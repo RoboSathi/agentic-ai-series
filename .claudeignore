@@ -1,0 +1,65 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# --- Virtual environments ---
+venv/
+.venv/
+env/
+ENV/
+.uv/
+
+# --- Package manager artifacts ---
+uv.lock.tmp
+.pip-cache/
+
+# --- Testing / coverage ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+# --- Logs, data, runtime artifacts ---
+logs/
+*.log
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+*.db-journal
+.deepeval/
+harness.db
+
+# --- Env / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Git ---
+.git/
+
+# --- Node (if any tooling pulls in JS deps) ---
+node_modules/
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Build/dist for docs ---
+docs/_build/
+site/

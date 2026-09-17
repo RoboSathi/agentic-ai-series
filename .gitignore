@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.coverage
+.deepeval/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.DS_Store
+.idea
+logs/*
+src/agentic_commons/data/*
+src/agentic_commons/persistence/*
+src/agentic_commons/config/local.yaml
