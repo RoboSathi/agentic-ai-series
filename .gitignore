@@ -18,3 +18,4 @@ src/agentic_commons/config/local.yaml
 
 # Claude specific
 .claude
+CLAUDE.md

@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(pip install *)",
-      "Bash(python3 -m pip install -e . -q)"
-    ]
-  }
-}
