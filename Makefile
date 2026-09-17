@@ -1,4 +1,4 @@
-.PHONY: help install clean test lint type-check format check-all run logs
+.PHONY: help install clean test lint type-check format check-all run seed-db logs llm-check
 
 # Colors for output
 GREEN := \033[0;32m
@@ -25,8 +25,10 @@ help:
 	@echo "  make test-fast        Run pytest without coverage"
 	@echo ""
 	@echo "$(GREEN)Running:$(NC)"
-	@echo "  make run              Run the walking skeleton"
+	@echo "  make seed-db          Seed the database with sample users/orders"
+	@echo "  make run              Run one demo query through the agent"
 	@echo "  make tui              Run the terminal UI (interactive)"
+	@echo "  make llm-check        Verify the configured LLM endpoint is up and responsive"
 	@echo ""
 	@echo "$(GREEN)Utilities:$(NC)"
 	@echo "  make logs             Show recent log files"
@@ -86,14 +88,20 @@ check-all: lint test
 	@echo "$(GREEN)✓ All checks passed$(NC)"
 
 run:
-	@echo "$(BLUE)Running walking skeleton...$(NC)"
-	@echo "$(YELLOW)Note: Graph execution will fail on state management (Phase 1 fix)$(NC)"
-	@echo "$(YELLOW)But colored trace logs will show before error$(NC)"
-	./venv/bin/python -m customer_support_agent.dev.walking_skeleton
+	@echo "$(BLUE)Running customer support agent demo query...$(NC)"
+	./venv/bin/python -m customer_support_agent.dev.run_demo
+
+seed-db:
+	@echo "$(BLUE)Seeding sample users/orders...$(NC)"
+	./venv/bin/python -m customer_support_agent.dev.seed_db
 
 tui:
 	@echo "$(BLUE)Launching terminal UI...$(NC)"
 	./venv/bin/python -m agentic_commons.tui.app
+
+llm-check:
+	@echo "$(BLUE)Checking LLM endpoint connectivity...$(NC)"
+	./venv/bin/python -m agentic_commons.llm.cli
 
 logs:
 	@echo "$(BLUE)Recent log files:$(NC)"

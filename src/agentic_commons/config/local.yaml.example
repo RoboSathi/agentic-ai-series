@@ -1,0 +1,16 @@
+# Copy this file to local.yaml (gitignored) to override config.yaml values
+# on your machine without touching the tracked file. Only include the keys
+# you want to change — anything omitted falls back to config.yaml. Any
+# section in config.yaml can be overridden here the same way, e.g. flip a
+# safety layer on for local testing:
+#
+# security:
+#   pii:
+#     enabled: true
+
+# Example: point the LLM client at a local llama.cpp-style server instead
+# of NVIDIA NIM.
+llm:
+  provider: local
+  base_url: http://localhost:8080/v1
+  model: mistral-nemo-12b

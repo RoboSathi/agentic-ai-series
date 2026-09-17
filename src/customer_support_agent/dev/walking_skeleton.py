@@ -1,6 +1,7 @@
 """Walking skeleton entry point — demonstrates architecture by calling each subsystem."""
 
 import time
+from typing import Callable
 
 from agentic_commons.audit.log import AuditLog
 from agentic_commons.audit.types import AuditEvent
@@ -8,7 +9,8 @@ from agentic_commons.gatekeeper.gatekeeper import Gatekeeper
 from agentic_commons.gatekeeper.types import Action
 from agentic_commons.guardrails.guards import PydanticGuard
 from agentic_commons.hallucination_protection.checker import HallucinationChecker
-from agentic_commons.llm.client import LLMClient
+from agentic_commons.llm.client import LLMClient, create_llm_client
+from agentic_commons.llm.types import Message
 from agentic_commons.logging import get_logger
 from agentic_commons.memory.episodic.memory import EpisodicMemory
 from agentic_commons.memory.procedural.memory import ProceduralMemory
@@ -20,17 +22,28 @@ from agentic_commons.security.prompt_injection.detector import InjectionDetector
 from agentic_commons.tools.registry import ToolRegistry
 
 
-def main() -> None:
-    """Run the walking skeleton — call each subsystem to demonstrate architecture."""
+def main(
+    query: str | None = None,
+    llm_client: LLMClient | None = None,
+    on_llm_chunk: Callable[[str], None] | None = None,
+) -> str:
+    """Run the Customer Support Agent — call each subsystem to demonstrate architecture.
+
+    Every ticket, whether the built-in demo or a caller-supplied `query`,
+    goes through the same steps before reaching the LLM. If `on_llm_chunk`
+    is given, the LLM node streams and calls it once per text delta; either
+    way, the steps after the LLM node (hallucination check, audit) only ever
+    see the complete response.
+    """
     logger = get_logger("customer_support_agent")
 
-    logger.info("[bold bright_green]═══ WALKING SKELETON START ═══[/bold bright_green]")
+    logger.info("[bold bright_green]═══ Customer Support Agent START ═══[/bold bright_green]")
     start_time = time.perf_counter()
 
     ticket = {
         "id": "ticket-001",
         "customer": "John Doe",
-        "issue": "Refund request for order #12345",
+        "issue": query if query else "Refund request for order #12345",
     }
 
     logger.info("[bright_green]Intake:[/bright_green] Loading ticket and context")
@@ -74,8 +87,15 @@ def main() -> None:
     logger.info("[cyan]✓ Tools invoked[/cyan]")
 
     logger.info("[bright_green]LLM:[/bright_green] Generating response")
-    client = LLMClient()
-    response = client.generate(f"Process this ticket: {ticket}")
+    client = llm_client or create_llm_client()
+    prompt = [Message(role="user", content=f"Process this ticket: {ticket}")]
+    if on_llm_chunk is not None:
+        streamed = client.generate_stream(prompt)
+        for chunk in streamed:
+            on_llm_chunk(chunk)
+        response = streamed.response
+    else:
+        response = client.generate(prompt)
     logger.info("[cyan]✓ Response generated[/cyan]")
 
     logger.info("[bright_green]Hallucination Check:[/bright_green] Verifying claim")
@@ -102,6 +122,8 @@ def main() -> None:
     logger.info(
         "[green]✓ Phase 0 Walking Skeleton Complete[/green]"
     )
+
+    return response.content
 
 
 if __name__ == "__main__":

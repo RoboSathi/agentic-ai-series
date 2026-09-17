@@ -1,6 +1,5 @@
 """Additional unit tests for coverage."""
 
-import pytest
 
 from agentic_commons.config import get_settings
 from agentic_commons.logging.core import get_logger
@@ -38,7 +37,7 @@ def test_resolve_toggle_simple() -> None:
 
 def test_resolve_toggle_nested() -> None:
     """Test nested toggle resolution."""
-    assert _resolve_toggle("security.pii.enabled") is True
+    assert _resolve_toggle("security.pii.enabled") is False
 
 
 def test_subsystem_colors() -> None:
@@ -75,7 +74,7 @@ def test_log_call_with_kwargs() -> None:
 def test_settings_security_nested() -> None:
     """Test accessing nested security settings."""
     settings = get_settings()
-    assert settings.security.pii.enabled is True
+    assert settings.security.pii.enabled is False
 
 
 def test_settings_logging_config() -> None:
@@ -164,7 +163,11 @@ def test_placeholder_for_pydantic_model() -> None:
 
 
 def test_placeholder_for_unhandled_type() -> None:
-    """Test placeholder creation for unhandled type raises error."""
+    """Test placeholder creation for an unconstructible type returns None.
+
+    A disabled subsystem must never crash its caller just because its
+    return type can't be zero-arg constructed — None is the safe fallback.
+    """
     from agentic_commons.logging.stub import _placeholder_for
 
     class UnconstructibleClass:
@@ -174,5 +177,4 @@ def test_placeholder_for_unhandled_type() -> None:
     def func() -> UnconstructibleClass:
         pass
 
-    with pytest.raises(NotImplementedError):
-        _placeholder_for(func)
+    assert _placeholder_for(func) is None

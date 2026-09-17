@@ -1,11 +1,46 @@
-"""Configuration settings for agentic commons using pydantic-settings."""
+"""Configuration settings for agentic commons using pydantic-settings.
 
+Every subsystem's `enabled` toggle — and, for `llm`, its connection
+parameters — is read from config.yaml (overridable by the gitignored
+local.yaml), never hardcoded as a Python default. See YamlBackedSettings and
+agentic_commons/config/yaml_config.py.
+"""
+
+import os
+from typing import Any, ClassVar, Literal
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from agentic_commons.config.yaml_config import load_section
 
-class LoggingSettings(BaseSettings):
+
+class YamlBackedSettings(BaseSettings):
+    """Base for settings sourced from config.yaml.
+
+    Subclasses set `_yaml_section` to their (optionally dotted, e.g.
+    "security.pii") path in config.yaml. Any field not explicitly given via
+    env var or constructor kwarg is filled from that section; a field with
+    no Python default and no matching YAML key fails fast with a validation
+    error rather than silently falling back to a hardcoded value.
+    """
+
+    _yaml_section: ClassVar[str] = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_from_yaml(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        return {**load_section(cls._yaml_section), **data}
+
+
+class LoggingSettings(YamlBackedSettings):
     """Logging configuration."""
 
+    _yaml_section = "logging"
+
+    enabled: bool
     level: str = "INFO"
     colorize: bool = True
     console_enabled: bool = True
@@ -15,154 +50,213 @@ class LoggingSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="LOGGING__")
 
 
-class ConfigSettings(BaseSettings):
+class ConfigSettings(YamlBackedSettings):
     """Meta config toggle."""
 
-    enabled: bool = True
+    _yaml_section = "config"
+
+    enabled: bool
 
     model_config = SettingsConfigDict(env_prefix="CONFIG__")
 
 
-class LLMSettings(BaseSettings):
-    """LLM provider configuration."""
+class LLMSettings(YamlBackedSettings):
+    """Unified LLM provider configuration.
 
-    enabled: bool = True
+    One shape covers any OpenAI-compatible endpoint, cloud or local.
+    provider/base_url/model/timeout_seconds/max_tokens are never hardcoded
+    here — they are read from config.yaml. API keys are never config values
+    at all: they are resolved from the provider's bare env var by
+    convention (see `api_key`), so they never appear in a settings dump or
+    log line.
+    """
+
+    _yaml_section = "llm"
+
+    enabled: bool
+    provider: Literal["nim", "local"]
+    base_url: str
+    model: str
+    timeout_seconds: float
+    max_tokens: int
 
     model_config = SettingsConfigDict(env_prefix="LLM__")
 
+    @property
+    def api_key(self) -> str | None:
+        """Resolve the API key from the provider's bare env var convention."""
+        if self.provider == "nim":
+            return os.environ.get("nvidia_api_key")
+        return None
 
-class PersistenceSettings(BaseSettings):
+
+class PersistenceSettings(YamlBackedSettings):
     """Database/persistence configuration."""
 
-    enabled: bool = True
+    _yaml_section = "persistence"
+
+    enabled: bool
 
     model_config = SettingsConfigDict(env_prefix="PERSISTENCE__")
 
 
-class ObservabilitySettings(BaseSettings):
+class ObservabilitySettings(YamlBackedSettings):
     """Observability/tracing configuration."""
 
-    enabled: bool = True
+    _yaml_section = "observability"
+
+    enabled: bool
 
     model_config = SettingsConfigDict(env_prefix="OBSERVABILITY__")
 
 
-class AuditSettings(BaseSettings):
+class AuditSettings(YamlBackedSettings):
     """Audit logging configuration."""
 
-    enabled: bool = True
+    _yaml_section = "audit"
+
+    enabled: bool
 
     model_config = SettingsConfigDict(env_prefix="AUDIT__")
 
 
-class EvalsSettings(BaseSettings):
+class EvalsSettings(YamlBackedSettings):
     """Evals runner configuration."""
 
-    enabled: bool = True
+    _yaml_section = "evals"
+
+    enabled: bool
 
     model_config = SettingsConfigDict(env_prefix="EVALS__")
 
 
-class GuardrailsSettings(BaseSettings):
+class GuardrailsSettings(YamlBackedSettings):
     """Guardrails configuration."""
 
-    enabled: bool = True
+    _yaml_section = "guardrails"
+
+    enabled: bool
 
     model_config = SettingsConfigDict(env_prefix="GUARDRAILS__")
 
 
-class ResilienceSettings(BaseSettings):
+class ResilienceSettings(YamlBackedSettings):
     """Resilience patterns configuration."""
 
-    enabled: bool = True
+    _yaml_section = "resilience"
+
+    enabled: bool
 
     model_config = SettingsConfigDict(env_prefix="RESILIENCE__")
 
 
-class SecurityAuthSettings(BaseSettings):
+class SecurityAuthSettings(YamlBackedSettings):
     """Security auth subsystem configuration."""
 
-    enabled: bool = True
+    _yaml_section = "security.auth"
+
+    enabled: bool
 
     model_config = SettingsConfigDict(env_prefix="SECURITY__AUTH__")
 
 
-class SecurityPIISettings(BaseSettings):
+class SecurityPIISettings(YamlBackedSettings):
     """Security PII subsystem configuration."""
 
-    enabled: bool = True
+    _yaml_section = "security.pii"
+
+    enabled: bool
 
     model_config = SettingsConfigDict(env_prefix="SECURITY__PII__")
 
 
-class SecurityPromptInjectionSettings(BaseSettings):
+class SecurityPromptInjectionSettings(YamlBackedSettings):
     """Security prompt injection subsystem configuration."""
 
-    enabled: bool = True
+    _yaml_section = "security.prompt_injection"
+
+    enabled: bool
 
     model_config = SettingsConfigDict(env_prefix="SECURITY__PROMPT_INJECTION__")
 
 
-class SecurityContentModerationSettings(BaseSettings):
+class SecurityContentModerationSettings(YamlBackedSettings):
     """Security content moderation subsystem configuration."""
 
-    enabled: bool = True
+    _yaml_section = "security.content_moderation"
+
+    enabled: bool
 
     model_config = SettingsConfigDict(env_prefix="SECURITY__CONTENT_MODERATION__")
 
 
-class SecuritySettings(BaseSettings):
+class SecuritySettings(YamlBackedSettings):
     """Security configuration."""
 
-    enabled: bool = True
-    auth: SecurityAuthSettings = SecurityAuthSettings()
-    pii: SecurityPIISettings = SecurityPIISettings()
+    _yaml_section = "security"
+
+    # Nested settings classes fill `enabled` from config.yaml via
+    # YamlBackedSettings; mypy can't see that, hence the ignores.
+    enabled: bool
+    auth: SecurityAuthSettings = SecurityAuthSettings()  # type: ignore[call-arg]
+    pii: SecurityPIISettings = SecurityPIISettings()  # type: ignore[call-arg]
     prompt_injection: SecurityPromptInjectionSettings = (
-        SecurityPromptInjectionSettings()
+        SecurityPromptInjectionSettings()  # type: ignore[call-arg]
     )
     content_moderation: SecurityContentModerationSettings = (
-        SecurityContentModerationSettings()
+        SecurityContentModerationSettings()  # type: ignore[call-arg]
     )
 
     model_config = SettingsConfigDict(env_prefix="SECURITY__")
 
 
-class MemorySettings(BaseSettings):
+class MemorySettings(YamlBackedSettings):
     """Memory configuration."""
 
-    enabled: bool = True
+    _yaml_section = "memory"
+
+    enabled: bool
 
     model_config = SettingsConfigDict(env_prefix="MEMORY__")
 
 
-class ToolsSettings(BaseSettings):
+class ToolsSettings(YamlBackedSettings):
     """Tools configuration."""
 
-    enabled: bool = True
+    _yaml_section = "tools"
+
+    enabled: bool
 
     model_config = SettingsConfigDict(env_prefix="TOOLS__")
 
 
-class GatekeeperSettings(BaseSettings):
+class GatekeeperSettings(YamlBackedSettings):
     """Gatekeeper configuration."""
 
-    enabled: bool = True
+    _yaml_section = "gatekeeper"
+
+    enabled: bool
 
     model_config = SettingsConfigDict(env_prefix="GATEKEEPER__")
 
 
-class HallucinationProtectionSettings(BaseSettings):
+class HallucinationProtectionSettings(YamlBackedSettings):
     """Hallucination protection configuration."""
 
-    enabled: bool = True
+    _yaml_section = "hallucination_protection"
+
+    enabled: bool
 
     model_config = SettingsConfigDict(env_prefix="HALLUCINATION_PROTECTION__")
 
 
-class CustomerSupportAgentSettings(BaseSettings):
+class CustomerSupportAgentSettings(YamlBackedSettings):
     """Customer support agent configuration."""
 
-    enabled: bool = True
+    _yaml_section = "customer_support_agent"
+
+    enabled: bool
+    max_tool_iterations: int
 
     model_config = SettingsConfigDict(env_prefix="CUSTOMER_SUPPORT_AGENT__")
 
@@ -170,24 +264,27 @@ class CustomerSupportAgentSettings(BaseSettings):
 class Settings(BaseSettings):
     """Root settings object containing all subsystem configurations."""
 
-    logging: LoggingSettings = LoggingSettings()
-    config: ConfigSettings = ConfigSettings()
-    llm: LLMSettings = LLMSettings()
-    persistence: PersistenceSettings = PersistenceSettings()
-    observability: ObservabilitySettings = ObservabilitySettings()
-    audit: AuditSettings = AuditSettings()
-    evals: EvalsSettings = EvalsSettings()
-    guardrails: GuardrailsSettings = GuardrailsSettings()
-    resilience: ResilienceSettings = ResilienceSettings()
-    security: SecuritySettings = SecuritySettings()
-    memory: MemorySettings = MemorySettings()
-    tools: ToolsSettings = ToolsSettings()
-    gatekeeper: GatekeeperSettings = GatekeeperSettings()
+    # Every nested settings class fills its required fields from
+    # config.yaml via YamlBackedSettings; mypy can't see that, hence the
+    # ignores on each zero-arg construction below.
+    logging: LoggingSettings = LoggingSettings()  # type: ignore[call-arg]
+    config: ConfigSettings = ConfigSettings()  # type: ignore[call-arg]
+    llm: LLMSettings = LLMSettings()  # type: ignore[call-arg]
+    persistence: PersistenceSettings = PersistenceSettings()  # type: ignore[call-arg]
+    observability: ObservabilitySettings = ObservabilitySettings()  # type: ignore[call-arg]
+    audit: AuditSettings = AuditSettings()  # type: ignore[call-arg]
+    evals: EvalsSettings = EvalsSettings()  # type: ignore[call-arg]
+    guardrails: GuardrailsSettings = GuardrailsSettings()  # type: ignore[call-arg]
+    resilience: ResilienceSettings = ResilienceSettings()  # type: ignore[call-arg]
+    security: SecuritySettings = SecuritySettings()  # type: ignore[call-arg]
+    memory: MemorySettings = MemorySettings()  # type: ignore[call-arg]
+    tools: ToolsSettings = ToolsSettings()  # type: ignore[call-arg]
+    gatekeeper: GatekeeperSettings = GatekeeperSettings()  # type: ignore[call-arg]
     hallucination_protection: HallucinationProtectionSettings = (
-        HallucinationProtectionSettings()
+        HallucinationProtectionSettings()  # type: ignore[call-arg]
     )
     customer_support_agent: CustomerSupportAgentSettings = (
-        CustomerSupportAgentSettings()
+        CustomerSupportAgentSettings()  # type: ignore[call-arg]
     )
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")

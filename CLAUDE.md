@@ -111,11 +111,8 @@ Don't report work as done from reading code alone — run it. `ruff`, `mypy
 
 ## What NOT to do
 
-- Don't reach for Streamlit or any web UI — the interactive layer is the
-  terminal UI described above.
-- Don't bake NOLLM tiering or reuse Atlas code into this repo — this is a
-  deliberate fresh start aligned with current agentic-AI industry standards,
-  not a continuation of prior projects.
+- Do NOT hard code any value in the code, no hard coded strings or magic numbers.
+- All values are strictly read from configuration files.
 - Don't build ahead of the confirmed platform-first phasing: the full shared
   library ships before any episode-specific business logic beyond what's
   needed to exercise it.

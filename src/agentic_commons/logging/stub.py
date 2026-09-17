@@ -3,6 +3,8 @@
 import functools
 import inspect
 import time
+import types
+import typing
 from typing import Any, Callable, TypeVar
 
 from agentic_commons.config import get_settings
@@ -83,15 +85,19 @@ def _placeholder_for(func: Callable[..., T]) -> T:
     """Return a type-appropriate dummy value based on func's return annotation.
 
     Returns a zero-arg or all-default constructed instance for dataclass/
-    BaseModel return types, or built-in defaults for bool/str/dict/list/None.
-
-    Raises NotImplementedError for unhandled return annotations.
+    BaseModel return types, built-in defaults for bool/str/dict/list, or
+    None for Optional/Union/Any and anything else that can't be
+    constructed — never raises, since a disabled subsystem must never
+    crash its caller.
     """
     sig = inspect.signature(func)
     return_annotation = sig.return_annotation
 
     if return_annotation is inspect.Signature.empty or return_annotation is None:
-        return None
+        return None  # type: ignore[return-value]
+
+    if return_annotation is Any:
+        return None  # type: ignore[return-value]
 
     if return_annotation is bool:
         return False
@@ -110,27 +116,31 @@ def _placeholder_for(func: Callable[..., T]) -> T:
     if return_annotation is set or return_annotation is set[Any]:
         return set()
 
+    origin = typing.get_origin(return_annotation)
+
+    # Optional[X] / X | None / Union[...] that permits None: None is
+    # always a safe, type-correct placeholder for these.
+    if origin in (typing.Union, types.UnionType) and type(None) in typing.get_args(
+        return_annotation
+    ):
+        return None  # type: ignore[return-value]
+
+    if origin is dict:
+        return {}
+    if origin is list:
+        return []
+    if origin is tuple:
+        return ()
+    if origin is set:
+        return set()
+
+    if hasattr(return_annotation, "model_validate"):
+        return return_annotation.model_construct()
+
+    if hasattr(return_annotation, "__dataclass_fields__"):
+        return return_annotation()
+
     try:
-        if hasattr(return_annotation, "__origin__"):
-            origin = return_annotation.__origin__
-            if origin is dict:
-                return {}
-            if origin is list:
-                return []
-            if origin is tuple:
-                return ()
-            if origin is set:
-                return set()
-
-        if hasattr(return_annotation, "model_validate"):
-            return return_annotation.model_construct()
-
-        if hasattr(return_annotation, "__dataclass_fields__"):
-            return return_annotation()
-
         return return_annotation()
     except Exception:
-        raise NotImplementedError(
-            f"Cannot create placeholder for return type {return_annotation} "
-            f"in {func.__qualname__}"
-        )
+        return None  # type: ignore[return-value]

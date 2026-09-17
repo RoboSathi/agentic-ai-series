@@ -17,6 +17,8 @@ dependencies = [
     "langgraph>=0.1",
     "langsmith>=0.1",
     "python-dotenv>=1.0",
+    "openai>=1.0",
+    "pyyaml>=6.0",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "ruff>=0.1",
@@ -29,6 +31,7 @@ dev = [
     "pytest-cov>=4.0",
     "ruff>=0.1",
     "mypy>=1.0",
+    "types-PyYAML>=6.0",
 ]
 
 [tool.setuptools.packages.find]

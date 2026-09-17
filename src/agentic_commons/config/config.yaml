@@ -1,0 +1,88 @@
+# Tracked defaults for every subsystem. Never put API keys here — those
+# come from bare environment variables (see .env.example).
+#
+# Only the core capabilities this agent actually needs are enabled by
+# default: llm, tools, persistence, customer_support_agent (plus the
+# always-on config/logging infrastructure). Every optional safety/
+# governance layer (security.*, memory, guardrails, gatekeeper,
+# hallucination_protection, resilience, audit, evals, observability)
+# defaults to disabled — flip it on here to bring it into the pipeline.
+#
+# To override any of this on your machine without touching this tracked
+# file, copy local.yaml.example to local.yaml (gitignored).
+
+config:
+  enabled: true
+
+logging:
+  enabled: true
+
+llm:
+  provider: nim
+  base_url: https://integrate.api.nvidia.com/v1
+  # NIM catalog entitlements are per-account — models.list() can show a
+  # model your key still can't invoke (404 "not found for account"), and
+  # some invokable models are slow reasoning models that burn their whole
+  # token budget on chain-of-thought (nvidia/nemotron-3.5-lightning-30b-a3b:
+  # confirmed invokable but unreliable here — narrates "thinking" instead of
+  # answering, 20-30s+ per call). This one is confirmed to reliably do
+  # multi-step tool-calling for the refund agent end-to-end.
+  model: meta/llama-3.2-11b-vision-instruct
+  timeout_seconds: 60
+  # Default cap on generation length, used whenever a caller doesn't pass
+  # its own max_tokens. Unbounded generation can run past any reasonable
+  # timeout (observed: 34s+ with no answer reached) — always bound it.
+  # 300 (not the original 150) gives multi-step tool-calling turns enough
+  # room to both reason and emit a tool call in the same response.
+  max_tokens: 300
+  enabled: true
+
+persistence:
+  enabled: true
+
+tools:
+  enabled: true
+
+customer_support_agent:
+  enabled: true
+  # Cap on the LLM <-> tool round trips per query (ask -> tool call ->
+  # tool result -> ask again -> ...), so a confused model can't loop
+  # forever waiting on tool calls instead of answering.
+  max_tool_iterations: 5
+
+# --- Optional safety / governance layers: off by default ---
+
+security:
+  enabled: false
+  auth:
+    enabled: false
+  pii:
+    enabled: false
+  prompt_injection:
+    enabled: false
+  content_moderation:
+    enabled: false
+
+memory:
+  enabled: false
+
+guardrails:
+  enabled: false
+
+gatekeeper:
+  enabled: false
+
+hallucination_protection:
+  enabled: false
+
+resilience:
+  enabled: false
+
+audit:
+  enabled: false
+
+evals:
+  enabled: false
+
+observability:
+  enabled: false

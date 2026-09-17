@@ -2,13 +2,11 @@
 
 from dataclasses import dataclass
 
-import pytest
-
 from agentic_commons.logging.stub import _placeholder_for
 
 
 def test_placeholder_with_exception_in_construction() -> None:
-    """Test that placeholder handles construction exceptions."""
+    """Test that a construction exception falls back to None, not a crash."""
 
     class BadClass:
         """A class that cannot be constructed without args."""
@@ -19,8 +17,7 @@ def test_placeholder_with_exception_in_construction() -> None:
     def returns_bad_class() -> BadClass:
         pass
 
-    with pytest.raises(NotImplementedError):
-        _placeholder_for(returns_bad_class)
+    assert _placeholder_for(returns_bad_class) is None
 
 
 def test_placeholder_with_no_annotation() -> None:

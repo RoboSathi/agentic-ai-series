@@ -1,13 +1,15 @@
 """Unit tests for stub implementations."""
 
+import pytest
+
 from agentic_commons.audit.log import AuditLog
 from agentic_commons.audit.types import AuditEvent
+from agentic_commons.config import get_settings
 from agentic_commons.evals.runner import EvalRunner
 from agentic_commons.gatekeeper.gatekeeper import Gatekeeper
 from agentic_commons.gatekeeper.types import Action
 from agentic_commons.guardrails.guards import OutlinesGuard, PydanticGuard
 from agentic_commons.hallucination_protection.checker import HallucinationChecker
-from agentic_commons.llm.client import LLMClient, LocalClient, NimClient
 from agentic_commons.memory.episodic.memory import EpisodicMemory
 from agentic_commons.memory.episodic.types import Episode
 from agentic_commons.memory.procedural.memory import ProceduralMemory
@@ -15,7 +17,6 @@ from agentic_commons.memory.semantic.memory import SemanticMemory
 from agentic_commons.memory.semantic.types import Fact
 from agentic_commons.memory.working.memory import WorkingMemory
 from agentic_commons.observability.tracer import Tracer
-from agentic_commons.persistence.database import Database
 from agentic_commons.resilience.bulkhead.bulkhead import Bulkhead
 from agentic_commons.resilience.circuit_breaker.breaker import CircuitBreaker
 from agentic_commons.resilience.idempotency.guard import IdempotencyGuard
@@ -28,46 +29,11 @@ from agentic_commons.security.auth.auth import Auth
 from agentic_commons.security.content_moderation.moderator import ContentModerator
 from agentic_commons.security.pii.detector import PIIDetector
 from agentic_commons.security.prompt_injection.detector import InjectionDetector
-from agentic_commons.tools.registry import ToolRegistry
 
 
-def test_llm_client_generate() -> None:
-    """Test LLM client generation."""
-    client = LLMClient()
-    response = client.generate("test prompt")
-    assert response.content == "[stub response]"
-
-
-def test_nim_client_generate() -> None:
-    """Test NIM client generation."""
-    client = NimClient()
-    response = client.generate("test prompt")
-    assert response.model == "nim"
-
-
-def test_local_client_generate() -> None:
-    """Test local client generation."""
-    client = LocalClient()
-    response = client.generate("test prompt")
-    assert response.model == "local"
-
-
-def test_database_execute() -> None:
-    """Test database execution."""
-    db = Database()
-    result = db.execute("SELECT * FROM test")
-    assert result.rows == []
-
-
-def test_database_get_connection() -> None:
-    """Test database connection."""
-    db = Database()
-    conn = db.get_connection()
-    assert conn is None
-
-
-def test_observability_tracer() -> None:
+def test_observability_tracer(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test observability tracer."""
+    monkeypatch.setattr(get_settings().observability, "enabled", True)
     tracer = Tracer()
     span = tracer.start_span("test")
     assert span.id != ""
@@ -88,8 +54,9 @@ def test_audit_log_query() -> None:
     assert results == []
 
 
-def test_eval_runner() -> None:
+def test_eval_runner(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test eval runner."""
+    monkeypatch.setattr(get_settings().evals, "enabled", True)
     runner = EvalRunner()
     result = runner.run("test_suite")
     assert result.suite_name == "test_suite"
@@ -109,8 +76,9 @@ def test_outlines_guard() -> None:
     assert result.constrained is False
 
 
-def test_circuit_breaker() -> None:
+def test_circuit_breaker(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test circuit breaker."""
+    monkeypatch.setattr(get_settings().resilience, "enabled", True)
     breaker = CircuitBreaker()
 
     def test_func() -> int:
@@ -120,8 +88,9 @@ def test_circuit_breaker() -> None:
     assert result == 42
 
 
-def test_retry() -> None:
+def test_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test retry pattern."""
+    monkeypatch.setattr(get_settings().resilience, "enabled", True)
     retry = Retry()
 
     def test_func() -> int:
@@ -131,8 +100,9 @@ def test_retry() -> None:
     assert result == 99
 
 
-def test_timeout() -> None:
+def test_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test timeout pattern."""
+    monkeypatch.setattr(get_settings().resilience, "enabled", True)
     timeout = Timeout()
 
     def test_func() -> int:
@@ -157,8 +127,9 @@ def test_idempotency_guard() -> None:
     guard.record("key1")
 
 
-def test_bulkhead() -> None:
+def test_bulkhead(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test bulkhead pattern."""
+    monkeypatch.setattr(get_settings().resilience, "enabled", True)
     bulkhead = Bulkhead()
     with bulkhead.acquire("test_pool"):
         pass
@@ -203,8 +174,9 @@ def test_content_moderator() -> None:
     assert result.flagged is False
 
 
-def test_working_memory() -> None:
+def test_working_memory(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test working memory."""
+    monkeypatch.setattr(get_settings().memory, "enabled", True)
     memory = WorkingMemory()
     context = memory.get("session1")
     assert context.session_id == "session1"
@@ -234,14 +206,6 @@ def test_procedural_memory() -> None:
     memory = ProceduralMemory()
     skill = memory.get_skill("test_skill")
     assert skill is None
-
-
-def test_tool_registry() -> None:
-    """Test tool registry."""
-    registry = ToolRegistry()
-    registry.register("test_tool")
-    result = registry.invoke("test_tool", {})
-    assert result.success is False
 
 
 def test_gatekeeper() -> None:
