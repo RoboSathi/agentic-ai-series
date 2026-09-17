@@ -1,13 +1,13 @@
 """Demo entry point: run one sample query through the customer support agent.
 
-Requires the database to have been seeded (`make seed-db`) so there's a
+Requires the dummy data to have been built (`make dummy-data`) so there's a
 real order for the demo query to find.
 """
 
 from agentic_commons.logging import get_logger
 from customer_support_agent.core.graph import run_agent
 
-_DEMO_QUERY = "What is the status of order 12345, and can I get a refund?"
+_DEMO_QUERY = "What is the status of order 10001, and can I get a refund?"
 
 
 def main() -> str:

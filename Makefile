@@ -1,4 +1,4 @@
-.PHONY: help install clean test lint type-check format check-all run seed-db logs llm-check
+.PHONY: help install clean test lint type-check format check-all run dummy-data logs llm-check
 
 # Colors for output
 GREEN := \033[0;32m
@@ -25,7 +25,7 @@ help:
 	@echo "  make test-fast        Run pytest without coverage"
 	@echo ""
 	@echo "$(GREEN)Running:$(NC)"
-	@echo "  make seed-db          Seed the database with sample users/orders"
+	@echo "  make dummy-data       Generate dummy_data/*.sql and build dummy_data/agentic.db"
 	@echo "  make run              Run one demo query through the agent"
 	@echo "  make tui              Run the terminal UI (interactive)"
 	@echo "  make llm-check        Verify the configured LLM endpoint is up and responsive"
@@ -91,9 +91,9 @@ run:
 	@echo "$(BLUE)Running customer support agent demo query...$(NC)"
 	./venv/bin/python -m customer_support_agent.dev.run_demo
 
-seed-db:
-	@echo "$(BLUE)Seeding sample users/orders...$(NC)"
-	./venv/bin/python -m customer_support_agent.dev.seed_db
+dummy-data:
+	@echo "$(BLUE)Generating dummy_data/seed_data.sql and building dummy_data/agentic.db...$(NC)"
+	./venv/bin/python -m customer_support_agent.dummy_data.generate_dummy_data
 
 tui:
 	@echo "$(BLUE)Launching terminal UI...$(NC)"

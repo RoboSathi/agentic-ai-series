@@ -51,6 +51,31 @@ def test_execute_persists_across_separate_calls(tmp_path: Path) -> None:
     assert result.rows == [{"name": "sprocket"}]
 
 
+def test_execute_script_runs_multiple_statements(tmp_path: Path) -> None:
+    """Test that execute_script runs a whole multi-statement SQL script."""
+    db = Database(db_path=tmp_path / "test.db")
+
+    db.execute_script(
+        """
+        CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT);
+        INSERT INTO widgets (name) VALUES ('sprocket');
+        INSERT INTO widgets (name) VALUES ('cog');
+        """
+    )
+
+    result = db.execute("SELECT name FROM widgets ORDER BY id")
+    assert result.rows == [{"name": "sprocket"}, {"name": "cog"}]
+
+
+def test_execute_script_create_table_if_not_exists_is_idempotent(tmp_path: Path) -> None:
+    """Test that re-running a CREATE TABLE IF NOT EXISTS script doesn't error."""
+    db = Database(db_path=tmp_path / "test.db")
+    script = "CREATE TABLE IF NOT EXISTS widgets (id INTEGER PRIMARY KEY)"
+
+    db.execute_script(script)
+    db.execute_script(script)  # must not raise
+
+
 def test_default_db_path_is_package_relative_not_cwd() -> None:
     """Test that the default db path doesn't depend on the process's cwd."""
     db = Database()

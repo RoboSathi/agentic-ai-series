@@ -13,8 +13,8 @@ venv/
 .idea
 logs/*
 src/agentic_commons/data/*
-src/agentic_commons/persistence/*
 src/agentic_commons/config/local.yaml
+src/customer_support_agent/dummy_data/*.db
 
 # Claude specific
 .claude

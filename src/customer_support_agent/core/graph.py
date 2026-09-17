@@ -35,6 +35,7 @@ from agentic_commons.security.prompt_injection.detector import InjectionDetector
 from agentic_commons.tools.registry import ToolRegistry
 from customer_support_agent.core.schema import ensure_schema
 from customer_support_agent.core.tools import build_tool_registry
+from customer_support_agent.dummy_data import DB_PATH as DEFAULT_DB_PATH
 from customer_support_agent.prompts.system_prompt import build_system_prompt
 
 _LOGGER_NAME = "customer_support_agent"
@@ -122,10 +123,16 @@ def _make_agent_node(llm_client: LLMClient, tool_registry: ToolRegistry) -> Any:
     """Build the agent node: one LLM call with tools bound."""
 
     def agent_node(state: AgentState) -> dict[str, Any]:
-        get_logger(_LOGGER_NAME).info("[bright_green]LLM:[/bright_green] Thinking")
+        logger = get_logger(_LOGGER_NAME)
+        round_num = state["tool_call_count"] + 1
+        logger.info(f"[bright_green]LLM:[/bright_green] Thinking (round {round_num})")
         response = llm_client.generate(
             state["messages"], tools=tool_registry.to_openai_tools()
         )
+
+        if response.content:
+            logger.info(f"[dim]  says:[/dim] {response.content}")
+
         assistant_message = Message(
             role="assistant", content=response.content, tool_calls=response.tool_calls
         )
@@ -162,7 +169,8 @@ def _make_finalize_node(llm_client: LLMClient) -> Any:
     """
 
     def finalize_node(state: AgentState) -> dict[str, Any]:
-        get_logger(_LOGGER_NAME).info(
+        logger = get_logger(_LOGGER_NAME)
+        logger.info(
             "[yellow]Tool call limit reached — forcing a final answer[/yellow]"
         )
         nudge = Message(
@@ -173,6 +181,8 @@ def _make_finalize_node(llm_client: LLMClient) -> Any:
             ),
         )
         response = llm_client.generate(state["messages"] + [nudge])
+        if response.content:
+            logger.info(f"[dim]  says:[/dim] {response.content}")
         assistant_message = Message(role="assistant", content=response.content)
         return {
             "messages": [nudge, assistant_message],
@@ -195,13 +205,14 @@ def _make_tools_node(tool_registry: ToolRegistry) -> Any:
         tool_messages: list[Message] = []
 
         for call in last_message.tool_calls or []:
-            logger.info(f"[bright_green]Tools:[/bright_green] {call.name}({call.arguments})")
+            logger.info(f"[bright_green]Tools:[/bright_green] calling {call.name}({call.arguments})")
             try:
                 args = json.loads(call.arguments)
             except json.JSONDecodeError:
                 output = f"Invalid arguments for {call.name}: {call.arguments}"
             else:
                 if call.name == "process_refund" and is_enabled("gatekeeper"):
+                    logger.info("[dim]  checking gatekeeper authorization...[/dim]")
                     decision = Gatekeeper().authorize(Action(name="process_refund"))
                     output = (
                         tool_registry.invoke(call.name, args).output
@@ -211,6 +222,7 @@ def _make_tools_node(tool_registry: ToolRegistry) -> Any:
                 else:
                     output = tool_registry.invoke(call.name, args).output
 
+            logger.info(f"[dim]  →[/dim] {output}")
             tool_messages.append(
                 Message(role="tool", tool_call_id=call.id, content=output)
             )
@@ -252,7 +264,7 @@ def build_graph(
     database: Database | None = None,
 ) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
     """Build and compile the customer support agent graph."""
-    db = database or Database()
+    db = database or Database(db_path=DEFAULT_DB_PATH)
     ensure_schema(db)
     tool_registry = build_tool_registry(db)
     client = llm_client or create_llm_client()

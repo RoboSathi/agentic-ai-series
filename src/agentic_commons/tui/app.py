@@ -104,27 +104,22 @@ class AgenticTUI(App[None]):
         layout: vertical;
     }
 
-    Header {
-        dock: top;
-    }
-
-    Footer {
-        dock: bottom;
+    /* Header/Footer dock themselves (top/bottom) by default. #logs,
+    #status-line and #input-field are NOT docked — they flow vertically in
+    the remaining space between Header and Footer, in this order. Docking
+    more than one of them to the same edge would make them overlap, since
+    docking pins to an edge rather than stacking. */
+    #logs {
+        height: 1fr;
     }
 
     #status-line {
-        dock: bottom;
         height: 1;
         color: $text-muted;
     }
 
     #input-field {
-        dock: bottom;
         height: 3;
-    }
-
-    #logs {
-        height: 1fr;
     }
     """
 
@@ -137,6 +132,9 @@ class AgenticTUI(App[None]):
     TITLE = "Agentic Commons - Customer Support Agent"
     SUB_TITLE = "Refunds, order status, and human-in-the-loop approvals"
 
+    _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+    _SPINNER_INTERVAL_SECONDS = 0.1
+
     def __init__(
         self,
         llm_client: LLMClient | None = None,
@@ -148,7 +146,8 @@ class AgenticTUI(App[None]):
         self._llm_client = llm_client
         self._database = database
         self._processing_started_at = 0.0
-        self._chars_streamed = 0
+        self._response_chars = 0
+        self._spinner_index = 0
         self._status_timer: Timer | None = None
         self._log_handlers: list[tuple[logging.Logger, LogHandler]] = []
 
@@ -159,7 +158,7 @@ class AgenticTUI(App[None]):
         yield Static("", id="status-line")
         yield Input(
             id="input-field",
-            placeholder="Ask about an order, e.g. 'refund order 12345'...",
+            placeholder="Ask about an order, e.g. 'refund order 10001'...",
         )
         yield Footer()
 
@@ -173,7 +172,7 @@ class AgenticTUI(App[None]):
         log_display.add_log("═══ Agentic Commons - Interactive TUI ═══")
         log_display.add_log("")
         log_display.add_log("Instructions:")
-        log_display.add_log("  • Ask about an order, e.g. 'what's the status of order 12345?'")
+        log_display.add_log("  • Ask about an order, e.g. 'what's the status of order 10001?'")
         log_display.add_log("  • System must finish before accepting new queries")
         log_display.add_log("  • Ctrl+Y copies your last query, Ctrl+L copies the full log")
         log_display.add_log("  • Ctrl+C exits")
@@ -220,19 +219,33 @@ class AgenticTUI(App[None]):
         log_display.add_log(f"[cyan]Copied query to clipboard:[/cyan] {self._last_query}")
 
     def action_copy_logs(self) -> None:
-        """Copy the full visible log transcript to the system clipboard.
+        """Save the full visible log transcript to a file and try the clipboard too.
 
         Markup tags (e.g. "[bright_green]...[/bright_green]") are stripped
         first — useful for pasting the transcript into a bug report.
+
+        Terminal clipboard copy (OSC 52) has real, well-known size limits
+        that vary by terminal — a transcript of any length can silently
+        fail to actually reach the clipboard even though nothing raises an
+        error. The file write always works and is the dependable path;
+        the clipboard copy is attempted as a convenience on top.
         """
         log_display = self.query_one("#logs", LogDisplay)
         if not log_display.logs:
             log_display.add_log("[yellow]No logs to copy yet[/yellow]")
             return
+
         plain_text = "\n".join(Text.from_markup(line).plain for line in log_display.logs)
+
+        log_dir = Path(get_settings().logging.log_dir)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        export_path = log_dir / f"tui_log_export_{int(time.time())}.txt"
+        export_path.write_text(plain_text)
+
         self.copy_to_clipboard(plain_text)
         log_display.add_log(
-            f"[cyan]Copied {len(log_display.logs)} log lines to clipboard[/cyan]"
+            f"[cyan]Saved {len(log_display.logs)} log lines to {export_path}[/cyan] "
+            "[dim](also tried the clipboard, but terminal clipboard support varies)[/dim]"
         )
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -259,19 +272,21 @@ class AgenticTUI(App[None]):
         input_field.disabled = True
 
         self._processing_started_at = time.monotonic()
-        self._chars_streamed = 0
+        self._response_chars = 0
+        self._spinner_index = 0
         self._update_status()
-        self._status_timer = self.set_interval(1.0, self._update_status)
+        self._status_timer = self.set_interval(
+            self._SPINNER_INTERVAL_SECONDS, self._update_status
+        )
 
         self._run_pipeline(query)
 
     def _update_status(self) -> None:
-        """Refresh the live \"Accomplishing… (Ns · ↓ N chars)\" status line."""
+        """Advance the spinner and refresh the live "<spinner> Accomplishing… (Ns)" line."""
+        self._spinner_index = (self._spinner_index + 1) % len(self._SPINNER_FRAMES)
+        frame = self._SPINNER_FRAMES[self._spinner_index]
         elapsed = time.monotonic() - self._processing_started_at
-        status = self.query_one("#status-line", Static)
-        status.update(
-            f"⏳ Accomplishing… ({elapsed:.0f}s · ↓ {self._chars_streamed} chars streamed)"
-        )
+        self.query_one("#status-line", Static).update(f"{frame} Accomplishing… ({elapsed:.0f}s)")
 
     @work(thread=True, exclusive=True)
     def _run_pipeline(self, query: str) -> None:
@@ -282,7 +297,7 @@ class AgenticTUI(App[None]):
 
         try:
             response = run_agent(query, llm_client=self._llm_client, database=self._database)
-            self._chars_streamed = len(response)
+            self._response_chars = len(response)
             self.call_from_thread(log_display.add_log, f"[cyan]Response:[/cyan] {response}")
         except Exception as exc:
             self.call_from_thread(log_display.add_log, f"[red]Error: {exc}[/red]")
@@ -306,7 +321,7 @@ class AgenticTUI(App[None]):
         log_display.add_log("")
         log_display.add_log(
             f"[bold bright_green]✓ Processing Complete[/bold bright_green] "
-            f"[dim]({elapsed:.1f}s · {self._chars_streamed} chars streamed)[/dim]"
+            f"[dim]({elapsed:.1f}s · {self._response_chars} chars)[/dim]"
         )
         log_display.add_log("Ready for next query...")
 

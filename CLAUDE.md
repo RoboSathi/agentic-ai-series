@@ -64,8 +64,7 @@ building anything non-trivial.
 ## Stack
 
 - **LLM providers**: NVIDIA NIM (OpenAI-compatible endpoint) as the cloud
-  provider; local `mistral-nemo-12b` via a llama.cpp-style local server as
-  the local provider. Both go through `agentic_commons/llm/` adapters — no
+  provider. Both go through `agentic_commons/llm/` adapters — no
   direct SDK calls from business logic.
 - **Observability**: LangSmith for LLM call tracing, plus the repo's own
   `observability/` + `audit/` modules for structured logs and the audit
