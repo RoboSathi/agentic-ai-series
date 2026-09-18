@@ -48,7 +48,8 @@ llm:
       # (nvidia/nemotron-3.5-lightning-30b-a3b is invokable but narrates
       # chain-of-thought instead of answering.) It does NOT honor
       # guided_json/response_format — see guardrails.constrained_backend.
-      model: nvidia/nemotron-3-ultra-550b-a55b # meta/llama-3.2-11b-vision-instruct
+      model: nvidia/nemotron-3-super-120b-a12b
+      # meta/llama-3.2-11b-vision-instruct, nvidia/nemotron-3-super-120b-a12b, nvidia/nemotron-3-ultra-550b-a55b
       timeout_seconds: 60
       input_cost_per_1k_tokens: 0.0002
       output_cost_per_1k_tokens: 0.0006

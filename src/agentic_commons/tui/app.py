@@ -16,6 +16,7 @@ bottom puts all three in the same place. They flow instead.
 """
 
 from typing import Any, Callable
+from uuid import uuid4
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -39,12 +40,26 @@ AgentFactory = Callable[[StageReporter], Any]
 class AgenticTuiApp(App[None]):
     """Live status feed over a running agent."""
 
+    # Laid out like Claude Code: the transcript takes the space it can, the
+    # prompt sits directly under it in a bordered box, and the spinner and
+    # token counts run *below* the prompt where they read as a status on
+    # the work in flight.
+    #
+    # Nothing is docked. `dock` pins a widget to the screen edge and takes
+    # it out of the flow, which is what left the prompt stranded at the
+    # very bottom with a gap above it — and, earlier, put three docked
+    # widgets in the same place.
     CSS = """
     Screen { layout: vertical; }
     #feed { height: 1fr; padding: 0 1; }
-    #status-line { height: auto; padding: 0 1; }
-    #tokens { height: auto; padding: 0 1; }
-    #query { dock: bottom; }
+    #query {
+        height: auto;
+        margin: 0 1;
+        border: round $accent;
+    }
+    #query:focus { border: round $accent-lighten-2; }
+    #status-line { height: auto; padding: 0 2; }
+    #tokens { height: auto; padding: 0 2; }
     """
 
     BINDINGS = [
@@ -63,15 +78,19 @@ class AgenticTuiApp(App[None]):
         self._status = StatusLineWidget()
         self._tokens = TokenCounterWidget()
         self._turn = 0
+        # One session for the life of the window. Keying it per turn would
+        # give every message its own conversation, so a follow-up like
+        # "what about 10010" would have nothing to refer to.
+        self._session_id = f"tui-{uuid4().hex[:8]}"
         self._journal = get_logger("tui")
 
     def compose(self) -> ComposeResult:
-        """The single-panel layout."""
+        """The single-panel layout, prompt above its own status line."""
         yield Header()
         yield VerticalScroll(self._panel, id="feed")
+        yield Input(placeholder="Ask the support agent…", id="query")
         yield self._status
         yield self._tokens
-        yield Input(placeholder="Ask the support agent…", id="query")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -94,14 +113,16 @@ class AgenticTuiApp(App[None]):
         self._turn += 1
         self._tokens.start_turn()
         self._panel.note(f"\n> {query}", style="bold")
+        self._scroll_to_latest()
         self._status.begin(self._labels.label_for("intake"))
         if self._agent is None:
             self._panel.note("No agent wired; feed demo only.", style="yellow")
             self._status.finish()
             return
         try:
-            state = await self._agent.handle(query, session_id=f"tui-{self._turn}")
+            state = await self._agent.handle(query, session_id=self._session_id)
             self._panel.note(f"\n{state.response}", style="bright_green")
+            self._scroll_to_latest()
         except Exception as exc:
             self._journal.exception("Agent run failed")
             self._panel.note(f"\nFailed: {exc}", style="red")
@@ -111,6 +132,7 @@ class AgenticTuiApp(App[None]):
     def _on_status(self, event: StatusEvent) -> None:
         """Feed subscriber: update the panel, status line and counters."""
         self._panel.show_status(event)
+        self._scroll_to_latest()
         if event.status == "started":
             self._status.update_stage(
                 self._labels.label_for(event.stage, tool_name=event.detail or "")
@@ -130,6 +152,18 @@ class AgenticTuiApp(App[None]):
     def action_clear_feed(self) -> None:
         """Clear the panel."""
         self._panel.clear_feed()
+
+    def _scroll_to_latest(self) -> None:
+        """Keep the newest line in view as the feed grows.
+
+        A transcript that silently scrolls out of view is the same defect
+        as not printing it: the person is watching for the step that is
+        happening now.
+        """
+        try:
+            self.query_one("#feed", VerticalScroll).scroll_end(animate=False)
+        except Exception:
+            pass
 
 
 def main() -> None:

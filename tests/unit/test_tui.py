@@ -172,3 +172,59 @@ class TestFormatting:
         assert _elapsed(4) == "4s"
         assert _elapsed(64) == "1m 04s"
         assert _elapsed(3_720) == "1h 02m"
+
+
+class TestLayout:
+    """The prompt sits under the transcript, with its status below it.
+
+    Reported as "the chat window is too low": `dock: bottom` pins a
+    widget to the screen edge and removes it from the flow, which left
+    the prompt stranded at the very bottom. Nothing is docked now.
+    """
+
+    async def test_the_prompt_is_below_the_transcript(self) -> None:
+        from textual.containers import VerticalScroll
+        from textual.widgets import Input
+
+        from agentic_commons.tui.app import AgenticTuiApp
+
+        app = AgenticTuiApp()
+        async with app.run_test(size=(78, 26)):
+            feed = app.query_one("#feed", VerticalScroll)
+            prompt = app.query_one("#query", Input)
+            assert prompt.region.y > feed.region.y
+
+    async def test_the_status_line_sits_under_the_prompt(self) -> None:
+        """Where it reads as a status on the work, as in Claude Code."""
+        from textual.widgets import Input
+
+        from agentic_commons.tui.app import AgenticTuiApp
+
+        app = AgenticTuiApp()
+        async with app.run_test(size=(78, 26)):
+            prompt = app.query_one("#query", Input)
+            assert app._status.region.y >= prompt.region.y + prompt.region.height
+
+    async def test_nothing_is_docked(self) -> None:
+        """Three docked widgets once landed in the same place."""
+        from agentic_commons.tui.app import AgenticTuiApp
+
+        assert "dock:" not in AgenticTuiApp.CSS.replace(" ", "")
+
+    async def test_the_transcript_takes_the_remaining_height(self) -> None:
+        from textual.containers import VerticalScroll
+
+        from agentic_commons.tui.app import AgenticTuiApp
+
+        app = AgenticTuiApp()
+        async with app.run_test(size=(78, 26)):
+            assert app.query_one("#feed", VerticalScroll).region.height > 10
+
+    async def test_one_session_spans_the_whole_window(self) -> None:
+        """Keying per turn would give every message its own conversation."""
+        from agentic_commons.tui.app import AgenticTuiApp
+
+        app = AgenticTuiApp()
+        first = app._session_id
+        app._turn += 1
+        assert app._session_id == first

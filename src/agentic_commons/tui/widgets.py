@@ -33,6 +33,9 @@ class TokenCounterWidget(Static):
     session_tokens: reactive[int] = reactive(0)
     turn_tokens: reactive[int] = reactive(0)
 
+    def __init__(self) -> None:
+        super().__init__(id="tokens")
+
     def add(self, tokens: int) -> None:
         """Account for tokens spent in the current turn."""
         self.turn_tokens += tokens
@@ -62,7 +65,7 @@ class StatusLineWidget(Static):
     running: reactive[bool] = reactive(False)
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(id="status-line")
         settings = get_settings().tui
         self._frames = settings.spinner_frames
         self._started_at = 0.0
