@@ -58,6 +58,7 @@ class SessionCommand:
 
         settings = get_settings()
         provider = settings.llm.providers[settings.llm.provider]
+        trace = settings.tui.trace
         customer = current_customer()
         result = CommandResult(title="Session")
         result.headers = ["field", "value"]
@@ -69,7 +70,16 @@ class SessionCommand:
         result.row("max tokens", str(settings.llm.max_tokens))
         result.row("database", str(settings.persistence.resolved_db_path.name))
         result.row("policy version", settings.audit.policy_version)
-        result.row("config", ", ".join(p.name for p in config_sources() if p.exists()))
+        # Qualified by their folder: the platform file and every agent
+        # overlay are all called config.yaml, so bare names would list
+        # the same word twice and say nothing about which files are live.
+        result.row(
+            "config",
+            ", ".join(f"{p.parent.parent.name}/{p.name}" for p in config_sources() if p.exists()),
+        )
+        logging_settings = get_settings().logging
+        result.row("log level", f"file {logging_settings.file_level}, screen {trace.level}")
+        result.row("trace on screen", "yes" if trace.enabled else "no — /debug on")
         return result
 
 
