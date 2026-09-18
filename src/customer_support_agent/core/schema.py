@@ -11,10 +11,10 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.config import get_settings
 from agentic_commons.llm.types import Message
 from agentic_commons.observability.types import utc_now
 from agentic_commons.persistence import SqliteConnectionPool
+from customer_support_agent.config import get_agent_settings
 
 OrderStatus = Literal["pending", "shipped", "delivered", "cancelled"]
 RefundStatus = Literal["none", "pending_review", "approved", "denied", "completed"]
@@ -32,8 +32,8 @@ _SCHEMA_FILE = Path(__file__).resolve().parents[1] / "dummy_data" / "schema.sql"
 class Order(BaseModel):
     """One customer order."""
 
-    order_id: str
-    user_id: str
+    order_id: int
+    user_id: int
     timestamp: str
     order_status: OrderStatus
     refund_status: RefundStatus
@@ -70,20 +70,37 @@ class Order(BaseModel):
 
 
 class User(BaseModel):
-    """One customer."""
+    """One customer.
 
-    user_id: str
+    `user_code` is the credential the customer types; `user_id` is the
+    internal key that appears in joins and logs. Keeping them separate
+    means an enumerable primary key is never the thing that grants
+    access.
+    """
+
+    user_id: int
+    user_code: str
     created_at: str
+    name: str
     email: str
     phone: str | None = None
+
+    @property
+    def masked_email(self) -> str:
+        """Email with the local part partly hidden, for read-back."""
+        local, _, domain = self.email.partition("@")
+        if not domain:
+            return self.email
+        shown = local[:2] if len(local) > 2 else local[:1]
+        return f"{shown}{'*' * max(3, len(local) - len(shown))}@{domain}"
 
 
 class HitlRequest(BaseModel):
     """A refund waiting on a human decision."""
 
     id: int | None = None
-    order_id: str
-    user_id: str
+    order_id: int
+    user_id: int
     requested_amount: float
     status: HitlStatus = "pending"
     created_at: str = Field(default_factory=lambda: utc_now().isoformat())
@@ -105,7 +122,7 @@ class AgentState(BaseModel):
     query: str = ""
     session_id: str = ""
     actor: str = ""
-    customer_id: str = ""
+    customer_id: int | None = None
     messages: Annotated[list[Message], _merge_messages] = Field(default_factory=list)
     context: str = ""
     tool_rounds: int = 0
@@ -129,4 +146,4 @@ def ensure_schema(pool: SqliteConnectionPool) -> None:
 
 def policy_text() -> str:
     """The refund policy, resolved package-relative and never from the CWD."""
-    return get_settings().customer_support_agent.resolved_policy_path.read_text()
+    return get_agent_settings().resolved_policy_path.read_text()

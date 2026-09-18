@@ -29,7 +29,7 @@ from customer_support_agent.core.repositories import (
 from customer_support_agent.core.schema import Order
 
 # Notifier is injected: the agent does not own how a customer is reached.
-Notifier = Callable[[str, str], Awaitable[None]]
+Notifier = Callable[[int, str], Awaitable[None]]
 
 
 class RefundSaga:
@@ -94,7 +94,7 @@ class RefundSaga:
             if self._notifier is not None:
                 await self._notifier(
                     order.user_id,
-                    f"Your refund of ${amount:.2f} for {order.order_id} is on its way.",
+                    f"Your refund of ${amount:.2f} for order {order.order_id} is on its way.",
                 )
 
         return [

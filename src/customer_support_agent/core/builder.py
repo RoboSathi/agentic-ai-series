@@ -31,12 +31,14 @@ from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.resilience import SqliteIdempotencyGuard
 from agentic_commons.security import Authorizer, SecuritySuite
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
+from customer_support_agent.core.authentication import CustomerAuthenticator
 from customer_support_agent.core.graph import CustomerSupportAgent
 from customer_support_agent.core.refund_saga import RefundSaga
 from customer_support_agent.core.repositories import (
     HitlQueueRepository,
     OrdersRepository,
     RefundLedgerRepository,
+    UsersRepository,
 )
 from customer_support_agent.core.review import ReviewQueueService
 from customer_support_agent.core.schema import policy_text
@@ -141,6 +143,7 @@ def build_agent(
         costs=CostAggregatorImpl() if observe else None,
         slos=SLORegistry() if observe else None,
         grounding=DetectionLadder(scoring) if observe else None,
+        authenticator=CustomerAuthenticator(UsersRepository(connection)),
     )
 
 
@@ -174,7 +177,7 @@ def build_lexical_index(pool: SqliteConnectionPool) -> LexicalRetriever:
                     f"${order.amount:.2f}, refund {order.refund_status}"
                 ),
                 kind="retrieved",
-                source=order.order_id,
+                source=str(order.order_id),
             )
             for order in orders.query()
         ]

@@ -38,10 +38,10 @@ class TestAutoApprovedRefundLifecycle:
             seeded_pool,
             query="Order 10001 arrived damaged, I'd like a refund please",
             script=[
-                {"tool_calls": tool_call("support.get_order_status", order_id="10001")},
+                {"tool_calls": tool_call("support.get_order_status", order_id=10001)},
                 {
                     "tool_calls": tool_call(
-                        "support.process_refund", order_id="10001", amount=32.0, reason="damaged"
+                        "support.process_refund", order_id=10001, amount=32.0, reason="damaged"
                     )
                 },
                 {"content": "I've refunded $32.00 for order 10001."},
@@ -56,13 +56,13 @@ class TestAutoApprovedRefundLifecycle:
         self, outcome, seeded_pool: SqliteConnectionPool
     ) -> None:  # type: ignore[no-untyped-def]
         await outcome
-        assert OrdersRepository(seeded_pool).get("10001").refund_status == "completed"  # type: ignore[union-attr]
+        assert OrdersRepository(seeded_pool).get(10001).refund_status == "completed"  # type: ignore[union-attr]
 
     async def test_the_payment_is_in_the_refund_ledger(
         self, outcome, seeded_pool: SqliteConnectionPool
     ) -> None:  # type: ignore[no-untyped-def]
         await outcome
-        assert RefundLedgerRepository(seeded_pool).total_for_user("u1") == 32.0
+        assert RefundLedgerRepository(seeded_pool).total_for_user(1) == 32.0
 
     async def test_every_tool_call_left_an_audit_entry(self, outcome) -> None:  # type: ignore[no-untyped-def]
         _, parts = await outcome
@@ -90,10 +90,10 @@ class TestEscalatedRefundLifecycle:
             seeded_pool,
             query="I want a full refund for order 10002",
             script=[
-                {"tool_calls": tool_call("support.get_order_status", order_id="10002")},
+                {"tool_calls": tool_call("support.get_order_status", order_id=10002)},
                 {
                     "tool_calls": tool_call(
-                        "support.queue_for_approval", order_id="10002", amount=210.0
+                        "support.queue_for_approval", order_id=10002, amount=210.0
                     )
                 },
                 {"content": "That refund needs manual review; you'll hear back shortly."},
@@ -108,13 +108,13 @@ class TestEscalatedRefundLifecycle:
 
     async def test_no_money_moved(self, outcome, seeded_pool: SqliteConnectionPool) -> None:  # type: ignore[no-untyped-def]
         await outcome
-        assert RefundLedgerRepository(seeded_pool).total_for_user("u1") == 0.0
+        assert RefundLedgerRepository(seeded_pool).total_for_user(1) == 0.0
 
     async def test_the_order_is_marked_pending_review(
         self, outcome, seeded_pool: SqliteConnectionPool
     ) -> None:  # type: ignore[no-untyped-def]
         await outcome
-        assert OrdersRepository(seeded_pool).get("10002").refund_status == "pending_review"  # type: ignore[union-attr]
+        assert OrdersRepository(seeded_pool).get(10002).refund_status == "pending_review"  # type: ignore[union-attr]
 
     async def test_a_human_can_then_approve_it(
         self, outcome, seeded_pool: SqliteConnectionPool
@@ -151,7 +151,7 @@ class TestSLOsOverALifecycle:
             seeded_pool,
             query="what is the status of order 10001?",
             script=[
-                {"tool_calls": tool_call("support.get_order_status", order_id="10001")},
+                {"tool_calls": tool_call("support.get_order_status", order_id=10001)},
                 {"content": "It was delivered."},
             ],
         )

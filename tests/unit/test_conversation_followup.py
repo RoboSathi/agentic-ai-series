@@ -14,6 +14,7 @@ because the leak check only recognised the one JSON shape seen first.
 
 from agentic_commons.config import get_settings
 from agentic_commons.persistence import SqliteConnectionPool
+from customer_support_agent.config import get_agent_settings
 from customer_support_agent.core import build_agent
 from customer_support_agent.core.graph import is_customer_ready
 from customer_support_agent.core.intent import IntentClassifier
@@ -90,7 +91,7 @@ class TestConversationHistory:
         )
         for index in range(20):
             await agent.handle(f"message {index}", session_id="s1")
-        cap = get_settings().customer_support_agent.history_turns * 2
+        cap = get_agent_settings().history_turns * 2
         assert len(agent.history_for("s1")) <= cap
 
     async def test_a_follow_up_reaches_the_lookup_tool(
@@ -99,9 +100,9 @@ class TestConversationHistory:
         """The reported failure, end to end."""
         llm = ScriptedLLM(
             [
-                {"tool_calls": tool_call("support.get_order_status", order_id="10001")},
+                {"tool_calls": tool_call("support.get_order_status", order_id=10001)},
                 {"content": "Order 10001 was delivered."},
-                {"tool_calls": tool_call("support.get_order_status", order_id="10002")},
+                {"tool_calls": tool_call("support.get_order_status", order_id=10002)},
                 {"content": "Order 10002 was delivered."},
             ]
         )

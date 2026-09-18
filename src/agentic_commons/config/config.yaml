@@ -12,6 +12,12 @@
 # Parked packages (sandbox, control_loop, prompt_compilation) and the
 # stub-only multi_agent package deliberately have no config surface yet.
 
+# Agent configuration layered on top of these platform defaults, in order.
+# Each agent owns its own action names, roles, thresholds and data paths;
+# leaving them here would make every agent inherit one agent's vocabulary.
+overlays:
+  - src/customer_support_agent/config/config.yaml
+
 config:
   enabled: true
 
@@ -76,7 +82,9 @@ llm:
 
 persistence:
   enabled: true
-  db_path: src/customer_support_agent/dummy_data/agentic.db
+  # Neutral default. Each agent overlays its own database path so nothing
+  # writes into the shared library's folder.
+  db_path: data/agentic.db
 
 audit:
   enabled: true
@@ -129,7 +137,8 @@ memory:
     enabled: true
   episodic:
     enabled: true
-    path: src/customer_support_agent/dummy_data/episodic
+    # Neutral default; each agent overlays its own session-log directory.
+    path: data/episodic
   semantic:
     enabled: true
     fuzzy_match_threshold: 0.6
@@ -202,42 +211,26 @@ gatekeeper:
   ledger:
     enabled: true
     window_hours: 24
-    # Which cumulative budget each action consumes from. Several actions
-    # can share one class deliberately — splitting an amount across two
-    # different tools is the same structuring attack as splitting it
-    # across eighty calls to one.
-    action_classes:
-      process_refund: refund
-      apply_goodwill_credit: goodwill_credit
-    thresholds_usd:
-      refund: 4000
-      goodwill_credit: 500
+    # Action -> budget class, and the cap per class. Empty here: the
+    # actions belong to the agent, so the agent supplies both.
+    action_classes: {}
+    thresholds_usd: {}
   tier2:
     enabled: false
   surface_policy:
     enabled: true
-    # action -> surface class (locked | editable | append_only | human_controlled)
-    surfaces:
-      get_order_status: editable
-      get_refund_status: editable
-      process_refund: editable
-      queue_for_approval: append_only
-      apply_goodwill_credit: editable
-      update_refund_policy: locked
-      approve_hitl_request: human_controlled
+    # action -> surface class. Empty here, filled by the agent. An
+    # unmapped action defaults to human-controlled, which fails safe.
+    surfaces: {}
   automation:
     enabled: true
     # Sheridan 1-10. Levels <= human_approval_below require a human.
     human_approval_below: 5
-    levels:
-      get_order_status: 10
-      get_refund_status: 10
-      process_refund: 7
-      queue_for_approval: 9
-      apply_goodwill_credit: 6
-    per_action_amount_escalation_usd:
-      process_refund: 50
-      apply_goodwill_credit: 25
+    # Sheridan level per action, and the amount forcing a human. Empty
+    # here: these are the agent's actions. An unconfigured action sits at
+    # the approval floor rather than defaulting to autonomous.
+    levels: {}
+    per_action_amount_escalation_usd: {}
 
 security:
   # A sub-feature is enabled only if its parent is too. RBAC (auth) stays on
@@ -247,19 +240,10 @@ security:
   auth:
     enabled: true
     elevation_max_ttl_seconds: 900
-    roles:
-      support_agent: [read_orders, process_refund, queue_for_approval, apply_goodwill_credit]
-      support_supervisor: [read_orders, process_refund, queue_for_approval, apply_goodwill_credit, approve_hitl_request]
-      policy_admin: [update_refund_policy]
-      viewer: [read_orders]
-    action_permissions:
-      get_order_status: read_orders
-      get_refund_status: read_orders
-      process_refund: process_refund
-      queue_for_approval: queue_for_approval
-      apply_goodwill_credit: apply_goodwill_credit
-      update_refund_policy: update_refund_policy
-      approve_hitl_request: approve_hitl_request
+    # Roles and the action -> permission mapping. Empty here: an agent's
+    # actions are its own. Unmapped means denied, which fails safe.
+    roles: {}
+    action_permissions: {}
   pii:
     enabled: false
     mode: mask             # mask | tokenize | remove
@@ -389,17 +373,13 @@ tui:
     audit_record: Recording audit trail…
     finalize: Composing the reply…
     intent_classified: Understanding the request…
+    scope_check: Checking this is something I can help with…
+    authentication: Verifying your account…
     tool_suppressed: Already had that answer — skipping the repeat
     tool_refused: Action not available for this request
-  # Per-tool wording for the tool_execution step. A customer-support
-  # operator should read what the agent is doing, not which Python method
-  # it reached for.
-  tool_labels:
-    get_order_status: Looking up the order…
-    get_refund_status: Checking refund eligibility…
-    process_refund: Issuing the refund…
-    queue_for_approval: Sending to a human for approval…
-    apply_goodwill_credit: Applying a goodwill credit…
+  # Per-tool wording, supplied by each agent for its own tools. An
+  # unlabelled tool degrades to a readable fallback rather than failing.
+  tool_labels: {}
   # Colour per step, so the feed is scannable rather than a wall of green.
   # Grouped by what the step *is*: security checks warn, data preparation
   # is cool, model calls are blue, authority decisions stand out, and only
@@ -407,6 +387,8 @@ tui:
   stage_styles:
     intake: white
     intent_classified: bright_magenta
+    scope_check: yellow
+    authentication: bright_cyan
     prompt_injection_check: yellow
     pii_filtering: yellow
     content_moderation: yellow
@@ -428,107 +410,3 @@ tui:
     finalize: bright_green
   default_stage_style: white
 
-customer_support_agent:
-  enabled: true
-  max_tool_iterations: 5
-  # What the customer is asking for decides which tools exist this turn.
-  #
-  # This is business policy, stated deterministically, and it runs before
-  # any similarity score: a refund is discussed when the customer raises
-  # it, never because a status question scraped a weak embedding match.
-  # Phrases are matched case-insensitively against the customer's message;
-  # the first intent whose phrases match wins, so they are ordered most
-  # specific first.
-  #
-  # `tools: []` means the turn is answered conversationally, with no tools
-  # offered at all.
-  intents:
-    - name: refund_request
-      phrases:
-        - refund
-        - money back
-        - reimburse
-        - my money
-        - charge back
-        - chargeback
-        - compensate
-        - compensation
-        - credit me
-      tools:
-        - get_order_status
-        - get_refund_status
-        - process_refund
-        - queue_for_approval
-        - apply_goodwill_credit
-    - name: order_enquiry
-      # Only the order lookup. Checking refund state is itself a refund
-      # conversation, and offering it here is what made the agent mention
-      # refunds in answer to "where is my parcel".
-      phrases:
-        - order
-        - status
-        - where is
-        - track
-        - tracking
-        - delivered
-        - delivery
-        - shipped
-        - shipment
-        - arrived
-        - parcel
-        - package
-      tools:
-        - get_order_status
-  # Intent used when nothing matches — no tools, just an answer.
-  default_intent: general_enquiry
-  # A follow-up carries the previous turn's intent. "what about 10010"
-  # after an order enquiry is an order enquiry: the customer did not
-  # restate the subject because they had already established it.
-  followup:
-    phrases:
-      - what about
-      - how about
-      - and
-      - what of
-      - also
-      - same for
-      - check
-    # A bare reference that looks like an order id also continues the
-    # subject, even without a lead-in phrase ("10010?").
-    reference_pattern: '\b\d{4,}\b'
-  # How many prior turns to replay to the model. Enough to resolve a
-  # follow-up, small enough to stay cheap.
-  history_turns: 6
-  default_actor: support-agent-1
-  default_role: support_agent
-  default_authority_rank: 4     # user_task-granted authority
-  # Goodwill credits are money, so they get the same treatment as refunds:
-  # a per-credit cap, a rolling per-customer cap, and a window. Without
-  # them the tool is an unbounded payout with a friendlier name.
-  goodwill:
-    max_per_credit_usd: 25
-    max_per_customer_usd: 100
-    window_days: 30
-  # Phrases that mark model deliberation rather than a reply to the
-  # customer. A model that reasons out loud addresses itself or "the
-  # user"; a reply addresses the person reading it. Matching any of these
-  # sends the turn back for a proper reply instead of shipping the
-  # thinking.
-  deliberation_markers:
-    - "we need to"
-    - "we should"
-    - "let me"
-    - "i should"
-    - "i need to"
-    - "the user"
-    - "the customer wants"
-    - "according to policy"
-    - "first, "
-    - "next, i"
-    - "so the answer"
-  # Identity for the local demo and the TUI. A real deployment takes the
-  # customer from authentication; this is the stand-in so the demo is not
-  # unauthenticated (which would correctly see no orders at all).
-  demo_customer_id: user-0001
-  checkpoint_path: src/customer_support_agent/dummy_data/checkpoints.db
-  policy_path: src/customer_support_agent/prompts/customer_policy.md

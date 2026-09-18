@@ -67,6 +67,12 @@ class ScriptedLLM(LLMClient):
         )
 
 
+# The seeded customers' codes. `u1` owns orders 10001 and 10002; `u2`
+# owns 10003, which is what makes the ownership tests meaningful.
+CUSTOMER_CODE = "ADAXYZ7"
+OTHER_CODE = "GRCABC9"
+
+
 def tool_call(name: str, **arguments: Any) -> list[ModelToolCall]:
     """Build a model tool call for a script step."""
     return [ModelToolCall(id=name, name=name, arguments=json.dumps(arguments))]
@@ -92,12 +98,28 @@ def seeded_pool(pool: SqliteConnectionPool) -> SqliteConnectionPool:
 
     users = UsersRepository(pool)
     orders = OrdersRepository(pool)
-    users.save(User(user_id="u1", created_at="2026-01-01", email="ada@example.com"))
-    users.save(User(user_id="u2", created_at="2026-01-02", email="grace@example.com"))
+    users.save(
+        User(
+            user_id=1,
+            user_code=CUSTOMER_CODE,
+            created_at="2026-01-01",
+            name="Ada Lovelace",
+            email="ada@example.com",
+        )
+    )
+    users.save(
+        User(
+            user_id=2,
+            user_code=OTHER_CODE,
+            created_at="2026-01-02",
+            name="Grace Hopper",
+            email="grace@example.com",
+        )
+    )
     orders.save(
         Order(
-            order_id="10001",
-            user_id="u1",
+            order_id=10001,
+            user_id=1,
             timestamp="2026-02-01",
             order_status="delivered",
             refund_status="none",
@@ -106,8 +128,8 @@ def seeded_pool(pool: SqliteConnectionPool) -> SqliteConnectionPool:
     )
     orders.save(
         Order(
-            order_id="10002",
-            user_id="u1",
+            order_id=10002,
+            user_id=1,
             timestamp="2026-02-02",
             order_status="delivered",
             refund_status="none",
@@ -116,8 +138,8 @@ def seeded_pool(pool: SqliteConnectionPool) -> SqliteConnectionPool:
     )
     orders.save(
         Order(
-            order_id="10003",
-            user_id="u2",
+            order_id=10003,
+            user_id=2,
             timestamp="2026-02-03",
             order_status="delivered",
             refund_status="completed",
@@ -135,10 +157,21 @@ def authenticated_customer() -> Iterator[Customer]:
     that binds nobody sees no orders. `u1` owns the seeded orders;
     a test about another customer rebinds explicitly.
     """
-    customer = Customer(customer_id="u1", email="ada@example.com")
+    customer = Customer(customer_id=1, name="Ada Lovelace", email="ada@example.com")
     set_current_customer(customer)
     yield customer
     set_current_customer(None)
+
+
+@pytest.fixture
+def verified_agent_session() -> str:
+    """Session id whose customer is already verified.
+
+    Most tests are about what the agent does *after* verification.
+    Making each of them perform the handshake would test the handshake
+    a hundred times and the behaviour under test once.
+    """
+    return "verified-session"
 
 
 @pytest.fixture

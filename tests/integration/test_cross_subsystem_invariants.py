@@ -35,8 +35,8 @@ class TestNoExecutionPathBypassesTheGatekeeper:
         )
         llm = ScriptedLLM(
             [
-                {"tool_calls": tool_call("support.get_order_status", order_id="10001")},
-                {"tool_calls": tool_call("support.get_refund_status", order_id="10001")},
+                {"tool_calls": tool_call("support.get_order_status", order_id=10001)},
+                {"tool_calls": tool_call("support.get_refund_status", order_id=10001)},
                 {"content": "Here's the status."},
             ]
         )
@@ -58,13 +58,13 @@ class TestNoExecutionPathBypassesTheGatekeeper:
     ) -> None:
         llm = ScriptedLLM(
             [
-                {"tool_calls": tool_call("support.process_refund", order_id="10002", amount=210.0)},
+                {"tool_calls": tool_call("support.process_refund", order_id=10002, amount=210.0)},
                 {"content": "Queued instead."},
             ]
         )
         agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
         await agent.handle("refund order 10002")
-        assert OrdersRepository(seeded_pool).get("10002").refund_status == "none"  # type: ignore[union-attr]
+        assert OrdersRepository(seeded_pool).get(10002).refund_status == "none"  # type: ignore[union-attr]
 
 
 class TestNoMalformedOutputReachesAnExecutor:
@@ -80,7 +80,7 @@ class TestNoMalformedOutputReachesAnExecutor:
         )
         agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
         state = await agent.handle("refund something")
-        assert OrdersRepository(seeded_pool).get("10001").refund_status == "none"  # type: ignore[union-attr]
+        assert OrdersRepository(seeded_pool).get(10001).refund_status == "none"  # type: ignore[union-attr]
         assert any("unavailable" in result for result in state.tool_results)
 
     async def test_missing_required_arguments_are_rejected(
@@ -88,13 +88,13 @@ class TestNoMalformedOutputReachesAnExecutor:
     ) -> None:
         llm = ScriptedLLM(
             [
-                {"tool_calls": tool_call("support.process_refund", order_id="10001")},
+                {"tool_calls": tool_call("support.process_refund", order_id=10001)},
                 {"content": "I need the amount."},
             ]
         )
         agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
         await agent.handle("refund 10001")
-        assert OrdersRepository(seeded_pool).get("10001").refund_status == "none"  # type: ignore[union-attr]
+        assert OrdersRepository(seeded_pool).get(10001).refund_status == "none"  # type: ignore[union-attr]
 
 
 class TestEverySideEffectHasATrace:
@@ -157,11 +157,11 @@ class TestEveryRetryIsIdempotent:
         orders = OrdersRepository(seeded_pool)
         refunds = RefundLedgerRepository(seeded_pool)
         saga = RefundSaga(orders, refunds, idempotency=SqliteIdempotencyGuard(seeded_pool))
-        order = orders.get("10001")
+        order = orders.get(10001)
         assert order is not None
         for _ in range(3):
             await saga.issue(order, 32.0, "damaged")
-        assert refunds.total_for_user("u1") == 32.0
+        assert refunds.total_for_user(1) == 32.0
 
     def test_the_retry_policy_cannot_run_unkeyed(self) -> None:
         """Structural, not advisory."""

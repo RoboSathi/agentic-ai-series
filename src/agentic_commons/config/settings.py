@@ -514,59 +514,6 @@ class TuiSettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="TUI__")
 
 
-class IntentSettings(BaseModel):
-    """One customer intent, and the tools it unlocks."""
-
-    name: str
-    phrases: list[str]
-    tools: list[str]
-
-
-class FollowupSettings(BaseModel):
-    """How a message that restates nothing continues the previous subject."""
-
-    phrases: list[str]
-    reference_pattern: str
-
-
-class GoodwillSettings(BaseModel):
-    """Caps on goodwill credits — money, so it is bounded like a refund."""
-
-    max_per_credit_usd: float
-    max_per_customer_usd: float
-    window_days: int
-
-
-class CustomerSupportAgentSettings(YamlBackedSettings):
-    """The running product's own wiring values (LLD §21)."""
-
-    _yaml_section = "customer_support_agent"
-    enabled: bool
-    max_tool_iterations: int
-    intents: list[IntentSettings]
-    default_intent: str
-    followup: FollowupSettings
-    history_turns: int
-    goodwill: GoodwillSettings
-    deliberation_markers: list[str]
-    demo_customer_id: str
-    default_actor: str
-    default_role: str
-    default_authority_rank: int
-    checkpoint_path: str
-    policy_path: str
-
-    model_config = SettingsConfigDict(env_prefix="CUSTOMER_SUPPORT_AGENT__")
-
-    @property
-    def resolved_checkpoint_path(self) -> Path:
-        return resolve_path(self.checkpoint_path)
-
-    @property
-    def resolved_policy_path(self) -> Path:
-        return resolve_path(self.policy_path)
-
-
 class AppConfig(BaseSettings):
     """Root config — one settings model per bounded context (LLD §1)."""
 
@@ -590,9 +537,6 @@ class AppConfig(BaseSettings):
     evals: EvalsSettings = EvalsSettings()  # type: ignore[call-arg]
     tools: ToolsSettings = ToolsSettings()  # type: ignore[call-arg]
     tui: TuiSettings = TuiSettings()  # type: ignore[call-arg]
-    customer_support_agent: CustomerSupportAgentSettings = (
-        CustomerSupportAgentSettings()  # type: ignore[call-arg]
-    )
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

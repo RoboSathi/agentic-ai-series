@@ -20,7 +20,6 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
-from agentic_commons.config import get_settings
 from agentic_commons.context import Chunk, FiveStagePipeline, StrategySelector, Task
 from agentic_commons.evals import NollmScoringCascadeImpl
 from agentic_commons.gatekeeper import AuthorityContext, GatekeeperImpl
@@ -38,7 +37,9 @@ from agentic_commons.observability import (
 from agentic_commons.resilience import ResilientCaller
 from agentic_commons.security import SecuritySuite
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
+from customer_support_agent.config import get_agent_settings
 from customer_support_agent.control_loop import DuplicateActionDetector
+from customer_support_agent.core.authentication import CustomerAuthenticator
 from customer_support_agent.core.identity import (
     Customer,
     current_customer,
@@ -46,6 +47,7 @@ from customer_support_agent.core.identity import (
 )
 from customer_support_agent.core.intent import Intent, IntentClassifier
 from customer_support_agent.core.schema import AgentState, policy_text
+from customer_support_agent.core.scope import ScopeGuard
 from customer_support_agent.core.tools import SupportTools
 from customer_support_agent.prompts.system_prompt import (
     build_reply_instruction,
@@ -79,8 +81,9 @@ class CustomerSupportAgent:
         costs: CostAggregatorImpl | None = None,
         slos: SLORegistry | None = None,
         grounding: DetectionLadder | None = None,
+        authenticator: CustomerAuthenticator | None = None,
     ) -> None:
-        settings = get_settings().customer_support_agent
+        settings = get_agent_settings()
         self._llm = llm
         self._gatekeeper = gatekeeper
         self._registry = registry
@@ -105,6 +108,12 @@ class CustomerSupportAgent:
         self._role = settings.default_role
         self._strategies = StrategySelector()
         self._intents = IntentClassifier()
+        self._scope = ScopeGuard()
+        self._authenticator = authenticator
+        # Who each session has proved itself to be. Authentication is per
+        # conversation: a customer verifies once and stays verified for
+        # that session, rather than retyping a code every turn.
+        self._sessions: dict[str, Customer] = {}
         self._history_turns = settings.history_turns
         self._conversations: dict[str, list[Message]] = {}
         self._last_intent: dict[str, Intent] = {}
@@ -131,14 +140,20 @@ class CustomerSupportAgent:
         rather than every order.
         """
         if customer is not None:
+            # An explicitly supplied customer means the caller
+            # authenticated upstream — an SSO session, a signed token, a
+            # test fixture. The conversation does not re-ask for a code
+            # it has already been given the answer to.
             set_current_customer(customer)
+            if session_id:
+                self._sessions[session_id] = customer
         customer = customer or current_customer()
         self._duplicates = DuplicateActionDetector()
         initial = AgentState(
             query=query,
             session_id=session_id,
             actor=self._actor,
-            customer_id=customer.customer_id if customer else "",
+            customer_id=customer.customer_id if customer else None,
         )
         final = await self._graph.ainvoke(initial)
         state = AgentState.model_validate(final)
@@ -160,6 +175,70 @@ class CustomerSupportAgent:
         self._conversations[session_id] = turns[-self._history_turns * 2 :]
 
     # ---- nodes -------------------------------------------------------
+
+    async def screen(self, state: AgentState) -> dict[str, Any]:
+        """Is this the agent's business at all?
+
+        First, and deliberately cheap: an off-topic message is refused by
+        a regex pass rather than a completion. The refusal is identical
+        every time, so paying a model to write it is pure waste.
+        """
+        self._report("scope_check")
+        verdict = self._scope.check(state.query)
+        self._done("scope_check", detail=verdict.topic)
+        if verdict.in_scope:
+            return {"decisions": [*state.decisions, f"scope: {verdict.topic}"]}
+        return {
+            "response": verdict.refusal,
+            "decisions": [*state.decisions, "scope: refused (out of scope)"],
+            "metadata": {**state.metadata, "halted": "out_of_scope"},
+        }
+
+    async def authenticate(self, state: AgentState) -> dict[str, Any]:
+        """Establish who is speaking before looking anything up.
+
+        Until a valid code arrives there is no owner to scope a lookup
+        to, so "where is my order" has no answer. Verification is a
+        database lookup, not a model call: the code either matches a row
+        or it does not, and a deterministic check cannot be talked into a
+        different answer.
+        """
+        existing = self._sessions.get(state.session_id) or current_customer()
+        if existing is not None:
+            # Already verified — either earlier in this conversation, or
+            # by the caller before it handed the request over. A
+            # deployment behind SSO authenticates upstream and binds the
+            # customer; it should not be asked for a code it never issued.
+            set_current_customer(existing)
+            if state.session_id:
+                self._sessions[state.session_id] = existing
+            return {"customer_id": existing.customer_id}
+        if self._authenticator is None:
+            return {}
+        self._report("authentication")
+        result = self._authenticator.authenticate(state.query)
+        self._done("authentication", detail="verified" if result.authenticated else "awaiting code")
+        if not result.authenticated:
+            return {
+                "response": result.message,
+                "decisions": [
+                    *state.decisions,
+                    "auth: rejected" if result.code_attempted else "auth: awaiting code",
+                ],
+                "metadata": {**state.metadata, "halted": "unauthenticated"},
+            }
+        assert result.customer is not None
+        if state.session_id:
+            self._sessions[state.session_id] = result.customer
+        set_current_customer(result.customer)
+        return {
+            "response": result.message,
+            "customer_id": result.customer.customer_id,
+            "decisions": [*state.decisions, f"auth: verified #{result.customer.customer_id}"],
+            # The verified read-back *is* the answer to "here is my code".
+            # Nothing further is needed this turn.
+            "metadata": {**state.metadata, "halted": "just_verified"},
+        }
 
     async def intake(self, state: AgentState) -> dict[str, Any]:
         """Screen the query before anything acts on it.
@@ -383,13 +462,21 @@ class CustomerSupportAgent:
     def _build(self) -> Any:
         """Assemble the state graph."""
         graph: StateGraph[AgentState, None, AgentState, AgentState] = StateGraph(AgentState)
+        graph.add_node("screen", self.screen)
+        graph.add_node("authenticate", self.authenticate)
         graph.add_node("intake", self.intake)
         graph.add_node("assemble_context", self.assemble_context)
         graph.add_node("reason", self.reason)
         graph.add_node("act", self.act)
         graph.add_node("finalize", self.finalize)
 
-        graph.set_entry_point("intake")
+        graph.set_entry_point("screen")
+        graph.add_conditional_edges(
+            "screen", self._after_screen, {"authenticate": "authenticate", "done": END}
+        )
+        graph.add_conditional_edges(
+            "authenticate", self._after_authenticate, {"intake": "intake", "done": END}
+        )
         graph.add_edge("intake", "assemble_context")
         graph.add_edge("assemble_context", "reason")
         graph.add_conditional_edges(
@@ -400,6 +487,14 @@ class CustomerSupportAgent:
         )
         graph.add_edge("finalize", END)
         return graph.compile()
+
+    def _after_screen(self, state: AgentState) -> str:
+        """Out-of-scope messages are answered and finished, with no model call."""
+        return "done" if state.metadata.get("halted") else "authenticate"
+
+    def _after_authenticate(self, state: AgentState) -> str:
+        """An unverified turn, or a just-verified one, ends here."""
+        return "done" if state.metadata.get("halted") else "intake"
 
     def _after_reason(self, state: AgentState) -> str:
         """Act on requested tools, or finish."""

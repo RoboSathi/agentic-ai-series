@@ -26,7 +26,8 @@ _logger = get_logger("customer_support_agent")
 class Customer(BaseModel):
     """The authenticated customer a request is being handled for."""
 
-    customer_id: str
+    customer_id: int
+    name: str = ""
     email: str = ""
     verified: bool = True
 
@@ -44,15 +45,15 @@ def current_customer() -> Customer | None:
     return _CURRENT_CUSTOMER.get()
 
 
-def current_customer_id() -> str:
-    """The authenticated customer's id, or empty when unauthenticated.
+def current_customer_id() -> int | None:
+    """The authenticated customer's id, or None when unauthenticated.
 
-    Callers must treat empty as "scope to nothing", never as "scope to
+    Callers must treat None as "scope to nothing", never as "scope to
     everything" — an unauthenticated request should see no orders, not
     every order.
     """
     customer = current_customer()
     if customer is None:
         _logger.warning("No authenticated customer bound to this request")
-        return ""
+        return None
     return customer.customer_id

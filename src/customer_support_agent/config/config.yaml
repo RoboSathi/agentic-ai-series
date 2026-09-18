@@ -1,0 +1,251 @@
+# Customer support agent — configuration specific to THIS agent.
+#
+# Layered on top of `agentic_commons/config/config.yaml`, which holds what
+# is true for any agent. The split is not cosmetic: action names, role
+# tables, refund thresholds and tool wording belong to the product that
+# has those actions. Left in the platform's defaults, every episode and
+# every future agent would inherit this one agent's vocabulary.
+#
+# Merging is deep, so a key set here fills in part of a platform section
+# without replacing the rest of it. Machine-local overrides still go in
+# `agentic_commons/config/local.yaml`, which is applied last.
+
+# Where this agent's data lives. Each agent owns its own database and its
+# own dummy data — nothing writes into the shared library's folder.
+persistence:
+  db_path: src/customer_support_agent/dummy_data/agentic.db
+
+memory:
+  episodic:
+    path: src/customer_support_agent/dummy_data/episodic
+
+gatekeeper:
+  ledger:
+    # Which cumulative budget each action consumes from. Several actions
+    # can share one class deliberately — splitting an amount across two
+    # different tools is the same structuring attack as splitting it
+    # across eighty calls to one.
+    action_classes:
+      process_refund: refund
+      apply_goodwill_credit: goodwill_credit
+    thresholds_usd:
+      refund: 4000
+      goodwill_credit: 500
+  surface_policy:
+    # action -> surface class (locked | editable | append_only |
+    # human_controlled). An action absent here defaults to
+    # human-controlled: one nobody has classified is one nobody has
+    # decided is safe to automate.
+    surfaces:
+      get_order_status: editable
+      get_refund_status: editable
+      process_refund: editable
+      queue_for_approval: append_only
+      apply_goodwill_credit: editable
+      update_refund_policy: locked
+      approve_hitl_request: human_controlled
+  automation:
+    # Sheridan 1-10 per action (E03).
+    levels:
+      get_order_status: 10
+      get_refund_status: 10
+      process_refund: 7
+      queue_for_approval: 9
+      apply_goodwill_credit: 6
+    # Amount above which an action needs a human regardless of its level.
+    per_action_amount_escalation_usd:
+      process_refund: 50
+      apply_goodwill_credit: 25
+
+security:
+  auth:
+    # Role -> permissions (NIST RBAC). A policy artifact a human reviews,
+    # not a constant an engineer compiles in.
+    roles:
+      support_agent:
+      - read_orders
+      - process_refund
+      - queue_for_approval
+      - apply_goodwill_credit
+      support_supervisor:
+      - read_orders
+      - process_refund
+      - queue_for_approval
+      - apply_goodwill_credit
+      - approve_hitl_request
+      policy_admin:
+      - update_refund_policy
+      viewer:
+      - read_orders
+    # Action -> the permission it requires. An action absent here is
+    # ungoverned, and is therefore denied.
+    action_permissions:
+      get_order_status: read_orders
+      get_refund_status: read_orders
+      process_refund: process_refund
+      queue_for_approval: queue_for_approval
+      apply_goodwill_credit: apply_goodwill_credit
+      update_refund_policy: update_refund_policy
+      approve_hitl_request: approve_hitl_request
+
+tui:
+  # Per-tool wording for the feed. An operator should read what the agent
+  # is doing, not which Python method it reached for.
+  tool_labels:
+    get_order_status: Looking up the order…
+    get_refund_status: Checking refund eligibility…
+    process_refund: Issuing the refund…
+    queue_for_approval: Sending to a human for approval…
+    apply_goodwill_credit: Applying a goodwill credit…
+
+customer_support_agent:
+  enabled: true
+  max_tool_iterations: 5
+  intents:
+  - name: refund_request
+    phrases:
+    - refund
+    - money back
+    - reimburse
+    - my money
+    - charge back
+    - chargeback
+    - compensate
+    - compensation
+    - credit me
+    tools:
+    - get_order_status
+    - get_refund_status
+    - process_refund
+    - queue_for_approval
+    - apply_goodwill_credit
+  - name: order_enquiry
+    phrases:
+    - order
+    - status
+    - where is
+    - track
+    - tracking
+    - delivered
+    - delivery
+    - shipped
+    - shipment
+    - arrived
+    - parcel
+    - package
+    tools:
+    - get_order_status
+  default_intent: general_enquiry
+  followup:
+    phrases:
+    - what about
+    - how about
+    - and
+    - what of
+    - also
+    - same for
+    - check
+    reference_pattern: \b\d{4,}\b
+  history_turns: 6
+  default_actor: support-agent-1
+  default_role: support_agent
+  default_authority_rank: 4
+  goodwill:
+    max_per_credit_usd: 25
+    max_per_customer_usd: 100
+    window_days: 30
+  deliberation_markers:
+  - we need to
+  - we should
+  - let me
+  - i should
+  - i need to
+  - the user
+  - the customer wants
+  - according to policy
+  - 'first, '
+  - next, i
+  - so the answer
+  # What this agent will talk about. Default-deny: a message is answered
+  # when it matches a topic below, and refused otherwise. A deny-list of
+  # off-topic subjects is a list of the things somebody thought of, and
+  # the next question is always the one nobody thought of.
+  scope:
+    in_scope_topics:
+      orders:
+        - order
+        - purchase
+        - parcel
+        - package
+        - delivery
+        - delivered
+        - shipped
+        - shipment
+        - tracking
+        - track
+        - dispatch
+        - arrive
+        - where is
+      refunds:
+        - refund
+        - money back
+        - reimburse
+        - return
+        - cancel
+        - charge
+        - chargeback
+        - compensate
+        - compensation
+        - credit
+        - payment
+        - paid
+        - invoice
+        - receipt
+        - billing
+      account:
+        - account
+        - my code
+        - customer code
+        - verify
+        - my details
+        - email address
+        - phone number
+      support:
+        - help
+        - support
+        - agent
+        - human
+        - complaint
+        - issue
+        - problem
+        - damaged
+        - broken
+        - faulty
+        - missing
+        - wrong item
+        - late
+        - who are you
+        - what can you
+        - hello
+        - hi there
+        - thanks
+        - thank you
+    # Shorter than this with no topic match is courtesy ("ok", "thanks"),
+    # not an off-topic request. Refusing those reads as hostile.
+    min_words_before_refusal: 4
+    refusal_message: >-
+      I can only help with things related to your orders — deliveries,
+      refunds, billing and your account. I can't help with that one, but
+      if you have a question about an order I'm happy to look into it.
+
+  # Shape of the customer code. The alphabet excludes 0/O and 1/I/L:
+  # a code read aloud or copied from an email should not hinge on
+  # telling those apart.
+  user_code_length: 7
+  user_code_alphabet: ABCDEFGHJKMNPQRSTUVWXYZ23456789
+  # The code the local demo authenticates with. A real deployment has
+  # the customer type their own; this is the stand-in so the demo has
+  # somebody to be.
+  demo_user_code: HEDZTVA
+  checkpoint_path: src/customer_support_agent/dummy_data/checkpoints.db
+  policy_path: src/customer_support_agent/prompts/customer_policy.md

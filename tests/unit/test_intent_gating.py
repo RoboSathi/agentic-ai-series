@@ -80,10 +80,10 @@ class TestTheAgentHonoursTheGate:
         """The exact reported failure, end to end."""
         llm = ScriptedLLM(
             [
-                {"tool_calls": tool_call("support.get_order_status", order_id="10002")},
+                {"tool_calls": tool_call("support.get_order_status", order_id=10002)},
                 {
                     "tool_calls": tool_call(
-                        "support.queue_for_approval", order_id="10002", amount=210.0
+                        "support.queue_for_approval", order_id=10002, amount=210.0
                     )
                 },
                 {"content": "Order 10002 has been delivered."},
@@ -92,7 +92,7 @@ class TestTheAgentHonoursTheGate:
         agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
         state = await agent.handle("what is the status of order 10002")
         assert HitlQueueRepository(seeded_pool).pending() == []
-        assert OrdersRepository(seeded_pool).get("10002").refund_status == "none"  # type: ignore[union-attr]
+        assert OrdersRepository(seeded_pool).get(10002).refund_status == "none"  # type: ignore[union-attr]
         assert any("not offered" in decision for decision in state.decisions)
 
     async def test_a_status_query_still_answers_from_a_lookup(
@@ -101,7 +101,7 @@ class TestTheAgentHonoursTheGate:
         """Gating must not break the question the customer actually asked."""
         llm = ScriptedLLM(
             [
-                {"tool_calls": tool_call("support.get_order_status", order_id="10001")},
+                {"tool_calls": tool_call("support.get_order_status", order_id=10001)},
                 {"content": "Order 10001 was delivered."},
             ]
         )
@@ -115,13 +115,13 @@ class TestTheAgentHonoursTheGate:
     ) -> None:
         llm = ScriptedLLM(
             [
-                {"tool_calls": tool_call("support.process_refund", order_id="10001", amount=32.0)},
+                {"tool_calls": tool_call("support.process_refund", order_id=10001, amount=32.0)},
                 {"content": "Refunded."},
             ]
         )
         agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
         await agent.handle("order 10001 was damaged, I want a refund")
-        assert OrdersRepository(seeded_pool).get("10001").refund_status == "completed"  # type: ignore[union-attr]
+        assert OrdersRepository(seeded_pool).get(10001).refund_status == "completed"  # type: ignore[union-attr]
 
     async def test_the_intent_is_recorded_for_the_operator(
         self, seeded_pool: SqliteConnectionPool

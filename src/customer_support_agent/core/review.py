@@ -31,7 +31,7 @@ class ReviewOutcome(BaseModel):
 
     request_id: int
     decision: str
-    order_id: str = ""
+    order_id: int | None = None
     amount: float = 0.0
     refund_issued: bool = False
     reason: str = ""

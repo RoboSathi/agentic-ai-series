@@ -82,11 +82,9 @@ class AgenticTuiApp(App[None]):
         # give every message its own conversation, so a follow-up like
         # "what about 10010" would have nothing to refer to.
         self._session_id = f"tui-{uuid4().hex[:8]}"
-        # Order lookups are scoped to the authenticated customer, so the
-        # demo binds one. Without it the TUI would correctly see no
-        # orders at all, which looks like a bug and is in fact the
-        # security control working.
-        self._customer = _demo_customer()
+        # No customer is bound here. The conversation authenticates:
+        # the agent asks for a code and verifies it against the database,
+        # which is the flow a real deployment has.
         self._journal = get_logger("tui")
 
     def compose(self) -> ComposeResult:
@@ -103,7 +101,10 @@ class AgenticTuiApp(App[None]):
         self._feed.subscribe(self._on_status)
         self.set_interval(get_settings().tui.refresh_interval_ms / 1000, self._status.tick)
         self.query_one("#query", Input).focus()
-        self._panel.note("Ready. Type a customer query below.", style="dim")
+        self._panel.note(
+            "Ready. The agent will ask you to verify before it looks anything up.",
+            style="dim",
+        )
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         """Run one query through the agent."""
@@ -125,9 +126,7 @@ class AgenticTuiApp(App[None]):
             self._status.finish()
             return
         try:
-            state = await self._agent.handle(
-                query, session_id=self._session_id, customer=self._customer
-            )
+            state = await self._agent.handle(query, session_id=self._session_id)
             self._panel.note(f"\n{state.response}", style="bright_green")
             self._scroll_to_latest()
         except Exception as exc:
@@ -171,17 +170,6 @@ class AgenticTuiApp(App[None]):
             self.query_one("#feed", VerticalScroll).scroll_end(animate=False)
         except Exception:
             pass
-
-
-def _demo_customer() -> Any:
-    """The stand-in identity for the local demo.
-
-    A real deployment takes the customer from authentication; this is
-    configuration so the demo is not unauthenticated.
-    """
-    from customer_support_agent.core.identity import Customer
-
-    return Customer(customer_id=get_settings().customer_support_agent.demo_customer_id)
 
 
 def main() -> None:

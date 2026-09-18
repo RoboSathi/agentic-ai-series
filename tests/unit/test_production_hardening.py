@@ -47,7 +47,7 @@ def review(seeded_pool: SqliteConnectionPool) -> ReviewQueueService:
 class TestOrdersAreScopedToTheirOwner:
     def test_a_customer_cannot_read_another_customers_order(self, tools: SupportTools) -> None:
         """Order 10003 belongs to u2; the default fixture is u1."""
-        assert tools.get_order_status("10003").success is False
+        assert tools.get_order_status(10003).success is False
 
     def test_the_refusal_does_not_confirm_the_order_exists(self, tools: SupportTools) -> None:
         """A distinct "not yours" message is itself a disclosure.
@@ -55,25 +55,25 @@ class TestOrdersAreScopedToTheirOwner:
         The two messages differ only by the id the caller supplied, which
         tells them nothing they did not already know.
         """
-        missing = (tools.get_order_status("99999").error or "").replace("99999", "ID")
-        not_mine = (tools.get_order_status("10003").error or "").replace("10003", "ID")
+        missing = (tools.get_order_status(99999).error or "").replace("99999", "ID")
+        not_mine = (tools.get_order_status(10003).error or "").replace("10003", "ID")
         assert missing == not_mine
 
     async def test_a_customer_cannot_refund_another_customers_order(
         self, tools: SupportTools, seeded_pool: SqliteConnectionPool
     ) -> None:
         """The part that costs money."""
-        result = await tools.process_refund("10003", 45.0)
+        result = await tools.process_refund(10003, 45.0)
         assert result.success is False
-        assert OrdersRepository(seeded_pool).get("10003").refund_status == "completed"  # type: ignore[union-attr]
+        assert OrdersRepository(seeded_pool).get(10003).refund_status == "completed"  # type: ignore[union-attr]
 
     def test_an_unauthenticated_request_sees_nothing(self, tools: SupportTools) -> None:
         """Scope to nothing, never to everything."""
         set_current_customer(None)
-        assert tools.get_order_status("10001").success is False
+        assert tools.get_order_status(10001).success is False
 
     def test_the_owner_still_sees_their_own_order(self, tools: SupportTools) -> None:
-        assert tools.get_order_status("10001").success is True
+        assert tools.get_order_status(10001).success is True
 
     def test_identity_is_not_a_tool_argument(self) -> None:
         """Anything in the schema is something the model can choose."""
@@ -88,26 +88,26 @@ class TestTheEscalationPathDrains:
     async def test_a_queued_refund_can_be_approved(
         self, tools: SupportTools, review: ReviewQueueService, seeded_pool: SqliteConnectionPool
     ) -> None:
-        tools.queue_for_approval("10002", 210.0)
+        tools.queue_for_approval(10002, 210.0)
         request_id = review.pending()[0].id
         outcome = await review.approve(request_id, reviewer="supervisor-1")  # type: ignore[arg-type]
         assert outcome.refund_issued is True
-        assert OrdersRepository(seeded_pool).get("10002").refund_status == "completed"  # type: ignore[union-attr]
+        assert OrdersRepository(seeded_pool).get(10002).refund_status == "completed"  # type: ignore[union-attr]
 
     def test_a_queued_refund_can_be_denied_without_paying(
         self, tools: SupportTools, review: ReviewQueueService, seeded_pool: SqliteConnectionPool
     ) -> None:
-        tools.queue_for_approval("10002", 210.0)
+        tools.queue_for_approval(10002, 210.0)
         outcome = review.deny(review.pending()[0].id, "supervisor-1", "not eligible")  # type: ignore[arg-type]
         assert outcome.decision == "denied"
-        assert RefundLedgerRepository(seeded_pool).total_for_user("u1") == 0.0
+        assert RefundLedgerRepository(seeded_pool).total_for_user(1) == 0.0
 
     async def test_eligibility_is_rechecked_at_approval(
         self, tools: SupportTools, review: ReviewQueueService, seeded_pool: SqliteConnectionPool
     ) -> None:
         """An order can change state while it waits in the queue."""
-        tools.queue_for_approval("10002", 210.0)
-        OrdersRepository(seeded_pool).set_refund_status("10002", "completed")
+        tools.queue_for_approval(10002, 210.0)
+        OrdersRepository(seeded_pool).set_refund_status(10002, "completed")
         outcome = await review.approve(review.pending()[0].id, "supervisor-1")  # type: ignore[arg-type]
         assert outcome.refund_issued is False
 
@@ -119,7 +119,7 @@ class TestTheEscalationPathDrains:
     def test_deciding_drains_the_queue(
         self, tools: SupportTools, review: ReviewQueueService
     ) -> None:
-        tools.queue_for_approval("10002", 210.0)
+        tools.queue_for_approval(10002, 210.0)
         review.deny(review.pending()[0].id, "supervisor-1")  # type: ignore[arg-type]
         assert review.pending_count() == 0
 
@@ -141,7 +141,7 @@ class TestTheEscalationPathDrains:
             RefundSaga(orders, RefundLedgerRepository(seeded_pool)),
             audit=audit,
         )
-        tools.queue_for_approval("10002", 210.0)
+        tools.queue_for_approval(10002, 210.0)
         await service.approve(service.pending()[0].id, "supervisor-7")  # type: ignore[arg-type]
         assert any(entry.actor == "supervisor-7" for entry in audit.by_decision("allow"))
 
@@ -162,14 +162,14 @@ class TestGoodwillIsBounded:
         """Colliding ids would let INSERT OR REPLACE hide one."""
         for _ in range(3):
             tools.apply_goodwill_credit(10.0)
-        assert RefundLedgerRepository(seeded_pool).total_for_user("u1") == 30.0
+        assert RefundLedgerRepository(seeded_pool).total_for_user(1) == 30.0
 
     def test_a_credit_goes_to_the_authenticated_customer(
         self, tools: SupportTools, seeded_pool: SqliteConnectionPool
     ) -> None:
-        set_current_customer(Customer(customer_id="u2"))
+        set_current_customer(Customer(customer_id=2))
         tools.apply_goodwill_credit(10.0)
-        assert RefundLedgerRepository(seeded_pool).total_for_user("u1") == 0.0
+        assert RefundLedgerRepository(seeded_pool).total_for_user(1) == 0.0
 
 
 class TestSubsystemsAreActuallyWired:
@@ -180,7 +180,7 @@ class TestSubsystemsAreActuallyWired:
         agent = build_agent(
             llm=ScriptedLLM([{"content": "hello"}]), pool=seeded_pool, with_memory=False
         )
-        await agent.handle("who are you", customer=Customer(customer_id="u1"))
+        await agent.handle("who are you", customer=Customer(customer_id=1))
         assert agent._resilient.healthy is True
 
     async def test_cost_is_attributed_to_the_request(
@@ -189,14 +189,14 @@ class TestSubsystemsAreActuallyWired:
         agent = build_agent(
             llm=ScriptedLLM([{"content": "hello"}]), pool=seeded_pool, with_memory=False
         )
-        await agent.handle("who are you", session_id="s1", customer=Customer(customer_id="u1"))
+        await agent.handle("who are you", session_id="s1", customer=Customer(customer_id=1))
         assert agent._costs is not None and agent._costs.total_cost > 0
 
     async def test_spans_are_recorded_for_the_run(self, seeded_pool: SqliteConnectionPool) -> None:
         agent = build_agent(
             llm=ScriptedLLM([{"content": "hello"}]), pool=seeded_pool, with_memory=False
         )
-        await agent.handle("who are you", customer=Customer(customer_id="u1"))
+        await agent.handle("who are you", customer=Customer(customer_id=1))
         assert agent._tracer is not None and agent._tracer.spans
 
     async def test_the_reply_is_checked_against_the_tool_results(
@@ -205,13 +205,13 @@ class TestSubsystemsAreActuallyWired:
         """A claim no tool supports is recorded, not silently served."""
         llm = ScriptedLLM(
             [
-                {"tool_calls": tool_call("support.get_order_status", order_id="10001")},
+                {"tool_calls": tool_call("support.get_order_status", order_id=10001)},
                 {"content": "Order 10001 was delivered. We also sent you a free holiday."},
             ]
         )
         agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
         state = await agent.handle(
-            "status of order 10001", session_id="s1", customer=Customer(customer_id="u1")
+            "status of order 10001", session_id="s1", customer=Customer(customer_id=1)
         )
         assert any("grounding" in decision for decision in state.decisions)
 
@@ -221,13 +221,13 @@ class TestSubsystemsAreActuallyWired:
         """A detector that can be wrong must not withhold the answer."""
         llm = ScriptedLLM(
             [
-                {"tool_calls": tool_call("support.get_order_status", order_id="10001")},
+                {"tool_calls": tool_call("support.get_order_status", order_id=10001)},
                 {"content": "Order 10001 was delivered. We also sent you a free holiday."},
             ]
         )
         agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
         state = await agent.handle(
-            "status of order 10001", session_id="s1", customer=Customer(customer_id="u1")
+            "status of order 10001", session_id="s1", customer=Customer(customer_id=1)
         )
         assert state.response
 
@@ -235,6 +235,6 @@ class TestSubsystemsAreActuallyWired:
         agent = build_agent(
             llm=ScriptedLLM([{"content": "hello"}]), pool=seeded_pool, with_memory=False
         )
-        await agent.handle("who are you", customer=Customer(customer_id="u1"))
+        await agent.handle("who are you", customer=Customer(customer_id=1))
         assert agent._slos is not None
         assert agent._slos.status("tool_failure_rate").sample_count > 0

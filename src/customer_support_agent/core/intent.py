@@ -20,8 +20,8 @@ import re
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger, logged
+from customer_support_agent.config import get_agent_settings
 
 
 class Intent(BaseModel):
@@ -41,7 +41,7 @@ class IntentClassifier:
     """Maps a customer message to the tools that message can justify."""
 
     def __init__(self) -> None:
-        settings = get_settings().customer_support_agent
+        settings = get_agent_settings()
         self._intents = settings.intents
         self._default = settings.default_intent
         self._followup_phrases = [p.casefold() for p in settings.followup.phrases]

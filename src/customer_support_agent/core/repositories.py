@@ -21,6 +21,7 @@ from customer_support_agent.core.schema import (
 )
 
 _ORDER_COLUMNS = "order_id, user_id, timestamp, order_status, refund_status, amount"
+_USER_COLUMNS = "user_id, user_code, created_at, name, email, phone"
 
 
 class OrdersRepository:
@@ -30,7 +31,7 @@ class OrdersRepository:
         self._pool = pool
         self._logger = get_logger("customer_support_agent")
 
-    def get(self, id: str) -> Order | None:
+    def get(self, id: int) -> Order | None:
         """One order by id."""
         row = self._pool.query_one(f"SELECT {_ORDER_COLUMNS} FROM orders WHERE order_id = ?", (id,))
         return Order.model_validate(row) if row else None
@@ -64,7 +65,7 @@ class OrdersRepository:
             )
         ]
 
-    def get_for_customer(self, order_id: str, customer_id: str) -> Order | None:
+    def get_for_customer(self, order_id: int, customer_id: int | None) -> Order | None:
         """One order, but only if this customer owns it.
 
         Scoping happens in the query, not after it. Fetching the row and
@@ -73,7 +74,7 @@ class OrdersRepository:
         forget. An empty customer id matches nothing, so an
         unauthenticated request sees no orders rather than all of them.
         """
-        if not customer_id:
+        if customer_id is None:
             return None
         row = self._pool.query_one(
             f"SELECT {_ORDER_COLUMNS} FROM orders WHERE order_id = ? AND user_id = ?",
@@ -81,12 +82,12 @@ class OrdersRepository:
         )
         return Order.model_validate(row) if row else None
 
-    def for_user(self, user_id: str) -> list[Order]:
+    def for_user(self, user_id: int) -> list[Order]:
         """Every order belonging to one customer."""
         return self.query(user_id=user_id)
 
     @logged("customer_support_agent")
-    def set_refund_status(self, order_id: str, status: RefundStatus) -> bool:
+    def set_refund_status(self, order_id: int, status: RefundStatus) -> bool:
         """Move an order to a new refund state, reporting whether it existed."""
         result = self._pool.execute(
             "UPDATE orders SET refund_status = ? WHERE order_id = ?", (status, order_id)
@@ -100,18 +101,43 @@ class UsersRepository:
     def __init__(self, pool: SqliteConnectionPool) -> None:
         self._pool = pool
 
-    def get(self, id: str) -> User | None:
-        """One customer by id."""
+    def get(self, id: int) -> User | None:
+        """One customer by internal id."""
+        row = self._pool.query_one(f"SELECT {_USER_COLUMNS} FROM users WHERE user_id = ?", (id,))
+        return User.model_validate(row) if row else None
+
+    def order_count_for(self, user_id: int) -> int:
+        """How many orders a customer has — shown in the verified read-back."""
+        row = self._pool.query_one("SELECT COUNT(*) AS n FROM orders WHERE user_id = ?", (user_id,))
+        return int(row["n"]) if row else 0
+
+    def get_by_code(self, user_code: str) -> User | None:
+        """One customer by the code they typed.
+
+        Matching is case-insensitive and ignores surrounding whitespace:
+        a customer reading a code off an email should not fail
+        authentication over capitalisation.
+        """
+        normalized = user_code.strip().upper()
+        if not normalized:
+            return None
         row = self._pool.query_one(
-            "SELECT user_id, created_at, email, phone FROM users WHERE user_id = ?", (id,)
+            f"SELECT {_USER_COLUMNS} FROM users WHERE user_code = ?", (normalized,)
         )
         return User.model_validate(row) if row else None
 
     def save(self, entity: User) -> None:
         """Insert or replace a customer."""
         self._pool.execute(
-            "INSERT OR REPLACE INTO users (user_id, created_at, email, phone) VALUES (?, ?, ?, ?)",
-            (entity.user_id, entity.created_at, entity.email, entity.phone),
+            f"INSERT OR REPLACE INTO users ({_USER_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                entity.user_id,
+                entity.user_code,
+                entity.created_at,
+                entity.name,
+                entity.email,
+                entity.phone,
+            ),
         )
 
     def query(self, **filters: Any) -> list[User]:
@@ -120,8 +146,7 @@ class UsersRepository:
         return [
             User.model_validate(row)
             for row in self._pool.iter_rows(
-                f"SELECT user_id, created_at, email, phone FROM users WHERE {clause}",
-                tuple(filters.values()),
+                f"SELECT {_USER_COLUMNS} FROM users WHERE {clause}", tuple(filters.values())
             )
         ]
 
@@ -138,7 +163,7 @@ class HitlQueueRepository:
         self._pool = pool
         self._logger = get_logger("customer_support_agent")
 
-    def get(self, id: str) -> HitlRequest | None:
+    def get(self, id: int) -> HitlRequest | None:
         """One queue entry by id."""
         row = self._pool.query_one("SELECT * FROM hitl_queue WHERE id = ?", (id,))
         return HitlRequest.model_validate(row) if row else None
@@ -171,7 +196,7 @@ class HitlQueueRepository:
         """Everything still awaiting a human decision."""
         return self.query(status="pending")
 
-    def pending_for_order(self, order_id: str) -> HitlRequest | None:
+    def pending_for_order(self, order_id: int) -> HitlRequest | None:
         """An existing pending request for an order, if there is one.
 
         Checked before enqueuing so a customer who asks twice does not
@@ -210,8 +235,8 @@ class RefundLedgerRepository:
     _SCHEMA = """
     CREATE TABLE IF NOT EXISTS refunds (
         refund_id  TEXT PRIMARY KEY,
-        order_id   TEXT NOT NULL,
-        user_id    TEXT NOT NULL,
+        order_id   INTEGER,
+        user_id    INTEGER NOT NULL,
         amount     REAL NOT NULL,
         reason     TEXT NOT NULL,
         reversed   INTEGER NOT NULL DEFAULT 0,
@@ -224,7 +249,7 @@ class RefundLedgerRepository:
         self._pool.execute_script(self._SCHEMA)
 
     def record(
-        self, refund_id: str, order_id: str, user_id: str, amount: float, reason: str
+        self, refund_id: str, order_id: int | None, user_id: int, amount: float, reason: str
     ) -> None:
         """Record an issued refund."""
         self._pool.execute(
@@ -240,7 +265,7 @@ class RefundLedgerRepository:
         )
         return result.affected > 0
 
-    def goodwill_total(self, user_id: str, window_days: int) -> float:
+    def goodwill_total(self, user_id: int, window_days: int) -> float:
         """Goodwill credited to one customer inside a rolling window.
 
         Windowed rather than lifetime: a cap with no window eventually
@@ -256,7 +281,7 @@ class RefundLedgerRepository:
         )
         return float(row["total"]) if row else 0.0
 
-    def total_for_user(self, user_id: str) -> float:
+    def total_for_user(self, user_id: int) -> float:
         """Total refunded to one customer, excluding reversals."""
         row = self._pool.query_one(
             "SELECT COALESCE(SUM(amount), 0) AS total FROM refunds "

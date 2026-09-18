@@ -14,9 +14,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger
 from agentic_commons.tools import ToolDefinition, ToolResult
+from customer_support_agent.config import get_agent_settings
 from customer_support_agent.core.identity import current_customer_id
 from customer_support_agent.core.refund_saga import RefundSaga
 from customer_support_agent.core.repositories import (
@@ -37,13 +37,13 @@ NAMESPACE = "support"
 class OrderLookupArgs(BaseModel):
     """Arguments for the two read-only lookups."""
 
-    order_id: str = Field(description="The order identifier, e.g. 10042")
+    order_id: int = Field(description="The order identifier, e.g. 10042")
 
 
 class RefundArgs(BaseModel):
     """Arguments for issuing a refund."""
 
-    order_id: str = Field(description="The order to refund")
+    order_id: int = Field(description="The order to refund")
     amount: float = Field(description="Amount in USD, confirmed from the order first")
     reason: str = Field(default="", description="Why the refund is being issued")
 
@@ -62,7 +62,7 @@ class GoodwillArgs(BaseModel):
 class ApprovalArgs(BaseModel):
     """Arguments for queuing a refund for human approval."""
 
-    order_id: str = Field(description="The order whose refund needs review")
+    order_id: int = Field(description="The order whose refund needs review")
     amount: float = Field(description="Amount the customer is requesting")
 
 
@@ -80,7 +80,7 @@ class SupportTools:
         self._hitl = hitl
         self._refunds = refunds
         self._saga = saga
-        self._goodwill = get_settings().customer_support_agent.goodwill
+        self._goodwill = get_agent_settings().goodwill
         self._logger = get_logger("customer_support_agent")
 
     def definitions(self) -> list[ToolDefinition]:
@@ -152,7 +152,7 @@ class SupportTools:
             ),
         ]
 
-    def _owned_order(self, order_id: str) -> Order | None:
+    def _owned_order(self, order_id: int) -> Order | None:
         """The order, if the authenticated customer owns it.
 
         Every tool goes through here. A lookup that bypassed it would
@@ -160,7 +160,7 @@ class SupportTools:
         """
         return self._orders.get_for_customer(order_id, current_customer_id())
 
-    def get_order_status(self, order_id: str) -> ToolResult:
+    def get_order_status(self, order_id: int) -> ToolResult:
         """Read one order belonging to the current customer."""
         order = self._owned_order(order_id)
         if order is None:
@@ -175,7 +175,7 @@ class SupportTools:
             data=order.model_dump(),
         )
 
-    def get_refund_status(self, order_id: str) -> ToolResult:
+    def get_refund_status(self, order_id: int) -> ToolResult:
         """Read one order's refund state."""
         order = self._owned_order(order_id)
         if order is None:
@@ -188,7 +188,7 @@ class SupportTools:
             data={"refund_status": order.refund_status, "pending_review": pending is not None},
         )
 
-    async def process_refund(self, order_id: str, amount: float, reason: str = "") -> ToolResult:
+    async def process_refund(self, order_id: int, amount: float, reason: str = "") -> ToolResult:
         """Issue a refund through the saga.
 
         The double-refund check lives here rather than in the prompt: a
@@ -216,7 +216,7 @@ class SupportTools:
             data={"order_id": order_id, "amount": amount, "steps": result.completed},
         )
 
-    def queue_for_approval(self, order_id: str, amount: float) -> ToolResult:
+    def queue_for_approval(self, order_id: int, amount: float) -> ToolResult:
         """Enqueue a refund for a human to decide."""
         order = self._owned_order(order_id)
         if order is None:
@@ -255,7 +255,7 @@ class SupportTools:
         payout with a friendly name is still an unbounded payout.
         """
         customer_id = current_customer_id()
-        if not customer_id:
+        if customer_id is None:
             return ToolResult(success=False, error="No authenticated customer for this request")
         if amount <= 0:
             return ToolResult(success=False, error="A goodwill credit must be a positive amount")
@@ -283,7 +283,7 @@ class SupportTools:
         # the per-customer cap be walked straight past.
         self._refunds.record(
             f"goodwill:{customer_id}:{uuid4().hex[:12]}",
-            "",
+            None,
             customer_id,
             amount,
             f"goodwill: {reason}" if reason else "goodwill",

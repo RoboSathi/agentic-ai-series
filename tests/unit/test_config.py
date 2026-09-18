@@ -44,9 +44,23 @@ class TestSettings:
             "evals",
             "tools",
             "tui",
-            "customer_support_agent",
         ):
             assert getattr(settings, section) is not None, section
+
+    def test_the_platform_does_not_own_an_agents_settings(self) -> None:
+        """A shared library that depends on one of its consumers is not shared."""
+        assert not hasattr(get_settings(), "customer_support_agent")
+
+    def test_an_agent_loads_its_own_settings(self) -> None:
+        from customer_support_agent.config import get_agent_settings
+
+        assert get_agent_settings().intents
+
+    def test_the_agent_overlay_merges_into_platform_sections(self) -> None:
+        """Deep merge: the overlay fills part of a section, not all of it."""
+        gatekeeper = get_settings().gatekeeper
+        assert gatekeeper.surface_policy.surfaces  # from the agent overlay
+        assert gatekeeper.authority_hierarchy  # from the platform base
 
     def test_settings_are_a_singleton(self) -> None:
         assert get_settings() is get_settings()

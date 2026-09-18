@@ -90,13 +90,13 @@ class TestOfferedSetIsEnforcedAtInvocation:
         """
         llm = ScriptedLLM(
             [
-                {"tool_calls": tool_call("support.process_refund", order_id="10001", amount=32.0)},
+                {"tool_calls": tool_call("support.process_refund", order_id=10001, amount=32.0)},
                 {"content": "I'm a support agent."},
             ]
         )
         agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
         state = await agent.handle(CONVERSATIONAL)
-        assert OrdersRepository(seeded_pool).get("10001").refund_status == "none"  # type: ignore[union-attr]
+        assert OrdersRepository(seeded_pool).get(10001).refund_status == "none"  # type: ignore[union-attr]
         assert any("not offered" in decision for decision in state.decisions)
 
     async def test_no_refund_is_queued_for_a_conversational_query(
@@ -107,7 +107,7 @@ class TestOfferedSetIsEnforcedAtInvocation:
             [
                 {
                     "tool_calls": tool_call(
-                        "support.queue_for_approval", order_id="10002", amount=210.0
+                        "support.queue_for_approval", order_id=10002, amount=210.0
                     )
                 },
                 {"content": "I'm a support agent."},
@@ -150,12 +150,12 @@ class TestDuplicateActionSuppression:
             [
                 {
                     "tool_calls": tool_call(
-                        "support.queue_for_approval", order_id="10002", amount=210.0
+                        "support.queue_for_approval", order_id=10002, amount=210.0
                     )
                 },
                 {
                     "tool_calls": tool_call(
-                        "support.queue_for_approval", order_id="10002", amount=210.0
+                        "support.queue_for_approval", order_id=10002, amount=210.0
                     )
                 },
                 {"content": "Queued for review."},
@@ -171,7 +171,7 @@ class TestDuplicateActionSuppression:
     ) -> None:
         """A second customer asking the same thing is not a repeat."""
         script = [
-            {"tool_calls": tool_call("support.get_order_status", order_id="10001")},
+            {"tool_calls": tool_call("support.get_order_status", order_id=10001)},
             {"content": "Delivered."},
         ]
         agent = build_agent(llm=ScriptedLLM(script), pool=seeded_pool, with_memory=False)

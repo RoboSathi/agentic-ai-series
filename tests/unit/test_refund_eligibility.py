@@ -37,7 +37,7 @@ from tests.conftest import ScriptedLLM, tool_call
 def _order(order_id: str, status: str, refund: str = "none") -> Order:
     return Order(
         order_id=order_id,
-        user_id="u1",
+        user_id=1,
         timestamp="2026-02-01",
         order_status=status,  # type: ignore[arg-type]
         refund_status=refund,  # type: ignore[arg-type]
@@ -57,18 +57,18 @@ def tools(seeded_pool: SqliteConnectionPool) -> SupportTools:
 class TestEligibilityRule:
     @pytest.mark.parametrize("status", ["delivered", "cancelled"])
     def test_a_settled_order_is_refundable(self, status: str) -> None:
-        assert _order("1", status).is_refund_eligible is True
+        assert _order(1, status).is_refund_eligible is True
 
     @pytest.mark.parametrize("status", ["pending", "shipped"])
     def test_an_in_flight_order_is_not(self, status: str) -> None:
-        assert _order("1", status).is_refund_eligible is False
+        assert _order(1, status).is_refund_eligible is False
 
     def test_the_reason_is_readable_by_a_customer(self) -> None:
-        reason = _order("10001", "shipped").refund_ineligibility_reason
+        reason = _order(10001, "shipped").refund_ineligibility_reason
         assert "still shipped" in reason and "delivered" in reason
 
     def test_an_already_refunded_order_says_so(self) -> None:
-        reason = _order("10001", "delivered", "completed").refund_ineligibility_reason
+        reason = _order(10001, "delivered", "completed").refund_ineligibility_reason
         assert "already been refunded" in reason
 
 
@@ -77,8 +77,8 @@ class TestToolsEnforceIt:
         self, tools: SupportTools, seeded_pool: SqliteConnectionPool
     ) -> None:
         """Enforced in code, not left to the prompt."""
-        OrdersRepository(seeded_pool).save(_order("10050", "shipped"))
-        result = await tools.process_refund("10050", 40.0)
+        OrdersRepository(seeded_pool).save(_order(10050, "shipped"))
+        result = await tools.process_refund(10050, 40.0)
         assert result.success is False
         assert "nothing to refund yet" in (result.error or "")
 
@@ -86,24 +86,24 @@ class TestToolsEnforceIt:
         self, tools: SupportTools, seeded_pool: SqliteConnectionPool
     ) -> None:
         """Otherwise the rule is bypassed by asking for approval instead."""
-        OrdersRepository(seeded_pool).save(_order("10051", "pending"))
-        assert tools.queue_for_approval("10051", 40.0).success is False
+        OrdersRepository(seeded_pool).save(_order(10051, "pending"))
+        assert tools.queue_for_approval(10051, 40.0).success is False
 
     async def test_a_cancelled_order_can_be_refunded(
         self, tools: SupportTools, seeded_pool: SqliteConnectionPool
     ) -> None:
-        OrdersRepository(seeded_pool).save(_order("10052", "cancelled"))
-        assert (await tools.process_refund("10052", 40.0)).success is True
+        OrdersRepository(seeded_pool).save(_order(10052, "cancelled"))
+        assert (await tools.process_refund(10052, 40.0)).success is True
 
 
 class TestRefundsAreNotVolunteered:
     def test_a_status_lookup_says_nothing_about_refunds(self, tools: SupportTools) -> None:
         """The reported behaviour: every order answer mentioned a refund."""
-        output = tools.get_order_status("10001").output
+        output = tools.get_order_status(10001).output
         assert "refund" not in output.casefold()
 
     def test_a_status_lookup_still_answers_the_question(self, tools: SupportTools) -> None:
-        output = tools.get_order_status("10001")
+        output = tools.get_order_status(10001)
         assert "delivered" in output.output and "32.00" in output.output
 
     def test_an_order_enquiry_does_not_unlock_the_refund_lookup(self) -> None:
@@ -119,7 +119,7 @@ class TestRefundsAreNotVolunteered:
     ) -> None:
         llm = ScriptedLLM(
             [
-                {"tool_calls": tool_call("support.get_refund_status", order_id="10001")},
+                {"tool_calls": tool_call("support.get_refund_status", order_id=10001)},
                 {"content": "Order 10001 was delivered."},
             ]
         )
