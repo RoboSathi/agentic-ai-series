@@ -87,13 +87,18 @@ class TestAuthentication:
         assert authenticator.authenticate(CUSTOMER_CODE.lower()).authenticated is True
 
     def test_a_wrong_code_does_not_verify(self, authenticator: CustomerAuthenticator) -> None:
-        assert authenticator.authenticate("ZZZZZZZ").authenticated is False
+        assert authenticator.authenticate("ZZZ9ZZZ").authenticated is False
+
+    def test_a_seven_letter_word_is_not_a_code(self, authenticator: CustomerAuthenticator) -> None:
+        """Otherwise "what's the weather" reads as a failed login."""
+        assert authenticator.extract_code("what is the weather today") is None
+        assert authenticator.authenticate("what is the weather").code_attempted is False
 
     def test_a_wrong_code_and_a_malformed_one_give_the_same_message(
         self, authenticator: CustomerAuthenticator
     ) -> None:
         """Distinguishing them tells an attacker which codes exist."""
-        wrong = authenticator.authenticate("ZZZZZZZ")
+        wrong = authenticator.authenticate("ZZZ9ZZZ")
         assert wrong.code_attempted is True
         assert "couldn't find" in wrong.message
 

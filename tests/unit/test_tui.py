@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from agentic_commons.observability.types import StatusEvent
 from agentic_commons.tui import (
     Osc52ClipboardService,
@@ -86,9 +88,23 @@ class TestTokenCounter:
 
     def test_renders_both_counts(self) -> None:
         counter = TokenCounterWidget()
-        counter.add(1200)
+        counter.add(1200, cost_usd=0.0031)
         rendered = counter.render().plain
-        assert "1.2k turn" in rendered and "1.2k session" in rendered
+        assert "1.2k" in rendered and "this turn" in rendered and "session" in rendered
+
+    def test_it_shows_spend_next_to_tokens(self) -> None:
+        """A token count nobody converts is a number nobody acts on."""
+        counter = TokenCounterWidget()
+        counter.add(1200, cost_usd=0.0031)
+        assert "$0.0031" in counter.render().plain
+
+    def test_a_new_turn_resets_the_turn_counters_only(self) -> None:
+        counter = TokenCounterWidget()
+        counter.add(1000, cost_usd=0.01)
+        counter.start_turn()
+        counter.add(500, cost_usd=0.005)
+        assert counter.turn_tokens == 500 and counter.session_tokens == 1500
+        assert counter.session_cost == pytest.approx(0.015)
 
 
 class TestStatusLine:

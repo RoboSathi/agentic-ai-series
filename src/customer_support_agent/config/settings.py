@@ -47,6 +47,7 @@ class ScopeSettings(BaseModel):
 
     in_scope_topics: dict[str, list[str]]
     min_words_before_refusal: int
+    reference_pattern: str
     refusal_message: str
 
 

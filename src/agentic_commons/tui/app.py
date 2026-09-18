@@ -29,7 +29,12 @@ from agentic_commons.observability import InMemoryLiveStatusFeed, StageReporter
 from agentic_commons.observability.types import StatusEvent
 from agentic_commons.tui.clipboard import Osc52ClipboardService
 from agentic_commons.tui.labels import StageLabelRegistry
-from agentic_commons.tui.widgets import LiveStatusPanel, StatusLineWidget, TokenCounterWidget
+from agentic_commons.tui.widgets import (
+    LiveStatusPanel,
+    SessionBar,
+    StatusLineWidget,
+    TokenCounterWidget,
+)
 
 # Builds the agent, given the reporter it should emit status through. A
 # factory rather than a built agent: the app owns the feed, so the agent
@@ -58,6 +63,7 @@ class AgenticTuiApp(App[None]):
         border: round $accent;
     }
     #query:focus { border: round $accent-lighten-2; }
+    #session-bar { height: auto; padding: 0 1; }
     #status-line { height: auto; padding: 0 2; }
     #tokens { height: auto; padding: 0 2; }
     """
@@ -77,6 +83,7 @@ class AgenticTuiApp(App[None]):
         self._panel = LiveStatusPanel(self._labels)
         self._status = StatusLineWidget()
         self._tokens = TokenCounterWidget()
+        self._session_bar = SessionBar()
         self._turn = 0
         # One session for the life of the window. Keying it per turn would
         # give every message its own conversation, so a follow-up like
@@ -90,6 +97,7 @@ class AgenticTuiApp(App[None]):
     def compose(self) -> ComposeResult:
         """The single-panel layout, prompt above its own status line."""
         yield Header()
+        yield self._session_bar
         yield VerticalScroll(self._panel, id="feed")
         yield Input(placeholder="Ask the support agent…", id="query")
         yield self._status
@@ -101,6 +109,7 @@ class AgenticTuiApp(App[None]):
         self._feed.subscribe(self._on_status)
         self.set_interval(get_settings().tui.refresh_interval_ms / 1000, self._status.tick)
         self.query_one("#query", Input).focus()
+        self._session_bar.bind_session(self._session_id)
         self._panel.note(
             "Ready. The agent will ask you to verify before it looks anything up.",
             style="dim",
@@ -118,6 +127,7 @@ class AgenticTuiApp(App[None]):
         """Execute a query, keeping the feed live throughout."""
         self._turn += 1
         self._tokens.start_turn()
+        self._session_bar.turns = self._turn
         self._panel.note(f"\n> {query}", style="bold")
         self._scroll_to_latest()
         self._status.begin(self._labels.label_for("intake"))
@@ -127,6 +137,7 @@ class AgenticTuiApp(App[None]):
             return
         try:
             state = await self._agent.handle(query, session_id=self._session_id)
+            self._reflect(state)
             self._panel.note(f"\n{state.response}", style="bright_green")
             self._scroll_to_latest()
         except Exception as exc:
@@ -134,6 +145,40 @@ class AgenticTuiApp(App[None]):
             self._panel.note(f"\nFailed: {exc}", style="red")
         finally:
             self._status.finish()
+
+    def _reflect(self, state: Any) -> None:
+        """Surface what the harness decided, beyond the stages it ran.
+
+        The feed shows *what happened*; these lines show *what was
+        decided* — which intent was matched, whether an action was
+        refused, whether the reply was grounded. An operator watching a
+        refusal needs the reason, not just the mark.
+        """
+        customer = getattr(state, "customer_id", None)
+        if customer and self._session_bar.customer == "not verified":
+            self._session_bar.verified(self._customer_name(state), customer)
+        for decision in getattr(state, "decisions", []):
+            style = "dim"
+            if "refused" in decision or "deny" in decision:
+                style = "red"
+            elif "escalate" in decision or "suppressed" in decision:
+                style = "yellow"
+            elif decision.startswith(("intent", "scope", "auth")):
+                style = "bright_magenta"
+            elif "grounding" in decision:
+                style = "orange3"
+            self._panel.note(f"    · {decision}", style=style)
+        usage = getattr(state, "metadata", {}).get("last_usage") or {}
+        if usage:
+            self._tokens.add(0, 0.0)
+
+    @staticmethod
+    def _customer_name(state: Any) -> str:
+        """The verified customer's name, from the agent's own read-back."""
+        from customer_support_agent.core.identity import current_customer
+
+        customer = current_customer()
+        return customer.name if customer and customer.name else "verified"
 
     def _on_status(self, event: StatusEvent) -> None:
         """Feed subscriber: update the panel, status line and counters."""

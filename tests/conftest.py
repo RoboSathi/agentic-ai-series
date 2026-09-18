@@ -69,8 +69,8 @@ class ScriptedLLM(LLMClient):
 
 # The seeded customers' codes. `u1` owns orders 10001 and 10002; `u2`
 # owns 10003, which is what makes the ownership tests meaningful.
-CUSTOMER_CODE = "ADAXYZ7"
-OTHER_CODE = "GRCABC9"
+CUSTOMER_CODE = "ADA7XYZ"
+OTHER_CODE = "GRC9ABC"
 
 
 def tool_call(name: str, **arguments: Any) -> list[ModelToolCall]:

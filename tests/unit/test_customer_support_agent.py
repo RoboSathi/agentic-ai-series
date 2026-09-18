@@ -78,7 +78,7 @@ class TestRepositories:
         assert UsersRepository(seeded_pool).get_by_code(f"  {CUSTOMER_CODE.lower()} ") is not None
 
     def test_an_unknown_code_matches_nothing(self, seeded_pool: SqliteConnectionPool) -> None:
-        assert UsersRepository(seeded_pool).get_by_code("ZZZZZZZ") is None
+        assert UsersRepository(seeded_pool).get_by_code("ZZZ9ZZZ") is None
 
     def test_queueing_and_deciding_a_hitl_request(
         self, hitl: HitlQueueRepository, tools: SupportTools

@@ -42,11 +42,19 @@ class CustomerAuthenticator:
         self._length = settings.user_code_length
         self._alphabet = settings.user_code_alphabet
         # A code is a run of exactly the configured length drawn from the
-        # configured alphabet. Anchored on word boundaries so it is found
-        # inside a sentence ("my code is HEDZTVA") without matching a
-        # longer token that merely contains one.
+        # configured alphabet, containing at least one digit. Anchored on
+        # word boundaries so it is found inside a sentence ("my code is
+        # HED8TVA") without matching a longer token that contains one.
+        #
+        # The digit requirement is what stops a seven-letter English word
+        # being read as a credential: without it "what's the weather"
+        # authenticates as WEATHER and the customer is told their code was
+        # not found, which is both wrong and baffling.
+        alphabet = re.escape(self._alphabet)
         self._pattern = re.compile(
-            rf"\b[{re.escape(self._alphabet)}]{{{self._length}}}\b", re.IGNORECASE
+            rf"\b(?=[{alphabet}]{{{self._length}}}\b)"
+            rf"[{alphabet}]*\d[{alphabet}]*\b",
+            re.IGNORECASE,
         )
         self._logger = get_logger("customer_support_agent")
 

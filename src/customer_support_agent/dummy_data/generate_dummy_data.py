@@ -69,11 +69,20 @@ _LAST_NAMES = [
 ]
 
 
+# Every code carries at least one digit. Without that rule a seven-letter
+# English word is a well-formed code, and "what's the weather" reads as a
+# login attempt — the customer is then told their code was not found,
+# which is baffling and wrong.
+_USER_CODE_DIGITS = "23456789"
+
+
 def _user_code(rng: random.Random, taken: set[str]) -> str:
-    """A unique 7-character code, unambiguous when read aloud."""
+    """A unique 7-character code, unambiguous and never a plain word."""
     while True:
-        code = "".join(rng.choices(_USER_CODE_ALPHABET, k=_USER_CODE_LENGTH))
-        if code not in taken:
+        body = rng.choices(_USER_CODE_ALPHABET, k=_USER_CODE_LENGTH - 1)
+        body.insert(rng.randrange(_USER_CODE_LENGTH), rng.choice(_USER_CODE_DIGITS))
+        code = "".join(body)
+        if code not in taken and any(char.isdigit() for char in code):
             taken.add(code)
             return code
 

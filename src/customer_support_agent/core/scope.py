@@ -39,6 +39,7 @@ class ScopeGuard:
         self._topics = settings.scope.in_scope_topics
         self._refusal = settings.scope.refusal_message
         self._min_words_for_refusal = settings.scope.min_words_before_refusal
+        self._reference = re.compile(settings.scope.reference_pattern)
         self._patterns = {
             topic: re.compile("|".join(re.escape(p) for p in phrases), re.IGNORECASE)
             for topic, phrases in self._topics.items()
@@ -55,6 +56,11 @@ class ScopeGuard:
         for topic, pattern in self._patterns.items():
             if pattern.search(text):
                 return ScopeVerdict(in_scope=True, topic=topic)
+        if self._reference.search(text):
+            # A bare order reference continues the conversation. Refusing
+            # "what about 10002" because it names no topic would break
+            # every follow-up.
+            return ScopeVerdict(in_scope=True, topic="reference")
         # A very short message with no topic is usually courtesy ("ok",
         # "thanks") rather than an off-topic request, and refusing those
         # reads as hostile. Anything longer is a real question about

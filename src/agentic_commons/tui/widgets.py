@@ -22,39 +22,93 @@ from agentic_commons.tui.labels import StageLabelRegistry
 _MARKS = {"completed": ("✓", "green"), "failed": ("✗", "red")}
 
 
-class TokenCounterWidget(Static):
-    """Session total and current-turn count, both visible at once.
+class SessionBar(Static):
+    """Who the conversation is for, and what it is talking to.
 
-    Both, because they answer different questions: the turn count says
-    whether *this* request is running away, the session total says what
-    the conversation has cost so far.
+    An operator watching a transcript needs to know which customer is
+    verified and which model is answering. Without it, two screenshots of
+    the same agent on different configurations are indistinguishable.
+    """
+
+    customer: reactive[str] = reactive("not verified")
+    turns: reactive[int] = reactive(0)
+
+    def __init__(self) -> None:
+        super().__init__(id="session-bar")
+        settings = get_settings().llm
+        self._model = settings.providers[settings.provider].model
+        self._session = ""
+
+    def bind_session(self, session_id: str) -> None:
+        """Record which conversation this is."""
+        self._session = session_id
+        self.refresh()
+
+    def verified(self, name: str, customer_id: int) -> None:
+        """Show the authenticated customer once the handshake completes."""
+        self.customer = f"{name} (#{customer_id})"
+        self.refresh()
+
+    def render(self) -> Text:
+        line = Text("  ")
+        line.append("customer ", style="dim")
+        line.append(
+            self.customer,
+            style="bright_green" if self.customer != "not verified" else "yellow",
+        )
+        line.append("   model ", style="dim")
+        line.append(self._model, style="bright_blue")
+        line.append("   session ", style="dim")
+        line.append(self._session or "—", style="cyan")
+        line.append(f"   turn {self.turns}", style="dim")
+        return line
+
+
+class TokenCounterWidget(Static):
+    """Tokens and spend, per turn and per session.
+
+    Four numbers because they answer different questions: the turn counts
+    say whether *this* request is running away, the session totals say
+    what the conversation has cost so far. Cost is shown next to tokens
+    rather than derived later, because a token count nobody converts is a
+    number nobody acts on.
     """
 
     session_tokens: reactive[int] = reactive(0)
     turn_tokens: reactive[int] = reactive(0)
+    session_cost: reactive[float] = reactive(0.0)
+    turn_cost: reactive[float] = reactive(0.0)
 
     def __init__(self) -> None:
         super().__init__(id="tokens")
 
-    def add(self, tokens: int) -> None:
-        """Account for tokens spent in the current turn."""
+    def add(self, tokens: int, cost_usd: float = 0.0) -> None:
+        """Account for tokens and spend in the current turn."""
         self.turn_tokens += tokens
         self.session_tokens += tokens
+        self.turn_cost += cost_usd
+        self.session_cost += cost_usd
         self.refresh()
 
     def start_turn(self) -> None:
-        """Reset the per-turn counter; the session total keeps accruing."""
+        """Reset the per-turn counters; session totals keep accruing."""
         self.turn_tokens = 0
+        self.turn_cost = 0.0
         self.refresh()
 
     def render(self) -> Text:
-        """`↓ 1.2k turn · 8.4k session`."""
+        """`↓ 1.2k · $0.0031 this turn   8.4k · $0.0210 session`."""
         if not get_settings().tui.show_token_count:
             return Text("")
-        return Text(
-            f"↓ {_compact(self.turn_tokens)} turn · {_compact(self.session_tokens)} session",
-            style="dim",
-        )
+        line = Text("  ↓ ", style="dim")
+        line.append(_compact(self.turn_tokens), style="white")
+        line.append(f" · {_money(self.turn_cost)}", style="white")
+        line.append(" this turn", style="dim")
+        line.append("     ", style="dim")
+        line.append(_compact(self.session_tokens), style="bright_black")
+        line.append(f" · {_money(self.session_cost)}", style="bright_black")
+        line.append(" session", style="dim")
+        return line
 
 
 class StatusLineWidget(Static):
@@ -197,6 +251,11 @@ class LiveStatusPanel(Static):
             self.update(self.buffer.renderable())
         except Exception:
             pass
+
+
+def _money(amount: float) -> str:
+    """Spend at a resolution that stays meaningful for a single turn."""
+    return f"${amount:.4f}" if amount < 1 else f"${amount:,.2f}"
 
 
 def _compact(tokens: int) -> str:

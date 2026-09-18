@@ -230,9 +230,16 @@ customer_support_agent:
         - hi there
         - thanks
         - thank you
-    # Shorter than this with no topic match is courtesy ("ok", "thanks"),
-    # not an off-topic request. Refusing those reads as hostile.
-    min_words_before_refusal: 4
+    # Shorter than this with no topic match is courtesy ("ok", "thanks",
+    # "got it"), not an off-topic request — refusing those reads as
+    # hostile. Three words is already a question ("what's the weather"),
+    # so the line sits just below it.
+    min_words_before_refusal: 3
+    # A message carrying something that looks like an order reference is
+    # on-topic even when it names no subject. "what about 10002" is a
+    # follow-up, not a new conversation about nothing — the subject lives
+    # in the previous turn.
+    reference_pattern: '\b\d{4,}\b' 
     refusal_message: >-
       I can only help with things related to your orders — deliveries,
       refunds, billing and your account. I can't help with that one, but
@@ -246,6 +253,6 @@ customer_support_agent:
   # The code the local demo authenticates with. A real deployment has
   # the customer type their own; this is the stand-in so the demo has
   # somebody to be.
-  demo_user_code: HEDZTVA
+  demo_user_code: 2HEDZTV
   checkpoint_path: src/customer_support_agent/dummy_data/checkpoints.db
   policy_path: src/customer_support_agent/prompts/customer_policy.md
