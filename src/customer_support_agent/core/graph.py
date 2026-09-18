@@ -16,6 +16,7 @@ in-memory database without patching a single import.
 """
 
 import json
+import re
 from typing import Any
 
 from langgraph.graph import END, StateGraph
@@ -46,6 +47,15 @@ from customer_support_agent.core.identity import (
     set_current_customer,
 )
 from customer_support_agent.core.intent import Intent, IntentClassifier
+from customer_support_agent.core.presentation import (
+    OrderMenu,
+    build_menu,
+    customer_orders,
+    render_order_detail,
+    render_order_list,
+    resolve_selection,
+)
+from customer_support_agent.core.repositories import OrdersRepository
 from customer_support_agent.core.schema import AgentState, policy_text
 from customer_support_agent.core.scope import ScopeGuard
 from customer_support_agent.core.tools import SupportTools
@@ -82,6 +92,7 @@ class CustomerSupportAgent:
         slos: SLORegistry | None = None,
         grounding: DetectionLadder | None = None,
         authenticator: CustomerAuthenticator | None = None,
+        orders: OrdersRepository | None = None,
     ) -> None:
         settings = get_agent_settings()
         self._llm = llm
@@ -110,10 +121,14 @@ class CustomerSupportAgent:
         self._intents = IntentClassifier()
         self._scope = ScopeGuard()
         self._authenticator = authenticator
+        self._orders = orders
         # Who each session has proved itself to be. Authentication is per
         # conversation: a customer verifies once and stays verified for
         # that session, rather than retyping a code every turn.
         self._sessions: dict[str, Customer] = {}
+        # The order list each session was last shown, so a bare "2"
+        # resolves back to an order.
+        self._menus: dict[str, OrderMenu] = {}
         self._history_turns = settings.history_turns
         self._conversations: dict[str, list[Message]] = {}
         self._last_intent: dict[str, Intent] = {}
@@ -236,6 +251,8 @@ class CustomerSupportAgent:
         assert result.customer is not None
         if state.session_id:
             self._sessions[state.session_id] = result.customer
+            if result.menu is not None:
+                self._menus[state.session_id] = result.menu
         set_current_customer(result.customer)
         return {
             "response": result.message,
@@ -244,6 +261,45 @@ class CustomerSupportAgent:
             # The verified read-back *is* the answer to "here is my code".
             # Nothing further is needed this turn.
             "metadata": {**state.metadata, "halted": "just_verified"},
+        }
+
+    async def choose_order(self, state: AgentState) -> dict[str, Any]:
+        """Answer a menu choice straight from the database.
+
+        "2" after being shown a list is a lookup, not a conversation.
+        Resolving it here costs one SELECT; routing it through the model
+        costs a completion to read a row aloud, and risks the model
+        getting a digit wrong about the customer's own order.
+
+        Only a message that is *nothing but* a choice lands here.
+        "refund order 2" states an intent and continues to the normal
+        path, where the Gatekeeper and the refund rules apply.
+        """
+        menu = self._menus.get(state.session_id)
+        if menu is None or self._orders is None or state.customer_id is None:
+            return {}
+        if _asks_for_the_list(state.query):
+            orders = customer_orders(self._orders, state.customer_id)
+            self._menus[state.session_id] = build_menu(orders)
+            return self._halt(state, render_order_list(orders), "menu: listed")
+        order_id = resolve_selection(state.query, menu)
+        if order_id is None:
+            return {}
+        self._report("order_lookup")
+        order = self._orders.get_for_customer(order_id, state.customer_id)
+        self._done("order_lookup", detail=str(order_id))
+        if order is None:
+            return self._halt(
+                state, f"I couldn't find order {order_id} on your account.", "menu: not found"
+            )
+        return self._halt(state, render_order_detail(order), f"menu: order {order_id}")
+
+    def _halt(self, state: AgentState, response: str, decision: str) -> dict[str, Any]:
+        """Answer now, without reaching the model."""
+        return {
+            "response": response,
+            "decisions": [*state.decisions, decision],
+            "metadata": {**state.metadata, "halted": "answered_from_db"},
         }
 
     async def intake(self, state: AgentState) -> dict[str, Any]:
@@ -479,6 +535,7 @@ class CustomerSupportAgent:
         graph: StateGraph[AgentState, None, AgentState, AgentState] = StateGraph(AgentState)
         graph.add_node("screen", self.screen)
         graph.add_node("authenticate", self.authenticate)
+        graph.add_node("choose_order", self.choose_order)
         graph.add_node("intake", self.intake)
         graph.add_node("assemble_context", self.assemble_context)
         graph.add_node("reason", self.reason)
@@ -490,7 +547,12 @@ class CustomerSupportAgent:
             "screen", self._after_screen, {"authenticate": "authenticate", "done": END}
         )
         graph.add_conditional_edges(
-            "authenticate", self._after_authenticate, {"intake": "intake", "done": END}
+            "authenticate",
+            self._after_authenticate,
+            {"choose_order": "choose_order", "done": END},
+        )
+        graph.add_conditional_edges(
+            "choose_order", self._after_choose, {"intake": "intake", "done": END}
         )
         graph.add_edge("intake", "assemble_context")
         graph.add_edge("assemble_context", "reason")
@@ -509,6 +571,10 @@ class CustomerSupportAgent:
 
     def _after_authenticate(self, state: AgentState) -> str:
         """An unverified turn, or a just-verified one, ends here."""
+        return "done" if state.metadata.get("halted") else "choose_order"
+
+    def _after_choose(self, state: AgentState) -> str:
+        """A menu choice is answered from the database and finishes here."""
         return "done" if state.metadata.get("halted") else "intake"
 
     def _after_reason(self, state: AgentState) -> str:
@@ -633,6 +699,20 @@ class CustomerSupportAgent:
         """Emit a stage-completed event, so the feed can close the line out."""
         if self._reporter is not None:
             self._reporter.completed(stage, tokens_delta=tokens, detail=detail)
+
+
+# A customer asking to see the list again. Deterministic, like the list
+# itself — re-reading a table is not a task for a model.
+_LIST_REQUEST = re.compile(
+    r"\b(my orders|all my orders|list (my )?orders|show (me )?(my )?orders|"
+    r"what orders|which orders|see (my )?orders|orders again|the list)\b",
+    re.IGNORECASE,
+)
+
+
+def _asks_for_the_list(message: str) -> bool:
+    """Whether the customer is asking to see their order list again."""
+    return bool(_LIST_REQUEST.search(message))
 
 
 def is_customer_ready(content: str) -> bool:

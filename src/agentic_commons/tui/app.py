@@ -23,18 +23,16 @@ from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.widgets import Footer, Header, Input
 
+from agentic_commons.commands import CommandRegistry
 from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger
 from agentic_commons.observability import InMemoryLiveStatusFeed, StageReporter
 from agentic_commons.observability.types import StatusEvent
 from agentic_commons.tui.clipboard import Osc52ClipboardService
+from agentic_commons.tui.command_view import CommandView
 from agentic_commons.tui.labels import StageLabelRegistry
-from agentic_commons.tui.widgets import (
-    LiveStatusPanel,
-    SessionBar,
-    StatusLineWidget,
-    TokenCounterWidget,
-)
+from agentic_commons.tui.suggest import CommandSuggester
+from agentic_commons.tui.widgets import LiveStatusPanel, StatusLineWidget, TokenCounterWidget
 
 # Builds the agent, given the reporter it should emit status through. A
 # factory rather than a built agent: the app owns the feed, so the agent
@@ -63,7 +61,6 @@ class AgenticTuiApp(App[None]):
         border: round $accent;
     }
     #query:focus { border: round $accent-lighten-2; }
-    #session-bar { height: auto; padding: 0 1; }
     #status-line { height: auto; padding: 0 2; }
     #tokens { height: auto; padding: 0 2; }
     """
@@ -83,7 +80,8 @@ class AgenticTuiApp(App[None]):
         self._panel = LiveStatusPanel(self._labels)
         self._status = StatusLineWidget()
         self._tokens = TokenCounterWidget()
-        self._session_bar = SessionBar()
+        self._commands = CommandRegistry()
+        self._view = CommandView()
         self._turn = 0
         # One session for the life of the window. Keying it per turn would
         # give every message its own conversation, so a follow-up like
@@ -97,9 +95,12 @@ class AgenticTuiApp(App[None]):
     def compose(self) -> ComposeResult:
         """The single-panel layout, prompt above its own status line."""
         yield Header()
-        yield self._session_bar
         yield VerticalScroll(self._panel, id="feed")
-        yield Input(placeholder="Ask the support agent…", id="query")
+        yield Input(
+            placeholder="Ask the support agent…  (/help for commands)",
+            id="query",
+            suggester=CommandSuggester(self._commands),
+        )
         yield self._status
         yield self._tokens
         yield Footer()
@@ -109,25 +110,44 @@ class AgenticTuiApp(App[None]):
         self._feed.subscribe(self._on_status)
         self.set_interval(get_settings().tui.refresh_interval_ms / 1000, self._status.tick)
         self.query_one("#query", Input).focus()
-        self._session_bar.bind_session(self._session_id)
+        self._status.bind_tokens(self._tokens)
         self._panel.note(
-            "Ready. The agent will ask you to verify before it looks anything up.",
+            "Ready. The agent will ask you to verify before it looks anything up. "
+            "Type /help for console commands.",
             style="dim",
         )
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Run one query through the agent."""
+        """Run one line — a slash command, or a message to the agent."""
         query = event.value.strip()
         if not query:
             return
         event.input.value = ""
+        if CommandRegistry.is_command(query):
+            await self._run_command(query)
+            return
         await self._run(query)
+
+    async def _run_command(self, line: str) -> None:
+        """Dispatch a slash command and draw its result.
+
+        Commands never reach the agent: no model call, no turn counted,
+        nothing added to the customer's conversation. An operator
+        inspecting the system should not show up in the transcript the
+        customer is having.
+        """
+        self._panel.show_lines([self._view.echo(f"\n{line}")])
+        result = await self._commands.dispatch(line)
+        if result.clears_transcript:
+            self._panel.clear_feed()
+            return
+        self._panel.show_lines(self._view.render(result))
+        self._scroll_to_latest()
 
     async def _run(self, query: str) -> None:
         """Execute a query, keeping the feed live throughout."""
         self._turn += 1
         self._tokens.start_turn()
-        self._session_bar.turns = self._turn
         self._panel.note(f"\n> {query}", style="bold")
         self._scroll_to_latest()
         self._status.begin(self._labels.label_for("intake"))
@@ -154,9 +174,6 @@ class AgenticTuiApp(App[None]):
         refused, whether the reply was grounded. An operator watching a
         refusal needs the reason, not just the mark.
         """
-        customer = getattr(state, "customer_id", None)
-        if customer and self._session_bar.customer == "not verified":
-            self._session_bar.verified(self._customer_name(state), customer)
         for decision in getattr(state, "decisions", []):
             style = "dim"
             if "refused" in decision or "deny" in decision:
@@ -168,17 +185,6 @@ class AgenticTuiApp(App[None]):
             elif "grounding" in decision:
                 style = "orange3"
             self._panel.note(f"    · {decision}", style=style)
-        usage = getattr(state, "metadata", {}).get("last_usage") or {}
-        if usage:
-            self._tokens.add(0, 0.0)
-
-    @staticmethod
-    def _customer_name(state: Any) -> str:
-        """The verified customer's name, from the agent's own read-back."""
-        from customer_support_agent.core.identity import current_customer
-
-        customer = current_customer()
-        return customer.name if customer and customer.name else "verified"
 
     def _on_status(self, event: StatusEvent) -> None:
         """Feed subscriber: update the panel, status line and counters."""

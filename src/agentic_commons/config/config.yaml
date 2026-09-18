@@ -345,6 +345,14 @@ tools:
   # embedding model changes.
   selection_min_score: 0.15
 
+# Console slash commands (/help, /orders, /audit …). These are operator
+# views of the harness, so the limits here are about what fits on a
+# terminal, not about what the agent may do.
+commands:
+  default_limit: 15        # rows a listing shows when no limit is given
+  value_preview_chars: 40  # where a long stored value is elided in a table
+  recent_window: 20        # how many recent records the summaries look back over
+
 tui:
   refresh_interval_ms: 100
   show_token_count: true
@@ -409,4 +417,17 @@ tui:
     audit_record: bright_black
     finalize: bright_green
   default_stage_style: white
+  # How a slash command's output is drawn in the feed. Commands answer
+  # about the system rather than the customer, so they are styled apart
+  # from the conversation — a reader should never mistake `/orders` output
+  # for something the agent said.
+  command_output:
+    title_style: bold bright_cyan
+    header_style: bold bright_black
+    row_style: white
+    note_style: dim
+    error_style: red
+    column_gap: 2
+    max_column_width: 64
+    prompt_style: bold bright_black
 

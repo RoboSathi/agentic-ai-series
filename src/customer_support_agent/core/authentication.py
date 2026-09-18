@@ -20,7 +20,13 @@ from pydantic import BaseModel
 from agentic_commons.logging import get_logger, logged
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.core.identity import Customer
-from customer_support_agent.core.repositories import UsersRepository
+from customer_support_agent.core.presentation import (
+    OrderMenu,
+    build_menu,
+    customer_orders,
+    describe_customer,
+)
+from customer_support_agent.core.repositories import OrdersRepository, UsersRepository
 from customer_support_agent.core.schema import User
 
 
@@ -31,14 +37,18 @@ class AuthResult(BaseModel):
     customer: Customer | None = None
     message: str = ""
     code_attempted: bool = False
+    # The order list shown alongside the greeting, so a later bare "2"
+    # can be resolved back to an order.
+    menu: OrderMenu | None = None
 
 
 class CustomerAuthenticator:
     """Turns a typed code into an authenticated customer, or a prompt."""
 
-    def __init__(self, users: UsersRepository) -> None:
+    def __init__(self, users: UsersRepository, orders: OrdersRepository) -> None:
         settings = get_agent_settings()
         self._users = users
+        self._orders = orders
         self._length = settings.user_code_length
         self._alphabet = settings.user_code_alphabet
         # A code is a run of exactly the configured length drawn from the
@@ -88,32 +98,19 @@ class CustomerAuthenticator:
                 ),
                 code_attempted=True,
             )
-        self._logger.info("Customer authenticated", customer_id=user.user_id)
+        orders = customer_orders(self._orders, user.user_id)
+        self._logger.info("Customer authenticated", customer_id=user.user_id, orders=len(orders))
         return AuthResult(
             authenticated=True,
             customer=Customer(customer_id=user.user_id, name=user.name, email=user.email),
-            message=self.describe(user),
+            message=describe_customer(user, orders),
             code_attempted=True,
+            menu=build_menu(orders),
         )
 
     def describe(self, user: User) -> str:
-        """The fixed-format read-back of a customer's own details.
-
-        Rendered here rather than by a model. These are the customer's
-        own records; a generated version can be subtly wrong, and being
-        subtly wrong about someone's account is worse than being terse.
-        The email is masked because a support transcript is not a place
-        to restate a full address.
-        """
-        order_count = self._users.order_count_for(user.user_id)
-        return (
-            f"Thanks, {user.name} — you're verified.\n"
-            f"  Account   : #{user.user_id}\n"
-            f"  Email     : {user.masked_email}\n"
-            f"  Customer since: {user.created_at[:10]}\n"
-            f"  Orders    : {order_count}\n"
-            "How can I help with your orders today?"
-        )
+        """The fixed-format read-back, including the customer's orders."""
+        return describe_customer(user, customer_orders(self._orders, user.user_id))
 
     def _ask_for_code(self) -> str:
         """The prompt shown until a code arrives."""

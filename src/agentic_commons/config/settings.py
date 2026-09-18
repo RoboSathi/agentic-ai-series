@@ -497,6 +497,30 @@ class ToolsSettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="TOOLS__")
 
 
+class CommandSettings(YamlBackedSettings):
+    """Console slash commands (LLD §20)."""
+
+    _yaml_section = "commands"
+    default_limit: int
+    value_preview_chars: int
+    recent_window: int
+
+    model_config = SettingsConfigDict(env_prefix="COMMANDS__")
+
+
+class CommandOutputSettings(BaseModel):
+    """How slash-command output is drawn (LLD §20)."""
+
+    title_style: str
+    header_style: str
+    row_style: str
+    note_style: str
+    error_style: str
+    column_gap: int
+    max_column_width: int
+    prompt_style: str
+
+
 class TuiSettings(YamlBackedSettings):
     """Live status feed (LLD §20)."""
 
@@ -510,6 +534,7 @@ class TuiSettings(YamlBackedSettings):
     tool_labels: dict[str, str]
     stage_styles: dict[str, str]
     default_stage_style: str
+    command_output: CommandOutputSettings
 
     model_config = SettingsConfigDict(env_prefix="TUI__")
 
@@ -537,6 +562,7 @@ class AppConfig(BaseSettings):
     evals: EvalsSettings = EvalsSettings()  # type: ignore[call-arg]
     tools: ToolsSettings = ToolsSettings()  # type: ignore[call-arg]
     tui: TuiSettings = TuiSettings()  # type: ignore[call-arg]
+    commands: CommandSettings = CommandSettings()  # type: ignore[call-arg]
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

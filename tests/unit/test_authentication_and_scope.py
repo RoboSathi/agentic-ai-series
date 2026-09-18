@@ -24,7 +24,9 @@ from tests.conftest import CUSTOMER_CODE, ScriptedLLM
 
 @pytest.fixture
 def authenticator(seeded_pool: SqliteConnectionPool) -> CustomerAuthenticator:
-    return CustomerAuthenticator(UsersRepository(seeded_pool))
+    from customer_support_agent.core.repositories import OrdersRepository
+
+    return CustomerAuthenticator(UsersRepository(seeded_pool), OrdersRepository(seeded_pool))
 
 
 class TestScopeGuard:
@@ -111,17 +113,19 @@ class TestAuthentication:
         """Rendered here, not by a model: these are the customer's own records."""
         message = authenticator.authenticate(CUSTOMER_CODE).message
         assert "Ada Lovelace" in message
-        assert "Account" in message and "Orders" in message
+        assert "Account" in message and "orders" in message
 
     def test_the_read_back_masks_the_email(self, authenticator: CustomerAuthenticator) -> None:
         """A support transcript is not a place to restate a full address."""
         message = authenticator.authenticate(CUSTOMER_CODE).message
         assert "ada@example.com" not in message and "@example.com" in message
 
-    def test_the_read_back_counts_the_customers_own_orders(
+    def test_the_read_back_lists_the_customers_own_orders(
         self, authenticator: CustomerAuthenticator
     ) -> None:
-        assert "Orders    : 2" in authenticator.authenticate(CUSTOMER_CODE).message
+        """Listed, not counted — they verified in order to talk about one."""
+        message = authenticator.authenticate(CUSTOMER_CODE).message
+        assert "Order 10001" in message and "Order 10002" in message
 
 
 class TestTheConversationFlow:
@@ -206,19 +210,38 @@ class TestIdentitySurvivesTheGraph:
     async def test_a_lookup_after_verifying_in_conversation_succeeds(
         self, seeded_pool: SqliteConnectionPool
     ) -> None:
+        """A direct order reference is now answered from the database.
+
+        Identity still has to have survived the graph for this to work:
+        the lookup is ownership-scoped, so an unbound customer would see
+        nothing.
+        """
+        from customer_support_agent.core.identity import set_current_customer
+
+        llm = ScriptedLLM([{"content": "(should not be reached)"}])
+        agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
+        set_current_customer(None)
+        await agent.handle(f"my code is {CUSTOMER_CODE}", session_id="fresh")
+        state = await agent.handle("status of order 10001", session_id="fresh")
+        assert "Order 10001" in state.response and llm.requests == []
+
+    async def test_a_tool_lookup_after_verifying_also_succeeds(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        """The same property on the governed path, where a tool actually runs."""
         from customer_support_agent.core.identity import set_current_customer
         from tests.conftest import tool_call
 
         llm = ScriptedLLM(
             [
                 {"tool_calls": tool_call("support__get_order_status", order_id=10001)},
-                {"content": "Order 10001 was delivered."},
+                {"content": "It was delivered."},
             ]
         )
         agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
         set_current_customer(None)
         await agent.handle(f"my code is {CUSTOMER_CODE}", session_id="fresh")
-        state = await agent.handle("status of order 10001", session_id="fresh")
+        state = await agent.handle("has my parcel been delivered yet", session_id="fresh")
         assert any("get_order_status: ok" in decision for decision in state.decisions)
 
     async def test_the_offered_set_is_carried_not_recomputed(

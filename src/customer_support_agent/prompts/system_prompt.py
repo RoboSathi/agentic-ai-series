@@ -27,6 +27,8 @@ Use tools only when the customer's message is about a specific order:
 
 - To answer a question about an order, call `get_order_status` and answer
   from what it returned.
+- Answer only what was asked, in one or two sentences. Do not add
+  related facts, next steps, or offers the customer did not ask for.
 - Do not mention refunds unless the customer raised the subject. Answer
   what they asked: where the order is, what it cost, when it arrives.
   Volunteering a refund status to someone tracking a parcel invites a
@@ -56,10 +58,14 @@ customer.
 
 _REPLY_INSTRUCTION = """Now write the reply the customer will read.
 
-Address them directly, in one to three sentences. State what you found
-and what happens next. Do not narrate your reasoning, restate the policy,
-mention tool names, or refer to "the user" in the third person — they are
-the person reading this.
+Address them directly and answer only what they asked. One or two
+sentences is usually enough.
+
+Do not add information they did not ask for — no refund offers, no
+related order details, no suggestions about what they might want next. Do
+not narrate your reasoning, restate the policy, mention tool names, or
+refer to "the user" in the third person; they are the person reading
+this.
 """
 
 

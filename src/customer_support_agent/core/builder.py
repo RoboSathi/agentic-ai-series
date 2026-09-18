@@ -143,7 +143,8 @@ def build_agent(
         costs=CostAggregatorImpl() if observe else None,
         slos=SLORegistry() if observe else None,
         grounding=DetectionLadder(scoring) if observe else None,
-        authenticator=CustomerAuthenticator(UsersRepository(connection)),
+        authenticator=CustomerAuthenticator(UsersRepository(connection), orders),
+        orders=orders,
     )
 
 
