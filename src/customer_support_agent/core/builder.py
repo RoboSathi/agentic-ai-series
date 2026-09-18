@@ -22,9 +22,11 @@ from agentic_commons.context import (
 from agentic_commons.evals import NollmScoringCascadeImpl, create_scoring_cascade
 from agentic_commons.gatekeeper import GatekeeperImpl
 from agentic_commons.gatekeeper.ledger import CumulativeLedger
+from agentic_commons.hallucination_protection import DetectionLadder
 from agentic_commons.llm.client import LLMClient, create_llm_client
 from agentic_commons.memory import MemoryFacade
-from agentic_commons.observability import StageReporter
+from agentic_commons.observability import CostAggregatorImpl, SLORegistry, StageReporter
+from agentic_commons.observability.tracer import LocalTracer
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.resilience import SqliteIdempotencyGuard
 from agentic_commons.security import Authorizer, SecuritySuite
@@ -36,6 +38,7 @@ from customer_support_agent.core.repositories import (
     OrdersRepository,
     RefundLedgerRepository,
 )
+from customer_support_agent.core.review import ReviewQueueService
 from customer_support_agent.core.schema import policy_text
 from customer_support_agent.core.tools import SupportTools
 
@@ -91,6 +94,7 @@ def build_agent(
     audit: AuditLedger | None = None,
     reporter: StageReporter | None = None,
     with_memory: bool = True,
+    observe: bool = True,
 ) -> CustomerSupportAgent:
     """Wire the refund agent from config, honouring any injected parts."""
     connection = pool or SqliteConnectionPool()
@@ -131,6 +135,31 @@ def build_agent(
         selector=ToolRetrievalSelector(registry, scoring),
         cascade=scoring,
         reporter=reporter,
+        # Observability is on by default: a production agent that has to
+        # be reconfigured before it can be diagnosed is diagnosed late.
+        tracer=LocalTracer(connection) if observe else None,
+        costs=CostAggregatorImpl() if observe else None,
+        slos=SLORegistry() if observe else None,
+        grounding=DetectionLadder(scoring) if observe else None,
+    )
+
+
+def build_review_service(
+    pool: SqliteConnectionPool | None = None, audit: AuditLedger | None = None
+) -> ReviewQueueService:
+    """The operator-side entry point for the human review queue.
+
+    Built separately from the agent on purpose: this is the human half
+    of the escalation path, and the agent must have no route to it.
+    """
+    connection = pool or SqliteConnectionPool()
+    orders = OrdersRepository(connection)
+    refunds = RefundLedgerRepository(connection)
+    return ReviewQueueService(
+        queue=HitlQueueRepository(connection),
+        orders=orders,
+        saga=RefundSaga(orders, refunds, idempotency=SqliteIdempotencyGuard(connection)),
+        audit=audit or create_audit_ledger(connection),
     )
 
 

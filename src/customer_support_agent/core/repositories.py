@@ -6,6 +6,7 @@ lives here, behind methods whose names are the domain's vocabulary
 rather than the table's.
 """
 
+from datetime import timedelta
 from typing import Any
 
 from agentic_commons.logging import get_logger, logged
@@ -62,6 +63,23 @@ class OrdersRepository:
                 f"SELECT {_ORDER_COLUMNS} FROM orders WHERE {clause}", tuple(filters.values())
             )
         ]
+
+    def get_for_customer(self, order_id: str, customer_id: str) -> Order | None:
+        """One order, but only if this customer owns it.
+
+        Scoping happens in the query, not after it. Fetching the row and
+        then comparing owners works until someone forgets the comparison;
+        a query that cannot return another customer's row has nothing to
+        forget. An empty customer id matches nothing, so an
+        unauthenticated request sees no orders rather than all of them.
+        """
+        if not customer_id:
+            return None
+        row = self._pool.query_one(
+            f"SELECT {_ORDER_COLUMNS} FROM orders WHERE order_id = ? AND user_id = ?",
+            (order_id, customer_id),
+        )
+        return Order.model_validate(row) if row else None
 
     def for_user(self, user_id: str) -> list[Order]:
         """Every order belonging to one customer."""
@@ -221,6 +239,22 @@ class RefundLedgerRepository:
             "UPDATE refunds SET reversed = 1 WHERE refund_id = ?", (refund_id,)
         )
         return result.affected > 0
+
+    def goodwill_total(self, user_id: str, window_days: int) -> float:
+        """Goodwill credited to one customer inside a rolling window.
+
+        Windowed rather than lifetime: a cap with no window eventually
+        blocks every long-standing customer, and one with no cap at all
+        is not a control.
+        """
+        cutoff = (utc_now() - timedelta(days=window_days)).isoformat()
+        row = self._pool.query_one(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM refunds "
+            "WHERE user_id = ? AND reversed = 0 AND reason LIKE 'goodwill%' "
+            "AND issued_at >= ?",
+            (user_id, cutoff),
+        )
+        return float(row["total"]) if row else 0.0
 
     def total_for_user(self, user_id: str) -> float:
         """Total refunded to one customer, excluding reversals."""

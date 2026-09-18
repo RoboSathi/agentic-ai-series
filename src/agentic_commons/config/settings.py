@@ -529,6 +529,14 @@ class FollowupSettings(BaseModel):
     reference_pattern: str
 
 
+class GoodwillSettings(BaseModel):
+    """Caps on goodwill credits — money, so it is bounded like a refund."""
+
+    max_per_credit_usd: float
+    max_per_customer_usd: float
+    window_days: int
+
+
 class CustomerSupportAgentSettings(YamlBackedSettings):
     """The running product's own wiring values (LLD §21)."""
 
@@ -539,6 +547,9 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     default_intent: str
     followup: FollowupSettings
     history_turns: int
+    goodwill: GoodwillSettings
+    deliberation_markers: list[str]
+    demo_customer_id: str
     default_actor: str
     default_role: str
     default_authority_rank: int

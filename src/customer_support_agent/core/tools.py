@@ -10,17 +10,26 @@ which is what makes "no execution path bypasses mediation" a property of
 the wiring rather than a rule everyone has to remember.
 """
 
+from uuid import uuid4
+
 from pydantic import BaseModel, Field
 
+from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger
 from agentic_commons.tools import ToolDefinition, ToolResult
+from customer_support_agent.core.identity import current_customer_id
 from customer_support_agent.core.refund_saga import RefundSaga
 from customer_support_agent.core.repositories import (
     HitlQueueRepository,
     OrdersRepository,
     RefundLedgerRepository,
 )
-from customer_support_agent.core.schema import HitlRequest
+from customer_support_agent.core.schema import HitlRequest, Order
+
+# Shown when an order is absent *or* belongs to someone else. Deliberately
+# identical: a different message for "exists but not yours" confirms the
+# order exists, which is the thing being protected.
+_NOT_FOUND = "No order found with id {order_id}"
 
 NAMESPACE = "support"
 
@@ -40,9 +49,12 @@ class RefundArgs(BaseModel):
 
 
 class GoodwillArgs(BaseModel):
-    """Arguments for a goodwill credit."""
+    """Arguments for a goodwill credit.
 
-    user_id: str = Field(description="The customer receiving the credit")
+    No recipient field. The credit goes to the authenticated customer,
+    and a model that could name the recipient could credit somebody else.
+    """
+
     amount: float = Field(description="Credit amount in USD")
     reason: str = Field(default="", description="Why the credit is being applied")
 
@@ -68,6 +80,7 @@ class SupportTools:
         self._hitl = hitl
         self._refunds = refunds
         self._saga = saga
+        self._goodwill = get_settings().customer_support_agent.goodwill
         self._logger = get_logger("customer_support_agent")
 
     def definitions(self) -> list[ToolDefinition]:
@@ -139,11 +152,19 @@ class SupportTools:
             ),
         ]
 
+    def _owned_order(self, order_id: str) -> Order | None:
+        """The order, if the authenticated customer owns it.
+
+        Every tool goes through here. A lookup that bypassed it would
+        read another customer's data, so there is exactly one path.
+        """
+        return self._orders.get_for_customer(order_id, current_customer_id())
+
     def get_order_status(self, order_id: str) -> ToolResult:
-        """Read one order."""
-        order = self._orders.get(order_id)
+        """Read one order belonging to the current customer."""
+        order = self._owned_order(order_id)
         if order is None:
-            return ToolResult(success=False, error=f"No order found with id {order_id}")
+            return ToolResult(success=False, error=_NOT_FOUND.format(order_id=order_id))
         # Deliberately no refund status. A customer asking where their
         # order is has not asked about a refund, and an agent that
         # volunteers one every time is the agent that eventually offers
@@ -156,9 +177,9 @@ class SupportTools:
 
     def get_refund_status(self, order_id: str) -> ToolResult:
         """Read one order's refund state."""
-        order = self._orders.get(order_id)
+        order = self._owned_order(order_id)
         if order is None:
-            return ToolResult(success=False, error=f"No order found with id {order_id}")
+            return ToolResult(success=False, error=_NOT_FOUND.format(order_id=order_id))
         pending = self._hitl.pending_for_order(order_id)
         detail = " (a review request is already pending)" if pending else ""
         return ToolResult(
@@ -174,9 +195,9 @@ class SupportTools:
         policy the model is asked to remember is a policy that fails on
         the turn the model is distracted.
         """
-        order = self._orders.get(order_id)
+        order = self._owned_order(order_id)
         if order is None:
-            return ToolResult(success=False, error=f"No order found with id {order_id}")
+            return ToolResult(success=False, error=_NOT_FOUND.format(order_id=order_id))
         if not order.is_refund_eligible or order.already_refunded:
             return ToolResult(success=False, error=order.refund_ineligibility_reason)
         result = await self._saga.issue(order, amount, reason)
@@ -197,9 +218,9 @@ class SupportTools:
 
     def queue_for_approval(self, order_id: str, amount: float) -> ToolResult:
         """Enqueue a refund for a human to decide."""
-        order = self._orders.get(order_id)
+        order = self._owned_order(order_id)
         if order is None:
-            return ToolResult(success=False, error=f"No order found with id {order_id}")
+            return ToolResult(success=False, error=_NOT_FOUND.format(order_id=order_id))
         if not order.is_refund_eligible or order.already_refunded:
             return ToolResult(success=False, error=order.refund_ineligibility_reason)
         existing = self._hitl.pending_for_order(order_id)
@@ -222,13 +243,53 @@ class SupportTools:
             data={"queued": True, "request_id": self._hitl.last_id()},
         )
 
-    def apply_goodwill_credit(self, user_id: str, amount: float, reason: str = "") -> ToolResult:
-        """Apply a goodwill credit, recorded in the refund ledger."""
+    def apply_goodwill_credit(self, amount: float, reason: str = "") -> ToolResult:
+        """Apply a goodwill credit to the current customer, within policy.
+
+        The customer is the authenticated one, never an argument: a
+        `user_id` parameter is a field the model fills in, and a model
+        that can name the recipient can credit somebody else.
+
+        Both caps are enforced here rather than described in the prompt.
+        A goodwill credit is money leaving the business, and an unbounded
+        payout with a friendly name is still an unbounded payout.
+        """
+        customer_id = current_customer_id()
+        if not customer_id:
+            return ToolResult(success=False, error="No authenticated customer for this request")
+        if amount <= 0:
+            return ToolResult(success=False, error="A goodwill credit must be a positive amount")
+        if amount > self._goodwill.max_per_credit_usd:
+            return ToolResult(
+                success=False,
+                error=(
+                    f"A single goodwill credit cannot exceed "
+                    f"${self._goodwill.max_per_credit_usd:,.2f}"
+                ),
+            )
+        already = self._refunds.goodwill_total(customer_id, self._goodwill.window_days)
+        if already + amount > self._goodwill.max_per_customer_usd:
+            return ToolResult(
+                success=False,
+                error=(
+                    f"That would take goodwill credits for this customer to "
+                    f"${already + amount:,.2f} in {self._goodwill.window_days} days, over the "
+                    f"${self._goodwill.max_per_customer_usd:,.2f} limit — escalate instead"
+                ),
+            )
+        # A unique id per credit. A second-resolution timestamp collides
+        # for credits issued in the same second, and INSERT OR REPLACE
+        # then silently overwrites one with the other — which would let
+        # the per-customer cap be walked straight past.
         self._refunds.record(
-            f"goodwill:{user_id}:{amount:.2f}", "", user_id, amount, reason or "goodwill"
+            f"goodwill:{customer_id}:{uuid4().hex[:12]}",
+            "",
+            customer_id,
+            amount,
+            f"goodwill: {reason}" if reason else "goodwill",
         )
         return ToolResult(
             success=True,
-            output=f"Applied a ${amount:.2f} goodwill credit to {user_id}",
-            data={"user_id": user_id, "amount": amount},
+            output=f"Applied a ${amount:.2f} goodwill credit to your account",
+            data={"customer_id": customer_id, "amount": amount},
         )

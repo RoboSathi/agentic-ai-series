@@ -107,7 +107,14 @@ class TestTools:
     async def test_an_already_refunded_order_cannot_be_refunded_again(
         self, tools: SupportTools
     ) -> None:
-        """Enforced in code, not in the prompt."""
+        """Enforced in code, not in the prompt.
+
+        Order 10003 belongs to u2, so the test authenticates as u2 — the
+        default fixture binds u1, and to u1 that order does not exist.
+        """
+        from customer_support_agent.core.identity import Customer, set_current_customer
+
+        set_current_customer(Customer(customer_id="u2"))
         result = await tools.process_refund("10003", 45.0)
         assert result.success is False and "already been refunded" in (result.error or "")
 
@@ -131,8 +138,26 @@ class TestTools:
     def test_goodwill_credit_is_recorded(
         self, tools: SupportTools, refunds: RefundLedgerRepository
     ) -> None:
-        assert tools.apply_goodwill_credit("u1", 10.0, "sorry").success
+        """The recipient is the authenticated customer, not an argument."""
+        assert tools.apply_goodwill_credit(10.0, "sorry").success
         assert refunds.total_for_user("u1") == 10.0
+
+    def test_a_goodwill_credit_over_the_per_credit_cap_is_refused(
+        self, tools: SupportTools
+    ) -> None:
+        """Money leaving the business is bounded, like a refund."""
+        result = tools.apply_goodwill_credit(500.0, "sorry")
+        assert result.success is False and "cannot exceed" in (result.error or "")
+
+    def test_goodwill_credits_are_capped_per_customer(self, tools: SupportTools) -> None:
+        """Otherwise the per-credit cap is bypassed by asking repeatedly."""
+        for _ in range(4):
+            tools.apply_goodwill_credit(25.0, "sorry")
+        result = tools.apply_goodwill_credit(25.0, "sorry")
+        assert result.success is False and "escalate instead" in (result.error or "")
+
+    def test_a_negative_goodwill_credit_is_refused(self, tools: SupportTools) -> None:
+        assert tools.apply_goodwill_credit(-50.0).success is False
 
     def test_every_tool_declares_its_governance_properties(self, tools: SupportTools) -> None:
         """A tool cannot be added without someone stating what it can break."""

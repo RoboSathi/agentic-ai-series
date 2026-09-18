@@ -105,6 +105,7 @@ class AgentState(BaseModel):
     query: str = ""
     session_id: str = ""
     actor: str = ""
+    customer_id: str = ""
     messages: Annotated[list[Message], _merge_messages] = Field(default_factory=list)
     context: str = ""
     tool_rounds: int = 0

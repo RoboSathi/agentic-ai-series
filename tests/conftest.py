@@ -29,6 +29,7 @@ from agentic_commons.llm.types import (
     TokenUsage,
 )
 from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
+from customer_support_agent.core.identity import Customer, set_current_customer
 from customer_support_agent.core.schema import Order, User, ensure_schema
 
 
@@ -124,6 +125,20 @@ def seeded_pool(pool: SqliteConnectionPool) -> SqliteConnectionPool:
         )
     )
     return pool
+
+
+@pytest.fixture(autouse=True)
+def authenticated_customer() -> Iterator[Customer]:
+    """Bind a customer for every test, and clear it afterwards.
+
+    Order lookups are scoped to the authenticated customer, so a test
+    that binds nobody sees no orders. `u1` owns the seeded orders;
+    a test about another customer rebinds explicitly.
+    """
+    customer = Customer(customer_id="u1", email="ada@example.com")
+    set_current_customer(customer)
+    yield customer
+    set_current_customer(None)
 
 
 @pytest.fixture

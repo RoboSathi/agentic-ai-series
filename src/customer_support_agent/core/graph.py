@@ -21,17 +21,29 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from agentic_commons.config import get_settings
-from agentic_commons.context import FiveStagePipeline, StrategySelector, Task
+from agentic_commons.context import Chunk, FiveStagePipeline, StrategySelector, Task
 from agentic_commons.evals import NollmScoringCascadeImpl
 from agentic_commons.gatekeeper import AuthorityContext, GatekeeperImpl
+from agentic_commons.hallucination_protection import DetectionLadder
 from agentic_commons.llm.client import LLMClient
-from agentic_commons.llm.types import CompletionRequest, Message
+from agentic_commons.llm.types import CompletionRequest, CompletionResult, Message
 from agentic_commons.logging import get_logger
 from agentic_commons.memory import MemoryFacade
-from agentic_commons.observability import StageReporter
+from agentic_commons.observability import (
+    CostAggregatorImpl,
+    SLORegistry,
+    StageReporter,
+    Tracer,
+)
+from agentic_commons.resilience import ResilientCaller
 from agentic_commons.security import SecuritySuite
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from customer_support_agent.control_loop import DuplicateActionDetector
+from customer_support_agent.core.identity import (
+    Customer,
+    current_customer,
+    set_current_customer,
+)
 from customer_support_agent.core.intent import Intent, IntentClassifier
 from customer_support_agent.core.schema import AgentState, policy_text
 from customer_support_agent.core.tools import SupportTools
@@ -62,6 +74,11 @@ class CustomerSupportAgent:
         selector: ToolRetrievalSelector | None = None,
         cascade: NollmScoringCascadeImpl | None = None,
         reporter: StageReporter | None = None,
+        resilient: ResilientCaller | None = None,
+        tracer: Tracer | None = None,
+        costs: CostAggregatorImpl | None = None,
+        slos: SLORegistry | None = None,
+        grounding: DetectionLadder | None = None,
     ) -> None:
         settings = get_settings().customer_support_agent
         self._llm = llm
@@ -74,6 +91,15 @@ class CustomerSupportAgent:
         self._selector = selector
         self._cascade = cascade
         self._reporter = reporter
+        # The model is a remote dependency like any other: bounded by a
+        # timeout, retried under an idempotency key, and behind a breaker
+        # so a provider outage fails fast instead of queueing.
+        self._resilient = resilient or ResilientCaller("llm")
+        self._tracer = tracer
+        self._costs = costs
+        self._slos = slos
+        self._grounding = grounding
+        self._deliberation_markers = [m.casefold() for m in settings.deliberation_markers]
         self._max_rounds = settings.max_tool_iterations
         self._actor = settings.default_actor
         self._role = settings.default_role
@@ -86,16 +112,34 @@ class CustomerSupportAgent:
         self._logger = get_logger("customer_support_agent")
         self._graph = self._build()
 
-    async def handle(self, query: str, session_id: str = "") -> AgentState:
-        """Run one customer query end to end, in its conversation.
+    async def handle(
+        self, query: str, session_id: str = "", customer: Customer | None = None
+    ) -> AgentState:
+        """Run one customer query end to end, on that customer's behalf.
 
         Prior turns are replayed so a follow-up has something to refer
         to. Without them "what about 10010" is unanswerable: the subject
         lives in the previous turn, not in the words the customer just
         typed.
+
+        The customer is bound before any tool can run, and comes from
+        authentication rather than from anything the model says. Passing
+        one here binds it; passing none leaves whatever the caller already
+        bound, so a web handler that authenticates upstream does not have
+        to thread it through. With nothing bound either way, the tools
+        scope to nothing — an unauthenticated request sees no orders
+        rather than every order.
         """
+        if customer is not None:
+            set_current_customer(customer)
+        customer = customer or current_customer()
         self._duplicates = DuplicateActionDetector()
-        initial = AgentState(query=query, session_id=session_id, actor=self._actor)
+        initial = AgentState(
+            query=query,
+            session_id=session_id,
+            actor=self._actor,
+            customer_id=customer.customer_id if customer else "",
+        )
         final = await self._graph.ainvoke(initial)
         state = AgentState.model_validate(final)
         self._remember_turn(session_id, query, state.response)
@@ -178,12 +222,11 @@ class CustomerSupportAgent:
         """One model turn, with the tools this turn is allowed to use."""
         self._report("llm_call")
         tools = await self._offered_tools(state)
-        result = await self._llm.complete(
-            CompletionRequest(
-                messages=self._prompt_messages(state),
-                tools=self._registry.to_openai_tools([tool.qualified_name for tool in tools]),
-            )
+        request = CompletionRequest(
+            messages=self._prompt_messages(state),
+            tools=self._registry.to_openai_tools([tool.qualified_name for tool in tools]),
         )
+        result = await self._call_model(request, state, f"{state.session_id}:{state.tool_rounds}")
         message = Message(role="assistant", content=result.content, tool_calls=result.tool_calls)
         self._done("llm_response_received", tokens=result.usage.total_tokens)
         return {
@@ -191,6 +234,50 @@ class CustomerSupportAgent:
             "tool_rounds": state.tool_rounds + 1,
             "metadata": {**state.metadata, "last_usage": result.usage.model_dump()},
         }
+
+    async def _call_model(
+        self, request: CompletionRequest, state: AgentState, key: str
+    ) -> CompletionResult:
+        """One model call, protected, traced and costed.
+
+        The retry key includes the round so two genuinely different turns
+        are not mistaken for a repeat of one — an idempotency key that is
+        too coarse suppresses work that should happen.
+        """
+
+        async def call() -> CompletionResult:
+            return await self._llm.complete(request)
+
+        try:
+            result = await self._resilient.call(call, idempotency_key=key)
+        except Exception:
+            self._record_slo("tool_failure_rate", 1.0)
+            self._done_failed("llm_call")
+            raise
+        self._account_for(result, state)
+        return result
+
+    def _account_for(self, result: CompletionResult, state: AgentState) -> None:
+        """Record what the call cost and what it did."""
+        if self._costs is not None:
+            self._costs.record(state.session_id or "anonymous", "output_tokens", result.cost_usd)
+        if self._tracer is not None:
+            # start/end rather than the context manager: those are the
+            # Protocol's methods, so a LangSmith-backed tracer works here
+            # without the graph knowing which one it was given.
+            span = self._tracer.start_span(
+                "llm_call",
+                actor=state.actor,
+                model_version=result.model,
+                cost_usd=result.cost_usd,
+            )
+            self._tracer.end_span(span, result=result.finish_reason or "")
+        self._record_slo("tool_failure_rate", 0.0)
+
+    def _record_slo(self, metric: str, value: float) -> None:
+        """Feed one observation to the SLO registry, when one is wired."""
+        if self._slos is not None:
+            self._slos.record(metric, value)
 
     async def act(self, state: AgentState) -> dict[str, Any]:
         """Execute the requested tool calls, each through the Gatekeeper."""
@@ -227,9 +314,19 @@ class CustomerSupportAgent:
         """
         self._report("finalize")
         last = state.messages[-1] if state.messages else Message()
-        if last.role == "assistant" and is_customer_ready(last.content) and not last.tool_calls:
+        if (
+            last.role == "assistant"
+            and not last.tool_calls
+            and is_customer_ready(last.content)
+            and not self._is_deliberation(last.content)
+        ):
+            # Grounding runs on this path too. It used to be checked only
+            # when a second call was needed, which is the *rarer* path —
+            # so the reply that usually reached the customer was the one
+            # never checked.
+            grounded = await self._check_grounding(last.content, state)
             self._done("finalize")
-            return {"response": last.content}
+            return {"response": last.content, "decisions": [*state.decisions, *grounded]}
         result = await self._llm.complete(
             CompletionRequest(
                 messages=[
@@ -239,11 +336,47 @@ class CustomerSupportAgent:
             )
         )
         reply = result.content if is_customer_ready(result.content) else _FALLBACK_REPLY
+        grounding = await self._check_grounding(reply, state)
         self._done("finalize", tokens=result.usage.total_tokens)
         return {
             "response": reply,
             "messages": [Message(role="assistant", content=reply)],
+            "decisions": [*state.decisions, *grounding],
         }
+
+    def _is_deliberation(self, content: str) -> bool:
+        """Whether this text is the model thinking rather than replying.
+
+        A reply addresses the customer; deliberation addresses the model
+        itself, or refers to the customer in the third person. Shipping
+        the latter reads as "We need to respond as per the conversation",
+        which is the model's notes, not an answer.
+        """
+        lowered = content.casefold()
+        return any(marker in lowered for marker in self._deliberation_markers)
+
+    async def _check_grounding(self, reply: str, state: AgentState) -> list[str]:
+        """Check the reply against what the tools actually returned.
+
+        Advisory, not blocking. An unsupported claim is recorded and fed
+        to the hallucination SLO; it does not withhold the answer,
+        because a detector that can be wrong must not be the thing that
+        decides whether a customer hears anything at all.
+        """
+        if self._grounding is None or not state.tool_results:
+            return []
+        self._report("hallucination_check")
+        evidence = [Chunk(content=text, kind="tool_result") for text in state.tool_results]
+        assessment = await self._grounding.assess(reply, evidence)
+        self._record_slo("hallucination_rate", assessment.hallucination_rate)
+        self._done("hallucination_check", detail=f"{assessment.hallucination_rate:.0%} unsupported")
+        if assessment.clean:
+            return []
+        self._logger.warning(
+            "Reply contains claims the tool results do not support",
+            unsupported=assessment.unsupported,
+        )
+        return [f"grounding: {len(assessment.unsupported)} unsupported claim(s)"]
 
     # ---- wiring ------------------------------------------------------
 
@@ -380,6 +513,11 @@ class CustomerSupportAgent:
         """Emit a stage-started event for the TUI, when one is listening."""
         if self._reporter is not None:
             self._reporter.started(stage, detail=detail)
+
+    def _done_failed(self, stage: str, detail: str | None = None) -> None:
+        """Emit a stage-failed event so the feed shows what broke."""
+        if self._reporter is not None:
+            self._reporter.failed(stage, detail=detail)
 
     def _done(self, stage: str, tokens: int | None = None, detail: str | None = None) -> None:
         """Emit a stage-completed event, so the feed can close the line out."""

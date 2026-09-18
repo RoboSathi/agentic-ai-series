@@ -502,5 +502,33 @@ customer_support_agent:
   default_actor: support-agent-1
   default_role: support_agent
   default_authority_rank: 4     # user_task-granted authority
+  # Goodwill credits are money, so they get the same treatment as refunds:
+  # a per-credit cap, a rolling per-customer cap, and a window. Without
+  # them the tool is an unbounded payout with a friendlier name.
+  goodwill:
+    max_per_credit_usd: 25
+    max_per_customer_usd: 100
+    window_days: 30
+  # Phrases that mark model deliberation rather than a reply to the
+  # customer. A model that reasons out loud addresses itself or "the
+  # user"; a reply addresses the person reading it. Matching any of these
+  # sends the turn back for a proper reply instead of shipping the
+  # thinking.
+  deliberation_markers:
+    - "we need to"
+    - "we should"
+    - "let me"
+    - "i should"
+    - "i need to"
+    - "the user"
+    - "the customer wants"
+    - "according to policy"
+    - "first, "
+    - "next, i"
+    - "so the answer"
+  # Identity for the local demo and the TUI. A real deployment takes the
+  # customer from authentication; this is the stand-in so the demo is not
+  # unauthenticated (which would correctly see no orders at all).
+  demo_customer_id: user-0001
   checkpoint_path: src/customer_support_agent/dummy_data/checkpoints.db
   policy_path: src/customer_support_agent/prompts/customer_policy.md
