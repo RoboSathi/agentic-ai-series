@@ -38,7 +38,7 @@ llm:
       # (nvidia/nemotron-3.5-lightning-30b-a3b is invokable but narrates
       # chain-of-thought instead of answering.) It does NOT honor
       # guided_json/response_format — see guardrails.constrained_backend.
-      model: meta/llama-3.2-11b-vision-instruct
+      model: meta/llama-3.2-11b-vision-instruct  # nvidia/nemotron-3.5-lightning-30b-a3b
       timeout_seconds: 60
       input_cost_per_1k_tokens: 0.0002
       output_cost_per_1k_tokens: 0.0006
@@ -335,7 +335,16 @@ evals:
 tools:
   enabled: true
   selection_k: 5
-  selection_min_score: 0.05
+  # Relevance floor for offering a tool at all. Below this, the turn is
+  # offered NO tools rather than the full set — a conversational message
+  # ("who are you?") must not be handed a money-moving tool just because
+  # it scraped a weak similarity score.
+  #
+  # The scale is specific to the configured embedding backend: measured
+  # against the current one, an unrelated query scores under 0.07 and a
+  # genuine order query scores over 0.24. Re-measure this if the
+  # embedding model changes.
+  selection_min_score: 0.15
 
 tui:
   refresh_interval_ms: 100

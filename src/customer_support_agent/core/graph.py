@@ -31,6 +31,7 @@ from agentic_commons.memory import MemoryFacade
 from agentic_commons.observability import StageReporter
 from agentic_commons.security import SecuritySuite
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
+from customer_support_agent.control_loop import DuplicateActionDetector
 from customer_support_agent.core.schema import AgentState, policy_text
 from customer_support_agent.core.tools import SupportTools
 from customer_support_agent.prompts.system_prompt import build_system_prompt
@@ -67,11 +68,13 @@ class CustomerSupportAgent:
         self._actor = settings.default_actor
         self._role = settings.default_role
         self._strategies = StrategySelector()
+        self._duplicates = DuplicateActionDetector()
         self._logger = get_logger("customer_support_agent")
         self._graph = self._build()
 
     async def handle(self, query: str, session_id: str = "") -> AgentState:
         """Run one customer query end to end."""
+        self._duplicates = DuplicateActionDetector()
         initial = AgentState(query=query, session_id=session_id, actor=self._actor)
         final = await self._graph.ainvoke(initial)
         return AgentState.model_validate(final)
@@ -144,9 +147,10 @@ class CustomerSupportAgent:
         outputs: list[Message] = []
         results: list[str] = []
         decisions: list[str] = []
+        offered = {tool.qualified_name for tool in await self._offered_tools(state)}
         for requested in last.tool_calls or []:
             self._report("gatekeeper_evaluation", detail=requested.name)
-            text, decision = await self._invoke(requested.name, requested.arguments, state)
+            text, decision = await self._invoke(requested.name, requested.arguments, state, offered)
             self._done("tool_execution", detail=requested.name)
             results.append(text)
             decisions.append(decision)
@@ -168,8 +172,9 @@ class CustomerSupportAgent:
         control, not an excuse to hand the customer an empty reply.
         """
         self._report("finalize")
-        if state.messages and state.messages[-1].content and not state.messages[-1].tool_calls:
-            return {"response": state.messages[-1].content}
+        last = state.messages[-1] if state.messages else Message()
+        if last.role == "assistant" and last.content and not last.tool_calls:
+            return {"response": last.content}
         result = await self._llm.complete(CompletionRequest(messages=self._prompt_messages(state)))
         return {
             "response": result.content,
@@ -208,13 +213,25 @@ class CustomerSupportAgent:
         """Loop back to reason unless the round cap is spent."""
         return "reason" if state.tool_rounds < self._max_rounds else "finalize"
 
-    async def _invoke(self, name: str, arguments: str, state: AgentState) -> tuple[str, str]:
+    async def _invoke(
+        self, name: str, arguments: str, state: AgentState, offered: set[str]
+    ) -> tuple[str, str]:
         """Validate, authorize and run one tool call.
 
         Returns the text the model sees and the decision line the operator
         sees — the model is told *what* happened, the log records *why*.
         """
         call = self._registry.build_call(name, arguments)
+        if call is not None and call.action not in offered:
+            # The offered set is an authority decision made before the
+            # model saw the turn. A model that names a tool it was never
+            # given must not reach it — otherwise narrowing the toolset
+            # is presentation, not control.
+            self._logger.warning("Model called a tool it was not offered", tool=call.action)
+            return (
+                f"'{call.action}' is not available for this request.",
+                f"{call.action}: refused (not offered)",
+            )
         if call is None:
             return (
                 f"Tool '{name}' is unavailable or its arguments were invalid.",
@@ -227,6 +244,9 @@ class CustomerSupportAgent:
             granted_by="user_task",
             session_id=state.session_id,
         )
+        repeated = self._duplicates.seen_before(call)
+        if repeated is not None:
+            return self._duplicates.reject(call), f"{call.action}: suppressed (repeat)"
         decision = await self._gatekeeper.evaluate(call, authority)
         if not decision.allowed:
             return (
@@ -236,6 +256,7 @@ class CustomerSupportAgent:
         result = await self._registry.invoke(call)
         if result.success:
             self._gatekeeper.commit(call, authority)
+            self._duplicates.record(call, result.output)
         return (
             result.output if result.success else f"Tool failed: {result.error}",
             f"{call.action}: {'ok' if result.success else 'failed'}",
@@ -258,7 +279,10 @@ class CustomerSupportAgent:
         if self._selector is None:
             return tools
         selected = await self._selector.select(state.query)
-        return [tool for tool in selected if tool in tools] or tools
+        # No fallback to the full toolset. If nothing clears the relevance
+        # bar, the correct offer is *nothing* — "who are you?" must not be
+        # handed a refund tool just because retrieval came back empty.
+        return [tool for tool in selected if tool in tools]
 
     def _prompt_messages(self, state: AgentState) -> list[Message]:
         """System prompt, assembled context, the query, and the turns so far."""
