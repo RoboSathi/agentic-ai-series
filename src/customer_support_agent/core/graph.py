@@ -144,10 +144,16 @@ class CustomerSupportAgent:
             # authenticated upstream — an SSO session, a signed token, a
             # test fixture. The conversation does not re-ask for a code
             # it has already been given the answer to.
-            set_current_customer(customer)
             if session_id:
                 self._sessions[session_id] = customer
-        customer = customer or current_customer()
+        # Bind identity *before* the graph runs, not inside a node.
+        # Context variables copy into a task when it starts and do not
+        # propagate back out, and LangGraph runs each node in its own
+        # task — so a customer bound inside `authenticate` would be
+        # invisible to `act`, and every lookup would silently scope to
+        # nobody.
+        customer = customer or self._sessions.get(session_id) or current_customer()
+        set_current_customer(customer)
         self._duplicates = DuplicateActionDetector()
         initial = AgentState(
             query=query,
@@ -301,6 +307,7 @@ class CustomerSupportAgent:
         """One model turn, with the tools this turn is allowed to use."""
         self._report("llm_call")
         tools = await self._offered_tools(state)
+        offered = sorted(tool.qualified_name for tool in tools)
         request = CompletionRequest(
             messages=self._prompt_messages(state),
             tools=self._registry.to_openai_tools([tool.qualified_name for tool in tools]),
@@ -311,7 +318,15 @@ class CustomerSupportAgent:
         return {
             "messages": [message],
             "tool_rounds": state.tool_rounds + 1,
-            "metadata": {**state.metadata, "last_usage": result.usage.model_dump()},
+            # The offered set is carried, not recomputed. Selection can
+            # involve a network-backed ranker, so recomputing it in `act`
+            # could produce a different set and refuse a tool the model
+            # was genuinely handed. An authority decision is made once.
+            "metadata": {
+                **state.metadata,
+                "last_usage": result.usage.model_dump(),
+                "offered_actions": offered,
+            },
         }
 
     async def _call_model(
@@ -365,7 +380,7 @@ class CustomerSupportAgent:
         outputs: list[Message] = []
         results: list[str] = []
         decisions: list[str] = []
-        offered = {tool.qualified_name for tool in await self._offered_tools(state)}
+        offered = set(state.metadata.get("offered_actions", []))
         for requested in last.tool_calls or []:
             self._report("gatekeeper_evaluation", detail=requested.name)
             text, decision, stage = await self._invoke(

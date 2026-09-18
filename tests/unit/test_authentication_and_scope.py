@@ -186,3 +186,53 @@ class TestTheConversationFlow:
         from customer_support_agent.core.tools import SupportTools  # noqa: F401
 
         assert agent._sessions["fresh"].customer_id == 1
+
+
+class TestIdentitySurvivesTheGraph:
+    """Identity must reach the node that uses it.
+
+    LangGraph runs each node in its own task. Context variables copy
+    *into* a task when it starts and do not propagate back out, so a
+    customer bound inside the `authenticate` node was invisible to `act`
+    — every lookup silently scoped to nobody, and the tool failed with
+    "no order found" on the customer's own order.
+    """
+
+    async def test_a_lookup_after_verifying_in_conversation_succeeds(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        from customer_support_agent.core.identity import set_current_customer
+        from tests.conftest import tool_call
+
+        llm = ScriptedLLM(
+            [
+                {"tool_calls": tool_call("support__get_order_status", order_id=10001)},
+                {"content": "Order 10001 was delivered."},
+            ]
+        )
+        agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
+        set_current_customer(None)
+        await agent.handle(f"my code is {CUSTOMER_CODE}", session_id="fresh")
+        state = await agent.handle("status of order 10001", session_id="fresh")
+        assert any("get_order_status: ok" in decision for decision in state.decisions)
+
+    async def test_the_offered_set_is_carried_not_recomputed(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        """Selection can use a network ranker; recomputing can differ.
+
+        A tool the model was genuinely handed must not then be refused
+        because a second ranking returned something else.
+        """
+        from tests.conftest import tool_call
+
+        llm = ScriptedLLM(
+            [
+                {"tool_calls": tool_call("support__get_order_status", order_id=10001)},
+                {"content": "Order 10001 was delivered."},
+            ]
+        )
+        agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
+        state = await agent.handle("status of order 10001", session_id="s1")
+        assert state.metadata.get("offered_actions")
+        assert not any("not offered" in decision for decision in state.decisions)
