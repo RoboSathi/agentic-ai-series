@@ -1,55 +1,128 @@
-"""Tool registry: register callables and expose them to an LLM as tool schemas."""
+"""Namespaced tool registry and invocation (LLD §19).
 
-from dataclasses import dataclass
-from typing import Any, Callable
+The registry owns three things a tool-calling loop otherwise scatters:
+what tools exist, what they are allowed to break, and how a wire-level
+model request becomes a validated call. Argument validation happening
+*here* is what lets the Gatekeeper downstream reason about real values
+rather than a JSON string it has to trust.
+"""
 
-from agentic_commons.logging import log_call
-from agentic_commons.tools.types import ToolResult
+import inspect
+import json
+from typing import Any, Protocol, runtime_checkable
 
+from pydantic import ValidationError
 
-@dataclass
-class Tool:
-    """A single LLM-callable tool: its schema plus the real implementation."""
-
-    name: str
-    description: str
-    parameters: dict[str, Any]
-    func: Callable[..., ToolResult]
-
-    def to_openai_schema(self) -> dict[str, Any]:
-        """Render this tool as an OpenAI-compatible `tools=[...]` entry."""
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": self.parameters,
-            },
-        }
+from agentic_commons.logging import get_logger, logged
+from agentic_commons.tools.types import (
+    ToolCall,
+    ToolDefinition,
+    ToolResult,
+)
 
 
-class ToolRegistry:
-    """Registry of tools an LLM can call, and the mechanism to invoke them."""
+@runtime_checkable
+class ToolRegistry(Protocol):
+    """Registration and lookup over the available tools."""
+
+    def register(self, tool: ToolDefinition) -> None: ...
+
+    def get(self, name: str) -> ToolDefinition | None: ...
+
+    def all_tools(self) -> list[ToolDefinition]: ...
+
+
+class NamespacedToolRegistry:
+    """Tools keyed by `namespace.name`, with namespace-scoped exposure.
+
+    Namespacing is not cosmetic. E22 measures the accuracy collapse that
+    comes from exposing fifty flat tool names at once; scoping exposure
+    to a namespace is half of the recovery, retrieval is the other half.
+    """
 
     def __init__(self) -> None:
-        self._tools: dict[str, Tool] = {}
+        self._tools: dict[str, ToolDefinition] = {}
+        self._logger = get_logger("tools")
 
-    @log_call("tools")
-    def register(self, tool: Tool) -> None:
-        """Register a tool, making it callable by name and visible to the LLM."""
-        self._tools[tool.name] = tool
+    @logged("tools")
+    def register(self, tool: ToolDefinition) -> None:
+        """Register a tool under its qualified name, replacing any namesake."""
+        self._tools[tool.qualified_name] = tool
 
-    @log_call("tools")
-    def invoke(self, name: str, args: dict[str, Any]) -> ToolResult:
-        """Call a registered tool by name, wrapping any exception into a failed result."""
-        tool = self._tools.get(name)
+    def register_all(self, tools: list[ToolDefinition]) -> None:
+        """Register a batch — how a subsystem contributes its whole toolset."""
+        for tool in tools:
+            self.register(tool)
+
+    def get(self, name: str) -> ToolDefinition | None:
+        """Look up by qualified name, falling back to a unique bare name.
+
+        Models routinely drop the namespace they were shown. Resolving a
+        bare name works only while it is unambiguous; once two namespaces
+        share it, the lookup fails rather than guessing which was meant.
+        """
+        if name in self._tools:
+            return self._tools[name]
+        matches = [tool for tool in self._tools.values() if tool.name == name]
+        return matches[0] if len(matches) == 1 else None
+
+    def all_tools(self) -> list[ToolDefinition]:
+        """Every registered tool."""
+        return list(self._tools.values())
+
+    def in_namespace(self, namespace: str) -> list[ToolDefinition]:
+        """Tools belonging to one namespace."""
+        return [tool for tool in self._tools.values() if tool.namespace == namespace]
+
+    def namespaces(self) -> list[str]:
+        """Every registered namespace."""
+        return sorted({tool.namespace for tool in self._tools.values()})
+
+    def to_openai_tools(self, names: list[str] | None = None) -> list[dict[str, Any]]:
+        """Schemas for the named tools, or for all of them when unfiltered."""
+        selected = (
+            [tool for name in names if (tool := self.get(name)) is not None]
+            if names is not None
+            else self.all_tools()
+        )
+        return [tool.to_openai_schema() for tool in selected]
+
+    def build_call(self, name: str, raw_arguments: str | dict[str, Any]) -> ToolCall | None:
+        """Turn a wire-level request into a validated, governed `ToolCall`.
+
+        Returns None when the tool is unknown or its arguments do not
+        validate — both are the model's error to see and recover from,
+        not the harness's to crash on.
+        """
+        tool = self.get(name)
         if tool is None:
-            return ToolResult(success=False, output=f"Unknown tool: {name}")
+            self._logger.warning("Model asked for an unregistered tool", tool=name)
+            return None
         try:
-            return tool.func(**args)
-        except Exception as exc:
-            return ToolResult(success=False, output=f"Tool '{name}' failed: {exc}")
+            params = (
+                json.loads(raw_arguments) if isinstance(raw_arguments, str) else dict(raw_arguments)
+            )
+            validated = tool.args_schema.model_validate(params or {})
+        except (ValidationError, ValueError) as exc:
+            self._logger.warning("Tool arguments failed validation", tool=name, error=str(exc))
+            return None
+        return ToolCall(
+            action=tool.qualified_name,
+            params=validated.model_dump(),
+            surface=tool.surface,
+            blast_radius=tool.blast_radius,
+            reversible=tool.reversible,
+        )
 
-    def to_openai_tools(self) -> list[dict[str, Any]]:
-        """Render every registered tool as an OpenAI-compatible tools=[...] list."""
-        return [tool.to_openai_schema() for tool in self._tools.values()]
+    @logged("tools")
+    async def invoke(self, call: ToolCall) -> ToolResult:
+        """Execute a validated call, wrapping any escape into a failed result."""
+        tool = self.get(call.action)
+        if tool is None:
+            return ToolResult(success=False, error=f"Unknown tool: {call.action}")
+        try:
+            outcome = tool.handler(**call.params)
+            return await outcome if inspect.isawaitable(outcome) else outcome
+        except Exception as exc:
+            self._logger.exception("Tool raised", tool=call.action)
+            return ToolResult(success=False, error=f"Tool '{call.action}' failed: {exc}")

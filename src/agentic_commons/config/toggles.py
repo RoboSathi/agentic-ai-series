@@ -1,25 +1,81 @@
-"""Feature toggles for agentic commons subsystems."""
+"""Live feature toggles (LLD §1, PRD G6).
 
-from typing import Any
+Every governance feature and sub-feature can be switched on or off at
+runtime, with no restart, so its marginal effect is measurable rather than
+merely asserted. Reads are live — never cached — because the TUI flips
+these mid-run.
 
-from agentic_commons.config.settings import get_settings
+Sub-features are parent-gated: `security.pii` is only enabled if `security`
+is too. A section with no `enabled` field (the Gatekeeper) is always on by
+construction — PRD G1 requires that no execution path can bypass it.
+"""
+
+from typing import Any, Protocol, runtime_checkable
+
+from agentic_commons.config.settings import AppConfig, get_settings
 
 
-def is_enabled(subsystem: str) -> bool:
-    """Check if a subsystem is enabled via config.
+@runtime_checkable
+class FeatureToggle(Protocol):
+    """Reads and writes governance feature flags live."""
 
-    Accepts either a bare subsystem path ("security.pii") or one ending in
-    ".enabled" ("security.pii.enabled") — both resolve to the same toggle.
-    A bare path resolves to a settings object, not a bool, so it falls
-    back to that object's own `enabled` field rather than `bool(object)`
-    (which is always True for a pydantic model, regardless of its fields).
-    """
-    settings = get_settings()
-    node: Any = settings
-    for part in subsystem.split("."):
-        node = getattr(node, part, None)
-        if node is None:
-            return False
-    if isinstance(node, bool):
-        return node
-    return bool(getattr(node, "enabled", False))
+    def is_enabled(self, feature: str, sub_feature: str | None = None) -> bool: ...
+
+    def set(self, feature: str, sub_feature: str | None, value: bool) -> None: ...
+
+
+def _path_parts(feature: str, sub_feature: str | None) -> list[str]:
+    parts = feature.split(".")
+    if sub_feature:
+        parts.extend(sub_feature.split("."))
+    return parts
+
+
+class ConfigFeatureToggle:
+    """FeatureToggle backed by the live config singleton."""
+
+    def __init__(self, config: AppConfig | None = None) -> None:
+        self._config = config
+
+    @property
+    def _root(self) -> AppConfig:
+        return self._config or get_settings()
+
+    def is_enabled(self, feature: str, sub_feature: str | None = None) -> bool:
+        """True only if this node and every ancestor section is enabled."""
+        node: Any = self._root
+        for part in _path_parts(feature, sub_feature):
+            node = getattr(node, part, None)
+            if node is None:
+                return False
+            if isinstance(node, bool):
+                return node
+            if getattr(node, "enabled", True) is False:
+                return False
+        return bool(getattr(node, "enabled", True))
+
+    def set(self, feature: str, sub_feature: str | None, value: bool) -> None:
+        """Flip a toggle on the live singleton; raises if the path is unknown."""
+        parts = _path_parts(feature, sub_feature)
+        node: Any = self._root
+        for part in parts:
+            parent, node = node, getattr(node, part, None)
+            if node is None:
+                raise KeyError(f"Unknown feature path: {'.'.join(parts)}")
+        if isinstance(node, bool):
+            setattr(parent, parts[-1], value)
+        else:
+            setattr(node, "enabled", value)
+
+
+_default_toggle = ConfigFeatureToggle()
+
+
+def is_enabled(feature: str, sub_feature: str | None = None) -> bool:
+    """Module-level convenience over the default toggle."""
+    return _default_toggle.is_enabled(feature, sub_feature)
+
+
+def set_enabled(feature: str, sub_feature: str | None, value: bool) -> None:
+    """Module-level convenience over the default toggle."""
+    _default_toggle.set(feature, sub_feature, value)

@@ -1,13 +1,79 @@
-"""Saga pattern stub for Phase 0."""
+"""Compensating saga (LLD §13).
 
-from agentic_commons.logging import log_call
-from agentic_commons.resilience.saga.types import SagaResult, SagaStep
+A refund touches several systems that cannot share a transaction. The
+saga's contract is not "all steps succeed" — it is "no step is left
+half-applied": whatever committed before the failure is undone, in
+reverse order, because a later step may depend on an earlier one.
+
+Reverse order matters. Releasing a reservation before the refund that
+consumed it is undone leaves the two out of step.
+"""
+
+from typing import Protocol, runtime_checkable
+
+from agentic_commons.config import get_settings
+from agentic_commons.logging import get_logger, logged
+from agentic_commons.resilience.types import SagaResult, SagaStep
 
 
-class Saga:
-    """Saga pattern stub."""
+@runtime_checkable
+class Saga(Protocol):
+    """Runs steps, compensating what completed if a later step fails."""
 
-    @log_call("resilience")
-    def execute(self, steps: list[SagaStep]) -> SagaResult:
-        """Phase 0 stub — no real saga execution yet."""
-        return SagaResult(completed=False, steps_executed=0)
+    async def run(self, steps: list[SagaStep]) -> SagaResult: ...
+
+
+class CompensatingSaga:
+    """Forward execution with reverse compensation on failure."""
+
+    def __init__(self) -> None:
+        self._enabled = get_settings().resilience.saga.enabled
+        self._logger = get_logger("resilience")
+
+    @logged("resilience")
+    async def run(self, steps: list[SagaStep]) -> SagaResult:
+        """Run every step; on failure, undo what already committed."""
+        completed: list[SagaStep] = []
+        for step in steps:
+            try:
+                await step.action()
+            except Exception as exc:
+                self._logger.error("Saga step failed", step=step.name, error=str(exc))
+                return await self._compensate(completed, step.name, str(exc))
+            completed.append(step)
+            self._logger.debug("Saga step committed", step=step.name)
+        return SagaResult(succeeded=True, completed=[step.name for step in completed])
+
+    async def _compensate(
+        self, completed: list[SagaStep], failed_step: str, error: str
+    ) -> SagaResult:
+        """Undo committed steps in reverse, recording any that would not undo.
+
+        A compensation that itself fails is recorded and the unwinding
+        continues. Stopping there would leave *more* state half-applied
+        than the original failure did — and the record is what a human
+        needs to finish the job by hand.
+        """
+        compensated: list[str] = []
+        errors: dict[str, str] = {}
+        for step in reversed(completed):
+            if step.compensation is None:
+                continue
+            try:
+                await step.compensation()
+                compensated.append(step.name)
+            except Exception as exc:
+                errors[step.name] = str(exc)
+                self._logger.error(
+                    "Compensation failed — manual reconciliation required",
+                    step=step.name,
+                    error=str(exc),
+                )
+        return SagaResult(
+            succeeded=False,
+            completed=[step.name for step in completed],
+            compensated=compensated,
+            failed_step=failed_step,
+            error=error,
+            compensation_errors=errors,
+        )

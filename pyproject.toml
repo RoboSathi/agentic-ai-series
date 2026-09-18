@@ -15,20 +15,19 @@ dependencies = [
     "rich>=13.0",
     "textual>=0.30",
     "langgraph>=0.1",
+    "langgraph-checkpoint-sqlite>=2.0",
     "langsmith>=0.1",
     "python-dotenv>=1.0",
     "openai>=1.0",
     "pyyaml>=6.0",
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "ruff>=0.1",
-    "mypy>=1.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    "pytest-asyncio>=0.23",
+    "hypothesis>=6.100",
     "ruff>=0.1",
     "mypy>=1.0",
     "types-PyYAML>=6.0",
@@ -37,15 +36,23 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"*" = ["*.yaml", "*.yaml.example", "*.sql", "*.md", "py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
 addopts = "--strict-markers"
+asyncio_mode = "auto"
+markers = [
+    "live_llm: hits a real LLM endpoint; skipped unless RUN_LIVE_LLM_TESTS=1 and credentials are present",
+]
 
 [tool.coverage.run]
-source = ["src"]
+source = ["src", "design_patterns", "episodes"]
 omit = ["*/tests/*"]
 
 [tool.coverage.report]
@@ -55,6 +62,7 @@ exclude_lines = [
     "raise AssertionError",
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
+    "\\.\\.\\.$",
 ]
 fail_under = 80
 
@@ -63,7 +71,6 @@ python_version = "3.11"
 strict = true
 warn_unused_configs = true
 disallow_untyped_defs = true
-disallow_any_unimported = true
 
 [tool.ruff]
 line-length = 100

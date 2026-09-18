@@ -1,16 +1,47 @@
-"""Timeout pattern stub for Phase 0."""
+"""Timeouts (LLD §13).
 
-from typing import Any, Callable
+Nygard's point, unchanged: the dangerous failure is not the call that
+errors, it is the call that never returns. An unbounded wait converts a
+slow dependency into an exhausted thread pool, and then into an outage
+of everything sharing it.
+"""
 
-from agentic_commons.logging import log_call
+import asyncio
+from typing import Awaitable, Callable, Protocol, TypeVar, runtime_checkable
+
+from agentic_commons.config import get_settings
+from agentic_commons.logging import get_logger
+
+T = TypeVar("T")
 
 
-class Timeout:
-    """Timeout pattern stub."""
+@runtime_checkable
+class TimeoutGuard(Protocol):
+    """Bounds how long an operation may take."""
 
-    @log_call("resilience")
-    def run(
-        self, fn: Callable[..., Any], seconds: float, *args: Any, **kwargs: Any
-    ) -> Any:
-        """Phase 0 stub — no real timeouts yet."""
-        return fn(*args, **kwargs)
+    async def run(self, fn: Callable[[], Awaitable[T]], seconds: float | None = None) -> T: ...
+
+
+class AsyncTimeoutGuard:
+    """Wraps an operation in a hard deadline."""
+
+    def __init__(self, default_seconds: float | None = None) -> None:
+        settings = get_settings().resilience.timeout
+        self._default = default_seconds if default_seconds is not None else settings.default_seconds
+        self._enabled = settings.enabled
+        self._logger = get_logger("resilience")
+
+    @property
+    def default_seconds(self) -> float:
+        return self._default
+
+    async def run(self, fn: Callable[[], Awaitable[T]], seconds: float | None = None) -> T:
+        """Run the operation, raising TimeoutError past the deadline."""
+        if not self._enabled:
+            return await fn()
+        budget = seconds if seconds is not None else self._default
+        try:
+            return await asyncio.wait_for(fn(), timeout=budget)
+        except asyncio.TimeoutError:
+            self._logger.warning("Operation exceeded its deadline", budget_s=budget)
+            raise

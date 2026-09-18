@@ -1,88 +1,373 @@
-# Tracked defaults for every subsystem. Never put API keys here — those
-# come from bare environment variables (see .env.example).
+# Tracked defaults for every live subsystem. Never put API keys here — those
+# come from bare environment variables (nvidia_api_key, hf_api_key).
 #
-# Only the core capabilities this agent actually needs are enabled by
-# default: llm, tools, persistence, customer_support_agent (plus the
-# always-on config/logging infrastructure). Every optional safety/
-# governance layer (security.*, memory, guardrails, gatekeeper,
-# hallucination_protection, resilience, audit, evals, observability)
-# defaults to disabled — flip it on here to bring it into the pipeline.
+# Every governance feature and sub-feature is an independent `enabled` flag
+# (PRD G6) and can be flipped live at runtime via agentic_commons.config's
+# FeatureToggle — no restart. The Gatekeeper itself is always invoked (PRD
+# G1); only its sub-features are toggleable.
 #
-# To override any of this on your machine without touching this tracked
-# file, copy local.yaml.example to local.yaml (gitignored).
+# Override anything locally via config/local.yaml (gitignored). Paths are
+# resolved relative to the repository root, never the shell's CWD.
+#
+# Parked packages (sandbox, control_loop, prompt_compilation) and the
+# stub-only multi_agent package deliberately have no config surface yet.
 
 config:
   enabled: true
 
 logging:
   enabled: true
+  level: INFO
+  console_enabled: true
+  console_level: INFO
+  file_enabled: true
+  dir: logs
+  per_subsystem_color: true
+  max_bytes: 5000000
+  backup_count: 3
 
 llm:
-  provider: nim
-  base_url: https://integrate.api.nvidia.com/v1
-  # NIM catalog entitlements are per-account — models.list() can show a
-  # model your key still can't invoke (404 "not found for account"), and
-  # some invokable models are slow reasoning models that burn their whole
-  # token budget on chain-of-thought (nvidia/nemotron-3.5-lightning-30b-a3b:
-  # confirmed invokable but unreliable here — narrates "thinking" instead of
-  # answering, 20-30s+ per call). This one is confirmed to reliably do
-  # multi-step tool-calling for the refund agent end-to-end.
-  model: meta/llama-3.2-11b-vision-instruct
-  timeout_seconds: 60
-  # Default cap on generation length, used whenever a caller doesn't pass
-  # its own max_tokens. Unbounded generation can run past any reasonable
-  # timeout (observed: 34s+ with no answer reached) — always bound it.
-  # 300 (not the original 150) gives multi-step tool-calling turns enough
-  # room to both reason and emit a tool call in the same response.
-  max_tokens: 300
   enabled: true
+  provider: nim            # nim | local — the default single-tier client
+  max_tokens: 300
+  providers:
+    nim:
+      base_url: https://integrate.api.nvidia.com/v1
+      # NIM entitlements are per-account; this model is confirmed invokable
+      # and does reliable multi-step tool calling for the refund agent.
+      # (nvidia/nemotron-3.5-lightning-30b-a3b is invokable but narrates
+      # chain-of-thought instead of answering.) It does NOT honor
+      # guided_json/response_format — see guardrails.constrained_backend.
+      model: meta/llama-3.2-11b-vision-instruct
+      timeout_seconds: 60
+      input_cost_per_1k_tokens: 0.0002
+      output_cost_per_1k_tokens: 0.0006
+    local:
+      base_url: http://localhost:8080/v1
+      model: mistral-nemo-12b
+      timeout_seconds: 120
+      input_cost_per_1k_tokens: 0.0
+      output_cost_per_1k_tokens: 0.0
+  cascade:
+    enabled: false
+    tiers: [local, nim]    # cheapest sufficient tier first (E44)
+    escalate_on_finish_reasons: [length]
+    escalate_on_empty_content: true
+    escalate_on_error: true
+  embedding:
+    provider: nim          # nim | local
+    nim_model: nvidia/nemotron-3-embed-1b
+    local_dimensions: 256
 
 persistence:
   enabled: true
+  db_path: src/customer_support_agent/dummy_data/agentic.db
+
+audit:
+  enabled: true
+  policy_version: refund-policy-v1
+  data_version: dummy-data-v1
+
+observability:
+  enabled: true
+  langsmith_enabled: false
+  langsmith_project: agentic-harness-core
+  persist_traces: true
+  slo_targets:
+    task_success_rate: 0.95
+    unauthorized_action_rate: 0.0
+    hallucination_rate: 0.05
+    escalation_rate: 0.20
+    loop_abort_rate: 0.05
+    tool_failure_rate: 0.05
+    cost_per_success_usd: 0.05
+    recovery_success_rate: 0.90
+    policy_violation_rate: 0.0
+  review_queue:
+    minutes_per_hour: 60
+
+context:
+  enabled: true
+  token_budget: 3000
+  chars_per_token: 4
+  retrieval_mode: hybrid   # lexical | dense | hybrid | graph
+  top_k: 5
+  hybrid_lexical_weight: 0.5
+  bm25_k1: 1.5
+  bm25_b: 0.75
+  strategies:
+    offload: true
+    reduce: true
+    retrieve: true
+    isolate: true
+    cache: true
+    consolidate: true
+  reduce_keep_ratio: 0.5
+  failure_detection:
+    enabled: true
+    checkpoints_tokens: [10000, 30000, 60000, 100000, 150000]
+    degradation_threshold: 0.2
+
+memory:
+  enabled: true
+  working:
+    enabled: true
+  episodic:
+    enabled: true
+    path: src/customer_support_agent/dummy_data/episodic
+  semantic:
+    enabled: true
+    fuzzy_match_threshold: 0.6
+  procedural:
+    enabled: true
+  write_pipeline:
+    enabled: true
+    auto_commit_threshold: 0.8
+    discard_threshold: 0.3
+    decay_if_unconfirmed_days: 30
+    # Fact categories that may never be written from conversational
+    # assertion, whatever confidence the speaker expresses (E15/E16). No
+    # role's permission set includes granting itself authority.
+    authority_changing_categories:
+      - policy_limit
+      - permission_grant
+      - role_assignment
+      - authority_delegation
+    # Deterministic first-tier classification: phrase -> category. Cheap,
+    # auditable, and reached for before any model (the NOLLM discipline).
+    classification_hints:
+      policy_limit: ["refund limit", "spending limit", "my limit is", "cap is now", "threshold is now"]
+      permission_grant: ["i am authorized", "grant me", "give me access", "i have permission"]
+      role_assignment: ["i am an admin", "i am a supervisor", "my role is"]
+      authority_delegation: ["on behalf of", "acting for", "delegated to me"]
+      preference: ["i prefer", "i like", "please always", "don't ever"]
+      order_fact: ["order", "tracking", "delivered", "shipment"]
+  # Retrieval weighting by how a fact came to be known (E16).
+  provenance_weights:
+    verified_system_of_record: 1.0
+    agent_inference: 0.6
+    self_reported: 0.3
+  retrieval_weights:
+    relevance: 0.4
+    recency: 0.2
+    importance: 0.15
+    authority: 0.15
+    temporal_validity: 0.1
+  recency_half_life_days: 14
+
+guardrails:
+  enabled: true
+  mode: auto_repair        # reject | auto_repair | constrained
+  max_repair_attempts: 2
+  constrained_backend: llamacpp_grammar   # llamacpp_grammar | nim_guided_json
+
+hallucination_protection:
+  enabled: true
+  confidence_threshold: 0.7
+  consistency_samples: 3
+  consistency_agreement_threshold: 0.67
+  grounding_overlap_threshold: 0.3
+
+gatekeeper:
+  # The Gatekeeper is always invoked (PRD G1). These are its sub-features.
+  authority_grant_max_rank: 5
+  # The Authority Hierarchy, strongest first. Only the first
+  # `authority_grant_max_rank` sources can grant or expand authority;
+  # everything below them is input to be acted on, never instruction to
+  # be obeyed — which is why a tool result cannot authorize anything.
+  authority_hierarchy:
+    - provider
+    - organization
+    - product
+    - workspace
+    - user_task
+    - runtime_reminders
+    - tool_observations
+    - untrusted_content
+  ledger:
+    enabled: true
+    window_hours: 24
+    # Which cumulative budget each action consumes from. Several actions
+    # can share one class deliberately — splitting an amount across two
+    # different tools is the same structuring attack as splitting it
+    # across eighty calls to one.
+    action_classes:
+      process_refund: refund
+      apply_goodwill_credit: goodwill_credit
+    thresholds_usd:
+      refund: 4000
+      goodwill_credit: 500
+  tier2:
+    enabled: false
+  surface_policy:
+    enabled: true
+    # action -> surface class (locked | editable | append_only | human_controlled)
+    surfaces:
+      get_order_status: editable
+      get_refund_status: editable
+      process_refund: editable
+      queue_for_approval: append_only
+      apply_goodwill_credit: editable
+      update_refund_policy: locked
+      approve_hitl_request: human_controlled
+  automation:
+    enabled: true
+    # Sheridan 1-10. Levels <= human_approval_below require a human.
+    human_approval_below: 5
+    levels:
+      get_order_status: 10
+      get_refund_status: 10
+      process_refund: 7
+      queue_for_approval: 9
+      apply_goodwill_credit: 6
+    per_action_amount_escalation_usd:
+      process_refund: 50
+      apply_goodwill_credit: 25
+
+security:
+  # A sub-feature is enabled only if its parent is too. RBAC (auth) stays on
+  # because the Gatekeeper's "who is asking?" question depends on it; the
+  # content-level checks are off by default.
+  enabled: true
+  auth:
+    enabled: true
+    elevation_max_ttl_seconds: 900
+    roles:
+      support_agent: [read_orders, process_refund, queue_for_approval, apply_goodwill_credit]
+      support_supervisor: [read_orders, process_refund, queue_for_approval, apply_goodwill_credit, approve_hitl_request]
+      policy_admin: [update_refund_policy]
+      viewer: [read_orders]
+    action_permissions:
+      get_order_status: read_orders
+      get_refund_status: read_orders
+      process_refund: process_refund
+      queue_for_approval: queue_for_approval
+      apply_goodwill_credit: apply_goodwill_credit
+      update_refund_policy: update_refund_policy
+      approve_hitl_request: approve_hitl_request
+  pii:
+    enabled: false
+    mode: mask             # mask | tokenize | remove
+    mask_token: "[REDACTED]"
+    ner_enabled: false
+    # Detector patterns, ordered most-specific first so a card number is not
+    # first matched as a shorter numeric identifier.
+    patterns:
+      credit_card: '\b(?:\d[ -]?){13,16}\b'
+      ssn: '\b\d{3}-\d{2}-\d{4}\b'
+      email: '\b[\w.+-]+@[\w-]+\.[\w.-]+\b'
+      phone: '(?<!\d)(?:\+?\d{1,2}[ -])?\(?\d{3}\)?[ -]\d{3}[ -]\d{4}(?!\d)'
+      ip_address: '\b\d{1,3}(?:\.\d{1,3}){3}\b'
+    # Fields a tool call may carry; everything else is dropped before the
+    # call leaves the harness (data minimization, E32).
+    tool_call_allowed_fields: [order_id, user_id, amount, reason, status]
+  prompt_injection:
+    enabled: false
+    data_open_tag: "<untrusted_data>"
+    data_close_tag: "</untrusted_data>"
+    suspicious_phrases:
+      - ignore previous instructions
+      - ignore all previous
+      - disregard the above
+      - you are now
+      - system prompt
+      - new instructions
+      - override your
+      - my refund limit is now
+  content_moderation:
+    enabled: false
+    blocked_terms: [kill, bomb, terrorist]
+
+resilience:
+  enabled: true
+  circuit_breaker:
+    enabled: true
+    failure_threshold: 3
+    half_open_after_seconds: 30
+  retry:
+    enabled: true
+    max_attempts: 3
+    base_delay_seconds: 0.2
+    max_delay_seconds: 2.0
+  timeout:
+    enabled: true
+    default_seconds: 30
+  bulkhead:
+    enabled: true
+    pool_size: 4
+  idempotency:
+    enabled: true
+  saga:
+    enabled: true
+
+evals:
+  enabled: true
+  manifest_path: src/agentic_commons/evals/eval_manifest.yaml
+  cascade:
+    exact_assertion: true
+    deterministic_rule: true
+    embedding_similarity: true
+    nli_entailment: true
+    calibrated_llm_judge: true
+    human_adjudication: true
+  embedding_similarity_threshold: 0.85
+  embedding_dissimilarity_threshold: 0.3
+  nli_entailment_threshold: 0.7
+  judge_confidence_threshold: 0.7
+  kappa_acceptable: 0.6
+  # Lexical entailment fallback used when no hosted NLI endpoint is wired.
+  nli:
+    min_overlap: 0.4
+    negation_markers:
+      - "not"
+      - "no"
+      - "never"
+      - "cannot"
+      - "n't"
+      - "without"
+      - "denied"
+      - "refused"
+      - "unable"
+  judge:
+    temperature: 0.0
+    max_tokens: 256
 
 tools:
   enabled: true
+  selection_k: 5
+  selection_min_score: 0.05
+
+tui:
+  refresh_interval_ms: 100
+  show_token_count: true
+  copy_method: osc52       # osc52 | file
+  max_feed_lines: 500
+  spinner_frames: "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+  stage_labels:
+    intake: Receiving request…
+    prompt_injection_check: Checking for prompt injection…
+    pii_filtering: Filtering PII…
+    content_moderation: Checking content policy…
+    working_memory_check: Checking working memory…
+    context_assembly: Assembling context…
+    llm_call: Calling model…
+    llm_response_received: Model responded
+    output_parsing: Parsing output…
+    guardrail_validation: Validating output structure…
+    hallucination_check: Checking response grounding…
+    gatekeeper_evaluation: Checking authorization…
+    tool_execution: "Executing {tool_name}…"
+    order_status_check: Checking order status…
+    refund_eligibility_check: Checking refund eligibility…
+    memory_write: Updating memory…
+    audit_record: Recording audit trail…
+    finalize: Composing the response…
 
 customer_support_agent:
   enabled: true
-  # Cap on the LLM <-> tool round trips per query (ask -> tool call ->
-  # tool result -> ask again -> ...), so a confused model can't loop
-  # forever waiting on tool calls instead of answering.
   max_tool_iterations: 5
-
-# --- Optional safety / governance layers: off by default ---
-
-security:
-  enabled: false
-  auth:
-    enabled: false
-  pii:
-    enabled: false
-  prompt_injection:
-    enabled: false
-  content_moderation:
-    enabled: false
-
-memory:
-  enabled: false
-
-guardrails:
-  enabled: false
-
-gatekeeper:
-  enabled: false
-
-hallucination_protection:
-  enabled: false
-
-resilience:
-  enabled: false
-
-audit:
-  enabled: false
-
-evals:
-  enabled: false
-
-observability:
-  enabled: false
+  default_actor: support-agent-1
+  default_role: support_agent
+  default_authority_rank: 4     # user_task-granted authority
+  checkpoint_path: src/customer_support_agent/dummy_data/checkpoints.db
+  policy_path: src/customer_support_agent/prompts/customer_policy.md

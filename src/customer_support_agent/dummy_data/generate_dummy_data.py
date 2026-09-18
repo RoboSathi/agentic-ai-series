@@ -9,7 +9,7 @@ import random
 from datetime import datetime, timedelta, timezone
 
 from agentic_commons.logging import get_logger
-from agentic_commons.persistence.database import Database
+from agentic_commons.persistence import SqliteConnectionPool
 from customer_support_agent.dummy_data import DB_PATH, DUMMY_DATA_DIR
 
 _SCHEMA_FILE = DUMMY_DATA_DIR / "schema.sql"
@@ -95,9 +95,10 @@ def main() -> None:
     if DB_PATH.exists():
         DB_PATH.unlink()
 
-    database = Database(db_path=DB_PATH)
-    database.execute_script(_SCHEMA_FILE.read_text())
-    database.execute_script(seed_sql)
+    pool = SqliteConnectionPool(DB_PATH)
+    pool.execute_script(_SCHEMA_FILE.read_text())
+    pool.execute_script(seed_sql)
+    pool.close()
 
     logger.info(
         f"Built {DB_PATH} ({_NUM_USERS} users, {_NUM_ORDERS} orders, "

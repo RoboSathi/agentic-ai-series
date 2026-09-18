@@ -97,7 +97,7 @@ dummy-data:
 
 tui:
 	@echo "$(BLUE)Launching terminal UI...$(NC)"
-	./venv/bin/python -m agentic_commons.tui.app
+	./venv/bin/python -m agentic_commons.tui
 
 llm-check:
 	@echo "$(BLUE)Checking LLM endpoint connectivity...$(NC)"
@@ -119,16 +119,23 @@ venv-check:
 		$$VIRTUAL_ENV/bin/python --version; \
 	fi
 
-# Quick verification (for CI/CD)
+# Quick verification (for CI/CD).
+#
+# The coverage gate is enforced by pytest-cov's own `fail_under = 80`
+# (pyproject.toml), so a shortfall fails the command itself. An earlier
+# version grepped the report for the string "80", which matched any line
+# containing those digits and therefore passed at any coverage at all.
 verify:
-	@echo "$(BLUE)Running Phase 0 verification...$(NC)"
-	@echo "$(BLUE)1/4 Ruff lint...$(NC)"
-	./venv/bin/ruff check src/ tests/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
-	@echo "$(BLUE)2/4 Pytest...$(NC)"
-	./venv/bin/pytest tests/ -q > /dev/null 2>&1 && echo "$(GREEN)✓$(NC)" || exit 1
-	@echo "$(BLUE)3/4 Coverage gate (80%)...$(NC)"
-	./venv/bin/pytest tests/ --cov=src --cov-report=term-missing -q 2>&1 | grep -q "80" && echo "$(GREEN)✓$(NC)" || exit 1
-	@echo "$(BLUE)4/4 Import check...$(NC)"
-	./venv/bin/python -c "from customer_support_agent.core.graph import build_graph; print('$(GREEN)✓$(NC)')" || exit 1
+	@echo "$(BLUE)Running verification...$(NC)"
+	@echo "$(BLUE)1/4 Ruff lint + format...$(NC)"
+	./venv/bin/ruff check src/ tests/ > /dev/null && \
+	./venv/bin/ruff format --check src/ tests/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
+	@echo "$(BLUE)2/4 mypy --strict...$(NC)"
+	./venv/bin/mypy --strict src/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
+	@echo "$(BLUE)3/4 Pytest with coverage gate (80%)...$(NC)"
+	./venv/bin/pytest tests/ --cov=src -q > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
+	@echo "$(BLUE)4/4 Composition root imports...$(NC)"
+	./venv/bin/python -c "from customer_support_agent.core import build_agent; build_agent" \
+	  && echo "$(GREEN)✓$(NC)" || exit 1
 	@echo ""
-	@echo "$(GREEN)✓ Phase 0 verification complete - All systems operational$(NC)"
+	@echo "$(GREEN)✓ Verification complete - all gates green$(NC)"

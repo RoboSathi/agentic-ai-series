@@ -1,142 +1,205 @@
-"""Real logging implementation using Rich and Python's logging."""
+"""Structured, per-subsystem, colored logging (LLD §2).
 
+The file log is the authoritative record and is written independently of the
+TUI: the TUI's live feed is a human-readable summary only, so full
+structured detail for the same event always lands here (PRD FR-56).
+"""
+
+import json
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from rich.logging import RichHandler
 from rich.text import Text
 
 from agentic_commons.config import get_settings
+from agentic_commons.logging.trace_context import get_current_trace_id
 
-_loggers: dict[str, logging.Logger] = {}
+Level = Literal["debug", "info", "warning", "error"]
+
+_LEVEL_TO_INT: dict[Level, int] = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+}
+
+SUBSYSTEM_COLORS: dict[str, str] = {
+    "config": "grey58",
+    "logging": "grey78",
+    "tui": "bright_magenta",
+    "llm": "bright_blue",
+    "persistence": "blue",
+    "observability": "cyan",
+    "audit": "green",
+    "evals": "spring_green2",
+    "guardrails": "magenta",
+    "resilience": "yellow",
+    "security": "red",
+    "memory": "dodger_blue1",
+    "context": "turquoise2",
+    "tools": "white",
+    "gatekeeper": "bright_red",
+    "hallucination_protection": "orange3",
+    "customer_support_agent": "bright_green",
+    "design_patterns": "plum1",
+    "episodes": "khaki1",
+}
+
+
+@runtime_checkable
+class StructuredLogger(Protocol):
+    """Emits structured events, optionally rebound to another subsystem."""
+
+    def bind(self, subsystem: str) -> "StructuredLogger": ...
+
+    def event(self, level: Level, message: str, **fields: Any) -> None: ...
 
 
 class PlainFormatter(logging.Formatter):
-    """Formatter that strips Rich markup tags for handlers that don't render them.
+    """Formatter that strips Rich markup for handlers that don't render it.
 
-    log_call and RichLogger embed Rich markup (e.g. "[bright_green]...[/]")
-    in every message, meant for RichHandler's console rendering. A plain
-    logging.Formatter has no way to interpret that markup, so it would
-    otherwise write the literal tags into the file.
+    Messages carry Rich markup (e.g. "[bright_green]…[/bright_green]") for
+    the console; a plain file handler would otherwise write the literal tags.
     """
 
     def format(self, record: logging.LogRecord) -> str:
-        return Text.from_markup(super().format(record)).plain
-
-
-def get_logger(subsystem: str) -> "RichLogger":
-    """Get or create a logger for a subsystem."""
-    if subsystem not in _loggers:
-        settings = get_settings()
-        log_dir = Path(settings.logging.log_dir)
-        log_dir.mkdir(parents=True, exist_ok=True)
-
-        logger = logging.getLogger(f"agentic.{subsystem}")
-        # Always let DEBUG-level records (e.g. log_call's CALLED/RETURNED
-        # trace) through the logger gate; handlers below decide who actually
-        # sees them — full detail to the file, curated INFO+ to the console.
-        logger.setLevel(logging.DEBUG)
-        logger.handlers.clear()
-
-        if settings.logging.console_enabled:
-            console_handler = RichHandler(
-                markup=True,
-                rich_tracebacks=True,
-                show_time=True,
-                show_level=True,
-                show_path=False,
-            )
-            console_handler.setLevel(settings.logging.level)
-            console_handler.setFormatter(
-                logging.Formatter("%(message)s", datefmt="[%X]")
-            )
-            logger.addHandler(console_handler)
-
-        if settings.logging.file_enabled:
-            log_file = log_dir / f"{subsystem}.log"
-            file_handler = logging.FileHandler(log_file)
-            file_handler.setLevel(logging.DEBUG)
-            file_handler.setFormatter(
-                PlainFormatter(
-                    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-                )
-            )
-            logger.addHandler(file_handler)
-
-        _loggers[subsystem] = logger
-
-    return RichLogger(_loggers[subsystem], subsystem)
+        rendered = super().format(record)
+        return Text.from_markup(rendered).plain
 
 
 class RichLogger:
-    """Wrapper around standard logger with rich formatting methods."""
+    """StructuredLogger over stdlib logging, with Rich console rendering."""
 
     def __init__(self, logger: logging.Logger, subsystem: str) -> None:
         self._logger = logger
         self._subsystem = subsystem
 
+    @property
+    def subsystem(self) -> str:
+        return self._subsystem
+
+    def bind(self, subsystem: str) -> "RichLogger":
+        """A logger for another subsystem, sharing this one's configuration."""
+        return get_logger(subsystem)
+
+    def event(self, level: Level, message: str, **fields: Any) -> None:
+        """Log one structured event; extra fields are serialized as JSON."""
+        trace_id = get_current_trace_id()
+        if trace_id:
+            fields = {"trace_id": trace_id, **fields}
+        suffix = f" {json.dumps(fields, default=str)}" if fields else ""
+        self._logger.log(_LEVEL_TO_INT[level], f"{message}{suffix}")
+
+    def info(self, msg: str, **fields: Any) -> None:
+        self.event("info", msg, **fields)
+
+    def debug(self, msg: str, **fields: Any) -> None:
+        self.event("debug", msg, **fields)
+
+    def warning(self, msg: str, **fields: Any) -> None:
+        self.event("warning", msg, **fields)
+
+    def error(self, msg: str, **fields: Any) -> None:
+        self.event("error", msg, **fields)
+
+    def exception(self, msg: str, **fields: Any) -> None:
+        """Log at ERROR with the active traceback attached.
+
+        Only meaningful inside an `except` block — the traceback is what
+        makes a swallowed exception diagnosable after the fact.
+        """
+        trace_id = get_current_trace_id()
+        if trace_id:
+            fields = {"trace_id": trace_id, **fields}
+        suffix = f" {json.dumps(fields, default=str)}" if fields else ""
+        self._logger.exception(f"{msg}{suffix}")
+
     def log_called(
-        self,
-        func_name: str,
-        color: str,
-        args: tuple[Any, ...],
-        kwargs: dict[str, Any],
+        self, func_name: str, color: str, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> None:
-        """Log a function call with subsystem color."""
+        """Trace a call at DEBUG — file only, never the curated TUI feed."""
         args_repr = ", ".join(repr(a)[:50] for a in args)
-        kwargs_repr = ", ".join(
-            f"{k}={repr(v)[:50]}" for k, v in kwargs.items()
-        )
+        kwargs_repr = ", ".join(f"{k}={repr(v)[:50]}" for k, v in kwargs.items())
         all_args = ", ".join(filter(None, [args_repr, kwargs_repr]))
-        msg = (
-            f"[bold {color}]CALLED[/bold {color}] "
-            f"[cyan]{func_name}[/cyan]({all_args})"
-        )
-        self._logger.debug(msg)
+        self.debug(f"[bold {color}]CALLED[/bold {color}] [cyan]{func_name}[/cyan]({all_args})")
 
-    def log_returned(
-        self,
-        func_name: str,
-        color: str,
-        result: Any,
-        elapsed_ms: float,
-    ) -> None:
-        """Log a function return with result and timing."""
-        result_repr = repr(result)[:100]
-        msg = (
-            f"[bold {color}]RETURNED[/bold {color}] "
-            f"[cyan]{func_name}[/cyan] → {result_repr} "
-            f"[dim]({elapsed_ms:.1f}ms)[/dim]"
+    def log_returned(self, func_name: str, color: str, result: Any, elapsed_ms: float) -> None:
+        """Trace a return value and its latency at DEBUG."""
+        self.debug(
+            f"[bold {color}]RETURNED[/bold {color}] [cyan]{func_name}[/cyan] → "
+            f"{repr(result)[:100]} [dim]({elapsed_ms:.1f}ms)[/dim]"
         )
-        self._logger.debug(msg)
 
-    def log_skipped(
-        self,
-        func_name: str,
-        color: str,
-        toggle_path: str,
-    ) -> None:
-        """Log a subsystem skip due to disabled toggle."""
-        msg = (
-            f"[dim {color}]SKIPPED[/dim {color}] "
-            f"[cyan]{func_name}[/cyan] "
+    def log_skipped(self, func_name: str, color: str, toggle_path: str) -> None:
+        """Trace a subsystem skipped because its toggle is off."""
+        self.debug(
+            f"[dim {color}]SKIPPED[/dim {color}] [cyan]{func_name}[/cyan] "
             f"[yellow]({toggle_path}=False)[/yellow]"
         )
-        self._logger.debug(msg)
 
-    def info(self, msg: str) -> None:
-        """Log info message."""
-        self._logger.info(msg)
 
-    def debug(self, msg: str) -> None:
-        """Log debug message."""
-        self._logger.debug(msg)
+class LoggerFactory:
+    """Builds one configured logger per subsystem (LLD §2)."""
 
-    def warning(self, msg: str) -> None:
-        """Log warning message."""
-        self._logger.warning(msg)
+    _loggers: dict[str, logging.Logger] = {}
 
-    def error(self, msg: str) -> None:
-        """Log error message."""
-        self._logger.error(msg)
+    @classmethod
+    def for_subsystem(cls, subsystem: str) -> RichLogger:
+        """Get (or build) the logger for one subsystem."""
+        if subsystem not in cls._loggers:
+            cls._loggers[subsystem] = cls._build(subsystem)
+        return RichLogger(cls._loggers[subsystem], subsystem)
+
+    @classmethod
+    def reset(cls) -> None:
+        """Drop cached loggers so config changes take effect (tests use this)."""
+        for logger in cls._loggers.values():
+            for handler in list(logger.handlers):
+                handler.close()
+                logger.removeHandler(handler)
+        cls._loggers.clear()
+
+    @classmethod
+    def _build(cls, subsystem: str) -> logging.Logger:
+        settings = get_settings().logging
+        logger = logging.getLogger(f"agentic.{subsystem}")
+        # Let DEBUG through the logger gate; each handler decides who sees it.
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = False
+        logger.handlers.clear()
+        if settings.console_enabled:
+            logger.addHandler(cls._console_handler(settings.console_level))
+        if settings.file_enabled:
+            logger.addHandler(cls._file_handler(subsystem))
+        return logger
+
+    @classmethod
+    def _console_handler(cls, level: str) -> logging.Handler:
+        handler = RichHandler(
+            markup=True, rich_tracebacks=True, show_time=True, show_level=True, show_path=False
+        )
+        handler.setLevel(level)
+        handler.setFormatter(logging.Formatter("%(message)s", datefmt="[%X]"))
+        return handler
+
+    @classmethod
+    def _file_handler(cls, subsystem: str) -> logging.Handler:
+        settings = get_settings().logging
+        log_dir: Path = settings.resolved_dir
+        log_dir.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(
+            log_dir / f"{subsystem}.log",
+            maxBytes=settings.max_bytes,
+            backupCount=settings.backup_count,
+        )
+        handler.setLevel(settings.level)
+        handler.setFormatter(PlainFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+        return handler
+
+
+def get_logger(subsystem: str) -> RichLogger:
+    """The logger for one subsystem — the standard entry point."""
+    return LoggerFactory.for_subsystem(subsystem)

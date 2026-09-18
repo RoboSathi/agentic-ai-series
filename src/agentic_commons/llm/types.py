@@ -1,13 +1,18 @@
-"""Type definitions for LLM module."""
+"""Provider-neutral LLM request/result types (LLD §3)."""
 
-from dataclasses import dataclass
-from typing import Iterator, Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+Role = Literal["system", "user", "assistant", "tool"]
 
 
-class ToolCall(BaseModel):
-    """A request from the LLM to invoke one tool."""
+class ModelToolCall(BaseModel):
+    """A tool invocation the model asked for, in wire form.
+
+    Distinct from `tools.ToolCall`, which is the governed, typed call the
+    Gatekeeper evaluates — this is only what came back over the wire.
+    """
 
     id: str = ""
     name: str = ""
@@ -15,48 +20,52 @@ class ToolCall(BaseModel):
 
 
 class Message(BaseModel):
-    """A single message in a chat conversation.
+    """One message in a conversation."""
 
-    `tool_calls` is set on an assistant message that wants to invoke one or
-    more tools. `tool_call_id` is set on a "tool" role message answering
-    one specific ToolCall.id.
-    """
-
-    role: Literal["system", "user", "assistant", "tool"] = "user"
+    role: Role = "user"
     content: str = ""
-    tool_calls: list[ToolCall] | None = None
+    tool_calls: list[ModelToolCall] | None = None
     tool_call_id: str | None = None
 
 
-class LLMResponse(BaseModel):
-    """Response from LLM generation."""
+class TokenUsage(BaseModel):
+    """Token accounting for one completion — feeds cost and TUI counters."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+class CompletionRequest(BaseModel):
+    """Everything a provider needs for one completion."""
+
+    messages: list[Message]
+    tools: list[dict[str, Any]] | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+    json_schema: dict[str, Any] | None = Field(
+        default=None,
+        description="Requested output schema; honored only by backends that "
+        "support grammar-constrained decoding (see guardrails).",
+    )
+
+
+class CompletionResult(BaseModel):
+    """One completion, plus the accounting the harness needs downstream."""
 
     content: str = ""
+    tool_calls: list[ModelToolCall] | None = None
     model: str = ""
-    tokens_used: int = 0
     finish_reason: str | None = None
-    tool_calls: list[ToolCall] | None = None
+    usage: TokenUsage = TokenUsage()
+    cost_usd: float = 0.0
+    tier: str = ""
+    latency_ms: float = 0.0
 
 
 class HealthCheckResult(BaseModel):
-    """Result of an LLM endpoint connectivity check."""
+    """Result of an endpoint connectivity check."""
 
     healthy: bool = False
     latency_ms: float = 0.0
     error: str | None = None
-
-
-@dataclass
-class StreamedResponse:
-    """A live token stream.
-
-    Iterate for text deltas as they arrive; `response` is the same
-    `LLMResponse` instance, mutated in place, and is only complete once the
-    stream has been fully consumed.
-    """
-
-    chunks: Iterator[str]
-    response: LLMResponse
-
-    def __iter__(self) -> Iterator[str]:
-        return self.chunks

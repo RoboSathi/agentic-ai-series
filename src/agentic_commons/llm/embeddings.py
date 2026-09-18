@@ -1,0 +1,128 @@
+"""Embedding backends for the NOLLM cascade, RAG and memory scoring.
+
+Two implementations behind one interface: NIM's hosted embedding model, and
+a deterministic local hashing embedder that needs no network and no model
+download — the fallback that keeps tests fast, offline and reproducible.
+"""
+
+import hashlib
+import math
+import re
+from typing import Protocol, runtime_checkable
+
+from openai import AsyncOpenAI
+
+from agentic_commons.config import get_settings
+from agentic_commons.config.settings import LLMSettings
+from agentic_commons.logging import get_logger
+
+_TOKEN_PATTERN = re.compile(r"[a-z0-9']+")
+
+
+@runtime_checkable
+class EmbeddingClient(Protocol):
+    """Turns text into vectors for similarity scoring."""
+
+    async def embed(self, texts: list[str]) -> list[list[float]]: ...
+
+    @property
+    def dimensions(self) -> int: ...
+
+
+def cosine_similarity(left: list[float], right: list[float]) -> float:
+    """Cosine similarity, clamped to [0, 1] for use as a score."""
+    if not left or not right or len(left) != len(right):
+        return 0.0
+    dot = sum(a * b for a, b in zip(left, right))
+    norm = math.sqrt(sum(a * a for a in left)) * math.sqrt(sum(b * b for b in right))
+    if norm == 0:
+        return 0.0
+    return max(0.0, min(1.0, dot / norm))
+
+
+def tokenize(text: str) -> list[str]:
+    """Lowercase word tokens — shared by the local embedder and BM25."""
+    return _TOKEN_PATTERN.findall(text.lower())
+
+
+class HashingEmbeddingClient:
+    """Deterministic bag-of-words hashing embedder (no network, no weights).
+
+    Token counts are hashed into a fixed number of buckets. Similar texts
+    share buckets, so cosine similarity is a genuine lexical-overlap signal —
+    enough for the cascade's cheap tier, and reproducible in tests.
+    """
+
+    def __init__(self, dimensions: int | None = None) -> None:
+        self._dimensions = dimensions or get_settings().llm.embedding.local_dimensions
+
+    @property
+    def dimensions(self) -> int:
+        return self._dimensions
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """Embed each text into a normalized hashed bag-of-words vector."""
+        return [self.embed_sync(text) for text in texts]
+
+    def embed_sync(self, text: str) -> list[float]:
+        """Synchronous embedding — callers outside async paths use this."""
+        vector = [0.0] * self._dimensions
+        for token in tokenize(text):
+            digest = hashlib.blake2b(token.encode(), digest_size=8).digest()
+            vector[int.from_bytes(digest, "big") % self._dimensions] += 1.0
+        norm = math.sqrt(sum(value * value for value in vector))
+        return [value / norm for value in vector] if norm else vector
+
+
+class NimEmbeddingClient:
+    """NVIDIA NIM hosted embeddings, with the local embedder as a fallback.
+
+    Entitlements are per-account, so a failure here degrades to the hashing
+    embedder rather than taking down every caller that needs a similarity
+    score.
+    """
+
+    def __init__(
+        self,
+        settings: LLMSettings | None = None,
+        client: AsyncOpenAI | None = None,
+        fallback: EmbeddingClient | None = None,
+    ) -> None:
+        self._settings = settings or get_settings().llm
+        provider = self._settings.provider_settings("nim")
+        self._model = self._settings.embedding.nim_model
+        self._logger = get_logger("llm")
+        self._fallback = fallback or HashingEmbeddingClient()
+        self._dimensions = 0
+        self._client = client or AsyncOpenAI(
+            base_url=provider.base_url,
+            api_key=self._settings.api_key_for("nim") or "not-needed",
+            timeout=provider.timeout_seconds,
+        )
+
+    @property
+    def dimensions(self) -> int:
+        return self._dimensions or self._fallback.dimensions
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        """Embed via NIM, falling back locally if the endpoint refuses."""
+        try:
+            response = await self._client.embeddings.create(
+                model=self._model,
+                input=texts,
+                extra_body={"input_type": "query", "truncate": "END"},
+            )
+        except Exception as exc:
+            self._logger.warning("NIM embeddings unavailable, using local fallback", error=str(exc))
+            return await self._fallback.embed(texts)
+        vectors = [item.embedding for item in response.data]
+        self._dimensions = len(vectors[0]) if vectors else 0
+        return vectors
+
+
+def create_embedding_client(settings: LLMSettings | None = None) -> EmbeddingClient:
+    """Build the configured embedding client (Factory)."""
+    resolved = settings or get_settings().llm
+    if resolved.embedding.provider == "nim":
+        return NimEmbeddingClient(resolved)
+    return HashingEmbeddingClient(resolved.embedding.local_dimensions)

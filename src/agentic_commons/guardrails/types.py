@@ -1,17 +1,30 @@
-"""Type definitions for guardrails module."""
+"""Guardrail value types (LLD §9)."""
 
-from pydantic import BaseModel
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+# reject: halt on invalid output. auto_repair: try to fix it, bounded.
+# constrained: make invalid output unrepresentable at decode time.
+GuardrailMode = Literal["reject", "auto_repair", "constrained"]
 
 
-class ValidationOutcome(BaseModel):
-    """Outcome of validation."""
+class ValidationResult(BaseModel):
+    """Whether raw model output satisfied its schema, and what it cost."""
 
-    valid: bool = True
-    errors: list[str] = []
+    valid: bool
+    value: dict[str, Any] | None = None
+    errors: list[str] = Field(default_factory=list)
+    repaired: bool = False
+    attempts: int = 1
+    mode: GuardrailMode = "reject"
+    raw: str = ""
 
 
-class ConstraintResult(BaseModel):
-    """Result of constraint application."""
+class GuardrailViolationError(Exception):
+    """Raised when output cannot be made valid and the mode forbids passing it.
 
-    output: str = ""
-    constrained: bool = False
+    Loud by design. Silently coercing a malformed tool call into
+    something plausible is how an agent acts on a value no model ever
+    produced (E29).
+    """

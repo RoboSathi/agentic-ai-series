@@ -1,17 +1,101 @@
-"""Schema initialization for the customer support agent's database.
+"""Domain models and graph state (LLD §21).
 
-The DDL itself lives in customer_support_agent/dummy_data/schema.sql — the
-single source of truth, used both by generate_dummy_data.py to build the
-demo database and by ensure_schema() here to initialize any fresh database
-(e.g. a test's temporary SQLite file) at runtime.
+The domain vocabulary is deliberately narrow: an Order, a User, a
+HITL request, and the state the graph carries between nodes. Everything
+else — authority, memory, context, resilience — belongs to
+`agentic_commons` and arrives here by injection.
 """
 
-from agentic_commons.persistence.database import Database
-from customer_support_agent.dummy_data import DUMMY_DATA_DIR
+from pathlib import Path
+from typing import Annotated, Any, Literal
 
-_SCHEMA_FILE = DUMMY_DATA_DIR / "schema.sql"
+from pydantic import BaseModel, Field
+
+from agentic_commons.config import get_settings
+from agentic_commons.llm.types import Message
+from agentic_commons.observability.types import utc_now
+from agentic_commons.persistence import SqliteConnectionPool
+
+OrderStatus = Literal["pending", "shipped", "delivered", "cancelled"]
+RefundStatus = Literal["none", "pending_review", "approved", "denied", "completed"]
+HitlStatus = Literal["pending", "approved", "denied"]
+
+_SCHEMA_FILE = Path(__file__).resolve().parents[1] / "dummy_data" / "schema.sql"
 
 
-def ensure_schema(database: Database) -> None:
-    """Create the users/orders/hitl_queue tables if they don't already exist."""
-    database.execute_script(_SCHEMA_FILE.read_text())
+class Order(BaseModel):
+    """One customer order."""
+
+    order_id: str
+    user_id: str
+    timestamp: str
+    order_status: OrderStatus
+    refund_status: RefundStatus
+    amount: float
+
+    @property
+    def already_refunded(self) -> bool:
+        """Whether this order has been refunded and cannot be refunded again."""
+        return self.refund_status == "completed"
+
+
+class User(BaseModel):
+    """One customer."""
+
+    user_id: str
+    created_at: str
+    email: str
+    phone: str | None = None
+
+
+class HitlRequest(BaseModel):
+    """A refund waiting on a human decision."""
+
+    id: int | None = None
+    order_id: str
+    user_id: str
+    requested_amount: float
+    status: HitlStatus = "pending"
+    created_at: str = Field(default_factory=lambda: utc_now().isoformat())
+
+
+def _merge_messages(existing: list[Message], incoming: list[Message]) -> list[Message]:
+    """Reducer: graph nodes append to the transcript rather than replace it."""
+    return [*existing, *incoming]
+
+
+class AgentState(BaseModel):
+    """What flows between graph nodes.
+
+    A pydantic model rather than a loose dict so that a node returning
+    the wrong shape fails where it happened, not three nodes later where
+    the value is finally read.
+    """
+
+    query: str = ""
+    session_id: str = ""
+    actor: str = ""
+    messages: Annotated[list[Message], _merge_messages] = Field(default_factory=list)
+    context: str = ""
+    tool_rounds: int = 0
+    tool_results: list[str] = Field(default_factory=list)
+    decisions: list[str] = Field(default_factory=list)
+    escalated: bool = False
+    response: str = ""
+    error: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+def ensure_schema(pool: SqliteConnectionPool) -> None:
+    """Create the domain tables from the single source of truth.
+
+    The DDL lives in `dummy_data/schema.sql` and is read from disk rather
+    than duplicated here: two copies of a schema drift, and the one in
+    the test fixture is always the one that drifts.
+    """
+    pool.execute_script(_SCHEMA_FILE.read_text())
+
+
+def policy_text() -> str:
+    """The refund policy, resolved package-relative and never from the CWD."""
+    return get_settings().customer_support_agent.resolved_policy_path.read_text()
