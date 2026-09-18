@@ -195,7 +195,7 @@ class LoggerFactory:
             maxBytes=settings.max_bytes,
             backupCount=settings.backup_count,
         )
-        handler.setLevel(settings.level)
+        handler.setLevel(settings.file_level)
         handler.setFormatter(PlainFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
         return handler
 

@@ -83,6 +83,11 @@ def _tool_calls_from(raw: Any) -> list[ModelToolCall] | None:
     ]
 
 
+# Payload logging truncates each message: a full 100k-token window in a
+# log line is unreadable, and the first part is what identifies the bug.
+_PAYLOAD_CHARS = 2000
+
+
 class OpenAICompatibleClient(LLMClient):
     """Adapter for any OpenAI-compatible chat/completions endpoint.
 
@@ -119,6 +124,7 @@ class OpenAICompatibleClient(LLMClient):
     async def complete(self, request: CompletionRequest) -> CompletionResult:
         """Run one completion; max_tokens is always bounded by config."""
         started = time.perf_counter()
+        self._log_request(request)
         completion = await self._client.chat.completions.create(
             model=self._provider.model,
             messages=[to_provider_message(m) for m in request.messages],
@@ -131,7 +137,7 @@ class OpenAICompatibleClient(LLMClient):
         )
         choice = completion.choices[0]
         usage = self._usage_from(completion.usage)
-        return CompletionResult(
+        result = CompletionResult(
             content=choice.message.content or "",
             tool_calls=_tool_calls_from(choice.message.tool_calls),
             model=completion.model,
@@ -140,6 +146,43 @@ class OpenAICompatibleClient(LLMClient):
             cost_usd=self.cost_for(usage),
             tier=self.tier,
             latency_ms=(time.perf_counter() - started) * 1000,
+        )
+        self._log_response(result)
+        return result
+
+    def _log_request(self, request: CompletionRequest) -> None:
+        """Record exactly what the model was asked.
+
+        The most useful line in the log when an agent misbehaves: what
+        the model actually received is rarely what you assumed it
+        received. Written to the file log only, never the curated feed.
+        """
+        if not self._settings.log_payloads:
+            return
+        self._logger.debug(
+            "LLM request",
+            model=self._provider.model,
+            tools=[tool["function"]["name"] for tool in request.tools or []],
+            messages=[
+                {"role": message.role, "content": message.content[:_PAYLOAD_CHARS]}
+                for message in request.messages
+            ],
+        )
+
+    def _log_response(self, result: CompletionResult) -> None:
+        """Record what came back, including tool calls and their arguments."""
+        if not self._settings.log_payloads:
+            return
+        self._logger.debug(
+            "LLM response",
+            model=result.model,
+            finish_reason=result.finish_reason,
+            tokens=result.usage.total_tokens,
+            latency_ms=round(result.latency_ms),
+            content=result.content[:_PAYLOAD_CHARS],
+            tool_calls=[
+                {"name": call.name, "arguments": call.arguments} for call in result.tool_calls or []
+            ],
         )
 
     def _structured_output_kwargs(self, request: CompletionRequest) -> dict[str, Any]:

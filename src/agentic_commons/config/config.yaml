@@ -21,6 +21,11 @@ logging:
   console_enabled: true
   console_level: INFO
   file_enabled: true
+  # The file log is the authoritative record, so it captures more than the
+  # console: DEBUG here is what makes LLM payloads, call traces and
+  # gatekeeper reasoning available after the fact without flooding the
+  # screen someone is watching.
+  file_level: DEBUG
   dir: logs
   per_subsystem_color: true
   max_bytes: 5000000
@@ -30,6 +35,11 @@ llm:
   enabled: true
   provider: nim            # nim | local — the default single-tier client
   max_tokens: 300
+  # Write every request and response to logs/llm.log at DEBUG. The single
+  # most useful switch when the agent misbehaves: it shows what the model
+  # was actually asked, which is rarely what you assume it was asked.
+  # Off by default — payloads are verbose and may carry customer text.
+  log_payloads: true
   providers:
     nim:
       base_url: https://integrate.api.nvidia.com/v1
@@ -38,7 +48,7 @@ llm:
       # (nvidia/nemotron-3.5-lightning-30b-a3b is invokable but narrates
       # chain-of-thought instead of answering.) It does NOT honor
       # guided_json/response_format — see guardrails.constrained_backend.
-      model: meta/llama-3.2-11b-vision-instruct  # nvidia/nemotron-3.5-lightning-30b-a3b
+      model: nvidia/nemotron-3-ultra-550b-a55b # meta/llama-3.2-11b-vision-instruct
       timeout_seconds: 60
       input_cost_per_1k_tokens: 0.0002
       output_cost_per_1k_tokens: 0.0006
@@ -352,6 +362,8 @@ tui:
   copy_method: osc52       # osc52 | file
   max_feed_lines: 500
   spinner_frames: "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+  # What each step says on screen. These are read by a person watching the
+  # agent work, so they name the *work*, not the method being called.
   stage_labels:
     intake: Receiving request…
     prompt_injection_check: Checking for prompt injection…
@@ -365,16 +377,121 @@ tui:
     guardrail_validation: Validating output structure…
     hallucination_check: Checking response grounding…
     gatekeeper_evaluation: Checking authorization…
-    tool_execution: "Executing {tool_name}…"
+    tool_execution: "{tool_name}"
     order_status_check: Checking order status…
     refund_eligibility_check: Checking refund eligibility…
     memory_write: Updating memory…
     audit_record: Recording audit trail…
-    finalize: Composing the response…
+    finalize: Composing the reply…
+    intent_classified: Understanding the request…
+    tool_suppressed: Already had that answer — skipping the repeat
+    tool_refused: Action not available for this request
+  # Per-tool wording for the tool_execution step. A customer-support
+  # operator should read what the agent is doing, not which Python method
+  # it reached for.
+  tool_labels:
+    get_order_status: Looking up the order…
+    get_refund_status: Checking refund eligibility…
+    process_refund: Issuing the refund…
+    queue_for_approval: Sending to a human for approval…
+    apply_goodwill_credit: Applying a goodwill credit…
+  # Colour per step, so the feed is scannable rather than a wall of green.
+  # Grouped by what the step *is*: security checks warn, data preparation
+  # is cool, model calls are blue, authority decisions stand out, and only
+  # a completed action or the final reply is green.
+  stage_styles:
+    intake: white
+    intent_classified: bright_magenta
+    prompt_injection_check: yellow
+    pii_filtering: yellow
+    content_moderation: yellow
+    working_memory_check: cyan
+    context_assembly: cyan
+    memory_write: cyan
+    llm_call: blue
+    llm_response_received: bright_blue
+    output_parsing: blue
+    guardrail_validation: magenta
+    hallucination_check: magenta
+    gatekeeper_evaluation: bright_magenta
+    tool_execution: green
+    tool_suppressed: bright_black
+    tool_refused: red
+    order_status_check: green
+    refund_eligibility_check: green
+    audit_record: bright_black
+    finalize: bright_green
+  default_stage_style: white
 
 customer_support_agent:
   enabled: true
   max_tool_iterations: 5
+  # What the customer is asking for decides which tools exist this turn.
+  #
+  # This is business policy, stated deterministically, and it runs before
+  # any similarity score: a refund is discussed when the customer raises
+  # it, never because a status question scraped a weak embedding match.
+  # Phrases are matched case-insensitively against the customer's message;
+  # the first intent whose phrases match wins, so they are ordered most
+  # specific first.
+  #
+  # `tools: []` means the turn is answered conversationally, with no tools
+  # offered at all.
+  intents:
+    - name: refund_request
+      phrases:
+        - refund
+        - money back
+        - reimburse
+        - my money
+        - charge back
+        - chargeback
+        - compensate
+        - compensation
+        - credit me
+      tools:
+        - get_order_status
+        - get_refund_status
+        - process_refund
+        - queue_for_approval
+        - apply_goodwill_credit
+    - name: order_enquiry
+      phrases:
+        - order
+        - status
+        - where is
+        - track
+        - tracking
+        - delivered
+        - delivery
+        - shipped
+        - shipment
+        - arrived
+        - parcel
+        - package
+      tools:
+        - get_order_status
+        - get_refund_status
+  # Intent used when nothing matches — no tools, just an answer.
+  default_intent: general_enquiry
+  # A follow-up carries the previous turn's intent. "what about 10010"
+  # after an order enquiry is an order enquiry: the customer did not
+  # restate the subject because they had already established it.
+  followup:
+    phrases:
+      - what about
+      - how about
+      - and
+      - what of
+      - also
+      - same for
+      - check
+    # A bare reference that looks like an order id also continues the
+    # subject, even without a lead-in phrase ("10010?").
+    reference_pattern: '\b\d{4,}\b'
+  # How many prior turns to replay to the model. Enough to resolve a
+  # follow-up, small enough to stay cheap.
+  history_turns: 6
   default_actor: support-agent-1
   default_role: support_agent
   default_authority_rank: 4     # user_task-granted authority

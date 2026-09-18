@@ -90,11 +90,7 @@ class TestOfferedSetIsEnforcedAtInvocation:
         """
         llm = ScriptedLLM(
             [
-                {
-                    "tool_calls": tool_call(
-                        "support.process_refund", order_id="10001", amount=32.0
-                    )
-                },
+                {"tool_calls": tool_call("support.process_refund", order_id="10001", amount=32.0)},
                 {"content": "I'm a support agent."},
             ]
         )
@@ -152,8 +148,16 @@ class TestDuplicateActionSuppression:
         """Defect 4: one request produced two attempts at the same effect."""
         llm = ScriptedLLM(
             [
-                {"tool_calls": tool_call("support.queue_for_approval", order_id="10002", amount=210.0)},
-                {"tool_calls": tool_call("support.queue_for_approval", order_id="10002", amount=210.0)},
+                {
+                    "tool_calls": tool_call(
+                        "support.queue_for_approval", order_id="10002", amount=210.0
+                    )
+                },
+                {
+                    "tool_calls": tool_call(
+                        "support.queue_for_approval", order_id="10002", amount=210.0
+                    )
+                },
                 {"content": "Queued for review."},
             ]
         )

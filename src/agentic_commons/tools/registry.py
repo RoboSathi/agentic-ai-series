@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from agentic_commons.logging import get_logger, logged
 from agentic_commons.tools.types import (
+    WIRE_NAME_PATTERN,
     ToolCall,
     ToolDefinition,
     ToolResult,
@@ -46,7 +47,17 @@ class NamespacedToolRegistry:
 
     @logged("tools")
     def register(self, tool: ToolDefinition) -> None:
-        """Register a tool under its qualified name, replacing any namesake."""
+        """Register a tool under its qualified name, replacing any namesake.
+
+        The wire name is validated here rather than at call time: a name
+        a provider will reject should fail at startup, not halfway
+        through a customer's first conversation.
+        """
+        if not WIRE_NAME_PATTERN.match(tool.wire_name):
+            raise ValueError(
+                f"Tool '{tool.wire_name}' is not a valid provider function name; "
+                f"only letters, digits, underscores and dashes are allowed"
+            )
         self._tools[tool.qualified_name] = tool
 
     def register_all(self, tools: list[ToolDefinition]) -> None:
@@ -57,12 +68,17 @@ class NamespacedToolRegistry:
     def get(self, name: str) -> ToolDefinition | None:
         """Look up by qualified name, falling back to a unique bare name.
 
-        Models routinely drop the namespace they were shown. Resolving a
-        bare name works only while it is unambiguous; once two namespaces
-        share it, the lookup fails rather than guessing which was meant.
+        Three spellings resolve: the qualified name used in logs and
+        policy, the wire name the provider was actually shown, and a bare
+        name while it is unambiguous — models routinely drop the
+        namespace. Once two namespaces share a bare name the lookup
+        fails rather than guessing which was meant.
         """
         if name in self._tools:
             return self._tools[name]
+        by_wire = next((tool for tool in self._tools.values() if tool.wire_name == name), None)
+        if by_wire is not None:
+            return by_wire
         matches = [tool for tool in self._tools.values() if tool.name == name]
         return matches[0] if len(matches) == 1 else None
 

@@ -63,6 +63,7 @@ class LoggingSettings(YamlBackedSettings):
     console_enabled: bool
     console_level: str
     file_enabled: bool
+    file_level: str
     dir: str
     per_subsystem_color: bool
     max_bytes: int
@@ -110,6 +111,7 @@ class LLMSettings(YamlBackedSettings):
     enabled: bool
     provider: ProviderName
     max_tokens: int
+    log_payloads: bool
     providers: dict[str, LLMProviderSettings]
     cascade: LLMCascadeSettings
     embedding: EmbeddingSettings
@@ -504,8 +506,26 @@ class TuiSettings(YamlBackedSettings):
     max_feed_lines: int
     spinner_frames: str
     stage_labels: dict[str, str]
+    tool_labels: dict[str, str]
+    stage_styles: dict[str, str]
+    default_stage_style: str
 
     model_config = SettingsConfigDict(env_prefix="TUI__")
+
+
+class IntentSettings(BaseModel):
+    """One customer intent, and the tools it unlocks."""
+
+    name: str
+    phrases: list[str]
+    tools: list[str]
+
+
+class FollowupSettings(BaseModel):
+    """How a message that restates nothing continues the previous subject."""
+
+    phrases: list[str]
+    reference_pattern: str
 
 
 class CustomerSupportAgentSettings(YamlBackedSettings):
@@ -514,6 +534,10 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     _yaml_section = "customer_support_agent"
     enabled: bool
     max_tool_iterations: int
+    intents: list[IntentSettings]
+    default_intent: str
+    followup: FollowupSettings
+    history_turns: int
     default_actor: str
     default_role: str
     default_authority_rank: int

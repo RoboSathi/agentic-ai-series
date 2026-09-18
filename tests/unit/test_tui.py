@@ -35,9 +35,38 @@ class TestStageLabels:
     def test_labels_come_from_config(self) -> None:
         assert StageLabelRegistry().label_for("llm_call") == "Calling model…"
 
-    def test_substitutes_the_tool_name(self) -> None:
+    def test_a_tool_step_reads_as_work_not_as_a_method_name(self) -> None:
+        """The person watching cares what the agent is doing."""
         label = StageLabelRegistry().label_for("tool_execution", tool_name="process_refund")
-        assert "process_refund" in label
+        assert label == "Issuing the refund…"
+        assert "process_refund" not in label
+
+    def test_a_namespaced_tool_resolves_to_the_same_wording(self) -> None:
+        registry = StageLabelRegistry()
+        assert registry.tool_label("support.process_refund") == registry.tool_label(
+            "process_refund"
+        )
+
+    def test_an_unlabelled_tool_degrades_readably(self) -> None:
+        assert StageLabelRegistry().tool_label("send_carrier_email") == (
+            "Running send carrier email…"
+        )
+
+    def test_steps_are_not_all_one_colour(self) -> None:
+        """A feed that is entirely green communicates nothing."""
+        registry = StageLabelRegistry()
+        styles = {
+            registry.style_for(stage)
+            for stage in ("prompt_injection_check", "context_assembly", "llm_call", "finalize")
+        }
+        assert len(styles) >= 3
+
+    def test_a_refused_action_is_coloured_as_a_problem(self) -> None:
+        assert StageLabelRegistry().style_for("tool_refused") == "red"
+
+    def test_a_suppressed_repeat_is_muted(self) -> None:
+        """It is not work done, so it must not look like work done."""
+        assert StageLabelRegistry().style_for("tool_suppressed") == "bright_black"
 
     def test_a_missing_substitution_leaves_the_template_readable(self) -> None:
         assert StageLabelRegistry().label_for("tool_execution") != ""

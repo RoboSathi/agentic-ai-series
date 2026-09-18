@@ -118,16 +118,21 @@ class StatusFeedBuffer:
 
         `started` events add nothing: they drive the status line instead,
         and a line per start would double every stage in the feed.
+
+        The mark says what happened; the colour says what *kind* of thing
+        it was. Both carry information, which is why the feed is not one
+        colour with a tick in front of every line.
         """
         if event.status == "started":
             return
-        mark, style = _MARKS.get(event.status, ("·", "dim"))
-        line = Text(f"{mark} ", style=style)
-        line.append(self._labels.label_for(event.stage, tool_name=event.detail or ""))
+        mark, mark_style = _MARKS.get(event.status, ("·", "dim"))
+        style = "red" if event.status == "failed" else self._labels.style_for(event.stage)
+        line = Text(f"{mark} ", style=mark_style)
+        line.append(self._labels.label_for(event.stage, tool_name=event.detail or ""), style=style)
         if event.detail and event.status == "failed":
             line.append(f" — {event.detail}", style="red")
         if event.tokens_delta:
-            line.append(f"  ↓{_compact(event.tokens_delta)}", style="dim")
+            line.append(f"  ↓{_compact(event.tokens_delta)}", style="bright_black")
         self.append(line)
 
     def note(self, text: str, style: str = "") -> None:
