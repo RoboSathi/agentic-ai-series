@@ -15,6 +15,7 @@ logs/*
 src/agentic_commons/data/*
 src/agentic_commons/config/local.yaml
 src/customer_support_agent/dummy_data/*.db
+src/customer_support_agent/dummy_data/episodic/
 
 # Claude specific
 .claude
