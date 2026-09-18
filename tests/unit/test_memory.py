@@ -67,13 +67,13 @@ class TestWorkingMemory:
     def test_holds_the_active_window(self) -> None:
         working = WorkingMemory(capacity=3)
         working.write(_fact("a", "1"), Provenance(source="t"))
-        assert working.size == 1
+        assert working.size() == 1
 
     def test_evicts_the_oldest_when_full(self) -> None:
         working = WorkingMemory(capacity=2)
         for index in range(3):
             working.write(_fact(str(index), str(index)), Provenance(source="t"))
-        assert working.size == 2
+        assert working.size() == 2
 
     def test_reads_newest_first(self) -> None:
         working = WorkingMemory(capacity=5)

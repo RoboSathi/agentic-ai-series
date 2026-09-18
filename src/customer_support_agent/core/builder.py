@@ -63,6 +63,35 @@ class PolicyContextSource:
         ]
 
 
+class WorkingMemoryContextSource:
+    """Contributes what this conversation has already established.
+
+    Pinned, and for the same reason the policy is: these are not
+    retrieval results competing on relevance, they are the facts of the
+    conversation in progress. An agent that drops "this customer is
+    verified as #41" under budget pressure asks for the code again.
+
+    This is the source that makes working memory *used* rather than
+    merely written. Without it the window is a store nothing reads, which
+    is how it sat for several episodes.
+    """
+
+    def __init__(self, memory: MemoryFacade) -> None:
+        self._memory = memory
+
+    async def candidates(self, task: Task) -> list[Chunk]:
+        """This session's active facts, newest first."""
+        return [
+            Chunk(
+                content=f"{fact.key}: {fact.value}",
+                kind="memory",
+                source=fact.provenance.source,
+                pinned=True,
+            )
+            for fact in self._memory.active_window(task.session_id)
+        ]
+
+
 class MemoryContextSource:
     """Contributes recalled memory to the window."""
 
@@ -118,6 +147,7 @@ def build_agent(
 
     sources: list[object] = [PolicyContextSource()]
     if facade is not None:
+        sources.append(WorkingMemoryContextSource(facade))
         sources.append(MemoryContextSource(facade))
     context = FiveStagePipeline(sources=sources, ranker=scoring)  # type: ignore[arg-type]
 

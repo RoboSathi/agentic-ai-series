@@ -17,7 +17,7 @@ import re
 
 from pydantic import BaseModel
 
-from agentic_commons.logging import get_logger, logged
+from agentic_commons.logging import get_logger, instrument, logged
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.core.identity import Customer
 from customer_support_agent.core.presentation import (
@@ -42,6 +42,7 @@ class AuthResult(BaseModel):
     menu: OrderMenu | None = None
 
 
+@instrument("customer_support_agent")
 class CustomerAuthenticator:
     """Turns a typed code into an authenticated customer, or a prompt."""
 

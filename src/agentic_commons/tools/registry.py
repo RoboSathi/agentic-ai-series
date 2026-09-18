@@ -13,7 +13,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from pydantic import ValidationError
 
-from agentic_commons.logging import get_logger, logged
+from agentic_commons.logging import get_logger, instrument, logged
 from agentic_commons.tools.types import (
     WIRE_NAME_PATTERN,
     ToolCall,
@@ -33,6 +33,7 @@ class ToolRegistry(Protocol):
     def all_tools(self) -> list[ToolDefinition]: ...
 
 
+@instrument("tools")
 class NamespacedToolRegistry:
     """Tools keyed by `namespace.name`, with namespace-scoped exposure.
 

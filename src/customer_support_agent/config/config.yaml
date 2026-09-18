@@ -102,7 +102,12 @@ customer_support_agent:
   enabled: true
   max_tool_iterations: 5
   intents:
+  # `semantic: false` keeps an intent on the deterministic path only.
+  # Refund stays there deliberately: a similarity score is a continuum,
+  # so "is this about a refund?" becomes a threshold to tune rather than
+  # a policy to state — and the money moves on the wrong side of it.
   - name: refund_request
+    semantic: false
     phrases:
     - refund
     - money back
@@ -120,6 +125,7 @@ customer_support_agent:
     - queue_for_approval
     - apply_goodwill_credit
   - name: order_enquiry
+    semantic: true
     phrases:
     - order
     - status
@@ -136,6 +142,20 @@ customer_support_agent:
     tools:
     - get_order_status
   default_intent: general_enquiry
+  # The encoder fallback, tried only when no configured phrase matched.
+  # It runs an embedding model (a BERT-family encoder), never a
+  # completion: classification is a similarity question, and paying for
+  # generation to answer it is both slower and less stable.
+  semantic_intent:
+    enabled: true
+    # Cosine similarity a message must reach before it is read as an
+    # intent. High on purpose — an intent unlocks tools, so the cost of a
+    # false positive is an action nobody asked for.
+    threshold: 0.62
+    # Longest message the encoder is asked about. A paragraph averages
+    # out to nothing in particular; a support request that long is
+    # better served by the default intent and the model itself.
+    max_words: 40
   followup:
     phrases:
     - what about

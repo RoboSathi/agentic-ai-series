@@ -34,13 +34,17 @@ logging:
   file_level: DEBUG
   dir: logs
   per_subsystem_color: true
+  # How much of a traced argument or return value is written. 0 means all
+  # of it: the argument you need to read back is always the long one, and
+  # an elided payload turns the log from evidence into a hint.
+  payload_max_chars: 0
   max_bytes: 5000000
   backup_count: 3
 
 llm:
   enabled: true
   provider: nim            # nim | local — the default single-tier client
-  max_tokens: 300
+  max_tokens: 3000
   # Write every request and response to logs/llm.log at DEBUG. The single
   # most useful switch when the agent misbehaves: it shows what the model
   # was actually asked, which is rarely what you assume it was asked.
@@ -261,7 +265,10 @@ security:
     # call leaves the harness (data minimization, E32).
     tool_call_allowed_fields: [order_id, user_id, amount, reason, status]
   prompt_injection:
-    enabled: false
+    # On: untrusted text is delimited and the tool surface narrowed before
+    # anything is concatenated into a prompt. This is an agent talking to
+    # the public, and the defence costs one pass over the message.
+    enabled: true
     data_open_tag: "<untrusted_data>"
     data_close_tag: "</untrusted_data>"
     suspicious_phrases:
@@ -274,7 +281,7 @@ security:
       - override your
       - my refund limit is now
   content_moderation:
-    enabled: false
+    enabled: true
     blocked_terms: [kill, bomb, terrorist]
 
 resilience:
@@ -380,11 +387,14 @@ tui:
     memory_write: Updating memory…
     audit_record: Recording audit trail…
     finalize: Composing the reply…
-    intent_classified: Understanding the request…
+    intent_classification: Understanding the intention of request…
     scope_check: Checking this is something I can help with…
     authentication: Verifying your account…
     tool_suppressed: Already had that answer — skipping the repeat
     tool_refused: Action not available for this request
+    order_lookup: Checking order details
+    working_memory_write: Noting that for this conversation…
+    memory_recall: Recalling what this conversation established…
   # Per-tool wording, supplied by each agent for its own tools. An
   # unlabelled tool degrades to a readable fallback rather than failing.
   tool_labels: {}
@@ -394,7 +404,7 @@ tui:
   # a completed action or the final reply is green.
   stage_styles:
     intake: white
-    intent_classified: bright_magenta
+    intent_classification: bright_magenta
     scope_check: yellow
     authentication: bright_cyan
     prompt_injection_check: yellow
@@ -416,7 +426,17 @@ tui:
     refund_eligibility_check: green
     audit_record: bright_black
     finalize: bright_green
+    order_lookup: cyan
+    working_memory_write: dodger_blue1
+    memory_recall: dodger_blue1
   default_stage_style: white
+  # Mirroring the log stream onto the screen. On by default while the
+  # system is being built out: seeing every step is how the flow gets
+  # understood, and `/debug off` (or level: INFO) quiets it again without
+  # touching the files, which stay complete regardless.
+  trace:
+    enabled: true
+    level: DEBUG          # DEBUG | INFO | WARNING | ERROR
   # How a slash command's output is drawn in the feed. Commands answer
   # about the system rather than the customer, so they are styled apart
   # from the conversation — a reader should never mistake `/orders` output

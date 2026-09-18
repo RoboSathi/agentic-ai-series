@@ -23,7 +23,8 @@ from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.widgets import Footer, Header, Input
 
-from agentic_commons.commands import CommandRegistry
+from agentic_commons.commands import CommandRegistry, ConsoleEffect
+from agentic_commons.commands.data import MemoryCommand
 from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger
 from agentic_commons.observability import InMemoryLiveStatusFeed, StageReporter
@@ -31,6 +32,7 @@ from agentic_commons.observability.types import StatusEvent
 from agentic_commons.tui.clipboard import Osc52ClipboardService
 from agentic_commons.tui.command_view import CommandView
 from agentic_commons.tui.labels import StageLabelRegistry
+from agentic_commons.tui.log_feed import TraceStream
 from agentic_commons.tui.suggest import CommandSuggester
 from agentic_commons.tui.widgets import LiveStatusPanel, StatusLineWidget, TokenCounterWidget
 
@@ -38,6 +40,9 @@ from agentic_commons.tui.widgets import LiveStatusPanel, StatusLineWidget, Token
 # factory rather than a built agent: the app owns the feed, so the agent
 # cannot be constructed until the app exists.
 AgentFactory = Callable[[StageReporter], Any]
+
+# What `/debug off` passes back as its requested level.
+_TRACE_OFF = "off"
 
 
 class AgenticTuiApp(App[None]):
@@ -73,6 +78,7 @@ class AgenticTuiApp(App[None]):
 
     def __init__(self, agent_factory: "AgentFactory | None" = None) -> None:
         super().__init__()
+        self.title = "Customer Support Agent"
         self._feed = InMemoryLiveStatusFeed()
         self._agent = agent_factory(StageReporter(self._feed, "tui")) if agent_factory else None
         self._labels = StageLabelRegistry()
@@ -82,6 +88,9 @@ class AgenticTuiApp(App[None]):
         self._tokens = TokenCounterWidget()
         self._commands = CommandRegistry()
         self._view = CommandView()
+        # Mirrors the log stream into the same panel. The files are
+        # written regardless; this only decides what reaches the screen.
+        self._trace = TraceStream(self._panel.show_line)
         self._turn = 0
         # One session for the life of the window. Keying it per turn would
         # give every message its own conversation, so a follow-up like
@@ -91,6 +100,19 @@ class AgenticTuiApp(App[None]):
         # the agent asks for a code and verifies it against the database,
         # which is the flow a real deployment has.
         self._journal = get_logger("tui")
+        self._bind_live_commands()
+
+    def _bind_live_commands(self) -> None:
+        """Point the commands that inspect live state at this session's agent.
+
+        `/memory working` reads the running facade, not the database —
+        the active window exists only in the process. A console with no
+        agent keeps the default command, which says so rather than
+        showing an empty window.
+        """
+        memory = getattr(self._agent, "memory", None)
+        if memory is not None:
+            self._commands.register(MemoryCommand(memory=memory, session_id=self._session_id))
 
     def compose(self) -> ComposeResult:
         """The single-panel layout, prompt above its own status line."""
@@ -111,8 +133,10 @@ class AgenticTuiApp(App[None]):
         self.set_interval(get_settings().tui.refresh_interval_ms / 1000, self._status.tick)
         self.query_one("#query", Input).focus()
         self._status.bind_tokens(self._tokens)
+        if get_settings().tui.trace.enabled:
+            self._trace.enable()
         self._panel.note(
-            "Ready. The agent will ask you to verify before it looks anything up. "
+            "Ready. The agent will ask you to verify with user_code before it looks anything up. "
             "Type /help for console commands.",
             style="dim",
         )
@@ -138,11 +162,21 @@ class AgenticTuiApp(App[None]):
         """
         self._panel.show_lines([self._view.echo(f"\n{line}")])
         result = await self._commands.dispatch(line)
-        if result.clears_transcript:
-            self._panel.clear_feed()
+        self._apply(result.effect)
+        if result.effect.clear_transcript:
             return
         self._panel.show_lines(self._view.render(result))
         self._scroll_to_latest()
+
+    def _apply(self, effect: ConsoleEffect) -> None:
+        """Perform the console-level effects a command asked for."""
+        if effect.clear_transcript:
+            self._panel.clear_feed()
+        if effect.trace_level:
+            if effect.trace_level == _TRACE_OFF:
+                self._trace.disable()
+            else:
+                self._trace.enable(effect.trace_level)
 
     async def _run(self, query: str) -> None:
         """Execute a query, keeping the feed live throughout."""
@@ -205,6 +239,10 @@ class AgenticTuiApp(App[None]):
         """Export the visible feed and try the terminal clipboard."""
         path = self._copier.copy(self._panel.as_text())
         self._panel.note(f"Feed written to {path}", style="cyan")
+
+    def on_unmount(self) -> None:
+        """Detach the trace stream so the handler does not outlive the app."""
+        self._trace.disable()
 
     def action_clear_feed(self) -> None:
         """Clear the panel."""

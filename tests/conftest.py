@@ -189,9 +189,23 @@ def restore_settings() -> Iterator[None]:
 
 @pytest.fixture
 def security_on(restore_settings: None) -> Iterator[None]:
-    """Turn on the content-level security checks that ship off by default."""
+    """Turn on every content-level security check.
+
+    Injection defence and moderation ship on; PII masking does not, and
+    a test that needs it says so here rather than assuming.
+    """
     settings = get_settings().security
     settings.pii.enabled = True
     settings.prompt_injection.enabled = True
     settings.content_moderation.enabled = True
+    yield
+
+
+@pytest.fixture
+def security_off(restore_settings: None) -> Iterator[None]:
+    """Turn the content-level checks off, for the degraded-mode tests."""
+    settings = get_settings().security
+    settings.pii.enabled = False
+    settings.prompt_injection.enabled = False
+    settings.content_moderation.enabled = False
     yield

@@ -15,7 +15,7 @@ import difflib
 from typing import Any
 
 from agentic_commons.config import get_settings
-from agentic_commons.logging import get_logger, logged
+from agentic_commons.logging import get_logger, instrument, logged
 from agentic_commons.memory.types import (
     MemoryFact,
     MemoryQuery,
@@ -52,6 +52,7 @@ INSERT INTO semantic_facts (
 """
 
 
+@instrument("memory")
 class SemanticStore:
     """Structured facts with exact-then-fuzzy key lookup."""
 

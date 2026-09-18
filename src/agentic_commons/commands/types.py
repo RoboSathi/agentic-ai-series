@@ -15,6 +15,20 @@ from typing import Protocol, runtime_checkable
 from pydantic import BaseModel, Field
 
 
+class ConsoleEffect(BaseModel):
+    """Something only the console can do, asked for by a command.
+
+    A command has no handle on the widget, and giving it one would make
+    every command a UI component. It states the effect; the console
+    applies it. `/clear` and `/debug` are the two that need this.
+    """
+
+    clear_transcript: bool = False
+    # A logging level name, or "off". Empty means "leave the trace
+    # stream alone" — which is what every other command wants.
+    trace_level: str = ""
+
+
 class CommandRow(BaseModel):
     """One row of tabular output."""
 
@@ -35,11 +49,7 @@ class CommandResult(BaseModel):
     headers: list[str] = Field(default_factory=list)
     rows: list[CommandRow] = Field(default_factory=list)
     ok: bool = True
-    # Console-level effects a command asks for but cannot perform itself.
-    # A command has no handle on the widget, and giving it one would make
-    # every command a UI component. It states the effect; the console
-    # applies it.
-    clears_transcript: bool = False
+    effect: ConsoleEffect = Field(default_factory=ConsoleEffect)
 
     @property
     def empty(self) -> bool:

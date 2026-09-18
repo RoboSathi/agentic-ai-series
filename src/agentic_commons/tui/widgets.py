@@ -190,6 +190,11 @@ class LiveStatusPanel(Static):
         self.buffer.note(text, style)
         self._repaint()
 
+    def show_line(self, line: Text) -> None:
+        """Add one already-styled line — what the trace stream sends."""
+        self.buffer.append(line)
+        self._repaint()
+
     def show_lines(self, lines: list[Text]) -> None:
         """Add already-styled lines — what a rendered command produces."""
         for line in lines:

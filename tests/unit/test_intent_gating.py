@@ -217,3 +217,100 @@ class TestMachineOutputNeverReachesTheCustomer:
         agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
         state = await agent.handle("who are you")
         assert '"parameters"' not in state.response
+
+
+class TestSemanticFallback:
+    """The encoder runs second, and only where config allows it."""
+
+    class StubEncoder:
+        """A stand-in for the hosted encoder, with a fixed geometry.
+
+        Every configured phrase sits on one axis. A query is placed on
+        the same axis when `similar`, and orthogonal to it otherwise —
+        so the similarity score is 1.0 or 0.0 and the assertions are
+        about the *rule*, not about a hosted model's mood on the day.
+
+        The phrases are recognised by their absence of a question mark,
+        which every query in these tests carries.
+        """
+
+        _PHRASE_AXIS = [1.0, 0.0]
+        _ELSEWHERE = [0.0, 1.0]
+
+        def __init__(self, similar: bool = True) -> None:
+            self.calls = 0
+            self._similar = similar
+
+        @property
+        def dimensions(self) -> int:
+            return 2
+
+        async def embed(self, texts: list[str]) -> list[list[float]]:
+            self.calls += 1
+            return [self._vector_for(text) for text in texts]
+
+        def _vector_for(self, text: str) -> list[float]:
+            is_query = text.endswith("?")
+            if not is_query:
+                return self._PHRASE_AXIS
+            return self._PHRASE_AXIS if self._similar else self._ELSEWHERE
+
+    @pytest.mark.asyncio
+    async def test_a_phrase_match_never_reaches_the_encoder(self) -> None:
+        """Deterministic policy wins outright; the encoder is not consulted."""
+        encoder = self.StubEncoder()
+        intent = await IntentClassifier(embeddings=encoder).classify_async("where is my order")
+        assert intent.name == "order_enquiry"
+        assert encoder.calls == 0
+
+    @pytest.mark.asyncio
+    async def test_a_paraphrase_is_recognised_by_similarity(self) -> None:
+        encoder = self.StubEncoder(similar=True)
+        intent = await IntentClassifier(embeddings=encoder).classify_async("when will it get here?")
+        assert intent.name == "order_enquiry"
+        assert "similarity" in intent.matched_phrase
+
+    @pytest.mark.asyncio
+    async def test_a_weak_match_stays_on_the_default_intent(self) -> None:
+        encoder = self.StubEncoder(similar=False)
+        intent = await IntentClassifier(embeddings=encoder).classify_async("mattress thread count?")
+        assert intent.name == "general_enquiry"
+        assert not intent.permits_tools
+
+    @pytest.mark.asyncio
+    async def test_refund_is_never_reached_semantically(self) -> None:
+        """Money moves on a stated policy, not on a threshold.
+
+        `refund_request` is configured `semantic: false`, so however
+        close a sentence sits to the refund vocabulary in embedding
+        space, it cannot unlock the refund tools without saying so.
+        """
+        encoder = self.StubEncoder(similar=True)
+        intent = await IntentClassifier(embeddings=encoder).classify_async("sort out the charge?")
+        assert intent.name != "refund_request"
+        assert "process_refund" not in intent.allowed_tools
+
+    @pytest.mark.asyncio
+    async def test_the_phrase_vocabulary_is_embedded_once(self) -> None:
+        """The phrases cannot have moved, so re-embedding them is waste."""
+        encoder = self.StubEncoder()
+        classifier = IntentClassifier(embeddings=encoder)
+        await classifier.classify_async("first question?")
+        after_first = encoder.calls
+        await classifier.classify_async("second question?")
+        assert encoder.calls == after_first + 1
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_encoder_degrades_to_the_deterministic_answer(self) -> None:
+        """A classifier that cannot reach its model must not fail the turn."""
+
+        class Broken:
+            @property
+            def dimensions(self) -> int:
+                return 2
+
+            async def embed(self, texts: list[str]) -> list[list[float]]:
+                raise RuntimeError("no entitlement")
+
+        intent = await IntentClassifier(embeddings=Broken()).classify_async("something vague?")
+        assert intent.name == "general_enquiry"

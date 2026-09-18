@@ -1,8 +1,9 @@
 """Commands about the console itself (LLD §20)."""
 
+import logging
 from typing import TYPE_CHECKING
 
-from agentic_commons.commands.types import CommandResult
+from agentic_commons.commands.types import CommandError, CommandResult, ConsoleEffect
 from agentic_commons.config import get_settings
 from agentic_commons.config.yaml_config import config_sources
 
@@ -114,4 +115,40 @@ class ClearCommand:
     usage = "/clear"
 
     async def run(self, args: list[str]) -> CommandResult:
-        return CommandResult(clears_transcript=True)
+        return CommandResult(effect=ConsoleEffect(clear_transcript=True))
+
+
+class DebugCommand:
+    """Turn the on-screen trace stream up, down, or off.
+
+    The files are unaffected: they record at their configured level
+    whatever the screen is doing. This changes only how much of that
+    stream is mirrored into the feed, which is a readability decision,
+    not a logging one.
+    """
+
+    name = "debug"
+    summary = "Show more or less of the live trace (DEBUG|INFO|off)"
+    usage = "/debug [debug|info|warning|error|off|on]"
+
+    _OFF = "off"
+    _ON = "on"
+
+    async def run(self, args: list[str]) -> CommandResult:
+        settings = get_settings().tui.trace
+        if not args:
+            return (
+                CommandResult(title="Trace stream")
+                .line(f"Configured level: {settings.level}.")
+                .line(self.usage)
+            )
+        wanted = args[0].casefold()
+        if wanted == self._ON:
+            wanted = settings.level.casefold()
+        if wanted != self._OFF and wanted.upper() not in logging.getLevelNamesMapping():
+            raise CommandError(f"'{args[0]}' is not a level or '{self._OFF}'")
+        told = "off" if wanted == self._OFF else wanted.upper()
+        return CommandResult(
+            title=f"Trace stream {told}",
+            effect=ConsoleEffect(trace_level=wanted),
+        ).line("The log files are unchanged — they record everything either way.")

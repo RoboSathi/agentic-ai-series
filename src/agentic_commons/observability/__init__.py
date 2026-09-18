@@ -19,6 +19,7 @@ from agentic_commons.observability.tracer import (
     Redactor,
     Tracer,
 )
+from agentic_commons.observability.tracing import traced
 from agentic_commons.observability.types import (
     CostComponent,
     CostStack,
@@ -53,5 +54,6 @@ __all__ = [
     "StatusEvent",
     "StatusKind",
     "Tracer",
+    "traced",
     "utc_now",
 ]

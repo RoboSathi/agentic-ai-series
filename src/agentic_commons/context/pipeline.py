@@ -13,7 +13,7 @@ from typing import Protocol, runtime_checkable
 
 from agentic_commons.config import get_settings
 from agentic_commons.context.types import AssembledContext, Chunk, ChunkKind, Task
-from agentic_commons.logging import get_logger, logged
+from agentic_commons.logging import get_logger, instrument, logged
 
 # Where each kind of content belongs in the window. Instructions lead;
 # retrieved material sits in the middle; the task is last so it is the
@@ -53,6 +53,7 @@ class RelevanceRanker(Protocol):
     async def rank(self, text: str, candidates: list[str]) -> list[float]: ...
 
 
+@instrument("context")
 class FiveStagePipeline:
     """Assembly as five small, independently testable stages."""
 

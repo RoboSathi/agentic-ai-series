@@ -16,7 +16,7 @@ from datetime import timedelta
 
 from agentic_commons.config import get_settings
 from agentic_commons.gatekeeper.types import LedgerEntry, LedgerState
-from agentic_commons.logging import get_logger, logged
+from agentic_commons.logging import get_logger, instrument, logged
 from agentic_commons.observability.types import utc_now
 from agentic_commons.persistence import SqliteConnectionPool
 
@@ -35,6 +35,7 @@ CREATE INDEX IF NOT EXISTS idx_ledger_window
 """
 
 
+@instrument("gatekeeper")
 class CumulativeLedger:
     """Running totals per (ledger key, action class) inside a rolling window."""
 

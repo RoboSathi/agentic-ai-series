@@ -1,10 +1,15 @@
 """Call-tracing decorator (LLD §2, "Decorator" pattern).
 
-`@logged` writes a CALLED/RETURNED pair at DEBUG level — file only, so the
-TUI's curated feed stays readable (PRD FR-56). Passing `toggle_path` also
-makes the call a no-op when that feature is switched off, returning a
+`@logged` writes a CALLED/RETURNED pair at DEBUG level, with the arguments
+and the return value in full (PRD FR-56). Passing `toggle_path` also makes
+the call a no-op when that feature is switched off, returning a
 type-appropriate placeholder instead; without it the wrapped function always
 runs.
+
+Async methods get an async wrapper. The distinction matters: a sync
+wrapper around a coroutine function traces the coroutine *object* and
+times how long it took to create — a line that looks like evidence and
+contains none.
 """
 
 import functools
@@ -12,12 +17,17 @@ import inspect
 import time
 import types
 import typing
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, TypeVar, cast
 
 from agentic_commons.config import is_enabled
 from agentic_commons.logging.core import SUBSYSTEM_COLORS, get_logger
 
 T = TypeVar("T")
+C = TypeVar("C")
+
+# Set on a wrapper so `instrument` can tell an already-traced method from
+# an untraced one and never wrap the same call twice.
+_TRACED_MARKER = "__agentic_traced__"
 
 
 def logged(
@@ -33,24 +43,84 @@ def logged(
     color = SUBSYSTEM_COLORS.get(subsystem, "white")
 
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
-        @functools.wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> T:
+        def announce(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[Any, float]:
+            """Log the call, or report that the toggle skipped it."""
             logger = get_logger(subsystem)
             if toggle_path is not None and not is_enabled(toggle_path):
                 logger.log_skipped(func.__qualname__, color, toggle_path)
-                return _placeholder_for(func)
+                return logger, -1.0
             visible_args = args[1:] if args and hasattr(args[0], "__dict__") else args
             logger.log_called(func.__qualname__, color, visible_args, kwargs)
-            start = time.perf_counter()
+            return logger, time.perf_counter()
+
+        if inspect.iscoroutinefunction(func):
+            # Awaited here rather than returned unawaited. A sync wrapper
+            # around an async function traces the *coroutine object* and
+            # reports 0.0ms, which is a trace of nothing: the call had not
+            # run yet when the line was written.
+            @functools.wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                logger, start = announce(args, kwargs)
+                if start < 0:
+                    return _placeholder_for(func)
+                result = await func(*args, **kwargs)
+                logger.log_returned(
+                    func.__qualname__, color, result, (time.perf_counter() - start) * 1000
+                )
+                return result
+
+            setattr(async_wrapper, _TRACED_MARKER, True)
+            return cast(Callable[..., T], async_wrapper)
+
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> T:
+            logger, start = announce(args, kwargs)
+            if start < 0:
+                return _placeholder_for(func)
             result = func(*args, **kwargs)
             logger.log_returned(
                 func.__qualname__, color, result, (time.perf_counter() - start) * 1000
             )
             return result
 
+        setattr(wrapper, _TRACED_MARKER, True)
         return wrapper
 
     return decorator
+
+
+def instrument(subsystem: str) -> Callable[[type[C]], type[C]]:
+    """Trace every public method of a class (LLD §2).
+
+    One annotation on the class instead of one per method, for the same
+    reason a linter beats a checklist: the per-method version is correct
+    only until somebody adds a method. A new step on a decorated class is
+    traced because it exists, not because its author remembered.
+
+    Left alone: dunders, private methods, properties, and anything
+    already carrying `@logged` — double-tracing a method writes every
+    call twice and makes the file log look like a loop.
+    """
+
+    def decorator(cls: type[C]) -> type[C]:
+        for name, attribute in list(vars(cls).items()):
+            if not _is_traceable(name, attribute):
+                continue
+            setattr(cls, name, logged(subsystem)(attribute))
+        return cls
+
+    return decorator
+
+
+def _is_traceable(name: str, attribute: Any) -> bool:
+    """Whether one class attribute is a method worth tracing."""
+    if name.startswith("_"):
+        return False
+    if isinstance(attribute, (property, staticmethod, classmethod)):
+        return False
+    if getattr(attribute, _TRACED_MARKER, False):
+        return False
+    return inspect.isfunction(attribute)
 
 
 def _placeholder_for(func: Callable[..., T]) -> T:

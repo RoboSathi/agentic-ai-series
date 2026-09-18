@@ -66,6 +66,7 @@ class LoggingSettings(YamlBackedSettings):
     file_level: str
     dir: str
     per_subsystem_color: bool
+    payload_max_chars: int
     max_bytes: int
     backup_count: int
 
@@ -508,6 +509,13 @@ class CommandSettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="COMMANDS__")
 
 
+class TraceStreamSettings(BaseModel):
+    """Mirroring the log stream into the live feed (LLD §20)."""
+
+    enabled: bool
+    level: str
+
+
 class CommandOutputSettings(BaseModel):
     """How slash-command output is drawn (LLD §20)."""
 
@@ -535,6 +543,7 @@ class TuiSettings(YamlBackedSettings):
     stage_styles: dict[str, str]
     default_stage_style: str
     command_output: CommandOutputSettings
+    trace: TraceStreamSettings
 
     model_config = SettingsConfigDict(env_prefix="TUI__")
 

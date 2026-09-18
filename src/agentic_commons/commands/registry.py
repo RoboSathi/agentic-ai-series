@@ -23,6 +23,7 @@ from agentic_commons.commands.inspection import (
 )
 from agentic_commons.commands.system import (
     ClearCommand,
+    DebugCommand,
     HelpCommand,
     LogsCommand,
     SessionCommand,
@@ -113,4 +114,5 @@ def _default_commands() -> list[Command]:
         SessionCommand(),
         LogsCommand(),
         ClearCommand(),
+        DebugCommand(),
     ]

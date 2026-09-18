@@ -9,7 +9,7 @@ anything persists.
 from typing import Any
 
 from agentic_commons.config import get_settings
-from agentic_commons.logging import get_logger
+from agentic_commons.logging import get_logger, instrument
 from agentic_commons.security.auth.auth import Authorizer
 from agentic_commons.security.auth.types import AccessDecision, Principal
 from agentic_commons.security.content_moderation.moderator import (
@@ -24,6 +24,7 @@ from agentic_commons.security.prompt_injection.types import InjectionAssessment
 from agentic_commons.tools.types import ToolDefinition
 
 
+@instrument("security")
 class SecuritySuite:
     """Auth, PII, injection defense and moderation behind one object."""
 

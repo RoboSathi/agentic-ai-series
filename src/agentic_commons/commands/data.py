@@ -10,14 +10,18 @@ The agent has no route to these. They are console commands, dispatched
 before a message ever becomes a conversation turn.
 """
 
-from typing import Any, get_args
+from typing import TYPE_CHECKING, Any, get_args
 
+from agentic_commons.commands._pool import PoolBackedCommand
 from agentic_commons.commands.types import CommandError, CommandResult
 from agentic_commons.config import get_settings
 from agentic_commons.persistence import SqliteConnectionPool
 
+if TYPE_CHECKING:
+    from agentic_commons.memory import MemoryFacade
 
-class UsersCommand:
+
+class UsersCommand(PoolBackedCommand):
     """List customers, or look one up by code."""
 
     name = "users"
@@ -30,7 +34,7 @@ class UsersCommand:
             UsersRepository,
         )
 
-        pool = SqliteConnectionPool()
+        pool = self.pool
         users = UsersRepository(pool)
         orders = OrdersRepository(pool)
 
@@ -74,7 +78,7 @@ class UsersCommand:
         return result
 
 
-class OrdersCommand:
+class OrdersCommand(PoolBackedCommand):
     """List orders, filtered by customer code or status."""
 
     name = "orders"
@@ -87,7 +91,7 @@ class OrdersCommand:
             UsersRepository,
         )
 
-        pool = SqliteConnectionPool()
+        pool = self.pool
         settings = get_settings().commands
         limit = next((int(arg) for arg in args if arg.isdigit()), settings.default_limit)
         selector = next((arg for arg in args if not arg.isdigit()), "")
@@ -147,18 +151,38 @@ class OrdersCommand:
         return result
 
 
-class MemoryCommand:
-    """Show what each CoALA store currently holds."""
+class MemoryCommand(PoolBackedCommand):
+    """Show what the CoALA stores hold — long-term, or this conversation's.
+
+    Working memory lives in the running process, not the database, so
+    the console has to be handed the live facade to show it. Without
+    one, `/memory working` says so rather than reporting an empty window
+    that would read as "nothing was remembered".
+    """
 
     name = "memory"
-    summary = "What each memory store holds"
-    usage = "/memory [search term]"
+    summary = "What memory holds (add 'working' for this conversation)"
+    usage = "/memory [working|<search term>]"
+
+    _WORKING = "working"
+
+    def __init__(
+        self,
+        pool: SqliteConnectionPool | None = None,
+        memory: "MemoryFacade | None" = None,
+        session_id: str = "",
+    ) -> None:
+        super().__init__(pool)
+        self._memory = memory
+        self._session_id = session_id
 
     async def run(self, args: list[str]) -> CommandResult:
         from agentic_commons.memory import MemoryQuery, SemanticStore
 
         settings = get_settings().commands
-        pool = SqliteConnectionPool()
+        if args and args[0].casefold() == self._WORKING:
+            return self._working_window(settings.value_preview_chars)
+        pool = self.pool
         semantic = SemanticStore(pool)
         term = " ".join(args)
         facts = semantic.read(MemoryQuery(text=term, limit=settings.default_limit))
@@ -179,6 +203,31 @@ class MemoryCommand:
                 style="yellow" if fact.provenance.kind == "self_reported" else "",
             )
         result.line("Self-reported facts are weighted below verified ones at retrieval.")
+        result.line("Use /memory working to see what this conversation is holding.")
+        return result
+
+    def _working_window(self, preview: int) -> CommandResult:
+        """This session's active window — what the next turn will see."""
+        if self._memory is None:
+            return CommandResult(title="Working memory", ok=False).line(
+                "No live agent is attached to this console."
+            )
+        facts = self._memory.active_window(self._session_id)
+        result = CommandResult(
+            title=f"Working memory — {len(facts)} fact(s) active in this conversation"
+        )
+        if not facts:
+            return result.line("Nothing established yet. Verify, and it fills as you talk.")
+        result.headers = ["category", "key", "value", "source"]
+        for fact in facts:
+            result.row(
+                fact.category or "—",
+                fact.key,
+                fact.value[:preview],
+                fact.provenance.source,
+            )
+        result.line("These are pinned into the context window on the next turn.")
+        result.line("They are dropped when the conversation ends; nothing here is long-term.")
         return result
 
 

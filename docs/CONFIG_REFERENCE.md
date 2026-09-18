@@ -30,6 +30,7 @@ sub-features toggle.
 | `file_enabled` / `file_level` | Whether files get logs. `DEBUG` here on purpose — the file is the authoritative record and captures more than the console. |
 | `dir` | Log directory, resolved from the repo root, never the CWD. |
 | `per_subsystem_color` | Colour each subsystem differently in the console. |
+| `payload_max_chars` | Characters kept per traced argument or return value. **`0` = all of it**, which is the default: the argument you need to read back is always the long one. |
 | `max_bytes` / `backup_count` | Rotation size and how many rotated files to keep. |
 
 ## `llm`
@@ -189,6 +190,18 @@ No `enabled` flag by design — it is always invoked.
 | `tool_labels` | Tool → wording. "Looking up the order…", not "Executing support.get_order_status…". |
 | `stage_styles` | Stage → colour. Security warns, data prep is cool, model calls blue, authority stands out; green is reserved for completed work. |
 | `default_stage_style` | Fallback colour. |
+| `trace.enabled` | Mirror every log record into the feed. On while the system is being built out — `/debug off` quiets the screen without touching the files. |
+| `trace.level` | Lowest level mirrored to the screen (`DEBUG`…`ERROR`). The files still record at `logging.file_level`. |
+| `command_output.title_style` / `header_style` / `row_style` / `note_style` / `error_style` | How a slash command's output is drawn, so it never reads as something the agent said. |
+| `command_output.column_gap` / `max_column_width` | Table spacing, and where one long cell is elided rather than pushing every other column off the right edge. |
+| `command_output.prompt_style` | How the typed command is echoed back. |
+
+## `commands`
+| Param | Meaning |
+|---|---|
+| `default_limit` | Rows a listing shows when no limit is given. |
+| `value_preview_chars` | Where a long stored value is elided in a table. |
+| `recent_window` | How many recent records the summaries (`/audit`, `/queue`) look back over. |
 
 ## `customer_support_agent`
 | Param | Meaning |
@@ -197,6 +210,10 @@ No `enabled` flag by design — it is always invoked.
 | `default_actor` / `default_role` | The agent's own identity for RBAC. |
 | `default_authority_rank` | Rank the agent acts under. |
 | `intents` | Ordered, most specific first. Each is `name` + `phrases` + the `tools` it unlocks. This is why a refund is discussed only when the customer raises it; `tools: []` means answer conversationally. |
+| `intents[].semantic` | Whether this intent may also be reached by similarity when no phrase matched. `false` for `refund_request` on purpose: money must not move on the wrong side of a threshold. |
+| `semantic_intent.enabled` | Consult the encoder when no configured phrase matched. An embedding call, never a completion. |
+| `semantic_intent.threshold` | Cosine similarity a message must reach to be read as an intent. High, because an intent unlocks tools. |
+| `semantic_intent.max_words` | Longest message the encoder is asked about; a paragraph averages out to nothing in particular. |
 | `default_intent` | Used when nothing matches — no tools. |
 | `followup.phrases` | Lead-ins that continue the previous subject ("what about…"). |
 | `followup.reference_pattern` | A bare reference (an order number) that also continues it. |

@@ -8,11 +8,11 @@ audit ledger wants the ledger's answer, not a model's summary of it.
 from typing import Any
 
 from agentic_commons.audit import Decision, SqliteAuditLedger
+from agentic_commons.commands._pool import PoolBackedCommand
 from agentic_commons.commands.types import CommandError, CommandResult
 from agentic_commons.config import get_settings
 from agentic_commons.config.yaml_config import config_sources, load_config
 from agentic_commons.observability import LittlesLawQueueModel, SLORegistry
-from agentic_commons.persistence import SqliteConnectionPool
 
 
 class ConfigCommand:
@@ -45,7 +45,7 @@ class ConfigCommand:
         return result
 
 
-class AuditCommand:
+class AuditCommand(PoolBackedCommand):
     """Show recent decisions from the audit ledger."""
 
     name = "audit"
@@ -53,8 +53,7 @@ class AuditCommand:
     usage = "/audit [allow|deny|escalate] [limit]"
 
     async def run(self, args: list[str]) -> CommandResult:
-        pool = SqliteConnectionPool()
-        ledger = SqliteAuditLedger(pool)
+        ledger = SqliteAuditLedger(self.pool)
         verdicts: tuple[Decision, ...] = ("allow", "deny", "escalate")
         wanted = next((v for v in verdicts if args and args[0] == v), None)
         limit = _limit(args)
@@ -110,7 +109,7 @@ class SloCommand:
         return result
 
 
-class QueueCommand:
+class QueueCommand(PoolBackedCommand):
     """Show the human review queue and the staffing it implies."""
 
     name = "queue"
@@ -120,8 +119,7 @@ class QueueCommand:
     async def run(self, args: list[str]) -> CommandResult:
         from customer_support_agent.core.repositories import HitlQueueRepository
 
-        pool = SqliteConnectionPool()
-        pending = HitlQueueRepository(pool).pending()
+        pending = HitlQueueRepository(self.pool).pending()
         result = CommandResult(title=f"Review queue — {len(pending)} pending")
         if pending:
             result.headers = ["id", "order", "customer", "amount", "raised"]

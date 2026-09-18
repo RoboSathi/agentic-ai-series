@@ -27,7 +27,7 @@ from agentic_commons.hallucination_protection.types import (
     TrustReport,
 )
 from agentic_commons.llm.embeddings import tokenize
-from agentic_commons.logging import get_logger, logged
+from agentic_commons.logging import get_logger, instrument, logged
 
 # Sentence boundaries, and the connectives that join two claims into one
 # sentence — both produce claims that must be checked separately.
@@ -82,6 +82,7 @@ class ClaimDecomposer:
         return claims
 
 
+@instrument("hallucination_protection")
 class DetectionLadder:
     """The detection ladder, delegating every tier to the shared cascade."""
 

@@ -24,7 +24,7 @@ from agentic_commons.llm.embeddings import (
     create_embedding_client,
     tokenize,
 )
-from agentic_commons.logging import get_logger
+from agentic_commons.logging import get_logger, instrument
 
 # Cascade order. Everything above the judge is a NOLLM tier by definition.
 TIER_ORDER: tuple[ScorerTier, ...] = (
@@ -224,6 +224,7 @@ class HumanAdjudicationScorer:
         )
 
 
+@instrument("evals")
 class NollmScoringCascadeImpl:
     """Chain of Responsibility over the six tiers.
 

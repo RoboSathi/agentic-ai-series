@@ -15,7 +15,7 @@ everything that can.
 import uuid
 from typing import Awaitable, Callable
 
-from agentic_commons.logging import get_logger
+from agentic_commons.logging import get_logger, instrument
 from agentic_commons.resilience import (
     CompensatingSaga,
     SagaResult,
@@ -32,6 +32,7 @@ from customer_support_agent.core.schema import Order
 Notifier = Callable[[int, str], Awaitable[None]]
 
 
+@instrument("customer_support_agent")
 class RefundSaga:
     """Issues a refund as a compensable sequence of steps."""
 

@@ -25,6 +25,19 @@ class IntentSettings(BaseModel):
     name: str
     phrases: list[str]
     tools: list[str]
+    # Whether this intent may also be reached by similarity when no
+    # phrase matched. Off by default: an intent that moves money is a
+    # policy decision, and a policy stated as a threshold is a policy
+    # nobody can read.
+    semantic: bool = False
+
+
+class SemanticIntentSettings(BaseModel):
+    """The encoder fallback used when no phrase matched."""
+
+    enabled: bool
+    threshold: float
+    max_words: int
 
 
 class FollowupSettings(BaseModel):
@@ -59,6 +72,7 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     max_tool_iterations: int
     intents: list[IntentSettings]
     default_intent: str
+    semantic_intent: SemanticIntentSettings
     followup: FollowupSettings
     history_turns: int
     goodwill: GoodwillSettings

@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 from agentic_commons.config import get_settings
-from agentic_commons.logging import get_logger, logged
+from agentic_commons.logging import get_logger, instrument, logged
 from agentic_commons.memory.types import (
     MemoryFact,
     MemoryQuery,
@@ -24,6 +24,7 @@ from agentic_commons.memory.types import (
 )
 
 
+@instrument("memory")
 class EpisodicStore:
     """Append-only session logs, one file per session."""
 

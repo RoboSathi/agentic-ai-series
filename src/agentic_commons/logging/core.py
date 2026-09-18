@@ -120,17 +120,17 @@ class RichLogger:
     def log_called(
         self, func_name: str, color: str, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> None:
-        """Trace a call at DEBUG — file only, never the curated TUI feed."""
-        args_repr = ", ".join(repr(a)[:50] for a in args)
-        kwargs_repr = ", ".join(f"{k}={repr(v)[:50]}" for k, v in kwargs.items())
+        """Trace a call at DEBUG, with its arguments in full."""
+        args_repr = ", ".join(_payload(a) for a in args)
+        kwargs_repr = ", ".join(f"{k}={_payload(v)}" for k, v in kwargs.items())
         all_args = ", ".join(filter(None, [args_repr, kwargs_repr]))
         self.debug(f"[bold {color}]CALLED[/bold {color}] [cyan]{func_name}[/cyan]({all_args})")
 
     def log_returned(self, func_name: str, color: str, result: Any, elapsed_ms: float) -> None:
-        """Trace a return value and its latency at DEBUG."""
+        """Trace a return value and its latency at DEBUG, in full."""
         self.debug(
             f"[bold {color}]RETURNED[/bold {color}] [cyan]{func_name}[/cyan] → "
-            f"{repr(result)[:100]} [dim]({elapsed_ms:.1f}ms)[/dim]"
+            f"{_payload(result)} [dim]({elapsed_ms:.1f}ms)[/dim]"
         )
 
     def log_skipped(self, func_name: str, color: str, toggle_path: str) -> None:
@@ -145,6 +145,11 @@ class LoggerFactory:
     """Builds one configured logger per subsystem (LLD §2)."""
 
     _loggers: dict[str, logging.Logger] = {}
+    # Handlers that want every subsystem's records, whenever that
+    # subsystem's logger happens to be built. The TUI's trace feed is one:
+    # it subscribes once at startup, and must still receive records from a
+    # subsystem whose logger is created twenty stages later.
+    _subscribers: list[logging.Handler] = []
 
     @classmethod
     def for_subsystem(cls, subsystem: str) -> RichLogger:
@@ -154,10 +159,35 @@ class LoggerFactory:
         return RichLogger(cls._loggers[subsystem], subsystem)
 
     @classmethod
+    def subscribe(cls, handler: logging.Handler) -> None:
+        """Send every subsystem's records to `handler`, now and in future.
+
+        Attached to the loggers that already exist *and* remembered for
+        the ones that do not. A subscriber that only saw today's loggers
+        would silently miss whichever subsystem happened to start late.
+        """
+        if handler in cls._subscribers:
+            return
+        cls._subscribers.append(handler)
+        for logger in cls._loggers.values():
+            logger.addHandler(handler)
+
+    @classmethod
+    def unsubscribe(cls, handler: logging.Handler) -> None:
+        """Stop sending records to `handler`."""
+        if handler in cls._subscribers:
+            cls._subscribers.remove(handler)
+        for logger in cls._loggers.values():
+            logger.removeHandler(handler)
+
+    @classmethod
     def reset(cls) -> None:
         """Drop cached loggers so config changes take effect (tests use this)."""
         for logger in cls._loggers.values():
             for handler in list(logger.handlers):
+                if handler in cls._subscribers:
+                    logger.removeHandler(handler)
+                    continue
                 handler.close()
                 logger.removeHandler(handler)
         cls._loggers.clear()
@@ -174,6 +204,8 @@ class LoggerFactory:
             logger.addHandler(cls._console_handler(settings.console_level))
         if settings.file_enabled:
             logger.addHandler(cls._file_handler(subsystem))
+        for subscriber in cls._subscribers:
+            logger.addHandler(subscriber)
         return logger
 
     @classmethod
@@ -203,3 +235,17 @@ class LoggerFactory:
 def get_logger(subsystem: str) -> RichLogger:
     """The logger for one subsystem — the standard entry point."""
     return LoggerFactory.for_subsystem(subsystem)
+
+
+def _payload(value: Any) -> str:
+    """One traced value, rendered at the configured length.
+
+    The default is no limit at all. A truncated trace is the one that
+    fails you: the argument you need to see is always the long one, and
+    an elided payload turns the log from evidence into a hint.
+    """
+    rendered = repr(value)
+    limit = get_settings().logging.payload_max_chars
+    if limit <= 0 or len(rendered) <= limit:
+        return rendered
+    return f"{rendered[:limit]}… [{len(rendered)} chars]"

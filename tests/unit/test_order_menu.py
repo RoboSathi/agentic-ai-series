@@ -110,11 +110,19 @@ class TestRendering:
         detail = render_order_detail(order)
         assert "10001" in detail and "32.00" in detail and "delivered" in detail
 
-    def test_detail_states_refund_eligibility(self, seeded_pool: SqliteConnectionPool) -> None:
-        """The customer should not have to ask whether a refund is possible."""
+    def test_detail_stays_silent_about_refunds_until_asked(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        """A customer checking where a parcel is has not raised a refund.
+
+        Volunteering refund state on every order view invites a request
+        nobody intended to make, which is how an agent ends up issuing
+        money back on an enquiry.
+        """
         order = OrdersRepository(seeded_pool).get(10001)
         assert order is not None
-        assert "refund" in render_order_detail(order).casefold()
+        assert "refund" not in render_order_detail(order).casefold()
+        assert "refund" in render_order_detail(order, include_refund=True).casefold()
 
     def test_the_greeting_lists_the_orders(self, seeded_pool: SqliteConnectionPool) -> None:
         user = UsersRepository(seeded_pool).get(1)

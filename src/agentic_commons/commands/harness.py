@@ -1,5 +1,6 @@
 """Commands that exercise or describe the harness itself (LLD §20)."""
 
+from agentic_commons.commands._pool import PoolBackedCommand
 from agentic_commons.commands.types import CommandResult
 from agentic_commons.config import get_settings
 from agentic_commons.evals import (
@@ -105,7 +106,7 @@ class CascadeCommand:
         return result
 
 
-class ToolsCommand:
+class ToolsCommand(PoolBackedCommand):
     """Show the agent's registered tools and their governance."""
 
     name = "tools"
@@ -113,7 +114,6 @@ class ToolsCommand:
     usage = "/tools"
 
     async def run(self, args: list[str]) -> CommandResult:
-        from agentic_commons.persistence import SqliteConnectionPool
         from customer_support_agent.core.refund_saga import RefundSaga
         from customer_support_agent.core.repositories import (
             HitlQueueRepository,
@@ -122,7 +122,7 @@ class ToolsCommand:
         )
         from customer_support_agent.core.tools import SupportTools
 
-        pool = SqliteConnectionPool()
+        pool = self.pool
         orders = OrdersRepository(pool)
         refunds = RefundLedgerRepository(pool)
         tools = SupportTools(

@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.logging import get_logger
+from agentic_commons.logging import get_logger, instrument
 from agentic_commons.tools import ToolDefinition, ToolResult
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.core.identity import current_customer_id
@@ -66,6 +66,7 @@ class ApprovalArgs(BaseModel):
     amount: float = Field(description="Amount the customer is requesting")
 
 
+@instrument("customer_support_agent")
 class SupportTools:
     """The domain toolset, built over injected repositories."""
 

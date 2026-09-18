@@ -38,7 +38,7 @@ from agentic_commons.gatekeeper.types import (
     AuthorityDecision,
     LedgerEntry,
 )
-from agentic_commons.logging import get_logger, logged
+from agentic_commons.logging import get_logger, instrument, logged
 from agentic_commons.logging.trace_context import get_current_trace_id
 from agentic_commons.security.auth.types import AccessDecision, Principal
 from agentic_commons.tools.types import ToolCall
@@ -66,6 +66,7 @@ class Gatekeeper(Protocol):
     async def evaluate(self, call: ToolCall, authority: AuthorityContext) -> AuthorityDecision: ...
 
 
+@instrument("gatekeeper")
 class GatekeeperImpl:
     """Reference Monitor over the four questions (Facade + Chain of Responsibility)."""
 

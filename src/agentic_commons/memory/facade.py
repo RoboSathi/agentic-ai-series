@@ -7,7 +7,7 @@ intact as stores change underneath.
 """
 
 from agentic_commons.config import get_settings
-from agentic_commons.logging import get_logger
+from agentic_commons.logging import get_logger, instrument
 from agentic_commons.memory.episodic.memory import EpisodicStore
 from agentic_commons.memory.procedural.memory import ProceduralStore
 from agentic_commons.memory.semantic.memory import SemanticStore
@@ -24,6 +24,7 @@ from agentic_commons.memory.working.memory import WorkingMemory
 from agentic_commons.memory.write_pipeline import MemoryWritePipelineImpl
 
 
+@instrument("memory")
 class MemoryFacade:
     """Read and write across working, episodic, semantic and procedural memory."""
 
@@ -59,6 +60,51 @@ class MemoryFacade:
         if not self._enabled:
             return WriteResult(route="discard", written=False, reason="memory disabled")
         return self.pipeline.process(raw_input, source, provenance_kind, session_id)
+
+    def note(
+        self,
+        key: str,
+        value: str,
+        session_id: str,
+        source: str,
+        category: str = "",
+        provenance_kind: ProvenanceKind = "verified_system_of_record",
+    ) -> WriteResult:
+        """Hold a fact in this session's active window.
+
+        This is the short-term path, and it is deliberately not the write
+        pipeline: what the customer just selected, what a tool just
+        returned, who is verified. Those are true for this conversation
+        and meaningless outside it, so they belong in the window rather
+        than in long-term storage, where they would need conflict
+        resolution and a curator.
+
+        Default provenance is the system of record, because that is what
+        almost every caller is: a tool result or a database read. A
+        caller relaying something the *customer* said passes
+        `self_reported` and it is weighted down at retrieval.
+        """
+        if not self._enabled:
+            return WriteResult(route="discard", written=False, reason="memory disabled")
+        fact = MemoryFact(
+            key=key,
+            value=value,
+            memory_type="working",
+            category=category,
+            metadata={"session_id": session_id},
+            provenance=Provenance(source=source, kind=provenance_kind),
+        )
+        return self.working.write(fact, fact.provenance)
+
+    def active_window(self, session_id: str, limit: int = 0) -> list[MemoryFact]:
+        """What this session currently holds, newest first."""
+        query = MemoryQuery(session_id=session_id)
+        return self.working.read(query.model_copy(update={"limit": limit or query.limit}))
+
+    def end_session(self, session_id: str) -> None:
+        """Drop one conversation's window. Long-term memory is untouched."""
+        self.working.clear(session_id)
+        self._logger.debug("Working memory cleared", session_id=session_id)
 
     def record_event(self, description: str, source: str, session_id: str) -> WriteResult:
         """Append to the episodic log — events are never subject to conflict."""

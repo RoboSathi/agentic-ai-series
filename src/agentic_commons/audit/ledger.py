@@ -11,7 +11,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from agentic_commons.audit.types import AuditEntry, Decision
 from agentic_commons.config import get_settings
-from agentic_commons.logging import get_logger, logged
+from agentic_commons.logging import get_logger, instrument, logged
 from agentic_commons.persistence import SqliteConnectionPool
 
 _SCHEMA = """
@@ -56,6 +56,7 @@ class AuditLedger(Protocol):
     def reconstruct(self, trace_id: str) -> list[AuditEntry]: ...
 
 
+@instrument("audit")
 class SqliteAuditLedger:
     """Audit entries in SQLite, ordered by insertion sequence.
 

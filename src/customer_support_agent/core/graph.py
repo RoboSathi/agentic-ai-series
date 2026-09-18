@@ -181,6 +181,11 @@ class CustomerSupportAgent:
         self._remember_turn(session_id, query, state.response)
         return state
 
+    @property
+    def memory(self) -> MemoryFacade | None:
+        """The memory this agent uses, for a console that wants to inspect it."""
+        return self._memory
+
     def history_for(self, session_id: str) -> list[Message]:
         """The recent turns of one conversation, oldest first."""
         return list(self._conversations.get(session_id, []))
@@ -254,6 +259,12 @@ class CustomerSupportAgent:
             if result.menu is not None:
                 self._menus[state.session_id] = result.menu
         set_current_customer(result.customer)
+        self._note(
+            state,
+            "verified_customer",
+            f"{result.customer.name} (account #{result.customer.customer_id})",
+            category="identity",
+        )
         return {
             "response": result.message,
             "customer_id": result.customer.customer_id,
@@ -292,7 +303,36 @@ class CustomerSupportAgent:
             return self._halt(
                 state, f"I couldn't find order {order_id} on your account.", "menu: not found"
             )
+        self._note(
+            state,
+            "order_under_discussion",
+            f"order {order.order_id}, {order.order_status}, ${order.amount:,.2f}",
+            category="order",
+        )
         return self._halt(state, render_order_detail(order), f"menu: order {order_id}")
+
+    def _note(self, state: AgentState, key: str, value: str, category: str = "") -> None:
+        """Hold a fact this turn established in the session's window.
+
+        Working memory is what stops the next turn re-deriving what this
+        one already knows — which order the customer selected, what a
+        tool returned, who they are. It is read back in
+        `assemble_context`, so anything noted here is in front of the
+        model on the following turn without another database read.
+
+        Silent when no memory is wired: memory is optional in this
+        graph, and an agent without it must still answer.
+        """
+        if self._memory is None or not state.session_id:
+            return
+        self._memory.note(
+            key=key,
+            value=value,
+            session_id=state.session_id,
+            source=self._actor,
+            category=category,
+        )
+        self._done("working_memory_write", detail=key)
 
     def _halt(self, state: AgentState, response: str, decision: str) -> dict[str, Any]:
         """Answer now, without reaching the model."""
@@ -314,13 +354,14 @@ class CustomerSupportAgent:
             build_system_prompt(), state.query, self._registry.all_tools()
         )
         moderation = self._security.moderate(state.query)
-        self._report("intent_classified")
-        intent = self._intents.classify(
+        self._report("intent_classification")
+        intent = await self._intents.classify_async(
             state.query, previous=self._last_intent.get(state.session_id)
         )
         if state.session_id:
             self._last_intent[state.session_id] = intent
-        self._done("intent_classified", detail=intent.name)
+        self._done("intent_classification", detail=intent.name)
+        self._note(state, "current_intent", intent.name, category="intent")
         decisions = [
             f"intent: {intent.name}"
             + (f" (matched '{intent.matched_phrase}')" if intent.matched_phrase else ""),
@@ -350,6 +391,9 @@ class CustomerSupportAgent:
             Task(query=state.query, session_id=state.session_id, actor=state.actor)
         )
         fitted = self._strategies.fit(assembled)
+        if self._memory is not None and state.session_id:
+            held = self._memory.working.size(state.session_id)
+            self._done("memory_recall", detail=f"{held} fact(s) held for this conversation")
         self._done("context_assembly", detail=f"{fitted.used_tokens} tokens")
         return {
             "context": fitted.text,
@@ -445,6 +489,7 @@ class CustomerSupportAgent:
             self._done(stage, detail=requested.name)
             results.append(text)
             decisions.append(decision)
+            self._note(state, f"result_of_{requested.name}", text, category="tool_result")
             outputs.append(
                 Message(role="tool", content=text, tool_call_id=requested.id or requested.name)
             )

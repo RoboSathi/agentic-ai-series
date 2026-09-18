@@ -17,7 +17,7 @@ at a third of the intended threshold.
 
 from typing import Awaitable, Callable, TypeVar
 
-from agentic_commons.logging import get_logger
+from agentic_commons.logging import get_logger, instrument
 from agentic_commons.resilience.bulkhead.bulkhead import ResourcePoolBulkhead
 from agentic_commons.resilience.circuit_breaker.breaker import CircuitBreakerImpl
 from agentic_commons.resilience.retry.retry import ExponentialBackoffRetry
@@ -26,6 +26,7 @@ from agentic_commons.resilience.timeout.timeout import AsyncTimeoutGuard
 T = TypeVar("T")
 
 
+@instrument("resilience")
 class ResilientCaller:
     """One dependency's full protection stack, applied in the fixed order.
 

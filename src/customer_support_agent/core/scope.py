@@ -19,7 +19,7 @@ import re
 
 from pydantic import BaseModel
 
-from agentic_commons.logging import get_logger, logged
+from agentic_commons.logging import get_logger, instrument, logged
 from customer_support_agent.config import get_agent_settings
 
 
@@ -31,6 +31,7 @@ class ScopeVerdict(BaseModel):
     refusal: str = ""
 
 
+@instrument("customer_support_agent")
 class ScopeGuard:
     """Default-deny topic gate, evaluated before any model call."""
 

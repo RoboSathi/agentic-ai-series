@@ -32,7 +32,13 @@ from agentic_commons.commands.system import (
     LogsCommand,
     SessionCommand,
 )
-from agentic_commons.commands.types import Command, CommandError, CommandResult, CommandRow
+from agentic_commons.commands.types import (
+    Command,
+    CommandError,
+    CommandResult,
+    CommandRow,
+    ConsoleEffect,
+)
 
 __all__ = [
     "PREFIX",
@@ -43,6 +49,7 @@ __all__ = [
     "CommandError",
     "CommandRegistry",
     "CommandResult",
+    "ConsoleEffect",
     "CommandRow",
     "ConfigCommand",
     "CostCommand",

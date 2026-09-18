@@ -18,7 +18,7 @@ from typing import Protocol, runtime_checkable
 from pydantic import BaseModel
 
 from agentic_commons.config import get_settings
-from agentic_commons.logging import get_logger
+from agentic_commons.logging import get_logger, instrument
 from agentic_commons.tools.registry import NamespacedToolRegistry
 from agentic_commons.tools.types import ToolDefinition, ToolSelection
 
@@ -43,6 +43,7 @@ class SelectionMetrics(BaseModel):
     latency_ms: float
 
 
+@instrument("tools")
 class ToolRetrievalSelector:
     """Selects the few tools a task plausibly needs (Facade over the cascade)."""
 

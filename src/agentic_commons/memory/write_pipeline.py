@@ -20,7 +20,7 @@ write is evidence.
 from typing import Protocol, runtime_checkable
 
 from agentic_commons.config import get_settings
-from agentic_commons.logging import get_logger, logged
+from agentic_commons.logging import get_logger, instrument, logged
 from agentic_commons.memory.episodic.memory import EpisodicStore
 from agentic_commons.memory.procedural.memory import ProceduralStore
 from agentic_commons.memory.semantic.memory import SemanticStore
@@ -53,6 +53,7 @@ class WriteAuthorizer(Protocol):
     def may_write(self, actor: str, category: str) -> bool: ...
 
 
+@instrument("memory")
 class MemoryWritePipelineImpl:
     """Chain of Responsibility over the seven write stages."""
 
