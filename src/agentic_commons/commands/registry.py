@@ -17,9 +17,11 @@ from agentic_commons.commands.harness import (
 from agentic_commons.commands.inspection import (
     AuditCommand,
     ConfigCommand,
-    CostCommand,
+    ModelCommand,
+    PostmortemCommand,
     QueueCommand,
     SloCommand,
+    VersionsCommand,
 )
 from agentic_commons.commands.system import (
     ClearCommand,
@@ -102,7 +104,9 @@ def _default_commands() -> list[Command]:
         AuditCommand(),
         SloCommand(),
         QueueCommand(),
-        CostCommand(),
+        ModelCommand(),
+        VersionsCommand(),
+        PostmortemCommand(),
         UsersCommand(),
         OrdersCommand(),
         MemoryCommand(),

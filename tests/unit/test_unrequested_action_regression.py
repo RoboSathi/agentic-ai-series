@@ -58,7 +58,7 @@ class TestSelectionOffersNothingRatherThanEverything:
         self, selector: ToolRetrievalSelector
     ) -> None:
         offered = {tool.name for tool in await selector.select(CONVERSATIONAL)}
-        assert offered.isdisjoint({"process_refund", "apply_goodwill_credit"})
+        assert offered.isdisjoint({"process_refund"})
 
     async def test_a_status_query_offers_only_read_only_tools(
         self, selector: ToolRetrievalSelector

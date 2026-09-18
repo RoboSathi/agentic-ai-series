@@ -98,7 +98,7 @@ class TestRepositories:
 
     def test_the_refund_ledger_excludes_reversals(self, refunds: RefundLedgerRepository) -> None:
         refunds.record("r1", 10001, 1, 32.0, "damaged")
-        refunds.record("r2", 10002, 1, 10.0, "goodwill")
+        refunds.record("r2", 10002, 1, 10.0, "refund")
         refunds.reverse("r2")
         assert refunds.total_for_user(1) == 32.0
 
@@ -152,30 +152,6 @@ class TestTools:
         tools.queue_for_approval(10002, 210.0)
         tools.queue_for_approval(10002, 210.0)
         assert len(hitl.pending()) == 1
-
-    def test_goodwill_credit_is_recorded(
-        self, tools: SupportTools, refunds: RefundLedgerRepository
-    ) -> None:
-        """The recipient is the authenticated customer, not an argument."""
-        assert tools.apply_goodwill_credit(10.0, "sorry").success
-        assert refunds.total_for_user(1) == 10.0
-
-    def test_a_goodwill_credit_over_the_per_credit_cap_is_refused(
-        self, tools: SupportTools
-    ) -> None:
-        """Money leaving the business is bounded, like a refund."""
-        result = tools.apply_goodwill_credit(500.0, "sorry")
-        assert result.success is False and "cannot exceed" in (result.error or "")
-
-    def test_goodwill_credits_are_capped_per_customer(self, tools: SupportTools) -> None:
-        """Otherwise the per-credit cap is bypassed by asking repeatedly."""
-        for _ in range(4):
-            tools.apply_goodwill_credit(25.0, "sorry")
-        result = tools.apply_goodwill_credit(25.0, "sorry")
-        assert result.success is False and "escalate instead" in (result.error or "")
-
-    def test_a_negative_goodwill_credit_is_refused(self, tools: SupportTools) -> None:
-        assert tools.apply_goodwill_credit(-50.0).success is False
 
     def test_every_tool_declares_its_governance_properties(self, tools: SupportTools) -> None:
         """A tool cannot be added without someone stating what it can break."""

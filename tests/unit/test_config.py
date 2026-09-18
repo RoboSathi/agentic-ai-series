@@ -92,7 +92,11 @@ class TestFeatureToggles:
         get_settings().security.enabled = False
         assert toggle.is_enabled("security", "auth") is False
 
-    def test_sub_feature_reads_its_own_flag_when_the_parent_is_on(self) -> None:
+    def test_sub_feature_reads_its_own_flag_when_the_parent_is_on(
+        self, restore_settings: None
+    ) -> None:
+        """A sub-feature decides for itself, once its parent has allowed it."""
+        get_settings().security.pii.enabled = False
         toggle = ConfigFeatureToggle()
         assert toggle.is_enabled("security", "auth") is True
         assert toggle.is_enabled("security", "pii") is False

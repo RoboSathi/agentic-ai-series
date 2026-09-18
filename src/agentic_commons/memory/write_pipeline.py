@@ -77,8 +77,25 @@ class MemoryWritePipelineImpl:
             category: [phrase.casefold() for phrase in phrases]
             for category, phrases in settings.classification_hints.items()
         }
+        self._interrogatives = [word.casefold() for word in settings.interrogative_markers]
         self._curator_queue: list[WriteResult] = []
         self._logger = get_logger("memory")
+
+    def is_assertion(self, raw_input: str) -> bool:
+        """Whether this text claims something, rather than asks something.
+
+        A question is not a candidate memory. Without this the curator
+        queue fills with "where is my order?" — every message becomes a
+        fact awaiting adjudication, and a queue that contains everything
+        is a queue nobody reads, which is how the one claim that mattered
+        gets approved along with the noise.
+        """
+        text = raw_input.strip().casefold()
+        if not text:
+            return False
+        if text.endswith("?"):
+            return False
+        return not any(text.startswith(word) for word in self._interrogatives)
 
     @logged("memory")
     def process(
@@ -91,6 +108,10 @@ class MemoryWritePipelineImpl:
         """Run a candidate memory through every stage."""
         if not self._enabled:
             return WriteResult(route="discard", written=False, reason="write pipeline disabled")
+        if not self.is_assertion(raw_input):
+            return WriteResult(
+                route="discard", written=False, reason="a question states no fact to remember"
+            )
 
         key, value = self.extract(raw_input)
         category = self.classify(raw_input)

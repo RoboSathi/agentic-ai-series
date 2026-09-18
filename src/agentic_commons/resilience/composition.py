@@ -69,6 +69,11 @@ class ResilientCaller:
             return await self.breaker.call(guarded)
 
     @property
+    def attempts(self) -> int:
+        """Total attempts made through this stack, retries included."""
+        return self.retry.attempts
+
+    @property
     def healthy(self) -> bool:
         """Whether this dependency is currently considered callable."""
         return self.breaker.state != "open"

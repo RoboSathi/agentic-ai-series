@@ -47,6 +47,12 @@ class ExponentialBackoffRetry:
         self._max_delay = (
             max_delay_seconds if max_delay_seconds is not None else settings.max_delay_seconds
         )
+        # How many attempts this component has made in total. Read by the
+        # caller to tell a call that worked first time from one that
+        # needed the retry to work at all — the difference between
+        # "nothing went wrong" and "something went wrong and we
+        # recovered", which is the whole recovery SLO.
+        self.attempts = 0
         self._enabled = settings.enabled
         self._logger = get_logger("resilience")
 
@@ -58,10 +64,12 @@ class ExponentialBackoffRetry:
                 "non-idempotent call can duplicate its effect"
             )
         if not self._enabled:
+            self.attempts += 1
             return await fn()
         last_error: Exception | None = None
         for attempt in range(1, self._max_attempts + 1):
             try:
+                self.attempts += 1
                 return await fn()
             except CircuitBreakerOpenError:
                 # The circuit already decided the dependency is down.

@@ -41,10 +41,22 @@ class SLORegistry:
         self._logger = get_logger("observability")
 
     def record(self, metric: str, value: float) -> None:
-        """Record one observation for a metric."""
+        """Record one observation, and say so when the budget is spent."""
         if metric not in self._targets:
             self._logger.warning("Recording an SLO with no configured target", metric=metric)
         self._measurements.setdefault(metric, []).append(SLOMeasurement(metric=metric, value=value))
+        self._logger.debug("SLO observation", metric=metric, value=value)
+        if metric in self._targets and not self.status(metric).within_target:
+            # At WARNING because an exhausted error budget is an
+            # operational event, not a statistic: somebody decides
+            # whether to keep shipping.
+            self._logger.warning(
+                "SLO outside its target",
+                metric=metric,
+                observed=round(self.observed(metric), 4),
+                target=self._targets[metric],
+                budget_remaining=round(self.error_budget_remaining(metric), 3),
+            )
 
     def record_outcome(self, metric: str, success: bool) -> None:
         """Record a boolean outcome as a 1.0/0.0 observation."""

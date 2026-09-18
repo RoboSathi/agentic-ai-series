@@ -27,10 +27,8 @@ gatekeeper:
     # across eighty calls to one.
     action_classes:
       process_refund: refund
-      apply_goodwill_credit: goodwill_credit
     thresholds_usd:
       refund: 4000
-      goodwill_credit: 500
   surface_policy:
     # action -> surface class (locked | editable | append_only |
     # human_controlled). An action absent here defaults to
@@ -41,7 +39,6 @@ gatekeeper:
       get_refund_status: editable
       process_refund: editable
       queue_for_approval: append_only
-      apply_goodwill_credit: editable
       update_refund_policy: locked
       approve_hitl_request: human_controlled
   automation:
@@ -51,11 +48,9 @@ gatekeeper:
       get_refund_status: 10
       process_refund: 7
       queue_for_approval: 9
-      apply_goodwill_credit: 6
     # Amount above which an action needs a human regardless of its level.
     per_action_amount_escalation_usd:
       process_refund: 50
-      apply_goodwill_credit: 25
 
 security:
   auth:
@@ -66,12 +61,10 @@ security:
       - read_orders
       - process_refund
       - queue_for_approval
-      - apply_goodwill_credit
       support_supervisor:
       - read_orders
       - process_refund
       - queue_for_approval
-      - apply_goodwill_credit
       - approve_hitl_request
       policy_admin:
       - update_refund_policy
@@ -84,7 +77,6 @@ security:
       get_refund_status: read_orders
       process_refund: process_refund
       queue_for_approval: queue_for_approval
-      apply_goodwill_credit: apply_goodwill_credit
       update_refund_policy: update_refund_policy
       approve_hitl_request: approve_hitl_request
 
@@ -96,7 +88,6 @@ tui:
     get_refund_status: Checking refund eligibility…
     process_refund: Issuing the refund…
     queue_for_approval: Sending to a human for approval…
-    apply_goodwill_credit: Applying a goodwill credit…
 
 customer_support_agent:
   enabled: true
@@ -123,7 +114,6 @@ customer_support_agent:
     - get_refund_status
     - process_refund
     - queue_for_approval
-    - apply_goodwill_credit
   - name: order_enquiry
     semantic: true
     phrases:
@@ -142,6 +132,21 @@ customer_support_agent:
     tools:
     - get_order_status
   default_intent: general_enquiry
+  # What each intent decomposes into, in order (E06). The sequence is a
+  # property of the domain, not a judgement call: eligibility is checked
+  # before a refund is issued, every time, whatever a model would have
+  # picked. So the plan is a lookup rather than a completion.
+  plans:
+    refund_request:
+      - description: confirm the order and its current state
+        tool: get_order_status
+      - description: check whether the order is eligible for a refund
+        tool: get_refund_status
+      - description: issue the refund, or queue it for a human
+        tool: process_refund
+    order_enquiry:
+      - description: look the order up and report its state
+        tool: get_order_status
   # The encoder fallback, tried only when no configured phrase matched.
   # It runs an embedding model (a BERT-family encoder), never a
   # completion: classification is a similarity question, and paying for
@@ -170,10 +175,6 @@ customer_support_agent:
   default_actor: support-agent-1
   default_role: support_agent
   default_authority_rank: 4
-  goodwill:
-    max_per_credit_usd: 25
-    max_per_customer_usd: 100
-    window_days: 30
   deliberation_markers:
   - we need to
   - we should

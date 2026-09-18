@@ -53,10 +53,12 @@ Every dependency is constructed here and injected downward. In order:
 | Saga | `RefundSaga` | Refunds are multi-step and must compensate on failure |
 | Tools | `SupportTools` → `NamespacedToolRegistry` | Tools are registered, not imported by the model path |
 | Memory | `MemoryFacade` (working, episodic, semantic, procedural) | One entry point over four CoALA stores |
-| Context | `FiveStagePipeline` over `PolicyContextSource`, `WorkingMemoryContextSource`, `MemoryContextSource` | What the model sees is assembled, never concatenated ad hoc |
+| Context | `FiveStagePipeline` over `PolicyContextSource`, `OrderCorpusContextSource`, `WorkingMemoryContextSource`, `MemoryContextSource` | What the model sees is assembled, never concatenated ad hoc. The order corpus is retrieved hybrid (BM25 + embeddings) and rebuilt per request from **this** customer's orders |
 | Authority | `GatekeeperImpl(Authorizer, CumulativeLedger, AuditLedger)` | Every action is ruled on and recorded |
 | Model | `create_llm_client()` | NIM behind an adapter; business logic never touches an SDK |
-| Observability | `LocalTracer`, `CostAggregatorImpl`, `SLORegistry`, `DetectionLadder` | On by default — an agent that must be reconfigured before it can be diagnosed is diagnosed late |
+| Observability | `LocalTracer(redactor=PIIFilterImpl())`, `SLORegistry`, `DetectionLadder` | On by default — an agent that must be reconfigured before it can be diagnosed is diagnosed late. The redactor is not optional: a span carries the query, the tool arguments and the result |
+| Deliberation | `DeliberationLoop(IntentPlanner, GroundedReflector, CascadeEvaluator)` | Plan, reflect, evaluate — each swappable, none calling a model |
+| Encoders | `create_reranker()` → `CrossEncoderReranker` | Two-pass relevance; `None` when no hosted encoder is reachable, and the pipeline then keeps the cheaper ordering rather than pretending |
 
 The graph is then compiled once, in `CustomerSupportAgent._build()`.
 
@@ -201,7 +203,7 @@ Refund state is **omitted unless asked for**: a customer checking where a
 parcel is has not raised a refund, and volunteering one invites a request
 nobody intended to make.
 
-### 2.4 `intake` — screen the text, classify the ask
+### 2.4 `intake` — screen the text, classify the ask, plan the work
 
 1. `SecuritySuite.prepare_untrusted` — delimits untrusted input and
    returns the actions it permits. At the edge, before concatenation:
@@ -218,16 +220,34 @@ nobody intended to make.
      threshold. `refund_request` is deliberately excluded: a similarity
      score is a continuum, and money must not move on the wrong side of
      a threshold. It is an *embedding* call, never a completion.
-4. The episodic log records the query; working memory notes the intent.
+4. `IntentPlanner` decomposes the intent into ordered steps from
+   `customer_support_agent.plans`. The order is a domain property —
+   eligibility before refund, every time — so the plan is a lookup, not
+   a completion.
+5. The episodic log records the query; working memory notes the intent.
+6. The message is offered to the **memory write pipeline** as
+   `self_reported`. Most are discarded (a question states no fact); an
+   authority-changing claim — "my refund limit is now $5,000" — is
+   *refused*, because a sentence must not become a policy.
 
 The intent's tool list is the ceiling for this turn. Retrieval narrows
 further inside it; nothing widens it.
 
 ### 2.5 `assemble_context` — build what the model sees
 
-`FiveStagePipeline.assemble` gathers candidates from three sources —
-policy (pinned), this session's working memory (pinned), long-term recall
-(scored) — then `StrategySelector.fit` trims to the token budget.
+`FiveStagePipeline.assemble` gathers candidates from four sources —
+policy (pinned), this session's working memory (pinned), the customer's
+own orders (hybrid retrieval: BM25 for the identifier-shaped queries a
+support conversation is full of, embeddings for the ones that describe
+rather than name), and long-term recall (scored). A cross-encoder then
+reranks the shortlist, and `StrategySelector.fit` trims to the budget.
+
+Near-duplicates are dropped before anything is paid for: working memory
+and the retrieved corpus routinely describe the same order, and two
+copies spend the budget twice while leaving the model choosing between
+near-identical options — the "confusion" failure mode by construction.
+`ContextFailureDetector` then measures what was actually built for rot,
+distraction, confusion, clash and poisoning.
 
 Pinning matters: an agent that drops its own policy under budget pressure
 is an agent operating without one, and one that drops "verified as #41"
@@ -265,6 +285,11 @@ a tool it was not offered" a refusal **on the record** rather than a
 quiet drop. Each result is noted in working memory, so the next turn does
 not re-ask the database what it already learned.
 
+Tool arguments are validated by `guardrails.PydanticValidator`, not by a
+private check inside the registry. That is what makes mechanical repair
+possible: a model that fenced its JSON made a formatting mistake, and an
+inline `model_validate` threw those calls away as invalid.
+
 Then `_after_act`: loop back to `reason` while rounds remain, else
 `finalize`. The cap is a control, not an excuse to return nothing.
 
@@ -274,6 +299,12 @@ If the last assistant message is already customer-ready (no tool calls,
 not deliberation), it is used. Otherwise one tool-free completion is made
 with an explicit reply instruction, and a fallback sentence covers even
 that failing.
+
+Before that, `GroundedReflector` critiques the draft: deliberation
+shipped as a reply, or an order id that appears in the answer but in no
+tool result, sends the turn to the second call. `CascadeEvaluator` then
+scores the reply with the NOLLM cascade — independent of the model that
+wrote it, which is the entire point of an evaluator.
 
 Either way `_check_grounding` runs — on **both** paths. It used to run
 only on the rarer second-call path, which meant the reply that usually
@@ -307,14 +338,30 @@ Colour carries meaning — security checks warn, model calls are blue,
 green is reserved for a completed action or the final reply, so a feed
 that is entirely green would mean nothing.
 
-### 3.2 The trace stream — every log record, live
+### 3.2 The trace stream — the harness, narrated
 
 ```
-any module: get_logger("memory").debug(...)  |  @logged  |  @instrument
-  └── logging.Logger "agentic.memory"
-        ├── RotatingFileHandler  → logs/memory.log      (always)
-        └── LiveFeedLogHandler   → LiveStatusPanel      (while enabled)
+any module: get_logger("memory").info(...)  |  @logged  |  @instrument  |  @traced
+  └── logging.Logger "agentic.memory"   (record carries a `Narration`)
+        ├── RotatingFileHandler  → logs/memory.log   full payloads, always
+        └── LiveFeedLogHandler   → LiveStatusPanel   one line per curated step
 ```
+
+The two renderings are deliberately different. The file gets the
+evidence — every argument, every return value, untruncated. The screen
+gets a sentence:
+
+```
+agent      working out the intent      message=where is my order → name=order_enquiry
+context    assembling the window       query=where is my order → 4 items
+gatekeeper checking authority          action=support.process_refund → verdict=deny
+```
+
+Only three things earn a line: a **curated step** from `tui.trace.steps`
+(on return, so the line can show input → output), an **author-written
+`logger.info`** (already a sentence), and anything that **failed**.
+Narrating every instrumented call produced forty lines a turn from eight
+modules — technically complete and practically unreadable.
 
 `LoggerFactory.subscribe` attaches the handler to every subsystem logger
 that exists *and remembers it for the ones that do not yet*, so a
@@ -352,7 +399,31 @@ files record at their configured level regardless.
 | An answer states something no tool returned | `_check_grounding`; it is advisory and logs the claims |
 | The window forgot something | `/memory working`, then `graph._note` call sites |
 | Nothing on screen, but it ran | `tui.trace.enabled`, or `/debug debug`; `logs/` has it either way |
+| A step you want on screen | add it to `tui.trace.steps` — config, not code |
+| Which version answered | `/versions`; the authority path never canaries |
+| An incident | `/postmortem` — impact → trigger → missing control → detection gap → containment → root cause → permanent eval |
 
 Commands worth knowing: `/help`, `/session`, `/config <section>`,
 `/audit`, `/orders`, `/users`, `/memory working`, `/queue`, `/slo`,
-`/cost`, `/tools`, `/gatekeeper`, `/eval`, `/logs`, `/debug`.
+`/model`, `/tools`, `/gatekeeper`, `/eval`, `/logs`, `/debug`, `/versions`,
+`/postmortem`.
+
+---
+
+## 5. What is deliberately absent
+
+**Money.** Tokens are counted; cost is not. Pricing a turn means
+carrying a rate card per provider and a unit price for every tool,
+retrieval and minute of review — a model that is wrong the moment a
+price changes, and wrong in the direction that flatters it.
+
+**Goodwill credits.** Refunds follow policy. A discretionary payout with
+a friendly name is money leaving the business on a judgement call, and
+the judgement was the model's.
+
+**Self-elevation.** `JustInTimeElevator` exists and the agent never
+calls it. An agent that can widen its own permissions has no ceiling;
+elevation is an operator action.
+
+**Sandbox, multi-agent, DSPy, the control-loop package.** Parked in the
+PRD, interface-only here, and not pretended otherwise.

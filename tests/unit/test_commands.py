@@ -54,9 +54,9 @@ class TestDispatch:
 
     def test_completions_narrow_as_you_type(self) -> None:
         registry = CommandRegistry()
-        assert registry.completions("/c") == ["cascade", "clear", "config", "cost"]
+        assert registry.completions("/c") == ["cascade", "clear", "config"]
         assert registry.completions("/d") == ["debug"]
-        assert registry.completions("/co") == ["config", "cost"]
+        assert registry.completions("/m") == ["memory", "model"]
 
     @pytest.mark.asyncio
     async def test_the_suggester_completes_only_the_command_word(self) -> None:

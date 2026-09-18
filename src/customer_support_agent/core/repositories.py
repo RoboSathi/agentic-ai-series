@@ -6,7 +6,6 @@ lives here, behind methods whose names are the domain's vocabulary
 rather than the table's.
 """
 
-from datetime import timedelta
 from typing import Any
 
 from agentic_commons.logging import get_logger, logged
@@ -264,22 +263,6 @@ class RefundLedgerRepository:
             "UPDATE refunds SET reversed = 1 WHERE refund_id = ?", (refund_id,)
         )
         return result.affected > 0
-
-    def goodwill_total(self, user_id: int, window_days: int) -> float:
-        """Goodwill credited to one customer inside a rolling window.
-
-        Windowed rather than lifetime: a cap with no window eventually
-        blocks every long-standing customer, and one with no cap at all
-        is not a control.
-        """
-        cutoff = (utc_now() - timedelta(days=window_days)).isoformat()
-        row = self._pool.query_one(
-            "SELECT COALESCE(SUM(amount), 0) AS total FROM refunds "
-            "WHERE user_id = ? AND reversed = 0 AND reason LIKE 'goodwill%' "
-            "AND issued_at >= ?",
-            (user_id, cutoff),
-        )
-        return float(row["total"]) if row else 0.0
 
     def total_for_user(self, user_id: int) -> float:
         """Total refunded to one customer, excluding reversals."""

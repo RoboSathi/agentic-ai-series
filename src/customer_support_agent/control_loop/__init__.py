@@ -6,6 +6,10 @@ controls the running product needs today live here and migrate into that
 package when its phase opens. That migration is a stated follow-up, not
 a silent duplication.
 
+It also hosts the Planner/Reflector/Evaluator composition (E06, FR-16):
+three swappable roles the graph deliberates with, none of which calls a
+model.
+
 What is here today is the duplicate-action layer of the six-layer
 watchdog stack. It earns its place: a weak model asked for the status of
 an order and then, unprompted, asked to queue a refund for it — twice.
@@ -15,6 +19,18 @@ effect, repeating it is how one request becomes two refunds.
 
 from agentic_commons.logging import get_logger
 from agentic_commons.tools import ToolCall
+from customer_support_agent.control_loop.deliberation import (
+    CascadeEvaluator,
+    Critique,
+    DeliberationLoop,
+    Evaluator,
+    GroundedReflector,
+    IntentPlanner,
+    Plan,
+    Planner,
+    PlanStep,
+    Reflector,
+)
 
 
 def action_fingerprint(call: ToolCall) -> str:
@@ -73,4 +89,17 @@ class DuplicateActionDetector:
         return len(self._seen)
 
 
-__all__ = ["DuplicateActionDetector", "action_fingerprint"]
+__all__ = [
+    "CascadeEvaluator",
+    "Critique",
+    "DeliberationLoop",
+    "DuplicateActionDetector",
+    "Evaluator",
+    "GroundedReflector",
+    "IntentPlanner",
+    "Plan",
+    "PlanStep",
+    "Planner",
+    "Reflector",
+    "action_fingerprint",
+]

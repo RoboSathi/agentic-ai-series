@@ -59,21 +59,24 @@ class TestDeterministicRules:
 
 
 class TestEntailment:
-    def test_coverage_plus_matching_polarity_entails(self) -> None:
-        result = LexicalEntailmentModel().entails(
+    """The fallback model, for when no hosted cross-encoder is reachable."""
+
+    async def test_coverage_plus_matching_polarity_entails(self) -> None:
+        result = await LexicalEntailmentModel().entails(
             "the refund was approved today", "the refund was approved"
         )
         assert result.entailed is True
 
-    def test_opposing_polarity_does_not_entail(self) -> None:
+    async def test_opposing_polarity_does_not_entail(self) -> None:
         """The failure similarity alone cannot catch."""
-        result = LexicalEntailmentModel().entails(
+        result = await LexicalEntailmentModel().entails(
             "the refund was not approved", "the refund was approved"
         )
         assert result.entailed is False
 
-    def test_low_coverage_scores_zero(self) -> None:
-        assert LexicalEntailmentModel().entails("weather is nice", "refund approved").score == 0.0
+    async def test_low_coverage_scores_zero(self) -> None:
+        scored = await LexicalEntailmentModel().entails("weather is nice", "refund approved")
+        assert scored.score == 0.0
 
     async def test_the_scorer_declines_without_evidence(self) -> None:
         assert await NliEntailmentScorer().resolve(Claim(text="x")) is None

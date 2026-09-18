@@ -1,6 +1,7 @@
 """Observability module for agentic commons."""
 
 from agentic_commons.observability.cost import CostAggregator, CostAggregatorImpl
+from agentic_commons.observability.postmortem import Postmortem, PostmortemRegister
 from agentic_commons.observability.queue import (
     LittlesLawQueueModel,
     QueueCapacity,
@@ -42,6 +43,8 @@ __all__ = [
     "LiveStatusFeed",
     "LocalTracer",
     "NullLiveStatusFeed",
+    "Postmortem",
+    "PostmortemRegister",
     "QueueCapacity",
     "Redactor",
     "ReviewQueueModel",

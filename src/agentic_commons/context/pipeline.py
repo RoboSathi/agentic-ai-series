@@ -12,6 +12,8 @@ that actually survived.
 from typing import Protocol, runtime_checkable
 
 from agentic_commons.config import get_settings
+from agentic_commons.context.failure import is_near_duplicate
+from agentic_commons.context.retrieval import CrossEncoderReranker
 from agentic_commons.context.types import AssembledContext, Chunk, ChunkKind, Task
 from agentic_commons.logging import get_logger, instrument, logged
 
@@ -61,10 +63,16 @@ class FiveStagePipeline:
         self,
         sources: list[CandidateSource] | None = None,
         ranker: RelevanceRanker | None = None,
+        reranker: CrossEncoderReranker | None = None,
     ) -> None:
         settings = get_settings().context
         self._sources = sources or []
         self._ranker = ranker
+        # Two-pass scoring. The ranker scores everything cheaply; the
+        # reranker rescores only what survived, with a model that reads
+        # query and passage together.
+        self._reranker = reranker
+        self._rerank = settings.rerank
         self._budget = settings.token_budget
         self._chars_per_token = settings.chars_per_token
         self._enabled = settings.enabled
@@ -106,18 +114,65 @@ class FiveStagePipeline:
         if not chunks:
             return []
         scores = await self._rank(task.query, [chunk.content for chunk in chunks])
-        return [
+        scored = [
             chunk.model_copy(update={"score": 1.0 if chunk.pinned else score})
             for chunk, score in zip(chunks, scores)
         ]
+        return await self._rerank_shortlist(task.query, scored)
+
+    async def _rerank_shortlist(self, query: str, chunks: list[Chunk]) -> list[Chunk]:
+        """Rescore the best few with the stronger, slower model.
+
+        A shortlist, never the whole set: a cross-encoder runs attention
+        over every (query, passage) pair, so its cost is linear in
+        candidates and its latency is what stops it being used on a
+        corpus. Ten good candidates is where it earns its keep.
+
+        Pinned chunks are excluded. They do not compete on relevance, so
+        paying a model to score them would buy a number nothing reads.
+        """
+        if self._reranker is None or not self._rerank.enabled:
+            return chunks
+        pinned = [chunk for chunk in chunks if chunk.pinned]
+        competing = sorted(
+            (chunk for chunk in chunks if not chunk.pinned),
+            key=lambda chunk: chunk.score,
+            reverse=True,
+        )
+        shortlist, remainder = (
+            competing[: self._rerank.shortlist],
+            competing[self._rerank.shortlist :],
+        )
+        if len(shortlist) < self._rerank.min_candidates:
+            return chunks
+        reranked = await self._reranker.rerank(query, shortlist, len(shortlist))
+        self._logger.debug(
+            "Reranked the shortlist",
+            candidates=len(shortlist),
+            held_back=len(remainder),
+        )
+        return [*pinned, *reranked, *remainder]
 
     def fit_to_budget(self, chunks: list[Chunk], budget: int) -> tuple[list[Chunk], list[str]]:
-        """Stage 3 — take the best chunks that fit, reporting what was cut."""
+        """Stage 3 — take the best chunks that fit, reporting what was cut.
+
+        Near-duplicates are dropped before anything else. Two sources
+        describing the same order — working memory and the retrieved
+        corpus, say — spend the budget twice on one fact and leave the
+        model choosing between near-identical options, which is the
+        "confusion" failure mode by construction. Highest-scoring copy
+        wins, pinned chunks always survive.
+        """
         ordered = sorted(chunks, key=lambda chunk: (not chunk.pinned, -chunk.score))
         kept: list[Chunk] = []
         dropped: list[str] = []
         used = 0
         for chunk in ordered:
+            if not chunk.pinned and any(
+                is_near_duplicate(chunk.content, existing.content) for existing in kept
+            ):
+                dropped.append(chunk.source or chunk.kind)
+                continue
             if used + chunk.token_estimate <= budget or chunk.pinned:
                 kept.append(chunk)
                 used += chunk.token_estimate

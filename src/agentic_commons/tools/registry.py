@@ -11,8 +11,7 @@ import inspect
 import json
 from typing import Any, Protocol, runtime_checkable
 
-from pydantic import ValidationError
-
+from agentic_commons.guardrails import PydanticValidator
 from agentic_commons.logging import get_logger, instrument, logged
 from agentic_commons.tools.types import (
     WIRE_NAME_PATTERN,
@@ -42,8 +41,13 @@ class NamespacedToolRegistry:
     to a namespace is half of the recovery, retrieval is the other half.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, validator: PydanticValidator | None = None) -> None:
         self._tools: dict[str, ToolDefinition] = {}
+        # Injected so a caller can demand strict rejection where repair
+        # would be wrong. The default follows config, which is
+        # `auto_repair`: a model that fenced its JSON made a formatting
+        # mistake, not a authorization one.
+        self._validator = validator or PydanticValidator()
         self._logger = get_logger("tools")
 
     @logged("tools")
@@ -107,25 +111,34 @@ class NamespacedToolRegistry:
     def build_call(self, name: str, raw_arguments: str | dict[str, Any]) -> ToolCall | None:
         """Turn a wire-level request into a validated, governed `ToolCall`.
 
-        Returns None when the tool is unknown or its arguments do not
-        validate — both are the model's error to see and recover from,
-        not the harness's to crash on.
+        The validation is `guardrails`', not a second implementation of
+        it living here. That matters for more than tidiness: the
+        guardrail knows how to *repair* mechanically malformed output —
+        a code fence around the JSON, a trailing comma — and a private
+        `model_validate` in this method quietly threw those calls away
+        as invalid. It also means the FR-10 invariant ("no malformed
+        output reaches a side-effecting executor") is enforced by the
+        component the invariant is written about.
+
+        Returns None when the tool is unknown or its arguments cannot be
+        made to validate — both are the model's error to see and recover
+        from, not the harness's to crash on.
         """
         tool = self.get(name)
         if tool is None:
             self._logger.warning("Model asked for an unregistered tool", tool=name)
             return None
-        try:
-            params = (
-                json.loads(raw_arguments) if isinstance(raw_arguments, str) else dict(raw_arguments)
+        result = self._validator.validate(_as_json(raw_arguments), tool.args_schema)
+        if not result.valid or result.value is None:
+            self._logger.warning(
+                "Tool arguments failed validation", tool=name, errors=result.errors
             )
-            validated = tool.args_schema.model_validate(params or {})
-        except (ValidationError, ValueError) as exc:
-            self._logger.warning("Tool arguments failed validation", tool=name, error=str(exc))
             return None
+        if result.repaired:
+            self._logger.info("Repaired the model's tool arguments", tool=name)
         return ToolCall(
             action=tool.qualified_name,
-            params=validated.model_dump(),
+            params=result.value,
             surface=tool.surface,
             blast_radius=tool.blast_radius,
             reversible=tool.reversible,
@@ -143,3 +156,15 @@ class NamespacedToolRegistry:
         except Exception as exc:
             self._logger.exception("Tool raised", tool=call.action)
             return ToolResult(success=False, error=f"Tool '{call.action}' failed: {exc}")
+
+
+def _as_json(raw_arguments: str | dict[str, Any]) -> str:
+    """The arguments as a JSON string, whichever way the caller had them.
+
+    The guardrail validates text, because text is what a model produces
+    and what can be malformed. A caller that already holds a dict gets it
+    re-serialised rather than handed a second validation path.
+    """
+    if isinstance(raw_arguments, str):
+        return raw_arguments or "{}"
+    return json.dumps(raw_arguments)

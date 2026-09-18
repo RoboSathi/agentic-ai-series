@@ -83,6 +83,25 @@ llm:
     provider: nim          # nim | local
     nim_model: nvidia/nemotron-3-embed-1b
     local_dimensions: 256
+  # Hosted BERT-family encoders. These answer questions a generative
+  # model answers worse and dearer: does this evidence *entail* this
+  # claim, and which of these ten passages actually answers the query.
+  # The key comes from the bare `hf_api_key` environment variable; with
+  # no key, every caller silently uses its deterministic fallback.
+  encoders:
+    enabled: true
+    base_url: https://api-inference.huggingface.co/models
+    # A cross-encoder trained on NLI. It reads premise and hypothesis
+    # together, which is what lets it separate "refund approved" from
+    # "refund denied" — two strings a bi-encoder scores as near-identical.
+    nli_model: cross-encoder/nli-deberta-v3-base
+    # A reranking cross-encoder, run only over a retrieved shortlist.
+    reranker_model: cross-encoder/ms-marco-MiniLM-L-6-v2
+    timeout_seconds: 10
+    # Hosted models scale to zero. Waiting is right for an eval run and
+    # wrong for a customer waiting on a reply, so the caller that cannot
+    # afford the cold start gets the fallback instead.
+    wait_for_model: false
 
 persistence:
   enabled: true
@@ -92,8 +111,13 @@ persistence:
 
 audit:
   enabled: true
+  # Nine things version independently (E39). One release number cannot
+  # answer "which of them moved?", which is the only question worth
+  # asking after a regression.
   policy_version: refund-policy-v1
   data_version: dummy-data-v1
+  prompt_version: support-prompt-v1
+  tool_schema_version: support-tools-v1
 
 observability:
   enabled: true
@@ -107,11 +131,17 @@ observability:
     escalation_rate: 0.20
     loop_abort_rate: 0.05
     tool_failure_rate: 0.05
-    cost_per_success_usd: 0.05
     recovery_success_rate: 0.90
     policy_violation_rate: 0.0
   review_queue:
     minutes_per_hour: 60
+    # How long one escalation takes a reviewer. Feeds both the Little's
+    # Law capacity model and the human-review line of the cost stack.
+    minutes_per_review: 8
+  # Unit prices for the parts of a request that are not tokens. An agent
+  # whose cost model stops at tokens reports a cost-per-success that is
+  # wrong in the direction that flatters it: tool calls, retrieval,
+  # evaluator passes and human review are what actually add up.
 
 context:
   enabled: true
@@ -120,6 +150,16 @@ context:
   retrieval_mode: hybrid   # lexical | dense | hybrid | graph
   top_k: 5
   hybrid_lexical_weight: 0.5
+  # Two-pass scoring (E19). The cheap ranker scores every candidate; a
+  # cross-encoder then rescores the best few, reading query and passage
+  # together. Bounded to a shortlist because that cost is what stops a
+  # cross-encoder being usable over a corpus.
+  rerank:
+    enabled: true
+    shortlist: 10
+    # Below this, reranking cannot change the answer — reordering two
+    # chunks that both fit the budget buys nothing for a network call.
+    min_candidates: 3
   bm25_k1: 1.5
   bm25_b: 0.75
   strategies:
@@ -137,6 +177,7 @@ context:
 
 memory:
   enabled: true
+  schema_version: memory-schema-v1
   working:
     enabled: true
   episodic:
@@ -150,6 +191,32 @@ memory:
     enabled: true
   write_pipeline:
     enabled: true
+    # Openers that mark a question rather than a claim. A question states
+    # no fact, so it is discarded before classification — otherwise every
+    # message becomes a candidate memory and the curator queue fills with
+    # things nobody asserted.
+    interrogative_markers:
+      - who
+      - what
+      - when
+      - where
+      - why
+      - how
+      - which
+      - can you
+      - could you
+      - would you
+      - will you
+      - do you
+      - does
+      - did
+      - is
+      - are
+      - was
+      - were
+      - should
+      - tell me
+      - show me
     auto_commit_threshold: 0.8
     discard_threshold: 0.3
     decay_if_unconfirmed_days: 30
@@ -249,7 +316,11 @@ security:
     roles: {}
     action_permissions: {}
   pii:
-    enabled: false
+    # On. Traces, logs and tool calls all carry customer text, and a
+    # detector that is switched off is a detector that is not there.
+    # `mask` keeps the shape of a value without its content, so a
+    # redacted trace is still readable as a trace.
+    enabled: true
     mode: mask             # mask | tokenize | remove
     mask_token: "[REDACTED]"
     ner_enabled: false
@@ -308,6 +379,7 @@ resilience:
 
 evals:
   enabled: true
+  manifest_version: eval-manifest-v1
   manifest_path: src/agentic_commons/evals/eval_manifest.yaml
   cascade:
     exact_assertion: true
@@ -434,9 +506,82 @@ tui:
   # system is being built out: seeing every step is how the flow gets
   # understood, and `/debug off` (or level: INFO) quiets it again without
   # touching the files, which stay complete regardless.
+  # The live trace: what the code is doing, while it does it.
+  #
+  # Curated, not exhaustive. Narrating every instrumented call produced
+  # forty lines a turn from eight modules, which is a log file on a
+  # screen — technically complete and practically unreadable. So the
+  # screen shows the steps below and nothing else, one line each, with
+  # what went in and what came out. Everything else is in logs/, in full.
   trace:
     enabled: true
     level: DEBUG          # DEBUG | INFO | WARNING | ERROR
+    subsystem_width: 12
+    action_width: 34
+    max_values: 2           # inputs shown beside a step
+    max_value_chars: 40     # where a value is elided to keep one line
+    # Author-written log lines (logger.info) also reach the screen: they
+    # are already sentences, written by whoever knew what mattered.
+    show_events: true
+    # What each subsystem is called on screen. Truncating
+    # "customer_support_agent" to fit a column produces "customer_su",
+    # which is not a word; these are.
+    subsystem_labels:
+      customer_support_agent: agent
+      hallucination_protection: grounding
+      observability: observe
+      design_patterns: patterns
+    # The steps worth a line, and what to call each one. `Class.method`
+    # -> the phrase a person reads. Adding a step to the screen is a
+    # config change; the code never grows a list of what to narrate.
+    steps:
+      ScopeGuard.check: screening the request
+      CustomerAuthenticator.authenticate: verifying the customer
+      IntentClassifier.classify: working out the intent
+      SecuritySuite.prepare_untrusted: checking for prompt injection
+      SecuritySuite.moderate: checking content policy
+      MemoryFacade.note: noting for this conversation
+      MemoryFacade.recall: recalling from memory
+      MemoryWritePipelineImpl.process: routing a memory write
+      FiveStagePipeline.assemble: assembling the context window
+      ToolRetrievalSelector.select: choosing which tools to offer
+      NvidiaNimClient.complete: asking the model
+      OpenAICompatibleClient.complete: asking the model
+      LocalLlamaCppClient.complete: asking the model
+      GatekeeperImpl.evaluate: checking authority
+      NamespacedToolRegistry.build_call: validating the tool arguments
+      NamespacedToolRegistry.invoke: running the tool
+      RefundSaga.execute: processing the refund
+      DetectionLadder.assess: checking the answer is grounded
+      NollmScoringCascadeImpl.resolve: resolving a claim
+      HostedNliModel.entails: checking entailment
+      HostedCrossEncoderRanker.rank: reranking the shortlist
+      ReviewQueueService.approve: approving a queued refund
+      ReviewQueueService.deny: denying a queued refund
+    # Fields that are *content* rather than identity. Printing an
+    # assembled window or a stored fact turns the trace into the thing it
+    # is meant to summarise.
+    muted_fields:
+      - args
+      - kwargs
+      - result
+      - content
+      - context
+      - messages
+      - text
+      - value
+      - chunks
+      - facts
+      - payload
+      - prompt
+      - trace_id
+      - evidence
+      - unsupported
+      - instructions
+      - raw_arguments
+      - provenance
+      - session_id
+      - source
   # How a slash command's output is drawn in the feed. Commands answer
   # about the system rather than the customer, so they are styled apart
   # from the conversation — a reader should never mistake `/orders` output

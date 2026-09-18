@@ -15,7 +15,7 @@ a failure to resolve cheaply, not a first move.
 from typing import Callable, Protocol, runtime_checkable
 
 from agentic_commons.config import get_settings
-from agentic_commons.evals.entailment import EntailmentModel, LexicalEntailmentModel
+from agentic_commons.evals.entailment import EntailmentModel, create_entailment_model
 from agentic_commons.evals.judge import CalibratedJudge
 from agentic_commons.evals.types import Claim, ScorerTier, Verdict
 from agentic_commons.llm.embeddings import (
@@ -168,14 +168,14 @@ class NliEntailmentScorer:
     tier: ScorerTier = "nli_entailment"
 
     def __init__(self, model: EntailmentModel | None = None) -> None:
-        self._model = model or LexicalEntailmentModel()
+        self._model = model or create_entailment_model()
         self._threshold = get_settings().evals.nli_entailment_threshold
 
     async def resolve(self, claim: Claim) -> Verdict | None:
         """Resolve when entailment or contradiction is confident enough."""
         if not claim.evidence:
             return None
-        result = self._model.entails(" ".join(claim.evidence), claim.text)
+        result = await self._model.entails(" ".join(claim.evidence), claim.text)
         if result.score < self._threshold:
             return None
         return Verdict(

@@ -40,19 +40,18 @@ class SemanticIntentSettings(BaseModel):
     max_words: int
 
 
+class PlanStepSettings(BaseModel):
+    """One configured step of an intent's plan (E06)."""
+
+    description: str
+    tool: str = ""
+
+
 class FollowupSettings(BaseModel):
     """How a message that restates nothing continues the previous subject."""
 
     phrases: list[str]
     reference_pattern: str
-
-
-class GoodwillSettings(BaseModel):
-    """Caps on goodwill credits — money, so it is bounded like a refund."""
-
-    max_per_credit_usd: float
-    max_per_customer_usd: float
-    window_days: int
 
 
 class ScopeSettings(BaseModel):
@@ -72,10 +71,10 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     max_tool_iterations: int
     intents: list[IntentSettings]
     default_intent: str
+    plans: dict[str, list[PlanStepSettings]]
     semantic_intent: SemanticIntentSettings
     followup: FollowupSettings
     history_turns: int
-    goodwill: GoodwillSettings
     deliberation_markers: list[str]
     scope: ScopeSettings
     user_code_length: int

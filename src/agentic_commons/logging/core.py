@@ -15,6 +15,7 @@ from rich.logging import RichHandler
 from rich.text import Text
 
 from agentic_commons.config import get_settings
+from agentic_commons.logging.narration import NARRATION, Narration
 from agentic_commons.logging.trace_context import get_current_trace_id
 
 Level = Literal["debug", "info", "warning", "error"]
@@ -25,6 +26,22 @@ _LEVEL_TO_INT: dict[Level, int] = {
     "warning": logging.WARNING,
     "error": logging.ERROR,
 }
+
+# Fields that identify an object well enough to name it on screen, in
+# the order they are tried. Everything else about the object is in the
+# file log, which is where an object's contents belong.
+_IDENTIFYING_FIELDS = (
+    "name",
+    "action",
+    "order_id",
+    "customer_id",
+    "key",
+    "query",
+    "verdict",
+    "label",
+    "topic",
+    "route",
+)
 
 SUBSYSTEM_COLORS: dict[str, str] = {
     "config": "grey58",
@@ -86,12 +103,24 @@ class RichLogger:
         return get_logger(subsystem)
 
     def event(self, level: Level, message: str, **fields: Any) -> None:
-        """Log one structured event; extra fields are serialized as JSON."""
+        """Log one structured event; extra fields are serialized as JSON.
+
+        The record carries the fields twice: flattened into the message
+        for the file, and structured on the record for anything that
+        wants to render them differently. The file log is a record; the
+        screen is a narration, and they should not be the same text.
+        """
         trace_id = get_current_trace_id()
         if trace_id:
             fields = {"trace_id": trace_id, **fields}
         suffix = f" {json.dumps(fields, default=str)}" if fields else ""
-        self._logger.log(_LEVEL_TO_INT[level], f"{message}{suffix}")
+        self._logger.log(
+            _LEVEL_TO_INT[level],
+            f"{message}{suffix}",
+            extra={
+                NARRATION: Narration(subsystem=self._subsystem, headline=message, fields=fields)
+            },
+        )
 
     def info(self, msg: str, **fields: Any) -> None:
         self.event("info", msg, **fields)
@@ -118,27 +147,63 @@ class RichLogger:
         self._logger.exception(f"{msg}{suffix}")
 
     def log_called(
-        self, func_name: str, color: str, args: tuple[Any, ...], kwargs: dict[str, Any]
+        self, func_name: str, color: str, arguments: dict[str, Any], kwargs: dict[str, Any]
     ) -> None:
         """Trace a call at DEBUG, with its arguments in full."""
-        args_repr = ", ".join(_payload(a) for a in args)
-        kwargs_repr = ", ".join(f"{k}={_payload(v)}" for k, v in kwargs.items())
-        all_args = ", ".join(filter(None, [args_repr, kwargs_repr]))
-        self.debug(f"[bold {color}]CALLED[/bold {color}] [cyan]{func_name}[/cyan]({all_args})")
+        all_args = ", ".join(f"{name}={_payload(value)}" for name, value in arguments.items())
+        self._traced(
+            f"[bold {color}]CALLED[/bold {color}] [cyan]{func_name}[/cyan]({all_args})",
+            Narration(
+                subsystem=self._subsystem,
+                kind="call",
+                qualname=func_name,
+                arguments={name: _summarize(value) for name, value in arguments.items()},
+            ),
+        )
 
-    def log_returned(self, func_name: str, color: str, result: Any, elapsed_ms: float) -> None:
-        """Trace a return value and its latency at DEBUG, in full."""
-        self.debug(
+    def log_returned(
+        self,
+        func_name: str,
+        color: str,
+        result: Any,
+        elapsed_ms: float,
+        arguments: dict[str, Any] | None = None,
+    ) -> None:
+        """Trace a return value and its latency at DEBUG, in full.
+
+        The arguments come along so that a reader can be shown one line
+        per step — what went in and what came out — instead of two lines
+        they have to pair up themselves.
+        """
+        self._traced(
             f"[bold {color}]RETURNED[/bold {color}] [cyan]{func_name}[/cyan] → "
-            f"{_payload(result)} [dim]({elapsed_ms:.1f}ms)[/dim]"
+            f"{_payload(result)} [dim]({elapsed_ms:.1f}ms)[/dim]",
+            Narration(
+                subsystem=self._subsystem,
+                kind="return",
+                qualname=func_name,
+                arguments={name: _summarize(value) for name, value in (arguments or {}).items()},
+                outcome=_summarize(result),
+                elapsed_ms=round(elapsed_ms, 1),
+            ),
         )
 
     def log_skipped(self, func_name: str, color: str, toggle_path: str) -> None:
         """Trace a subsystem skipped because its toggle is off."""
-        self.debug(
+        self._traced(
             f"[dim {color}]SKIPPED[/dim {color}] [cyan]{func_name}[/cyan] "
-            f"[yellow]({toggle_path}=False)[/yellow]"
+            f"[yellow]({toggle_path}=False)[/yellow]",
+            Narration(
+                subsystem=self._subsystem,
+                kind="skip",
+                qualname=func_name,
+                outcome=f"{toggle_path} is off",
+            ),
         )
+
+    def _traced(self, message: str, narration: "Narration") -> None:
+        """One call-trace record: full text for the file, structure for the screen."""
+        self._logger.debug(message, extra={NARRATION: narration})
 
 
 class LoggerFactory:
@@ -235,6 +300,38 @@ class LoggerFactory:
 def get_logger(subsystem: str) -> RichLogger:
     """The logger for one subsystem — the standard entry point."""
     return LoggerFactory.for_subsystem(subsystem)
+
+
+def _summarize(value: Any) -> str:
+    """One value, as a person would say it.
+
+    Scalars speak for themselves. A collection is reported by its size,
+    and an object by its type plus whichever identifying field it
+    carries — a window of nine chunks is "9 items", never nine chunks of
+    text pasted onto the screen. An object with nothing identifying to
+    say says nothing at all.
+    """
+    if value is None or isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple, set, dict)):
+        return f"{len(value)} item" if len(value) == 1 else f"{len(value)} items"
+    for field in _IDENTIFYING_FIELDS:
+        identity = getattr(value, field, None)
+        if isinstance(identity, bool) or identity in (None, ""):
+            continue
+        if isinstance(identity, (str, int)):
+            # The field, not the class: "topic=orders" is what a reader
+            # wanted to know, and "ScopeVerdict(topic=orders)" makes them
+            # read past the type to find it. The type is in the file log.
+            return f"{field}={identity}"
+    # A bare class name tells a reader nothing they could act on —
+    # "query=MemoryQuery" is the shape of information, not information.
+    # The file log has the object in full; the screen says nothing.
+    return ""
 
 
 def _payload(value: Any) -> str:

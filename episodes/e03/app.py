@@ -37,7 +37,6 @@ async def run() -> EpisodeOutput:
         "get_order_status",
         "queue_for_approval",
         "process_refund",
-        "apply_goodwill_credit",
     ):
         level = policy.level_for(action)
         levels[action] = level

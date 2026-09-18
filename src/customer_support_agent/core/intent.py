@@ -33,7 +33,7 @@ from agentic_commons.llm.embeddings import (
     cosine_similarity,
     create_embedding_client,
 )
-from agentic_commons.logging import get_logger, logged
+from agentic_commons.logging import get_logger
 from agentic_commons.observability import traced
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.config.settings import IntentSettings
@@ -70,7 +70,6 @@ class IntentClassifier:
         self._logger = get_logger("customer_support_agent")
 
     @traced("intent_classification", subsystem="customer_support_agent")
-    @logged("customer_support_agent")
     def classify(self, message: str, previous: Intent | None = None) -> Intent:
         """The intent of this message, in the context of the last one.
 

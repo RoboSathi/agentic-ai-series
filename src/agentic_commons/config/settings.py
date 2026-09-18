@@ -105,6 +105,32 @@ class EmbeddingSettings(BaseModel):
     local_dimensions: int
 
 
+class EncoderSettings(BaseModel):
+    """Hosted BERT-family encoders for entailment and reranking (LLD §3)."""
+
+    enabled: bool
+    base_url: str
+    nli_model: str
+    reranker_model: str
+    timeout_seconds: float
+    wait_for_model: bool
+
+    @property
+    def api_key(self) -> str:
+        """The Hugging Face token, from its bare environment variable.
+
+        A property rather than a field, like every other credential here:
+        it never appears in `model_dump()`, so it cannot reach a log line
+        or a settings dump.
+        """
+        return os.environ.get("hf_api_key", "")
+
+    @property
+    def usable(self) -> bool:
+        """Whether a hosted encoder can be called at all."""
+        return self.enabled and bool(self.api_key)
+
+
 class LLMSettings(YamlBackedSettings):
     """LLM adapters — the only place a provider SDK is used (LLD §3)."""
 
@@ -117,6 +143,7 @@ class LLMSettings(YamlBackedSettings):
     providers: dict[str, LLMProviderSettings]
     cascade: LLMCascadeSettings
     embedding: EmbeddingSettings
+    encoders: EncoderSettings
 
     model_config = SettingsConfigDict(env_prefix="LLM__")
 
@@ -154,6 +181,8 @@ class AuditSettings(YamlBackedSettings):
     enabled: bool
     policy_version: str
     data_version: str
+    prompt_version: str
+    tool_schema_version: str
 
     model_config = SettingsConfigDict(env_prefix="AUDIT__")
 
@@ -162,6 +191,7 @@ class ReviewQueueSettings(BaseModel):
     """Little's Law queue model inputs (E38)."""
 
     minutes_per_hour: float
+    minutes_per_review: float
 
 
 class ObservabilitySettings(YamlBackedSettings):
@@ -176,6 +206,14 @@ class ObservabilitySettings(YamlBackedSettings):
     review_queue: ReviewQueueSettings
 
     model_config = SettingsConfigDict(env_prefix="OBSERVABILITY__")
+
+
+class RerankSettings(BaseModel):
+    """Cross-encoder reranking of the retrieved shortlist (LLD §7)."""
+
+    enabled: bool
+    shortlist: int
+    min_candidates: int
 
 
 class ContextStrategySettings(BaseModel):
@@ -207,6 +245,7 @@ class ContextSettings(YamlBackedSettings):
     retrieval_mode: RetrievalMode
     top_k: int
     hybrid_lexical_weight: float
+    rerank: RerankSettings
     bm25_k1: float
     bm25_b: float
     strategies: ContextStrategySettings
@@ -244,6 +283,7 @@ class MemoryWritePipelineSettings(BaseModel):
     """Write-path routing thresholds (E15)."""
 
     enabled: bool
+    interrogative_markers: list[str]
     auto_commit_threshold: float
     discard_threshold: float
     decay_if_unconfirmed_days: int
@@ -266,6 +306,7 @@ class MemorySettings(YamlBackedSettings):
 
     _yaml_section = "memory"
     enabled: bool
+    schema_version: str
     working: MemoryStoreToggle
     episodic: EpisodicMemorySettings
     semantic: SemanticMemorySettings
@@ -470,6 +511,7 @@ class EvalsSettings(YamlBackedSettings):
 
     _yaml_section = "evals"
     enabled: bool
+    manifest_version: str
     manifest_path: str
     cascade: CascadeTierToggles
     embedding_similarity_threshold: float
@@ -510,10 +552,18 @@ class CommandSettings(YamlBackedSettings):
 
 
 class TraceStreamSettings(BaseModel):
-    """Mirroring the log stream into the live feed (LLD §20)."""
+    """Narrating the log stream into the live feed (LLD §20)."""
 
     enabled: bool
     level: str
+    subsystem_width: int
+    action_width: int
+    subsystem_labels: dict[str, str]
+    max_values: int
+    max_value_chars: int
+    show_events: bool
+    steps: dict[str, str]
+    muted_fields: list[str]
 
 
 class CommandOutputSettings(BaseModel):

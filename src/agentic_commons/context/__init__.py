@@ -44,6 +44,7 @@ __all__ = [
     "ConsolidateStrategy",
     "ContextAssembler",
     "ContextFailureDetector",
+    "is_near_duplicate",
     "ContextFailureMode",
     "ContextHealth",
     "ContextStrategy",

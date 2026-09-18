@@ -13,6 +13,7 @@ from rich.text import Text
 
 from agentic_commons.logging import LoggerFactory, get_logger, instrument
 from agentic_commons.logging.decorators import logged
+from agentic_commons.logging.narration import NARRATION, Narration
 from agentic_commons.memory import MemoryFacade, MemoryQuery, Provenance
 from agentic_commons.memory.types import MemoryFact
 from agentic_commons.memory.working.memory import WorkingMemory
@@ -21,7 +22,7 @@ from agentic_commons.observability import (
     StageReporter,
     traced,
 )
-from agentic_commons.tui.log_feed import LiveFeedLogHandler, TraceStream
+from agentic_commons.tui.log_feed import LiveFeedLogHandler, TraceLineFormatter, TraceStream
 
 
 def _fact(key: str, value: str, session: str = "") -> MemoryFact:
@@ -137,14 +138,14 @@ class TestTraceStream:
         lines: list[Text] = []
         stream = TraceStream(lines.append)
         stream.enable()
-        get_logger("memory").debug("something happened", key="value")
+        get_logger("memory").info("something happened", key="value")
         assert stream.enabled
-        assert any("something happened" in line.plain for line in lines)
+        assert any("Something happened" in line.plain for line in lines)
 
         stream.disable()
-        get_logger("memory").debug("after the switch")
+        get_logger("memory").info("after the switch")
         assert not stream.enabled
-        assert not any("after the switch" in line.plain for line in lines)
+        assert not any("after the switch" in line.plain.casefold() for line in lines)
 
     def test_a_subsystem_whose_logger_is_built_later_still_reaches_the_screen(self) -> None:
         """The subscription outlives the loggers that existed when it started."""
@@ -154,17 +155,20 @@ class TestTraceStream:
         try:
             LoggerFactory._loggers.pop("evals", None)
             get_logger("evals").info("late subsystem")
-            assert any("late subsystem" in line.plain for line in lines)
+            assert any("Late subsystem" in line.plain for line in lines)
         finally:
             stream.disable()
 
     def test_the_line_names_its_subsystem(self) -> None:
-        record = logging.LogRecord(
-            "agentic.gatekeeper", logging.INFO, __file__, 1, "refused", None, None
+        lines: list[Text] = []
+        rendered = LiveFeedLogHandler(lines.append).render(
+            logging.LogRecord(
+                "agentic.gatekeeper", logging.INFO, __file__, 1, "refused", None, None
+            )
         )
-        rendered = LiveFeedLogHandler.render(record).plain
-        assert rendered.strip().startswith("gatekeeper")
-        assert "refused" in rendered
+        assert rendered is not None
+        assert rendered.plain.strip().startswith("gatekeeper")
+        assert "Refused" in rendered.plain
 
     def test_a_broken_sink_never_breaks_the_caller(self) -> None:
         """A UI that can break logging is worse than no UI."""
@@ -175,6 +179,90 @@ class TestTraceStream:
         handler = LiveFeedLogHandler(explode)
         handler.handleError = lambda record: None  # type: ignore[method-assign]
         handler.emit(logging.LogRecord("agentic.tui", logging.INFO, __file__, 1, "hi", None, None))
+
+
+class TestTraceNarration:
+    """The screen gets a sentence; the file gets the evidence."""
+
+    def _record(self, narration: Narration, level: int = logging.DEBUG) -> logging.LogRecord:
+        record = logging.LogRecord("agentic.x", level, __file__, 1, "raw text", None, None)
+        setattr(record, NARRATION, narration)
+        return record
+
+    def test_a_curated_step_reads_as_a_phrase_with_its_result(self) -> None:
+        """One line per step: what went in, and what came back."""
+        line = TraceLineFormatter().format(
+            Narration(
+                subsystem="memory",
+                kind="return",
+                qualname="MemoryFacade.note",
+                arguments={"key": "order_under_discussion"},
+                outcome="route=auto_commit",
+            ),
+            logging.DEBUG,
+        )
+        assert "Noting for this conversation" in line.plain
+        assert "in order_under_discussion" in line.plain
+        assert "out auto_commit" in line.plain
+
+    def test_an_uncurated_call_stays_in_the_files(self) -> None:
+        """Narrating every instrumented call is a log file on a screen."""
+        formatter = TraceLineFormatter()
+        plumbing = Narration(subsystem="memory", kind="call", qualname="WorkingMemory.read")
+        assert not formatter.wants(plumbing, logging.DEBUG)
+        assert not formatter.wants(
+            Narration(subsystem="memory", kind="return", qualname="WorkingMemory.read"),
+            logging.DEBUG,
+        )
+
+    def test_a_failure_is_never_dropped(self) -> None:
+        """Whatever else is filtered, what went wrong is not."""
+        formatter = TraceLineFormatter()
+        failed = Narration(subsystem="memory", kind="return", qualname="X.y", outcome="boom")
+        assert formatter.wants(failed, logging.ERROR)
+
+    def test_an_author_written_line_reaches_the_screen(self) -> None:
+        """Already a sentence, written by whoever knew what mattered."""
+        formatter = TraceLineFormatter()
+        event = Narration(subsystem="agent", kind="event", headline="Customer authenticated")
+        assert formatter.wants(event, logging.INFO)
+        assert not formatter.wants(event, logging.DEBUG)
+
+    def test_content_fields_are_not_printed_to_the_screen(self) -> None:
+        """An assembled window on screen is the log file all over again."""
+        line = TraceLineFormatter().format(
+            Narration(
+                subsystem="context",
+                kind="return",
+                qualname="FiveStagePipeline.assemble",
+                arguments={"content": "a" * 4000, "budget": "3000"},
+            ),
+            logging.DEBUG,
+        )
+        assert "aaaa" not in line.plain
+        assert "3000" in line.plain
+
+    def test_a_long_value_is_elided_to_keep_one_line(self) -> None:
+        line = TraceLineFormatter().format(
+            Narration(
+                subsystem="agent",
+                kind="return",
+                qualname="ScopeGuard.check",
+                arguments={"message": "x" * 500},
+            ),
+            logging.DEBUG,
+        )
+        assert "…" in line.plain
+        assert len(line.plain) < 200
+
+    def test_a_record_from_outside_the_harness_is_still_shown(self) -> None:
+        """Silence about a third-party warning is worse than an odd line."""
+        lines: list[Text] = []
+        handler = LiveFeedLogHandler(lines.append)
+        handler.emit(
+            logging.LogRecord("httpx", logging.WARNING, __file__, 1, "connect failed", None, None)
+        )
+        assert any("Connect failed" in line.plain for line in lines)
 
 
 class TestWorkingMemory:

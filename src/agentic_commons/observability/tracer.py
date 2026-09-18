@@ -100,6 +100,21 @@ class LocalTracer:
         span.latency_ms = (span.ended_at - span.started_at).total_seconds() * 1000
         if result is not None:
             span.result = result
+        # Logged as well as persisted. A span is the record of *why* a
+        # decision happened, and a subsystem that writes only to its own
+        # table is one you cannot follow in the log beside everything
+        # else that was happening at the time.
+        self._logger.info(
+            "Span closed",
+            name=span.name,
+            trace_id=span.trace_id,
+            actor=span.actor,
+            tool=span.tool,
+            result=span.result,
+            latency_ms=round(span.latency_ms, 1),
+            policy_version=span.policy_version,
+            model_version=span.model_version,
+        )
         self._spans.append(span)
         for subscriber in self._subscribers:
             subscriber(span)

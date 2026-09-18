@@ -19,7 +19,7 @@ from customer_support_agent.core import HitlQueueRepository, OrdersRepository, b
 from customer_support_agent.core.intent import IntentClassifier
 from tests.conftest import ScriptedLLM, tool_call
 
-MONEY_MOVING = {"process_refund", "apply_goodwill_credit", "queue_for_approval"}
+MONEY_MOVING = {"process_refund", "queue_for_approval"}
 
 
 class _Args(BaseModel):

@@ -77,9 +77,9 @@ class TestOrdersAreScopedToTheirOwner:
 
     def test_identity_is_not_a_tool_argument(self) -> None:
         """Anything in the schema is something the model can choose."""
-        from customer_support_agent.core.tools import GoodwillArgs, OrderLookupArgs
+        from customer_support_agent.core.tools import OrderLookupArgs, RefundArgs
 
-        for schema in (OrderLookupArgs, GoodwillArgs):
+        for schema in (OrderLookupArgs, RefundArgs):
             fields = set(schema.model_fields)
             assert not fields & {"customer_id", "user_id"}, schema.__name__
 
@@ -146,32 +146,6 @@ class TestTheEscalationPathDrains:
         assert any(entry.actor == "supervisor-7" for entry in audit.by_decision("allow"))
 
 
-class TestGoodwillIsBounded:
-    def test_a_single_credit_is_capped(self, tools: SupportTools) -> None:
-        assert tools.apply_goodwill_credit(500.0).success is False
-
-    def test_the_per_customer_total_is_capped(self, tools: SupportTools) -> None:
-        """Otherwise the per-credit cap is bypassed by asking repeatedly."""
-        for _ in range(4):
-            tools.apply_goodwill_credit(25.0)
-        assert tools.apply_goodwill_credit(25.0).success is False
-
-    def test_each_credit_is_recorded_separately(
-        self, tools: SupportTools, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        """Colliding ids would let INSERT OR REPLACE hide one."""
-        for _ in range(3):
-            tools.apply_goodwill_credit(10.0)
-        assert RefundLedgerRepository(seeded_pool).total_for_user(1) == 30.0
-
-    def test_a_credit_goes_to_the_authenticated_customer(
-        self, tools: SupportTools, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        set_current_customer(Customer(customer_id=2))
-        tools.apply_goodwill_credit(10.0)
-        assert RefundLedgerRepository(seeded_pool).total_for_user(1) == 0.0
-
-
 class TestSubsystemsAreActuallyWired:
     async def test_the_model_call_runs_through_the_resilience_stack(
         self, seeded_pool: SqliteConnectionPool
@@ -183,14 +157,21 @@ class TestSubsystemsAreActuallyWired:
         await agent.handle("who are you", customer=Customer(customer_id=1))
         assert agent._resilient.healthy is True
 
-    async def test_cost_is_attributed_to_the_request(
+    async def test_tokens_are_counted_rather_than_priced(
         self, seeded_pool: SqliteConnectionPool
     ) -> None:
+        """Money is deliberately not modelled: tokens are what we observe.
+
+        A rate card per provider is a second source of truth about
+        pricing that goes stale silently, and a cost-per-success built on
+        it is wrong in the direction that flatters it.
+        """
         agent = build_agent(
             llm=ScriptedLLM([{"content": "hello"}]), pool=seeded_pool, with_memory=False
         )
-        await agent.handle("who are you", session_id="s1", customer=Customer(customer_id=1))
-        assert agent._costs is not None and agent._costs.total_cost > 0
+        state = await agent.handle("who are you", session_id="s1", customer=Customer(customer_id=1))
+        assert state.metadata.get("last_usage", {}).get("total_tokens", 0) > 0
+        assert not hasattr(agent, "_costs")
 
     async def test_spans_are_recorded_for_the_run(self, seeded_pool: SqliteConnectionPool) -> None:
         agent = build_agent(

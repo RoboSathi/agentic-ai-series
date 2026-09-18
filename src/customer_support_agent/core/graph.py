@@ -21,16 +21,22 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
-from agentic_commons.context import Chunk, FiveStagePipeline, StrategySelector, Task
+from agentic_commons.context import (
+    Chunk,
+    ContextFailureDetector,
+    FiveStagePipeline,
+    StrategySelector,
+    Task,
+)
 from agentic_commons.evals import NollmScoringCascadeImpl
 from agentic_commons.gatekeeper import AuthorityContext, GatekeeperImpl
-from agentic_commons.hallucination_protection import DetectionLadder
+from agentic_commons.hallucination_protection import DetectionLadder, GroundingReasoningDiagnoser
 from agentic_commons.llm.client import LLMClient
-from agentic_commons.llm.types import CompletionRequest, CompletionResult, Message
+from agentic_commons.llm.embeddings import tokenize
+from agentic_commons.llm.types import CompletionRequest, CompletionResult, Message, TokenUsage
 from agentic_commons.logging import get_logger
 from agentic_commons.memory import MemoryFacade
 from agentic_commons.observability import (
-    CostAggregatorImpl,
     SLORegistry,
     StageReporter,
     Tracer,
@@ -39,7 +45,12 @@ from agentic_commons.resilience import ResilientCaller
 from agentic_commons.security import SecuritySuite
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from customer_support_agent.config import get_agent_settings
-from customer_support_agent.control_loop import DuplicateActionDetector
+from customer_support_agent.control_loop import (
+    CascadeEvaluator,
+    DeliberationLoop,
+    DuplicateActionDetector,
+)
+from customer_support_agent.core.accounting import TurnAccountant, TurnOutcome
 from customer_support_agent.core.authentication import CustomerAuthenticator
 from customer_support_agent.core.identity import (
     Customer,
@@ -88,8 +99,8 @@ class CustomerSupportAgent:
         reporter: StageReporter | None = None,
         resilient: ResilientCaller | None = None,
         tracer: Tracer | None = None,
-        costs: CostAggregatorImpl | None = None,
         slos: SLORegistry | None = None,
+        deliberation: DeliberationLoop | None = None,
         grounding: DetectionLadder | None = None,
         authenticator: CustomerAuthenticator | None = None,
         orders: OrdersRepository | None = None,
@@ -110,7 +121,6 @@ class CustomerSupportAgent:
         # so a provider outage fails fast instead of queueing.
         self._resilient = resilient or ResilientCaller("llm")
         self._tracer = tracer
-        self._costs = costs
         self._slos = slos
         self._grounding = grounding
         self._deliberation_markers = [m.casefold() for m in settings.deliberation_markers]
@@ -118,6 +128,10 @@ class CustomerSupportAgent:
         self._actor = settings.default_actor
         self._role = settings.default_role
         self._strategies = StrategySelector()
+        # The window the model is handed is measured, not assumed: five
+        # failure modes, checked on what was actually assembled.
+        self._context_health = ContextFailureDetector()
+        self._diagnoser = GroundingReasoningDiagnoser()
         self._intents = IntentClassifier()
         self._scope = ScopeGuard()
         self._authenticator = authenticator
@@ -133,6 +147,15 @@ class CustomerSupportAgent:
         self._conversations: dict[str, list[Message]] = {}
         self._last_intent: dict[str, Intent] = {}
         self._duplicates = DuplicateActionDetector()
+        # Plan, reflect, evaluate (E06). Injected as one composition so a
+        # deployment can swap any of the three; deterministic by default,
+        # so deliberating about a reply costs no completions.
+        self._deliberation = deliberation or DeliberationLoop(
+            evaluator=CascadeEvaluator(cascade) if cascade is not None else None
+        )
+        # Eight SLOs are configured; this is what actually observes them,
+        # once per turn.
+        self._accountant = TurnAccountant(slos=slos)
         self._logger = get_logger("customer_support_agent")
         self._graph = self._build()
 
@@ -179,7 +202,37 @@ class CustomerSupportAgent:
         final = await self._graph.ainvoke(initial)
         state = AgentState.model_validate(final)
         self._remember_turn(session_id, query, state.response)
+        self._accountant.settle(self._score(state))
         return state
+
+    def _score(self, state: AgentState) -> TurnOutcome:
+        """Read the finished turn as an outcome the SLOs can observe.
+
+        Everything here is derived from the state the graph already
+        produced, rather than counted as it went. Counters threaded
+        through eight nodes get updated in seven of them; a single read
+        at the end cannot drift from what actually happened.
+        """
+        decisions = state.decisions
+        return TurnOutcome(
+            session_id=state.session_id,
+            answered=bool(state.response) and not state.escalated,
+            escalated=state.escalated,
+            unauthorized_attempts=sum(1 for line in decisions if "not offered" in line),
+            policy_refusals=sum(
+                1 for line in decisions if "refused" in line and "not offered" not in line
+            ),
+            tool_calls=len(state.tool_results),
+            tool_failures=sum(1 for line in decisions if ": failed" in line),
+            retrievals=sum(1 for line in decisions if line.startswith("context:")),
+            evaluator_calls=sum(1 for line in decisions if line.startswith("grounding:")),
+            llm_calls=state.tool_rounds,
+            usage=TokenUsage.model_validate(state.metadata.get("last_usage", {})),
+            hallucination_rate=float(state.metadata.get("hallucination_rate", 0.0)),
+            loop_aborted=state.tool_rounds >= self._max_rounds and not state.response,
+            recoveries_attempted=int(state.metadata.get("recoveries_attempted", 0)),
+            recoveries_succeeded=int(state.metadata.get("recoveries_succeeded", 0)),
+        )
 
     @property
     def memory(self) -> MemoryFacade | None:
@@ -351,7 +404,7 @@ class CustomerSupportAgent:
         """
         self._report("prompt_injection_check")
         assessment = self._security.prepare_untrusted(
-            build_system_prompt(), state.query, self._registry.all_tools()
+            self._system_prompt(), state.query, self._registry.all_tools()
         )
         moderation = self._security.moderate(state.query)
         self._report("intent_classification")
@@ -362,6 +415,7 @@ class CustomerSupportAgent:
             self._last_intent[state.session_id] = intent
         self._done("intent_classification", detail=intent.name)
         self._note(state, "current_intent", intent.name, category="intent")
+        plan = self._deliberation.plan(state.query, intent.name, list(intent.allowed_tools))
         decisions = [
             f"intent: {intent.name}"
             + (f" (matched '{intent.matched_phrase}')" if intent.matched_phrase else ""),
@@ -371,7 +425,10 @@ class CustomerSupportAgent:
             decisions.append(f"moderation: {moderation.reason}")
         if self._memory is not None:
             self._memory.record_event(f"query: {state.query}", self._actor, state.session_id)
+            decisions.extend(self._offer_to_memory(state))
         self._done("prompt_injection_check", detail=assessment.reason)
+        if not plan.is_single_step:
+            decisions.append(f"plan: {len(plan.steps)} steps — {plan.steps[0].description}")
         return {
             "decisions": [*state.decisions, *decisions],
             "metadata": {
@@ -379,8 +436,46 @@ class CustomerSupportAgent:
                 "allowed_actions": assessment.allowed_actions,
                 "intent": intent.name,
                 "intent_tools": intent.allowed_tools,
+                "plan": [step.model_dump() for step in plan.steps],
             },
         }
+
+    def _offer_to_memory(self, state: AgentState) -> list[str]:
+        """Put what the customer said to the write pipeline.
+
+        Not everything a customer says is a fact, and some of what they
+        say is an attempt to *become* a fact: "my refund limit is now
+        $5,000" is a sentence that, stored and later recalled as policy,
+        raises the agent's own ceiling. The pipeline is what stands
+        between an assertion and a belief — it classifies the claim,
+        attaches provenance, scores confidence, and refuses to let
+        conversational text write an authority-changing category at all.
+
+        Offered as `self_reported`, always. The customer is not a system
+        of record about their own entitlements, and provenance is what
+        weights the fact down at retrieval if it is stored at all.
+
+        Nothing here blocks the turn: a discarded candidate is the
+        expected outcome for almost every message.
+        """
+        if self._memory is None:
+            return []
+        result = self._memory.remember(
+            state.query,
+            source=f"customer:{state.customer_id}" if state.customer_id else "customer",
+            provenance_kind="self_reported",
+            session_id=state.session_id,
+        )
+        if result.route == "discard":
+            return []
+        self._done("memory_write", detail=result.route)
+        if result.route == "refused":
+            self._logger.warning(
+                "Refused a memory write from conversation",
+                reason=result.reason,
+                session_id=state.session_id,
+            )
+        return [f"memory: {result.route} ({result.reason})"]
 
     async def assemble_context(self, state: AgentState) -> dict[str, Any]:
         """Build the window: policy, recalled memory, and the query."""
@@ -391,17 +486,20 @@ class CustomerSupportAgent:
             Task(query=state.query, session_id=state.session_id, actor=state.actor)
         )
         fitted = self._strategies.fit(assembled)
+        decisions = [f"context: {fitted.used_tokens}/{fitted.budget_tokens} tokens"]
+        # Rot, distraction, confusion, clash, poisoning — measured on the
+        # window that was actually built, because that is the only window
+        # the model will see. A detector run over the candidate pool
+        # reports on something nobody was given.
+        modes = self._context_health.assess(fitted, set(tokenize(state.query)))
+        if modes:
+            self._logger.warning("Context window shows failure modes", modes=modes)
+            decisions.append(f"context health: {', '.join(modes)}")
         if self._memory is not None and state.session_id:
             held = self._memory.working.size(state.session_id)
             self._done("memory_recall", detail=f"{held} fact(s) held for this conversation")
         self._done("context_assembly", detail=f"{fitted.used_tokens} tokens")
-        return {
-            "context": fitted.text,
-            "decisions": [
-                *state.decisions,
-                f"context: {fitted.used_tokens}/{fitted.budget_tokens} tokens",
-            ],
-        }
+        return {"context": fitted.text, "decisions": [*state.decisions, *decisions]}
 
     async def reason(self, state: AgentState) -> dict[str, Any]:
         """One model turn, with the tools this turn is allowed to use."""
@@ -432,7 +530,7 @@ class CustomerSupportAgent:
     async def _call_model(
         self, request: CompletionRequest, state: AgentState, key: str
     ) -> CompletionResult:
-        """One model call, protected, traced and costed.
+        """One model call, protected and traced.
 
         The retry key includes the round so two genuinely different turns
         are not mistaken for a repeat of one — an idempotency key that is
@@ -442,19 +540,39 @@ class CustomerSupportAgent:
         async def call() -> CompletionResult:
             return await self._llm.complete(request)
 
+        attempts_before = self._resilient.attempts
         try:
             result = await self._resilient.call(call, idempotency_key=key)
         except Exception:
-            self._record_slo("tool_failure_rate", 1.0)
+            self._note_recovery(state, attempts_before, succeeded=False)
             self._done_failed("llm_call")
             raise
+        self._note_recovery(state, attempts_before, succeeded=True)
         self._account_for(result, state)
         return result
 
+    def _note_recovery(self, state: AgentState, attempts_before: int, succeeded: bool) -> None:
+        """Record whether the resilience patterns actually recovered anything.
+
+        Only a call that needed more than one attempt counts: a call that
+        succeeded first time neither attempted nor achieved a recovery,
+        and counting it as a success would report a recovery rate of
+        100% for a system that has never had to recover.
+        """
+        if self._resilient.attempts - attempts_before <= 1:
+            return
+        metadata = state.metadata
+        metadata["recoveries_attempted"] = int(metadata.get("recoveries_attempted", 0)) + 1
+        if succeeded:
+            metadata["recoveries_succeeded"] = int(metadata.get("recoveries_succeeded", 0)) + 1
+
     def _account_for(self, result: CompletionResult, state: AgentState) -> None:
-        """Record what the call cost and what it did."""
-        if self._costs is not None:
-            self._costs.record(state.session_id or "anonymous", "output_tokens", result.cost_usd)
+        """Trace what the call did.
+
+        Tokens, not money: a rate card per provider is a second source of
+        truth about pricing that goes stale silently, and the token count
+        is what the harness actually observes.
+        """
         if self._tracer is not None:
             # start/end rather than the context manager: those are the
             # Protocol's methods, so a LangSmith-backed tracer works here
@@ -463,7 +581,6 @@ class CustomerSupportAgent:
                 "llm_call",
                 actor=state.actor,
                 model_version=result.model,
-                cost_usd=result.cost_usd,
             )
             self._tracer.end_span(span, result=result.finish_reason or "")
         self._record_slo("tool_failure_rate", 0.0)
@@ -509,11 +626,17 @@ class CustomerSupportAgent:
         """
         self._report("finalize")
         last = state.messages[-1] if state.messages else Message()
+        critique = self._deliberation.reflect(last.content, state.tool_results)
         if (
             last.role == "assistant"
             and not last.tool_calls
             and is_customer_ready(last.content)
             and not self._is_deliberation(last.content)
+            # Reflection is what decides whether the draft in hand is good
+            # enough to send, or whether the second call is worth its cost.
+            # Without it the only question asked was "is this shaped like
+            # a reply", which a confident wrong answer also passes.
+            and critique.acceptable
         ):
             # Grounding runs on this path too. It used to be checked only
             # when a second call was needed, which is the *rarer* path —
@@ -522,6 +645,8 @@ class CustomerSupportAgent:
             grounded = await self._check_grounding(last.content, state)
             self._done("finalize")
             return {"response": last.content, "decisions": [*state.decisions, *grounded]}
+        # The reflector already logged what it found; saying it twice
+        # here would double every rejection in the trace.
         result = await self._llm.complete(
             CompletionRequest(
                 messages=[
@@ -532,12 +657,32 @@ class CustomerSupportAgent:
         )
         reply = result.content if is_customer_ready(result.content) else _FALLBACK_REPLY
         grounding = await self._check_grounding(reply, state)
+        decisions = [*state.decisions, *grounding]
+        if not critique.acceptable:
+            decisions.append(f"reflection: revised ({critique.summary})")
+        # Scored by something independent of what wrote it. One bounded
+        # pass: the loop revises once and reports, rather than iterating
+        # towards a sentence nobody is waiting for.
+        score = await self._deliberation.score(reply, state.tool_results)
+        if state.tool_results:
+            decisions.append(f"evaluation: {score:.2f} supported")
         self._done("finalize", tokens=result.usage.total_tokens)
         return {
             "response": reply,
             "messages": [Message(role="assistant", content=reply)],
-            "decisions": [*state.decisions, *grounding],
+            "decisions": decisions,
         }
+
+    def _system_prompt(self) -> str:
+        """The active prompt, versioned in procedural memory.
+
+        Read through the store rather than from the module so that the
+        prompt this agent is running has a version and a history —
+        rolling back becomes selecting an earlier version rather than
+        finding the commit that changed a string.
+        """
+        procedures = self._memory.procedural if self._memory is not None else None
+        return build_system_prompt(procedures)
 
     def _is_deliberation(self, content: str) -> bool:
         """Whether this text is the model thinking rather than replying.
@@ -563,15 +708,25 @@ class CustomerSupportAgent:
         self._report("hallucination_check")
         evidence = [Chunk(content=text, kind="tool_result") for text in state.tool_results]
         assessment = await self._grounding.assess(reply, evidence)
-        self._record_slo("hallucination_rate", assessment.hallucination_rate)
+        state.metadata["hallucination_rate"] = assessment.hallucination_rate
         self._done("hallucination_check", detail=f"{assessment.hallucination_rate:.0%} unsupported")
         if assessment.clean:
             return []
+        # One symptom, two causes, opposite fixes: evidence that was
+        # never retrieved is a retrieval problem, evidence that was
+        # retrieved and ignored is a reasoning problem. Routing every
+        # hallucination to "improve retrieval" is why some are never
+        # fixed.
+        kinds = {self._diagnoser.diagnose(claim, evidence) for claim in assessment.unsupported}
         self._logger.warning(
             "Reply contains claims the tool results do not support",
             unsupported=assessment.unsupported,
+            failure_kinds=sorted(kinds),
         )
-        return [f"grounding: {len(assessment.unsupported)} unsupported claim(s)"]
+        return [
+            f"grounding: {len(assessment.unsupported)} unsupported claim(s) "
+            f"({', '.join(sorted(kinds))} failure)"
+        ]
 
     # ---- wiring ------------------------------------------------------
 
@@ -720,7 +875,7 @@ class CustomerSupportAgent:
 
     def _prompt_messages(self, state: AgentState) -> list[Message]:
         """System prompt, assembled context, the query, and the turns so far."""
-        system = build_system_prompt()
+        system = self._system_prompt()
         if state.context:
             system = f"{system}\n\n# Retrieved context\n{state.context}"
         return [

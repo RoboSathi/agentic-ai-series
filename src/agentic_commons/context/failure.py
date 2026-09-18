@@ -79,7 +79,7 @@ class ContextFailureDetector:
             return 0.0
         duplicated = sum(
             any(
-                index != other and _similar(chunk.content, chunks[other].content)
+                index != other and is_near_duplicate(chunk.content, chunks[other].content)
                 for other in range(len(chunks))
             )
             for index, chunk in enumerate(chunks)
@@ -144,8 +144,14 @@ def _claims(chunk: Chunk) -> list[tuple[str, str]]:
     return found
 
 
-def _similar(left: str, right: str) -> bool:
-    """Whether two chunks are near-copies, by token overlap."""
+def is_near_duplicate(left: str, right: str) -> bool:
+    """Whether two chunks are near-copies, by token overlap.
+
+    Public because two components need exactly this rule and must agree
+    on it: the pipeline drops a near-duplicate before spending budget on
+    it, and the detector reports what is left. Two thresholds would mean
+    the window could be deduplicated and still flagged as confused.
+    """
     left_tokens, right_tokens = set(left.casefold().split()), set(right.casefold().split())
     if not left_tokens or not right_tokens:
         return False

@@ -31,6 +31,17 @@ sub-features toggle.
 | `dir` | Log directory, resolved from the repo root, never the CWD. |
 | `per_subsystem_color` | Colour each subsystem differently in the console. |
 | `payload_max_chars` | Characters kept per traced argument or return value. **`0` = all of it**, which is the default: the argument you need to read back is always the long one. |
+
+## `llm.encoders`
+Hosted BERT-family encoders. The key comes from the bare `hf_api_key` env var; with no key every caller uses its deterministic fallback.
+| Param | Meaning |
+|---|---|
+| `enabled` | Whether hosted encoders may be called at all. |
+| `base_url` | Hugging Face inference endpoint. |
+| `nli_model` | Cross-encoder trained on NLI. Reads premise and hypothesis together, which is what separates "refund approved" from "refund denied" — two strings a bi-encoder scores as near-identical. Tier 4 of the cascade and the entailment rung of the hallucination ladder. |
+| `reranker_model` | Reranking cross-encoder, run only over a retrieved shortlist. |
+| `timeout_seconds` | Per-call timeout. |
+| `wait_for_model` | Whether to wait out a cold start. Right for an eval run, wrong for a customer waiting on a reply. |
 | `max_bytes` / `backup_count` | Rotation size and how many rotated files to keep. |
 
 ## `llm`
@@ -190,11 +201,28 @@ No `enabled` flag by design — it is always invoked.
 | `tool_labels` | Tool → wording. "Looking up the order…", not "Executing support.get_order_status…". |
 | `stage_styles` | Stage → colour. Security warns, data prep is cool, model calls blue, authority stands out; green is reserved for completed work. |
 | `default_stage_style` | Fallback colour. |
-| `trace.enabled` | Mirror every log record into the feed. On while the system is being built out — `/debug off` quiets the screen without touching the files. |
-| `trace.level` | Lowest level mirrored to the screen (`DEBUG`…`ERROR`). The files still record at `logging.file_level`. |
+| `trace.enabled` | Narrate the harness onto the screen while it runs. `/debug off` quiets it without touching the files. |
+| `trace.level` | Lowest level narrated to the screen (`DEBUG`…`ERROR`). The files still record at `logging.file_level`. |
+| `trace.steps` | `Class.method` → the phrase a person reads. **Only these are narrated**, one line each, on return, so the line can show input → output. Narrating every instrumented call gave forty lines a turn from eight modules — a log file on a screen. |
+| `trace.show_events` | Also show author-written `logger.info` lines. They are already sentences, written by whoever knew what mattered. |
+| `trace.subsystem_labels` | Short names for the screen: truncating "customer_support_agent" to a column gives "customer_su", which is not a word. |
+| `trace.subsystem_width` / `max_values` / `max_value_chars` | Column width, how many values sit beside a step, and where a value is elided to keep one line. |
+| `trace.muted_fields` | Fields that are *content* rather than identity. Printing an assembled window or a stored fact turns the trace into the thing it summarises. |
 | `command_output.title_style` / `header_style` / `row_style` / `note_style` / `error_style` | How a slash command's output is drawn, so it never reads as something the agent said. |
 | `command_output.column_gap` / `max_column_width` | Table spacing, and where one long cell is elided rather than pushing every other column off the right edge. |
 | `command_output.prompt_style` | How the typed command is echoed back. |
+
+## `context.rerank`
+| Param | Meaning |
+|---|---|
+| `enabled` | Two-pass scoring: the cheap ranker scores every candidate, a cross-encoder rescores the best few. |
+| `shortlist` | How many candidates reach the cross-encoder. Its cost is what stops it being usable over a corpus. |
+| `min_candidates` | Below this, reranking cannot change the answer. |
+
+## `memory.write_pipeline`
+| Param | Meaning |
+|---|---|
+| `interrogative_markers` | Openers that mark a question rather than a claim. A question states no fact, so it is discarded before classification — otherwise every message becomes a candidate memory and the curator queue fills with things nobody asserted. |
 
 ## `commands`
 | Param | Meaning |
@@ -210,6 +238,7 @@ No `enabled` flag by design — it is always invoked.
 | `default_actor` / `default_role` | The agent's own identity for RBAC. |
 | `default_authority_rank` | Rank the agent acts under. |
 | `intents` | Ordered, most specific first. Each is `name` + `phrases` + the `tools` it unlocks. This is why a refund is discussed only when the customer raises it; `tools: []` means answer conversationally. |
+| `plans` | What each intent decomposes into, in order (E06). The sequence is a domain property — eligibility is checked before a refund is issued, whatever a model would have picked — so the plan is a lookup, not a completion. |
 | `intents[].semantic` | Whether this intent may also be reached by similarity when no phrase matched. `false` for `refund_request` on purpose: money must not move on the wrong side of a threshold. |
 | `semantic_intent.enabled` | Consult the encoder when no configured phrase matched. An embedding call, never a completion. |
 | `semantic_intent.threshold` | Cosine similarity a message must reach to be read as an intent. High, because an intent unlocks tools. |

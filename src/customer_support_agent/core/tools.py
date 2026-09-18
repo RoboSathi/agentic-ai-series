@@ -10,13 +10,10 @@ which is what makes "no execution path bypasses mediation" a property of
 the wiring rather than a rule everyone has to remember.
 """
 
-from uuid import uuid4
-
 from pydantic import BaseModel, Field
 
 from agentic_commons.logging import get_logger, instrument
 from agentic_commons.tools import ToolDefinition, ToolResult
-from customer_support_agent.config import get_agent_settings
 from customer_support_agent.core.identity import current_customer_id
 from customer_support_agent.core.refund_saga import RefundSaga
 from customer_support_agent.core.repositories import (
@@ -48,17 +45,6 @@ class RefundArgs(BaseModel):
     reason: str = Field(default="", description="Why the refund is being issued")
 
 
-class GoodwillArgs(BaseModel):
-    """Arguments for a goodwill credit.
-
-    No recipient field. The credit goes to the authenticated customer,
-    and a model that could name the recipient could credit somebody else.
-    """
-
-    amount: float = Field(description="Credit amount in USD")
-    reason: str = Field(default="", description="Why the credit is being applied")
-
-
 class ApprovalArgs(BaseModel):
     """Arguments for queuing a refund for human approval."""
 
@@ -81,7 +67,6 @@ class SupportTools:
         self._hitl = hitl
         self._refunds = refunds
         self._saga = saga
-        self._goodwill = get_agent_settings().goodwill
         self._logger = get_logger("customer_support_agent")
 
     def definitions(self) -> list[ToolDefinition]:
@@ -140,16 +125,6 @@ class SupportTools:
                 surface="append_only",
                 blast_radius="single_record",
                 reversible=True,
-            ),
-            ToolDefinition(
-                name="apply_goodwill_credit",
-                namespace=NAMESPACE,
-                description="Apply a small goodwill credit to a customer's account.",
-                args_schema=GoodwillArgs,
-                handler=self.apply_goodwill_credit,
-                surface="editable",
-                blast_radius="account",
-                reversible=False,
             ),
         ]
 
@@ -242,55 +217,4 @@ class SupportTools:
                 f"human review; the customer will hear back shortly"
             ),
             data={"queued": True, "request_id": self._hitl.last_id()},
-        )
-
-    def apply_goodwill_credit(self, amount: float, reason: str = "") -> ToolResult:
-        """Apply a goodwill credit to the current customer, within policy.
-
-        The customer is the authenticated one, never an argument: a
-        `user_id` parameter is a field the model fills in, and a model
-        that can name the recipient can credit somebody else.
-
-        Both caps are enforced here rather than described in the prompt.
-        A goodwill credit is money leaving the business, and an unbounded
-        payout with a friendly name is still an unbounded payout.
-        """
-        customer_id = current_customer_id()
-        if customer_id is None:
-            return ToolResult(success=False, error="No authenticated customer for this request")
-        if amount <= 0:
-            return ToolResult(success=False, error="A goodwill credit must be a positive amount")
-        if amount > self._goodwill.max_per_credit_usd:
-            return ToolResult(
-                success=False,
-                error=(
-                    f"A single goodwill credit cannot exceed "
-                    f"${self._goodwill.max_per_credit_usd:,.2f}"
-                ),
-            )
-        already = self._refunds.goodwill_total(customer_id, self._goodwill.window_days)
-        if already + amount > self._goodwill.max_per_customer_usd:
-            return ToolResult(
-                success=False,
-                error=(
-                    f"That would take goodwill credits for this customer to "
-                    f"${already + amount:,.2f} in {self._goodwill.window_days} days, over the "
-                    f"${self._goodwill.max_per_customer_usd:,.2f} limit — escalate instead"
-                ),
-            )
-        # A unique id per credit. A second-resolution timestamp collides
-        # for credits issued in the same second, and INSERT OR REPLACE
-        # then silently overwrites one with the other — which would let
-        # the per-customer cap be walked straight past.
-        self._refunds.record(
-            f"goodwill:{customer_id}:{uuid4().hex[:12]}",
-            None,
-            customer_id,
-            amount,
-            f"goodwill: {reason}" if reason else "goodwill",
-        )
-        return ToolResult(
-            success=True,
-            output=f"Applied a ${amount:.2f} goodwill credit to your account",
-            data={"customer_id": customer_id, "amount": amount},
         )

@@ -15,8 +15,12 @@ from agentic_commons.audit import AuditLedger, create_audit_ledger
 from agentic_commons.config import get_settings
 from agentic_commons.context import (
     Chunk,
+    CrossEncoderReranker,
+    DenseRetriever,
     FiveStagePipeline,
+    HybridRetriever,
     LexicalRetriever,
+    RelevanceRanker,
     Task,
 )
 from agentic_commons.evals import NollmScoringCascadeImpl, create_scoring_cascade
@@ -24,15 +28,17 @@ from agentic_commons.gatekeeper import GatekeeperImpl
 from agentic_commons.gatekeeper.ledger import CumulativeLedger
 from agentic_commons.hallucination_protection import DetectionLadder
 from agentic_commons.llm.client import LLMClient, create_llm_client
+from agentic_commons.llm.encoders import create_reranker
 from agentic_commons.memory import MemoryFacade
-from agentic_commons.observability import CostAggregatorImpl, SLORegistry, StageReporter
+from agentic_commons.observability import SLORegistry, StageReporter
 from agentic_commons.observability.tracer import LocalTracer
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.resilience import SqliteIdempotencyGuard
-from agentic_commons.security import Authorizer, SecuritySuite
+from agentic_commons.security import Authorizer, PIIFilterImpl, SecuritySuite
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from customer_support_agent.core.authentication import CustomerAuthenticator
 from customer_support_agent.core.graph import CustomerSupportAgent
+from customer_support_agent.core.identity import current_customer_id
 from customer_support_agent.core.refund_saga import RefundSaga
 from customer_support_agent.core.repositories import (
     HitlQueueRepository,
@@ -41,7 +47,7 @@ from customer_support_agent.core.repositories import (
     UsersRepository,
 )
 from customer_support_agent.core.review import ReviewQueueService
-from customer_support_agent.core.schema import policy_text
+from customer_support_agent.core.schema import Order, policy_text
 from customer_support_agent.core.tools import SupportTools
 
 
@@ -92,6 +98,46 @@ class WorkingMemoryContextSource:
         ]
 
 
+class OrderCorpusContextSource:
+    """Contributes the customer's own orders, retrieved (E19, FR-7).
+
+    Hybrid retrieval — BM25 for the identifier-shaped queries a support
+    conversation is full of ("10001"), embeddings for the ones that
+    describe rather than name ("the parcel that never turned up"). Both
+    are needed: lexical search cannot match a paraphrase and dense search
+    is unreliable on an exact id, which is the pairing E19 exists to
+    show.
+
+    **Scoped to the authenticated customer, every time.** The corpus is
+    rebuilt per request from that customer's orders rather than filtered
+    afterwards: a retriever over every customer's orders is one ranking
+    bug away from putting somebody else's purchase in this customer's
+    context window, and no amount of post-filtering makes that safe if
+    the filter is ever forgotten.
+    """
+
+    def __init__(self, orders: OrdersRepository, ranker: RelevanceRanker) -> None:
+        self._orders = orders
+        self._ranker = ranker
+        self._top_k = get_settings().context.top_k
+
+    async def candidates(self, task: Task) -> list[Chunk]:
+        """The customer's orders most relevant to this query."""
+        customer_id = current_customer_id()
+        if customer_id is None:
+            # No identity, no corpus. An unauthenticated request retrieves
+            # nothing rather than everything.
+            return []
+        corpus = [_order_chunk(order) for order in self._orders.for_user(customer_id)]
+        if not corpus:
+            return []
+        retriever = HybridRetriever(
+            lexical=LexicalRetriever(corpus),
+            dense=DenseRetriever(self._ranker, corpus),
+        )
+        return await retriever.retrieve(task.query, self._top_k)
+
+
 class MemoryContextSource:
     """Contributes recalled memory to the window."""
 
@@ -114,6 +160,18 @@ class MemoryContextSource:
             )
             for scored in recalled
         ]
+
+
+def _order_chunk(order: Order) -> Chunk:
+    """One order, as a sentence a retriever can match against."""
+    return Chunk(
+        content=(
+            f"Order {order.order_id} placed {order.timestamp[:10]}: {order.order_status}, "
+            f"${order.amount:,.2f}, refund {order.refund_status}"
+        ),
+        kind="retrieved",
+        source=str(order.order_id),
+    )
 
 
 def build_agent(
@@ -145,11 +203,20 @@ def build_agent(
         memory if memory is not None else (MemoryFacade(relevance=scoring) if with_memory else None)
     )
 
-    sources: list[object] = [PolicyContextSource()]
+    sources: list[object] = [PolicyContextSource(), OrderCorpusContextSource(orders, scoring)]
     if facade is not None:
         sources.append(WorkingMemoryContextSource(facade))
         sources.append(MemoryContextSource(facade))
-    context = FiveStagePipeline(sources=sources, ranker=scoring)  # type: ignore[arg-type]
+    # Two-pass relevance: the NOLLM cascade scores every candidate with an
+    # embedding model, then a cross-encoder rescores the shortlist. The
+    # reranker is None when no hosted encoder is reachable, and the
+    # pipeline then keeps the cheaper ordering rather than pretending.
+    reranker = create_reranker(fallback=scoring)
+    context = FiveStagePipeline(
+        sources=sources,  # type: ignore[arg-type]
+        ranker=scoring,
+        reranker=CrossEncoderReranker(reranker) if reranker is not None else None,
+    )
 
     return CustomerSupportAgent(
         llm=llm or create_llm_client(),
@@ -169,8 +236,11 @@ def build_agent(
         reporter=reporter,
         # Observability is on by default: a production agent that has to
         # be reconfigured before it can be diagnosed is diagnosed late.
-        tracer=LocalTracer(connection) if observe else None,
-        costs=CostAggregatorImpl() if observe else None,
+        # The redactor is not optional. A span carries the query, the
+        # tool arguments and the result, so an unredacted trace is a
+        # copy of the customer's data in a second place — and FR-44
+        # says there is no path that writes one. There was: this one.
+        tracer=LocalTracer(connection, redactor=PIIFilterImpl()) if observe else None,
         slos=SLORegistry() if observe else None,
         grounding=DetectionLadder(scoring) if observe else None,
         authenticator=CustomerAuthenticator(UsersRepository(connection), orders),

@@ -4,6 +4,7 @@ from agentic_commons.evals.entailment import (
     EntailmentModel,
     EntailmentResult,
     LexicalEntailmentModel,
+    create_entailment_model,
 )
 from agentic_commons.evals.judge import (
     AgreementReport,
@@ -81,6 +82,7 @@ __all__ = [
     "JudgeCalibrator",
     "LabelProvenance",
     "LexicalEntailmentModel",
+    "create_entailment_model",
     "LlmJudge",
     "NliEntailmentScorer",
     "NollmScoringCascade",

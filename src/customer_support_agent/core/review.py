@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from agentic_commons.audit import AuditEntry, AuditLedger, NullAuditLedger
 from agentic_commons.gatekeeper.types import AuthorityContext
+from agentic_commons.hallucination_protection import TrustCalibrationTracker, TrustReport
 from agentic_commons.logging import get_logger, logged
 from agentic_commons.observability.types import utc_now
 from customer_support_agent.core.refund_saga import RefundSaga
@@ -46,9 +47,16 @@ class ReviewQueueService:
         orders: OrdersRepository,
         saga: RefundSaga,
         audit: AuditLedger | None = None,
+        trust: TrustCalibrationTracker | None = None,
     ) -> None:
         self._queue = queue
         self._orders = orders
+        # Whether reviewers trust the agent about as much as they should
+        # (E27). A queue where every escalation is waved through is a
+        # rubber stamp, and one where every escalation is overturned is a
+        # control nobody believes — both are visible only if the
+        # agreement rate is counted.
+        self._trust = trust or TrustCalibrationTracker()
         self._saga = saga
         self._audit = audit or NullAuditLedger()
         self._logger = get_logger("customer_support_agent")
@@ -81,6 +89,10 @@ class ReviewQueueService:
         # and a refund approved against a stale fact is still wrong.
         if not order.is_refund_eligible or order.already_refunded:
             self._queue.decide(request_id, "denied")
+            # The agent was wrong to queue this one, and the human caught
+            # it: appropriate reliance, which is what the tracker is
+            # measuring against automation bias.
+            self._trust.record(agent_correct=False, human_accepted=False)
             return ReviewOutcome(
                 request_id=request_id,
                 decision="denied",
@@ -97,6 +109,8 @@ class ReviewQueueService:
                 reason=f"refund failed at '{result.failed_step}' and was rolled back",
             )
         self._queue.decide(request_id, "approved")
+        # The agent escalated something the reviewer agreed with.
+        self._trust.record(agent_correct=True, human_accepted=True)
         self._record(request, reviewer, "allow", "approved by reviewer")
         return ReviewOutcome(
             request_id=request_id,
@@ -116,6 +130,10 @@ class ReviewQueueService:
             )
         self._queue.decide(request_id, "denied")
         self._orders.set_refund_status(request.order_id, "denied")
+        # The reviewer overturned an eligible escalation. Recorded as the
+        # agent being right and the human declining: sustained, that is
+        # algorithm aversion, and it is only visible if it is counted.
+        self._trust.record(agent_correct=True, human_accepted=False)
         self._record(request, reviewer, "deny", reason or "denied by reviewer")
         return ReviewOutcome(
             request_id=request_id,
@@ -124,6 +142,15 @@ class ReviewQueueService:
             amount=request.requested_amount,
             reason=reason or "denied by reviewer",
         )
+
+    def calibration(self) -> TrustReport:
+        """How reviewers have been treating the agent's escalations.
+
+        The two failure modes are opposite and equally expensive: waving
+        everything through makes the queue a rubber stamp, and
+        overturning everything makes the agent a formality nobody trusts.
+        """
+        return self._trust.report()
 
     def _find(self, request_id: int) -> HitlRequest | None:
         """A pending request by id, or None if it is absent or decided."""

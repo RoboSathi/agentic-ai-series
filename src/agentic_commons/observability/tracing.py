@@ -24,6 +24,7 @@ import time
 from typing import Any, Callable, Literal, TypeVar, cast
 
 from agentic_commons.logging import get_logger
+from agentic_commons.logging.decorators import bind_arguments
 from agentic_commons.observability.status_feed import StageReporter
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -37,6 +38,11 @@ _LOGGER_ATTR = "_logger"
 # Result fields worth putting in the feed's one-line detail, in the order
 # they are tried. A stage's detail should say *what it decided*, and
 # these are the names the domain already uses for that.
+# Traced stages are steps in the agent's own flow, so they are coloured
+# like the component that owns them rather than given a colour of their
+# own — the subsystem is what a reader follows down the feed.
+_TRACE_COLOR = "cyan"
+
 _DETAIL_FIELDS = ("name", "detail", "reason", "verdict", "route", "topic", "matched_phrase")
 
 
@@ -97,6 +103,7 @@ class _Trace:
         self._logger = getattr(owner, _LOGGER_ATTR, None) or get_logger(subsystem)
         reporter = getattr(owner, _REPORTER_ATTR, None)
         self._reporter = reporter if isinstance(reporter, StageReporter) else None
+        self._func = func
         self._qualname = func.__qualname__
         self._args = args
         self._kwargs = kwargs
@@ -104,11 +111,8 @@ class _Trace:
 
     def __enter__(self) -> "_Trace":
         self._started = time.perf_counter()
-        self._logger.debug(
-            f"→ {self._qualname}",
-            stage=self._stage,
-            args=[repr(arg) for arg in self._args],
-            kwargs={key: repr(value) for key, value in self._kwargs.items()},
+        self._logger.log_called(
+            self._qualname, _TRACE_COLOR, bind_arguments(self._func, self._args, self._kwargs), {}
         )
         if self._reporter is not None:
             self._reporter.started(self._stage)
@@ -117,11 +121,12 @@ class _Trace:
     def finish(self, result: Any) -> Any:
         """Record a successful return, and pass the value straight through."""
         detail = _detail_of(result)
-        self._logger.debug(
-            f"← {self._qualname}",
-            stage=self._stage,
-            elapsed_ms=self._elapsed_ms(),
-            result=repr(result),
+        self._logger.log_returned(
+            self._qualname,
+            _TRACE_COLOR,
+            result,
+            self._elapsed_ms(),
+            bind_arguments(self._func, self._args, self._kwargs),
         )
         if self._reporter is not None:
             self._reporter.completed(self._stage, detail=detail)
@@ -132,7 +137,7 @@ class _Trace:
         if exc is None:
             return False
         self._logger.error(
-            f"✗ {self._qualname}",
+            f"{self._stage} failed",
             stage=self._stage,
             elapsed_ms=self._elapsed_ms(),
             error=str(exc),

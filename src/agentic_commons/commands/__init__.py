@@ -21,7 +21,7 @@ from agentic_commons.commands.harness import (
 from agentic_commons.commands.inspection import (
     AuditCommand,
     ConfigCommand,
-    CostCommand,
+    ModelCommand,
     QueueCommand,
     SloCommand,
 )
@@ -52,7 +52,7 @@ __all__ = [
     "ConsoleEffect",
     "CommandRow",
     "ConfigCommand",
-    "CostCommand",
+    "ModelCommand",
     "EvalCommand",
     "GatekeeperCommand",
     "HelpCommand",

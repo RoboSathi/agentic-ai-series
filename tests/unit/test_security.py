@@ -115,7 +115,8 @@ class TestPII:
         kept = PIIFilterImpl().minimize({"order_id": 1, "ssn": "x", "surprise": 2})
         assert kept == {"order_id": 1}
 
-    def test_disabled_filter_changes_nothing(self) -> None:
+    def test_a_disabled_filter_changes_nothing(self, security_off: None) -> None:
+        """Switching redaction off must leave the text exactly as it was."""
         text = "mail ada@example.com"
         assert PIIFilterImpl().redact(text) == text
 
