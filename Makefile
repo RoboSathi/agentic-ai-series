@@ -1,4 +1,5 @@
-.PHONY: help install clean test lint type-check format check-all run dummy-data logs llm-check
+.PHONY: help install clean test lint type-check format check-all run dummy-data logs llm-check \
+	tui verify episode episodes patterns venv-check test-verbose test-fast
 
 # Colors for output
 GREEN := \033[0;32m
@@ -28,6 +29,9 @@ help:
 	@echo "  make dummy-data       Generate dummy_data/*.sql and build dummy_data/agentic.db"
 	@echo "  make run              Run one demo query through the agent"
 	@echo "  make tui              Run the terminal UI (interactive)"
+	@echo "  make episode E=05     Run one episode"
+	@echo "  make episodes         Run every episode"
+	@echo "  make patterns         Test the design-pattern library"
 	@echo "  make llm-check        Verify the configured LLM endpoint is up and responsive"
 	@echo ""
 	@echo "$(GREEN)Utilities:$(NC)"
@@ -57,18 +61,18 @@ clean:
 
 lint:
 	@echo "$(BLUE)Running ruff lint...$(NC)"
-	./venv/bin/ruff check src/ tests/
+	./venv/bin/ruff check src/ tests/ design_patterns/ episodes/
 	@echo "$(GREEN)✓ Lint passed$(NC)"
 
 type-check:
 	@echo "$(BLUE)Running mypy type check...$(NC)"
-	./venv/bin/mypy --strict src/ 2>&1 | head -50 || true
-	@echo "$(YELLOW)Note: mypy strict has some decorator typing issues in Phase 0$(NC)"
+	./venv/bin/mypy --strict src/ design_patterns/ episodes/
+	@echo "$(GREEN)✓ Type check passed$(NC)"
 
 format:
 	@echo "$(BLUE)Formatting code with ruff...$(NC)"
-	./venv/bin/ruff format src/ tests/
-	./venv/bin/ruff check src/ tests/ --fix
+	./venv/bin/ruff format src/ tests/ design_patterns/ episodes/
+	./venv/bin/ruff check src/ tests/ design_patterns/ episodes/ --fix
 	@echo "$(GREEN)✓ Format complete$(NC)"
 
 test:
@@ -119,6 +123,24 @@ venv-check:
 		$$VIRTUAL_ENV/bin/python --version; \
 	fi
 
+# Run one episode: make episode E=05  (or E=48a)
+episode:
+	@test -n "$(E)" || (echo "$(YELLOW)Usage: make episode E=05$(NC)" && exit 1)
+	./venv/bin/python -m episodes.e$(E)
+
+# Run every episode in order — the whole series, end to end.
+episodes:
+	@echo "$(BLUE)Running every episode...$(NC)"
+	@for dir in episodes/e*/; do \
+		name=$$(basename $$dir); \
+		./venv/bin/python -m episodes.$$name || exit 1; \
+	done
+	@echo "$(GREEN)✓ All episodes ran$(NC)"
+
+# Run one design pattern's tests.
+patterns:
+	./venv/bin/pytest tests/design_patterns -q
+
 # Quick verification (for CI/CD).
 #
 # The coverage gate is enforced by pytest-cov's own `fail_under = 80`
@@ -128,10 +150,10 @@ venv-check:
 verify:
 	@echo "$(BLUE)Running verification...$(NC)"
 	@echo "$(BLUE)1/4 Ruff lint + format...$(NC)"
-	./venv/bin/ruff check src/ tests/ > /dev/null && \
-	./venv/bin/ruff format --check src/ tests/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
+	./venv/bin/ruff check src/ tests/ design_patterns/ episodes/ > /dev/null && \
+	./venv/bin/ruff format --check src/ tests/ design_patterns/ episodes/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
 	@echo "$(BLUE)2/4 mypy --strict...$(NC)"
-	./venv/bin/mypy --strict src/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
+	./venv/bin/mypy --strict src/ design_patterns/ episodes/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
 	@echo "$(BLUE)3/4 Pytest with coverage gate (80%)...$(NC)"
 	./venv/bin/pytest tests/ --cov=src -q > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
 	@echo "$(BLUE)4/4 Composition root imports...$(NC)"

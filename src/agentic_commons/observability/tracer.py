@@ -86,7 +86,10 @@ class LocalTracer:
             span_id=uuid.uuid4().hex,
             parent_id=parent.span_id if parent else None,
             name=name,
-            policy_version=self._audit_settings.policy_version,
+            # The configured policy version is a default, not an
+            # override: a caller tracing a decision made under a
+            # different policy must be able to say so.
+            policy_version=fields.pop("policy_version", self._audit_settings.policy_version),
             **fields,
         )
         return span
