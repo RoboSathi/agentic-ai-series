@@ -77,8 +77,9 @@ class SupportTools:
                 name="get_order_status",
                 namespace=NAMESPACE,
                 description=(
-                    "Look up an order's status, refund status and amount. "
-                    "Always call this before any refund action."
+                    "Look up an order's delivery status and total. Use this to "
+                    "answer any question about where an order is or what it cost. "
+                    "Also call it before any refund action, to confirm the amount."
                 ),
                 args_schema=OrderLookupArgs,
                 handler=self.get_order_status,
@@ -89,7 +90,10 @@ class SupportTools:
             ToolDefinition(
                 name="get_refund_status",
                 namespace=NAMESPACE,
-                description="Check whether an order has already been refunded or is under review.",
+                description=(
+                    "Check an order's refund state. Only use this when the "
+                    "customer has asked about a refund."
+                ),
                 args_schema=OrderLookupArgs,
                 handler=self.get_refund_status,
                 surface="editable",
@@ -140,12 +144,13 @@ class SupportTools:
         order = self._orders.get(order_id)
         if order is None:
             return ToolResult(success=False, error=f"No order found with id {order_id}")
+        # Deliberately no refund status. A customer asking where their
+        # order is has not asked about a refund, and an agent that
+        # volunteers one every time is the agent that eventually offers
+        # one nobody requested.
         return ToolResult(
             success=True,
-            output=(
-                f"Order {order.order_id}: {order.order_status}, "
-                f"${order.amount:.2f}, refund status {order.refund_status}"
-            ),
+            output=(f"Order {order.order_id}: {order.order_status}, total ${order.amount:.2f}"),
             data=order.model_dump(),
         )
 
@@ -172,11 +177,8 @@ class SupportTools:
         order = self._orders.get(order_id)
         if order is None:
             return ToolResult(success=False, error=f"No order found with id {order_id}")
-        if order.already_refunded:
-            return ToolResult(
-                success=False,
-                error=f"Order {order_id} has already been refunded and cannot be refunded again",
-            )
+        if not order.is_refund_eligible or order.already_refunded:
+            return ToolResult(success=False, error=order.refund_ineligibility_reason)
         result = await self._saga.issue(order, amount, reason)
         if not result.succeeded:
             return ToolResult(
@@ -198,6 +200,8 @@ class SupportTools:
         order = self._orders.get(order_id)
         if order is None:
             return ToolResult(success=False, error=f"No order found with id {order_id}")
+        if not order.is_refund_eligible or order.already_refunded:
+            return ToolResult(success=False, error=order.refund_ineligibility_reason)
         existing = self._hitl.pending_for_order(order_id)
         if existing is not None:
             return ToolResult(

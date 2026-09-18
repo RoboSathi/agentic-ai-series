@@ -112,6 +112,7 @@ class LLMSettings(YamlBackedSettings):
     provider: ProviderName
     max_tokens: int
     log_payloads: bool
+    payload_max_chars: int
     providers: dict[str, LLMProviderSettings]
     cascade: LLMCascadeSettings
     embedding: EmbeddingSettings

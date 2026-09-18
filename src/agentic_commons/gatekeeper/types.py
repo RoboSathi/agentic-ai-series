@@ -33,6 +33,16 @@ class AuthorityContext(BaseModel):
     cumulative_ledger_key: str = ""
     roles: list[str] = Field(default_factory=list)
     session_id: str = ""
+    # Actions this turn was offered. Narrowing the toolset is an authority
+    # decision made before the model saw the turn, so it belongs here and
+    # is checked — and audited — like any other.
+    #
+    # None and [] are different, and conflating them is a fail-open bug:
+    # None means no narrowing was applied, while an empty list means the
+    # turn was deliberately offered nothing — which is precisely the case
+    # for a conversational message, and exactly when a refund must not
+    # slip through.
+    offered_actions: list[str] | None = None
 
 
 class AdvisoryFlag(BaseModel):

@@ -40,6 +40,10 @@ llm:
   # was actually asked, which is rarely what you assume it was asked.
   # Off by default — payloads are verbose and may carry customer text.
   log_payloads: true
+  # Characters kept per message when logging payloads. 0 means the whole
+  # thing: a truncated prompt hides the end of the system prompt and the
+  # most recent turn, which is usually the part you are debugging.
+  payload_max_chars: 0
   providers:
     nim:
       base_url: https://integrate.api.nvidia.com/v1
@@ -457,6 +461,9 @@ customer_support_agent:
         - queue_for_approval
         - apply_goodwill_credit
     - name: order_enquiry
+      # Only the order lookup. Checking refund state is itself a refund
+      # conversation, and offering it here is what made the agent mention
+      # refunds in answer to "where is my parcel".
       phrases:
         - order
         - status
@@ -472,7 +479,6 @@ customer_support_agent:
         - package
       tools:
         - get_order_status
-        - get_refund_status
   # Intent used when nothing matches — no tools, just an answer.
   default_intent: general_enquiry
   # A follow-up carries the previous turn's intent. "what about 10010"

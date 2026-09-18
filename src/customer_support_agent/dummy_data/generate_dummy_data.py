@@ -3,6 +3,12 @@
 A deterministic (fixed random seed), reproducible synthetic dataset — 100
 users, 1000 orders. Not a source of real data, purely a demo fixture.
 Re-running regenerates both seed_data.sql and agentic.db from scratch.
+
+The data obeys the domain's own rules. Generating each column
+independently is easy and wrong: it produced pending orders with
+completed refunds, which is a state the business cannot reach, and an
+agent asked to reason over impossible data will produce impossible
+answers and look like a model problem.
 """
 
 import random
@@ -26,13 +32,32 @@ _ORDER_STATUS_WEIGHTS: list[tuple[str, float]] = [
     ("delivered", 0.60),
     ("cancelled", 0.10),
 ]
+# An order becomes refundable only once it is settled: delivered (the
+# customer has it and wants their money back) or cancelled before
+# delivery (they never received it). A pending or shipped order is still
+# in flight, so there is nothing to refund yet — generating one with a
+# completed refund produces data that contradicts the policy the agent is
+# asked to apply, and the agent then learns the contradiction.
+_REFUNDABLE_ORDER_STATUSES = frozenset({"delivered", "cancelled"})
+
+# Refund outcomes for an order that has reached a refundable state.
 _REFUND_STATUS_WEIGHTS: list[tuple[str, float]] = [
-    ("none", 0.75),
-    ("pending_review", 0.05),
-    ("approved", 0.05),
-    ("denied", 0.05),
+    ("none", 0.70),
+    ("pending_review", 0.08),
+    ("approved", 0.06),
+    ("denied", 0.06),
     ("completed", 0.10),
 ]
+
+# The only refund status an in-flight order can carry.
+_NO_REFUND = "none"
+
+
+def refund_status_for(rng: random.Random, order_status: str) -> str:
+    """The refund status an order in this state is allowed to have."""
+    if order_status not in _REFUNDABLE_ORDER_STATUSES:
+        return _NO_REFUND
+    return _weighted_choice(rng, _REFUND_STATUS_WEIGHTS)
 
 
 def _sql_str(value: str) -> str:
@@ -71,7 +96,7 @@ def _generate_seed_sql() -> str:
         user_id = rng.choice(user_ids)
         timestamp = (now - timedelta(days=rng.randint(0, 90))).isoformat()
         order_status = _weighted_choice(rng, _ORDER_STATUS_WEIGHTS)
-        refund_status = _weighted_choice(rng, _REFUND_STATUS_WEIGHTS)
+        refund_status = refund_status_for(rng, order_status)
         amount = round(rng.uniform(5.0, 500.0), 2)
         lines.append(
             "INSERT INTO orders "

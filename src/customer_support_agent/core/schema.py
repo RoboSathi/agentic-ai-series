@@ -20,6 +20,12 @@ OrderStatus = Literal["pending", "shipped", "delivered", "cancelled"]
 RefundStatus = Literal["none", "pending_review", "approved", "denied", "completed"]
 HitlStatus = Literal["pending", "approved", "denied"]
 
+# An order is refundable only once it is settled. Domain invariant, not a
+# tunable: it is what "refund" means for this business, and the dummy
+# data generator applies the same rule so the fixtures cannot contradict
+# the policy the agent is asked to enforce.
+REFUNDABLE_ORDER_STATUSES: frozenset[str] = frozenset({"delivered", "cancelled"})
+
 _SCHEMA_FILE = Path(__file__).resolve().parents[1] / "dummy_data" / "schema.sql"
 
 
@@ -37,6 +43,30 @@ class Order(BaseModel):
     def already_refunded(self) -> bool:
         """Whether this order has been refunded and cannot be refunded again."""
         return self.refund_status == "completed"
+
+    @property
+    def is_refund_eligible(self) -> bool:
+        """Whether this order has reached a state a refund can apply to.
+
+        An order becomes refundable once it is settled: delivered, so the
+        customer has it and wants their money back, or cancelled before
+        delivery, so they never received it. A pending or shipped order
+        is still in flight and there is nothing to refund yet.
+        """
+        return self.order_status in REFUNDABLE_ORDER_STATUSES
+
+    @property
+    def refund_ineligibility_reason(self) -> str:
+        """Why this order cannot be refunded, in words a customer can read."""
+        if self.already_refunded:
+            return f"Order {self.order_id} has already been refunded in full"
+        if not self.is_refund_eligible:
+            return (
+                f"Order {self.order_id} is still {self.order_status}, so there is "
+                f"nothing to refund yet — a refund applies once an order has been "
+                f"delivered, or if it is cancelled before delivery"
+            )
+        return ""
 
 
 class User(BaseModel):

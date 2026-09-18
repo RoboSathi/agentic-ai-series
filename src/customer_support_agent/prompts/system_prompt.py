@@ -25,10 +25,17 @@ specific order.
 
 Use tools only when the customer's message is about a specific order:
 
-- To answer a question about an order, call `get_order_status` or
-  `get_refund_status`, then answer from what it returned.
+- To answer a question about an order, call `get_order_status` and answer
+  from what it returned.
+- Do not mention refunds unless the customer raised the subject. Answer
+  what they asked: where the order is, what it cost, when it arrives.
+  Volunteering a refund status to someone tracking a parcel invites a
+  refund request nobody intended to make.
 - Only act on a refund when the customer has actually asked for one.
   Looking up an order is not a request to refund it.
+- A refund applies only once an order is settled: delivered, or cancelled
+  before delivery. An order still pending or shipped has nothing to
+  refund yet.
 - Never call a tool twice with the same arguments. If you already have
   the answer, use it.
 - Before any refund action, confirm the amount with `get_order_status` or
@@ -45,6 +52,27 @@ customer.
 # Refund Policy
 {policy}
 """
+
+
+_REPLY_INSTRUCTION = """Now write the reply the customer will read.
+
+Address them directly, in one to three sentences. State what you found
+and what happens next. Do not narrate your reasoning, restate the policy,
+mention tool names, or refer to "the user" in the third person — they are
+the person reading this.
+"""
+
+
+def build_reply_instruction() -> str:
+    """The instruction used for the final, customer-facing turn.
+
+    A separate instruction because the two turns want different things.
+    The working prompt tells the model how to *decide*; reusing it for
+    the last turn invites a model that reasons out loud to hand its
+    deliberation to the customer — "The user wants a refund for order
+    10003. According to policy, we need to confirm the amount…".
+    """
+    return _REPLY_INSTRUCTION
 
 
 def build_system_prompt() -> str:

@@ -35,7 +35,10 @@ from customer_support_agent.control_loop import DuplicateActionDetector
 from customer_support_agent.core.intent import Intent, IntentClassifier
 from customer_support_agent.core.schema import AgentState, policy_text
 from customer_support_agent.core.tools import SupportTools
-from customer_support_agent.prompts.system_prompt import build_system_prompt
+from customer_support_agent.prompts.system_prompt import (
+    build_reply_instruction,
+    build_system_prompt,
+)
 
 # Shown when the model produces nothing a customer could read. Rare, and
 # an honest hand-off beats a confident non-answer.
@@ -227,7 +230,14 @@ class CustomerSupportAgent:
         if last.role == "assistant" and is_customer_ready(last.content) and not last.tool_calls:
             self._done("finalize")
             return {"response": last.content}
-        result = await self._llm.complete(CompletionRequest(messages=self._prompt_messages(state)))
+        result = await self._llm.complete(
+            CompletionRequest(
+                messages=[
+                    *self._prompt_messages(state),
+                    Message(role="user", content=build_reply_instruction()),
+                ]
+            )
+        )
         reply = result.content if is_customer_ready(result.content) else _FALLBACK_REPLY
         self._done("finalize", tokens=result.usage.total_tokens)
         return {
@@ -278,17 +288,6 @@ class CustomerSupportAgent:
         repeat as a repeat rather than as work done.
         """
         call = self._registry.build_call(name, arguments)
-        if call is not None and call.action not in offered:
-            # The offered set is an authority decision made before the
-            # model saw the turn. A model that names a tool it was never
-            # given must not reach it — otherwise narrowing the toolset
-            # is presentation, not control.
-            self._logger.warning("Model called a tool it was not offered", tool=call.action)
-            return (
-                f"'{call.action}' is not available for this request.",
-                f"{call.action}: refused (not offered)",
-                "tool_refused",
-            )
         if call is None:
             return (
                 f"Tool '{name}' is unavailable or its arguments were invalid.",
@@ -301,6 +300,10 @@ class CustomerSupportAgent:
             roles=[self._role],
             granted_by="user_task",
             session_id=state.session_id,
+            # The Gatekeeper checks this and audits the attempt, so a tool
+            # the model was never offered is refused on the record rather
+            # than quietly here.
+            offered_actions=sorted(offered),
         )
         repeated = self._duplicates.seen_before(call)
         if repeated is not None:
@@ -311,6 +314,13 @@ class CustomerSupportAgent:
             )
         decision = await self._gatekeeper.evaluate(call, authority)
         if not decision.allowed:
+            if decision.question == "offered":
+                self._logger.warning("Model called a tool it was not offered", tool=call.action)
+                return (
+                    f"'{call.action}' is not available for this request.",
+                    f"{call.action}: refused (not offered)",
+                    "tool_refused",
+                )
             return (
                 f"That action was not permitted: {decision.reason}",
                 f"{call.action}: {decision.verdict} ({decision.question}) — {decision.reason}",

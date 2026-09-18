@@ -96,7 +96,8 @@ class GatekeeperImpl:
         amount = _amount_of(call)
 
         decision = (
-            self._check_surface(call, context)
+            self._check_offered(call, context)
+            or self._check_surface(call, context)
             or self._check_actor(call, context)
             or self._check_authority(call, context)
             or self._check_cumulative(call, context, amount)
@@ -128,6 +129,28 @@ class GatekeeperImpl:
                 amount=spent,
                 trace_id=get_current_trace_id() or "",
             )
+        )
+
+    def _check_offered(self, call: ToolCall, context: AuthorityContext) -> AuthorityDecision | None:
+        """Question 0 — was this action even on the table this turn?
+
+        A model that names a tool it was never given must not reach it,
+        and the attempt must be recorded: an agent reaching for authority
+        it was not offered is exactly the event an audit trail exists for.
+
+        An empty offered list denies everything. Only `None` — no
+        narrowing applied — lets a call past this question.
+        """
+        if context.offered_actions is None or call.action in context.offered_actions:
+            return None
+        return AuthorityDecision(
+            verdict="deny",
+            action=call.action,
+            actor=context.actor,
+            reason=f"'{call.action}' was not offered for this request",
+            question="offered",
+            surface=self._surfaces.classify(call.action),
+            blast_radius=call.blast_radius,
         )
 
     def _check_surface(self, call: ToolCall, context: AuthorityContext) -> AuthorityDecision | None:

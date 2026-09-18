@@ -83,11 +83,6 @@ def _tool_calls_from(raw: Any) -> list[ModelToolCall] | None:
     ]
 
 
-# Payload logging truncates each message: a full 100k-token window in a
-# log line is unreadable, and the first part is what identifies the bug.
-_PAYLOAD_CHARS = 2000
-
-
 class OpenAICompatibleClient(LLMClient):
     """Adapter for any OpenAI-compatible chat/completions endpoint.
 
@@ -150,6 +145,11 @@ class OpenAICompatibleClient(LLMClient):
         self._log_response(result)
         return result
 
+    def _clip(self, text: str) -> str:
+        """Apply the configured payload limit; 0 means keep everything."""
+        limit = self._settings.payload_max_chars
+        return text if limit <= 0 else text[:limit]
+
     def _log_request(self, request: CompletionRequest) -> None:
         """Record exactly what the model was asked.
 
@@ -164,7 +164,7 @@ class OpenAICompatibleClient(LLMClient):
             model=self._provider.model,
             tools=[tool["function"]["name"] for tool in request.tools or []],
             messages=[
-                {"role": message.role, "content": message.content[:_PAYLOAD_CHARS]}
+                {"role": message.role, "content": self._clip(message.content)}
                 for message in request.messages
             ],
         )
@@ -179,7 +179,7 @@ class OpenAICompatibleClient(LLMClient):
             finish_reason=result.finish_reason,
             tokens=result.usage.total_tokens,
             latency_ms=round(result.latency_ms),
-            content=result.content[:_PAYLOAD_CHARS],
+            content=self._clip(result.content),
             tool_calls=[
                 {"name": call.name, "arguments": call.arguments} for call in result.tool_calls or []
             ],
