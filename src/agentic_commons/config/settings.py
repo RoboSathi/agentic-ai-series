@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from agentic_commons.config.paths import resolve_path
@@ -540,6 +540,13 @@ class ToolsSettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="TOOLS__")
 
 
+class HarnessCommandSettings(BaseModel):
+    """What `/harness` considers to be the harness (E01)."""
+
+    # Dotted feature paths, each one `set_enabled` accepts.
+    controls: list[str]
+
+
 class CommandSettings(YamlBackedSettings):
     """Console slash commands (LLD §20)."""
 
@@ -547,6 +554,7 @@ class CommandSettings(YamlBackedSettings):
     default_limit: int
     value_preview_chars: int
     recent_window: int
+    harness: HarnessCommandSettings
 
     model_config = SettingsConfigDict(env_prefix="COMMANDS__")
 
@@ -599,29 +607,43 @@ class TuiSettings(YamlBackedSettings):
 
 
 class AppConfig(BaseSettings):
-    """Root config — one settings model per bounded context (LLD §1)."""
+    """Root config — one settings model per bounded context (LLD §1).
+
+    Every section is built by a factory rather than assigned a default
+    instance. A default instance is evaluated once, when this module is
+    imported, which would freeze the whole configuration at import time:
+    `reload_settings()` would rebuild `AppConfig` and hand back the same
+    seventeen section objects it built the first time, having re-read
+    nothing. Config files would then only ever be read once per process,
+    and a run-scoped overlay applied afterwards — an episode's, for
+    instance — would appear in `config_sources()` and change nothing.
+    """
 
     # Each nested model fills its required fields from config.yaml via
     # YamlBackedSettings; mypy can't see that, hence the ignores.
-    config: ConfigSettings = ConfigSettings()  # type: ignore[call-arg]
-    logging: LoggingSettings = LoggingSettings()  # type: ignore[call-arg]
-    llm: LLMSettings = LLMSettings()  # type: ignore[call-arg]
-    persistence: PersistenceSettings = PersistenceSettings()  # type: ignore[call-arg]
-    audit: AuditSettings = AuditSettings()  # type: ignore[call-arg]
-    observability: ObservabilitySettings = ObservabilitySettings()  # type: ignore[call-arg]
-    context: ContextSettings = ContextSettings()  # type: ignore[call-arg]
-    memory: MemorySettings = MemorySettings()  # type: ignore[call-arg]
-    guardrails: GuardrailsSettings = GuardrailsSettings()  # type: ignore[call-arg]
-    hallucination_protection: HallucinationProtectionSettings = (
-        HallucinationProtectionSettings()  # type: ignore[call-arg]
+    config: ConfigSettings = Field(default_factory=lambda: ConfigSettings())  # type: ignore[call-arg]
+    logging: LoggingSettings = Field(default_factory=lambda: LoggingSettings())  # type: ignore[call-arg]
+    llm: LLMSettings = Field(default_factory=lambda: LLMSettings())  # type: ignore[call-arg]
+    persistence: PersistenceSettings = Field(
+        default_factory=lambda: PersistenceSettings()  # type: ignore[call-arg]
     )
-    gatekeeper: GatekeeperSettings = GatekeeperSettings()  # type: ignore[call-arg]
-    security: SecuritySettings = SecuritySettings()  # type: ignore[call-arg]
-    resilience: ResilienceSettings = ResilienceSettings()  # type: ignore[call-arg]
-    evals: EvalsSettings = EvalsSettings()  # type: ignore[call-arg]
-    tools: ToolsSettings = ToolsSettings()  # type: ignore[call-arg]
-    tui: TuiSettings = TuiSettings()  # type: ignore[call-arg]
-    commands: CommandSettings = CommandSettings()  # type: ignore[call-arg]
+    audit: AuditSettings = Field(default_factory=lambda: AuditSettings())  # type: ignore[call-arg]
+    observability: ObservabilitySettings = Field(
+        default_factory=lambda: ObservabilitySettings()  # type: ignore[call-arg]
+    )
+    context: ContextSettings = Field(default_factory=lambda: ContextSettings())  # type: ignore[call-arg]
+    memory: MemorySettings = Field(default_factory=lambda: MemorySettings())  # type: ignore[call-arg]
+    guardrails: GuardrailsSettings = Field(default_factory=lambda: GuardrailsSettings())  # type: ignore[call-arg]
+    hallucination_protection: HallucinationProtectionSettings = Field(
+        default_factory=lambda: HallucinationProtectionSettings()  # type: ignore[call-arg]
+    )
+    gatekeeper: GatekeeperSettings = Field(default_factory=lambda: GatekeeperSettings())  # type: ignore[call-arg]
+    security: SecuritySettings = Field(default_factory=lambda: SecuritySettings())  # type: ignore[call-arg]
+    resilience: ResilienceSettings = Field(default_factory=lambda: ResilienceSettings())  # type: ignore[call-arg]
+    evals: EvalsSettings = Field(default_factory=lambda: EvalsSettings())  # type: ignore[call-arg]
+    tools: ToolsSettings = Field(default_factory=lambda: ToolsSettings())  # type: ignore[call-arg]
+    tui: TuiSettings = Field(default_factory=lambda: TuiSettings())  # type: ignore[call-arg]
+    commands: CommandSettings = Field(default_factory=lambda: CommandSettings())  # type: ignore[call-arg]
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

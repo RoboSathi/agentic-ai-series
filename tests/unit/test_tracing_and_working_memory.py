@@ -14,6 +14,11 @@ from rich.text import Text
 from agentic_commons.logging import LoggerFactory, get_logger, instrument
 from agentic_commons.logging.decorators import logged
 from agentic_commons.logging.narration import NARRATION, Narration
+from agentic_commons.logging.trace_stream import (
+    LiveFeedLogHandler,
+    TraceLineFormatter,
+    TraceStream,
+)
 from agentic_commons.memory import MemoryFacade, MemoryQuery, Provenance
 from agentic_commons.memory.types import MemoryFact
 from agentic_commons.memory.working.memory import WorkingMemory
@@ -22,7 +27,6 @@ from agentic_commons.observability import (
     StageReporter,
     traced,
 )
-from agentic_commons.tui.log_feed import LiveFeedLogHandler, TraceLineFormatter, TraceStream
 
 
 def _fact(key: str, value: str, session: str = "") -> MemoryFact:

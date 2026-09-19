@@ -1,81 +1,66 @@
 """E01 — Agent = Model + Harness.
 
-The claim: what people call "an agent" is a model plus everything around
-it, and almost every property you care about in production — whether it
-can be audited, bounded, resumed, or stopped — is a property of the
-harness, not the model.
+The cold open is one question asked twice. A customer asks for a $4,000
+refund; the agent proposes the refund tool; a single authority check
+refuses it. Then `/harness off` removes that check and the identical
+question, put to the identical model with the identical prompt, moves
+$4,000.
 
-This episode makes that concrete by counting. The same question is asked
-twice: once with a bare model call, once through the harness. The model
-is identical. What differs is everything else.
+That is the whole series in one screen. The model did not get better or
+worse between the two answers — nothing about it changed at all. What
+changed was whether anything stood between what it proposed and what
+was executed.
+
+The episode's only real work is arranging for there to be something
+worth refusing: the demo data's largest order is under $500, and an
+unsupervised $500 refund does not frighten anybody.
 """
 
-from agentic_commons.config import get_settings
-from agentic_commons.llm.types import CompletionRequest, Message
-from episodes._shared import EpisodeOutput, episode_llm, main
-
-# The subsystems a request passes through in the assembled harness. Each
-# is a thing the bare call simply does not have.
-HARNESS_SUBSYSTEMS = [
-    "config",
-    "logging",
-    "llm",
-    "persistence",
-    "audit",
-    "observability",
-    "context",
-    "memory",
-    "guardrails",
-    "hallucination_protection",
-    "gatekeeper",
-    "security",
-    "resilience",
-    "evals",
-    "tools",
-]
+from agentic_commons.config import YamlBackedSettings
+from agentic_commons.logging import get_logger
+from agentic_commons.observability.types import utc_now
+from agentic_commons.persistence import SqliteConnectionPool
+from customer_support_agent.config import get_agent_settings
+from customer_support_agent.core.repositories import OrdersRepository, UsersRepository
+from customer_support_agent.core.schema import Order, ensure_schema
 
 
-async def run() -> EpisodeOutput:
-    """Contrast a bare model call with the same call through a harness."""
-    output = EpisodeOutput(
-        episode="E01",
-        title="Agent = Model + Harness",
-        principle="The model produces text. The harness is what makes it a system.",
+class RefundScenario(YamlBackedSettings):
+    """The order this episode's cold open turns on."""
+
+    _yaml_section = "episode.scenario"
+
+    order_id: int
+    amount: float
+    order_status: str
+
+
+def setup() -> None:
+    """Put one large, settled order in front of the demo customer.
+
+    Written every run rather than only when missing: the episode ends
+    with the order refunded, and the next take needs it refundable
+    again. Idempotent by order id, so it does not accumulate.
+    """
+    scenario = RefundScenario()  # type: ignore[call-arg]
+    pool = SqliteConnectionPool()
+    ensure_schema(pool)
+    customer = UsersRepository(pool).get_by_code(get_agent_settings().demo_user_code)
+    if customer is None:
+        # No demo customer means an unseeded database. Say so rather than
+        # failing later inside a tool call, where it reads as a bug in
+        # the agent rather than as missing data.
+        get_logger("episodes").warning(
+            "Demo customer not found; run `make dummy-data` before this episode"
+        )
+        return
+    OrdersRepository(pool).save(
+        Order(
+            order_id=scenario.order_id,
+            user_id=customer.user_id,
+            timestamp=utc_now().isoformat(),
+            order_status=scenario.order_status,  # type: ignore[arg-type]
+            refund_status="none",
+            amount=scenario.amount,
+        )
     )
-    llm = episode_llm(["An agent is a model plus a harness."])
-
-    result = await llm.complete(
-        CompletionRequest(messages=[Message(role="user", content="What is an agent?")])
-    )
-    output.say(f"[bold]Bare model call[/bold] → {result.content!r}")
-    output.say("  no identity, no authority check, no audit trail, no bound on cost")
-    output.say("  nothing recorded; ask again tomorrow and nobody can say what happened")
-
-    settings = get_settings()
-    output.say("")
-    output.say(
-        f"[bold]The same call through the harness[/bold] passes {len(HARNESS_SUBSYSTEMS)} subsystems"
-    )
-    output.say(f"  model            : {settings.llm.providers[settings.llm.provider].model}")
-    output.say(
-        f"  bounded by       : max_tokens={settings.llm.max_tokens}, timeout={settings.resilience.timeout.default_seconds}s"
-    )
-    output.say(f"  every decision   : recorded against policy {settings.audit.policy_version}")
-    output.say("")
-    output.say("Swapping the model changes the answers. Swapping the harness")
-    output.say("changes what the system *is*.")
-
-    return output.model_copy(
-        update={
-            "artifact": {
-                "subsystems": len(HARNESS_SUBSYSTEMS),
-                "harness": ", ".join(HARNESS_SUBSYSTEMS),
-                "bare call guarantees": "none",
-                "harness guarantees": "identity, authority, audit, bounds, recovery",
-            }
-        }
-    )
-
-
-if __name__ == "__main__":
-    main(run)

@@ -20,3 +20,6 @@ src/customer_support_agent/dummy_data/episodic/
 # Claude specific
 .claude
 CLAUDE.md
+
+# Zip file
+project.zip

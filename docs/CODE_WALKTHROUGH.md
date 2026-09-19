@@ -62,6 +62,24 @@ Every dependency is constructed here and injected downward. In order:
 
 The graph is then compiled once, in `CustomerSupportAgent._build()`.
 
+**Which of these get wired is a configuration decision.** Each optional
+collaborator is gated on its own `enabled` flag, so a narrower config
+builds a genuinely narrower agent:
+
+| Config flag | Leaves out |
+|---|---|
+| `memory.enabled` | `MemoryFacade`, and the two memory context sources |
+| `context.enabled` | `FiveStagePipeline` — the graph falls back to the policy alone |
+| `tools.enabled` | `ToolRetrievalSelector`; the turn is offered whatever its intent permits |
+| `observability.enabled` | `LocalTracer`, `SLORegistry` |
+| `hallucination_protection.enabled` | `DetectionLadder` |
+
+Leaving a collaborator out is not the same as letting it switch itself
+off internally. A disabled component that is still constructed is still
+called and still narrates a step; one that was never built has no step to
+narrate — which is what makes an episode's configuration visible on
+screen rather than merely true.
+
 ### 0.2 What the app sets up (`AgenticTuiApp.__init__` / `on_mount`)
 
 - `InMemoryLiveStatusFeed` — the event stream the panel observes.
@@ -387,6 +405,29 @@ What produces those records:
 files record at their configured level regardless.
 
 ---
+
+## 3.3 The same walkthrough, for `make episode E=30`
+
+An episode is this same control flow with two differences and no third:
+
+```
+python -m episodes.e30
+  └── episodes/e30/__main__.py → run_episode(Path(__file__).parent, flow)
+        ├── use_overlay("episodes/e30/config.yaml"); reload_settings()
+        │     └── the run layer (CONFIG_REFERENCE.md), applied BEFORE the build
+        ├── TraceStream(console.print).enable()
+        │     └── §3.2's feed, on a plain Rich console instead of the TUI panel
+        ├── build_agent()          ← §0.1, now wiring only what E30 enabled
+        └── flow(EpisodeRun(...))  ← episodes/e30/app.py
+              └── run.ask(turn) → agent.handle(...) → §2, unchanged
+```
+
+The overlay must be applied before `build_agent()`, because the builder
+reads config to decide what to wire; applied afterwards it would produce
+the fully-featured agent and an episode config that changed nothing.
+
+Everything from §2 onward is identical — the episode is not a different
+program, it is the same agent with a narrower configuration.
 
 ## 4. Where to look when something is wrong
 

@@ -27,6 +27,12 @@ class ConsoleEffect(BaseModel):
     # A logging level name, or "off". Empty means "leave the trace
     # stream alone" — which is what every other command wants.
     trace_level: str = ""
+    # Rebuild the agent from the configuration as it now stands. A
+    # command that changes which subsystems are enabled has changed what
+    # the composition root would wire, and the agent already running was
+    # wired under the old answer — so the change is invisible until it is
+    # built again.
+    rebuild_agent: bool = False
 
 
 class CommandRow(BaseModel):

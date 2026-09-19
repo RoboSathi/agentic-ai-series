@@ -3,7 +3,13 @@
 import os
 from pathlib import Path
 
-from agentic_commons.config import get_settings, reload_settings
+from agentic_commons.config import (
+    clear_overlays,
+    config_sources,
+    get_settings,
+    reload_settings,
+    use_overlay,
+)
 from agentic_commons.config.paths import REPO_ROOT, resolve_path
 from agentic_commons.config.toggles import ConfigFeatureToggle
 
@@ -112,3 +118,99 @@ class TestFeatureToggles:
         toggle = ConfigFeatureToggle()
         toggle.set("guardrails", None, False)
         assert toggle.is_enabled("guardrails") is False
+
+
+class TestRunScopedOverlays:
+    """The layer that lets one episode run the agent configured down.
+
+    Every test here reloads through `restore_settings`, because the thing
+    under test is the singleton's contents.
+    """
+
+    def _write(self, tmp_path: Path, body: str) -> Path:
+        overlay = tmp_path / "overlay.yaml"
+        overlay.write_text(body)
+        return overlay
+
+    def test_an_overlay_changes_the_live_settings(
+        self, tmp_path: Path, restore_settings: None
+    ) -> None:
+        assert get_settings().memory.enabled is True
+        use_overlay(self._write(tmp_path, "memory:\n  enabled: false\n"))
+        assert reload_settings().memory.enabled is False
+
+    def test_it_merges_deeply_rather_than_replacing_the_section(
+        self, tmp_path: Path, restore_settings: None
+    ) -> None:
+        """Setting one sub-key must not erase its siblings.
+
+        The failure this guards is silent and severe: an overlay that
+        switched off `security.pii` and took the injection patterns with
+        it would leave an agent that looks configured and is undefended.
+        """
+        use_overlay(self._write(tmp_path, "security:\n  pii:\n    enabled: false\n"))
+        settings = reload_settings()
+        assert settings.security.pii.enabled is False
+        assert settings.security.prompt_injection.suspicious_phrases
+
+    def test_it_applies_after_the_agent_overlay(
+        self, tmp_path: Path, restore_settings: None
+    ) -> None:
+        """A run-scoped layer wins over the agent's own config."""
+        agent_value = get_settings().gatekeeper.ledger.thresholds_usd["refund"]
+        use_overlay(
+            self._write(
+                tmp_path,
+                "gatekeeper:\n  ledger:\n    thresholds_usd:\n      refund: 1\n",
+            )
+        )
+        assert agent_value != 1
+        assert reload_settings().gatekeeper.ledger.thresholds_usd["refund"] == 1
+
+    def test_local_yaml_still_has_the_last_word(self) -> None:
+        """Machine-local overrides outrank a run's, or they are not overrides."""
+        assert config_sources()[-1].name == "local.yaml"
+
+    def test_sources_report_the_overlay(self, tmp_path: Path, restore_settings: None) -> None:
+        """`/session` answers "which config is live?" from this list."""
+        overlay = self._write(tmp_path, "memory:\n  enabled: false\n")
+        use_overlay(overlay)
+        assert overlay.resolve() in config_sources()
+
+    def test_adding_the_same_overlay_twice_is_the_same_as_once(
+        self, tmp_path: Path, restore_settings: None
+    ) -> None:
+        overlay = self._write(tmp_path, "memory:\n  enabled: false\n")
+        use_overlay(overlay)
+        use_overlay(overlay)
+        assert config_sources().count(overlay.resolve()) == 1
+
+    def test_clearing_restores_the_base_configuration(
+        self, tmp_path: Path, restore_settings: None
+    ) -> None:
+        use_overlay(self._write(tmp_path, "memory:\n  enabled: false\n"))
+        assert reload_settings().memory.enabled is False
+        clear_overlays()
+        assert reload_settings().memory.enabled is True
+
+    def test_a_missing_overlay_is_not_an_error(
+        self, tmp_path: Path, restore_settings: None
+    ) -> None:
+        """An episode with no config of its own still runs, fully featured."""
+        use_overlay(tmp_path / "absent.yaml")
+        assert reload_settings().memory.enabled is True
+
+    def test_reload_actually_rereads_the_file(self, tmp_path: Path, restore_settings: None) -> None:
+        """The defect this guards, which was real.
+
+        Sections used to be default *instances* on `AppConfig`, built once
+        when the module was imported. `reload_settings()` then rebuilt the
+        root and handed back the same section objects, having re-read
+        nothing — so an overlay applied afterwards appeared in
+        `config_sources()` and changed nothing at all.
+        """
+        overlay = self._write(tmp_path, "memory:\n  enabled: false\n")
+        use_overlay(overlay)
+        assert reload_settings().memory.enabled is False
+        overlay.write_text("memory:\n  enabled: true\n")
+        assert reload_settings().memory.enabled is True

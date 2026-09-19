@@ -1,8 +1,8 @@
 """Commands that exercise or describe the harness itself (LLD §20)."""
 
 from agentic_commons.commands._pool import PoolBackedCommand
-from agentic_commons.commands.types import CommandResult
-from agentic_commons.config import get_settings
+from agentic_commons.commands.types import CommandError, CommandResult, ConsoleEffect
+from agentic_commons.config import get_settings, is_enabled, reload_settings, set_enabled
 from agentic_commons.evals import (
     TIER_ORDER,
     Claim,
@@ -199,3 +199,62 @@ class PatternsCommand:
             )
         result.line("Rows in yellow are the ones the Three Gates say need a human in the line.")
         return result
+
+
+class HarnessCommand:
+    """Switch the harness off and on around an unchanged model (E01).
+
+    The series' first claim is that an agent is a model plus a harness,
+    and that nearly everything worth having in production is a property
+    of the second half. The claim is cheap to assert and awkward to
+    show — so this makes it switchable: ask for a refund, turn the
+    harness off, ask for the identical refund.
+
+    `off` disables the controls named in `commands.harness.controls`.
+    `on` does not restore a remembered set, it re-reads configuration
+    from disk — so an episode gets *its* harness back rather than the
+    platform's, and the command needs no memory of what it changed.
+
+    Both rebuild the agent. Components read their `enabled` flag when
+    they are constructed, and the composition root decides what to wire
+    at all, so an agent already running was built under the old answer.
+    """
+
+    name = "harness"
+    summary = "Turn the harness off or on around the same model"
+    usage = "/harness [on|off]"
+
+    async def run(self, args: list[str]) -> CommandResult:
+        if not args:
+            return self._report()
+        wanted = args[0].lower()
+        if wanted not in {"on", "off"}:
+            raise CommandError(f"Say 'on' or 'off', not {args[0]!r}")
+        if wanted == "off":
+            for control in _controls():
+                set_enabled(control, None, False)
+        else:
+            reload_settings()
+        result = self._report()
+        result.title = f"Harness {wanted.upper()}"
+        result.line("")
+        result.line(
+            "The model, the prompt and the tools are unchanged. Ask the same question again."
+        )
+        result.effect = ConsoleEffect(rebuild_agent=True)
+        return result
+
+    def _report(self) -> CommandResult:
+        """Each control, and whether it currently stands between the model
+        and execution."""
+        result = CommandResult(title="Harness")
+        result.headers = ["control", "state"]
+        for control in _controls():
+            live = is_enabled(control)
+            result.row(control, "on" if live else "off", style="" if live else "bright_black")
+        return result
+
+
+def _controls() -> list[str]:
+    """The controls this console counts as the harness."""
+    return get_settings().commands.harness.controls

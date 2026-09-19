@@ -2,6 +2,7 @@
 
 import pytest
 
+from agentic_commons.config import set_enabled
 from agentic_commons.persistence import SqliteConnectionPool
 from customer_support_agent.core import (
     HitlQueueRepository,
@@ -293,3 +294,72 @@ class TestGraph:
         await agent.handle("hello")
         system = llm.requests[0].messages[0].content
         assert "Refund Policy" in system
+
+
+class TestTheBuilderHonoursConfiguration:
+    """Which subsystems are wired is a config decision, not a literal.
+
+    This is what makes an episode possible: the same `build_agent()` the
+    capstone runs, under a narrower config, produces a narrower agent.
+    Before this, two hardcoded booleans decided it and everything else
+    was wired unconditionally.
+
+    Leaving a collaborator out is deliberately not the same as letting it
+    disable itself internally — a component that is still constructed is
+    still called and still narrates a step to anyone watching the trace.
+    """
+
+    def _off(self, section: str, seeded_pool: SqliteConnectionPool) -> object:
+        set_enabled(section, None, False)
+        return build_agent(llm=ScriptedLLM(), pool=seeded_pool)
+
+    def test_everything_is_wired_by_default(self, seeded_pool: SqliteConnectionPool) -> None:
+        agent = build_agent(llm=ScriptedLLM(), pool=seeded_pool)
+        assert agent._memory is not None
+        assert agent._context is not None
+        assert agent._selector is not None
+        assert agent._tracer is not None
+        assert agent._grounding is not None
+
+    @pytest.mark.parametrize(
+        ("section", "attribute"),
+        [
+            ("memory", "_memory"),
+            ("context", "_context"),
+            ("tools", "_selector"),
+            ("observability", "_tracer"),
+            ("observability", "_slos"),
+            ("hallucination_protection", "_grounding"),
+        ],
+    )
+    def test_disabling_a_section_leaves_its_collaborator_out(
+        self,
+        section: str,
+        attribute: str,
+        seeded_pool: SqliteConnectionPool,
+        restore_settings: None,
+    ) -> None:
+        assert getattr(self._off(section, seeded_pool), attribute) is None
+
+    def test_grounding_does_not_depend_on_observability(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        """The defect this guards, which was real.
+
+        Grounding used to be gated on the `observe` flag alongside the
+        tracer and the SLO registry. "Is this reply supported by what the
+        tools returned?" is a hallucination-protection question, so an
+        agent configured to be quiet was also an agent that had quietly
+        stopped checking its own answers.
+        """
+        agent = self._off("observability", seeded_pool)
+        assert agent._tracer is None
+        assert agent._grounding is not None
+
+    def test_an_explicit_argument_still_overrides_the_config(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        """A caller that knows what it wants is not overruled by a file."""
+        set_enabled("memory", None, False)
+        agent = build_agent(llm=ScriptedLLM(), pool=seeded_pool, with_memory=True)
+        assert agent._memory is not None

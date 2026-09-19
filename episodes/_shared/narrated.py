@@ -1,17 +1,18 @@
-"""Shared shape for episode applications (LLD §22).
+"""The narrated episode shape — being retired (LLD §22).
 
-Every episode is a small, runnable program that exercises the harness at
-that episode's stage of maturity and prints its exit artifact. They
-*compose* `agentic_commons`, `design_patterns` and the running product —
-an episode that grew its own LLM client or its own auth check would be
-the duplication regression the series is meant to argue against.
+This is how every episode was written before the harness could be
+configured down: a script that hand-wires the two or three subsystems it
+wants to talk about and narrates the result in prose.
 
-Episodes are deterministic wherever the point can be made deterministically.
-Most of what these episodes demonstrate is harness behaviour — a cascade
-resolving at the cheapest tier, a ledger catching structuring, a saga
-compensating — and none of that needs a live model. The few that genuinely
-need one say so and degrade to a scripted stand-in when no key is present,
-so `make episodes` runs end to end offline.
+It is being replaced by `runner.py`, where an episode runs the *real*
+customer support agent and its own `config.yaml` decides which subsystems
+are live. The reason for the change is that this shape could only ever
+*describe* the claim the series makes — that an agent is a model plus a
+harness — while the new one demonstrates it: turn a subsystem off in
+config and its steps disappear from the trace.
+
+Episodes still on this shape keep working unchanged. Delete this module
+when the last one has moved.
 """
 
 import asyncio

@@ -1,6 +1,13 @@
 """`python -m episodes.e35` entry point."""
 
-from episodes._shared import main
-from episodes.e35.app import run
+from pathlib import Path
 
-main(run)
+from episodes._shared import run_scripted_episode
+from episodes.e35.app import flow
+
+# Guarded, unlike the narrated episodes: importing this module must not
+# run the episode. The smoke test imports every entry point to prove it
+# exists, and an unguarded body would mean that import builds an agent
+# and calls a live model.
+if __name__ == "__main__":
+    run_scripted_episode(Path(__file__).parent, flow)

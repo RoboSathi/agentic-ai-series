@@ -13,13 +13,16 @@ afternoon, which is not a test.
 import pytest
 
 from agentic_commons.commands import (
+    CommandError,
     CommandRegistry,
     CommandResult,
     CommandRow,
 )
 from agentic_commons.commands.data import OrdersCommand, UsersCommand
+from agentic_commons.commands.harness import HarnessCommand
 from agentic_commons.commands.inspection import AuditCommand, ConfigCommand, QueueCommand
 from agentic_commons.commands.system import ClearCommand, LogsCommand
+from agentic_commons.config import get_settings, is_enabled
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.tui.command_view import CommandView
 from agentic_commons.tui.suggest import CommandSuggester
@@ -237,3 +240,54 @@ class TestCommandView:
         text = "\n".join(line.plain for line in CommandView().render(result))
         assert "10001" in text
         assert "│" not in text
+
+
+class TestHarnessCommand:
+    """E01's switch: the same model, with and without what surrounds it."""
+
+    async def test_it_reports_every_control(self, restore_settings: None) -> None:
+        result = await HarnessCommand().run([])
+        reported = {row.cells[0] for row in result.rows}
+        assert reported == set(get_settings().commands.harness.controls)
+
+    async def test_off_disables_every_control(self, restore_settings: None) -> None:
+        await HarnessCommand().run(["off"])
+        assert not any(is_enabled(control) for control in _harness_controls())
+
+    async def test_on_restores_them_from_configuration(self, restore_settings: None) -> None:
+        """`on` re-reads config rather than remembering what it changed.
+
+        That is what makes it correct inside an episode: the harness it
+        restores is the episode's, not the platform's defaults, and the
+        command needs no memory of a state it might restore wrongly.
+        """
+        await HarnessCommand().run(["off"])
+        await HarnessCommand().run(["on"])
+        assert all(is_enabled(control) for control in _harness_controls())
+
+    async def test_both_directions_ask_for_a_rebuild(self, restore_settings: None) -> None:
+        """Components read their flags when constructed, so a running agent
+        was wired under the previous answer."""
+        for argument in ("off", "on"):
+            result = await HarnessCommand().run([argument])
+            assert result.effect.rebuild_agent
+
+    async def test_reporting_alone_rebuilds_nothing(self, restore_settings: None) -> None:
+        assert not (await HarnessCommand().run([])).effect.rebuild_agent
+
+    async def test_it_rejects_anything_but_on_or_off(self) -> None:
+        with pytest.raises(CommandError):
+            await HarnessCommand().run(["maybe"])
+
+    def test_auth_is_not_one_of_the_controls(self) -> None:
+        """Identity is not an approval control.
+
+        Switching RBAC off does not make the agent reckless, it makes it
+        unable to authenticate anybody — so it can do nothing at all,
+        which is the opposite of the demonstration E01 is making.
+        """
+        assert "security.auth" not in _harness_controls()
+
+
+def _harness_controls() -> list[str]:
+    return get_settings().commands.harness.controls

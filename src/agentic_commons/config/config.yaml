@@ -431,6 +431,35 @@ commands:
   default_limit: 15        # rows a listing shows when no limit is given
   value_preview_chars: 40  # where a long stored value is elided in a table
   recent_window: 20        # how many recent records the summaries look back over
+  # What `/harness off` switches off, and what `/harness` reports on.
+  #
+  # These are the controls that stand between a model's proposal and its
+  # execution — the difference E01 exists to show. Turning them off
+  # leaves the model, the plumbing it needs to run (config, logging, the
+  # provider adapter, the database) and nothing that would stop it.
+  #
+  # A list rather than a constant in Python: which controls count as
+  # "the harness" is exactly the question the series spends 48 episodes
+  # answering, and it should be arguable in a file rather than compiled
+  # in. Each entry is a dotted feature path `set_enabled` accepts.
+  #
+  # `security.auth` is deliberately NOT here. It is how the agent knows
+  # who is asking, not something standing between a proposal and its
+  # execution — and switching it off does not produce a reckless agent,
+  # it produces one that cannot authenticate anybody and so can do
+  # nothing at all. That is a different demonstration, and a duller one.
+  harness:
+    controls:
+      - security.prompt_injection
+      - security.pii
+      - security.content_moderation
+      - gatekeeper.ledger
+      - gatekeeper.surface_policy
+      - gatekeeper.automation
+      - guardrails
+      - hallucination_protection
+      - memory
+      - resilience
 
 tui:
   refresh_interval_ms: 100

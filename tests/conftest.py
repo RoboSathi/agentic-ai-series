@@ -14,12 +14,18 @@ for no visible reason.
 """
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
 
-from agentic_commons.config import get_settings, reload_settings
+from agentic_commons.config import (
+    REPO_ROOT,
+    clear_overlays,
+    get_settings,
+    reload_settings,
+    use_overlay,
+)
 from agentic_commons.llm.client import LLMClient
 from agentic_commons.llm.types import (
     CompletionRequest,
@@ -31,6 +37,7 @@ from agentic_commons.llm.types import (
 from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
 from customer_support_agent.core.identity import Customer, set_current_customer
 from customer_support_agent.core.schema import Order, User, ensure_schema
+from episodes._shared import CONFIG_FILENAME, EpisodeSettings
 
 
 class ScriptedLLM(LLMClient):
@@ -184,7 +191,25 @@ def scripted_llm() -> ScriptedLLM:
 def restore_settings() -> Iterator[None]:
     """Undo any config mutation a test performs."""
     yield
+    clear_overlays()
     reload_settings()
+
+
+@pytest.fixture
+def episode_config(restore_settings: None) -> Callable[[str], EpisodeSettings]:
+    """Load one episode's config the way `run_episode` does.
+
+    Applying the real overlay rather than a hand-built settings object is
+    the point: what is under test is that the episode's own `config.yaml`
+    produces the agent the episode claims to be demonstrating.
+    """
+
+    def apply(name: str) -> EpisodeSettings:
+        use_overlay(REPO_ROOT / "episodes" / name / CONFIG_FILENAME)
+        reload_settings()
+        return EpisodeSettings()  # type: ignore[call-arg]
+
+    return apply
 
 
 @pytest.fixture

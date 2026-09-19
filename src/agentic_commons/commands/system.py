@@ -1,10 +1,11 @@
 """Commands about the console itself (LLD §20)."""
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agentic_commons.commands.types import CommandError, CommandResult, ConsoleEffect
-from agentic_commons.config import get_settings
+from agentic_commons.config import REPO_ROOT, get_settings
 from agentic_commons.config.yaml_config import config_sources
 
 if TYPE_CHECKING:
@@ -70,12 +71,13 @@ class SessionCommand:
         result.row("max tokens", str(settings.llm.max_tokens))
         result.row("database", str(settings.persistence.resolved_db_path.name))
         result.row("policy version", settings.audit.policy_version)
-        # Qualified by their folder: the platform file and every agent
-        # overlay are all called config.yaml, so bare names would list
-        # the same word twice and say nothing about which files are live.
+        # Shown as repo-relative paths. Every layer's file is called
+        # config.yaml, so bare names would list the same word four times
+        # and say nothing about which files are live — and two episodes'
+        # overlays differ only in the directory above them.
         result.row(
             "config",
-            ", ".join(f"{p.parent.parent.name}/{p.name}" for p in config_sources() if p.exists()),
+            ", ".join(_relative(path) for path in config_sources() if path.exists()),
         )
         logging_settings = get_settings().logging
         result.row("log level", f"file {logging_settings.file_level}, screen {trace.level}")
@@ -162,3 +164,13 @@ class DebugCommand:
             title=f"Trace stream {told}",
             effect=ConsoleEffect(trace_level=wanted),
         ).line("The log files are unchanged — they record everything either way.")
+
+
+def _relative(path: Path) -> str:
+    """One config file, named from the repo root so it is unambiguous."""
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:
+        # An overlay from outside the repo — a machine-local path, say.
+        # Its full location is the only honest thing to show.
+        return str(path)

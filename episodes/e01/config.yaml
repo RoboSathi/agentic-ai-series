@@ -1,0 +1,70 @@
+# E01 — Agent = Model + Harness.
+#
+# The first episode, and deliberately the smallest harness in the series.
+# Almost everything is off here: memory, context assembly, guardrails,
+# grounding, the content-level security checks, the cumulative ledger,
+# surface policy and automation levels all arrive in later episodes and
+# are switched on there, one at a time, until the capstone runs with the
+# whole thing live.
+#
+# What is left on is the minimum that makes an agent an agent: a model, a
+# database, tools it can call, and *one* external authority check between
+# a proposal and its execution. That check is the entire argument of the
+# episode — `/harness off` removes it and nothing else changes.
+
+episode:
+  title: Agent = Model + Harness
+  principle: >-
+    The model may propose. Only the harness decides whether a proposal
+    reaches execution.
+  # The order the cold open turns on. Seeded by this episode's setup,
+  # because no order in the demo data is anywhere near large enough to
+  # make an unsupervised refund alarming.
+  scenario:
+    order_id: 19001
+    amount: 4000.0
+    order_status: delivered
+
+# RBAC stays on, but it is not what this episode is about: it is how the
+# agent knows which customer is asking, and without it there is no
+# conversation to have at all. The control E01 removes is the approval
+# check below.
+security:
+  enabled: true
+  auth:
+    enabled: true
+  # Off — E30 and E32 are where these arrive.
+  prompt_injection:
+    enabled: false
+  pii:
+    enabled: false
+  content_moderation:
+    enabled: false
+
+# The Gatekeeper is always invoked (PRD G1), but at E01 it asks one
+# question only: is this amount above what anybody has agreed the agent
+# may move on its own? The agent's config sets that at $50, so a $4,000
+# refund needs a human — and `/harness off` is what takes that away.
+#
+# Cumulative budgets across a window (E12) and surface classes (E12) are
+# each their own episode and are not switched on yet. The Sheridan levels
+# behind this check get their full treatment in E03.
+gatekeeper:
+  automation:
+    enabled: true
+  ledger:
+    enabled: false
+  surface_policy:
+    enabled: false
+
+# Not yet built, as far as the series is concerned.
+memory:
+  enabled: false
+context:
+  enabled: false
+guardrails:
+  enabled: false
+hallucination_protection:
+  enabled: false
+resilience:
+  enabled: false

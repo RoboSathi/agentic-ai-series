@@ -1,7 +1,10 @@
 """The live status feed's labels, widgets and clipboard (LLD §20)."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
+from agentic_commons.commands import ConsoleEffect
+from agentic_commons.commands.harness import HarnessCommand
 from agentic_commons.observability.types import StatusEvent
 from agentic_commons.tui import (
     Osc52ClipboardService,
@@ -10,6 +13,7 @@ from agentic_commons.tui import (
     StatusLineWidget,
     TokenCounterWidget,
 )
+from agentic_commons.tui.app import AgenticTuiApp
 from agentic_commons.tui.widgets import _compact, _elapsed
 
 # Every stage key the harness emits this phase. The contract test below
@@ -239,3 +243,45 @@ class TestLayout:
         first = app._session_id
         app._turn += 1
         assert app._session_id == first
+
+
+class TestTheAppRebuildsItsAgent:
+    """`/harness` changes which subsystems are enabled, which changes what
+    the composition root would wire — and the agent already on screen was
+    wired under the previous answer."""
+
+    def _app(self) -> AgenticTuiApp:
+        built: list[object] = []
+
+        def factory(reporter: object) -> object:
+            built.append(reporter)
+            return SimpleNamespace(memory=None, handle=None, _built=len(built))
+
+        return AgenticTuiApp(factory)
+
+    def test_a_rebuild_effect_replaces_the_agent(self) -> None:
+        app = self._app()
+        before = app._agent
+        app._apply(ConsoleEffect(rebuild_agent=True))
+        assert app._agent is not before
+
+    def test_other_effects_leave_the_agent_alone(self) -> None:
+        app = self._app()
+        before = app._agent
+        app._apply(ConsoleEffect(clear_transcript=True))
+        assert app._agent is before
+
+    def test_an_app_with_no_factory_survives_a_rebuild(self) -> None:
+        """The feed-only console has nothing to rebuild and must not crash."""
+        app = AgenticTuiApp()
+        app._apply(ConsoleEffect(rebuild_agent=True))
+        assert app._agent is None
+
+    def test_an_episode_names_the_window_and_its_claim(self) -> None:
+        app = AgenticTuiApp(title="E01 — Agent = Model + Harness", subtitle="The model proposes.")
+        assert app.title == "E01 — Agent = Model + Harness"
+        assert app.sub_title == "The model proposes."
+
+    def test_an_episode_can_add_its_own_commands(self) -> None:
+        app = AgenticTuiApp(commands=[HarnessCommand()])
+        assert "harness" in [command.name for command in app._commands.all_commands()]

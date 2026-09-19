@@ -15,6 +15,7 @@ from agentic_commons.commands.harness import (
     CascadeCommand,
     EvalCommand,
     GatekeeperCommand,
+    HarnessCommand,
     PatternsCommand,
     ToolsCommand,
 )
@@ -55,6 +56,7 @@ __all__ = [
     "ModelCommand",
     "EvalCommand",
     "GatekeeperCommand",
+    "HarnessCommand",
     "HelpCommand",
     "LogsCommand",
     "MemoryCommand",

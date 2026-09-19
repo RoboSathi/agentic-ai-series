@@ -5,6 +5,42 @@ Nothing is hardcoded in Python. Override locally with the gitignored
 `config/local.yaml`, or per-process with `SECTION__FIELD` environment
 variables (e.g. `LLM__MAX_TOKENS=500`).
 
+## The layers
+
+Configuration is merged from four layers, in this order. Merging is deep,
+so a layer that sets `gatekeeper.surface_policy.surfaces` fills in part of
+that section without erasing `gatekeeper.authority_hierarchy` beside it.
+
+| Layer | File | Answers |
+|---|---|---|
+| Platform | `src/agentic_commons/config/config.yaml` | What is true for *any* agent. |
+| Agent | each path under its `overlays:` key, e.g. `src/customer_support_agent/config/config.yaml` | What is true for *this* agent — action names, role tables, thresholds. |
+| Run | whatever a caller passes to `use_overlay()` | What is true for *this run*. |
+| Machine | `src/agentic_commons/config/local.yaml` (gitignored) | What is true on *this machine*. Always the last word. |
+
+The run layer is how an episode works. `episodes/eNN/config.yaml` is
+applied by `run_episode()` before the agent is built, so `build_agent()`
+wires only the subsystems that episode is about — the same agent the
+capstone runs, configured down. Turn memory off there and the memory
+steps disappear from the live trace; nothing else changes.
+
+```python
+from agentic_commons.config import use_overlay, reload_settings, clear_overlays
+
+use_overlay("episodes/e30/config.yaml")
+reload_settings()   # settings are cached; an overlay applied late is invisible
+...
+clear_overlays()
+```
+
+`config_sources()` lists every file that contributed, in merge order —
+which is what the `/session` slash command reports.
+
+An episode's `config.yaml` also carries an `episode` section (`title`,
+`principle`, `turns`) read by `EpisodeSettings`. It is deliberately not
+part of `AppConfig`: the platform's root model describes a harness, and
+an episode is not a harness feature.
+
 **API keys are the one exception.** They are read from bare lowercase env
 vars (`nvidia_api_key`, `hf_api_key`), are never config fields, and never
 appear in a settings dump.

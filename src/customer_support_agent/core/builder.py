@@ -182,12 +182,32 @@ def build_agent(
     cascade: NollmScoringCascadeImpl | None = None,
     audit: AuditLedger | None = None,
     reporter: StageReporter | None = None,
-    with_memory: bool = True,
-    observe: bool = True,
+    with_memory: bool | None = None,
+    observe: bool | None = None,
 ) -> CustomerSupportAgent:
-    """Wire the refund agent from config, honouring any injected parts."""
+    """Wire the refund agent from config, honouring any injected parts.
+
+    Which subsystems are wired is a configuration decision, not a literal
+    in this function. Each optional collaborator below is gated on its own
+    `enabled` flag, so a narrower config produces a genuinely narrower
+    agent — the same graph with fewer things in it, which is what lets one
+    episode run the real product with only that episode's subsystem live.
+
+    Leaving a collaborator out is deliberately not the same as letting it
+    switch itself off internally. A disabled component still constructed
+    is still called, still traced, and still narrates a step to anyone
+    watching; one that was never built has no step to narrate. The
+    difference is the whole point on screen.
+
+    The `with_memory` and `observe` arguments override their config flags
+    for a caller that knows what it wants — a test, mostly. `None` means
+    "ask the configuration", which is the normal case.
+    """
+    settings = get_settings()
     connection = pool or SqliteConnectionPool()
     scoring = cascade or create_scoring_cascade()
+    remember = settings.memory.enabled if with_memory is None else with_memory
+    observing = settings.observability.enabled if observe is None else observe
 
     orders = OrdersRepository(connection)
     hitl = HitlQueueRepository(connection)
@@ -200,7 +220,7 @@ def build_agent(
     registry.register_all(tools.definitions())
 
     facade = (
-        memory if memory is not None else (MemoryFacade(relevance=scoring) if with_memory else None)
+        memory if memory is not None else (MemoryFacade(relevance=scoring) if remember else None)
     )
 
     sources: list[object] = [PolicyContextSource(), OrderCorpusContextSource(orders, scoring)]
@@ -212,10 +232,17 @@ def build_agent(
     # reranker is None when no hosted encoder is reachable, and the
     # pipeline then keeps the cheaper ordering rather than pretending.
     reranker = create_reranker(fallback=scoring)
-    context = FiveStagePipeline(
-        sources=sources,  # type: ignore[arg-type]
-        ranker=scoring,
-        reranker=CrossEncoderReranker(reranker) if reranker is not None else None,
+    # With context assembly off, the agent still gets its policy — the
+    # graph falls back to it. An agent reasoning without its own refund
+    # policy is not a narrower agent, it is a wrong one.
+    context = (
+        FiveStagePipeline(
+            sources=sources,  # type: ignore[arg-type]
+            ranker=scoring,
+            reranker=CrossEncoderReranker(reranker) if reranker is not None else None,
+        )
+        if settings.context.enabled
+        else None
     )
 
     return CustomerSupportAgent(
@@ -231,7 +258,11 @@ def build_agent(
         security=SecuritySuite(),
         memory=facade,
         context=context,
-        selector=ToolRetrievalSelector(registry, scoring),
+        # Retrieval-based tool selection narrows within what the intent
+        # already permits. Without it the agent is offered every tool the
+        # intent allows, which is the pre-E22 behaviour and exactly what
+        # that episode exists to contrast against.
+        selector=ToolRetrievalSelector(registry, scoring) if settings.tools.enabled else None,
         cascade=scoring,
         reporter=reporter,
         # Observability is on by default: a production agent that has to
@@ -240,9 +271,14 @@ def build_agent(
         # tool arguments and the result, so an unredacted trace is a
         # copy of the customer's data in a second place — and FR-44
         # says there is no path that writes one. There was: this one.
-        tracer=LocalTracer(connection, redactor=PIIFilterImpl()) if observe else None,
-        slos=SLORegistry() if observe else None,
-        grounding=DetectionLadder(scoring) if observe else None,
+        tracer=LocalTracer(connection, redactor=PIIFilterImpl()) if observing else None,
+        slos=SLORegistry() if observing else None,
+        # Grounding answers "is this reply supported by what the tools
+        # returned?", which is a hallucination-protection question and
+        # not an observability one. Gating it on `observe` meant an agent
+        # configured to be quiet was also an agent that stopped checking
+        # its own answers.
+        grounding=DetectionLadder(scoring) if settings.hallucination_protection.enabled else None,
         authenticator=CustomerAuthenticator(UsersRepository(connection), orders),
         orders=orders,
     )

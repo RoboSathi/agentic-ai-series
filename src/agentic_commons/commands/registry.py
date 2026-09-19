@@ -11,6 +11,7 @@ from agentic_commons.commands.harness import (
     CascadeCommand,
     EvalCommand,
     GatekeeperCommand,
+    HarnessCommand,
     PatternsCommand,
     ToolsCommand,
 )
@@ -114,6 +115,7 @@ def _default_commands() -> list[Command]:
         CascadeCommand(),
         ToolsCommand(),
         GatekeeperCommand(),
+        HarnessCommand(),
         PatternsCommand(),
         SessionCommand(),
         LogsCommand(),

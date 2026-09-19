@@ -129,7 +129,13 @@ episode:
 	./venv/bin/python -m episodes.e$(E)
 
 # Run every episode in order — the whole series, end to end.
+#
+# Configured episodes call the live model, so this is one run of the
+# series and not a loop to leave going: on a free-tier account it will
+# rate-limit. It is deliberately not part of `verify`, which is scripted
+# and offline. Use it before a recording session, not as a check.
 episodes:
+	@echo "$(YELLOW)⚠ Configured episodes call the live model — this costs quota.$(NC)"
 	@echo "$(BLUE)Running every episode...$(NC)"
 	@for dir in episodes/e*/; do \
 		name=$$(basename $$dir); \

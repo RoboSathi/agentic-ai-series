@@ -72,7 +72,7 @@ class PydanticValidator:
     def validate(self, raw: str, schema: type[BaseModel]) -> ValidationResult:
         """Validate raw output, repairing it first if the mode allows."""
         if not self._enabled:
-            return ValidationResult(valid=True, value=None, mode=self._mode, raw=raw)
+            return self._unchecked(raw)
         attempt = self._attempt(raw, schema)
         if attempt.valid or self._mode != "auto_repair":
             return attempt
@@ -86,6 +86,37 @@ class PydanticValidator:
                 f"Output failed {schema.__name__} validation: {'; '.join(result.errors)}"
             )
         return result.value
+
+    def _unchecked(self, raw: str) -> ValidationResult:
+        """What a switched-off guardrail returns: the values, unexamined.
+
+        Disabled means "do not enforce the schema and do not repair" — it
+        does not mean "produce nothing". This used to return
+        `value=None`, and every caller that reads the value treats None
+        as a failure, so switching guardrails off did not relax tool
+        validation, it removed the agent's ability to call any tool at
+        all. The log line even said the arguments had failed validation,
+        with an empty list of what was wrong.
+
+        The fields are parsed but not checked against the schema, which
+        is the behaviour E28 contrasts against: a wrongly-typed or
+        entirely unexpected argument now reaches the tool, which is
+        exactly the point of having had a guardrail.
+        """
+        try:
+            parsed = json.loads(raw)
+        except ValueError as exc:
+            # Not parseable is not a schema question. There are no values
+            # here to pass on, whatever the guardrail was asked to do.
+            return ValidationResult(valid=False, errors=[str(exc)], mode=self._mode, raw=raw)
+        if not isinstance(parsed, dict):
+            return ValidationResult(
+                valid=False,
+                errors=[f"expected an object, got {type(parsed).__name__}"],
+                mode=self._mode,
+                raw=raw,
+            )
+        return ValidationResult(valid=True, value=parsed, mode=self._mode, raw=raw)
 
     def _attempt(self, raw: str, schema: type[BaseModel], attempts: int = 1) -> ValidationResult:
         """One validation pass over a candidate string."""

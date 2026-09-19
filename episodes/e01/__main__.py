@@ -1,6 +1,9 @@
 """`python -m episodes.e01` entry point."""
 
-from episodes._shared import main
-from episodes.e01.app import run
+from pathlib import Path
 
-main(run)
+from episodes._shared import run_episode
+from episodes.e01.app import setup
+
+if __name__ == "__main__":
+    run_episode(Path(__file__).parent, setup=setup)

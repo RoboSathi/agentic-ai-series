@@ -3,6 +3,7 @@
 import pytest
 from pydantic import BaseModel
 
+from agentic_commons.config import set_enabled
 from agentic_commons.guardrails import (
     GuardrailViolationError,
     LlmConstrainedGenerator,
@@ -103,3 +104,40 @@ class TestConstrainedGeneration:
 
     def test_the_backend_is_configured_not_assumed(self, scripted_llm) -> None:
         assert LlmConstrainedGenerator(scripted_llm).backend == "llamacpp_grammar"
+
+
+class TestASwitchedOffGuardrail:
+    """Disabled means "do not enforce the schema", not "produce nothing".
+
+    The defect this guards was quiet and total. A disabled validator
+    returned `valid=True, value=None`, and every caller reads the value —
+    so `NamespacedToolRegistry.build_call` saw None, treated it as a
+    failure and refused the call. Switching guardrails off did not relax
+    tool validation, it removed the agent's ability to call any tool at
+    all, while logging "Tool arguments failed validation" with an empty
+    list of what was wrong.
+    """
+
+    def test_it_returns_the_values_rather_than_nothing(self, restore_settings: None) -> None:
+        set_enabled("guardrails", None, False)
+        result = PydanticValidator().validate('{"order_id": 1, "amount": 5.0}', RefundCommand)
+        assert result.valid
+        assert result.value == {"order_id": 1, "amount": 5.0}
+
+    def test_it_passes_values_the_schema_would_have_rejected(self, restore_settings: None) -> None:
+        """Which is the whole of E28's contrast: with the guardrail gone, a
+        wrongly-typed argument reaches the tool."""
+        set_enabled("guardrails", None, False)
+        result = PydanticValidator().validate('{"order_id": "not a number"}', RefundCommand)
+        assert result.valid
+        assert result.value == {"order_id": "not a number"}
+
+    def test_unparseable_output_is_still_invalid(self, restore_settings: None) -> None:
+        """Not parseable is not a schema question — there are no values here
+        to pass on, whatever the guardrail was asked to do."""
+        set_enabled("guardrails", None, False)
+        assert not PydanticValidator().validate("{not json", RefundCommand).valid
+
+    def test_a_bare_value_is_not_a_set_of_arguments(self, restore_settings: None) -> None:
+        set_enabled("guardrails", None, False)
+        assert not PydanticValidator().validate("[1, 2, 3]", RefundCommand).valid

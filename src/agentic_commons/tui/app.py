@@ -15,6 +15,7 @@ than stacking it, so docking the footer, status line and input to the
 bottom puts all three in the same place. They flow instead.
 """
 
+from collections.abc import Sequence
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -23,16 +24,16 @@ from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.widgets import Footer, Header, Input
 
-from agentic_commons.commands import CommandRegistry, ConsoleEffect
+from agentic_commons.commands import Command, CommandRegistry, ConsoleEffect
 from agentic_commons.commands.data import MemoryCommand
 from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger
+from agentic_commons.logging.trace_stream import TraceStream
 from agentic_commons.observability import InMemoryLiveStatusFeed, StageReporter
 from agentic_commons.observability.types import StatusEvent
 from agentic_commons.tui.clipboard import Osc52ClipboardService
 from agentic_commons.tui.command_view import CommandView
 from agentic_commons.tui.labels import StageLabelRegistry
-from agentic_commons.tui.log_feed import TraceStream
 from agentic_commons.tui.suggest import CommandSuggester
 from agentic_commons.tui.widgets import LiveStatusPanel, StatusLineWidget, TokenCounterWidget
 
@@ -43,6 +44,9 @@ AgentFactory = Callable[[StageReporter], Any]
 
 # What `/debug off` passes back as its requested level.
 _TRACE_OFF = "off"
+
+# Shown when no caller names the window. An episode passes its own.
+_DEFAULT_TITLE = "Customer Support Agent"
 
 
 class AgenticTuiApp(App[None]):
@@ -76,10 +80,24 @@ class AgenticTuiApp(App[None]):
         Binding("ctrl+l", "clear_feed", "Clear"),
     ]
 
-    def __init__(self, agent_factory: "AgentFactory | None" = None) -> None:
+    def __init__(
+        self,
+        agent_factory: "AgentFactory | None" = None,
+        title: str = "",
+        subtitle: str = "",
+        commands: "Sequence[Command] | None" = None,
+    ) -> None:
         super().__init__()
-        self.title = "Customer Support Agent"
+        self.title = title or _DEFAULT_TITLE
+        # Textual draws this beside the title. For an episode it is the
+        # claim the episode has to earn, which is what a viewer should
+        # have in front of them while they watch the trace.
+        self.sub_title = subtitle
         self._feed = InMemoryLiveStatusFeed()
+        # Kept, not just called: `/harness` changes which subsystems are
+        # enabled, and the agent standing in front of us was wired under
+        # the previous answer.
+        self._factory = agent_factory
         self._agent = agent_factory(StageReporter(self._feed, "tui")) if agent_factory else None
         self._labels = StageLabelRegistry()
         self._copier = Osc52ClipboardService()
@@ -100,6 +118,8 @@ class AgenticTuiApp(App[None]):
         # the agent asks for a code and verifies it against the database,
         # which is the flow a real deployment has.
         self._journal = get_logger("tui")
+        for command in commands or ():
+            self._commands.register(command)
         self._bind_live_commands()
 
     def _bind_live_commands(self) -> None:
@@ -177,6 +197,21 @@ class AgenticTuiApp(App[None]):
                 self._trace.disable()
             else:
                 self._trace.enable(effect.trace_level)
+        if effect.rebuild_agent:
+            self._rebuild_agent()
+
+    def _rebuild_agent(self) -> None:
+        """Re-wire the agent from configuration as it now stands.
+
+        The conversation is deliberately kept. The point of rebuilding
+        mid-session is to ask the *same* question of a differently
+        configured agent, and a cleared transcript would take the
+        comparison off the screen at the moment it was made.
+        """
+        if self._factory is None:
+            return
+        self._agent = self._factory(StageReporter(self._feed, "tui"))
+        self._bind_live_commands()
 
     async def _run(self, query: str) -> None:
         """Execute a query, keeping the feed live throughout."""

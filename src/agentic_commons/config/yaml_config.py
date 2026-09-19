@@ -4,6 +4,7 @@ Configuration is layered, and the layers answer different questions:
 
   `agentic_commons/config/config.yaml`   what is true for *any* agent
   each overlay it declares               what is true for *this* agent
+  any overlay a caller adds              what is true for *this run*
   `local.yaml` (gitignored)              what is true on *this machine*
 
 The split matters because the platform is shared. Action names, role
@@ -15,6 +16,13 @@ So the platform ships neutral, self-contained defaults (empty maps where
 an agent must supply the content, which fail safe: an unmapped action is
 human-controlled, an unmapped permission is denied), and each agent
 overlays its own.
+
+The run-scoped layer is what lets one episode run the agent with only the
+subsystems that episode is about. An episode does not get a different
+agent; it gets the same agent with a narrower configuration, which is the
+whole claim the series makes about harnesses. It sits *below* local.yaml
+deliberately: a machine-local override is the last word, or it is not an
+override.
 
 Merging is deep. An overlay that sets `gatekeeper.surface_policy.surfaces`
 must not erase `gatekeeper.authority_hierarchy` alongside it, which is
@@ -34,6 +42,32 @@ _LOCAL_FILE = _CONFIG_DIR / "local.yaml"
 
 # Key in the platform config listing agent overlays, in merge order.
 _OVERLAYS_KEY = "overlays"
+
+# Overlays a caller added for this process, in the order they were added.
+# Module state rather than a parameter because the readers are the settings
+# models, which are constructed by pydantic deep inside `AppConfig()` and
+# have nowhere to thread an argument through from.
+_run_overlays: list[Path] = []
+
+
+def use_overlay(path: str | Path) -> None:
+    """Add a run-scoped config layer, applied after the agent overlays.
+
+    Adding the same path twice is the same as adding it once, so a caller
+    does not have to remember whether it already did.
+
+    Settings are cached, so anything already holding a settings object
+    will not see this. Call `reload_settings()` afterwards, before
+    anything else reads config.
+    """
+    resolved = resolve_path(path)
+    if resolved not in _run_overlays:
+        _run_overlays.append(resolved)
+
+
+def clear_overlays() -> None:
+    """Drop every run-scoped layer, back to platform + agents + local."""
+    _run_overlays.clear()
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -69,9 +103,9 @@ def _overlay_files() -> list[Path]:
 
 
 def load_config() -> dict[str, Any]:
-    """The fully merged configuration: platform, then agents, then local."""
+    """The fully merged configuration: platform, agents, run, then local."""
     merged = _read_yaml(_CONFIG_FILE)
-    for overlay in _overlay_files():
+    for overlay in (*_overlay_files(), *_run_overlays):
         merged = _deep_merge(merged, _read_yaml(overlay))
     return _deep_merge(merged, _read_yaml(_LOCAL_FILE))
 
@@ -95,4 +129,4 @@ def load_section(section: str) -> dict[str, Any]:
 
 def config_sources() -> list[Path]:
     """Every file that contributed, in merge order — for diagnostics."""
-    return [_CONFIG_FILE, *_overlay_files(), _LOCAL_FILE]
+    return [_CONFIG_FILE, *_overlay_files(), *_run_overlays, _LOCAL_FILE]
