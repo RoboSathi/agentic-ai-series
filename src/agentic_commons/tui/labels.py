@@ -1,92 +1,89 @@
-"""Stage labels for the live feed (LLD §20).
+"""Presentation labels for the customer-support TUI.
 
-The mapping lives in config, not here. That is the point: the table *is*
-the registry's content, so adding a stage is a config change and the
-code never grows a `if stage == ...` ladder.
-
-A stage with no configured label is a contract violation, surfaced
-rather than papered over with a generic fallback — an unlabeled stage in
-the feed is a stage nobody decided how to describe.
+The graph owns the workflow and stage sequence.  This module only converts
+canonical stage keys and tool names into compact, human-readable titles.
+It contains no workflow logic and no business decisions.
 """
 
 from typing import Protocol, runtime_checkable
 
-from agentic_commons.config import get_settings
-from agentic_commons.logging import get_logger
 from agentic_commons.tools.types import WIRE_SEPARATOR
 
 
 @runtime_checkable
 class StageLabeler(Protocol):
-    """Maps a canonical stage key to the line shown in the feed."""
+    """Maps a canonical runtime stage key to a display title."""
 
-    def label_for(self, stage: str, **substitutions: str) -> str: ...
+    def title_for(self, stage: str, **substitutions: str) -> str: ...
+
+    def tool_label(self, tool: str) -> str: ...
+
+
+# Canonical presentation vocabulary.  This is intentionally a presentation
+# map, not a workflow definition.  Unknown stages fall back to a readable
+# transformation, so a new graph stage does not break the TUI.
+_DISPLAY_NAMES = {
+    "intake": "INTAKE",
+    "scope_check": "SCOPE",
+    "authentication": "AUTH",
+    "prompt_injection_check": "PROMPT INJECTION",
+    "pii_filtering": "PII FILTER",
+    "content_moderation": "CONTENT POLICY",
+    "order_lookup": "ORDER LOOKUP",
+    "order_status_check": "ORDER STATUS",
+    "refund_eligibility_check": "REFUND ELIGIBILITY",
+    "intent_classification": "INTENT",
+    "working_memory_check": "WORKING MEMORY",
+    "memory_recall": "MEMORY RECALL",
+    "memory_write": "MEMORY WRITE",
+    "working_memory_write": "MEMORY WRITE",
+    "context_assembly": "CONTEXT",
+    "llm_call": "LLM",
+    "llm_response_received": "LLM",
+    "output_parsing": "OUTPUT PARSER",
+    "guardrail_validation": "GUARDRAIL",
+    "control_loop": "CONTROL LOOP",
+    "tool_request": "TOOL REQUEST",
+    "tool_execution": "TOOL RESULT",
+    "tool_result": "TOOL RESULT",
+    "tool_suppressed": "TOOL",
+    "tool_refused": "TOOL",
+    "gatekeeper_evaluation": "GATEKEEPER",
+    "resilience": "RESILIENCE",
+    "audit_record": "AUDIT",
+    "hallucination_check": "GROUNDING",
+    "escalation": "ESCALATION",
+    "finalize": "FINALIZE",
+}
 
 
 class StageLabelRegistry:
-    """Configured stage labels, tool wording and per-stage colour."""
+    """Compact display names for the TUI."""
 
-    def __init__(self) -> None:
-        settings = get_settings().tui
-        self._labels = settings.stage_labels
-        self._tool_labels = settings.tool_labels
-        self._styles = settings.stage_styles
-        self._default_style = settings.default_stage_style
-        self._logger = get_logger("tui")
-
-    def label_for(self, stage: str, **substitutions: str) -> str:
-        """The human-readable label for a stage key.
-
-        A `tool_name` substitution is resolved to that tool's *wording*
-        first, so the feed reads "Looking up the order…" rather than
-        "Executing support.get_order_status…". The person watching cares
-        what the agent is doing, not which method it reached for.
-        """
-        template = self._labels.get(stage)
-        if template is None:
-            self._logger.warning("Stage has no configured label", stage=stage)
-            return stage.replace("_", " ").capitalize()
-        if "tool_name" in substitutions:
-            substitutions = {
-                **substitutions,
-                "tool_name": self.tool_label(substitutions["tool_name"]),
-            }
-        return self._format(template, substitutions)
+    def title_for(
+        self,
+        stage: str,
+        **substitutions: str,
+    ) -> str:
+        """Return a canonical human-facing title for one runtime stage."""
+        del substitutions
+        return _DISPLAY_NAMES.get(
+            stage,
+            stage.replace("_", " ").upper(),
+        )
 
     def tool_label(self, tool: str) -> str:
-        """What to call a tool on screen, keyed by its bare name.
-
-        A tool arrives here spelled three ways — `process_refund`,
-        `support.process_refund` (logs and policy) and
-        `support__process_refund` (the wire) — and all three must land on
-        the same wording. Stripping only one separator is how a feed ends
-        up reading "Running support  process refund…".
-        """
-        bare = tool.rsplit(WIRE_SEPARATOR, maxsplit=1)[-1].rsplit(".", maxsplit=1)[-1]
-        return self._tool_labels.get(bare, f"Running {bare.replace('_', ' ')}…")
-
-    def style_for(self, stage: str) -> str:
-        """The colour a stage is rendered in.
-
-        Colour carries meaning here: security checks warn, data
-        preparation is cool, model calls are blue, authority decisions
-        stand out, and green is reserved for a completed action or the
-        final reply — so a feed that is entirely green means nothing.
-        """
-        return self._styles.get(stage, self._default_style)
+        """Convert wire / qualified tool names to concise display names."""
+        bare = (
+            tool.rsplit(WIRE_SEPARATOR, maxsplit=1)[-1]
+            .rsplit(".", maxsplit=1)[-1]
+        )
+        return bare.replace("_", " ")
 
     def known_stages(self) -> set[str]:
-        """Every stage key with a configured label."""
-        return set(self._labels)
+        """Return the presentation aliases known to this renderer."""
+        return set(_DISPLAY_NAMES)
 
     def missing(self, emitted_stages: set[str]) -> set[str]:
-        """Stages that were emitted but never labelled — the contract test."""
+        """Return emitted stages that have no explicit presentation alias."""
         return emitted_stages - self.known_stages()
-
-    @staticmethod
-    def _format(template: str, substitutions: dict[str, str]) -> str:
-        """Substitute placeholders, leaving the template intact if any is absent."""
-        try:
-            return template.format(**substitutions)
-        except (KeyError, IndexError):
-            return template

@@ -596,12 +596,7 @@ class TuiSettings(YamlBackedSettings):
     copy_method: Literal["osc52", "file"]
     max_feed_lines: int
     spinner_frames: str
-    stage_labels: dict[str, str]
-    tool_labels: dict[str, str]
-    stage_styles: dict[str, str]
-    default_stage_style: str
     command_output: CommandOutputSettings
-    trace: TraceStreamSettings
 
     model_config = SettingsConfigDict(env_prefix="TUI__")
 

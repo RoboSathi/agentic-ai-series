@@ -17,6 +17,7 @@ in-memory database without patching a single import.
 
 import json
 import re
+from collections import Counter
 from typing import Any
 
 from langgraph.graph import END, StateGraph
@@ -262,11 +263,30 @@ class CustomerSupportAgent:
         a regex pass rather than a completion. The refusal is identical
         every time, so paying a model to write it is pure waste.
         """
-        self._report("scope_check")
+        self._report(
+            "scope_check",
+            summary="Checking whether the request is in scope",
+        )
         verdict = self._scope.check(state.query)
-        self._done("scope_check", detail=verdict.topic)
         if verdict.in_scope:
+            self._done(
+                "scope_check",
+                summary="Request accepted",
+                fields={
+                    "in_scope": True,
+                    "topic": verdict.topic,
+                },
+            )
             return {"decisions": [*state.decisions, f"scope: {verdict.topic}"]}
+        self._reporter_blocked(
+            "scope_check",
+            summary="Request is outside agent scope",
+            fields={
+                "in_scope": False,
+                "topic": verdict.topic,
+                "decision": "refuse",
+            },
+        )
         return {
             "response": verdict.refusal,
             "decisions": [*state.decisions, "scope: refused (out of scope)"],
@@ -283,21 +303,55 @@ class CustomerSupportAgent:
         different answer.
         """
         existing = self._sessions.get(state.session_id) or current_customer()
+        self._report(
+            "authentication",
+            summary="Verifying the customer",
+        )
         if existing is not None:
             # Already verified — either earlier in this conversation, or
-            # by the caller before it handed the request over. A
-            # deployment behind SSO authenticates upstream and binds the
-            # customer; it should not be asked for a code it never issued.
+            # by the caller before it handed the request over.
             set_current_customer(existing)
             if state.session_id:
                 self._sessions[state.session_id] = existing
+            self._done(
+                "authentication",
+                summary="Customer already verified",
+                fields={
+                    "verified": True,
+                    "method": "session",
+                    "customer_id": existing.customer_id,
+                },
+            )
             return {"customer_id": existing.customer_id}
         if self._authenticator is None:
+            self._done(
+                "authentication",
+                summary="Authentication delegated upstream",
+                fields={"verified": False, "method": "upstream"},
+            )
             return {}
-        self._report("authentication")
         result = self._authenticator.authenticate(state.query)
-        self._done("authentication", detail="verified" if result.authenticated else "awaiting code")
         if not result.authenticated:
+            if result.code_attempted:
+                self._reporter_blocked(
+                    "authentication",
+                    summary="Customer code was not accepted",
+                    fields={
+                        "verified": False,
+                        "method": "customer_code",
+                        "reason": "invalid_or_unknown_code",
+                    },
+                )
+            else:
+                self._reporter_waiting(
+                    "authentication",
+                    summary="Waiting for customer verification",
+                    fields={
+                        "verified": False,
+                        "method": "customer_code",
+                        "action": "request_code",
+                    },
+                )
             return {
                 "response": result.message,
                 "decisions": [
@@ -312,6 +366,16 @@ class CustomerSupportAgent:
             if result.menu is not None:
                 self._menus[state.session_id] = result.menu
         set_current_customer(result.customer)
+        self._done(
+            "authentication",
+            summary="Customer verified",
+            fields={
+                "verified": True,
+                "method": "customer_code",
+                "customer_id": result.customer.customer_id,
+                "orders": result.menu.size if result.menu is not None else 0,
+            },
+        )
         self._note(
             state,
             "verified_customer",
@@ -345,17 +409,45 @@ class CustomerSupportAgent:
         if _asks_for_the_list(state.query):
             orders = customer_orders(self._orders, state.customer_id)
             self._menus[state.session_id] = build_menu(orders)
+            self._report(
+                "order_lookup",
+                summary="Loading the customer's orders",
+            )
+            self._done(
+                "order_lookup",
+                summary="Order list loaded",
+                fields={"count": len(orders)},
+            )
             return self._halt(state, render_order_list(orders), "menu: listed")
         order_id = resolve_selection(state.query, menu)
         if order_id is None:
             return {}
-        self._report("order_lookup")
+        self._report(
+            "order_lookup",
+            summary="Checking order details",
+            fields={"order_id": order_id},
+        )
         order = self._orders.get_for_customer(order_id, state.customer_id)
-        self._done("order_lookup", detail=str(order_id))
         if order is None:
+            self._reporter_blocked(
+                "order_lookup",
+                summary="Order not found on this account",
+                fields={"order_id": order_id, "found": False},
+            )
             return self._halt(
                 state, f"I couldn't find order {order_id} on your account.", "menu: not found"
             )
+        self._done(
+            "order_lookup",
+            summary="Order found",
+            fields={
+                "order_id": order.order_id,
+                "status": order.order_status,
+                "refund_status": order.refund_status,
+                "amount": f"${order.amount:,.2f}",
+                "found": True,
+            },
+        )
         self._note(
             state,
             "order_under_discussion",
@@ -378,14 +470,25 @@ class CustomerSupportAgent:
         """
         if self._memory is None or not state.session_id:
             return
-        self._memory.note(
+        result = self._memory.note(
             key=key,
             value=value,
             session_id=state.session_id,
             source=self._actor,
             category=category,
         )
-        self._done("working_memory_write", detail=key)
+        self._done(
+            "working_memory_write",
+            event_kind="memory",
+            summary="Working memory updated",
+            fields={
+                "operation": "write",
+                "key": key,
+                "category": category or "unspecified",
+                "written": result.written,
+                "route": result.route,
+            },
+        )
 
     def _halt(self, state: AgentState, response: str, decision: str) -> dict[str, Any]:
         """Answer now, without reaching the model."""
@@ -402,20 +505,94 @@ class CustomerSupportAgent:
         not after it has already been concatenated into a prompt where
         nothing downstream can tell instruction from data.
         """
-        self._report("prompt_injection_check")
+        self._report(
+            "prompt_injection_check",
+            event_kind="security",
+            summary="Checking untrusted input for injection",
+        )
         assessment = self._security.prepare_untrusted(
             self._system_prompt(), state.query, self._registry.all_tools()
         )
+        injection_fields = {
+            "detected": assessment.suspicious,
+            "phrases": len(assessment.phrases),
+            "allowed_tools": len(assessment.allowed_actions),
+            "reason": assessment.reason,
+        }
+        if assessment.suspicious:
+            self._reporter_warning(
+                "prompt_injection_check",
+                summary="Suspicious instruction pattern detected",
+                event_kind="security",
+                fields=injection_fields,
+            )
+        else:
+            self._done(
+                "prompt_injection_check",
+                summary="No injection pattern detected",
+                event_kind="security",
+                fields=injection_fields,
+            )
+
+        self._report(
+            "content_moderation",
+            event_kind="security",
+            summary="Checking content policy",
+        )
         moderation = self._security.moderate(state.query)
-        self._report("intent_classification")
+        moderation_fields = {
+            "flagged": moderation.flagged,
+            "categories": moderation.categories,
+            "matched_terms": len(moderation.matched_terms),
+            "reason": moderation.reason,
+            "advisory_only": moderation.advisory_only,
+        }
+        if moderation.flagged:
+            self._reporter_warning(
+                "content_moderation",
+                summary="Content policy flagged the request",
+                event_kind="security",
+                fields=moderation_fields,
+            )
+        else:
+            self._done(
+                "content_moderation",
+                summary="Content policy check passed",
+                event_kind="security",
+                fields=moderation_fields,
+            )
+
+        self._report(
+            "intent_classification",
+            event_kind="intent",
+            summary="Understanding the customer's intent",
+        )
         intent = await self._intents.classify_async(
             state.query, previous=self._last_intent.get(state.session_id)
         )
         if state.session_id:
             self._last_intent[state.session_id] = intent
-        self._done("intent_classification", detail=intent.name)
-        self._note(state, "current_intent", intent.name, category="intent")
         plan = self._deliberation.plan(state.query, intent.name, list(intent.allowed_tools))
+        match_method = (
+            "semantic"
+            if intent.matched_phrase.startswith("~")
+            else "deterministic"
+            if intent.matched_phrase
+            else "inherited_or_default"
+        )
+        self._done(
+            "intent_classification",
+            summary=f"Intent: {intent.name}",
+            event_kind="intent",
+            fields={
+                "intent": intent.name,
+                "matched": intent.matched_phrase or "none",
+                "match_method": match_method,
+                "allowed_tools": intent.allowed_tools,
+                "plan_steps": len(plan.steps),
+            },
+        )
+        self._note(state, "current_intent", intent.name, category="intent")
         decisions = [
             f"intent: {intent.name}"
             + (f" (matched '{intent.matched_phrase}')" if intent.matched_phrase else ""),
@@ -426,7 +603,6 @@ class CustomerSupportAgent:
         if self._memory is not None:
             self._memory.record_event(f"query: {state.query}", self._actor, state.session_id)
             decisions.extend(self._offer_to_memory(state))
-        self._done("prompt_injection_check", detail=assessment.reason)
         if not plan.is_single_step:
             decisions.append(f"plan: {len(plan.steps)} steps — {plan.steps[0].description}")
         return {
@@ -460,50 +636,128 @@ class CustomerSupportAgent:
         """
         if self._memory is None:
             return []
+        self._report(
+            "memory_write",
+            event_kind="memory",
+            summary="Evaluating whether the customer statement should be remembered",
+        )
         result = self._memory.remember(
             state.query,
             source=f"customer:{state.customer_id}" if state.customer_id else "customer",
             provenance_kind="self_reported",
             session_id=state.session_id,
         )
-        if result.route == "discard":
-            return []
-        self._done("memory_write", detail=result.route)
+        fields = {
+            "route": result.route,
+            "written": result.written,
+            "reason": result.reason,
+            "conflicts": len(result.conflicts_with),
+            "provenance": "self_reported",
+        }
         if result.route == "refused":
+            self._reporter_blocked(
+                "memory_write",
+                summary="Memory write refused by policy",
+                event_kind="memory",
+                fields=fields,
+            )
             self._logger.warning(
                 "Refused a memory write from conversation",
                 reason=result.reason,
                 session_id=state.session_id,
             )
+        else:
+            self._done(
+                "memory_write",
+                summary=f"Memory route: {result.route}",
+                event_kind="memory",
+                fields=fields,
+            )
+        if result.route == "discard":
+            return []
         return [f"memory: {result.route} ({result.reason})"]
 
     async def assemble_context(self, state: AgentState) -> dict[str, Any]:
         """Build the window: policy, recalled memory, and the query."""
-        self._report("context_assembly")
+        self._report(
+            "context_assembly",
+            event_kind="context",
+            summary="Assembling the model context window",
+        )
         if self._context is None:
-            return {"context": policy_text()}
+            context = policy_text()
+            self._done(
+                "context_assembly",
+                summary="Policy context loaded",
+                event_kind="context",
+                fields={"source": "policy", "used_tokens": len(tokenize(context))},
+            )
+            return {"context": context}
         assembled = await self._context.assemble(
             Task(query=state.query, session_id=state.session_id, actor=state.actor)
         )
         fitted = self._strategies.fit(assembled)
         decisions = [f"context: {fitted.used_tokens}/{fitted.budget_tokens} tokens"]
-        # Rot, distraction, confusion, clash, poisoning — measured on the
-        # window that was actually built, because that is the only window
-        # the model will see. A detector run over the candidate pool
-        # reports on something nobody was given.
         modes = self._context_health.assess(fitted, set(tokenize(state.query)))
         if modes:
             self._logger.warning("Context window shows failure modes", modes=modes)
             decisions.append(f"context health: {', '.join(modes)}")
+
+        by_kind = Counter(chunk.kind for chunk in fitted.chunks)
+        context_fields = {
+            "chunks": len(fitted.chunks),
+            "dropped": len(fitted.dropped),
+            "budget_tokens": fitted.budget_tokens,
+            "used_tokens": fitted.used_tokens,
+            "utilization": (
+                round(fitted.used_tokens / fitted.budget_tokens, 2)
+                if fitted.budget_tokens
+                else 0.0
+            ),
+            "kinds": dict(by_kind),
+            "strategies": fitted.applied_strategies,
+            "health": modes or ["healthy"],
+        }
         if self._memory is not None and state.session_id:
+            self._report(
+                "memory_recall",
+                event_kind="memory",
+                summary="Checking working memory",
+            )
             held = self._memory.working.size(state.session_id)
-            self._done("memory_recall", detail=f"{held} fact(s) held for this conversation")
-        self._done("context_assembly", detail=f"{fitted.used_tokens} tokens")
+            self._done(
+                "memory_recall",
+                event_kind="memory",
+                summary=f"Working memory: {held} fact(s)",
+                fields={
+                    "operation": "recall",
+                    "scope": "working",
+                    "facts_held": held,
+                },
+            )
+        if modes:
+            self._reporter_warning(
+                "context_assembly",
+                summary="Context health warning",
+                event_kind="context",
+                fields=context_fields,
+            )
+        else:
+            self._done(
+                "context_assembly",
+                summary="Context window assembled",
+                event_kind="context",
+                fields=context_fields,
+            )
         return {"context": fitted.text, "decisions": [*state.decisions, *decisions]}
 
     async def reason(self, state: AgentState) -> dict[str, Any]:
         """One model turn, with the tools this turn is allowed to use."""
-        self._report("llm_call")
+        self._report(
+            "llm_call",
+            event_kind="model",
+            summary="Selecting the next action",
+        )
         tools = await self._offered_tools(state)
         offered = sorted(tool.qualified_name for tool in tools)
         request = CompletionRequest(
@@ -512,7 +766,52 @@ class CustomerSupportAgent:
         )
         result = await self._call_model(request, state, f"{state.session_id}:{state.tool_rounds}")
         message = Message(role="assistant", content=result.content, tool_calls=result.tool_calls)
-        self._done("llm_response_received", tokens=result.usage.total_tokens)
+        tool_names = [call.name for call in (result.tool_calls or [])]
+        metrics = self._selector.last_metrics if self._selector is not None else None
+        llm_fields = {
+            "model": result.model,
+            "finish_reason": result.finish_reason or "unknown",
+            "tool_calls": len(result.tool_calls or []),
+            "requested_tools": tool_names,
+            "tools_offered": offered,
+            "input_tokens": result.usage.prompt_tokens,
+            "output_tokens": result.usage.completion_tokens,
+            "total_tokens": result.usage.total_tokens,
+        }
+        if metrics is not None:
+            llm_fields.update(
+                {
+                    "tools_available": metrics.tools_available,
+                    "tools_exposed": metrics.tools_exposed,
+                    "tool_selection_latency_ms": round(metrics.latency_ms, 1),
+                }
+            )
+        self._done(
+            "llm_call",
+            tokens=result.usage.total_tokens,
+            event_kind="model",
+            summary=(
+                f"Requested tool: {tool_names[0]}"
+                if tool_names
+                else "Produced a final response"
+            ),
+            fields=llm_fields,
+        )
+        self._done(
+            "control_loop",
+            event_kind="control_loop",
+            summary=(
+                f"Round {state.tool_rounds + 1}: tool execution requested"
+                if tool_names
+                else f"Round {state.tool_rounds + 1}: ready to finalize"
+            ),
+            fields={
+                "round": state.tool_rounds + 1,
+                "tool_calls": len(tool_names),
+                "next_stage": "act" if tool_names else "finalize",
+                "termination_reason": "tool_request" if tool_names else "no_tool_call",
+            },
+        )
         return {
             "messages": [message],
             "tool_rounds": state.tool_rounds + 1,
@@ -559,12 +858,23 @@ class CustomerSupportAgent:
         and counting it as a success would report a recovery rate of
         100% for a system that has never had to recover.
         """
-        if self._resilient.attempts - attempts_before <= 1:
+        attempts = self._resilient.attempts - attempts_before
+        if attempts <= 1:
             return
         metadata = state.metadata
         metadata["recoveries_attempted"] = int(metadata.get("recoveries_attempted", 0)) + 1
         if succeeded:
             metadata["recoveries_succeeded"] = int(metadata.get("recoveries_succeeded", 0)) + 1
+        if self._reporter is not None:
+            self._reporter_warning(
+                "resilience",
+                summary=("Recovered after retry" if succeeded else "Retry budget was exhausted"),
+                event_kind="resilience",
+                fields={
+                    "attempts": attempts,
+                    "recovered": succeeded,
+                },
+            )
 
     def _account_for(self, result: CompletionResult, state: AgentState) -> None:
         """Trace what the call did.
@@ -592,30 +902,36 @@ class CustomerSupportAgent:
 
     async def act(self, state: AgentState) -> dict[str, Any]:
         """Execute the requested tool calls, each through the Gatekeeper."""
-        self._report("tool_execution")
         last = state.messages[-1] if state.messages else Message()
+        requests = last.tool_calls or []
+        self._report(
+            "tool_execution",
+            summary=f"Executing {len(requests)} requested tool(s)",
+            event_kind="stage",
+            fields={"requested": len(requests)},
+        )
         outputs: list[Message] = []
         results: list[str] = []
         decisions: list[str] = []
+        invocation_fields_history: list[dict[str, Any]] = []
         offered = set(state.metadata.get("offered_actions", []))
-        for requested in last.tool_calls or []:
-            self._report("gatekeeper_evaluation", detail=requested.name)
-            text, decision, stage = await self._invoke(
+        for requested in requests:
+            self._done(
+                "tool_request",
+                event_kind="tool_request",
+                summary=f"Requested: {requested.name}",
+                fields=_safe_tool_request_fields(requested.name, requested.arguments),
+            )
+            text, decision, stage, invocation_fields = await self._invoke(
                 requested.name, requested.arguments, state, offered
             )
-            self._done(stage, detail=requested.name)
+            invocation_fields_history.append(invocation_fields)
             results.append(text)
             decisions.append(decision)
             self._note(state, f"result_of_{requested.name}", text, category="tool_result")
             outputs.append(
                 Message(role="tool", content=text, tool_call_id=requested.id or requested.name)
             )
-        return {
-            "messages": outputs,
-            "tool_results": [*state.tool_results, *results],
-            "decisions": [*state.decisions, *decisions],
-            "escalated": state.escalated or any("escalate" in d for d in decisions),
-        }
 
     async def finalize(self, state: AgentState) -> dict[str, Any]:
         """One tool-free call so the customer always gets an answer.
@@ -624,7 +940,10 @@ class CustomerSupportAgent:
         last turn happened to contain — often nothing. A cap is a
         control, not an excuse to hand the customer an empty reply.
         """
-        self._report("finalize")
+        self._report(
+            "finalize",
+            summary="Preparing the customer-facing response",
+        )
         last = state.messages[-1] if state.messages else Message()
         critique = self._deliberation.reflect(last.content, state.tool_results)
         if (
@@ -643,10 +962,26 @@ class CustomerSupportAgent:
             # so the reply that usually reached the customer was the one
             # never checked.
             grounded = await self._check_grounding(last.content, state)
-            self._done("finalize")
+            self._done(
+                "finalize",
+                summary="Response ready",
+                fields={
+                    "response_ready": True,
+                    "revised": False,
+                    "reflection": "accepted",
+                    "reflection_detail": critique.summary or "no issues detected",
+                    "grounding_issues": len(grounded),
+                },
+            )
             return {"response": last.content, "decisions": [*state.decisions, *grounded]}
         # The reflector already logged what it found; saying it twice
         # here would double every rejection in the trace.
+        self._report(
+            "llm_call",
+            event_kind="model",
+            summary="Generating the final customer response",
+            fields={"purpose": "reply_revision"},
+        )
         result = await self._llm.complete(
             CompletionRequest(
                 messages=[
@@ -654,6 +989,20 @@ class CustomerSupportAgent:
                     Message(role="user", content=build_reply_instruction()),
                 ]
             )
+        )
+        self._done(
+            "llm_call",
+            tokens=result.usage.total_tokens,
+            summary="Final customer response generated",
+            event_kind="model",
+            fields={
+                "purpose": "reply_revision",
+                "model": result.model,
+                "finish_reason": result.finish_reason or "unknown",
+                "input_tokens": result.usage.prompt_tokens,
+                "output_tokens": result.usage.completion_tokens,
+                "total_tokens": result.usage.total_tokens,
+            },
         )
         reply = result.content if is_customer_ready(result.content) else _FALLBACK_REPLY
         grounding = await self._check_grounding(reply, state)
@@ -666,7 +1015,18 @@ class CustomerSupportAgent:
         score = await self._deliberation.score(reply, state.tool_results)
         if state.tool_results:
             decisions.append(f"evaluation: {score:.2f} supported")
-        self._done("finalize", tokens=result.usage.total_tokens)
+        self._done(
+            "finalize",
+            summary="Customer response ready",
+            fields={
+                "response_ready": True,
+                "revised": not critique.acceptable,
+                "reflection": "revised" if not critique.acceptable else "accepted",
+                "reflection_detail": critique.summary or "no issues detected",
+                "evaluation_score": score if state.tool_results else None,
+                "grounding_issues": len([d for d in grounding if d.startswith("grounding:")]),
+            },
+        )
         return {
             "response": reply,
             "messages": [Message(role="assistant", content=reply)],
@@ -705,12 +1065,29 @@ class CustomerSupportAgent:
         """
         if self._grounding is None or not state.tool_results:
             return []
-        self._report("hallucination_check")
+        self._report(
+            "hallucination_check",
+            event_kind="grounding",
+            summary="Checking the answer against tool evidence",
+        )
         evidence = [Chunk(content=text, kind="tool_result") for text in state.tool_results]
         assessment = await self._grounding.assess(reply, evidence)
         state.metadata["hallucination_rate"] = assessment.hallucination_rate
-        self._done("hallucination_check", detail=f"{assessment.hallucination_rate:.0%} unsupported")
+        supported = sum(1 for verdict in assessment.verdicts if verdict.supported)
+        grounding_fields = {
+            "claims": len(assessment.verdicts),
+            "supported": supported,
+            "unsupported": len(assessment.unsupported),
+            "hallucination_rate": round(assessment.hallucination_rate, 3),
+            "nollm_resolved_ratio": round(assessment.nollm_resolved_ratio, 3),
+        }
         if assessment.clean:
+            self._done(
+                "hallucination_check",
+                summary=f"Grounded: {supported}/{len(assessment.verdicts)} claims supported",
+                event_kind="grounding",
+                fields=grounding_fields,
+            )
             return []
         # One symptom, two causes, opposite fixes: evidence that was
         # never retrieved is a retrieval problem, evidence that was
@@ -718,6 +1095,15 @@ class CustomerSupportAgent:
         # hallucination to "improve retrieval" is why some are never
         # fixed.
         kinds = {self._diagnoser.diagnose(claim, evidence) for claim in assessment.unsupported}
+        grounding_fields["failure_kinds"] = sorted(kinds)
+        self._reporter_warning(
+            "hallucination_check",
+            summary=(
+                f"Grounding warning: {len(assessment.unsupported)} unsupported claim(s)"
+            ),
+            event_kind="grounding",
+            fields=grounding_fields,
+        )
         self._logger.warning(
             "Reply contains claims the tool results do not support",
             unsupported=assessment.unsupported,
@@ -788,61 +1174,165 @@ class CustomerSupportAgent:
 
     async def _invoke(
         self, name: str, arguments: str, state: AgentState, offered: set[str]
-    ) -> tuple[str, str, str]:
-        """Validate, authorize and run one tool call.
-
-        Returns the text the model sees, the decision line the operator
-        sees, and the feed stage this ended in — the model is told *what*
-        happened, the log records *why*, and the feed shows a suppressed
-        repeat as a repeat rather than as work done.
-        """
+    ) -> tuple[str, str, str, dict[str, Any]]:
+        """Validate, authorize and run one tool call, emitting semantic events."""
         call = self._registry.build_call(name, arguments)
         if call is None:
+            blocked_fields = {
+                "tool": name,
+                "result": "invalid_request",
+                "reason": "tool is unknown or arguments failed validation",
+            }
+            self._reporter_blocked(
+                "tool_result",
+                summary=f"Tool request rejected: {name}",
+                event_kind="tool_result",
+                fields=blocked_fields,
+            )
             return (
                 f"Tool '{name}' is unavailable or its arguments were invalid.",
                 f"{name}: invalid",
                 "tool_refused",
+                {
+                    "tool_result": blocked_fields,
+                    "tool_status": "blocked",
+                },
             )
+
         call = call.model_copy(update={"params": self._security.minimize(call.params)})
         authority = AuthorityContext(
             actor=state.actor or self._actor,
             roles=[self._role],
             granted_by="user_task",
             session_id=state.session_id,
-            # The Gatekeeper checks this and audits the attempt, so a tool
-            # the model was never offered is refused on the record rather
-            # than quietly here.
             offered_actions=sorted(offered),
         )
+
         repeated = self._duplicates.seen_before(call)
         if repeated is not None:
+            fields = {
+                "decision": "suppress",
+                "action": call.action,
+                "reason": "duplicate action suppressed",
+                "duplicate": True,
+            }
+            self._reporter_blocked(
+                "gatekeeper_evaluation",
+                summary="Duplicate action suppressed",
+                event_kind="gatekeeper",
+                fields=fields,
+            )
+            result_fields = {
+                "tool": call.action,
+                "result": "suppressed_duplicate",
+            }
+            self._reporter_blocked(
+                "tool_result",
+                summary=f"Tool not executed: {call.action}",
+                event_kind="tool_result",
+                fields=result_fields,
+            )
             return (
                 self._duplicates.reject(call),
                 f"{call.action}: suppressed (repeat)",
                 "tool_suppressed",
+                {
+                    "gatekeeper": fields,
+                    "gatekeeper_status": "blocked",
+                    "tool_result": result_fields,
+                    "tool_status": "blocked",
+                },
             )
+
+        self._report(
+            "gatekeeper_evaluation",
+            event_kind="gatekeeper",
+            summary="Checking authorization",
+            fields={"requested_action": call.action},
+        )
         decision = await self._gatekeeper.evaluate(call, authority)
+        gatekeeper_fields = _gatekeeper_fields(decision, call)
         if not decision.allowed:
+            self._reporter_blocked(
+                "gatekeeper_evaluation",
+                summary=f"Authorization: {decision.verdict.upper()}",
+                event_kind="gatekeeper",
+                fields=gatekeeper_fields,
+            )
             if decision.question == "offered":
                 self._logger.warning("Model called a tool it was not offered", tool=call.action)
                 return (
                     f"'{call.action}' is not available for this request.",
                     f"{call.action}: refused (not offered)",
                     "tool_refused",
+                    {
+                        "gatekeeper": gatekeeper_fields,
+                        "gatekeeper_status": "blocked",
+                        "tool_result": {
+                            "tool": call.action,
+                            "result": "not_offered",
+                        },
+                        "tool_status": "blocked",
+                    },
                 )
+            result_fields = {
+                "tool": call.action,
+                "result": "not_executed",
+            }
+            self._reporter_blocked(
+                "tool_result",
+                summary=f"Tool not executed: {call.action}",
+                event_kind="tool_result",
+                fields=result_fields,
+            )
             return (
                 f"That action was not permitted: {decision.reason}",
                 f"{call.action}: {decision.verdict} ({decision.question}) — {decision.reason}",
                 "tool_refused",
+                {
+                    "gatekeeper": gatekeeper_fields,
+                    "gatekeeper_status": "blocked",
+                    "tool_result": result_fields,
+                    "tool_status": "blocked",
+                },
             )
+
+        self._done(
+            "gatekeeper_evaluation",
+            event_kind="gatekeeper",
+            summary="Authorization: ALLOW",
+            fields=gatekeeper_fields,
+        )
         result = await self._registry.invoke(call)
+        result_fields = _safe_tool_result_fields(call, result)
         if result.success:
             self._gatekeeper.commit(call, authority)
             self._duplicates.record(call, result.output)
+            self._done(
+                "tool_result",
+                event_kind="tool_result",
+                summary=f"Tool completed: {call.action}",
+                fields=result_fields,
+            )
+            tool_status = "completed"
+        else:
+            self._done_failed(
+                "tool_result",
+                summary=f"Tool failed: {call.action}",
+                event_kind="tool_result",
+                fields=result_fields,
+            )
+            tool_status = "failed"
         return (
             result.output if result.success else f"Tool failed: {result.error}",
             f"{call.action}: {'ok' if result.success else 'failed'}",
             "tool_execution" if result.success else "tool_refused",
+            {
+                "gatekeeper": gatekeeper_fields,
+                "gatekeeper_status": "completed",
+                "tool_result": result_fields,
+                "tool_status": tool_status,
+            },
         )
 
     async def _offered_tools(self, state: AgentState) -> list[Any]:
@@ -885,20 +1375,207 @@ class CustomerSupportAgent:
             *state.messages,
         ]
 
-    def _report(self, stage: str, detail: str | None = None) -> None:
+    def _report(
+        self,
+        stage: str,
+        detail: str | None = None,
+        *,
+        event_kind: str = "stage",
+        summary: str | None = None,
+        fields: dict[str, Any] | None = None,
+    ) -> None:
         """Emit a stage-started event for the TUI, when one is listening."""
         if self._reporter is not None:
-            self._reporter.started(stage, detail=detail)
+            self._reporter.started(
+                stage,
+                detail=detail,
+                event_kind=event_kind,
+                summary=summary,
+                fields=fields,
+            )
 
-    def _done_failed(self, stage: str, detail: str | None = None) -> None:
+    def _done_failed(
+        self,
+        stage: str,
+        detail: str | None = None,
+        *,
+        event_kind: str = "stage",
+        summary: str | None = None,
+        fields: dict[str, Any] | None = None,
+    ) -> None:
         """Emit a stage-failed event so the feed shows what broke."""
         if self._reporter is not None:
-            self._reporter.failed(stage, detail=detail)
+            self._reporter.failed(
+                stage,
+                detail=detail,
+                event_kind=event_kind,
+                summary=summary,
+                fields=fields,
+            )
 
-    def _done(self, stage: str, tokens: int | None = None, detail: str | None = None) -> None:
-        """Emit a stage-completed event, so the feed can close the line out."""
+    def _done(
+        self,
+        stage: str,
+        tokens: int | None = None,
+        detail: str | None = None,
+        *,
+        event_kind: str = "stage",
+        summary: str | None = None,
+        fields: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit a stage-completed event with safe semantic fields."""
         if self._reporter is not None:
-            self._reporter.completed(stage, tokens_delta=tokens, detail=detail)
+            self._reporter.completed(
+                stage,
+                tokens_delta=tokens,
+                detail=detail,
+                event_kind=event_kind,
+                summary=summary,
+                fields=fields,
+            )
+
+    def _reporter_blocked(
+        self,
+        stage: str,
+        *,
+        detail: str | None = None,
+        summary: str | None = None,
+        event_kind: str = "decision",
+        fields: dict[str, Any] | None = None,
+    ) -> None:
+        if self._reporter is not None:
+            self._reporter.blocked(
+                stage,
+                detail=detail,
+                event_kind=event_kind,
+                summary=summary,
+                fields=fields,
+            )
+
+    def _reporter_warning(
+        self,
+        stage: str,
+        *,
+        detail: str | None = None,
+        summary: str | None = None,
+        event_kind: str = "system",
+        fields: dict[str, Any] | None = None,
+    ) -> None:
+        if self._reporter is not None:
+            self._reporter.warning(
+                stage,
+                detail=detail,
+                event_kind=event_kind,
+                summary=summary,
+                fields=fields,
+            )
+
+    def _reporter_waiting(
+        self,
+        stage: str,
+        *,
+        detail: str | None = None,
+        summary: str | None = None,
+        event_kind: str = "stage",
+        fields: dict[str, Any] | None = None,
+    ) -> None:
+        if self._reporter is not None:
+            self._reporter.waiting(
+                stage,
+                detail=detail,
+                event_kind=event_kind,
+                summary=summary,
+                fields=fields,
+            )
+
+
+def _safe_tool_request_fields(name: str, arguments: str) -> dict[str, Any]:
+    """Expose only small, domain-relevant tool arguments to the TUI."""
+    display_name = _display_tool_name(name)
+    fields: dict[str, Any] = {
+        "tool": display_name,
+        "qualified_tool": name.replace("__", "."),
+    }
+    try:
+        raw = json.loads(arguments or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return fields
+    if not isinstance(raw, dict):
+        return fields
+    for key in ("order_id", "amount"):
+        value = raw.get(key)
+        if isinstance(value, (str, int, float)):
+            fields[key] = f"${value:,.2f}" if key == "amount" and isinstance(value, (int, float)) else value
+    return fields
+
+
+def _gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
+    """Reduce an AuthorityDecision to safe, decision-relevant TUI fields."""
+    fields: dict[str, Any] = {
+        "decision": decision.verdict,
+        "action": _display_tool_name(decision.action),
+        "qualified_action": decision.action,
+        "question": decision.question,
+        "surface": decision.surface,
+        "blast_radius": decision.blast_radius,
+        "automation_level": decision.automation_level,
+        "reason": decision.reason,
+    }
+    amount = call.params.get("amount")
+    if isinstance(amount, (int, float)):
+        fields["amount"] = f"${float(amount):,.2f}"
+    if decision.threshold:
+        fields["threshold"] = f"${decision.threshold:,.2f}"
+    if decision.cumulative_total:
+        fields["cumulative_total"] = f"${decision.cumulative_total:,.2f}"
+    for key in ("order_id",):
+        value = call.params.get(key)
+        if isinstance(value, (str, int)):
+            fields[key] = value
+    if decision.advisory is not None:
+        fields["advisory_flagged"] = decision.advisory.flagged
+    return fields
+
+
+def _display_tool_name(name: str) -> str:
+    """Return the concise tool name used in the operator-facing dashboard."""
+    normalized = name.replace("__", ".")
+    return normalized.rsplit(".", maxsplit=1)[-1]
+
+
+def _safe_tool_result_fields(call: Any, result: Any) -> dict[str, Any]:
+    """Expose domain outcome metadata without dumping arbitrary tool output."""
+    fields: dict[str, Any] = {
+        "tool": _display_tool_name(call.action),
+        "qualified_tool": call.action,
+        "result": "success" if result.success else "failed",
+    }
+    for key in (
+        "order_id",
+        "amount",
+        "order_status",
+        "refund_status",
+        "pending_review",
+        "queued",
+        "already_queued",
+        "request_id",
+        "refund_id",
+        "steps",
+        "failed_step",
+        "compensated",
+    ):
+        value = result.data.get(key)
+        if value is None:
+            continue
+        if key == "amount" and isinstance(value, (int, float)):
+            fields[key] = f"${float(value):,.2f}"
+        elif isinstance(value, (str, int, float, bool)):
+            fields[key] = value
+        elif isinstance(value, list):
+            fields[key] = len(value)
+    if not result.success and result.error:
+        fields["error"] = result.error
+    return fields
 
 
 # A customer asking to see the list again. Deterministic, like the list

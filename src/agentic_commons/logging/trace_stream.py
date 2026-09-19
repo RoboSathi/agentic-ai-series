@@ -1,25 +1,17 @@
-"""The live trace, narrated (LLD §20).
+"""Live, human-readable trace of the agent's execution.
 
-The curated stage feed says what the *agent* is doing — eight lines a
-turn, in the customer's terms. This says what the *code* is doing: one
-line per step, in the developer's terms, so the flow can be followed
-while it happens.
+The TUI has two observability layers:
 
-It is deliberately not the file log. `logs/` keeps the evidence — full
-payloads, exact arguments, whole return values — and a screen that
-repeats it becomes unreadable at exactly the moment it is most needed.
-So a record arrives here as a `Narration` and leaves as a sentence:
+* the stage feed (``StatusEvent``) answers *what high-level stage is active?*;
+* this trace answers *what code just happened, with what inputs, and what came back?*
 
-    agent      working out the intent     message=where is my order → name=order_enquiry
-    context    assembling the window      task=where is my order → 4 items
-    gatekeeper checking authority         action=support.process_refund → verdict=deny
+The file logs remain the authoritative, untruncated evidence. The terminal
+gets a compact representation of every narrated call/return/skip/event while
+``/debug`` is at ``DEBUG``. ``/debug info`` still provides the quieter view.
 
-Curated, not exhaustive. Narrating every instrumented call gave forty
-lines a turn from eight modules — technically complete, practically
-unreadable. So the screen shows the steps named in `tui.trace.steps`,
-one line each, on return, so the line can say what went in and what came
-out; plus author-written INFO lines, which are already sentences; plus
-anything that failed. Everything else stays in `logs/`, in full.
+The key design rule is: **detailed does not mean raw**. We expose the
+identifiers and counts that explain the flow, but still suppress payloads such
+as full prompts, memory contents, assembled context and arbitrary PII.
 """
 
 import logging
@@ -34,18 +26,10 @@ from agentic_commons.config.settings import TraceStreamSettings
 from agentic_commons.logging.core import SUBSYSTEM_COLORS, LoggerFactory
 from agentic_commons.logging.narration import NARRATION, Narration
 
-# How the two halves of a step are labelled. Words rather than arrows:
-# "in"/"out" is unambiguous in a terminal that may not render an arrow,
-# and reads the same aloud as on screen.
 _IN = "in"
 _OUT = "out"
 _DETAIL = "·"
-
-# Loggers are named `agentic.<subsystem>`, which is what the factory
-# builds them as.
 _LOGGER_PREFIX = "agentic."
-
-# A summarised collection: "4 items", "1 item".
 _COUNT = re.compile(r"\d+ \w+")
 
 _LEVEL_STYLES = {
@@ -56,149 +40,293 @@ _LEVEL_STYLES = {
     logging.CRITICAL: "bold red",
 }
 
+_KIND_MARKS = {
+    "call": ("→", "bright_blue"),
+    "return": ("←", "bright_green"),
+    "skip": ("↷", "yellow"),
+    "event": ("•", "white"),
+}
+
 
 class TraceLineFormatter:
-    """Turns one `Narration` into the line a person reads.
+    """Render one ``Narration`` as a compact operator-facing trace line.
 
-    Separate from the handler so the wording is testable without a
-    logging framework, and so the rules live in one place rather than
-    spread across an `emit` method.
+    At DEBUG every narrated call/return/skip/event is eligible for the live
+    trace. The logger/handler level still controls the overall verbosity,
+    so the existing ``/debug info`` and ``/debug off`` controls remain useful.
     """
 
     def __init__(self, settings: TraceStreamSettings | None = None) -> None:
         self._settings = settings or get_settings().tui.trace
 
     def wants(self, narration: Narration, level: int) -> bool:
-        """Whether this record belongs on screen at all.
+        """Whether a record is useful at the current terminal verbosity.
 
-        Three things earn a line, and nothing else does:
+        DEBUG is the exhaustive operator trace.
 
-        - a **curated step**, on return, so the line can say what went in
-          and what came out;
-        - an **author-written event** at INFO or above — already a
-          sentence, written by whoever knew what mattered;
-        - anything that **went wrong**.
-
-        Everything else is in the files. This is the difference between
-        a trace someone reads and a log file someone scrolls past: forty
-        lines a turn from eight modules is technically complete and
-        practically useless.
+        INFO intentionally remains quieter:
+        - WARNING/ERROR/CRITICAL are always shown.
+        - INFO authored events can still be shown when ``show_events`` is on.
+        - DEBUG lifecycle traces are suppressed.
         """
         if level >= logging.WARNING:
             return True
-        if narration.kind == "return":
-            return narration.qualname in self._settings.steps
+
+        if narration.kind in {"call", "return", "skip"}:
+            return level >= logging.DEBUG
+
         if narration.kind == "event":
             return self._settings.show_events and level >= logging.INFO
+
         return False
 
     def format(self, narration: Narration, level: int) -> Text:
-        """One step, in one standard shape.
+        """Render one event with a stable, scannable terminal layout.
 
-            memory       Noting for this conversation   in current_intent  out stored
+        Examples::
 
-        Module, then what is happening, then what went in and what came
-        back. Always those four parts, always in that order, always in
-        those columns — a trace is read by scanning down one column, and
-        a format that varies per line cannot be scanned at all.
+            agent        → CALL screening the request  in "refund"
+            agent        ← RETURN screening the request
+                         out verdict=support · 0.1ms
+            gatekeeper   • Checking authority
+                         · decision=allow, amount=24.99
         """
         settings = self._settings
-        label = settings.subsystem_labels.get(narration.subsystem, narration.subsystem)
-        line = Text("  ")
-        line.append(
-            f"{label[: settings.subsystem_width]:<{settings.subsystem_width}}",
-            style=SUBSYSTEM_COLORS.get(narration.subsystem, "white"),
+        label = settings.subsystem_labels.get(
+            narration.subsystem,
+            narration.subsystem,
         )
-        parts = self._parts(narration)
-        headline = self._headline(narration)
-        # Padded only when something follows it, so a step with nothing
-        # to report does not end in a column of whitespace.
+        mark, mark_style = _KIND_MARKS.get(
+            narration.kind,
+            ("•", "white"),
+        )
+
+        line = Text("  ")
+
         line.append(
-            f"{headline:<{settings.action_width}}" if parts else headline,
+            f"{label[:settings.subsystem_width]:<{settings.subsystem_width}}",
+            style=SUBSYSTEM_COLORS.get(
+                narration.subsystem,
+                "white",
+            ),
+        )
+
+        line.append(" ")
+        line.append(mark, style=mark_style)
+        line.append(" ")
+
+        headline = self._headline(narration)
+
+        if narration.kind == "call":
+            line.append("CALL ", style="bold bright_blue")
+        elif narration.kind == "return":
+            line.append("RETURN ", style="bold bright_green")
+        elif narration.kind == "skip":
+            line.append("SKIP ", style="bold yellow")
+
+        line.append(
+            headline,
             style=_LEVEL_STYLES.get(level, "white"),
         )
-        for marker, value in parts:
-            line.append(f" {marker} ", style="bright_black")
-            line.append(value, style="white" if marker == _OUT else "bright_black")
+
+        for marker, value in self._parts(narration):
+            line.append(
+                f"  {marker} ",
+                style="bright_black",
+            )
+            line.append(
+                value,
+                style="white" if marker == _OUT else "bright_black",
+            )
+
+        if narration.kind == "return" and narration.elapsed_ms > 0:
+            line.append(
+                f"  · {narration.elapsed_ms:.1f}ms",
+                style="bright_black",
+            )
+
         return line
 
     def _headline(self, narration: Narration) -> str:
-        """What is happening, as a sentence a person wrote.
+        """Choose human wording for the operation being observed."""
+        if narration.kind == "event":
+            headline = narration.headline
+        else:
+            headline = self._settings.steps.get(narration.qualname)
 
-        Never a method name. A step nobody gave words to does not belong
-        on the screen — `wants()` has already dropped it — so there is no
-        case here where the fallback is a signature.
-        """
-        headline = (
-            narration.headline
-            if narration.kind == "event"
-            else self._settings.steps.get(narration.qualname, "")
+            if not headline:
+                # IMPORTANT:
+                # Do not hide an unconfigured instrumented call.
+                # DEBUG should expose it automatically.
+                headline = (
+                    narration.qualname
+                    .replace(".", " → ")
+                    .replace("_", " ")
+                )
+
+        return (
+            headline[:1].upper() + headline[1:]
+            if headline
+            else "event"
         )
-        return headline[:1].upper() + headline[1:] if headline else ""
 
     def _parts(self, narration: Narration) -> list[tuple[str, str]]:
-        """The in/out pair for this step, whichever halves exist."""
+        """Render useful inputs/outputs without dumping raw payloads."""
+
         if narration.kind == "event":
-            # An author's line is already a statement, so its fields are
-            # detail rather than a return value: labelling them "out"
-            # would claim the sentence was a function call.
-            values = self._values(narration.fields, named=True)
-            return [(_DETAIL, values)] if values else []
+            values = self._values(
+                narration.fields,
+                named=True,
+            )
+
+            return [
+                (_DETAIL, values)
+            ] if values else []
+
         parts: list[tuple[str, str]] = []
-        inputs = self._values(narration.arguments, named=False)
+
+        inputs = self._values(
+            narration.arguments,
+            named=True,
+        )
+
         if inputs:
-            parts.append((_IN, inputs))
-        if _worth_showing(narration.outcome):
-            parts.append((_OUT, self._bare(narration.outcome)))
+            parts.append(
+                (_IN, inputs)
+            )
+
+        if (
+            narration.kind in {"return", "skip"}
+            and _worth_showing(narration.outcome)
+        ):
+            parts.append(
+                (
+                    _OUT,
+                    self._outcome(narration.outcome),
+                )
+            )
+
         return parts
 
-    def _values(self, source: Mapping[str, object], named: bool) -> str:
-        """The values that matter, rendered the same way every time.
+    def _outcome(self, value: str) -> str:
+        """Render a return summary without hiding useful multi-field decisions."""
 
-        A step's inputs and outputs are shown **bare**: the step already
-        said what it was doing, so "Checking authority · in
-        support.process_refund · out deny" reads as English, while
-        "in action=support.process_refund out verdict=deny" reads as a
-        stack frame.
+        flattened = " ".join(
+            value.split()
+        )
 
-        An author's own log fields keep their names, because the author
-        chose them to mean something: "held 2, returned 2" is only
-        intelligible with the names attached.
-        """
-        shown = [
-            f"{name} {self._clip(str(value))}" if named else self._bare(str(value))
-            for name, value in source.items()
-            if name not in self._settings.muted_fields and _worth_showing(str(value))
-        ]
-        return ", ".join(shown[: self._settings.max_values])
+        # Multi-field summaries are deliberate operator metadata, for
+        # example:
+        #
+        # action=support.process_refund
+        # verdict=deny
+        # reason=amount exceeds limit
+        #
+        # Do not run those through _bare(), because that would strip useful
+        # labels. Give them a larger budget instead.
+        if flattened.count("=") > 1:
+            limit = max(
+                self._settings.max_value_chars,
+                100,
+            )
+
+            if len(flattened) <= limit:
+                return flattened
+
+            return f"{flattened[: limit - 1]}…"
+
+        return self._bare(flattened)
+
+    def _values(
+        self,
+        source: Mapping[str, object],
+        named: bool,
+    ) -> str:
+        """Keep identifiers, decisions and counts; suppress content fields."""
+
+        shown: list[str] = []
+
+        for name, value in source.items():
+            if name in self._settings.muted_fields:
+                continue
+
+            rendered = self._clip(
+                str(value)
+            )
+
+            if not _worth_showing(rendered):
+                continue
+
+            if named:
+                # If a summarized object already has safe fields, preserve
+                # the nested structure:
+                #
+                # call[action=support.process_refund]
+                #
+                # rather than:
+                #
+                # call=action=support.process_refund
+                shown.append(
+                    f"{name}[{rendered}]"
+                    if "=" in rendered
+                    else f"{name}={rendered}"
+                )
+            else:
+                shown.append(
+                    self._bare(rendered)
+                )
+
+            if len(shown) >= self._settings.max_values:
+                break
+
+        return ", ".join(shown)
 
     def _bare(self, value: str) -> str:
-        """One value with no label, quoted when it is a phrase.
+        """Normalize a summarized value for a readable one-line display."""
 
-        A summarised object arrives as `topic=orders`; the field name was
-        useful while choosing *which* attribute to show, and is noise
-        once the step itself has been named, so it is dropped here.
-        """
         clipped = self._clip(value)
-        if "=" in clipped:
-            clipped = clipped.split("=", maxsplit=1)[1]
-        # Quoted only when it is something somebody wrote. A count is not
-        # a phrase, and '"4 items"' reads as a quotation of nothing.
-        return f'"{clipped}"' if " " in clipped and not _COUNT.fullmatch(clipped) else clipped
+
+        # A single field=value summary is usually redundant because the
+        # operation already supplies the context.
+        #
+        # Example:
+        #
+        #   result=success
+        #
+        # becomes:
+        #
+        #   success
+        #
+        # But multi-field decision summaries retain all field names.
+        if clipped.count("=") == 1:
+            clipped = clipped.split(
+                "=",
+                maxsplit=1,
+            )[1]
+
+        return (
+            f'"{clipped}"'
+            if " " in clipped and not _COUNT.fullmatch(clipped)
+            else clipped
+        )
 
     def _clip(self, value: str) -> str:
-        """One value, kept to a width that leaves the line readable."""
-        flattened = " ".join(value.split())
+        """Flatten and bound one displayed value."""
+
+        flattened = " ".join(
+            value.split()
+        )
+
         limit = self._settings.max_value_chars
-        return flattened if len(flattened) <= limit else f"{flattened[: limit - 1]}…"
+
+        if limit <= 0 or len(flattened) <= limit:
+            return flattened
+
+        return f"{flattened[: max(1, limit - 1)]}…"
 
 
 class LiveFeedLogHandler(logging.Handler):
-    """Forwards narrated log records to a callback.
-
-    Attached to every subsystem logger through `LoggerFactory.subscribe`,
-    so a subsystem whose logger is built later still reaches the screen.
-    """
+    """Forward narrated log records to the TUI without breaking the app."""
 
     def __init__(
         self,
@@ -211,46 +339,55 @@ class LiveFeedLogHandler(logging.Handler):
         self._formatter = formatter or TraceLineFormatter()
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Narrate one record onto the screen.
-
-        `logging.Handler.emit` must never raise — a failure here would
-        surface as an exception inside code that was merely logging.
-        """
         try:
             line = self.render(record)
+
             if line is not None:
                 self._sink(line)
-        except Exception:  # pragma: no cover - defensive, per logging contract
+
+        except Exception:  # pragma: no cover
+            # Observability must never be able to crash the agent.
             self.handleError(record)
 
-    def render(self, record: logging.LogRecord) -> Text | None:
-        """The line for one record, or None if it does not belong on screen.
+    def render(
+        self,
+        record: logging.LogRecord,
+    ) -> Text | None:
+        """Render a record, falling back to a plain event for third parties."""
 
-        A record with no narration came from outside this harness — a
-        library's logger that happens to be attached. It is shown as its
-        own message rather than dropped, because silence about a
-        third-party warning is worse than an unstyled line.
-        """
-        narration = getattr(record, NARRATION, None)
+        narration = getattr(
+            record,
+            NARRATION,
+            None,
+        )
+
         if not isinstance(narration, Narration):
             narration = Narration(
-                subsystem=record.name.removeprefix(_LOGGER_PREFIX),
+                subsystem=record.name.removeprefix(
+                    _LOGGER_PREFIX
+                ),
                 headline=record.getMessage(),
             )
-        if not self._formatter.wants(narration, record.levelno):
+
+        if not self._formatter.wants(
+            narration,
+            record.levelno,
+        ):
             return None
-        return self._formatter.format(narration, record.levelno)
+
+        return self._formatter.format(
+            narration,
+            record.levelno,
+        )
 
 
 class TraceStream:
-    """Turns the trace feed on and off for one console.
+    """Manage one console's subscription to the structured log stream."""
 
-    Owns the subscription so the app does not have to remember whether it
-    is currently attached — `enable()` twice is the same as once, which
-    matters when the toggle is a command an operator can hammer.
-    """
-
-    def __init__(self, sink: Callable[[Text], None]) -> None:
+    def __init__(
+        self,
+        sink: Callable[[Text], None],
+    ) -> None:
         self._sink = sink
         self._handler: LiveFeedLogHandler | None = None
 
@@ -260,29 +397,57 @@ class TraceStream:
 
     @property
     def level(self) -> str:
-        """The configured level, as a name."""
         return get_settings().tui.trace.level.upper()
 
-    def enable(self, level: str | None = None) -> None:
-        """Start narrating log records onto the panel."""
+    def enable(
+        self,
+        level: str | None = None,
+    ) -> None:
+        """Start streaming at DEBUG by default, or at an explicit level."""
+
         self.disable()
-        wanted = (level or self.level).upper()
-        self._handler = LiveFeedLogHandler(self._sink, level=logging.getLevelNamesMapping()[wanted])
-        LoggerFactory.subscribe(self._handler)
+
+        wanted = (
+            level or self.level
+        ).upper()
+
+        numeric = (
+            logging.getLevelNamesMapping().get(
+                wanted,
+                logging.DEBUG,
+            )
+        )
+
+        self._handler = LiveFeedLogHandler(
+            self._sink,
+            level=numeric,
+        )
+
+        LoggerFactory.subscribe(
+            self._handler
+        )
 
     def disable(self) -> None:
-        """Stop narrating. The files keep every record either way."""
+        """Detach the live trace; file logging continues unchanged."""
+
         if self._handler is not None:
-            LoggerFactory.unsubscribe(self._handler)
+            LoggerFactory.unsubscribe(
+                self._handler
+            )
             self._handler = None
 
 
-# Values that are the *absence* of a value. Printing them fills the line
-# with words that mean "nothing happened here", which is what a blank
-# already says.
-_EMPTY = {"", "None", "none", "0", "False", "[]", "{}", "0 items"}
+_EMPTY = {
+    "",
+    "None",
+    "none",
+    "0",
+    "False",
+    "[]",
+    "{}",
+    "0 items",
+}
 
 
 def _worth_showing(value: str) -> bool:
-    """Whether a value tells the reader anything."""
     return value not in _EMPTY

@@ -5,9 +5,10 @@ from agentic_commons.tui.clipboard import ClipboardService, Osc52ClipboardServic
 from agentic_commons.tui.labels import StageLabeler, StageLabelRegistry
 from agentic_commons.tui.widgets import (
     LiveStatusPanel,
-    StatusFeedBuffer,
+    #StatusFeedBuffer,
     StatusLineWidget,
     TokenCounterWidget,
+    StageEventWidget,
 )
 
 __all__ = [
@@ -20,5 +21,6 @@ __all__ = [
     "StatusFeedBuffer",
     "StatusLineWidget",
     "TokenCounterWidget",
+    "StageEventWidget",
     "main",
 ]

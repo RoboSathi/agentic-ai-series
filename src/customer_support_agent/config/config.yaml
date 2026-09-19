@@ -80,15 +80,6 @@ security:
       update_refund_policy: update_refund_policy
       approve_hitl_request: approve_hitl_request
 
-tui:
-  # Per-tool wording for the feed. An operator should read what the agent
-  # is doing, not which Python method it reached for.
-  tool_labels:
-    get_order_status: Looking up the order…
-    get_refund_status: Checking refund eligibility…
-    process_refund: Issuing the refund…
-    queue_for_approval: Sending to a human for approval…
-
 customer_support_agent:
   enabled: true
   max_tool_iterations: 5

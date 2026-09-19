@@ -23,6 +23,7 @@ from agentic_commons.observability.tracer import (
 from agentic_commons.observability.tracing import traced
 from agentic_commons.observability.types import (
     CostComponent,
+    EventKind,
     CostStack,
     SLOMeasurement,
     SLOStatus,
@@ -36,6 +37,7 @@ __all__ = [
     "CostAggregator",
     "CostAggregatorImpl",
     "CostComponent",
+    "EventKind",
     "CostStack",
     "InMemoryLiveStatusFeed",
     "LangSmithTracer",

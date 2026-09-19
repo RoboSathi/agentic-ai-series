@@ -5,7 +5,32 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-StatusKind = Literal["started", "completed", "failed"]
+StatusKind = Literal[
+    "started",
+    "completed",
+    "failed",
+    "warning",
+    "waiting",
+    "blocked",
+]
+
+EventKind = Literal[
+    "stage",
+    "decision",
+    "security",
+    "intent",
+    "memory",
+    "context",
+    "model",
+    "tool_request",
+    "tool_result",
+    "gatekeeper",
+    "resilience",
+    "control_loop",
+    "grounding",
+    "escalation",
+    "system",
+]
 
 CostComponent = Literal[
     "input_tokens",
@@ -35,8 +60,11 @@ class StatusEvent(BaseModel):
     stage: str
     status: StatusKind
     timestamp: datetime = Field(default_factory=utc_now)
+    event_kind: EventKind = "stage"
     tokens_delta: int | None = None
     detail: str | None = None
+    summary: str | None = None
+    fields: dict[str, Any] = Field(default_factory=dict)
 
 
 class Span(BaseModel):
