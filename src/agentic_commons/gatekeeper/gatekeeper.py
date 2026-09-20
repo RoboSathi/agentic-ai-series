@@ -43,6 +43,21 @@ from agentic_commons.tools.types import ToolCall
 _AMOUNT_PARAMS = ("amount", "amount_usd", "value")
 
 
+def _compact_check(check: CheckReport) -> dict[str, object]:
+    """Serialize only operator-useful check data for the canonical Gatekeeper log."""
+    payload: dict[str, object] = {
+        "name": check.name,
+        "status": check.status,
+        "reason_code": check.reason_code,
+        "reason": check.reason,
+    }
+    if check.observed:
+        payload["observed"] = check.observed
+    if check.evidence:
+        payload["evidence"] = check.evidence
+    return payload
+
+
 @runtime_checkable
 class RoleAuthorizer(Protocol):
     """Answers "may this principal perform this action?" (RBAC)."""
@@ -189,12 +204,18 @@ class GatekeeperImpl:
             actor=context.actor,
             verdict=decision.verdict,
             reason_code=decision.reason_code,
-            reason=decision.reason,
             question=decision.question,
-            checks=[check.model_dump(mode="json") for check in decision.checks],
-            three_gates=(decision.three_gates.model_dump(mode="json") if decision.three_gates else None),
-            automation=(decision.automation.model_dump(mode="json") if decision.automation else None),
-            advisory=(decision.advisory.model_dump(mode="json") if decision.advisory else None),
+            reason=decision.reason,
+            checks=[_compact_check(check) for check in decision.checks],
+            advisory=(
+                {
+                    "flagged": decision.advisory.flagged,
+                    "reason": decision.advisory.reason,
+                    "confidence": decision.advisory.confidence,
+                }
+                if decision.advisory
+                else None
+            ),
         )
         return decision
 
@@ -482,18 +503,6 @@ class GatekeeperImpl:
             or self._fallback_gate_check("blast_radius", evaluation.blast_radius),
             evaluation.certifiability_check
             or self._fallback_gate_check("certifiability", evaluation.certifiable),
-            CheckReport(
-                check_id="gatekeeper.three_gates.aggregate",
-                name="Three Gates result",
-                status="PASS" if evaluation.passes else "FAIL",
-                reason_code="THREE_GATES_PASS" if evaluation.passes else "THREE_GATES_FAILED",
-                reason=evaluation.reason,
-                observed={
-                    "path_cardinality": evaluation.path_cardinality,
-                    "blast_radius": evaluation.blast_radius,
-                    "certifiable": evaluation.certifiable,
-                },
-            ),
         ]
         fail = None if evaluation.passes else (
             "three_gates", "deny", "THREE_GATES_FAILED", evaluation.reason
@@ -508,12 +517,14 @@ class GatekeeperImpl:
         status = "PASS" if passed else "ESCALATE"
         check = CheckReport(
             check_id="gatekeeper.automation_policy",
-            name="Automation policy",
+            name="Automation level",
             status=status,
             reason_code="AUTOMATION_ALLOWED" if passed else "HUMAN_REQUIRED",
-            reason=assessment.reason,
+            reason=(
+                f"Sheridan level {assessment.level}; "
+                + ("human approval required" if assessment.requires_human else "autonomous execution permitted")
+            ),
             observed={
-                "action": assessment.action,
                 "sheridan_level": assessment.level,
                 "level_meaning": assessment.level_meaning,
                 "amount": assessment.amount,

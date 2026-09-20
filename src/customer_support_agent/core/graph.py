@@ -533,12 +533,7 @@ class CustomerSupportAgent:
                 metadata=state.metadata,
             )
         )
-        fields = {
-            "passed": result.passed,
-            "reason_code": result.reason_code,
-            "checks": [finding.model_dump(mode="json") for finding in result.findings],
-            "facts": result.facts,
-        }
+        fields = _basic_sanity_fields(result)
 
         if result.passed:
             self._done(
@@ -1660,81 +1655,91 @@ def _safe_tool_request_fields(name: str, arguments: str) -> dict[str, Any]:
     return fields
 
 
+def _basic_sanity_fields(result: Any) -> dict[str, Any]:
+    """Render BasicSanity findings consistently with the TUI check contract."""
+    fields: dict[str, Any] = {
+        "passed": result.passed,
+        "reason_code": result.reason_code,
+        "checks": [],
+    }
+    facts = result.facts if isinstance(result.facts, dict) else {}
+    for key in (
+        "order_id",
+        "customer_id",
+        "order_status",
+        "refund_status",
+        "amount",
+        "requested_amount",
+        "already_refunded",
+        "refund_eligible",
+        "operation",
+    ):
+        if key in facts:
+            fields[key] = facts[key]
+    for finding in result.findings:
+        evidence = finding.evidence if isinstance(finding.evidence, dict) else {}
+        fields["checks"].append(
+            {
+                "name": finding.check.replace("_", " ").title(),
+                "status": "PASS" if finding.passed else "FAIL",
+                "reason_code": (
+                    f"BASIC_SANITY_{finding.check.upper()}_PASS"
+                    if finding.passed
+                    else result.reason_code
+                ),
+                "reason": finding.reason,
+                "observed": evidence,
+            }
+        )
+    if not fields["checks"]:
+        fields["checks"].append(
+            {
+                "name": "Basic sanity",
+                "status": "PASS" if result.passed else "FAIL",
+                "reason_code": result.reason_code,
+                "reason": result.message or result.reason_code,
+                "observed": facts,
+            }
+        )
+    return fields
+
+
 def _control_loop_fields(report: ControlLoopReport) -> dict[str, Any]:
-    """Render the canonical control-loop report without leaking raw prompts."""
-    return {
+    """Render only the active control-loop decision and its evidence."""
+    fields: dict[str, Any] = {
         "decision": report.decision,
         "reason_code": report.reason_code,
-        "reason": report.reason,
-        "round": report.round_number,
-        "max_rounds": report.max_rounds,
-        "fingerprint": report.fingerprint,
-        "previous_result": report.previous_result,
         "checks": [check.model_dump(mode="json") for check in report.checks],
     }
+    if report.fingerprint:
+        fields["fingerprint"] = report.fingerprint
+    return fields
 
 
 def _gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
-    """Render the complete deterministic Gatekeeper decision report."""
+    """Render one concise Gatekeeper report; checks carry detailed evidence."""
     amount = call.params.get("amount")
     fields: dict[str, Any] = {
-        "decision": decision.verdict,
-        "action": _display_tool_name(decision.action),
-        "qualified_action": decision.action,
         "reason_code": decision.reason_code,
-        "question": decision.question,
-        "reason": decision.reason,
         "surface": decision.surface,
-        "blast_radius": decision.blast_radius,
-        "path_cardinality": call.path_cardinality,
-        "certifiable": call.certifiable,
         "actor": decision.actor,
-        "granted_by": decision.authority_source,
-        "authority_rank": decision.authority_rank,
-        "required_authority_rank": decision.required_authority_rank,
-        "max_granting_rank": decision.max_granting_rank,
+        "authority": (
+            f"{decision.authority_source} · rank {decision.authority_rank}/"
+            f"{decision.required_authority_rank}"
+            if decision.authority_rank is not None and decision.required_authority_rank is not None
+            else decision.authority_source
+        ),
         "checks": [check.model_dump(mode="json") for check in decision.checks],
     }
     if isinstance(amount, (int, float)):
         fields["amount"] = f"${float(amount):,.2f}"
     if decision.cumulative_total or decision.threshold:
-        fields["cumulative_total"] = f"${decision.cumulative_total:,.2f}"
-        fields["threshold"] = f"${decision.threshold:,.2f}"
-    if decision.three_gates is not None:
-        tg = decision.three_gates
-        fields["three_gates_result"] = "PASS" if tg.passes else "FAIL"
-        fields["three_gates_reason"] = tg.reason
-        fields["three_gates"] = {
-            "path_cardinality": tg.path_cardinality,
-            "path_result": tg.path_check.status if tg.path_check else None,
-            "blast_radius": tg.blast_radius,
-            "blast_radius_result": tg.blast_radius_check.status if tg.blast_radius_check else None,
-            "certifiable": tg.certifiable,
-            "certifiability_result": tg.certifiability_check.status if tg.certifiability_check else None,
-        }
-    if decision.automation is not None:
-        automation = decision.automation
-        fields.update(
-            {
-                "automation_level": automation.level,
-                "automation_level_meaning": automation.level_meaning,
-                "automation_amount": f"${automation.amount:,.2f}",
-                "auto_approval_ceiling": (
-                    "unbounded"
-                    if automation.auto_approval_ceiling == float("inf")
-                    else f"${automation.auto_approval_ceiling:,.2f}"
-                ),
-                "amount_within_ceiling": automation.amount_within_ceiling,
-                "automation_floor": automation.automation_floor,
-                "level_meets_floor": automation.level_meets_floor,
-                "human_required": automation.requires_human,
-                "automation_reason": automation.reason,
-            }
+        threshold = (
+            "∞" if decision.threshold == float("inf") else f"${decision.threshold:,.2f}"
         )
-    if decision.advisory is not None:
-        fields["advisory_flagged"] = decision.advisory.flagged
-        fields["advisory_reason"] = decision.advisory.reason
-        fields["advisory_confidence"] = decision.advisory.confidence
+        fields["cumulative"] = f"${decision.cumulative_total:,.2f} / {threshold}"
+    if decision.advisory is not None and decision.advisory.flagged:
+        fields["advisory"] = decision.advisory.reason or True
     return fields
 
 

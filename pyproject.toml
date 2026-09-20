@@ -21,6 +21,9 @@ dependencies = [
     "python-dotenv>=1.0",
     "openai>=1.0",
     "pyyaml>=6.0",
+    "torch>=2.2",
+    "transformers>=4.45",
+    "sentencepiece>=0.2",
     # Hosted encoders (NLI, cross-encoder reranking) speak plain HTTP
     # rather than the OpenAI protocol, so they need their own client.
     "httpx>=0.27",

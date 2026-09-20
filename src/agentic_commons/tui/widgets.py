@@ -492,13 +492,12 @@ class StageEventWidget(Collapsible):
         if stage == "control_loop":
             decision = fields.get("decision")
             reason_code = fields.get("reason_code")
-            round_number = fields.get("round")
             if reason_code == "DUPLICATE_ACTION":
                 return "SUPPRESS · DUPLICATE_ACTION"
             if reason_code == "MAX_TOOL_ITERATIONS":
                 return "ABORT · MAX_TOOL_ITERATIONS"
-            if decision and round_number is not None:
-                return f"{str(decision).upper()} · round {round_number}"
+            if decision:
+                return str(decision).upper()
             return "control decision"
 
         if stage == "tool_request":

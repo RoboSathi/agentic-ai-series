@@ -57,33 +57,35 @@ class ToolControlLoop:
         self._logger = get_logger("control_loop")
 
     def evaluate_round(self, round_number: int, max_rounds: int) -> ControlLoopReport:
-        """Check whether another tool round is legal."""
-        report = self._round_report(round_number, max_rounds)
+        """Check the iteration ceiling when the caller needs a standalone decision."""
+        if round_number <= max_rounds:
+            report = ControlLoopReport(
+                decision="continue",
+                reason_code="CONTROL_LOOP_CONTINUE",
+                reason="iteration limit not reached",
+                round_number=round_number,
+                max_rounds=max_rounds,
+            )
+        else:
+            report = ControlLoopReport(
+                decision="abort",
+                reason_code="MAX_TOOL_ITERATIONS",
+                reason=f"iteration limit reached ({round_number}/{max_rounds})",
+                checks=[
+                    ControlCheck(
+                        check_id="control_loop.max_tool_iterations",
+                        name="Iteration limit",
+                        status="FAIL",
+                        reason_code="MAX_TOOL_ITERATIONS",
+                        reason=f"iteration limit reached ({round_number}/{max_rounds})",
+                        observed={"current_round": round_number, "max_rounds": max_rounds},
+                    )
+                ],
+                round_number=round_number,
+                max_rounds=max_rounds,
+            )
         self._log(report)
         return report
-
-    def _round_report(self, round_number: int, max_rounds: int) -> ControlLoopReport:
-        passed = round_number <= max_rounds
-        check = ControlCheck(
-            check_id="control_loop.max_tool_iterations",
-            name="Round limit",
-            status="PASS" if passed else "FAIL",
-            reason_code="ROUND_WITHIN_LIMIT" if passed else "MAX_TOOL_ITERATIONS",
-            reason=(
-                f"Round {round_number} is within the configured limit of {max_rounds}."
-                if passed
-                else f"Round {round_number} would exceed the configured limit of {max_rounds}."
-            ),
-            observed={"current_round": round_number, "max_rounds": max_rounds},
-        )
-        return ControlLoopReport(
-            decision="continue" if passed else "abort",
-            reason_code="CONTROL_LOOP_CONTINUE" if passed else "MAX_TOOL_ITERATIONS",
-            reason=check.reason,
-            checks=[check],
-            round_number=round_number,
-            max_rounds=max_rounds,
-        )
 
     def before_action(
         self,
@@ -93,11 +95,9 @@ class ToolControlLoop:
         max_rounds: int,
     ) -> ControlLoopReport:
         """Evaluate active loop guards before one tool action."""
-        round_report = self._round_report(round_number, max_rounds)
-        if round_report.decision == "abort":
-            report = round_report.model_copy()
+        if round_number > max_rounds:
+            report = self.evaluate_round(round_number, max_rounds)
             report.fingerprint = action_fingerprint(call)
-            self._log(report)
             return report
 
         fingerprint = action_fingerprint(call)
@@ -120,9 +120,7 @@ class ToolControlLoop:
             decision="continue" if duplicate_passed else "abort",
             reason_code="CONTROL_LOOP_CONTINUE" if duplicate_passed else "DUPLICATE_ACTION",
             reason=duplicate_check.reason,
-            checks=[*round_report.checks, duplicate_check],
-            round_number=round_number,
-            max_rounds=max_rounds,
+            checks=[duplicate_check],
             fingerprint=fingerprint,
             previous_result=previous or "",
         )
@@ -142,10 +140,5 @@ class ToolControlLoop:
             "Control loop evaluated",
             decision=report.decision,
             reason_code=report.reason_code,
-            reason=report.reason,
-            round_number=report.round_number,
-            max_rounds=report.max_rounds,
-            fingerprint=report.fingerprint,
-            previous_result=report.previous_result,
             checks=[check.model_dump(mode="json") for check in report.checks],
         )

@@ -25,4 +25,4 @@ CLAUDE.md
 project.zip
 
 # DuckDB
-data/observability.duckdb
+data/observability.duckdb*

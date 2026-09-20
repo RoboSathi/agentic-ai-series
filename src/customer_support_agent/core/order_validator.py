@@ -140,6 +140,8 @@ class OrderSanityCheck(BasicSanityChecker):
                 evidence={
                     "order_id": order.order_id,
                     "customer_id": request.customer_id,
+                    "order_exists": True,
+                    "customer_owns_order": True,
                 },
             )
         ]
@@ -229,6 +231,7 @@ class OrderSanityCheck(BasicSanityChecker):
                         evidence={
                             "requested_amount": requested_amount,
                             "order_amount": order.amount,
+                            "within_order_total": True,
                         },
                     )
                 )
@@ -260,7 +263,10 @@ class OrderSanityCheck(BasicSanityChecker):
                     check="not_already_refunded",
                     passed=True,
                     reason="The order is not fully refunded.",
-                    evidence={"refund_status": order.refund_status},
+                    evidence={
+                        "refund_status": order.refund_status,
+                        "already_refunded": False,
+                    },
                 )
             )
             findings.append(
@@ -268,7 +274,10 @@ class OrderSanityCheck(BasicSanityChecker):
                     check="refund_eligible",
                     passed=True,
                     reason="The order is in a refundable state.",
-                    evidence={"order_status": order.order_status},
+                    evidence={
+                    "order_status": order.order_status,
+                    "refund_eligible": True,
+                },
                 )
             )
 

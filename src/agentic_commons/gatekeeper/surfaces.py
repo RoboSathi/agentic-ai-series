@@ -70,9 +70,6 @@ class ThreeGatesEvaluator:
     concrete values and the individual dimensions implicated by a failure.
     """
 
-    def __init__(self) -> None:
-        self._logger = get_logger("gatekeeper")
-
     def evaluate(
         self,
         path_cardinality: PathCardinality = "bounded",
@@ -104,9 +101,9 @@ class ThreeGatesEvaluator:
             status="FAIL" if path_failed else "PASS",
             reason_code="THREE_GATES_PATH_RISK" if path_failed else "PATH_CARDINALITY_ACCEPTED",
             reason=(
-                "Open-ended path combined with a wide blast radius."
+                "open path + wide blast radius"
                 if path_failed
-                else "Path cardinality is acceptable under the configured Three Gates rules."
+                else "accepted"
             ),
             observed={"value": path_cardinality},
         )
@@ -116,9 +113,9 @@ class ThreeGatesEvaluator:
             status="FAIL" if blast_failed else "PASS",
             reason_code="THREE_GATES_BLAST_RADIUS_RISK" if blast_failed else "BLAST_RADIUS_ACCEPTED",
             reason=(
-                "Wide blast radius participates in a failing Three Gates condition."
+                "wide blast radius contributes to a failing rule"
                 if blast_failed
-                else "Blast radius is not wide enough to trigger a configured Three Gates failure."
+                else "accepted"
             ),
             observed={"value": blast_radius},
         )
@@ -132,9 +129,9 @@ class ThreeGatesEvaluator:
                 else "CERTIFIABLE_RESULT"
             ),
             reason=(
-                "The result is not deterministically certifiable in a failing path."
+                "result is not deterministically certifiable"
                 if certifiability_failed
-                else "The action declares a deterministically certifiable result."
+                else "deterministically certifiable"
             ),
             observed={"value": certifiable},
         )
@@ -149,13 +146,5 @@ class ThreeGatesEvaluator:
             path_check=path_check,
             blast_radius_check=blast_check,
             certifiability_check=cert_check,
-        )
-        self._logger.info(
-            "Three Gates evaluated",
-            path_cardinality=path_cardinality,
-            blast_radius=blast_radius,
-            certifiable=certifiable,
-            passes=passes,
-            reason=result.reason,
         )
         return result
