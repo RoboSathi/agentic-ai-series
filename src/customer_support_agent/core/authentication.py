@@ -116,7 +116,6 @@ class CustomerAuthenticator:
     def _ask_for_code(self) -> str:
         """The prompt shown until a code arrives."""
         return (
-            "Before I can look anything up, I need to verify your account. "
-            f"Please share your {self._length}-character customer code — it's in "
-            "your order confirmation email."
+            "Before I can look anything up, I need to verify your account.\n"
+            f"Please share your {self._length}-character user code."
         )

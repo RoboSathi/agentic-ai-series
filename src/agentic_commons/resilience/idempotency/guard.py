@@ -1,13 +1,8 @@
 """Idempotency guard (LLD §13).
 
-"Exactly once" is not available over an unreliable network; "at least
-once delivery plus idempotent handling" is. This guard is the second
-half: a keyed record, written durably, so that the second arrival of the
-same request returns the first outcome instead of repeating the effect.
-
-The record is in SQLite rather than memory on purpose — a guard that
-forgets on restart protects against retries and not against crashes,
-which is the case that actually pays a customer twice.
+The durable record is platform operational state. It lives in the shared
+SQLite file, but only through ``PlatformStore`` and is always scoped by
+``agent_id`` so one agent cannot replay another agent's request key.
 """
 
 import json
@@ -16,16 +11,20 @@ from typing import Any, Awaitable, Callable, Protocol, TypeVar, runtime_checkabl
 from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger
 from agentic_commons.observability.types import utc_now
-from agentic_commons.persistence import SqliteConnectionPool
+from agentic_commons.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
 
 T = TypeVar("T")
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS idempotency_records (
-    key         TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS platform_idempotency_records (
+    agent_id    TEXT NOT NULL,
+    key         TEXT NOT NULL,
     result_json TEXT NOT NULL,
-    recorded_at TEXT NOT NULL
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, key)
 );
+CREATE INDEX IF NOT EXISTS idx_platform_idempotency_agent_time
+    ON platform_idempotency_records (agent_id, recorded_at);
 """
 
 
@@ -37,13 +36,25 @@ class IdempotencyGuard(Protocol):
 
 
 class SqliteIdempotencyGuard:
-    """Durable at-most-once execution, keyed by the caller's request key."""
+    """Durable at-most-once execution scoped to one agent."""
 
-    def __init__(self, pool: SqliteConnectionPool | None = None) -> None:
-        self._pool = pool or SqliteConnectionPool()
+    def __init__(
+        self,
+        store: PlatformStore | SqliteConnectionPool | None = None,
+        *,
+        agent_id: str | None = None,
+    ) -> None:
+        self._store = as_platform_store(store, agent_id=agent_id)
+        self._agent_id = agent_id or self._store.agent_id
         self._enabled = get_settings().resilience.idempotency.enabled
         self._logger = get_logger("resilience")
-        self._pool.execute_script(_SCHEMA)
+        self._store.execute_script(_SCHEMA)
+        self._migrate_legacy_table()
+
+    @property
+    def agent_id(self) -> str:
+        """Agent whose idempotency namespace this guard enforces."""
+        return self._agent_id
 
     async def once(self, key: str, fn: Callable[[], Awaitable[T]]) -> T:
         """Run the operation, or replay the recorded result for this key."""
@@ -59,34 +70,73 @@ class SqliteIdempotencyGuard:
 
     def recorded_result(self, key: str) -> Any | None:
         """The stored outcome for a key, if this request was already handled."""
-        row = self._pool.query_one(
-            "SELECT result_json FROM idempotency_records WHERE key = ?", (key,)
+        row = self._store.query_one(
+            "SELECT result_json FROM platform_idempotency_records "
+            "WHERE agent_id = ? AND key = ?",
+            (self._agent_id, key),
         )
         return json.loads(row["result_json"]) if row else None
 
     def seen(self, key: str) -> bool:
         """Whether a key has already been handled."""
         return (
-            self._pool.query_one("SELECT 1 AS hit FROM idempotency_records WHERE key = ?", (key,))
+            self._store.query_one(
+                "SELECT 1 AS hit FROM platform_idempotency_records "
+                "WHERE agent_id = ? AND key = ?",
+                (self._agent_id, key),
+            )
             is not None
         )
 
     def remember(self, key: str, result: Any) -> None:
-        """Record an outcome for a key the caller executed itself.
-
-        For callers that must decide *whether* the result is worth
-        replaying — a saga records only a success, so a failed attempt
-        can legitimately be retried rather than replaying the failure.
-        """
+        """Record an outcome for a key the caller executed itself."""
         self._record(key, result)
 
     def _record(self, key: str, result: Any) -> None:
         """Persist the outcome so a replay can return it verbatim."""
-        self._pool.execute(
-            "INSERT OR REPLACE INTO idempotency_records (key, result_json, recorded_at) "
-            "VALUES (?, ?, ?)",
-            (key, json.dumps(result, default=_serialize), utc_now().isoformat()),
+        self._store.execute(
+            "INSERT OR REPLACE INTO platform_idempotency_records "
+            "(agent_id, key, result_json, recorded_at) VALUES (?, ?, ?, ?)",
+            (self._agent_id, key, json.dumps(result, default=_serialize), utc_now().isoformat()),
         )
+
+    def _migrate_legacy_table(self) -> None:
+        """Copy legacy idempotency rows into the agent-scoped platform table."""
+        if not self._table_exists("idempotency_records"):
+            return
+        columns = self._table_columns("idempotency_records")
+        if "agent_id" in columns:
+            rows = self._store.iter_rows(
+                "SELECT agent_id, key, result_json, recorded_at FROM idempotency_records "
+                "WHERE agent_id = ?",
+                (self._agent_id,),
+            )
+        else:
+            rows = self._store.iter_rows(
+                "SELECT key, result_json, recorded_at FROM idempotency_records"
+            )
+        for row in rows:
+            values = (
+                row.get("agent_id", self._agent_id),
+                row["key"],
+                row["result_json"],
+                row["recorded_at"],
+            )
+            self._store.execute(
+                "INSERT OR IGNORE INTO platform_idempotency_records "
+                "(agent_id, key, result_json, recorded_at) VALUES (?, ?, ?, ?)",
+                values,
+            )
+
+    def _table_exists(self, table: str) -> bool:
+        row = self._store.query_one(
+            "SELECT 1 AS hit FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        )
+        return row is not None
+
+    def _table_columns(self, table: str) -> set[str]:
+        return {str(row["name"]) for row in self._store.iter_rows(f"PRAGMA table_info({table})")}
 
 
 def _serialize(value: Any) -> Any:

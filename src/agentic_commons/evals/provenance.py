@@ -1,10 +1,8 @@
 """Golden dataset provenance ledger (E11's exit artifact).
 
-A golden dataset inherits the biases of whoever labelled it. When the
-labels record what agents *did* rather than what policy *says*, the eval
-certifies the existing practice and quietly punishes correct behaviour.
-The ledger makes each label's origin, labeller and basis inspectable, so
-that failure is findable rather than baked in.
+Golden-label provenance is platform-owned agent state. The records are scoped
+by ``agent_id`` so a reusable common library can host more than one agent in
+the same SQLite file without cross-agent label collisions.
 """
 
 import json
@@ -15,28 +13,31 @@ from pydantic import BaseModel, Field
 
 from agentic_commons.logging import get_logger
 from agentic_commons.observability.types import utc_now
-from agentic_commons.persistence import SqliteConnectionPool
+from agentic_commons.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
 
-# E11's three-bucket relabelling framework.
 LabelBasis = Literal["written_policy", "historical_practice", "human_judgment"]
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS golden_labels (
-    case_id     TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS platform_golden_labels (
+    agent_id    TEXT NOT NULL,
+    case_id     TEXT NOT NULL,
     label       TEXT NOT NULL,
     basis       TEXT NOT NULL,
     labeller    TEXT NOT NULL,
     source      TEXT NOT NULL,
     rationale   TEXT NOT NULL,
     superseded  TEXT,
-    recorded_at TEXT NOT NULL
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, case_id)
 );
+CREATE INDEX IF NOT EXISTS idx_platform_golden_labels_agent
+    ON platform_golden_labels (agent_id, recorded_at);
 """
 
 _INSERT = """
-INSERT OR REPLACE INTO golden_labels
-    (case_id, label, basis, labeller, source, rationale, superseded, recorded_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT OR REPLACE INTO platform_golden_labels
+    (agent_id, case_id, label, basis, labeller, source, rationale, superseded, recorded_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -63,18 +64,30 @@ class BiasReport(BaseModel):
 
 
 class GoldenDatasetProvenanceLedger:
-    """Records and audits the provenance of every golden label."""
+    """Records and audits golden-label provenance for one agent."""
 
-    def __init__(self, pool: SqliteConnectionPool | None = None) -> None:
-        self._pool = pool or SqliteConnectionPool()
+    def __init__(
+        self,
+        store: PlatformStore | SqliteConnectionPool | None = None,
+        *,
+        agent_id: str | None = None,
+    ) -> None:
+        self._store = as_platform_store(store, agent_id=agent_id)
+        self._agent_id = agent_id or self._store.agent_id
         self._logger = get_logger("evals")
-        self._pool.execute_script(_SCHEMA)
+        self._store.execute_script(_SCHEMA)
+        self._migrate_legacy_table()
+
+    @property
+    def agent_id(self) -> str:
+        return self._agent_id
 
     def record(self, provenance: LabelProvenance) -> None:
-        """Record a label's provenance, replacing any prior entry for the case."""
-        self._pool.execute(
+        """Record a label's provenance, replacing a prior entry for the case."""
+        self._store.execute(
             _INSERT,
             (
+                self._agent_id,
                 provenance.case_id,
                 provenance.label,
                 provenance.basis,
@@ -87,11 +100,7 @@ class GoldenDatasetProvenanceLedger:
         )
 
     def relabel(self, case_id: str, label: str, labeller: str, rationale: str) -> LabelProvenance:
-        """Correct a label to written policy, preserving what it replaced.
-
-        The superseded value is kept rather than overwritten: a corrected
-        eval set whose corrections are invisible cannot be reviewed.
-        """
+        """Correct a label to written policy, preserving what it replaced."""
         previous = self.get(case_id)
         updated = LabelProvenance(
             case_id=case_id,
@@ -107,14 +116,22 @@ class GoldenDatasetProvenanceLedger:
 
     def get(self, case_id: str) -> LabelProvenance | None:
         """Provenance for one case, if recorded."""
-        row = self._pool.query_one("SELECT * FROM golden_labels WHERE case_id = ?", (case_id,))
+        row = self._store.query_one(
+            "SELECT case_id, label, basis, labeller, source, rationale, superseded, recorded_at "
+            "FROM platform_golden_labels WHERE agent_id = ? AND case_id = ?",
+            (self._agent_id, case_id),
+        )
         return LabelProvenance.model_validate(row) if row else None
 
     def all_labels(self) -> list[LabelProvenance]:
-        """Every recorded label."""
+        """Every recorded label for this agent."""
         return [
             LabelProvenance.model_validate(row)
-            for row in self._pool.iter_rows("SELECT * FROM golden_labels")
+            for row in self._store.iter_rows(
+                "SELECT case_id, label, basis, labeller, source, rationale, superseded, recorded_at "
+                "FROM platform_golden_labels WHERE agent_id = ? ORDER BY case_id",
+                (self._agent_id,),
+            )
         ]
 
     def bias_report(self) -> BiasReport:
@@ -138,3 +155,47 @@ class GoldenDatasetProvenanceLedger:
             [entry.model_dump(mode="json") for entry in self.all_labels()],
             indent=2,
         )
+
+    def _migrate_legacy_table(self) -> None:
+        """Copy legacy golden-label rows into the agent-scoped platform table."""
+        if not self._table_exists("golden_labels"):
+            return
+        columns = self._table_columns("golden_labels")
+        if "agent_id" in columns:
+            rows = self._store.iter_rows(
+                "SELECT agent_id, case_id, label, basis, labeller, source, rationale, superseded, recorded_at "
+                "FROM golden_labels WHERE agent_id = ?",
+                (self._agent_id,),
+            )
+        else:
+            rows = self._store.iter_rows(
+                "SELECT case_id, label, basis, labeller, source, rationale, superseded, recorded_at "
+                "FROM golden_labels"
+            )
+        for row in rows:
+            self._store.execute(
+                "INSERT OR IGNORE INTO platform_golden_labels "
+                "(agent_id, case_id, label, basis, labeller, source, rationale, superseded, recorded_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    row.get("agent_id", self._agent_id),
+                    row["case_id"],
+                    row["label"],
+                    row["basis"],
+                    row["labeller"],
+                    row["source"],
+                    row["rationale"],
+                    row["superseded"],
+                    row["recorded_at"],
+                ),
+            )
+
+    def _table_exists(self, table: str) -> bool:
+        row = self._store.query_one(
+            "SELECT 1 AS hit FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        )
+        return row is not None
+
+    def _table_columns(self, table: str) -> set[str]:
+        return {str(row["name"]) for row in self._store.iter_rows(f"PRAGMA table_info({table})")}

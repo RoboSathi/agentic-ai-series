@@ -206,11 +206,13 @@ class AgenticTuiApp(App[None]):
         self.query_one("#query", Input).focus()
         self._status.bind_tokens(self._tokens)
         self._panel.note(
-            "════════════════ AGENT OPERATIONS CONSOLE ════════════════",
+            "Author = RoboSathi | robosathi.com",
             style="bold cyan",
         )
+
         self._panel.note(
-            "Author = RoboSathi | robosathi.com",
+            "Before I can look anything up, I need to verify your account.\n"
+            f"Please share your 7-character user code.",
             style="yellow",
         )
 

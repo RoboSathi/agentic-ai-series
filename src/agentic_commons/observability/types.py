@@ -56,6 +56,7 @@ class StatusEvent(BaseModel):
     rather than `tui` so any layer can emit one without importing the UI.
     """
 
+    agent_id: str = ""
     run_id: str = ""
     stage: str
     status: StatusKind
@@ -75,6 +76,7 @@ class Span(BaseModel):
     telemetry, not audit.
     """
 
+    agent_id: str = ""
     trace_id: str
     span_id: str
     parent_id: str | None = None

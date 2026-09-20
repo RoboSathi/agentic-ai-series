@@ -34,6 +34,7 @@ from agentic_commons.memory.types import (
     WriteResult,
 )
 from agentic_commons.observability.types import utc_now
+from agentic_commons.persistence import PlatformStore
 
 # Which store a category belongs in is a semantic decision (E13); these
 # are the two the pipeline can infer structurally, and everything else
@@ -63,11 +64,12 @@ class MemoryWritePipelineImpl:
         episodic: EpisodicStore | None = None,
         procedural: ProceduralStore | None = None,
         authorizer: WriteAuthorizer | None = None,
+        platform_store: PlatformStore | None = None,
     ) -> None:
         settings = get_settings().memory.write_pipeline
-        self._semantic = semantic or SemanticStore()
+        self._semantic = semantic or SemanticStore(platform_store)
         self._episodic = episodic or EpisodicStore()
-        self._procedural = procedural or ProceduralStore()
+        self._procedural = procedural or ProceduralStore(platform_store)
         self._authorizer = authorizer
         self._enabled = settings.enabled
         self._auto_commit = settings.auto_commit_threshold

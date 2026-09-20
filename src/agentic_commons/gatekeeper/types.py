@@ -78,6 +78,7 @@ class AuthorityDecision(BaseModel):
 class LedgerEntry(BaseModel):
     """One recorded consumption against a cumulative budget."""
 
+    agent_id: str = ""
     ledger_key: str
     action_class: str
     actor: str

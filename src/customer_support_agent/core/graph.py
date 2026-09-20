@@ -929,9 +929,13 @@ class CustomerSupportAgent:
             results.append(text)
             decisions.append(decision)
             self._note(state, f"result_of_{requested.name}", text, category="tool_result")
-            outputs.append(
-                Message(role="tool", content=text, tool_call_id=requested.id or requested.name)
-            )
+            return {
+                "messages": outputs,
+                "tool_results": [*state.tool_results, *results],
+                "decisions": [*state.decisions, *decisions],
+                "escalated": state.escalated
+                             or any("escalate" in d for d in decisions),
+            }
 
     async def finalize(self, state: AgentState) -> dict[str, Any]:
         """One tool-free call so the customer always gets an answer.
@@ -982,13 +986,16 @@ class CustomerSupportAgent:
             summary="Generating the final customer response",
             fields={"purpose": "reply_revision"},
         )
-        result = await self._llm.complete(
+        # Fix: Make retry with exponential backoff + jitter (resilient)
+        result = await self._call_model(
             CompletionRequest(
                 messages=[
                     *self._prompt_messages(state),
                     Message(role="user", content=build_reply_instruction()),
                 ]
-            )
+            ),
+            state,
+            f"{state.session_id}:finalize:{state.tool_rounds}",
         )
         self._done(
             "llm_call",

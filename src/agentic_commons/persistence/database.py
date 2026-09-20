@@ -18,9 +18,9 @@ IN_MEMORY = ":memory:"
 class Repository(Protocol[T]):
     """Aggregate-oriented storage interface (LLD §4).
 
-    Concrete repositories live with their aggregate (e.g.
-    `customer_support_agent/core/repositories.py`) and depend on
-    `SqliteConnectionPool`, never on `sqlite3` directly.
+    Concrete repositories live with their owning agent/domain and depend on
+    `SqliteConnectionPool`, never on `sqlite3` directly. Platform-owned
+    common state uses the higher-level `PlatformStore` contract.
     """
 
     def get(self, id: str) -> T | None: ...

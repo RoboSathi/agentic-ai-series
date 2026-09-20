@@ -23,6 +23,7 @@ Decision = Literal["allow", "deny", "escalate"]
 class AuditEntry(BaseModel):
     """One consequential decision, attributable to a versioned tuple (E33)."""
 
+    agent_id: str = ""
     trace_id: str
     actor: str
     action: str = ""

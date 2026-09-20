@@ -18,6 +18,10 @@
 overlays:
   - src/customer_support_agent/config/config.yaml
 
+agent:
+  id: unnamed_agent
+  version: dev
+
 config:
   enabled: true
 
@@ -121,6 +125,8 @@ audit:
 
 observability:
   enabled: true
+  analytics_backend: duckdb
+  analytics_db_path: data/observability.duckdb
   langsmith_enabled: false
   langsmith_project: agentic-harness-core
   persist_traces: true

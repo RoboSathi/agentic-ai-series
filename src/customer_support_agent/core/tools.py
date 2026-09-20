@@ -174,8 +174,30 @@ class SupportTools:
         order = self._owned_order(order_id)
         if order is None:
             return ToolResult(success=False, error=_NOT_FOUND.format(order_id=order_id))
-        if not order.is_refund_eligible or order.already_refunded:
-            return ToolResult(success=False, error=order.refund_ineligibility_reason)
+        if order.already_refunded:
+            return ToolResult(
+                success=False,
+                error=order.refund_ineligibility_reason,
+                error_code="already_refunded",
+                data={
+                    "order_id": order.order_id,
+                    "refund_status": order.refund_status,
+                    "refund_eligible": False,
+                },
+            )
+
+        if not order.is_refund_eligible:
+            return ToolResult(
+                success=False,
+                error=order.refund_ineligibility_reason,
+                error_code="refund_ineligible",
+                data={
+                    "order_id": order.order_id,
+                    "refund_status": order.refund_status,
+                    "refund_eligible": False,
+                },
+            )
+
         result = await self._saga.issue(order, amount, reason)
         if not result.succeeded:
             return ToolResult(
@@ -197,8 +219,30 @@ class SupportTools:
         order = self._owned_order(order_id)
         if order is None:
             return ToolResult(success=False, error=_NOT_FOUND.format(order_id=order_id))
-        if not order.is_refund_eligible or order.already_refunded:
-            return ToolResult(success=False, error=order.refund_ineligibility_reason)
+        if order.already_refunded:
+            return ToolResult(
+                success=False,
+                error=order.refund_ineligibility_reason,
+                error_code="already_refunded",
+                data={
+                    "order_id": order.order_id,
+                    "refund_status": order.refund_status,
+                    "refund_eligible": False,
+                },
+            )
+
+        if not order.is_refund_eligible:
+            return ToolResult(
+                success=False,
+                error=order.refund_ineligibility_reason,
+                error_code="refund_ineligible",
+                data={
+                    "order_id": order.order_id,
+                    "refund_status": order.refund_status,
+                    "refund_eligible": False,
+                },
+            )
+
         existing = self._hitl.pending_for_order(order_id)
         if existing is not None:
             return ToolResult(

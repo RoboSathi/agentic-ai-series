@@ -53,6 +53,15 @@ class ConfigSettings(YamlBackedSettings):
 
     model_config = SettingsConfigDict(env_prefix="CONFIG__")
 
+class AgentIdentitySettings(YamlBackedSettings):
+    """Identity stamped onto shared platform observability records."""
+
+    _yaml_section = "agent"
+
+    id: str
+    version: str
+
+    model_config = SettingsConfigDict(env_prefix="AGENT__")
 
 class LoggingSettings(YamlBackedSettings):
     """File and console logging (LLD §2)."""
@@ -199,6 +208,8 @@ class ObservabilitySettings(YamlBackedSettings):
 
     _yaml_section = "observability"
     enabled: bool
+    analytics_backend: str
+    analytics_db_path: str
     langsmith_enabled: bool
     langsmith_project: str
     persist_traces: bool
@@ -617,6 +628,7 @@ class AppConfig(BaseSettings):
     # Each nested model fills its required fields from config.yaml via
     # YamlBackedSettings; mypy can't see that, hence the ignores.
     config: ConfigSettings = Field(default_factory=lambda: ConfigSettings())  # type: ignore[call-arg]
+    agent: AgentIdentitySettings = Field(default_factory=lambda: AgentIdentitySettings())   # type: ignore[call-arg]
     logging: LoggingSettings = Field(default_factory=lambda: LoggingSettings())  # type: ignore[call-arg]
     llm: LLMSettings = Field(default_factory=lambda: LLMSettings())  # type: ignore[call-arg]
     persistence: PersistenceSettings = Field(

@@ -22,6 +22,7 @@ from agentic_commons.memory.types import (
 )
 from agentic_commons.memory.working.memory import WorkingMemory
 from agentic_commons.memory.write_pipeline import MemoryWritePipelineImpl
+from agentic_commons.persistence import PlatformStore
 
 
 @instrument("memory")
@@ -36,13 +37,17 @@ class MemoryFacade:
         procedural: ProceduralStore | None = None,
         pipeline: MemoryWritePipelineImpl | None = None,
         relevance: RelevanceScorer | None = None,
+        platform_store: PlatformStore | None = None,
     ) -> None:
         self.working = working or WorkingMemory()
         self.episodic = episodic or EpisodicStore()
-        self.semantic = semantic or SemanticStore()
-        self.procedural = procedural or ProceduralStore()
+        self.semantic = semantic or SemanticStore(platform_store)
+        self.procedural = procedural or ProceduralStore(platform_store)
         self.pipeline = pipeline or MemoryWritePipelineImpl(
-            semantic=self.semantic, episodic=self.episodic, procedural=self.procedural
+            semantic=self.semantic,
+            episodic=self.episodic,
+            procedural=self.procedural,
+            platform_store=platform_store,
         )
         self._relevance = relevance
         self._scorer = CompositeRetrievalScorer()

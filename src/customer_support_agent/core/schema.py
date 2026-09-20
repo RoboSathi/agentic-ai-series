@@ -127,6 +127,7 @@ class AgentState(BaseModel):
     context: str = ""
     tool_rounds: int = 0
     tool_results: list[str] = Field(default_factory=list)
+    authoritative_facts: dict[str, Any] = Field(default_factory=dict)
     decisions: list[str] = Field(default_factory=list)
     escalated: bool = False
     response: str = ""

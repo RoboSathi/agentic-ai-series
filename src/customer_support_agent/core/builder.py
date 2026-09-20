@@ -30,9 +30,13 @@ from agentic_commons.hallucination_protection import DetectionLadder
 from agentic_commons.llm.client import LLMClient, create_llm_client
 from agentic_commons.llm.encoders import create_reranker
 from agentic_commons.memory import MemoryFacade
-from agentic_commons.observability import SLORegistry, StageReporter
+from agentic_commons.observability import (
+    DuckDbObservabilityStore,
+    SLORegistry,
+    StageReporter,
+)
 from agentic_commons.observability.tracer import LocalTracer
-from agentic_commons.persistence import SqliteConnectionPool
+from agentic_commons.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agentic_commons.resilience import SqliteIdempotencyGuard
 from agentic_commons.security import Authorizer, PIIFilterImpl, SecuritySuite
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
@@ -205,22 +209,38 @@ def build_agent(
     """
     settings = get_settings()
     connection = pool or SqliteConnectionPool()
+    platform_store = SqlitePlatformStore(connection, agent_id=get_settings().agent.id)
     scoring = cascade or create_scoring_cascade()
     remember = settings.memory.enabled if with_memory is None else with_memory
     observing = settings.observability.enabled if observe is None else observe
+    agent_id = settings.agent.id
+
+    # One shared analytics connection per running agent process. The store is
+    # intentionally separate from the agent's relational/business SQLite
+    # database: every agent writes its observability here and identifies its
+    # records with agent_id.
+    audit_needs_store = audit is None and settings.audit.enabled
+    observability_store = (
+        DuckDbObservabilityStore()
+        if (observing or audit_needs_store)
+        else None
+    )
 
     orders = OrdersRepository(connection)
     hitl = HitlQueueRepository(connection)
     refunds = RefundLedgerRepository(connection)
 
-    saga = RefundSaga(orders, refunds, idempotency=SqliteIdempotencyGuard(connection))
+    idempotency = SqliteIdempotencyGuard(platform_store)
+    saga = RefundSaga(orders, refunds, idempotency=idempotency)
     tools = SupportTools(orders, hitl, refunds, saga)
 
     registry = NamespacedToolRegistry()
     registry.register_all(tools.definitions())
 
     facade = (
-        memory if memory is not None else (MemoryFacade(relevance=scoring) if remember else None)
+        memory
+        if memory is not None
+        else (MemoryFacade(relevance=scoring, platform_store=platform_store) if remember else None)
     )
 
     sources: list[object] = [PolicyContextSource(), OrderCorpusContextSource(orders, scoring)]
@@ -250,8 +270,12 @@ def build_agent(
         gatekeeper=gatekeeper
         or GatekeeperImpl(
             authorizer=Authorizer(),
-            ledger=CumulativeLedger(connection),
-            audit=audit or create_audit_ledger(connection),
+            ledger=CumulativeLedger(platform_store),
+            audit=audit
+            or create_audit_ledger(
+                store=observability_store,
+                agent_id=agent_id,
+            ),
         ),
         registry=registry,
         tools=tools,
@@ -271,7 +295,15 @@ def build_agent(
         # tool arguments and the result, so an unredacted trace is a
         # copy of the customer's data in a second place — and FR-44
         # says there is no path that writes one. There was: this one.
-        tracer=LocalTracer(connection, redactor=PIIFilterImpl()) if observing else None,
+        tracer=(
+            LocalTracer(
+                redactor=PIIFilterImpl(),
+                store=observability_store,
+                agent_id=agent_id,
+            )
+            if observing
+            else None
+        ),
         slos=SLORegistry() if observing else None,
         # Grounding answers "is this reply supported by what the tools
         # returned?", which is a hallucination-protection question and
@@ -293,13 +325,21 @@ def build_review_service(
     of the escalation path, and the agent must have no route to it.
     """
     connection = pool or SqliteConnectionPool()
+    platform_store = SqlitePlatformStore(connection, agent_id=get_settings().agent.id)
     orders = OrdersRepository(connection)
     refunds = RefundLedgerRepository(connection)
+    observability_store = (
+        DuckDbObservabilityStore() if get_settings().audit.enabled else None
+    )
     return ReviewQueueService(
         queue=HitlQueueRepository(connection),
         orders=orders,
-        saga=RefundSaga(orders, refunds, idempotency=SqliteIdempotencyGuard(connection)),
-        audit=audit or create_audit_ledger(connection),
+        saga=RefundSaga(orders, refunds, idempotency=SqliteIdempotencyGuard(platform_store)),
+        audit=audit
+        or create_audit_ledger(
+            store=observability_store,
+            agent_id=get_settings().agent.id,
+        ),
     )
 
 

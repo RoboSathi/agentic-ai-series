@@ -38,6 +38,7 @@ class ToolResult(BaseModel):
     output: str = ""
     data: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
+    error_code: str | None = None
 
 
 ToolHandler = Union[Callable[..., ToolResult], Callable[..., Awaitable[ToolResult]]]

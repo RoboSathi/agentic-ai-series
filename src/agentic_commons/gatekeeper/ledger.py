@@ -1,28 +1,24 @@
-"""The cumulative ledger (E02, LLD §11).
+"""Cumulative action-spend ledger (LLD §11).
 
-Every individual action can be within policy while the sequence is not.
-Eighty separate $50 refunds are eighty permitted actions and one $4,000
-loss — the structuring attack, borrowed intact from financial crime,
-where a reportable transaction is split below the reporting threshold.
-
-A per-call check cannot see this by construction: it is given one call
-and asked whether that call is allowed. The ledger is the component that
-holds the memory a per-call check lacks, which is why it is a first-class
-part of the mediation point rather than an analytics job that notices
-afterwards.
+The ledger is platform-owned operational state. It is stored in the shared
+SQLite file, but only through ``PlatformStore`` and always scoped by the
+current ``agent_id``. That keeps the common Gatekeeper independent of any
+agent's domain tables.
 """
 
 from datetime import timedelta
+from typing import Any
 
 from agentic_commons.config import get_settings
 from agentic_commons.gatekeeper.types import LedgerEntry, LedgerState
 from agentic_commons.logging import get_logger, instrument, logged
 from agentic_commons.observability.types import utc_now
-from agentic_commons.persistence import SqliteConnectionPool
+from agentic_commons.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS gatekeeper_ledger (
+CREATE TABLE IF NOT EXISTS platform_gatekeeper_ledger (
     entry_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id     TEXT NOT NULL,
     ledger_key   TEXT NOT NULL,
     action_class TEXT NOT NULL,
     actor        TEXT NOT NULL,
@@ -30,47 +26,49 @@ CREATE TABLE IF NOT EXISTS gatekeeper_ledger (
     trace_id     TEXT NOT NULL,
     recorded_at  TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_ledger_window
-    ON gatekeeper_ledger (ledger_key, action_class, recorded_at);
+CREATE INDEX IF NOT EXISTS idx_platform_gatekeeper_window
+    ON platform_gatekeeper_ledger (agent_id, ledger_key, action_class, recorded_at);
 """
 
 
 @instrument("gatekeeper")
 class CumulativeLedger:
-    """Running totals per (ledger key, action class) inside a rolling window."""
+    """Running totals per (agent, ledger key, action class) inside a rolling window."""
 
-    def __init__(self, pool: SqliteConnectionPool | None = None) -> None:
+    def __init__(
+        self,
+        store: PlatformStore | SqliteConnectionPool | None = None,
+        *,
+        agent_id: str | None = None,
+    ) -> None:
         settings = get_settings().gatekeeper.ledger
-        self._pool = pool or SqliteConnectionPool()
+        self._store = as_platform_store(store, agent_id=agent_id)
+        self._agent_id = agent_id or self._store.agent_id
         self._enabled = settings.enabled
         self._window = timedelta(hours=settings.window_hours)
         self._action_classes = settings.action_classes
         self._thresholds = settings.thresholds_usd
         self._logger = get_logger("gatekeeper")
-        self._pool.execute_script(_SCHEMA)
+        self._store.execute_script(_SCHEMA)
+        self._migrate_legacy_table()
 
     @property
     def enabled(self) -> bool:
         """Whether cumulative accounting is active."""
         return self._enabled
 
-    def class_of(self, action: str) -> str:
-        """Which cumulative budget an action consumes from.
+    @property
+    def agent_id(self) -> str:
+        """Agent whose cumulative budget this ledger enforces."""
+        return self._agent_id
 
-        Mapped explicitly rather than derived from the action's name: an
-        action whose class is inferred from its spelling silently stops
-        being tracked the moment someone renames the tool.
-        """
+    def class_of(self, action: str) -> str:
+        """Which cumulative budget an action consumes from."""
         bare = action.rsplit(".", maxsplit=1)[-1]
         return self._action_classes.get(bare, bare)
 
     def threshold_for(self, action_class: str) -> float:
-        """The cumulative cap for an action class.
-
-        An action class with no configured threshold is uncapped, and
-        that is logged: an uncapped consequential action is a policy gap
-        someone should see, not a silent default.
-        """
+        """The cumulative cap for an action class."""
         threshold = self._thresholds.get(action_class)
         if threshold is None:
             self._logger.debug("No cumulative threshold configured", action_class=action_class)
@@ -79,20 +77,15 @@ class CumulativeLedger:
 
     def window_total(self, ledger_key: str, action_class: str) -> float:
         """Total consumed for a key and class inside the rolling window."""
-        row = self._pool.query_one(
-            "SELECT COALESCE(SUM(amount), 0) AS total FROM gatekeeper_ledger "
-            "WHERE ledger_key = ? AND action_class = ? AND recorded_at >= ?",
-            (ledger_key, action_class, self._window_start()),
+        row = self._store.query_one(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM platform_gatekeeper_ledger "
+            "WHERE agent_id = ? AND ledger_key = ? AND action_class = ? AND recorded_at >= ?",
+            (self._agent_id, ledger_key, action_class, self._window_start()),
         )
         return float(row["total"]) if row else 0.0
 
     def state(self, ledger_key: str, action_class: str, pending: float = 0.0) -> LedgerState:
-        """Where this key stands, optionally including a call not yet made.
-
-        `pending` is what makes this a gate rather than a report: the
-        eighty-first refund is refused *before* it is issued, because the
-        check asks "would this take us over?" and not "did it?".
-        """
+        """Where this key stands, optionally including a call not yet made."""
         total = self.window_total(ledger_key, action_class) + pending
         threshold = self.threshold_for(action_class)
         return LedgerState(
@@ -115,10 +108,12 @@ class CumulativeLedger:
         """Record a consumed amount and return the resulting state."""
         if not self._enabled:
             return self.state(entry.ledger_key, entry.action_class)
-        self._pool.execute(
-            "INSERT INTO gatekeeper_ledger (ledger_key, action_class, actor, amount, "
-            "trace_id, recorded_at) VALUES (?, ?, ?, ?, ?, ?)",
+        self._store.execute(
+            "INSERT INTO platform_gatekeeper_ledger "
+            "(agent_id, ledger_key, action_class, actor, amount, trace_id, recorded_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
+                self._agent_id,
                 entry.ledger_key,
                 entry.action_class,
                 entry.actor,
@@ -144,10 +139,10 @@ class CumulativeLedger:
 
     def entry_count(self, ledger_key: str, action_class: str) -> int:
         """How many entries a key has inside the window."""
-        row = self._pool.query_one(
-            "SELECT COUNT(*) AS n FROM gatekeeper_ledger "
-            "WHERE ledger_key = ? AND action_class = ? AND recorded_at >= ?",
-            (ledger_key, action_class, self._window_start()),
+        row = self._store.query_one(
+            "SELECT COUNT(*) AS n FROM platform_gatekeeper_ledger "
+            "WHERE agent_id = ? AND ledger_key = ? AND action_class = ? AND recorded_at >= ?",
+            (self._agent_id, ledger_key, action_class, self._window_start()),
         )
         return int(row["n"]) if row else 0
 
@@ -155,13 +150,64 @@ class CumulativeLedger:
         """Every entry in the window — the evidence behind a refusal."""
         return [
             LedgerEntry.model_validate({k: v for k, v in row.items() if k != "entry_id"})
-            for row in self._pool.iter_rows(
-                "SELECT * FROM gatekeeper_ledger WHERE ledger_key = ? AND action_class = ? "
-                "AND recorded_at >= ? ORDER BY entry_id",
-                (ledger_key, action_class, self._window_start()),
+            for row in self._store.iter_rows(
+                "SELECT agent_id, ledger_key, action_class, actor, amount, trace_id, recorded_at "
+                "FROM platform_gatekeeper_ledger WHERE agent_id = ? AND ledger_key = ? "
+                "AND action_class = ? AND recorded_at >= ? ORDER BY entry_id",
+                (self._agent_id, ledger_key, action_class, self._window_start()),
             )
         ]
 
     def _window_start(self) -> str:
         """ISO timestamp marking the start of the rolling window."""
         return (utc_now() - self._window).isoformat()
+
+    def _migrate_legacy_table(self) -> None:
+        """Copy legacy gatekeeper rows into the agent-scoped platform table once."""
+        if not self._table_exists("gatekeeper_ledger"):
+            return
+        columns = self._table_columns("gatekeeper_ledger")
+        if "agent_id" in columns:
+            rows = self._store.iter_rows(
+                "SELECT agent_id, ledger_key, action_class, actor, amount, trace_id, recorded_at "
+                "FROM gatekeeper_ledger WHERE agent_id = ?",
+                (self._agent_id,),
+            )
+        else:
+            rows = self._store.iter_rows(
+                "SELECT ledger_key, action_class, actor, amount, trace_id, recorded_at "
+                "FROM gatekeeper_ledger"
+            )
+        for row in rows:
+            values = (
+                row.get("agent_id", self._agent_id),
+                row["ledger_key"],
+                row["action_class"],
+                row["actor"],
+                row["amount"],
+                row["trace_id"],
+                row["recorded_at"],
+            )
+            exists = self._store.query_one(
+                "SELECT 1 AS hit FROM platform_gatekeeper_ledger "
+                "WHERE agent_id = ? AND ledger_key = ? AND action_class = ? "
+                "AND actor = ? AND amount = ? AND trace_id = ? AND recorded_at = ? LIMIT 1",
+                values,
+            )
+            if exists is None:
+                self._store.execute(
+                    "INSERT INTO platform_gatekeeper_ledger "
+                    "(agent_id, ledger_key, action_class, actor, amount, trace_id, recorded_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    values,
+                )
+
+    def _table_exists(self, table: str) -> bool:
+        row = self._store.query_one(
+            "SELECT 1 AS hit FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        )
+        return row is not None
+
+    def _table_columns(self, table: str) -> set[str]:
+        return {str(row["name"]) for row in self._store.iter_rows(f"PRAGMA table_info({table})")}

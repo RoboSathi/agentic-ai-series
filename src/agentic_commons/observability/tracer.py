@@ -4,6 +4,7 @@ Every hop is traced, and every trace passes through a redactor before it is
 persisted (FR-44) — there is no path that writes an unfiltered span to disk.
 """
 
+import json
 import uuid
 from contextlib import contextmanager
 from typing import Any, Iterator, Protocol, runtime_checkable
@@ -11,10 +12,12 @@ from typing import Any, Iterator, Protocol, runtime_checkable
 from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger, set_current_trace_id
 from agentic_commons.observability.types import Span, utc_now
-from agentic_commons.persistence import SqliteConnectionPool
+from agentic_commons.observability.store import DuckDbObservabilityStore
+from agentic_commons.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
 
-_CREATE_SPANS_TABLE = """
-CREATE TABLE IF NOT EXISTS trace_spans (
+_CREATE_SQLITE_SPANS_TABLE = """
+CREATE TABLE IF NOT EXISTS platform_trace_spans (
+    agent_id TEXT NOT NULL,
     span_id TEXT PRIMARY KEY,
     trace_id TEXT NOT NULL,
     parent_id TEXT,
@@ -31,6 +34,29 @@ CREATE TABLE IF NOT EXISTS trace_spans (
     cost_usd REAL NOT NULL,
     attributes TEXT NOT NULL
 )
+"""
+
+_CREATE_DUCKDB_SPANS_TABLE = """
+CREATE TABLE IF NOT EXISTS platform_trace_spans (
+    agent_id VARCHAR NOT NULL,
+    span_id VARCHAR PRIMARY KEY,
+    trace_id VARCHAR NOT NULL,
+    parent_id VARCHAR,
+    name VARCHAR NOT NULL,
+    actor VARCHAR,
+    tool VARCHAR,
+    policy_version VARCHAR,
+    model_version VARCHAR,
+    state_transition VARCHAR,
+    result VARCHAR,
+    started_at VARCHAR NOT NULL,
+    ended_at VARCHAR,
+    latency_ms DOUBLE NOT NULL,
+    cost_usd DOUBLE NOT NULL,
+    attributes VARCHAR NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_platform_trace_trace
+    ON platform_trace_spans (agent_id, trace_id);
 """
 
 
@@ -51,17 +77,21 @@ class Tracer(Protocol):
 
 
 class LocalTracer:
-    """In-process tracer that optionally persists spans to SQLite.
+    """In-process tracer with shared DuckDB persistence for observed agents.
 
-    Spans are kept in memory for the current process (so a test or the TUI
-    can reconstruct a trace immediately) and written through the redactor
-    when persistence is enabled.
+    The legacy ``pool`` parameter remains supported for older episode demos.
+    New agents should pass ``store`` so all traces land in the shared
+    observability database rather than an agent's business database.
     """
 
     def __init__(
         self,
         pool: SqliteConnectionPool | None = None,
         redactor: Redactor | None = None,
+        *,
+        store: DuckDbObservabilityStore | None = None,
+        platform_store: PlatformStore | None = None,
+        agent_id: str | None = None,
     ) -> None:
         self._settings = get_settings().observability
         self._audit_settings = get_settings().audit
@@ -70,8 +100,14 @@ class LocalTracer:
         self._spans: list[Span] = []
         self._subscribers: list[Any] = []
         self._pool = pool
-        if self._pool is not None and self._settings.persist_traces:
-            self._pool.execute_script(_CREATE_SPANS_TABLE)
+        self._store = store
+        self._platform_store = platform_store or (as_platform_store(pool, agent_id=agent_id) if pool is not None else None)
+        self._agent_id = agent_id or (self._platform_store.agent_id if self._platform_store else get_settings().agent.id)
+        if self._store is not None and self._settings.persist_traces:
+            self._store.execute_script(_CREATE_DUCKDB_SPANS_TABLE)
+        elif self._platform_store is not None and self._settings.persist_traces:
+            self._platform_store.execute_script(_CREATE_SQLITE_SPANS_TABLE)
+            self._migrate_legacy_sqlite_spans()
 
     def subscribe(self, subscriber: Any) -> None:
         """Register an observer notified as each span completes (cost, SLOs)."""
@@ -82,6 +118,7 @@ class LocalTracer:
         trace_id = parent.trace_id if parent else uuid.uuid4().hex
         set_current_trace_id(trace_id)
         span = Span(
+            agent_id=fields.pop("agent_id", self._agent_id),
             trace_id=trace_id,
             span_id=uuid.uuid4().hex,
             parent_id=parent.span_id if parent else None,
@@ -145,32 +182,95 @@ class LocalTracer:
         return list(self._spans)
 
     def _persist(self, span: Span) -> None:
-        if self._pool is None or not self._settings.persist_traces:
+        if not self._settings.persist_traces:
+            return
+        if self._store is None and self._platform_store is None:
             return
         redacted = self._redact(span)
-        self._pool.execute(
-            "INSERT OR REPLACE INTO trace_spans (span_id, trace_id, parent_id, name, actor, "
-            "tool, policy_version, model_version, state_transition, result, started_at, "
-            "ended_at, latency_ms, cost_usd, attributes) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                redacted.span_id,
-                redacted.trace_id,
-                redacted.parent_id,
-                redacted.name,
-                redacted.actor,
-                redacted.tool,
-                redacted.policy_version,
-                redacted.model_version,
-                redacted.state_transition,
-                redacted.result,
-                redacted.started_at.isoformat(),
-                redacted.ended_at.isoformat() if redacted.ended_at else None,
-                redacted.latency_ms,
-                redacted.cost_usd,
-                str(redacted.attributes),
-            ),
+        table = "platform_trace_spans"
+        sql = (
+            f"INSERT OR REPLACE INTO {table} "
+            "(agent_id, span_id, trace_id, parent_id, name, actor, tool, policy_version, "
+            "model_version, state_transition, result, started_at, ended_at, latency_ms, "
+            "cost_usd, attributes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
+        params = (
+            redacted.agent_id,
+            redacted.span_id,
+            redacted.trace_id,
+            redacted.parent_id,
+            redacted.name,
+            redacted.actor,
+            redacted.tool,
+            redacted.policy_version,
+            redacted.model_version,
+            redacted.state_transition,
+            redacted.result,
+            redacted.started_at.isoformat(),
+            redacted.ended_at.isoformat() if redacted.ended_at else None,
+            redacted.latency_ms,
+            redacted.cost_usd,
+            json.dumps(redacted.attributes, default=str),
+        )
+        if self._store is not None:
+            self._store.execute(sql, params)
+        else:
+            # Legacy episode compatibility only; new agents use DuckDB.
+            self._platform_store.execute(sql, params)  # type: ignore[union-attr]
+
+    def _migrate_legacy_sqlite_spans(self) -> None:
+        """Copy legacy SQLite spans into the platform-owned trace table."""
+        if self._platform_store is None:
+            return
+        exists = self._platform_store.query_one(
+            "SELECT 1 AS hit FROM sqlite_master WHERE type = 'table' AND name = ?",
+            ("trace_spans",),
+        )
+        if exists is None:
+            return
+        columns = {
+            str(row["name"])
+            for row in self._platform_store.iter_rows("PRAGMA table_info(trace_spans)")
+        }
+        if "agent_id" in columns:
+            rows = self._platform_store.iter_rows(
+                "SELECT agent_id, span_id, trace_id, parent_id, name, actor, tool, policy_version, "
+                "model_version, state_transition, result, started_at, ended_at, latency_ms, cost_usd, attributes "
+                "FROM trace_spans WHERE agent_id = ?",
+                (self._agent_id,),
+            )
+        else:
+            rows = self._platform_store.iter_rows(
+                "SELECT span_id, trace_id, parent_id, name, actor, tool, policy_version, "
+                "model_version, state_transition, result, started_at, ended_at, latency_ms, cost_usd, attributes "
+                "FROM trace_spans"
+            )
+        for row in rows:
+            values = (
+                row.get("agent_id", self._agent_id),
+                row["span_id"],
+                row["trace_id"],
+                row["parent_id"],
+                row["name"],
+                row["actor"],
+                row["tool"],
+                row["policy_version"],
+                row["model_version"],
+                row["state_transition"],
+                row["result"],
+                row["started_at"],
+                row["ended_at"],
+                row["latency_ms"],
+                row["cost_usd"],
+                row["attributes"],
+            )
+            self._platform_store.execute(
+                "INSERT OR REPLACE INTO platform_trace_spans "
+                "(agent_id, span_id, trace_id, parent_id, name, actor, tool, policy_version, "
+                "model_version, state_transition, result, started_at, ended_at, latency_ms, "
+                "cost_usd, attributes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                values,
+            )
 
     def _redact(self, span: Span) -> Span:
         """Apply the PII pass — no trace reaches storage unfiltered."""

@@ -12,6 +12,10 @@
 
 # Where this agent's data lives. Each agent owns its own database and its
 # own dummy data — nothing writes into the shared library's folder.
+agent:
+  id: customer_support_agent
+  version: 0.1.0
+
 persistence:
   db_path: src/customer_support_agent/dummy_data/agentic.db
 
