@@ -67,6 +67,21 @@ class CumulativeLedger:
         bare = action.rsplit(".", maxsplit=1)[-1]
         return self._action_classes.get(bare, bare)
 
+    def is_budgeted(self, action: str) -> bool:
+        """Whether this action is explicitly assigned to a cumulative budget.
+
+        Cumulative accounting is an opt-in financial/risk control. An action
+        that is not mapped is not silently assigned an infinite budget. This
+        prevents read operations and non-financial writes such as queuing a
+        review request from polluting the spend ledger.
+        """
+        bare = action.rsplit(".", maxsplit=1)[-1]
+        return bare in self._action_classes
+
+    def threshold_configured(self, action_class: str) -> bool:
+        """Whether a finite policy threshold exists for a budget class."""
+        return action_class in self._thresholds
+
     def threshold_for(self, action_class: str) -> float:
         """The cumulative cap for an action class."""
         threshold = self._thresholds.get(action_class)

@@ -536,15 +536,24 @@ class CustomerSupportAgent:
         fields = _basic_sanity_fields(result)
 
         if result.passed:
+            deferred = result.reason_code == "ORDER_REFERENCE_NOT_PRESENT"
             self._done(
                 "basic_sanity",
-                summary="Basic sanity checks passed",
+                summary=(
+                    "Order reference not provided · validation deferred"
+                    if deferred
+                    else "Basic sanity checks passed"
+                ),
                 fields=fields,
             )
             return {
                 "decisions": [
                     *state.decisions,
-                    f"basic_sanity: pass ({result.reason_code})",
+                    (
+                        f"basic_sanity: deferred ({result.reason_code})"
+                        if deferred
+                        else f"basic_sanity: pass ({result.reason_code})"
+                    ),
                 ],
                 "metadata": {
                     **state.metadata,
@@ -1673,17 +1682,28 @@ def _basic_sanity_fields(result: Any) -> dict[str, Any]:
         "already_refunded",
         "refund_eligible",
         "operation",
+        "order_id_present",
+        "lookup_attempted",
     ):
         if key in facts:
             fields[key] = facts[key]
     for finding in result.findings:
         evidence = finding.evidence if isinstance(finding.evidence, dict) else {}
+        status = (
+            "SKIPPED"
+            if not finding.applicable
+            else "PASS"
+            if finding.passed
+            else "FAIL"
+        )
         fields["checks"].append(
             {
                 "name": finding.check.replace("_", " ").title(),
-                "status": "PASS" if finding.passed else "FAIL",
+                "status": status,
                 "reason_code": (
-                    f"BASIC_SANITY_{finding.check.upper()}_PASS"
+                    f"BASIC_SANITY_{finding.check.upper()}_DEFERRED"
+                    if not finding.applicable
+                    else f"BASIC_SANITY_{finding.check.upper()}_PASS"
                     if finding.passed
                     else result.reason_code
                 ),
@@ -1711,33 +1731,24 @@ def _control_loop_fields(report: ControlLoopReport) -> dict[str, Any]:
         "reason_code": report.reason_code,
         "checks": [check.model_dump(mode="json") for check in report.checks],
     }
+    # The fingerprint is only useful when diagnosing duplicate suppression.
     if report.fingerprint:
         fields["fingerprint"] = report.fingerprint
     return fields
 
 
 def _gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
-    """Render one concise Gatekeeper report; checks carry detailed evidence."""
-    amount = call.params.get("amount")
+    """Render one concise Gatekeeper report; checks carry all detailed evidence."""
     fields: dict[str, Any] = {
+        "decision": decision.verdict,
+        "action": _display_tool_name(decision.action),
+        "effect": "write" if call.side_effecting else "read",
         "reason_code": decision.reason_code,
-        "surface": decision.surface,
-        "actor": decision.actor,
-        "authority": (
-            f"{decision.authority_source} · rank {decision.authority_rank}/"
-            f"{decision.required_authority_rank}"
-            if decision.authority_rank is not None and decision.required_authority_rank is not None
-            else decision.authority_source
-        ),
         "checks": [check.model_dump(mode="json") for check in decision.checks],
     }
-    if isinstance(amount, (int, float)):
+    amount = call.params.get("amount")
+    if isinstance(amount, (int, float)) and call.side_effecting:
         fields["amount"] = f"${float(amount):,.2f}"
-    if decision.cumulative_total or decision.threshold:
-        threshold = (
-            "∞" if decision.threshold == float("inf") else f"${decision.threshold:,.2f}"
-        )
-        fields["cumulative"] = f"${decision.cumulative_total:,.2f} / {threshold}"
     if decision.advisory is not None and decision.advisory.flagged:
         fields["advisory"] = decision.advisory.reason or True
     return fields

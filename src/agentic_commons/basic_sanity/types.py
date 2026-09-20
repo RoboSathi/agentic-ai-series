@@ -22,10 +22,16 @@ class BasicSanityRequest(BaseModel):
 
 
 class BasicSanityFinding(BaseModel):
-    """One deterministic sanity check and its evidence."""
+    """One deterministic sanity check and its evidence.
+
+    ``applicable=False`` means the finding was deliberately not evaluated
+    because its prerequisite was absent. This is different from a PASS: the
+    checker found nothing wrong, but it did not establish the fact.
+    """
 
     check: str
     passed: bool
+    applicable: bool = True
     reason: str = ""
     evidence: dict[str, Any] = Field(default_factory=dict)
 

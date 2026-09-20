@@ -224,7 +224,7 @@ class GatekeeperImpl:
     ) -> None:
         """Record a permitted action's actual consumption against the ledger."""
         spent = amount if amount is not None else _amount_of(call)
-        if spent <= 0:
+        if spent <= 0 or not self._ledger.is_budgeted(call.action):
             return
         self._ledger.record_and_check(
             LedgerEntry(
@@ -264,6 +264,30 @@ class GatekeeperImpl:
         self, call: ToolCall, context: AuthorityContext
     ) -> tuple[list[CheckReport], tuple[str, str, str, str] | None]:
         surface = self._surfaces.classify(call.action)
+
+        # ``surface`` describes the data surface, not whether this particular
+        # tool performs a write. A read against an editable table is still a
+        # read. Do not make the operator infer side effects from the surface
+        # class.
+        if not call.side_effecting:
+            check = CheckReport(
+                check_id="gatekeeper.surface",
+                name="Surface",
+                status="PASS",
+                reason_code="READ_ONLY_ACTION",
+                reason=(
+                    "Read-only action; no write is requested. The target surface "
+                    f"is classified as '{surface}'."
+                ),
+                observed={
+                    "operation": "read",
+                    "side_effecting": False,
+                    "surface": surface,
+                    "write_required": False,
+                },
+            )
+            return [check], None
+
         writable, reason = self._surfaces.is_writable_by_agent(surface)
         status = "PASS" if writable else "ESCALATE" if surface == "human_controlled" else "FAIL"
         reason_code = (
@@ -280,8 +304,11 @@ class GatekeeperImpl:
             reason_code=reason_code,
             reason=reason,
             observed={
+                "operation": "write",
+                "side_effecting": True,
                 "surface": surface,
                 "writable_by_agent": writable,
+                "write_required": True,
                 "blast_radius": call.blast_radius,
             },
         )
@@ -405,18 +432,32 @@ class GatekeeperImpl:
         result = self._basic_sanity.check(request)
         reports: list[CheckReport] = []
         for finding in result.findings:
+            status = (
+                "SKIPPED"
+                if not finding.applicable
+                else "PASS"
+                if finding.passed
+                else "FAIL"
+            )
+            reason_code = (
+                f"BASIC_SANITY_{finding.check.upper()}_DEFERRED"
+                if not finding.applicable
+                else f"BASIC_SANITY_{finding.check.upper()}_PASS"
+                if finding.passed
+                else result.reason_code
+            )
             reports.append(
                 CheckReport(
                     check_id=f"gatekeeper.basic_sanity.{finding.check}",
                     name=f"Basic sanity · {finding.check.replace('_', ' ')}",
-                    status="PASS" if finding.passed else "FAIL",
-                    reason_code=(
-                        f"BASIC_SANITY_{finding.check.upper()}_PASS"
-                        if finding.passed
-                        else result.reason_code
-                    ),
+                    status=status,
+                    reason_code=reason_code,
                     reason=finding.reason,
-                    observed={"check": finding.check, "passed": finding.passed},
+                    observed={
+                        "check": finding.check,
+                        "applicable": finding.applicable,
+                        "passed": finding.passed,
+                    },
                     evidence=finding.evidence,
                 )
             )
@@ -445,14 +486,48 @@ class GatekeeperImpl:
             return [
                 CheckReport(
                     check_id="gatekeeper.cumulative_limit",
-                    name="Cumulative limit",
+                    name="Cumulative budget",
                     status="SKIPPED",
                     reason_code="CUMULATIVE_POLICY_DISABLED",
                     reason="Cumulative spend accounting is disabled by configuration.",
                 )
             ], None, 0.0, 0.0
 
+        if not self._ledger.is_budgeted(call.action):
+            return [
+                CheckReport(
+                    check_id="gatekeeper.cumulative_limit",
+                    name="Cumulative budget",
+                    status="SKIPPED",
+                    reason_code="CUMULATIVE_NOT_APPLICABLE",
+                    reason=(
+                        "No cumulative spend budget is configured for this action; "
+                        "nothing is reserved or recorded in the spend ledger."
+                    ),
+                    observed={
+                        "action": call.action,
+                        "budgeted": False,
+                    },
+                )
+            ], None, 0.0, 0.0
+
         action_class = self._ledger.class_of(call.action)
+        if not self._ledger.threshold_configured(action_class):
+            reason = (
+                f"Cumulative budget class '{action_class}' is configured for "
+                "this action, but no threshold is configured."
+            )
+            return [
+                CheckReport(
+                    check_id="gatekeeper.cumulative_limit",
+                    name="Cumulative budget",
+                    status="FAIL",
+                    reason_code="CUMULATIVE_POLICY_MISCONFIGURED",
+                    reason=reason,
+                    observed={"action_class": action_class, "threshold_configured": False},
+                )
+            ], ("cumulative", "deny", "CUMULATIVE_POLICY_MISCONFIGURED", reason), 0.0, 0.0
+
         ledger_key = _ledger_key(context)
         previous = self._ledger.window_total(ledger_key, action_class)
         state = self._ledger.state(ledger_key, action_class, pending=amount)

@@ -63,6 +63,7 @@ SUMMARY_ACCENT_STYLES = {
 FIELD_PRIORITY = (
     "decision",
     "action",
+    "effect",
     "qualified_action",
     "reason_code",
     "question",
@@ -451,6 +452,11 @@ class StageEventWidget(Collapsible):
 
         if stage == "authentication":
             return "customer verified" if fields.get("verified") else "verification required"
+
+        if stage == "basic_sanity":
+            if fields.get("reason_code") == "ORDER_REFERENCE_NOT_PRESENT":
+                return "order reference not provided · validation deferred"
+            return "checks passed" if fields.get("passed") else "blocked"
 
         if stage == "prompt_injection_check":
             return "blocked" if fields.get("detected") else "check passed"

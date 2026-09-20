@@ -73,15 +73,33 @@ class OrderSanityCheck(BasicSanityChecker):
         if order_id is None:
             return BasicSanityResult(
                 passed=True,
-                reason_code="NO_EXPLICIT_ORDER_ID",
+                reason_code="ORDER_REFERENCE_NOT_PRESENT",
+                message=(
+                    "No deterministically recognizable order reference was found; "
+                    "order-state validation is deferred until an order is identified."
+                ),
                 findings=[
                     BasicSanityFinding(
-                        check="explicit_order_id",
+                        check="order_reference",
                         passed=True,
-                        reason="No explicit order id was present; no order lookup was attempted.",
+                        applicable=False,
+                        reason=(
+                            "No explicit order reference was supplied. BasicSanity does "
+                            "not guess or autocorrect identifiers."
+                        ),
+                        evidence={
+                            "operation": operation,
+                            "order_id_present": False,
+                            "lookup_attempted": False,
+                        },
                     )
                 ],
-                facts={"order_id": None, "operation": operation},
+                facts={
+                    "order_id": None,
+                    "operation": operation,
+                    "order_id_present": False,
+                    "lookup_attempted": False,
+                },
             )
 
         if request.customer_id is None:
