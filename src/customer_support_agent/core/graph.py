@@ -863,11 +863,16 @@ class CustomerSupportAgent:
         message = Message(role="assistant", content=result.content, tool_calls=result.tool_calls)
         tool_names = [call.name for call in (result.tool_calls or [])]
         metrics = self._selector.last_metrics if self._selector is not None else None
+        requested_tool_calls = [
+            _safe_tool_request_fields(call.name, call.arguments)
+            for call in (result.tool_calls or [])
+        ]
         llm_fields = {
             "model": result.model,
             "finish_reason": result.finish_reason or "unknown",
             "tool_calls": len(result.tool_calls or []),
             "requested_tools": tool_names,
+            "requested_tool_calls": requested_tool_calls,
             "tools_offered": offered,
             "input_tokens": result.usage.prompt_tokens,
             "output_tokens": result.usage.completion_tokens,

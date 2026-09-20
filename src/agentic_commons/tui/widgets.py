@@ -121,6 +121,7 @@ FIELD_PRIORITY = (
     "finish_reason",
     "tool_calls",
     "requested_tools",
+    "requested_tool_calls",
     "tools_available",
     "tools_offered",
     "input_tokens",
@@ -487,6 +488,22 @@ class StageEventWidget(Collapsible):
             return self._compact_from_fields(fields, ("selected", "used_tokens"))
 
         if stage in {"llm_call", "llm_response_received"}:
+            requested_calls = fields.get("requested_tool_calls")
+            if isinstance(requested_calls, list) and requested_calls:
+                first = requested_calls[0]
+                if isinstance(first, Mapping):
+                    tool = first.get("tool") or first.get("qualified_tool")
+                    order_id = first.get("order_id")
+                    amount = first.get("amount")
+                    parts = [
+                        "tool requested",
+                        self._labels.tool_label(str(tool)) if tool else "tool",
+                    ]
+                    if order_id is not None:
+                        parts.append(f"order {order_id}")
+                    if amount is not None:
+                        parts.append(_format_value("amount", amount))
+                    return " · ".join(parts)
             requested = fields.get("requested_tools")
             if requested:
                 first = requested[0] if isinstance(requested, list) else requested
