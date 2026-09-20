@@ -1,19 +1,17 @@
-"""The agent's domain tools (LLD §21).
+"""Customer Support's domain tools and execution adapter.
 
-Five tools, each a thin wrapper over a repository or the refund saga,
-each declaring its own surface class and blast radius so the Gatekeeper
-can reason about it without a separate policy table.
-
-The tools do not authorize themselves. They are registered with
-`tools.NamespacedToolRegistry` and executed only through the Gatekeeper —
-which is what makes "no execution path bypasses mediation" a property of
-the wiring rather than a rule everyone has to remember.
+The tool definitions declare the deterministic governance envelope. The
+``CustomerSupportToolHandler`` is the agent-owned bridge consumed by the
+common Executor; it contains no Gatekeeper logic.
 """
+
+import inspect
 
 from pydantic import BaseModel, Field
 
+from agentic_commons.executor import ToolExecutionHandler
 from agentic_commons.logging import get_logger, instrument
-from agentic_commons.tools import ToolDefinition, ToolResult
+from agentic_commons.tools import PathCardinality, ToolCall, ToolDefinition, ToolResult
 from customer_support_agent.core.identity import current_customer_id
 from customer_support_agent.core.refund_saga import RefundSaga
 from customer_support_agent.core.repositories import (
@@ -23,11 +21,7 @@ from customer_support_agent.core.repositories import (
 )
 from customer_support_agent.core.schema import HitlRequest, Order
 
-# Shown when an order is absent *or* belongs to someone else. Deliberately
-# identical: a different message for "exists but not yours" confirms the
-# order exists, which is the thing being protected.
 _NOT_FOUND = "No order found with id {order_id}"
-
 NAMESPACE = "support"
 
 
@@ -70,7 +64,7 @@ class SupportTools:
         self._logger = get_logger("customer_support_agent")
 
     def definitions(self) -> list[ToolDefinition]:
-        """Every tool, with the governance properties the Gatekeeper reads."""
+        """Every tool plus the metadata consumed by generic governance."""
         return [
             ToolDefinition(
                 name="get_order_status",
@@ -84,7 +78,10 @@ class SupportTools:
                 handler=self.get_order_status,
                 surface="editable",
                 blast_radius="single_record",
+                path_cardinality="single",
+                certifiable=True,
                 reversible=True,
+                side_effecting=False,
             ),
             ToolDefinition(
                 name="get_refund_status",
@@ -97,7 +94,10 @@ class SupportTools:
                 handler=self.get_refund_status,
                 surface="editable",
                 blast_radius="single_record",
+                path_cardinality="single",
+                certifiable=True,
                 reversible=True,
+                side_effecting=False,
             ),
             ToolDefinition(
                 name="process_refund",
@@ -110,7 +110,10 @@ class SupportTools:
                 handler=self.process_refund,
                 surface="editable",
                 blast_radius="account",
+                path_cardinality="single",
+                certifiable=True,
                 reversible=False,
+                side_effecting=True,
                 requires_authority_rank=5,
             ),
             ToolDefinition(
@@ -124,16 +127,15 @@ class SupportTools:
                 handler=self.queue_for_approval,
                 surface="append_only",
                 blast_radius="single_record",
+                path_cardinality="single",
+                certifiable=True,
                 reversible=True,
+                side_effecting=True,
             ),
         ]
 
     def _owned_order(self, order_id: int) -> Order | None:
-        """The order, if the authenticated customer owns it.
-
-        Every tool goes through here. A lookup that bypassed it would
-        read another customer's data, so there is exactly one path.
-        """
+        """The order, if the authenticated customer owns it."""
         return self._orders.get_for_customer(order_id, current_customer_id())
 
     def get_order_status(self, order_id: int) -> ToolResult:
@@ -141,10 +143,6 @@ class SupportTools:
         order = self._owned_order(order_id)
         if order is None:
             return ToolResult(success=False, error=_NOT_FOUND.format(order_id=order_id))
-        # Deliberately no refund status. A customer asking where their
-        # order is has not asked about a refund, and an agent that
-        # volunteers one every time is the agent that eventually offers
-        # one nobody requested.
         return ToolResult(
             success=True,
             output=(f"Order {order.order_id}: {order.order_status}, total ${order.amount:.2f}"),
@@ -165,39 +163,12 @@ class SupportTools:
         )
 
     async def process_refund(self, order_id: int, amount: float, reason: str = "") -> ToolResult:
-        """Issue a refund through the saga.
-
-        The double-refund check lives here rather than in the prompt: a
-        policy the model is asked to remember is a policy that fails on
-        the turn the model is distracted.
-        """
+        """Issue a refund through the saga with domain-level defense in depth."""
         order = self._owned_order(order_id)
         if order is None:
             return ToolResult(success=False, error=_NOT_FOUND.format(order_id=order_id))
-        if order.already_refunded:
-            return ToolResult(
-                success=False,
-                error=order.refund_ineligibility_reason,
-                error_code="already_refunded",
-                data={
-                    "order_id": order.order_id,
-                    "refund_status": order.refund_status,
-                    "refund_eligible": False,
-                },
-            )
-
-        if not order.is_refund_eligible:
-            return ToolResult(
-                success=False,
-                error=order.refund_ineligibility_reason,
-                error_code="refund_ineligible",
-                data={
-                    "order_id": order.order_id,
-                    "refund_status": order.refund_status,
-                    "refund_eligible": False,
-                },
-            )
-
+        if not order.is_refund_eligible or order.already_refunded:
+            return ToolResult(success=False, error=order.refund_ineligibility_reason)
         result = await self._saga.issue(order, amount, reason)
         if not result.succeeded:
             return ToolResult(
@@ -219,30 +190,8 @@ class SupportTools:
         order = self._owned_order(order_id)
         if order is None:
             return ToolResult(success=False, error=_NOT_FOUND.format(order_id=order_id))
-        if order.already_refunded:
-            return ToolResult(
-                success=False,
-                error=order.refund_ineligibility_reason,
-                error_code="already_refunded",
-                data={
-                    "order_id": order.order_id,
-                    "refund_status": order.refund_status,
-                    "refund_eligible": False,
-                },
-            )
-
-        if not order.is_refund_eligible:
-            return ToolResult(
-                success=False,
-                error=order.refund_ineligibility_reason,
-                error_code="refund_ineligible",
-                data={
-                    "order_id": order.order_id,
-                    "refund_status": order.refund_status,
-                    "refund_eligible": False,
-                },
-            )
-
+        if not order.is_refund_eligible or order.already_refunded:
+            return ToolResult(success=False, error=order.refund_ineligibility_reason)
         existing = self._hitl.pending_for_order(order_id)
         if existing is not None:
             return ToolResult(
@@ -258,7 +207,30 @@ class SupportTools:
             success=True,
             output=(
                 f"Refund of ${amount:.2f} for order {order_id} has been queued for "
-                f"human review; the customer will hear back shortly"
+                "human review; the customer will hear back shortly"
             ),
-            data={"queued": True, "request_id": self._hitl.last_id()},
+            data={"queued": True, "request_id": self._hitl.last_id(), "order_id": order_id, "amount": amount},
         )
+
+
+class CustomerSupportToolHandler(ToolExecutionHandler):
+    """Agent-owned execution adapter for the common Executor."""
+
+    def __init__(self, tools: SupportTools) -> None:
+        self._tools = tools
+        self._handlers = {
+            definition.qualified_name: definition.handler
+            for definition in tools.definitions()
+        }
+
+    async def execute(self, call: ToolCall) -> ToolResult:
+        """Dispatch only to a tool explicitly registered by this agent."""
+        handler = self._handlers.get(call.action)
+        if handler is None:
+            return ToolResult(success=False, error=f"No handler is registered for '{call.action}'")
+        result = handler(**call.params)
+        if inspect.isawaitable(result):
+            result = await result
+        if isinstance(result, ToolResult):
+            return result
+        return ToolResult(success=True, output=str(result))

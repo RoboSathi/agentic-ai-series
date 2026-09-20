@@ -1,13 +1,13 @@
-"""Namespaced tool registry and invocation (LLD §19).
+"""Namespaced tool registry and validation (LLD §19).
 
 The registry owns three things a tool-calling loop otherwise scatters:
 what tools exist, what they are allowed to break, and how a wire-level
 model request becomes a validated call. Argument validation happening
 *here* is what lets the Gatekeeper downstream reason about real values
-rather than a JSON string it has to trust.
+rather than a JSON string it has to trust. Execution deliberately does not
+belong here; the common Executor is the only execution boundary.
 """
 
-import inspect
 import json
 from typing import Any, Protocol, runtime_checkable
 
@@ -17,7 +17,6 @@ from agentic_commons.tools.types import (
     WIRE_NAME_PATTERN,
     ToolCall,
     ToolDefinition,
-    ToolResult,
 )
 
 
@@ -141,21 +140,13 @@ class NamespacedToolRegistry:
             params=result.value,
             surface=tool.surface,
             blast_radius=tool.blast_radius,
+            path_cardinality=tool.path_cardinality,
+            certifiable=tool.certifiable,
             reversible=tool.reversible,
+            side_effecting=tool.side_effecting,
+            requires_authority_rank=tool.requires_authority_rank,
         )
 
-    @logged("tools")
-    async def invoke(self, call: ToolCall) -> ToolResult:
-        """Execute a validated call, wrapping any escape into a failed result."""
-        tool = self.get(call.action)
-        if tool is None:
-            return ToolResult(success=False, error=f"Unknown tool: {call.action}")
-        try:
-            outcome = tool.handler(**call.params)
-            return await outcome if inspect.isawaitable(outcome) else outcome
-        except Exception as exc:
-            self._logger.exception("Tool raised", tool=call.action)
-            return ToolResult(success=False, error=f"Tool '{call.action}' failed: {exc}")
 
 
 def _as_json(raw_arguments: str | dict[str, Any]) -> str:

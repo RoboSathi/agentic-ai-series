@@ -22,7 +22,6 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
-from agentic_commons.basic_sanity import BasicSanityChecker, BasicSanityRequest
 from agentic_commons.context import (
     Chunk,
     ContextFailureDetector,
@@ -31,6 +30,9 @@ from agentic_commons.context import (
     Task,
 )
 from agentic_commons.evals import NollmScoringCascadeImpl
+from agentic_commons.basic_sanity import BasicSanityChecker, BasicSanityRequest
+from agentic_commons.control_loop import ControlLoopReport, ToolControlLoop
+from agentic_commons.executor import ApprovedToolCall, ToolExecutor
 from agentic_commons.gatekeeper import AuthorityContext, GatekeeperImpl
 from agentic_commons.hallucination_protection import DetectionLadder, GroundingReasoningDiagnoser
 from agentic_commons.llm.client import LLMClient
@@ -47,11 +49,7 @@ from agentic_commons.resilience import ResilientCaller
 from agentic_commons.security import SecuritySuite
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from customer_support_agent.config import get_agent_settings
-from customer_support_agent.control_loop import (
-    CascadeEvaluator,
-    DeliberationLoop,
-    DuplicateActionDetector,
-)
+from customer_support_agent.control_loop import CascadeEvaluator, DeliberationLoop
 from customer_support_agent.core.accounting import TurnAccountant, TurnOutcome
 from customer_support_agent.core.authentication import CustomerAuthenticator
 from customer_support_agent.core.identity import (
@@ -93,6 +91,7 @@ class CustomerSupportAgent:
         gatekeeper: GatekeeperImpl,
         registry: NamespacedToolRegistry,
         tools: SupportTools,
+        executor: ToolExecutor,
         security: SecuritySuite,
         memory: MemoryFacade | None = None,
         context: FiveStagePipeline | None = None,
@@ -113,6 +112,7 @@ class CustomerSupportAgent:
         self._gatekeeper = gatekeeper
         self._registry = registry
         self._tools = tools
+        self._executor = executor
         self._security = security
         self._memory = memory
         self._context = context
@@ -150,7 +150,7 @@ class CustomerSupportAgent:
         self._history_turns = settings.history_turns
         self._conversations: dict[str, list[Message]] = {}
         self._last_intent: dict[str, Intent] = {}
-        self._duplicates = DuplicateActionDetector()
+        self._control_loop = ToolControlLoop()
         # Plan, reflect, evaluate (E06). Injected as one composition so a
         # deployment can swap any of the three; deterministic by default,
         # so deliberating about a reply costs no completions.
@@ -196,7 +196,7 @@ class CustomerSupportAgent:
         # nobody.
         customer = customer or self._sessions.get(session_id) or current_customer()
         set_current_customer(customer)
-        self._duplicates = DuplicateActionDetector()
+        self._control_loop = ToolControlLoop()
         initial = AgentState(
             query=query,
             session_id=session_id,
@@ -831,6 +831,19 @@ class CustomerSupportAgent:
 
     async def reason(self, state: AgentState) -> dict[str, Any]:
         """One model turn, with the tools this turn is allowed to use."""
+        round_report = self._control_loop.evaluate_round(
+            state.tool_rounds + 1, self._max_rounds
+        )
+        self._done(
+            "control_loop",
+            event_kind="control_loop",
+            summary=(
+                "Tool round admitted"
+                if round_report.decision == "continue"
+                else "Tool round limit reached"
+            ),
+            fields=_control_loop_fields(round_report),
+        )
         self._report(
             "llm_call",
             event_kind="model",
@@ -884,7 +897,7 @@ class CustomerSupportAgent:
                 else f"Round {state.tool_rounds + 1}: ready to finalize"
             ),
             fields={
-                "round": state.tool_rounds + 1,
+                **_control_loop_fields(round_report),
                 "tool_calls": len(tool_names),
                 "next_stage": "act" if tool_names else "finalize",
                 "termination_reason": "tool_request" if tool_names else "no_tool_call",
@@ -1010,6 +1023,27 @@ class CustomerSupportAgent:
             outputs.append(
                 Message(role="tool", content=text, tool_call_id=requested.id or requested.name)
             )
+
+        self._done(
+            "tool_execution",
+            event_kind="tool_result",
+            summary=f"Processed {len(requests)} requested tool(s)",
+            fields={
+                "requested": len(requests),
+                "completed": sum(1 for item in invocation_fields_history if item.get("tool_status") == "completed"),
+                "blocked": sum(1 for item in invocation_fields_history if item.get("tool_status") == "blocked"),
+                "failed": sum(1 for item in invocation_fields_history if item.get("tool_status") == "failed"),
+            },
+        )
+        return {
+            "messages": outputs,
+            "tool_results": results,
+            "decisions": decisions,
+            "metadata": {
+                **state.metadata,
+                "last_tool_invocations": invocation_fields_history,
+            },
+        }
 
     async def finalize(self, state: AgentState) -> dict[str, Any]:
         """One tool-free call so the customer always gets an answer.
@@ -1255,18 +1289,29 @@ class CustomerSupportAgent:
         return "act" if last.tool_calls else "finalize"
 
     def _after_act(self, state: AgentState) -> str:
-        """Loop back to reason unless the round cap is spent."""
-        return "reason" if state.tool_rounds < self._max_rounds else "finalize"
+        """Loop back to reason unless the next round would exceed the cap."""
+        next_round = state.tool_rounds + 1
+        if next_round <= self._max_rounds:
+            return "reason"
+        report = self._control_loop.evaluate_round(next_round, self._max_rounds)
+        self._reporter_blocked(
+            "control_loop",
+            summary="Maximum tool iterations reached",
+            event_kind="control_loop",
+            fields=_control_loop_fields(report),
+        )
+        return "finalize"
 
     async def _invoke(
         self, name: str, arguments: str, state: AgentState, offered: set[str]
     ) -> tuple[str, str, str, dict[str, Any]]:
-        """Validate, authorize and run one tool call, emitting semantic events."""
+        """Validate, control, authorize, approve and execute one tool call."""
         call = self._registry.build_call(name, arguments)
         if call is None:
             blocked_fields = {
                 "tool": name,
                 "result": "invalid_request",
+                "reason_code": "TOOL_CALL_INVALID",
                 "reason": "tool is unknown or arguments failed validation",
             }
             self._reporter_blocked(
@@ -1279,10 +1324,7 @@ class CustomerSupportAgent:
                 f"Tool '{name}' is unavailable or its arguments were invalid.",
                 f"{name}: invalid",
                 "tool_refused",
-                {
-                    "tool_result": blocked_fields,
-                    "tool_status": "blocked",
-                },
+                {"tool_result": blocked_fields, "tool_status": "blocked"},
             )
 
         call = call.model_copy(update={"params": self._security.minimize(call.params)})
@@ -1292,25 +1334,38 @@ class CustomerSupportAgent:
             granted_by="user_task",
             session_id=state.session_id,
             offered_actions=sorted(offered),
+            sanity_context={
+                "query": state.query,
+                "customer_id": state.customer_id,
+                "metadata": dict(state.metadata),
+                "tool_action": call.action,
+                "tool_params": dict(call.params),
+            },
         )
 
-        repeated = self._duplicates.seen_before(call)
-        if repeated is not None:
-            fields = {
-                "decision": "suppress",
-                "action": call.action,
-                "reason": "duplicate action suppressed",
-                "duplicate": True,
-            }
+        control_report = self._control_loop.before_action(
+            call, round_number=state.tool_rounds, max_rounds=self._max_rounds
+        )
+        control_fields = _control_loop_fields(control_report)
+        if control_report.decision == "abort":
             self._reporter_blocked(
-                "gatekeeper_evaluation",
-                summary="Duplicate action suppressed",
-                event_kind="gatekeeper",
-                fields=fields,
+                "control_loop",
+                summary=(
+                    "Duplicate action suppressed"
+                    if control_report.reason_code == "DUPLICATE_ACTION"
+                    else "Control loop aborted the action"
+                ),
+                event_kind="control_loop",
+                fields=control_fields,
             )
             result_fields = {
                 "tool": call.action,
-                "result": "suppressed_duplicate",
+                "result": (
+                    "suppressed_duplicate"
+                    if control_report.reason_code == "DUPLICATE_ACTION"
+                    else "control_loop_aborted"
+                ),
+                "execution_status": "not_executed",
             }
             self._reporter_blocked(
                 "tool_result",
@@ -1319,12 +1374,18 @@ class CustomerSupportAgent:
                 fields=result_fields,
             )
             return (
-                self._duplicates.reject(call),
-                f"{call.action}: suppressed (repeat)",
+                self._control_loop.reject_message(call)
+                if control_report.reason_code == "DUPLICATE_ACTION"
+                else "The control loop stopped this action before execution.",
+                (
+                    f"{call.action}: suppressed (duplicate)"
+                    if control_report.reason_code == "DUPLICATE_ACTION"
+                    else f"{call.action}: control loop aborted"
+                ),
                 "tool_suppressed",
                 {
-                    "gatekeeper": fields,
-                    "gatekeeper_status": "blocked",
+                    "control_loop": control_fields,
+                    "control_loop_status": "blocked",
                     "tool_result": result_fields,
                     "tool_status": "blocked",
                 },
@@ -1333,7 +1394,7 @@ class CustomerSupportAgent:
         self._report(
             "gatekeeper_evaluation",
             event_kind="gatekeeper",
-            summary="Checking authorization",
+            summary="Checking deterministic execution admissibility",
             fields={"requested_action": call.action},
         )
         decision = await self._gatekeeper.evaluate(call, authority)
@@ -1341,30 +1402,25 @@ class CustomerSupportAgent:
         if not decision.allowed:
             self._reporter_blocked(
                 "gatekeeper_evaluation",
-                summary=f"Authorization: {decision.verdict.upper()}",
+                summary=f"Gatekeeper: {decision.verdict.upper()}",
                 event_kind="gatekeeper",
                 fields=gatekeeper_fields,
             )
             if decision.question == "offered":
                 self._logger.warning("Model called a tool it was not offered", tool=call.action)
-                return (
-                    f"'{call.action}' is not available for this request.",
-                    f"{call.action}: refused (not offered)",
-                    "tool_refused",
-                    {
-                        "gatekeeper": gatekeeper_fields,
-                        "gatekeeper_status": "blocked",
-                        "tool_result": {
-                            "tool": call.action,
-                            "result": "not_offered",
-                        },
-                        "tool_status": "blocked",
-                    },
-                )
-            result_fields = {
-                "tool": call.action,
-                "result": "not_executed",
-            }
+                text = f"'{call.action}' is not available for this request."
+                result_fields = {
+                    "tool": call.action,
+                    "result": "not_offered",
+                    "execution_status": "not_executed",
+                }
+            else:
+                text = f"That action was not permitted: {decision.reason}"
+                result_fields = {
+                    "tool": call.action,
+                    "result": "not_executed",
+                    "execution_status": "not_executed",
+                }
             self._reporter_blocked(
                 "tool_result",
                 summary=f"Tool not executed: {call.action}",
@@ -1372,10 +1428,12 @@ class CustomerSupportAgent:
                 fields=result_fields,
             )
             return (
-                f"That action was not permitted: {decision.reason}",
+                text,
                 f"{call.action}: {decision.verdict} ({decision.question}) — {decision.reason}",
                 "tool_refused",
                 {
+                    "control_loop": control_fields,
+                    "control_loop_status": "completed",
                     "gatekeeper": gatekeeper_fields,
                     "gatekeeper_status": "blocked",
                     "tool_result": result_fields,
@@ -1386,14 +1444,18 @@ class CustomerSupportAgent:
         self._done(
             "gatekeeper_evaluation",
             event_kind="gatekeeper",
-            summary="Authorization: ALLOW",
+            summary="Gatekeeper: ALLOW",
             fields=gatekeeper_fields,
         )
-        result = await self._registry.invoke(call)
-        result_fields = _safe_tool_result_fields(call, result)
+        approved = ApprovedToolCall.from_decision(call, decision, authority)
+        outcome = await self._executor.execute(approved)
+        result = outcome.result
+        result_fields = _safe_tool_result_fields(call, result, outcome=outcome)
         if result.success:
-            self._gatekeeper.commit(call, authority)
-            self._duplicates.record(call, result.output)
+            # Budget is charged only for a real completion, not a replay.
+            if not outcome.replayed:
+                self._gatekeeper.commit(call, authority)
+            self._control_loop.record_success(call, result.output)
             self._done(
                 "tool_result",
                 event_kind="tool_result",
@@ -1414,8 +1476,11 @@ class CustomerSupportAgent:
             f"{call.action}: {'ok' if result.success else 'failed'}",
             "tool_execution" if result.success else "tool_refused",
             {
+                "control_loop": control_fields,
+                "control_loop_status": "completed",
                 "gatekeeper": gatekeeper_fields,
                 "gatekeeper_status": "completed",
+                "executor": result_fields,
                 "tool_result": result_fields,
                 "tool_status": tool_status,
             },
@@ -1595,31 +1660,81 @@ def _safe_tool_request_fields(name: str, arguments: str) -> dict[str, Any]:
     return fields
 
 
+def _control_loop_fields(report: ControlLoopReport) -> dict[str, Any]:
+    """Render the canonical control-loop report without leaking raw prompts."""
+    return {
+        "decision": report.decision,
+        "reason_code": report.reason_code,
+        "reason": report.reason,
+        "round": report.round_number,
+        "max_rounds": report.max_rounds,
+        "fingerprint": report.fingerprint,
+        "previous_result": report.previous_result,
+        "checks": [check.model_dump(mode="json") for check in report.checks],
+    }
+
+
 def _gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
-    """Reduce an AuthorityDecision to safe, decision-relevant TUI fields."""
+    """Render the complete deterministic Gatekeeper decision report."""
+    amount = call.params.get("amount")
     fields: dict[str, Any] = {
         "decision": decision.verdict,
         "action": _display_tool_name(decision.action),
         "qualified_action": decision.action,
+        "reason_code": decision.reason_code,
         "question": decision.question,
+        "reason": decision.reason,
         "surface": decision.surface,
         "blast_radius": decision.blast_radius,
-        "automation_level": decision.automation_level,
-        "reason": decision.reason,
+        "path_cardinality": call.path_cardinality,
+        "certifiable": call.certifiable,
+        "actor": decision.actor,
+        "granted_by": decision.authority_source,
+        "authority_rank": decision.authority_rank,
+        "required_authority_rank": decision.required_authority_rank,
+        "max_granting_rank": decision.max_granting_rank,
+        "checks": [check.model_dump(mode="json") for check in decision.checks],
     }
-    amount = call.params.get("amount")
     if isinstance(amount, (int, float)):
         fields["amount"] = f"${float(amount):,.2f}"
-    if decision.threshold:
-        fields["threshold"] = f"${decision.threshold:,.2f}"
-    if decision.cumulative_total:
+    if decision.cumulative_total or decision.threshold:
         fields["cumulative_total"] = f"${decision.cumulative_total:,.2f}"
-    for key in ("order_id",):
-        value = call.params.get(key)
-        if isinstance(value, (str, int)):
-            fields[key] = value
+        fields["threshold"] = f"${decision.threshold:,.2f}"
+    if decision.three_gates is not None:
+        tg = decision.three_gates
+        fields["three_gates_result"] = "PASS" if tg.passes else "FAIL"
+        fields["three_gates_reason"] = tg.reason
+        fields["three_gates"] = {
+            "path_cardinality": tg.path_cardinality,
+            "path_result": tg.path_check.status if tg.path_check else None,
+            "blast_radius": tg.blast_radius,
+            "blast_radius_result": tg.blast_radius_check.status if tg.blast_radius_check else None,
+            "certifiable": tg.certifiable,
+            "certifiability_result": tg.certifiability_check.status if tg.certifiability_check else None,
+        }
+    if decision.automation is not None:
+        automation = decision.automation
+        fields.update(
+            {
+                "automation_level": automation.level,
+                "automation_level_meaning": automation.level_meaning,
+                "automation_amount": f"${automation.amount:,.2f}",
+                "auto_approval_ceiling": (
+                    "unbounded"
+                    if automation.auto_approval_ceiling == float("inf")
+                    else f"${automation.auto_approval_ceiling:,.2f}"
+                ),
+                "amount_within_ceiling": automation.amount_within_ceiling,
+                "automation_floor": automation.automation_floor,
+                "level_meets_floor": automation.level_meets_floor,
+                "human_required": automation.requires_human,
+                "automation_reason": automation.reason,
+            }
+        )
     if decision.advisory is not None:
         fields["advisory_flagged"] = decision.advisory.flagged
+        fields["advisory_reason"] = decision.advisory.reason
+        fields["advisory_confidence"] = decision.advisory.confidence
     return fields
 
 
@@ -1629,13 +1744,23 @@ def _display_tool_name(name: str) -> str:
     return normalized.rsplit(".", maxsplit=1)[-1]
 
 
-def _safe_tool_result_fields(call: Any, result: Any) -> dict[str, Any]:
-    """Expose domain outcome metadata without dumping arbitrary tool output."""
+def _safe_tool_result_fields(call: Any, result: Any, *, outcome: Any | None = None) -> dict[str, Any]:
+    """Expose domain outcome plus generic Executor lifecycle metadata."""
     fields: dict[str, Any] = {
         "tool": _display_tool_name(call.action),
         "qualified_tool": call.action,
         "result": "success" if result.success else "failed",
     }
+    if outcome is not None:
+        fields.update(
+            {
+                "execution_status": outcome.status,
+                "replayed": outcome.replayed,
+                "timed_out": outcome.timed_out,
+                "duration_ms": round(outcome.duration_ms, 2),
+                "idempotency_key": outcome.idempotency_key,
+            }
+        )
     for key in (
         "order_id",
         "amount",

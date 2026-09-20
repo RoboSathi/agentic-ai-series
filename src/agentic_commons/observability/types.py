@@ -25,6 +25,7 @@ EventKind = Literal[
     "tool_request",
     "tool_result",
     "gatekeeper",
+    "executor",
     "resilience",
     "control_loop",
     "grounding",

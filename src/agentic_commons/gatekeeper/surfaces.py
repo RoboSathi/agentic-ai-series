@@ -2,38 +2,28 @@
 
 Four surface classes, distinguished by what *may* be written to them:
 
-  locked           — never writable at runtime. Not "requires approval":
-                     there is no approval that grants it, because the
-                     agent's own policy lives here. An agent that can
-                     edit its own constraints has none.
+  locked           — never writable at runtime.
   editable         — writable under normal authorization.
-  append_only      — may be added to, never altered or removed. Audit
-                     trails and queues: history you can extend but not
-                     rewrite.
-  human_controlled — only a human writes here. An agent may propose.
+  append_only      — may be added to, never altered or removed.
+  human_controlled — only a human writes here.
 
-The Three Gates then decide whether an action is a candidate for
-automation at all: how many paths lead to the outcome, how far the damage
-reaches if it is wrong, and whether the result can be checked afterwards.
+The Three Gates then evaluate the declared execution profile.  The evaluator
+keeps the existing policy semantics and now exposes each dimension separately
+so operators can see exactly why an aggregate result passed or failed.
 """
 
 from agentic_commons.config import get_settings
-from agentic_commons.gatekeeper.types import GateEvaluation
+from agentic_commons.gatekeeper.types import CheckReport, GateEvaluation
 from agentic_commons.logging import get_logger
-from agentic_commons.tools.types import BlastRadius, SurfaceClass
+from agentic_commons.tools.types import BlastRadius, PathCardinality, SurfaceClass
 
-# Surfaces no runtime authority can write to, whatever rank asks.
 _NEVER_WRITABLE: frozenset[SurfaceClass] = frozenset({"locked"})
-
-# Surfaces only a human may write to.
 _HUMAN_ONLY: frozenset[SurfaceClass] = frozenset({"human_controlled"})
-
-# Blast radii too wide to automate without a certifiable result.
 _WIDE_RADII: frozenset[BlastRadius] = frozenset({"tenant", "global"})
 
 
 class SurfaceClassifier:
-    """Maps an action to its surface, and says who may write there."""
+    """Maps an action to a surface, and says who may write there."""
 
     def __init__(self) -> None:
         settings = get_settings().gatekeeper.surface_policy
@@ -44,9 +34,9 @@ class SurfaceClassifier:
     def classify(self, action: str) -> SurfaceClass:
         """The surface class an action writes to.
 
-        An unmapped action is treated as `human_controlled`, not
-        `editable`: an action nobody has classified is one nobody has
-        decided is safe to automate.
+        An unmapped action is treated as `human_controlled`, not `editable`:
+        an action nobody has classified is one nobody has decided is safe to
+        automate.
         """
         bare = action.rsplit(".", maxsplit=1)[-1]
         surface = self._surfaces.get(bare)
@@ -75,10 +65,9 @@ class SurfaceClassifier:
 class ThreeGatesEvaluator:
     """Path cardinality × blast radius × certifiability (E15).
 
-    All three must pass. An open-ended path with a wide blast radius and
-    no way to check the result is the profile of work that should not be
-    automated — and naming which gate failed is what turns "this feels
-    risky" into a decision someone can argue with.
+    The aggregate rules intentionally remain the same as the existing
+    evaluator.  What changes is the report: the operator can now see the
+    concrete values and the individual dimensions implicated by a failure.
     """
 
     def __init__(self) -> None:
@@ -86,23 +75,87 @@ class ThreeGatesEvaluator:
 
     def evaluate(
         self,
-        path_cardinality: str = "bounded",
+        path_cardinality: PathCardinality = "bounded",
         blast_radius: BlastRadius = "single_record",
         certifiable: bool = True,
     ) -> GateEvaluation:
         """Assess one action against all three gates."""
         reasons: list[str] = []
+        path_failed = False
+        blast_failed = False
+        certifiability_failed = False
+
         if path_cardinality == "open" and blast_radius in _WIDE_RADII:
             reasons.append("open-ended path with a wide blast radius")
+            path_failed = True
+            blast_failed = True
         if not certifiable and blast_radius in _WIDE_RADII:
             reasons.append("wide blast radius with no certifiable result")
+            blast_failed = True
+            certifiability_failed = True
         if not certifiable and path_cardinality == "open":
             reasons.append("open-ended path with no certifiable result")
+            path_failed = True
+            certifiability_failed = True
+
+        path_check = CheckReport(
+            check_id="three_gates.path_cardinality",
+            name="Path cardinality",
+            status="FAIL" if path_failed else "PASS",
+            reason_code="THREE_GATES_PATH_RISK" if path_failed else "PATH_CARDINALITY_ACCEPTED",
+            reason=(
+                "Open-ended path combined with a wide blast radius."
+                if path_failed
+                else "Path cardinality is acceptable under the configured Three Gates rules."
+            ),
+            observed={"value": path_cardinality},
+        )
+        blast_check = CheckReport(
+            check_id="three_gates.blast_radius",
+            name="Blast radius",
+            status="FAIL" if blast_failed else "PASS",
+            reason_code="THREE_GATES_BLAST_RADIUS_RISK" if blast_failed else "BLAST_RADIUS_ACCEPTED",
+            reason=(
+                "Wide blast radius participates in a failing Three Gates condition."
+                if blast_failed
+                else "Blast radius is not wide enough to trigger a configured Three Gates failure."
+            ),
+            observed={"value": blast_radius},
+        )
+        cert_check = CheckReport(
+            check_id="three_gates.certifiability",
+            name="Certifiability",
+            status="FAIL" if certifiability_failed else "PASS",
+            reason_code=(
+                "THREE_GATES_NOT_CERTIFIABLE"
+                if certifiability_failed
+                else "CERTIFIABLE_RESULT"
+            ),
+            reason=(
+                "The result is not deterministically certifiable in a failing path."
+                if certifiability_failed
+                else "The action declares a deterministically certifiable result."
+            ),
+            observed={"value": certifiable},
+        )
+
         passes = not reasons
-        return GateEvaluation(
-            path_cardinality=path_cardinality,  # type: ignore[arg-type]
+        result = GateEvaluation(
+            path_cardinality=path_cardinality,
             blast_radius=blast_radius,
             certifiable=certifiable,
             passes=passes,
             reason="; ".join(reasons) if reasons else "all three gates pass",
+            path_check=path_check,
+            blast_radius_check=blast_check,
+            certifiability_check=cert_check,
         )
+        self._logger.info(
+            "Three Gates evaluated",
+            path_cardinality=path_cardinality,
+            blast_radius=blast_radius,
+            certifiable=certifiable,
+            passes=passes,
+            reason=result.reason,
+        )
+        return result

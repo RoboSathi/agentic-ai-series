@@ -46,6 +46,7 @@ _DISPLAY_NAMES = {
     "tool_request": "TOOL REQUEST",
     "tool_execution": "TOOL RESULT",
     "tool_result": "TOOL RESULT",
+    "executor": "EXECUTOR",
     "tool_suppressed": "TOOL",
     "tool_refused": "TOOL",
     "gatekeeper_evaluation": "GATEKEEPER",

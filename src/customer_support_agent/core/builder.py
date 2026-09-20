@@ -25,6 +25,7 @@ from agentic_commons.context import (
     Task,
 )
 from agentic_commons.evals import NollmScoringCascadeImpl, create_scoring_cascade
+from agentic_commons.executor import ToolExecutorImpl
 from agentic_commons.gatekeeper import GatekeeperImpl
 from agentic_commons.gatekeeper.ledger import CumulativeLedger
 from agentic_commons.hallucination_protection import DetectionLadder
@@ -54,7 +55,7 @@ from customer_support_agent.core.repositories import (
 )
 from customer_support_agent.core.review import ReviewQueueService
 from customer_support_agent.core.schema import Order, policy_text
-from customer_support_agent.core.tools import SupportTools
+from customer_support_agent.core.tools import CustomerSupportToolHandler, SupportTools
 
 
 class PolicyContextSource:
@@ -240,6 +241,8 @@ def build_agent(
     registry = NamespacedToolRegistry()
     registry.register_all(tools.definitions())
 
+    sanity_checker = basic_sanity or OrderSanityCheck(orders)
+
     facade = (
         memory
         if memory is not None
@@ -279,9 +282,15 @@ def build_agent(
                 store=observability_store,
                 agent_id=agent_id,
             ),
+            basic_sanity=sanity_checker,
         ),
         registry=registry,
         tools=tools,
+        executor=ToolExecutorImpl(
+            handler=CustomerSupportToolHandler(tools),
+            idempotency=idempotency,
+            reporter=reporter,
+        ),
         security=SecuritySuite(),
         memory=facade,
         context=context,
@@ -316,7 +325,7 @@ def build_agent(
         grounding=DetectionLadder(scoring) if settings.hallucination_protection.enabled else None,
         authenticator=CustomerAuthenticator(UsersRepository(connection), orders),
         orders=orders,
-        basic_sanity=basic_sanity or OrderSanityCheck(orders),
+        basic_sanity=sanity_checker,
     )
 
 

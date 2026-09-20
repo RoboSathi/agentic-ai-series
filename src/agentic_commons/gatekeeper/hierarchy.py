@@ -36,6 +36,11 @@ class AuthorityHierarchyResolver:
         """The configured hierarchy, strongest first."""
         return list(self._hierarchy)
 
+    @property
+    def max_granting_rank(self) -> int:
+        """Highest (numerically weakest) rank allowed to grant authority."""
+        return self._max_granting_rank
+
     def rank_of(self, source: str) -> int:
         """The rank of a source.
 

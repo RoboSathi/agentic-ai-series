@@ -30,9 +30,15 @@ CREATE INDEX IF NOT EXISTS idx_platform_idempotency_agent_time
 
 @runtime_checkable
 class IdempotencyGuard(Protocol):
-    """Runs an operation at most once per key."""
+    """Durable idempotency contract shared by resilience and Executor."""
 
     async def once(self, key: str, fn: Callable[[], Awaitable[T]]) -> T: ...
+
+    def recorded_result(self, key: str) -> Any | None: ...
+
+    def seen(self, key: str) -> bool: ...
+
+    def remember(self, key: str, result: Any) -> None: ...
 
 
 class SqliteIdempotencyGuard:

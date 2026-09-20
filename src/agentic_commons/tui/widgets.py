@@ -63,6 +63,9 @@ SUMMARY_ACCENT_STYLES = {
 FIELD_PRIORITY = (
     "decision",
     "action",
+    "qualified_action",
+    "reason_code",
+    "question",
     "intent",
     "topic",
     "order_id",
@@ -71,8 +74,24 @@ FIELD_PRIORITY = (
     "requested_amount",
     "allowed_amount",
     "autonomous_limit",
+    "cumulative_total",
     "threshold",
+    "remaining_before",
+    "remaining_after",
     "policy_version",
+    "surface",
+    "blast_radius",
+    "path_cardinality",
+    "certifiable",
+    "actor",
+    "roles",
+    "permission",
+    "via_elevation",
+    "granted_by",
+    "authority_rank",
+    "required_authority_rank",
+    "max_granting_rank",
+    "checks",
     "reason",
     "confidence",
     "matched_phrase",
@@ -107,6 +126,9 @@ FIELD_PRIORITY = (
     "output_tokens",
     "total_tokens",
     "round",
+    "max_rounds",
+    "previous_result",
+    "fingerprint",
     "next_stage",
     "termination_reason",
     "claims",
@@ -118,6 +140,19 @@ FIELD_PRIORITY = (
     "reflection",
     "reflection_detail",
     "grounding_issues",
+    "three_gates_result",
+    "three_gates_reason",
+    "automation_level",
+    "automation_level_meaning",
+    "automation_amount",
+    "auto_approval_ceiling",
+    "amount_within_ceiling",
+    "automation_floor",
+    "level_meets_floor",
+    "human_required",
+    "automation_reason",
+    "advisory_flagged",
+    "advisory_reason",
 )
 
 FIELD_LABELS = {
@@ -335,25 +370,36 @@ class StageEventWidget(Collapsible):
 
         fields = self._ordered_fields(self.event.fields)
 
-        for index, (name, value) in enumerate(fields):
+        rendered_fields = False
+        for name, value in fields:
+            if name == "checks" and isinstance(value, list):
+                if rendered_fields:
+                    body.append("\n")
+                self._append_checks(body, value)
+                rendered_fields = True
+                continue
+            if name == "three_gates" and isinstance(value, Mapping):
+                if rendered_fields:
+                    body.append("\n")
+                self._append_three_gates(body, value)
+                rendered_fields = True
+                continue
+
+            if rendered_fields:
+                body.append("\n")
             body.append("  ")
-            body.append(
-                FIELD_LABELS.get(name, name),
-                style="bright_white",
-            )
+            body.append(FIELD_LABELS.get(name, name), style="bright_white")
             body.append(" = ")
             body.append(
                 _format_value(name, value),
                 style=_field_style(self.event.event_kind, name),
             )
-
-            if index != len(fields) - 1:
-                body.append("\n")
+            rendered_fields = True
 
         # The summary is already shown in the collapsed title.
         # Only show it in the expanded body when there are no structured
         # semantic fields available.
-        if not fields:
+        if not rendered_fields:
             if self.event.summary:
                 body.append(
                     self.event.summary,
@@ -366,7 +412,7 @@ class StageEventWidget(Collapsible):
                 )
 
         if self.event.tokens_delta:
-            if fields or self.event.summary or self.event.detail:
+            if rendered_fields or self.event.summary or self.event.detail:
                 body.append("\n")
 
             body.append("  tokens = ")
@@ -444,11 +490,16 @@ class StageEventWidget(Collapsible):
             return "response generated"
 
         if stage == "control_loop":
+            decision = fields.get("decision")
+            reason_code = fields.get("reason_code")
             round_number = fields.get("round")
-            termination = fields.get("termination_reason")
-            if round_number is not None and termination:
-                return f"round {round_number} · {termination}"
-            return f"round {round_number}" if round_number is not None else "control decision"
+            if reason_code == "DUPLICATE_ACTION":
+                return "SUPPRESS · DUPLICATE_ACTION"
+            if reason_code == "MAX_TOOL_ITERATIONS":
+                return "ABORT · MAX_TOOL_ITERATIONS"
+            if decision and round_number is not None:
+                return f"{str(decision).upper()} · round {round_number}"
+            return "control decision"
 
         if stage == "tool_request":
             return self._tool_summary(fields)
@@ -464,6 +515,14 @@ class StageEventWidget(Collapsible):
                 parts.append(self._labels.tool_label(str(action)))
             if amount is not None:
                 parts.append(_format_value("amount", amount))
+            checks = fields.get("checks")
+            if isinstance(checks, list):
+                failed = next(
+                    (item for item in checks if isinstance(item, Mapping) and item.get("status") in {"FAIL", "ESCALATE"}),
+                    None,
+                )
+                if isinstance(failed, Mapping):
+                    parts.append(str(failed.get("reason_code") or failed.get("check_id") or "blocked"))
             return " · ".join(parts) or "authorization evaluated"
 
         if stage in {"tool_execution", "tool_result"}:
@@ -492,6 +551,54 @@ class StageEventWidget(Collapsible):
         if self.event.detail:
             return _humanize(self.event.detail)
         return ""
+
+    def _append_checks(self, body: Text, checks: list[Any]) -> None:
+        """Render structured checks as an operator-readable decision tree."""
+        body.append("  checks", style="bold bright_white")
+        for check in checks:
+            if not isinstance(check, Mapping):
+                continue
+            status = str(check.get("status", ""))
+            mark, style = {
+                "PASS": ("✓", "green"),
+                "FAIL": ("✗", "red"),
+                "ESCALATE": ("⚠", "yellow"),
+                "SKIPPED": ("·", "dim"),
+            }.get(status, ("·", "white"))
+            name = str(check.get("name") or check.get("check_id") or "check")
+            reason_code = str(check.get("reason_code") or "")
+            reason = str(check.get("reason") or "")
+            body.append("\n    ")
+            body.append(f"{mark} {name} [{status}]", style=style)
+            if reason_code:
+                body.append(f" · {reason_code}", style="dim")
+            if reason:
+                body.append(f" — {reason}", style="bright_white")
+            observed = check.get("observed")
+            if isinstance(observed, Mapping) and observed:
+                body.append("\n      observed = ", style="dim")
+                body.append(_format_mapping(observed), style="dim")
+            evidence = check.get("evidence")
+            if isinstance(evidence, Mapping) and evidence:
+                body.append("\n      evidence = ", style="dim")
+                body.append(_format_mapping(evidence), style="dim")
+
+    def _append_three_gates(self, body: Text, gates: Mapping[str, Any]) -> None:
+        """Render the three gate dimensions in the same order as the policy."""
+        body.append("  THREE GATES", style="bold bright_white")
+        labels = (
+            ("path_cardinality", "Path cardinality", "path_result"),
+            ("blast_radius", "Blast radius", "blast_radius_result"),
+            ("certifiable", "Certifiability", "certifiability_result"),
+        )
+        for key, label, result_key in labels:
+            value = gates.get(key)
+            result = gates.get(result_key)
+            body.append("\n    ")
+            body.append(label, style="bright_white")
+            body.append(f" = {_format_value(key, value)}", style="white")
+            if result:
+                body.append(f" · {result}", style=_status_style_for_result(str(result)))
 
     def _compact_from_fields(
         self,
@@ -543,6 +650,26 @@ class StageEventWidget(Collapsible):
         title = self._build_title()
         body = self._build_body().plain
         return f"{title}\n{body}"
+
+
+def _format_mapping(value: Mapping[str, Any]) -> str:
+    """Compact nested mapping for evidence/observed values."""
+    parts = []
+    for key, item in value.items():
+        rendered = str(item)
+        if isinstance(item, list):
+            rendered = "[" + ", ".join(str(x) for x in item) + "]"
+        parts.append(f"{key}={rendered}")
+    return "; ".join(parts)
+
+
+def _status_style_for_result(result: str) -> str:
+    normalized = result.upper()
+    if normalized == "PASS":
+        return "green"
+    if normalized in {"FAIL", "ESCALATE"}:
+        return "red" if normalized == "FAIL" else "yellow"
+    return "dim"
 
 
 class FeedNote(Static):

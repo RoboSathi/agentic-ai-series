@@ -68,7 +68,8 @@ class OrderSanityCheck(BasicSanityChecker):
 
     def check(self, request: BasicSanityRequest) -> BasicSanityResult:
         """Run only deterministic checks that are safe before the model."""
-        order_id = self._extract_order_id(request.query)
+        order_id = self._extract_order_id(request.query, request.metadata)
+        operation = self._operation(request.query, request.metadata)
         if order_id is None:
             return BasicSanityResult(
                 passed=True,
@@ -80,7 +81,7 @@ class OrderSanityCheck(BasicSanityChecker):
                         reason="No explicit order id was present; no order lookup was attempted.",
                     )
                 ],
-                facts={"order_id": None, "operation": self._operation(request.query)},
+                facts={"order_id": None, "operation": operation},
             )
 
         if request.customer_id is None:
@@ -121,7 +122,6 @@ class OrderSanityCheck(BasicSanityChecker):
                 facts={"order_id": order_id, "operation": self._operation(request.query)},
             )
 
-        operation = self._operation(request.query)
         facts = {
             "order_id": order.order_id,
             "customer_id": order.user_id,
@@ -168,6 +168,70 @@ class OrderSanityCheck(BasicSanityChecker):
                 findings=findings,
                 facts=facts,
             )
+
+        if operation == "refund_request":
+            requested_amount = _requested_amount(request.metadata)
+            if requested_amount is not None and requested_amount <= 0:
+                findings.append(
+                    BasicSanityFinding(
+                        check="requested_amount_positive",
+                        passed=False,
+                        reason="A refund amount must be greater than zero.",
+                        evidence={"requested_amount": requested_amount},
+                    )
+                )
+                return BasicSanityResult(
+                    passed=False,
+                    reason_code="INVALID_REFUND_AMOUNT",
+                    message="The refund amount must be greater than zero.",
+                    findings=findings,
+                    facts={**facts, "requested_amount": requested_amount},
+                )
+            if requested_amount is not None and requested_amount > order.amount:
+                findings.append(
+                    BasicSanityFinding(
+                        check="requested_amount_within_order_total",
+                        passed=False,
+                        reason=(
+                            f"The requested refund of ${requested_amount:,.2f} exceeds the "
+                            f"order total of ${order.amount:,.2f}."
+                        ),
+                        evidence={
+                            "requested_amount": requested_amount,
+                            "order_amount": order.amount,
+                        },
+                    )
+                )
+                return BasicSanityResult(
+                    passed=False,
+                    reason_code="REFUND_AMOUNT_EXCEEDS_ORDER_TOTAL",
+                    message=(
+                        f"The requested refund exceeds the ${order.amount:,.2f} order total."
+                    ),
+                    findings=findings,
+                    facts={**facts, "requested_amount": requested_amount},
+                )
+            if requested_amount is not None:
+                facts["requested_amount"] = requested_amount
+                findings.append(
+                    BasicSanityFinding(
+                        check="requested_amount_positive",
+                        passed=True,
+                        reason="The requested refund amount is greater than zero.",
+                        evidence={"requested_amount": requested_amount},
+                    )
+                )
+                findings.append(
+                    BasicSanityFinding(
+                        check="requested_amount_within_order_total",
+                        passed=True,
+                        reason="The requested refund does not exceed the order total.",
+                        evidence={
+                            "requested_amount": requested_amount,
+                            "order_amount": order.amount,
+                        },
+                    )
+                )
 
         if operation == "refund_request" and not order.is_refund_eligible:
             findings.append(
@@ -216,28 +280,54 @@ class OrderSanityCheck(BasicSanityChecker):
         )
 
     @staticmethod
-    def _extract_order_id(query: str) -> int | None:
-        """Extract an order id from an explicit order/refund reference.
+    def _extract_order_id(query: str, metadata: dict[str, object] | None = None) -> int | None:
+        """Extract an order id from the user query or an exact tool call.
 
-        The normal form is an order-labelled number. Customer Support also
-        accepts the compact refund phrasing "refund 10891" because that is
-        an explicit refund request for a long numeric token in this domain.
-        Amount-looking forms such as "refund $50" remain unresolved here.
+        The tool-call fallback is only used by the Gatekeeper's final
+        re-check. It does not guess from arbitrary text: the agent has already
+        produced a validated ``order_id`` argument.
         """
         for pattern in _ORDER_ID_PATTERNS:
             match = pattern.search(query)
             if match is not None:
                 return int(match.group("order_id"))
+        tool_params = (metadata or {}).get("tool_params")
+        if isinstance(tool_params, dict):
+            candidate = tool_params.get("order_id")
+            if isinstance(candidate, int) and candidate > 0:
+                return candidate
+            if isinstance(candidate, str) and candidate.isdigit():
+                return int(candidate)
         return None
 
-    def _operation(self, query: str) -> str:
-        """Detect only the narrow operation needed for refund preflight."""
+    def _operation(self, query: str, metadata: dict[str, object] | None = None) -> str:
+        """Detect the refund operation from user wording or exact tool identity."""
+        tool_action = (metadata or {}).get("tool_action", "")
+        bare_action = str(tool_action).rsplit(".", maxsplit=1)[-1]
+        if bare_action in {"process_refund", "queue_for_approval"}:
+            return "refund_request"
         lowered = query.casefold()
         return (
             "refund_request"
             if any(marker in lowered for marker in self._refund_markers)
             else "unknown"
         )
+
+
+def _requested_amount(metadata: dict[str, object] | None) -> float | None:
+    """Read an already-validated tool amount, when the Gatekeeper rechecks a call."""
+    params = (metadata or {}).get("tool_params")
+    if not isinstance(params, dict):
+        return None
+    value = params.get("amount")
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    return None
 
 
 def _configured_refund_markers() -> list[str]:

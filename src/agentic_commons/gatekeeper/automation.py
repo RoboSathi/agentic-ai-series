@@ -1,22 +1,10 @@
-"""Sheridan automation levels (E03, LLD §11).
-
-Sheridan & Verplank's 1978 scale, from 1 (the human does everything) to
-10 (the computer acts and tells the human nothing). "Human in the loop"
-names no point on it — the useful question is always *which level*, for
-*which action*, at *what amount*.
-
-Level is per action and per amount, because the same tool is a different
-decision at different sizes: a $10 refund and a $10,000 refund are the
-same function call and not remotely the same risk.
-"""
+"""Sheridan automation levels (E03, LLD §11)."""
 
 from agentic_commons.config import get_settings
 from agentic_commons.gatekeeper.types import AutomationAssessment
 from agentic_commons.logging import get_logger
 
-# Sheridan's scale, kept for the audit record: a stored level must mean
-# something to whoever reads it later.
-SHERIDAN_LEVELS: dict[int, str] = {
+SHERIDAN_LEVELS = {
     1: "human does everything",
     2: "computer offers alternatives",
     3: "computer narrows the alternatives",
@@ -31,7 +19,7 @@ SHERIDAN_LEVELS: dict[int, str] = {
 
 
 class AutomationLevelPolicy:
-    """The automation level for an action, and whether a human is required."""
+    """Operationalizes the configured Sheridan automation envelope."""
 
     def __init__(self) -> None:
         settings = get_settings().gatekeeper.automation
@@ -41,12 +29,16 @@ class AutomationLevelPolicy:
         self._escalation_amounts = settings.per_action_amount_escalation_usd
         self._logger = get_logger("gatekeeper")
 
+    @property
+    def approval_floor(self) -> int:
+        """Configured level at or below which the current implementation requires review."""
+        return self._approval_below
+
     def level_for(self, action: str) -> int:
         """The configured Sheridan level for an action.
 
-        An unconfigured action sits at level 5 — executes only with human
-        approval. Defaulting upward would automate whatever nobody
-        remembered to classify.
+        An unconfigured action sits at the approval floor rather than
+        defaulting upward and silently becoming autonomous.
         """
         bare = action.rsplit(".", maxsplit=1)[-1]
         level = self._levels.get(bare)
@@ -62,35 +54,83 @@ class AutomationLevelPolicy:
 
     def assess(self, action: str, amount: float = 0.0) -> AutomationAssessment:
         """Whether this action, at this amount, may proceed without a human."""
-        if not self._enabled:
-            return AutomationAssessment(
-                action=action, level=10, requires_human=False, reason="automation policy disabled"
-            )
         level = self.level_for(action)
         ceiling = self.escalation_amount(action)
-        if amount > ceiling:
-            return AutomationAssessment(
+        within_ceiling = amount <= ceiling
+        level_meets_floor = level >= self._approval_below
+        meaning = SHERIDAN_LEVELS.get(level, "unconfigured Sheridan level")
+
+        if not self._enabled:
+            assessment = AutomationAssessment(
+                action=action,
+                level=10,
+                requires_human=False,
+                reason="automation policy disabled",
+                amount=amount,
+                policy_enabled=False,
+                automation_floor=self._approval_below,
+                level_meets_floor=True,
+                auto_approval_ceiling=ceiling,
+                amount_within_ceiling=True,
+                level_meaning=SHERIDAN_LEVELS[10],
+            )
+        elif amount > ceiling:
+            assessment = AutomationAssessment(
                 action=action,
                 level=level,
                 requires_human=True,
                 amount=amount,
                 reason=f"${amount:,.2f} exceeds the ${ceiling:,.2f} auto-approval ceiling",
+                policy_enabled=True,
+                automation_floor=self._approval_below,
+                level_meets_floor=level_meets_floor,
+                auto_approval_ceiling=ceiling,
+                amount_within_ceiling=False,
+                level_meaning=meaning,
             )
-        if level < self._approval_below:
-            return AutomationAssessment(
+        elif level < self._approval_below:
+            assessment = AutomationAssessment(
                 action=action,
                 level=level,
                 requires_human=True,
                 amount=amount,
                 reason=(
-                    f"Sheridan level {level} ({SHERIDAN_LEVELS.get(level, 'unknown')}) "
-                    f"is below the level-{self._approval_below} autonomy floor"
+                    f"Sheridan level {level} ({meaning}) is below the "
+                    f"level-{self._approval_below} autonomy floor"
                 ),
+                policy_enabled=True,
+                automation_floor=self._approval_below,
+                level_meets_floor=False,
+                auto_approval_ceiling=ceiling,
+                amount_within_ceiling=within_ceiling,
+                level_meaning=meaning,
             )
-        return AutomationAssessment(
+        else:
+            assessment = AutomationAssessment(
+                action=action,
+                level=level,
+                requires_human=False,
+                amount=amount,
+                reason=f"Sheridan level {level}: {meaning}",
+                policy_enabled=True,
+                automation_floor=self._approval_below,
+                level_meets_floor=True,
+                auto_approval_ceiling=ceiling,
+                amount_within_ceiling=within_ceiling,
+                level_meaning=meaning,
+            )
+
+        self._logger.info(
+            "Automation policy assessed",
             action=action,
-            level=level,
-            requires_human=False,
+            sheridan_level=assessment.level,
+            level_meaning=assessment.level_meaning,
             amount=amount,
-            reason=f"Sheridan level {level}: {SHERIDAN_LEVELS.get(level, 'unknown')}",
+            auto_approval_ceiling=assessment.auto_approval_ceiling,
+            amount_within_ceiling=assessment.amount_within_ceiling,
+            automation_floor=assessment.automation_floor,
+            level_meets_floor=assessment.level_meets_floor,
+            human_required=assessment.requires_human,
+            reason=assessment.reason,
         )
+        return assessment
