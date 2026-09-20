@@ -3,6 +3,7 @@
 from customer_support_agent.core.builder import build_agent, build_lexical_index
 from customer_support_agent.core.graph import CustomerSupportAgent
 from customer_support_agent.core.identity import Customer, current_customer, set_current_customer
+from customer_support_agent.core.order_validator import OrderSanityCheck
 from customer_support_agent.core.refund_saga import RefundSaga
 from customer_support_agent.core.repositories import (
     HitlQueueRepository,
@@ -28,6 +29,7 @@ __all__ = [
     "HitlQueueRepository",
     "HitlRequest",
     "Order",
+    "OrderSanityCheck",
     "OrdersRepository",
     "RefundLedgerRepository",
     "RefundSaga",

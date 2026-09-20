@@ -12,6 +12,7 @@ wiring that ships.
 """
 
 from agentic_commons.audit import AuditLedger, create_audit_ledger
+from agentic_commons.basic_sanity import BasicSanityChecker
 from agentic_commons.config import get_settings
 from agentic_commons.context import (
     Chunk,
@@ -43,6 +44,7 @@ from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from customer_support_agent.core.authentication import CustomerAuthenticator
 from customer_support_agent.core.graph import CustomerSupportAgent
 from customer_support_agent.core.identity import current_customer_id
+from customer_support_agent.core.order_validator import OrderSanityCheck
 from customer_support_agent.core.refund_saga import RefundSaga
 from customer_support_agent.core.repositories import (
     HitlQueueRepository,
@@ -188,6 +190,7 @@ def build_agent(
     reporter: StageReporter | None = None,
     with_memory: bool | None = None,
     observe: bool | None = None,
+    basic_sanity: BasicSanityChecker | None = None,
 ) -> CustomerSupportAgent:
     """Wire the refund agent from config, honouring any injected parts.
 
@@ -313,6 +316,7 @@ def build_agent(
         grounding=DetectionLadder(scoring) if settings.hallucination_protection.enabled else None,
         authenticator=CustomerAuthenticator(UsersRepository(connection), orders),
         orders=orders,
+        basic_sanity=basic_sanity or OrderSanityCheck(orders),
     )
 
 

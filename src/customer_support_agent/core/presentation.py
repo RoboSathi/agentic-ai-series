@@ -163,14 +163,17 @@ def customer_orders(orders_repository: OrdersRepository, customer_id: int) -> li
 
 
 def _menu_lines(orders: list[Order]) -> list[str]:
-    """One aligned row per order: position, id, date, status, total.
+    """One aligned row per order: id, date, order status, refund status, total.
 
-    No refund column. Listing orders is not a refund conversation, and a
-    list that annotates every row with refund state is advertising.
+    The list is rendered deterministically so the customer sees the same
+    authoritative refund state that the database returned. This function is
+    shared by the post-authentication greeting and an explicit "show orders"
+    request, so both surfaces stay consistent.
     """
     return [
         f"  {position:>2}. Order {order.order_id}  {order.timestamp[:10]}  "
         f"{_STATUS_WORDS.get(order.order_status, order.order_status):<14} "
+        f"{('Refund: ' + _REFUND_WORDS.get(order.refund_status, order.refund_status) if _REFUND_WORDS.get(order.refund_status, order.refund_status) else 'Refund: none'): <25} "
         f"${order.amount:>9,.2f}"
         for position, order in enumerate(orders, start=1)
     ]

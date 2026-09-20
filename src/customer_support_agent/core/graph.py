@@ -22,6 +22,7 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
+from agentic_commons.basic_sanity import BasicSanityChecker, BasicSanityRequest
 from agentic_commons.context import (
     Chunk,
     ContextFailureDetector,
@@ -105,6 +106,7 @@ class CustomerSupportAgent:
         grounding: DetectionLadder | None = None,
         authenticator: CustomerAuthenticator | None = None,
         orders: OrdersRepository | None = None,
+        basic_sanity: BasicSanityChecker | None = None,
     ) -> None:
         settings = get_agent_settings()
         self._llm = llm
@@ -137,6 +139,7 @@ class CustomerSupportAgent:
         self._scope = ScopeGuard()
         self._authenticator = authenticator
         self._orders = orders
+        self._basic_sanity = basic_sanity
         # Who each session has proved itself to be. Authentication is per
         # conversation: a customer verifies once and stays verified for
         # that session, rather than retyping a code every turn.
@@ -496,6 +499,81 @@ class CustomerSupportAgent:
             "response": response,
             "decisions": [*state.decisions, decision],
             "metadata": {**state.metadata, "halted": "answered_from_db"},
+        }
+
+    async def basic_sanity(self, state: AgentState) -> dict[str, Any]:
+        """Run cheap, deterministic domain checks before any model call."""
+        if self._basic_sanity is None:
+            self._done(
+                "basic_sanity",
+                summary="No basic sanity checker configured",
+                fields={"configured": False},
+            )
+            return {
+                "metadata": {
+                    **state.metadata,
+                    "basic_sanity": {
+                        "passed": True,
+                        "reason_code": "CHECKER_NOT_CONFIGURED",
+                    },
+                }
+            }
+
+        self._report(
+            "basic_sanity",
+            event_kind="stage",
+            summary="Running deterministic pre-LLM sanity checks",
+        )
+        result = self._basic_sanity.check(
+            BasicSanityRequest(
+                query=state.query,
+                session_id=state.session_id,
+                actor=state.actor,
+                customer_id=state.customer_id,
+                metadata=state.metadata,
+            )
+        )
+        fields = {
+            "passed": result.passed,
+            "reason_code": result.reason_code,
+            "checks": [finding.model_dump(mode="json") for finding in result.findings],
+            "facts": result.facts,
+        }
+
+        if result.passed:
+            self._done(
+                "basic_sanity",
+                summary="Basic sanity checks passed",
+                fields=fields,
+            )
+            return {
+                "decisions": [
+                    *state.decisions,
+                    f"basic_sanity: pass ({result.reason_code})",
+                ],
+                "metadata": {
+                    **state.metadata,
+                    "basic_sanity": result.model_dump(mode="json"),
+                },
+            }
+
+        self._reporter_blocked(
+            "basic_sanity",
+            summary=f"Basic sanity blocked: {result.reason_code}",
+            fields=fields,
+        )
+        return {
+            "response": result.message
+            or "I couldn't safely continue with that request.",
+            "decisions": [
+                *state.decisions,
+                f"basic_sanity: blocked ({result.reason_code})",
+            ],
+            "metadata": {
+                **state.metadata,
+                "basic_sanity": result.model_dump(mode="json"),
+                "halted": "basic_sanity",
+            },
         }
 
     async def intake(self, state: AgentState) -> dict[str, Any]:
@@ -929,13 +1007,9 @@ class CustomerSupportAgent:
             results.append(text)
             decisions.append(decision)
             self._note(state, f"result_of_{requested.name}", text, category="tool_result")
-            return {
-                "messages": outputs,
-                "tool_results": [*state.tool_results, *results],
-                "decisions": [*state.decisions, *decisions],
-                "escalated": state.escalated
-                             or any("escalate" in d for d in decisions),
-            }
+            outputs.append(
+                Message(role="tool", content=text, tool_call_id=requested.id or requested.name)
+            )
 
     async def finalize(self, state: AgentState) -> dict[str, Any]:
         """One tool-free call so the customer always gets an answer.
@@ -986,16 +1060,13 @@ class CustomerSupportAgent:
             summary="Generating the final customer response",
             fields={"purpose": "reply_revision"},
         )
-        # Fix: Make retry with exponential backoff + jitter (resilient)
-        result = await self._call_model(
+        result = await self._llm.complete(
             CompletionRequest(
                 messages=[
                     *self._prompt_messages(state),
                     Message(role="user", content=build_reply_instruction()),
                 ]
-            ),
-            state,
-            f"{state.session_id}:finalize:{state.tool_rounds}",
+            )
         )
         self._done(
             "llm_call",
@@ -1129,6 +1200,7 @@ class CustomerSupportAgent:
         graph.add_node("screen", self.screen)
         graph.add_node("authenticate", self.authenticate)
         graph.add_node("choose_order", self.choose_order)
+        graph.add_node("basic_sanity", self.basic_sanity)
         graph.add_node("intake", self.intake)
         graph.add_node("assemble_context", self.assemble_context)
         graph.add_node("reason", self.reason)
@@ -1145,7 +1217,10 @@ class CustomerSupportAgent:
             {"choose_order": "choose_order", "done": END},
         )
         graph.add_conditional_edges(
-            "choose_order", self._after_choose, {"intake": "intake", "done": END}
+            "choose_order", self._after_choose, {"basic_sanity": "basic_sanity", "done": END}
+        )
+        graph.add_conditional_edges(
+            "basic_sanity", self._after_basic_sanity, {"intake": "intake", "done": END}
         )
         graph.add_edge("intake", "assemble_context")
         graph.add_edge("assemble_context", "reason")
@@ -1168,6 +1243,10 @@ class CustomerSupportAgent:
 
     def _after_choose(self, state: AgentState) -> str:
         """A menu choice is answered from the database and finishes here."""
+        return "done" if state.metadata.get("halted") else "basic_sanity"
+
+    def _after_basic_sanity(self, state: AgentState) -> str:
+        """Blocked sanity checks finish the turn before the model sees it."""
         return "done" if state.metadata.get("halted") else "intake"
 
     def _after_reason(self, state: AgentState) -> str:
