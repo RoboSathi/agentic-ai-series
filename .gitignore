@@ -23,3 +23,6 @@ CLAUDE.md
 
 # Zip file
 project.zip
+
+# DuckDB
+data/observability.duckdb
