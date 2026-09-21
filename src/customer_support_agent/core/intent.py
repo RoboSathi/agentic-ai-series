@@ -122,10 +122,11 @@ class CustomerSupportIntentRouter:
                 "Intent routing is disabled; the request is handled without tool access."
             )
 
-        inherited = self._inherit(text, previous)
-        if inherited is not None:
-            return inherited
-
+        # IMPORTANT: previous intent is context, not a classification result.
+        # Always classify the current turn first. The previous intent is used
+        # only as a constrained fallback when the current turn is genuinely
+        # underspecified. This prevents a follow-up such as "what about a
+        # refund?" from being forced into the previous intent.
         if self._is_courtesy(text):
             return self._supported_unknown(
                 "Conversational courtesy can be handled without a business tool."
@@ -153,8 +154,41 @@ class CustomerSupportIntentRouter:
             )
 
         mapped_candidates = self._map_model_candidates(candidates)
+        if not mapped_candidates:
+            return self._clarify(
+                candidates=[],
+                reason="Intent classifier candidates could not be mapped to the configured taxonomy.",
+            )
+
         top = mapped_candidates[0]
         threshold = self._settings.intent_router.confidence_threshold
+        contextual_followup = self._is_contextual_followup(text)
+
+        # Current-turn evidence always wins. A follow-up marker never gets to
+        # overwrite a confident classification for the new message.
+        if top.intent in self._intents and top.score >= threshold:
+            configured = self._intents[top.intent]
+            return Intent(
+                IntentAssessment(
+                    intent=top.intent,
+                    confidence=top.score,
+                    disposition=IntentDisposition.SUPPORTED,
+                    source="huggingface_local",
+                    candidates=mapped_candidates,
+                    allowed_tools=list(configured.tools),
+                    model=self._backend_model_name(),
+                    score_type=self._backend_score_type(),
+                    reason="The current turn cleared the configured routing threshold.",
+                )
+            )
+
+        # Only now may conversational context participate. It is deliberately
+        # a fallback, and only for an underspecified follow-up.
+        if contextual_followup and previous is not None:
+            contextual = self._context_fallback(text, previous, top)
+            if contextual is not None:
+                return contextual
+
         if top.intent == self._default and top.score >= threshold:
             return Intent(
                 IntentAssessment(
@@ -169,22 +203,6 @@ class CustomerSupportIntentRouter:
                 )
             )
 
-        if top.intent in self._intents and top.score >= threshold:
-            configured = self._intents[top.intent]
-            return Intent(
-                IntentAssessment(
-                    intent=top.intent,
-                    confidence=top.score,
-                    disposition=IntentDisposition.SUPPORTED,
-                    source="huggingface_local",
-                    candidates=mapped_candidates,
-                    allowed_tools=list(configured.tools),
-                    model=self._backend_model_name(),
-                    score_type=self._backend_score_type(),
-                    reason="The classifier score cleared the configured routing threshold.",
-                )
-            )
-
         return self._clarify(candidates=mapped_candidates, reason="Classifier score is below the configured routing threshold.")
 
     def classify(self, message: str, previous: Intent | None = None) -> Intent:
@@ -193,9 +211,8 @@ class CustomerSupportIntentRouter:
         rejected = self._deterministic_rejection(text)
         if rejected is not None:
             return rejected
-        inherited = self._inherit(text, previous)
-        if inherited is not None:
-            return inherited
+        # This synchronous compatibility path has no semantic classifier, so
+        # it must not inherit business intent from conversational history.
         if self._is_courtesy(text):
             return self._supported_unknown(
                 "Conversational courtesy can be handled without a business tool."
@@ -276,26 +293,78 @@ class CustomerSupportIntentRouter:
     def _backend_score_type(self) -> str:
         return self._backend.score_type if self._backend is not None else "model_softmax"
 
-    def _inherit(self, message: str, previous: Intent | None) -> Intent | None:
-        """Carry forward a previously supported intent for an obvious follow-up."""
-        if previous is None or previous.disposition is not IntentDisposition.SUPPORTED:
-            return None
+    def _is_contextual_followup(self, message: str) -> bool:
+        """Return whether the message is plausibly an underspecified follow-up.
+
+        Context is a fallback signal only. Generic one-word terms such as
+        ``and`` or ``check`` are intentionally ignored as follow-up markers.
+        """
         lowered = message.casefold()
-        has_phrase = any(phrase in lowered for phrase in self._followup_phrases)
+
+        # Multi-word configured phrases are strong discourse markers. A
+        # one-word phrase is too generic to justify inheriting intent.
+        strong_phrases = tuple(
+            phrase
+            for phrase in self._followup_phrases
+            if len(phrase.split()) >= 2
+        )
+        has_strong_phrase = any(phrase in lowered for phrase in strong_phrases)
         has_reference = bool(self._reference.search(message))
-        if not (has_phrase or has_reference):
+        has_deictic_reference = bool(
+            re.search(r"\b(?:it|this|that|same|those|these|one)\b", lowered)
+        )
+        return has_strong_phrase or has_reference or has_deictic_reference
+
+    def _context_fallback(
+        self,
+        message: str,
+        previous: Intent,
+        top: IntentCandidate,
+    ) -> Intent | None:
+        """Use previous intent only when the current turn lacks evidence."""
+        if previous.disposition is not IntentDisposition.SUPPORTED:
             return None
-        self._logger.debug("Continuing the previous Customer Support intent", intent=previous.name)
+
+        threshold = self._settings.intent_router.confidence_threshold
+        current_is_unknown = top.intent == self._default
+        current_is_uncertain = top.intent in self._intents and top.score < threshold
+        if not (current_is_unknown or current_is_uncertain):
+            return None
+
+        # The classifier has meaningful evidence for another supported intent.
+        # Preserve that evidence and let the normal clarification path run.
+        meaningful_competitor = (
+            current_is_uncertain and top.score >= (threshold * 0.5)
+        )
+        if meaningful_competitor:
+            return None
+
+        self._logger.debug(
+            "Using previous Customer Support intent as constrained follow-up fallback",
+            previous_intent=previous.name,
+            current_top_intent=top.intent,
+            current_top_score=round(top.score, 4),
+        )
         return Intent(
             IntentAssessment(
                 intent=previous.name,
-                confidence=1.0,
+                confidence=previous.confidence,
                 disposition=IntentDisposition.SUPPORTED,
-                source="context",
-                candidates=[IntentCandidate(intent=previous.name, score=1.0)],
+                source="context_fallback",
+                candidates=[
+                    IntentCandidate(intent=top.intent, score=top.score),
+                    IntentCandidate(
+                        intent=previous.name,
+                        score=max(0.0, 1.0 - top.score),
+                    ),
+                ],
                 allowed_tools=list(previous.allowed_tools),
                 matched_rule="continued_context",
-                reason="The message is an obvious follow-up to the previous supported intent.",
+                reason=(
+                    "The current turn was an underspecified follow-up and did not "
+                    "establish a new intent, so the previous supported intent was "
+                    "used only as context fallback."
+                ),
             )
         )
 

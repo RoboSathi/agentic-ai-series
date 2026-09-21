@@ -32,3 +32,6 @@ data/agent.db
 
 # Local Models
 local_models/*
+
+# Patches
+*.patch
