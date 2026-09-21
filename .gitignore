@@ -26,3 +26,9 @@ project.zip
 
 # DuckDB
 data/observability.duckdb*
+
+# Data
+data/agent.db
+
+# Local Models
+local_models/*

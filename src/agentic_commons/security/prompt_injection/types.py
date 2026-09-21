@@ -1,5 +1,7 @@
 """Prompt-injection value types (LLD §12.3)."""
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -33,3 +35,4 @@ class InjectionAssessment(BaseModel):
     phrases: list[str] = Field(default_factory=list)
     allowed_actions: list[str] = Field(default_factory=list)
     reason: str = ""
+    checks: list[dict[str, Any]] = Field(default_factory=list)

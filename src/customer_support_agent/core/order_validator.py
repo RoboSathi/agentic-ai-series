@@ -164,7 +164,7 @@ class OrderSanityCheck(BasicSanityChecker):
             )
         ]
 
-        if operation == "refund_request" and order.already_refunded:
+        if operation == "REQUEST_REFUND" and order.already_refunded:
             self._logger.info(
                 "BasicSanity blocked an already-refunded order",
                 order_id=order.order_id,
@@ -189,7 +189,7 @@ class OrderSanityCheck(BasicSanityChecker):
                 facts=facts,
             )
 
-        if operation == "refund_request":
+        if operation == "REQUEST_REFUND":
             requested_amount = _requested_amount(request.metadata)
             if requested_amount is not None and requested_amount <= 0:
                 findings.append(
@@ -254,7 +254,7 @@ class OrderSanityCheck(BasicSanityChecker):
                     )
                 )
 
-        if operation == "refund_request" and not order.is_refund_eligible:
+        if operation == "REQUEST_REFUND" and not order.is_refund_eligible:
             findings.append(
                 BasicSanityFinding(
                     check="refund_eligible",
@@ -275,7 +275,7 @@ class OrderSanityCheck(BasicSanityChecker):
                 facts=facts,
             )
 
-        if operation == "refund_request":
+        if operation == "REQUEST_REFUND":
             findings.append(
                 BasicSanityFinding(
                     check="not_already_refunded",
@@ -332,10 +332,10 @@ class OrderSanityCheck(BasicSanityChecker):
         tool_action = (metadata or {}).get("tool_action", "")
         bare_action = str(tool_action).rsplit(".", maxsplit=1)[-1]
         if bare_action in {"process_refund", "queue_for_approval"}:
-            return "refund_request"
+            return "REQUEST_REFUND"
         lowered = query.casefold()
         return (
-            "refund_request"
+            "REQUEST_REFUND"
             if any(marker in lowered for marker in self._refund_markers)
             else "unknown"
         )
@@ -360,6 +360,6 @@ def _requested_amount(metadata: dict[str, object] | None) -> float | None:
 def _configured_refund_markers() -> list[str]:
     """Read refund phrases from the Customer Support agent's own config."""
     for intent in get_agent_settings().intents:
-        if intent.name == "refund_request":
+        if intent.name == "REQUEST_REFUND":
             return list(intent.phrases)
     return []

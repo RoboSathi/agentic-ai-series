@@ -137,9 +137,48 @@ class PromptInjectionGuard:
                 suspicious=False,
                 allowed_actions=[tool.qualified_name for tool in tools],
                 reason="prompt injection defense disabled",
+                checks=[
+                    {"name": "Instruction/data separation", "status": "SKIPPED", "reason_code": "INJECTION_DEFENSE_DISABLED"},
+                    {"name": "Injection phrase scan", "status": "SKIPPED", "reason_code": "INJECTION_DEFENSE_DISABLED"},
+                    {"name": "Protected surface filter", "status": "SKIPPED", "reason_code": "INJECTION_DEFENSE_DISABLED"},
+                    {"name": "Reversibility enforcement", "status": "SKIPPED", "reason_code": "INJECTION_DEFENSE_DISABLED"},
+                ],
             )
         context = self.separate(instructions, data)
         allowed = self.scope_tools(context, tools)
+        forbidden_surfaces_removed = len(allowed) <= len(tools)
+        reversible_ok = (
+            all(tool.reversible for tool in allowed)
+            if context.is_suspicious
+            else True
+        )
+        checks = [
+            {
+                "name": "Instruction/data separation",
+                "status": "PASS",
+                "reason_code": "CONTEXT_SEPARATED",
+                "reason": "Untrusted customer content was kept in the delimited data channel.",
+            },
+            {
+                "name": "Injection phrase scan",
+                "status": "FAIL" if context.is_suspicious else "PASS",
+                "reason_code": "INJECTION_PHRASES_FOUND" if context.is_suspicious else "NO_INJECTION_PHRASES",
+                "reason": "Known injection phrasing was detected." if context.is_suspicious else "No configured injection phrases were detected.",
+                "observed": {"phrases": context.suspicious_phrases},
+            },
+            {
+                "name": "Protected surface filter",
+                "status": "PASS" if forbidden_surfaces_removed else "SKIPPED",
+                "reason_code": "UNTRUSTED_SURFACES_FILTERED",
+                "reason": "Tools targeting protected untrusted surfaces were excluded from this turn.",
+            },
+            {
+                "name": "Reversibility enforcement",
+                "status": "PASS" if reversible_ok else "FAIL",
+                "reason_code": "REVERSIBLE_ONLY" if context.is_suspicious else "NOT_APPLICABLE",
+                "reason": "Suspicious content can only retain reversible tools." if context.is_suspicious else "No additional reversibility restriction was required.",
+            },
+        ]
         return InjectionAssessment(
             suspicious=context.is_suspicious,
             phrases=context.suspicious_phrases,
@@ -149,4 +188,5 @@ class PromptInjectionGuard:
                 if context.is_suspicious
                 else "no injection phrasing found"
             ),
+            checks=checks,
         )

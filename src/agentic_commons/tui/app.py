@@ -407,12 +407,28 @@ def _compact(tokens: int) -> str:
 
 
 def main() -> None:
-    from customer_support_agent.core import build_agent
+    # Keep Hugging Face/tokenizer initialization outside the Textual event loop.
+    # On macOS, initializing native ML components after the TUI has opened its
+    # descriptors can surface Python's `fds_to_keep` multiprocessing error.
+    # This is an environment/runtime issue, not an intent-routing decision.
+    import os
+
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+    from customer_support_agent.core import CustomerSupportIntentRouter, build_agent
+    from agentic_commons.intent import create_intent_classifier
+
+    classifier = create_intent_classifier()
+    print(f"Loading intent classifier: {classifier.model_name}")
+    classifier.ensure_loaded_sync()
+    intent_router = CustomerSupportIntentRouter(backend=classifier)
+    print(f"Intent classifier ready: {classifier.cache_path}")
 
     try:
         AgenticTuiApp(
             lambda reporter: build_agent(
-                reporter=reporter
+                reporter=reporter,
+                intent_router=intent_router,
             )
         ).run()
     except KeyboardInterrupt:

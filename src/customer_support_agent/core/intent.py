@@ -1,204 +1,368 @@
-"""What the customer is actually asking for (LLD §21).
+"""Customer Support intent routing.
 
-Business policy, stated deterministically, and it runs *before* any
-similarity score. The rule it encodes is simple and was expensive to get
-wrong: **a refund is discussed when the customer raises it.** Asking
-where an order is is not asking for money back, and an agent that treats
-every order enquiry as a possible refund will eventually issue one.
+The router has one job at the front door:
 
-Relying on embedding similarity for this was the earlier mistake. A
-weak score is a continuum, so "is this about a refund?" became a
-threshold to tune rather than a policy to state — and tuning it moves
-the boundary for every phrasing at once, invisibly.
+1. deterministically reject requests that are *provably* outside Customer
+   Support;
+2. otherwise classify into the agent's small intent set with a lightweight
+   BERT-family model;
+3. if the classifier is not confident enough, ask one deterministic
+   clarification question.
 
-An encoder *does* run, but strictly second and strictly bounded. When no
-configured phrase matches, the message is embedded and compared against
-the phrase sets of the intents config marks `semantic: true` — so a
-paraphrase like "any news on my parcel?" is recognised as an order
-enquiry, while `refund_request` stays on the deterministic path where a
-policy is a sentence rather than a threshold. An embedding model, never
-a completion: classification is a similarity question.
-
-This is the same NOLLM discipline the rest of the system uses: the cheap,
-deterministic, auditable answer first. Retrieval still narrows further
-within whatever the intent permits; it can never widen it.
+The router does not authorize tools.  The selected intent only determines
+which business workflow/tools may be considered later; the Gatekeeper still
+controls every side effect.
 """
 
+from __future__ import annotations
+
+import asyncio
 import re
+from functools import lru_cache
+from typing import Any
 
-from pydantic import BaseModel, Field
-
-from agentic_commons.llm.embeddings import (
-    EmbeddingClient,
-    cosine_similarity,
-    create_embedding_client,
-)
+from agentic_commons.config import get_settings
+from agentic_commons.intent import IntentAssessment, IntentCandidate, IntentClassifierInterface, IntentDisposition, create_intent_classifier
 from agentic_commons.logging import get_logger
 from agentic_commons.observability import traced
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.config.settings import IntentSettings
 
 
-class Intent(BaseModel):
-    """The classified intent of one customer message."""
+class Intent:
+    """Backwards-compatible lightweight view used by the planner."""
 
-    name: str
-    matched_phrase: str = ""
-    allowed_tools: list[str] = Field(default_factory=list)
+    def __init__(self, assessment: IntentAssessment) -> None:
+        self.name = assessment.intent
+        self.allowed_tools = assessment.allowed_tools
+        self.confidence = assessment.confidence
+        self.disposition = assessment.disposition
+        self.source = assessment.source
+        self.matched_phrase = assessment.matched_rule
+        self.candidates = assessment.candidates
+        self.clarification = assessment.clarification
+        self.reason = assessment.reason
+        self.model = assessment.model
+        self.score_type = assessment.score_type
+
+
+class CustomerSupportIntentRouter:
+    """One unified Customer Support intent + capability router."""
+
+    def __init__(self, backend: IntentClassifierInterface | None = None) -> None:
+        settings = get_agent_settings()
+        self._settings = settings
+        self._intents = {item.name: item for item in settings.intents}
+        self._default = settings.default_intent
+        self._followup_phrases = [phrase.casefold() for phrase in settings.followup.phrases]
+        self._reference = re.compile(settings.followup.reference_pattern)
+        self._logger = get_logger("customer_support_agent")
+        # The composition root supplies the agent-owned router; the router
+        # immediately wires the shared classifier provider. Model weights are
+        # still loaded asynchronously on first semantic classification.
+        self._backend = backend or create_intent_classifier()
+        self._backend_error: str = ""
+        self._backend_ready = bool(getattr(self._backend, "is_loaded", False))
+        self._reject_patterns = [
+            (rule.rule_id, re.compile(rule.pattern, re.IGNORECASE), rule.reason)
+            for rule in settings.intent_router.deterministic_rejects
+        ]
 
     @property
-    def permits_tools(self) -> bool:
-        """Whether this intent unlocks any tool at all."""
-        return bool(self.allowed_tools)
+    def model_name(self) -> str:
+        return self._backend.model_name
 
+    @property
+    def model_ready(self) -> bool:
+        return self._backend_ready
 
-class IntentClassifier:
-    """Maps a customer message to the tools that message can justify."""
-
-    def __init__(self, embeddings: EmbeddingClient | None = None) -> None:
-        settings = get_agent_settings()
-        self._intents = settings.intents
-        self._default = settings.default_intent
-        self._followup_phrases = [p.casefold() for p in settings.followup.phrases]
-        self._reference = re.compile(settings.followup.reference_pattern)
-        self._semantic = settings.semantic_intent
-        self._embeddings = embeddings
-        # Cached per phrase set, because the phrases never change within a
-        # process and re-embedding a fixed vocabulary on every message is
-        # a network call per turn for an answer that cannot have moved.
-        self._phrase_vectors: dict[str, list[list[float]]] = {}
-        self._logger = get_logger("customer_support_agent")
+    async def ensure_ready(self) -> None:
+        """Load the configured classifier once; surface failures rather than hiding them."""
+        if self._backend_ready:
+            return
+        if self._backend_error:
+            raise RuntimeError(self._backend_error)
+        try:
+            await self._backend.ensure_loaded()
+            self._backend_ready = True
+            cache_path = getattr(self._backend, "cache_path", None)
+            self._logger.info(
+                "Customer Support intent classifier ready",
+                model=self._backend.model_name,
+                cache_path=str(cache_path) if cache_path is not None else "provider-managed",
+            )
+        except Exception as exc:
+            self._backend_error = (
+                f"{type(exc).__name__}: {exc}"
+            )
+            self._logger.error(
+                "Customer Support intent classifier failed to load",
+                model=self._backend.model_name,
+                error=self._backend_error,
+            )
+            raise
 
     @traced("intent_classification", subsystem="customer_support_agent")
-    def classify(self, message: str, previous: Intent | None = None) -> Intent:
-        """The intent of this message, in the context of the last one.
+    async def classify_async(
+        self,
+        message: str,
+        previous: Intent | None = None,
+    ) -> Intent:
+        """Assess intent and whether Customer Support can serve the request."""
+        text = message.strip()
+        if not text:
+            return self._supported_unknown("Empty customer message")
 
-        Intents are ordered most specific first in config, so an explicit
-        refund request wins over the order words it also contains —
-        "I want a refund for order 10005" is a refund request, not an
-        order enquiry that happens to mention money.
+        deterministic = self._deterministic_rejection(text)
+        if deterministic is not None:
+            return deterministic
 
-        A message that states no intent of its own continues the previous
-        one. "what about 10010" is not a new topic; the customer dropped
-        the subject because they had already established it, and an agent
-        that forgets it between turns cannot hold a conversation.
-        """
-        lowered = message.casefold()
-        for intent in self._intents:
-            matched = next(
-                (phrase for phrase in intent.phrases if phrase.casefold() in lowered), None
+        if not self._settings.intent_router.enabled:
+            return self._supported_unknown(
+                "Intent routing is disabled; the request is handled without tool access."
             )
-            if matched is not None:
-                return Intent(
-                    name=intent.name, matched_phrase=matched, allowed_tools=list(intent.tools)
+
+        inherited = self._inherit(text, previous)
+        if inherited is not None:
+            return inherited
+
+        if self._is_courtesy(text):
+            return self._supported_unknown(
+                "Conversational courtesy can be handled without a business tool."
+            )
+
+        try:
+            await self.ensure_ready()
+        except Exception:
+            return self._clarify(
+                candidates=[],
+                reason=(
+                    "Intent classifier failed to load; the request is not safe to reject "
+                    f"deterministically. {self._backend_error}"
+                ),
+            )
+
+        candidates = await self._classify_with_backend(text)
+        if not candidates:
+            return self._clarify(
+                candidates=[],
+                reason=(
+                    "Intent classifier returned no candidates; the request is not safe "
+                    f"to reject deterministically. {self._backend_error}"
+                ),
+            )
+
+        mapped_candidates = self._map_model_candidates(candidates)
+        top = mapped_candidates[0]
+        threshold = self._settings.intent_router.confidence_threshold
+        if top.intent == self._default and top.score >= threshold:
+            return Intent(
+                IntentAssessment(
+                    intent=self._default,
+                    confidence=top.score,
+                    disposition=IntentDisposition.OUT_OF_SCOPE,
+                    source="huggingface_local",
+                    candidates=mapped_candidates,
+                    model=self._backend_model_name(),
+                    score_type=self._backend_score_type(),
+                    reason="The classifier confidently mapped the request to UNKNOWN.",
                 )
-        inherited = self._inherit(message, previous)
-        return inherited if inherited is not None else Intent(name=self._default)
+            )
+
+        if top.intent in self._intents and top.score >= threshold:
+            configured = self._intents[top.intent]
+            return Intent(
+                IntentAssessment(
+                    intent=top.intent,
+                    confidence=top.score,
+                    disposition=IntentDisposition.SUPPORTED,
+                    source="huggingface_local",
+                    candidates=mapped_candidates,
+                    allowed_tools=list(configured.tools),
+                    model=self._backend_model_name(),
+                    score_type=self._backend_score_type(),
+                    reason="The classifier score cleared the configured routing threshold.",
+                )
+            )
+
+        return self._clarify(candidates=mapped_candidates, reason="Classifier score is below the configured routing threshold.")
+
+    def classify(self, message: str, previous: Intent | None = None) -> Intent:
+        """Synchronous deterministic-only path, retained for small tests/callers."""
+        text = message.strip()
+        rejected = self._deterministic_rejection(text)
+        if rejected is not None:
+            return rejected
+        inherited = self._inherit(text, previous)
+        if inherited is not None:
+            return inherited
+        if self._is_courtesy(text):
+            return self._supported_unknown(
+                "Conversational courtesy can be handled without a business tool."
+            )
+        return self._clarify([], "Synchronous path does not invoke the BERT classifier.")
+
+    def permitted_tools(self, message: str, previous: Intent | None = None) -> set[str]:
+        """Tool names granted by the deterministic portion of the assessment."""
+        return set(self.classify(message, previous).allowed_tools)
+
+    def intent_names(self) -> list[str]:
+        """Configured intent labels."""
+        return [*self._intents.keys(), self._default]
+
+    def _deterministic_rejection(self, text: str) -> Intent | None:
+        for name, pattern, reason in self._reject_patterns:
+            if pattern.search(text):
+                self._logger.info(
+                    "Customer Support rejected a deterministic out-of-scope request",
+                    rule=name,
+                )
+                return Intent(
+                    IntentAssessment(
+                        intent=self._default,
+                        confidence=1.0,
+                        disposition=IntentDisposition.OUT_OF_SCOPE,
+                        source="deterministic",
+                        matched_rule=name,
+                        reason=reason,
+                    )
+                )
+        return None
+
+    async def _classify_with_backend(self, text: str) -> list[IntentCandidate]:
+        try:
+            return await self._backend.classify(text)
+        except Exception as exc:
+            self._backend_error = f"{type(exc).__name__}: {exc}"
+            self._logger.error(
+                "Intent classifier inference failed",
+                model=self._backend_model_name(),
+                error=self._backend_error,
+            )
+            return []
+
+    def _map_model_candidates(self, candidates: list[IntentCandidate]) -> list[IntentCandidate]:
+        """Aggregate the model's native labels into Customer Support intents."""
+        mapping = {
+            label.casefold(): intent
+            for intent, labels in self._settings.intent_router.model_label_mapping.items()
+            for label in labels
+        }
+        scores = {intent: 0.0 for intent in self._intents}
+        scores[self._default] = 0.0
+
+        for candidate in candidates:
+            mapped_intent = mapping.get(candidate.intent.casefold(), self._default)
+            scores[mapped_intent] = scores.get(mapped_intent, 0.0) + candidate.score
+
+        total = sum(scores.values())
+        if total <= 0.0:
+            return []
+
+        mapped = [
+            IntentCandidate(intent=intent, score=score / total)
+            for intent, score in scores.items()
+        ]
+        mapped.sort(key=lambda candidate: candidate.score, reverse=True)
+        return mapped
+
+    def _backend_model_name(self) -> str:
+        return (
+            self._backend.model_name
+            if self._backend is not None
+            else get_settings().llm.intent_classifier.model
+        )
+
+    def _backend_score_type(self) -> str:
+        return self._backend.score_type if self._backend is not None else "model_softmax"
 
     def _inherit(self, message: str, previous: Intent | None) -> Intent | None:
-        """Carry the previous intent forward when this message continues it.
-
-        Two signals, either sufficient: a lead-in phrase ("what about"),
-        or a bare reference that looks like an order id. Both mean the
-        customer is still talking about the same thing.
-
-        Inheritance never *widens* authority beyond what the earlier
-        message already justified — it reuses that intent, it does not
-        escalate to a stronger one.
-        """
-        if previous is None or not previous.permits_tools:
+        """Carry forward a previously supported intent for an obvious follow-up."""
+        if previous is None or previous.disposition is not IntentDisposition.SUPPORTED:
             return None
         lowered = message.casefold()
         has_phrase = any(phrase in lowered for phrase in self._followup_phrases)
         has_reference = bool(self._reference.search(message))
         if not (has_phrase or has_reference):
             return None
-        self._logger.debug("Continuing the previous intent", intent=previous.name)
-        return previous.model_copy(update={"matched_phrase": "continued"})
-
-    async def classify_async(self, message: str, previous: Intent | None = None) -> Intent:
-        """Classify deterministically, then fall back to the encoder.
-
-        The order is the whole design. A configured phrase is a stated
-        policy and wins outright; only a message that matched nothing is
-        put to an embedding model, and only intents marked `semantic` in
-        config can be reached that way. So the encoder can *recognise* a
-        paraphrase of an order enquiry, and can never quietly decide that
-        a sentence was about money.
-
-        This is an embedding call, not a completion: classification is a
-        similarity question, and generation is the wrong instrument for
-        it — slower, dearer, and less stable across runs.
-        """
-        deterministic = self.classify(message, previous)
-        if deterministic.name != self._default or not self._semantic.enabled:
-            return deterministic
-        matched = await self._semantic_match(message)
-        return matched if matched is not None else deterministic
-
-    async def _semantic_match(self, message: str) -> Intent | None:
-        """The best semantically similar intent, if one clears the bar."""
-        text = message.strip()
-        if not text or len(text.split()) > self._semantic.max_words:
-            return None
-        candidates = [intent for intent in self._intents if intent.semantic and intent.phrases]
-        if not candidates:
-            return None
-        client = self._embedding_client()
-        try:
-            query = (await client.embed([text]))[0]
-        except Exception as exc:
-            # A classifier that cannot reach its encoder degrades to the
-            # deterministic answer. It does not fail the customer's turn.
-            self._logger.warning("Semantic intent matching unavailable", error=str(exc))
-            return None
-        best, score = await self._best_match(client, query, candidates)
-        if best is None or score < self._semantic.threshold:
-            self._logger.debug("No intent cleared the similarity bar", best_score=score)
-            return None
-        self._logger.info("Intent matched semantically", intent=best.name, score=score)
+        self._logger.debug("Continuing the previous Customer Support intent", intent=previous.name)
         return Intent(
-            name=best.name,
-            matched_phrase=f"~{score:.2f} similarity",
-            allowed_tools=list(best.tools),
+            IntentAssessment(
+                intent=previous.name,
+                confidence=1.0,
+                disposition=IntentDisposition.SUPPORTED,
+                source="context",
+                candidates=[IntentCandidate(intent=previous.name, score=1.0)],
+                allowed_tools=list(previous.allowed_tools),
+                matched_rule="continued_context",
+                reason="The message is an obvious follow-up to the previous supported intent.",
+            )
         )
 
-    async def _best_match(
-        self, client: EmbeddingClient, query: list[float], candidates: list[IntentSettings]
-    ) -> tuple[IntentSettings | None, float]:
-        """The highest-scoring intent and its score."""
-        best: IntentSettings | None = None
-        best_score = 0.0
-        for intent in candidates:
-            for vector in await self._vectors_for(client, intent):
-                score = cosine_similarity(query, vector)
-                if score > best_score:
-                    best, best_score = intent, score
-        return best, best_score
+    @staticmethod
+    def _is_courtesy(text: str) -> bool:
+        return text.casefold() in {
+            "hi",
+            "hello",
+            "hey",
+            "thanks",
+            "thank you",
+            "ok",
+            "okay",
+            "got it",
+        }
 
-    async def _vectors_for(
-        self, client: EmbeddingClient, intent: IntentSettings
-    ) -> list[list[float]]:
-        """This intent's phrase vectors, embedded once per process."""
-        if intent.name not in self._phrase_vectors:
-            self._phrase_vectors[intent.name] = await client.embed(list(intent.phrases))
-        return self._phrase_vectors[intent.name]
+    @staticmethod
+    def _supported_unknown(reason: str) -> Intent:
+        return Intent(
+            IntentAssessment(
+                intent="UNKNOWN",
+                confidence=1.0,
+                disposition=IntentDisposition.SUPPORTED,
+                source="deterministic",
+                reason=reason,
+            )
+        )
 
-    def _embedding_client(self) -> EmbeddingClient:
-        """The encoder, built on first use.
+    def _clarify(self, candidates: list[IntentCandidate], reason: str) -> Intent:
+        top = [candidate for candidate in candidates if candidate.intent != self._default][: self._settings.intent_router.clarification_top_k]
+        clarification = self._clarification_for([candidate.intent for candidate in top])
+        return Intent(
+            IntentAssessment(
+                intent="UNKNOWN",
+                confidence=candidates[0].score if candidates else 0.0,
+                disposition=IntentDisposition.CLARIFY,
+                source="huggingface_local" if candidates else "classifier_unavailable",
+                candidates=candidates,
+                model=self._backend_model_name(),
+                score_type=self._backend_score_type(),
+                clarification=clarification,
+                reason=reason,
+            )
+        )
 
-        Lazily, because most turns never reach it: a classifier built at
-        startup would open a client for a path the deterministic rules
-        usually settle.
-        """
-        if self._embeddings is None:
-            self._embeddings = create_embedding_client()
-        return self._embeddings
+    @staticmethod
+    def _clarification_for(intents: list[str]) -> str:
+        key = frozenset(intents)
+        templates = {
+            frozenset({"ORDER_STATUS", "ORDER_DETAILS"}): "Are you asking about your order status or order details?",
+            frozenset({"ORDER_STATUS", "REFUND_STATUS"}): "Are you asking about your order status or a refund?",
+            frozenset({"ORDER_DETAILS", "REFUND_STATUS"}): "Do you need order details or help with a refund?",
+            frozenset({"REQUEST_REFUND", "REFUND_STATUS"}): "Are you asking to request a refund or check the status of a refund?",
+        }
+        if key in templates:
+            return templates[key]
+        if len(intents) == 1:
+            return f"Are you asking about {CustomerSupportIntentRouter._friendly(intents[0])}?"
+        if len(intents) == 2:
+            return f"Are you asking about {CustomerSupportIntentRouter._friendly(intents[0])} or {CustomerSupportIntentRouter._friendly(intents[1])}?"
+        return "Could you tell me whether you're asking about an order or a refund?"
 
-    def permitted_tools(self, message: str, previous: Intent | None = None) -> set[str]:
-        """The bare tool names this message justifies offering."""
-        return set(self.classify(message, previous).allowed_tools)
-
-    def intent_names(self) -> list[str]:
-        """Every configured intent, plus the default."""
-        return [intent.name for intent in self._intents] + [self._default]
+    @staticmethod
+    def _friendly(intent: str) -> str:
+        return {
+            "ORDER_STATUS": "your order status",
+            "ORDER_DETAILS": "your order details",
+            "REFUND_STATUS": "a refund",
+            "REQUEST_REFUND": "requesting a refund",
+        }.get(intent, "your request")

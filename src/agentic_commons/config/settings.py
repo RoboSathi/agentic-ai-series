@@ -140,6 +140,28 @@ class EncoderSettings(BaseModel):
         return self.enabled and bool(self.api_key)
 
 
+
+
+class IntentClassifierSettings(BaseModel):
+    """Reusable model/provider settings for semantic intent classification.
+
+    Agent-specific labels and the confidence threshold stay with the
+    consuming agent. This section only describes how the shared platform
+    obtains and runs the classifier.
+    """
+
+    enabled: bool
+    provider: Literal["huggingface_local"]
+    model: str
+    local_model_dir: str
+    download_if_missing: bool
+    max_length: int
+
+    @property
+    def resolved_local_model_dir(self) -> Path:
+        return resolve_path(self.local_model_dir)
+
+
 class LLMSettings(YamlBackedSettings):
     """LLM adapters — the only place a provider SDK is used (LLD §3)."""
 
@@ -153,6 +175,7 @@ class LLMSettings(YamlBackedSettings):
     cascade: LLMCascadeSettings
     embedding: EmbeddingSettings
     encoders: EncoderSettings
+    intent_classifier: IntentClassifierSettings
 
     model_config = SettingsConfigDict(env_prefix="LLM__")
 

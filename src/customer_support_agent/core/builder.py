@@ -47,6 +47,7 @@ from customer_support_agent.config import get_agent_settings
 from customer_support_agent.core.authentication import CustomerAuthenticator
 from customer_support_agent.core.business_rules import CustomerSupportBusinessRules
 from customer_support_agent.core.graph import CustomerSupportAgent
+from customer_support_agent.core.intent import CustomerSupportIntentRouter
 from customer_support_agent.core.identity import current_customer_id
 from customer_support_agent.core.order_validator import OrderSanityCheck
 from customer_support_agent.core.refund_saga import RefundSaga
@@ -196,6 +197,7 @@ def build_agent(
     with_memory: bool | None = None,
     observe: bool | None = None,
     basic_sanity: BasicSanityChecker | None = None,
+    intent_router: CustomerSupportIntentRouter | None = None,
 ) -> CustomerSupportAgent:
     """Wire the refund agent from config, honouring any injected parts.
 
@@ -250,6 +252,10 @@ def build_agent(
     authorizer = Authorizer(policy=agent_policy)
 
     sanity_checker = basic_sanity or OrderSanityCheck(orders)
+    # Intent routing is an agent-owned component, but the concrete provider is
+    # selected by the shared classifier factory. The graph receives the router
+    # by dependency injection and never constructs one itself.
+    resolved_intent_router = intent_router or CustomerSupportIntentRouter()
 
     facade = (
         memory
@@ -343,6 +349,7 @@ def build_agent(
         orders=orders,
         basic_sanity=sanity_checker,
         agent_policy=agent_policy,
+        intent_router=resolved_intent_router,
     )
 
 

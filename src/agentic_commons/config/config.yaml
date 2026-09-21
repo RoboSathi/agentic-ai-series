@@ -107,6 +107,23 @@ llm:
     # afford the cold start gets the fallback instead.
     wait_for_model: false
 
+  # Semantic intent classifier. The current implementation runs a fine-tuned
+  # BERT sequence classifier locally. Agent-specific labels, mappings and the
+  # routing threshold remain in the consuming agent's config.
+  intent_classifier:
+    enabled: true
+    provider: huggingface_local
+    model: learn-abc/magicSupport-intent-classifier
+    # All downloaded model files live inside the repository, not in the
+    # user's global Hugging Face cache. The provider loads from this folder
+    # with local_files_only=True after the first successful download.
+    local_model_dir: local_models/intent_classifier/magicSupport-intent-classifier
+    # Download only when the local artifact is missing or cannot be loaded.
+    # Normal classification calls never download or reload from disk.
+    download_if_missing: true
+    max_length: 64
+
+
 persistence:
   enabled: true
   # Neutral default. Each agent overlays its own database path so nothing
@@ -415,6 +432,7 @@ evals:
   judge:
     temperature: 0.0
     max_tokens: 256
+
 
 tools:
   enabled: true

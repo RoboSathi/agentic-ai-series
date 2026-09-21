@@ -24,7 +24,6 @@ class StageLabeler(Protocol):
 # transformation, so a new graph stage does not break the TUI.
 _DISPLAY_NAMES = {
     "intake": "INTAKE",
-    "scope_check": "SCOPE",
     "authentication": "AUTH",
     "prompt_injection_check": "PROMPT INJECTION",
     "pii_filtering": "PII FILTER",

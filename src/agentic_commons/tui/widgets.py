@@ -90,6 +90,11 @@ FIELD_PRIORITY = (
     "checks",
     "reason",
     "confidence",
+    "model_score",
+    "score_type",
+    "source",
+    "candidates",
+    "raw_model_labels",
     "matched_phrase",
     "match_method",
     "tool",
@@ -115,10 +120,6 @@ FIELD_PRIORITY = (
     "model",
     "finish_reason",
     "tool_calls",
-    "api_call",
-    "dependency",
-    "provider",
-    "retry_count",
     "requested_tools",
     "requested_tool_calls",
     "tools_available",
@@ -448,7 +449,7 @@ class StageEventWidget(Collapsible):
             return "checks passed" if fields.get("passed") else "blocked"
 
         if stage == "prompt_injection_check":
-            return "blocked" if fields.get("detected") else "check passed"
+            return "blocked" if fields.get("detected") else "checks passed"
 
         if stage == "pii_filtering":
             return self._compact_from_fields(fields, ("redacted", "entities"))
@@ -457,7 +458,13 @@ class StageEventWidget(Collapsible):
             return "flagged" if fields.get("flagged") else "no issues detected"
 
         if stage == "intent_classification":
-            return str(fields.get("intent") or self.event.detail or "classified")
+            intent = fields.get("intent") or self.event.detail or "classified"
+            score = fields.get("model_score")
+            disposition = fields.get("disposition")
+            if score is not None:
+                route = f" · {disposition}" if disposition else ""
+                return f"{intent} · model score {float(score):.0%}{route}"
+            return str(intent)
 
         if stage in {"memory_recall", "working_memory_check"}:
             count = fields.get("facts_held", fields.get("selected", fields.get("count")))
@@ -544,19 +551,11 @@ class StageEventWidget(Collapsible):
         if stage == "resilience":
             attempts = fields.get("attempts")
             recovered = fields.get("recovered")
-            api_call = fields.get("api_call") or fields.get("operation")
-            if recovered is True:
-                outcome = "Recovered"
-            elif recovered is False:
-                outcome = "Retry exhausted"
-            else:
-                outcome = "Resilience event"
-            parts = [outcome]
-            if api_call:
-                parts.append(str(api_call))
             if attempts is not None:
-                parts.append(f"{attempts} attempt{'s' if attempts != 1 else ''}")
-            return " · ".join(parts)
+                return f"{attempts} attempt{'s' if attempts != 1 else ''}" + (
+                    " · recovered" if recovered is True else ""
+                )
+            return self.event.summary or "recovery event"
 
         if stage == "hallucination_check":
             supported = fields.get("supported")

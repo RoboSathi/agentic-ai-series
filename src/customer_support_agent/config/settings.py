@@ -25,19 +25,26 @@ class IntentSettings(BaseModel):
     name: str
     phrases: list[str]
     tools: list[str]
-    # Whether this intent may also be reached by similarity when no
-    # phrase matched. Off by default: an intent that moves money is a
-    # policy decision, and a policy stated as a threshold is a policy
-    # nobody can read.
-    semantic: bool = False
+    description: str
 
 
-class SemanticIntentSettings(BaseModel):
-    """The encoder fallback used when no phrase matched."""
+class DeterministicRejectRule(BaseModel):
+    """One explicit, high-confidence out-of-scope rejection rule."""
 
-    enabled: bool
-    threshold: float
-    max_words: int
+    rule_id: str
+    pattern: str
+    reason: str
+
+
+class IntentRouterSettings(BaseModel):
+    """Customer Support intent routing policy."""
+
+    enabled: bool = True
+    confidence_threshold: float
+    clarification_top_k: int
+    clarification_template: str
+    deterministic_rejects: list[DeterministicRejectRule]
+    model_label_mapping: dict[str, list[str]]
 
 
 class PlanStepSettings(BaseModel):
@@ -54,15 +61,6 @@ class FollowupSettings(BaseModel):
     reference_pattern: str
 
 
-class ScopeSettings(BaseModel):
-    """What the agent will talk about — default-deny topic gate."""
-
-    in_scope_topics: dict[str, list[str]]
-    min_words_before_refusal: int
-    reference_pattern: str
-    refusal_message: str
-
-
 class CustomerSupportAgentSettings(YamlBackedSettings):
     """The running product's own wiring values (LLD §21)."""
 
@@ -72,11 +70,10 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     intents: list[IntentSettings]
     default_intent: str
     plans: dict[str, list[PlanStepSettings]]
-    semantic_intent: SemanticIntentSettings
+    intent_router: IntentRouterSettings
     followup: FollowupSettings
     history_turns: int
     deliberation_markers: list[str]
-    scope: ScopeSettings
     user_code_length: int
     user_code_alphabet: str
     demo_user_code: str

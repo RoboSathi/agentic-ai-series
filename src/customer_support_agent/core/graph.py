@@ -2,7 +2,8 @@
 
 Nodes, in order:
 
-    intake → assemble_context → reason ⇄ act → finalize
+    authenticate → choose_order → basic_sanity → intake →
+    assemble_context → reason ⇄ act → finalize
 
 Every node calls into `agentic_commons` and owns no platform logic of
 its own. That is the invariant this file exists to hold: the running
@@ -58,7 +59,7 @@ from customer_support_agent.core.identity import (
     current_customer,
     set_current_customer,
 )
-from customer_support_agent.core.intent import Intent, IntentClassifier
+from customer_support_agent.core.intent import CustomerSupportIntentRouter, Intent
 from customer_support_agent.core.presentation import (
     OrderMenu,
     build_menu,
@@ -69,7 +70,6 @@ from customer_support_agent.core.presentation import (
 )
 from customer_support_agent.core.repositories import OrdersRepository
 from customer_support_agent.core.schema import AgentState, policy_text
-from customer_support_agent.core.scope import ScopeGuard
 from customer_support_agent.core.tools import SupportTools
 from customer_support_agent.prompts.system_prompt import (
     build_reply_instruction,
@@ -108,6 +108,7 @@ class CustomerSupportAgent:
         orders: OrdersRepository | None = None,
         basic_sanity: BasicSanityChecker | None = None,
         agent_policy: AgentPolicy | None = None,
+        intent_router: CustomerSupportIntentRouter | None = None,
     ) -> None:
         settings = get_agent_settings()
         self._llm = llm
@@ -139,8 +140,9 @@ class CustomerSupportAgent:
         # failure modes, checked on what was actually assembled.
         self._context_health = ContextFailureDetector()
         self._diagnoser = GroundingReasoningDiagnoser()
-        self._intents = IntentClassifier()
-        self._scope = ScopeGuard()
+        if intent_router is None:
+            raise ValueError("CustomerSupportAgent requires an intent_router from the composition root")
+        self._intents = intent_router
         self._authenticator = authenticator
         self._orders = orders
         self._basic_sanity = basic_sanity
@@ -262,43 +264,6 @@ class CustomerSupportAgent:
         self._conversations[session_id] = turns[-self._history_turns * 2 :]
 
     # ---- nodes -------------------------------------------------------
-
-    async def screen(self, state: AgentState) -> dict[str, Any]:
-        """Is this the agent's business at all?
-
-        First, and deliberately cheap: an off-topic message is refused by
-        a regex pass rather than a completion. The refusal is identical
-        every time, so paying a model to write it is pure waste.
-        """
-        self._report(
-            "scope_check",
-            summary="Checking whether the request is in scope",
-        )
-        verdict = self._scope.check(state.query)
-        if verdict.in_scope:
-            self._done(
-                "scope_check",
-                summary="Request accepted",
-                fields={
-                    "in_scope": True,
-                    "topic": verdict.topic,
-                },
-            )
-            return {"decisions": [*state.decisions, f"scope: {verdict.topic}"]}
-        self._reporter_blocked(
-            "scope_check",
-            summary="Request is outside agent scope",
-            fields={
-                "in_scope": False,
-                "topic": verdict.topic,
-                "decision": "refuse",
-            },
-        )
-        return {
-            "response": verdict.refusal,
-            "decisions": [*state.decisions, "scope: refused (out of scope)"],
-            "metadata": {**state.metadata, "halted": "out_of_scope"},
-        }
 
     async def authenticate(self, state: AgentState) -> dict[str, Any]:
         """Establish who is speaking before looking anything up.
@@ -585,11 +550,13 @@ class CustomerSupportAgent:
         }
 
     async def intake(self, state: AgentState) -> dict[str, Any]:
-        """Screen the query before anything acts on it.
+        """Run the front door: security first, then one intent decision.
 
-        Untrusted input is delimited and assessed here, at the edge —
-        not after it has already been concatenated into a prompt where
-        nothing downstream can tell instruction from data.
+        The Customer Support intent router is the only scope/intent mechanism.
+        Its deterministic rules may reject only explicit, agent-specific
+        out-of-scope requests. Everything else is sent to the BERT-family
+        classifier, and low-confidence classifications produce a fixed
+        clarification question instead of an unsafe rejection.
         """
         self._report(
             "prompt_injection_check",
@@ -651,37 +618,119 @@ class CustomerSupportAgent:
         self._report(
             "intent_classification",
             event_kind="intent",
-            summary="Understanding the customer's intent",
+            summary=(
+                f"Loading intent classifier: {self._intents.model_name}"
+                if not self._intents.model_ready
+                else "Classifying the customer's request"
+            ),
         )
         intent = await self._intents.classify_async(
             state.query, previous=self._last_intent.get(state.session_id)
         )
+
+        if intent.disposition.value == "out_of_scope":
+            if state.session_id:
+                # Do not replace the previous supported intent with an
+                # out-of-scope request; a later follow-up should not inherit it.
+                self._last_intent.pop(state.session_id, None)
+            self._reporter_blocked(
+                "intent_classification",
+                summary="Request rejected as out of scope",
+                event_kind="intent",
+                fields={
+                    "intent": intent.name,
+                    "confidence": intent.confidence,
+                    "disposition": intent.disposition.value,
+                    "source": intent.source,
+                    "model": intent.model,
+                    "score_type": intent.score_type,
+                    "matched_rule": intent.matched_phrase,
+                    "reason": intent.reason,
+                },
+            )
+            return {
+                "response": (
+                    "I can help with your orders and refunds, "
+                    "but I can't help with that request."
+                ),
+                "decisions": [
+                    *state.decisions,
+                    f"intent: out_of_scope ({intent.reason})",
+                ],
+                "metadata": {
+                    **state.metadata,
+                    "intent": intent.name,
+                    "intent_confidence": intent.confidence,
+                    "intent_disposition": intent.disposition.value,
+                    "intent_source": intent.source,
+                    "intent_model": intent.model,
+                    "intent_score_type": intent.score_type,
+                    "intent_candidates": [c.model_dump(mode="json") for c in intent.candidates],
+                    "intent_reason": intent.reason,
+                    "halted": "out_of_scope",
+                },
+            }
+
+        if intent.disposition.value == "clarify":
+            self._reporter_waiting(
+                "intent_classification",
+                summary="Intent is ambiguous; clarification required",
+                event_kind="intent",
+                fields={
+                    "intent": intent.name,
+                    "confidence": intent.confidence,
+                    "disposition": intent.disposition.value,
+                    "source": intent.source,
+                    "model": intent.model,
+                    "score_type": intent.score_type,
+                    "candidates": [c.model_dump(mode="json") for c in intent.candidates],
+                    "clarification": intent.clarification,
+                    "reason": intent.reason,
+                },
+            )
+            return {
+                "response": intent.clarification,
+                "decisions": [
+                    *state.decisions,
+                    f"intent: clarify ({intent.reason})",
+                ],
+                "metadata": {
+                    **state.metadata,
+                    "intent": intent.name,
+                    "intent_confidence": intent.confidence,
+                    "intent_disposition": intent.disposition.value,
+                    "intent_source": intent.source,
+                    "intent_candidates": [c.model_dump(mode="json") for c in intent.candidates],
+                    "intent_clarification": intent.clarification,
+                    "intent_reason": intent.reason,
+                    "halted": "intent_clarification",
+                },
+            }
+
         if state.session_id:
             self._last_intent[state.session_id] = intent
         plan = self._deliberation.plan(state.query, intent.name, list(intent.allowed_tools))
-        match_method = (
-            "semantic"
-            if intent.matched_phrase.startswith("~")
-            else "deterministic"
-            if intent.matched_phrase
-            else "inherited_or_default"
-        )
         self._done(
             "intent_classification",
-            summary=f"Intent: {intent.name}",
+            summary=f"Intent: {intent.name} ({intent.confidence:.0%})",
             event_kind="intent",
             fields={
                 "intent": intent.name,
-                "matched": intent.matched_phrase or "none",
-                "match_method": match_method,
+                "confidence": intent.confidence,
+                "disposition": intent.disposition.value,
+                "source": intent.source,
+                "candidates": [c.model_dump(mode="json") for c in intent.candidates],
+                "matched_rule": intent.matched_phrase or "none",
                 "allowed_tools": intent.allowed_tools,
                 "plan_steps": len(plan.steps),
+                "model": intent.model,
+                "score_type": intent.score_type,
+                "reason": intent.reason,
             },
         )
         self._note(state, "current_intent", intent.name, category="intent")
         decisions = [
-            f"intent: {intent.name}"
-            + (f" (matched '{intent.matched_phrase}')" if intent.matched_phrase else ""),
+            f"intent: {intent.name} ({intent.confidence:.0%})",
             f"injection: {assessment.reason}",
         ]
         if moderation.flagged:
@@ -697,6 +746,12 @@ class CustomerSupportAgent:
                 **state.metadata,
                 "allowed_actions": assessment.allowed_actions,
                 "intent": intent.name,
+                "intent_confidence": intent.confidence,
+                "intent_disposition": intent.disposition.value,
+                "intent_source": intent.source,
+                "intent_model": intent.model,
+                "intent_score_type": intent.score_type,
+                "intent_candidates": [c.model_dump(mode="json") for c in intent.candidates],
                 "intent_tools": intent.allowed_tools,
                 "plan": [step.model_dump() for step in plan.steps],
             },
@@ -944,45 +999,17 @@ class CustomerSupportAgent:
             return await self._llm.complete(request)
 
         attempts_before = self._resilient.attempts
-        api_call = "chat.completions.create"
-        provider = getattr(self._llm, "tier", "") or getattr(self._llm, "provider_name", "")
-        model = getattr(self._llm, "model", "")
         try:
             result = await self._resilient.call(call, idempotency_key=key)
-        except Exception as exc:
-            self._note_recovery(
-                state,
-                attempts_before,
-                succeeded=False,
-                api_call=api_call,
-                provider=provider,
-                model=model,
-                error=str(exc),
-            )
+        except Exception:
+            self._note_recovery(state, attempts_before, succeeded=False)
             self._done_failed("llm_call")
             raise
-        self._note_recovery(
-            state,
-            attempts_before,
-            succeeded=True,
-            api_call=api_call,
-            provider=provider,
-            model=result.model or model,
-        )
+        self._note_recovery(state, attempts_before, succeeded=True)
         self._account_for(result, state)
         return result
 
-    def _note_recovery(
-        self,
-        state: AgentState,
-        attempts_before: int,
-        succeeded: bool,
-        *,
-        api_call: str,
-        provider: str = "",
-        model: str = "",
-        error: str | None = None,
-    ) -> None:
+    def _note_recovery(self, state: AgentState, attempts_before: int, succeeded: bool) -> None:
         """Record whether the resilience patterns actually recovered anything.
 
         Only a call that needed more than one attempt counts: a call that
@@ -998,28 +1025,14 @@ class CustomerSupportAgent:
         if succeeded:
             metadata["recoveries_succeeded"] = int(metadata.get("recoveries_succeeded", 0)) + 1
         if self._reporter is not None:
-            fields = {
-                "api_call": api_call,
-                "dependency": self._resilient.name,
-                "attempts": attempts,
-                "retry_count": max(0, attempts - 1),
-                "recovered": succeeded,
-            }
-            if provider:
-                fields["provider"] = provider
-            if model:
-                fields["model"] = model
-            if error:
-                fields["error"] = error
             self._reporter_warning(
                 "resilience",
-                summary=(
-                    f"Recovered · {api_call} · {attempts} attempts"
-                    if succeeded
-                    else f"Retry exhausted · {api_call} · {attempts} attempts"
-                ),
+                summary=("Recovered after retry" if succeeded else "Retry budget was exhausted"),
                 event_kind="resilience",
-                fields=fields,
+                fields={
+                    "attempts": attempts,
+                    "recovered": succeeded,
+                },
             )
 
     def _account_for(self, result: CompletionResult, state: AgentState) -> None:
@@ -1311,32 +1324,37 @@ class CustomerSupportAgent:
     def _build(self) -> Any:
         """Assemble the state graph."""
         graph: StateGraph[AgentState, None, AgentState, AgentState] = StateGraph(AgentState)
-        graph.add_node("screen", self.screen)
+        graph.add_node("intake", self.intake)
         graph.add_node("authenticate", self.authenticate)
         graph.add_node("choose_order", self.choose_order)
         graph.add_node("basic_sanity", self.basic_sanity)
-        graph.add_node("intake", self.intake)
         graph.add_node("assemble_context", self.assemble_context)
         graph.add_node("reason", self.reason)
         graph.add_node("act", self.act)
         graph.add_node("finalize", self.finalize)
 
-        graph.set_entry_point("screen")
-        graph.add_conditional_edges(
-            "screen", self._after_screen, {"authenticate": "authenticate", "done": END}
-        )
+        # Authentication is the hard front-door gate.  An unauthenticated
+        # request never reaches security screening, intent classification,
+        # retrieval, order selection, or the LLM.
+        graph.set_entry_point("authenticate")
         graph.add_conditional_edges(
             "authenticate",
             self._after_authenticate,
             {"choose_order": "choose_order", "done": END},
         )
+        # Resolve deterministic menu choices before anything model-driven.
         graph.add_conditional_edges(
             "choose_order", self._after_choose, {"basic_sanity": "basic_sanity", "done": END}
         )
+        # BasicSanity deliberately runs before the BERT intent classifier, so
+        # deterministic domain contradictions (e.g. an already-refunded
+        # order) never spend a model call.
         graph.add_conditional_edges(
             "basic_sanity", self._after_basic_sanity, {"intake": "intake", "done": END}
         )
-        graph.add_edge("intake", "assemble_context")
+        graph.add_conditional_edges(
+            "intake", self._after_intake, {"assemble_context": "assemble_context", "done": END}
+        )
         graph.add_edge("assemble_context", "reason")
         graph.add_conditional_edges(
             "reason", self._after_reason, {"act": "act", "finalize": "finalize"}
@@ -1347,13 +1365,18 @@ class CustomerSupportAgent:
         graph.add_edge("finalize", END)
         return graph.compile()
 
-    def _after_screen(self, state: AgentState) -> str:
-        """Out-of-scope messages are answered and finished, with no model call."""
-        return "done" if state.metadata.get("halted") else "authenticate"
-
     def _after_authenticate(self, state: AgentState) -> str:
-        """An unverified turn, or a just-verified one, ends here."""
+        """Stop until identity is verified; only verified sessions enter intake.
+
+        A turn that newly supplies a valid customer code ends after the
+        authentication read-back.  The next customer turn then enters the
+        deterministic order/menu and sanity path before security/intent.
+        """
         return "done" if state.metadata.get("halted") else "choose_order"
+
+    def _after_intake(self, state: AgentState) -> str:
+        """Route supported requests onward; stop on reject or clarification."""
+        return "done" if state.metadata.get("halted") else "assemble_context"
 
     def _after_choose(self, state: AgentState) -> str:
         """A menu choice is answered from the database and finishes here."""
@@ -1854,10 +1877,6 @@ def _gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
                 fields["permission"] = permission
             if role:
                 fields["role"] = role
-    for check in decision.checks:
-        observed = check.observed or {}
-        if "autonomous_limit" in observed:
-            fields["autonomous_limit"] = observed["autonomous_limit"]
             break
 
     return fields
