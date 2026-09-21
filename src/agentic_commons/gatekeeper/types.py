@@ -17,29 +17,21 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from agentic_commons.observability.types import utc_now
-from agentic_commons.tools.types import BlastRadius, SurfaceClass
+from agentic_commons.tools.types import BlastRadius
 
 Verdict = Literal["allow", "deny", "escalate"]
 CheckStatus = Literal["PASS", "FAIL", "ESCALATE", "SKIPPED"]
 
 
 class AuthorityContext(BaseModel):
-    """Who is acting, under whose authority, and against which ledger.
-
-    `granted_by_rank` is always resolved from `granted_by`; a caller-supplied
-    rank is never trusted.  `sanity_context` is deliberately generic so the
-    common Gatekeeper can pass request-scoped facts to an agent-owned
-    ``BasicSanityChecker`` without importing the agent's domain model.
-    """
+    """Trusted request authority plus a small opaque context for agent rules."""
 
     actor: str
     granted_by: str = "user_task"
-    granted_by_rank: int = 5
     cumulative_ledger_key: str = ""
-    roles: list[str] = Field(default_factory=list)
     session_id: str = ""
     offered_actions: list[str] | None = None
-    sanity_context: dict[str, Any] = Field(default_factory=dict)
+    request_context: dict[str, Any] = Field(default_factory=dict)
 
 
 class AdvisoryFlag(BaseModel):
@@ -74,9 +66,6 @@ class AuthorityDecision(BaseModel):
     reason: str
     reason_code: str = ""
     question: str = ""
-    surface: SurfaceClass = "editable"
-    blast_radius: BlastRadius = "single_record"
-    automation_level: int = 0
     cumulative_total: float = 0.0
     threshold: float = 0.0
     authority_source: str = ""
@@ -84,8 +73,6 @@ class AuthorityDecision(BaseModel):
     required_authority_rank: int | None = None
     max_granting_rank: int | None = None
     checks: list[CheckReport] = Field(default_factory=list)
-    three_gates: "GateEvaluation | None" = None
-    automation: "AutomationAssessment | None" = None
     advisory: AdvisoryFlag | None = None
     decided_at: datetime = Field(default_factory=utc_now)
 
@@ -120,22 +107,6 @@ class LedgerState(BaseModel):
     def remaining(self) -> float:
         """Budget left before the threshold trips."""
         return max(0.0, self.threshold - self.window_total)
-
-
-class AutomationAssessment(BaseModel):
-    """Sheridan level for an action, and whether a human is required (E03)."""
-
-    action: str
-    level: int
-    requires_human: bool
-    reason: str = ""
-    amount: float = 0.0
-    policy_enabled: bool = True
-    automation_floor: int = 5
-    level_meets_floor: bool = True
-    auto_approval_ceiling: float = float("inf")
-    amount_within_ceiling: bool = True
-    level_meaning: str = ""
 
 
 class GateEvaluation(BaseModel):

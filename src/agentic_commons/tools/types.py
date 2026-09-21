@@ -42,6 +42,7 @@ class ToolDefinition(BaseModel):
     reversible: bool = True
     side_effecting: bool = False
     requires_authority_rank: int = 5
+    required_permission: str | None = None
 
     @property
     def qualified_name(self) -> str:
@@ -75,6 +76,7 @@ class ToolCall(BaseModel):
     reversible: bool = True
     side_effecting: bool = False
     requires_authority_rank: int = 5
+    required_permission: str | None = None
     call_id: str = ""
 
 

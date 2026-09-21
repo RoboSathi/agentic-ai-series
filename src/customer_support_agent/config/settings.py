@@ -80,11 +80,9 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     user_code_length: int
     user_code_alphabet: str
     demo_user_code: str
-    default_actor: str
-    default_role: str
-    default_authority_rank: int
     checkpoint_path: str
     policy_path: str
+    db_path: str
 
     model_config = SettingsConfigDict(env_prefix="CUSTOMER_SUPPORT_AGENT__")
 
@@ -95,6 +93,11 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     @property
     def resolved_policy_path(self) -> Path:
         return resolve_path(self.policy_path)
+
+    @property
+    def resolved_db_path(self) -> Path:
+        """SQLite database owned by this agent deployment."""
+        return resolve_path(self.db_path)
 
 
 _SETTINGS: CustomerSupportAgentSettings | None = None

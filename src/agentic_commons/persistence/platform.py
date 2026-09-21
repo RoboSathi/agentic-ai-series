@@ -1,14 +1,9 @@
 """Platform-owned operational persistence contracts.
 
 The platform and each agent intentionally share the same physical SQLite
-file in this phase, but ownership is logical: ``agentic_commons`` can only
-persist through ``PlatformStore`` and therefore only touches platform-owned
-tables. Agent/domain repositories keep using their own repository layer.
-
-This is an architectural boundary, not another database. The shared SQLite
-file makes cross-domain SQL joins possible when an agent explicitly needs
-them, while the store interface prevents common code from importing an
-agent's schema or repository classes.
+file in this phase. The agent-specific runtime authority lives on
+``platform_agents`` and ``platform_agent_permissions`` so the policy remains
+simple and can be loaded as one immutable snapshot.
 """
 
 from __future__ import annotations
@@ -22,12 +17,24 @@ from agentic_commons.persistence.types import ExecutionResult
 
 _PLATFORM_SCHEMA = """
 CREATE TABLE IF NOT EXISTS platform_agents (
-    agent_id    TEXT PRIMARY KEY,
-    agent_name  TEXT NOT NULL,
-    version     TEXT NOT NULL,
-    enabled     INTEGER NOT NULL DEFAULT 1,
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    agent_id                     TEXT PRIMARY KEY,
+    agent_name                   TEXT NOT NULL,
+    version                      TEXT NOT NULL,
+    enabled                      INTEGER NOT NULL DEFAULT 1,
+    role                         TEXT NOT NULL DEFAULT 'unconfigured',
+    authority_rank               INTEGER NOT NULL DEFAULT 999,
+    max_refund_amount            REAL NOT NULL DEFAULT 0,
+    refund_budget_limit          REAL NOT NULL DEFAULT 0,
+    refund_budget_window_hours   INTEGER NOT NULL DEFAULT 24,
+    created_at                   TEXT NOT NULL,
+    updated_at                   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS platform_agent_permissions (
+    agent_id    TEXT NOT NULL,
+    permission  TEXT NOT NULL,
+    PRIMARY KEY (agent_id, permission),
+    FOREIGN KEY (agent_id) REFERENCES platform_agents(agent_id)
 );
 """
 
@@ -70,6 +77,7 @@ class SqlitePlatformStore:
         self._agent_id = agent_id or settings.agent.id
         self._agent_version = agent_version or settings.agent.version
         self._pool.execute_script(_PLATFORM_SCHEMA)
+        self._ensure_agent_columns()
         self._register_agent()
 
     @property
@@ -99,6 +107,28 @@ class SqlitePlatformStore:
     def iter_rows(self, query: str, params: tuple[Any, ...] = ()) -> Iterator[dict[str, Any]]:
         return self._pool.iter_rows(query, params)
 
+    def _ensure_agent_columns(self) -> None:
+        """Upgrade the pre-Phase-1 platform_agents table in place."""
+        row = self._pool.query_one(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'platform_agents'"
+        )
+        if row is None:
+            return
+        columns = {
+            str(item["name"])
+            for item in self._pool.iter_rows("PRAGMA table_info(platform_agents)")
+        }
+        additions = [
+            ("role", "TEXT NOT NULL DEFAULT 'unconfigured'"),
+            ("authority_rank", "INTEGER NOT NULL DEFAULT 999"),
+            ("max_refund_amount", "REAL NOT NULL DEFAULT 0"),
+            ("refund_budget_limit", "REAL NOT NULL DEFAULT 0"),
+            ("refund_budget_window_hours", "INTEGER NOT NULL DEFAULT 24"),
+        ]
+        for name, ddl in additions:
+            if name not in columns:
+                self._pool.execute(f"ALTER TABLE platform_agents ADD COLUMN {name} {ddl}")
+
     def _register_agent(self) -> None:
         now = _utc_now_iso()
         self._pool.execute(
@@ -109,7 +139,6 @@ class SqlitePlatformStore:
             ON CONFLICT(agent_id) DO UPDATE SET
                 agent_name = excluded.agent_name,
                 version = excluded.version,
-                enabled = 1,
                 updated_at = excluded.updated_at
             """,
             (self._agent_id, self._agent_id, self._agent_version, now, now),

@@ -16,10 +16,12 @@ from datetime import datetime, timedelta, timezone
 
 from agentic_commons.logging import get_logger
 from agentic_commons.persistence import SqliteConnectionPool
-from customer_support_agent.dummy_data import DB_PATH, DUMMY_DATA_DIR
+from customer_support_agent.config import get_agent_settings
+from customer_support_agent.dummy_data import DUMMY_DATA_DIR
 
 _SCHEMA_FILE = DUMMY_DATA_DIR / "schema.sql"
 _SEED_DATA_FILE = DUMMY_DATA_DIR / "seed_data.sql"
+_AGENT_POLICY_FILE = DUMMY_DATA_DIR / "agent_policy_seed.sql"
 
 _NUM_USERS = 100
 _NUM_ORDERS = 1000
@@ -180,16 +182,32 @@ def main() -> None:
     _SEED_DATA_FILE.write_text(seed_sql)
     logger.info(f"Wrote {_SEED_DATA_FILE}")
 
-    if DB_PATH.exists():
-        DB_PATH.unlink()
+    agent_settings = get_agent_settings()
+    from agentic_commons.config import get_settings
+    platform_settings = get_settings()
+    db_path = agent_settings.resolved_db_path
+    if db_path.exists():
+        db_path.unlink()
 
-    pool = SqliteConnectionPool(DB_PATH)
+    pool = SqliteConnectionPool(db_path)
     pool.execute_script(_SCHEMA_FILE.read_text())
     pool.execute_script(seed_sql)
+
+    agent_policy_sql = _AGENT_POLICY_FILE.read_text().replace(
+        "__AGENT_ID__", platform_settings.agent.id
+    ).replace("__AGENT_VERSION__", platform_settings.agent.version)
+    logger.info(f"Applying agent runtime policy from {_AGENT_POLICY_FILE}")
+    pool.execute_script(agent_policy_sql)
+    logger.info(
+        f"Applied agent policy: agent={platform_settings.agent.id} "
+        "role=support_agent authority_rank=4 max_refund=$50.00 "
+        "refund_budget=$4,000.00/24h "
+        "permissions=process_refund, queue_for_approval, read_orders"
+    )
     pool.close()
 
     logger.info(
-        f"Built {DB_PATH} ({_NUM_USERS} users, {_NUM_ORDERS} orders, "
+        f"Built {db_path} ({_NUM_USERS} users, {_NUM_ORDERS} orders, "
         f"order ids {_FIRST_ORDER_NUMBER}-{_FIRST_ORDER_NUMBER + _NUM_ORDERS - 1})"
     )
 

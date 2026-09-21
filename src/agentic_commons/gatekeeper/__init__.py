@@ -1,16 +1,18 @@
-"""The deterministic mediation point for agent actions."""
+"""Deterministic mediation and operator-facing Gatekeeper reports."""
 
-from agentic_commons.gatekeeper.automation import SHERIDAN_LEVELS, AutomationLevelPolicy
+from agentic_commons.gatekeeper.contracts import (
+    AllowAllBusinessRules,
+    BusinessRuleResult,
+    DeterministicBusinessRules,
+)
 from agentic_commons.gatekeeper.gatekeeper import Gatekeeper, GatekeeperImpl, RoleAuthorizer
 from agentic_commons.gatekeeper.hierarchy import AuthorityHierarchyResolver
 from agentic_commons.gatekeeper.ledger import CumulativeLedger
-from agentic_commons.gatekeeper.surfaces import SurfaceClassifier, ThreeGatesEvaluator
 from agentic_commons.gatekeeper.tier2 import NullTier2Advisor, SemanticTier2Advisor, Tier2Advisor
 from agentic_commons.gatekeeper.types import (
     AdvisoryFlag,
     AuthorityContext,
     AuthorityDecision,
-    AutomationAssessment,
     CheckReport,
     CheckStatus,
     GateEvaluation,
@@ -20,16 +22,16 @@ from agentic_commons.gatekeeper.types import (
 )
 
 __all__ = [
-    "SHERIDAN_LEVELS",
     "AdvisoryFlag",
+    "AllowAllBusinessRules",
+    "BusinessRuleResult",
     "AuthorityContext",
     "AuthorityDecision",
     "AuthorityHierarchyResolver",
-    "AutomationAssessment",
-    "AutomationLevelPolicy",
     "CheckReport",
     "CheckStatus",
     "CumulativeLedger",
+    "DeterministicBusinessRules",
     "GateEvaluation",
     "Gatekeeper",
     "GatekeeperImpl",
@@ -38,8 +40,6 @@ __all__ = [
     "NullTier2Advisor",
     "RoleAuthorizer",
     "SemanticTier2Advisor",
-    "SurfaceClassifier",
-    "ThreeGatesEvaluator",
     "Tier2Advisor",
     "Verdict",
 ]

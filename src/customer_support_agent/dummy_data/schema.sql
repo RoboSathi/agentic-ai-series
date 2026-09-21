@@ -52,3 +52,40 @@ CREATE TABLE IF NOT EXISTS hitl_queue (
 );
 
 CREATE INDEX IF NOT EXISTS idx_hitl_status ON hitl_queue (status);
+
+
+-- Platform-owned runtime authority for this deployed agent.
+CREATE TABLE IF NOT EXISTS platform_agents (
+    agent_id                     TEXT PRIMARY KEY,
+    agent_name                   TEXT NOT NULL,
+    version                      TEXT NOT NULL,
+    enabled                      INTEGER NOT NULL DEFAULT 1,
+    role                         TEXT NOT NULL DEFAULT 'unconfigured',
+    authority_rank               INTEGER NOT NULL DEFAULT 999,
+    max_refund_amount            REAL NOT NULL DEFAULT 0,
+    refund_budget_limit          REAL NOT NULL DEFAULT 0,
+    refund_budget_window_hours   INTEGER NOT NULL DEFAULT 24,
+    created_at                   TEXT NOT NULL,
+    updated_at                   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS platform_agent_permissions (
+    agent_id    TEXT NOT NULL,
+    permission  TEXT NOT NULL,
+    PRIMARY KEY (agent_id, permission),
+    FOREIGN KEY (agent_id) REFERENCES platform_agents(agent_id)
+);
+
+CREATE TABLE IF NOT EXISTS platform_gatekeeper_ledger (
+    entry_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id     TEXT NOT NULL,
+    ledger_key   TEXT NOT NULL,
+    action_class TEXT NOT NULL,
+    actor        TEXT NOT NULL,
+    amount       REAL NOT NULL,
+    trace_id     TEXT NOT NULL,
+    recorded_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_gatekeeper_window
+    ON platform_gatekeeper_ledger (agent_id, ledger_key, action_class, recorded_at);

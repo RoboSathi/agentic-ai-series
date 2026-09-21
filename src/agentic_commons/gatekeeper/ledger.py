@@ -40,14 +40,18 @@ class CumulativeLedger:
         store: PlatformStore | SqliteConnectionPool | None = None,
         *,
         agent_id: str | None = None,
+        enabled: bool | None = None,
+        action_classes: dict[str, str] | None = None,
+        thresholds: dict[str, float] | None = None,
+        window_hours: int | None = None,
     ) -> None:
-        settings = get_settings().gatekeeper.ledger
+        defaults = get_settings().gatekeeper.ledger
         self._store = as_platform_store(store, agent_id=agent_id)
         self._agent_id = agent_id or self._store.agent_id
-        self._enabled = settings.enabled
-        self._window = timedelta(hours=settings.window_hours)
-        self._action_classes = settings.action_classes
-        self._thresholds = settings.thresholds_usd
+        self._enabled = defaults.enabled if enabled is None else enabled
+        self._window = timedelta(hours=defaults.window_hours if window_hours is None else window_hours)
+        self._action_classes = dict(defaults.action_classes if action_classes is None else action_classes)
+        self._thresholds = dict(defaults.thresholds_usd if thresholds is None else thresholds)
         self._logger = get_logger("gatekeeper")
         self._store.execute_script(_SCHEMA)
         self._migrate_legacy_table()

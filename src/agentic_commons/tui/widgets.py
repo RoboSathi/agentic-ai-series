@@ -80,14 +80,9 @@ FIELD_PRIORITY = (
     "remaining_before",
     "remaining_after",
     "policy_version",
-    "surface",
-    "blast_radius",
-    "path_cardinality",
-    "certifiable",
     "actor",
     "roles",
     "permission",
-    "via_elevation",
     "granted_by",
     "authority_rank",
     "required_authority_rank",
@@ -120,6 +115,10 @@ FIELD_PRIORITY = (
     "model",
     "finish_reason",
     "tool_calls",
+    "api_call",
+    "dependency",
+    "provider",
+    "retry_count",
     "requested_tools",
     "requested_tool_calls",
     "tools_available",
@@ -142,17 +141,6 @@ FIELD_PRIORITY = (
     "reflection",
     "reflection_detail",
     "grounding_issues",
-    "three_gates_result",
-    "three_gates_reason",
-    "automation_level",
-    "automation_level_meaning",
-    "automation_amount",
-    "auto_approval_ceiling",
-    "amount_within_ceiling",
-    "automation_floor",
-    "level_meets_floor",
-    "human_required",
-    "automation_reason",
     "advisory_flagged",
     "advisory_reason",
 )
@@ -529,12 +517,15 @@ class StageEventWidget(Collapsible):
         if stage == "gatekeeper_evaluation":
             decision = fields.get("decision") or fields.get("verdict")
             action = fields.get("action")
+            order_id = fields.get("order_id")
             amount = _first_present(fields, AMOUNT_FIELDS)
             parts = []
             if decision:
                 parts.append(str(decision).upper())
             if action:
                 parts.append(self._labels.tool_label(str(action)))
+            if order_id is not None:
+                parts.append(f"order {order_id}")
             if amount is not None:
                 parts.append(_format_value("amount", amount))
             checks = fields.get("checks")
@@ -553,11 +544,19 @@ class StageEventWidget(Collapsible):
         if stage == "resilience":
             attempts = fields.get("attempts")
             recovered = fields.get("recovered")
+            api_call = fields.get("api_call") or fields.get("operation")
+            if recovered is True:
+                outcome = "Recovered"
+            elif recovered is False:
+                outcome = "Retry exhausted"
+            else:
+                outcome = "Resilience event"
+            parts = [outcome]
+            if api_call:
+                parts.append(str(api_call))
             if attempts is not None:
-                return f"{attempts} attempt{'s' if attempts != 1 else ''}" + (
-                    " · recovered" if recovered is True else ""
-                )
-            return self.event.summary or "recovery event"
+                parts.append(f"{attempts} attempt{'s' if attempts != 1 else ''}")
+            return " · ".join(parts)
 
         if stage == "hallucination_check":
             supported = fields.get("supported")

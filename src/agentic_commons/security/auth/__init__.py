@@ -1,27 +1,14 @@
-"""RBAC and just-in-time privilege elevation (LLD §12.1)."""
+"""Runtime authorization primitives."""
 
-from agentic_commons.security.auth.auth import (
-    Authorizer,
-    JustInTimeElevator,
-    PrivilegeElevator,
-    RBACRoleStore,
-    RoleStore,
-)
-from agentic_commons.security.auth.types import (
-    AccessDecision,
-    ElevationGrant,
-    Permission,
-    Principal,
-)
+from agentic_commons.security.auth.auth import Authorizer
+from agentic_commons.security.auth.policy import AgentPolicy, AgentPolicyRepository
+from agentic_commons.security.auth.types import AccessDecision, Permission, Principal
 
 __all__ = [
     "AccessDecision",
+    "AgentPolicy",
+    "AgentPolicyRepository",
     "Authorizer",
-    "ElevationGrant",
-    "JustInTimeElevator",
     "Permission",
     "Principal",
-    "PrivilegeElevator",
-    "RBACRoleStore",
-    "RoleStore",
 ]

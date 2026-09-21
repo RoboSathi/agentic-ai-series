@@ -50,3 +50,4 @@ class AccessDecision(BaseModel):
     permission: Permission = ""
     reason: str = ""
     via_elevation: bool = False
+    role: str = ""

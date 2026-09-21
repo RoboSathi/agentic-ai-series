@@ -26,7 +26,7 @@ from agentic_commons.context import (
 )
 from agentic_commons.evals import NollmScoringCascadeImpl, create_scoring_cascade
 from agentic_commons.executor import ToolExecutorImpl
-from agentic_commons.gatekeeper import GatekeeperImpl
+from agentic_commons.gatekeeper import Gatekeeper, GatekeeperImpl
 from agentic_commons.gatekeeper.ledger import CumulativeLedger
 from agentic_commons.hallucination_protection import DetectionLadder
 from agentic_commons.llm.client import LLMClient, create_llm_client
@@ -41,8 +41,11 @@ from agentic_commons.observability.tracer import LocalTracer
 from agentic_commons.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agentic_commons.resilience import SqliteIdempotencyGuard
 from agentic_commons.security import Authorizer, PIIFilterImpl, SecuritySuite
+from agentic_commons.security.auth.policy import AgentPolicy, AgentPolicyRepository
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
+from customer_support_agent.config import get_agent_settings
 from customer_support_agent.core.authentication import CustomerAuthenticator
+from customer_support_agent.core.business_rules import CustomerSupportBusinessRules
 from customer_support_agent.core.graph import CustomerSupportAgent
 from customer_support_agent.core.identity import current_customer_id
 from customer_support_agent.core.order_validator import OrderSanityCheck
@@ -181,10 +184,11 @@ def _order_chunk(order: Order) -> Chunk:
     )
 
 
+
 def build_agent(
     llm: LLMClient | None = None,
     pool: SqliteConnectionPool | None = None,
-    gatekeeper: GatekeeperImpl | None = None,
+    gatekeeper: Gatekeeper | None = None,
     memory: MemoryFacade | None = None,
     cascade: NollmScoringCascadeImpl | None = None,
     audit: AuditLedger | None = None,
@@ -212,12 +216,15 @@ def build_agent(
     "ask the configuration", which is the normal case.
     """
     settings = get_settings()
-    connection = pool or SqliteConnectionPool()
-    platform_store = SqlitePlatformStore(connection, agent_id=get_settings().agent.id)
+    agent_settings = get_agent_settings()
+    agent_id = settings.agent.id
+    connection = pool or SqliteConnectionPool(agent_settings.resolved_db_path)
+    platform_store = SqlitePlatformStore(connection, agent_id=agent_id)
+    policy_repo = AgentPolicyRepository(platform_store)
+    agent_policy = policy_repo.get()
     scoring = cascade or create_scoring_cascade()
     remember = settings.memory.enabled if with_memory is None else with_memory
     observing = settings.observability.enabled if observe is None else observe
-    agent_id = settings.agent.id
 
     # One shared analytics connection per running agent process. The store is
     # intentionally separate from the agent's relational/business SQLite
@@ -240,6 +247,7 @@ def build_agent(
 
     registry = NamespacedToolRegistry()
     registry.register_all(tools.definitions())
+    authorizer = Authorizer(policy=agent_policy)
 
     sanity_checker = basic_sanity or OrderSanityCheck(orders)
 
@@ -275,14 +283,22 @@ def build_agent(
         llm=llm or create_llm_client(),
         gatekeeper=gatekeeper
         or GatekeeperImpl(
-            authorizer=Authorizer(),
-            ledger=CumulativeLedger(platform_store),
+            authorizer=authorizer,
+            policy=agent_policy,
+            ledger=CumulativeLedger(
+                platform_store,
+                agent_id=agent_id,
+                enabled=settings.gatekeeper.ledger.enabled,
+                action_classes={"process_refund": "refund"},
+                thresholds={"refund": agent_policy.refund_budget_limit},
+                window_hours=agent_policy.refund_budget_window_hours,
+            ),
             audit=audit
             or create_audit_ledger(
                 store=observability_store,
                 agent_id=agent_id,
             ),
-            basic_sanity=sanity_checker,
+            business_rules=CustomerSupportBusinessRules(orders, hitl, agent_policy),
         ),
         registry=registry,
         tools=tools,
@@ -291,7 +307,7 @@ def build_agent(
             idempotency=idempotency,
             reporter=reporter,
         ),
-        security=SecuritySuite(),
+        security=SecuritySuite(authorizer=authorizer),
         memory=facade,
         context=context,
         # Retrieval-based tool selection narrows within what the intent
@@ -326,6 +342,7 @@ def build_agent(
         authenticator=CustomerAuthenticator(UsersRepository(connection), orders),
         orders=orders,
         basic_sanity=sanity_checker,
+        agent_policy=agent_policy,
     )
 
 
@@ -337,8 +354,10 @@ def build_review_service(
     Built separately from the agent on purpose: this is the human half
     of the escalation path, and the agent must have no route to it.
     """
-    connection = pool or SqliteConnectionPool()
-    platform_store = SqlitePlatformStore(connection, agent_id=get_settings().agent.id)
+    settings = get_settings()
+    agent_settings = get_agent_settings()
+    connection = pool or SqliteConnectionPool(agent_settings.resolved_db_path)
+    platform_store = SqlitePlatformStore(connection, agent_id=settings.agent.id)
     orders = OrdersRepository(connection)
     refunds = RefundLedgerRepository(connection)
     observability_store = (
@@ -376,4 +395,4 @@ def build_lexical_index(pool: SqliteConnectionPool) -> LexicalRetriever:
 
 def database_path() -> str:
     """Where the agent's database lives, per config."""
-    return str(get_settings().persistence.resolved_db_path)
+    return str(get_agent_settings().resolved_db_path)

@@ -3,11 +3,8 @@
 from agentic_commons.security.auth import (
     AccessDecision,
     Authorizer,
-    ElevationGrant,
-    JustInTimeElevator,
     Permission,
     Principal,
-    RBACRoleStore,
 )
 from agentic_commons.security.content_moderation import (
     ContentModerator,

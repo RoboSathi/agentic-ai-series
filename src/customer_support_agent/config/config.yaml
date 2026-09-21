@@ -1,10 +1,9 @@
 # Customer support agent — configuration specific to THIS agent.
 #
 # Layered on top of `agentic_commons/config/config.yaml`, which holds what
-# is true for any agent. The split is not cosmetic: action names, role
-# tables, refund thresholds and tool wording belong to the product that
-# has those actions. Left in the platform's defaults, every episode and
-# every future agent would inherit this one agent's vocabulary.
+# is true for any agent. The split is not cosmetic: action names and tool
+# wording belong to the product. Runtime authority and monetary limits are
+# persisted in this agent's platform_agent_* policy tables.
 #
 # Merging is deep, so a key set here fills in part of a platform section
 # without replacing the rest of it. Machine-local overrides still go in
@@ -16,76 +15,13 @@ agent:
   id: customer_support_agent
   version: 0.1.0
 
-persistence:
-  db_path: src/customer_support_agent/dummy_data/agentic.db
-
 memory:
   episodic:
     path: src/customer_support_agent/dummy_data/episodic
 
-gatekeeper:
-  ledger:
-    # Which cumulative budget each action consumes from. Several actions
-    # can share one class deliberately — splitting an amount across two
-    # different tools is the same structuring attack as splitting it
-    # across eighty calls to one.
-    action_classes:
-      process_refund: refund
-    thresholds_usd:
-      refund: 4000
-  surface_policy:
-    # action -> surface class (locked | editable | append_only |
-    # human_controlled). An action absent here defaults to
-    # human-controlled: one nobody has classified is one nobody has
-    # decided is safe to automate.
-    surfaces:
-      get_order_status: editable
-      get_refund_status: editable
-      process_refund: editable
-      queue_for_approval: append_only
-      update_refund_policy: locked
-      approve_hitl_request: human_controlled
-  automation:
-    # Sheridan 1-10 per action (E03).
-    levels:
-      get_order_status: 10
-      get_refund_status: 10
-      process_refund: 7
-      queue_for_approval: 9
-    # Amount above which an action needs a human regardless of its level.
-    per_action_amount_escalation_usd:
-      process_refund: 50
-
-security:
-  auth:
-    # Role -> permissions (NIST RBAC). A policy artifact a human reviews,
-    # not a constant an engineer compiles in.
-    roles:
-      support_agent:
-      - read_orders
-      - process_refund
-      - queue_for_approval
-      support_supervisor:
-      - read_orders
-      - process_refund
-      - queue_for_approval
-      - approve_hitl_request
-      policy_admin:
-      - update_refund_policy
-      viewer:
-      - read_orders
-    # Action -> the permission it requires. An action absent here is
-    # ungoverned, and is therefore denied.
-    action_permissions:
-      get_order_status: read_orders
-      get_refund_status: read_orders
-      process_refund: process_refund
-      queue_for_approval: queue_for_approval
-      update_refund_policy: update_refund_policy
-      approve_hitl_request: approve_hitl_request
-
 customer_support_agent:
   enabled: true
+  db_path: src/customer_support_agent/dummy_data/agentic.db
   max_tool_iterations: 5
   intents:
   # `semantic: false` keeps an intent on the deterministic path only.
@@ -167,9 +103,6 @@ customer_support_agent:
     - check
     reference_pattern: \b\d{4,}\b
   history_turns: 6
-  default_actor: support-agent-1
-  default_role: support_agent
-  default_authority_rank: 4
   deliberation_markers:
   - we need to
   - we should

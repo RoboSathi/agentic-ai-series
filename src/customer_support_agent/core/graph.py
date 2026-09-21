@@ -33,7 +33,7 @@ from agentic_commons.evals import NollmScoringCascadeImpl
 from agentic_commons.basic_sanity import BasicSanityChecker, BasicSanityRequest
 from agentic_commons.control_loop import ControlLoopReport, ToolControlLoop
 from agentic_commons.executor import ApprovedToolCall, ToolExecutor
-from agentic_commons.gatekeeper import AuthorityContext, GatekeeperImpl
+from agentic_commons.gatekeeper import AuthorityContext, Gatekeeper
 from agentic_commons.hallucination_protection import DetectionLadder, GroundingReasoningDiagnoser
 from agentic_commons.llm.client import LLMClient
 from agentic_commons.llm.embeddings import tokenize
@@ -47,6 +47,7 @@ from agentic_commons.observability import (
 )
 from agentic_commons.resilience import ResilientCaller
 from agentic_commons.security import SecuritySuite
+from agentic_commons.security.auth.policy import AgentPolicy
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.control_loop import CascadeEvaluator, DeliberationLoop
@@ -88,7 +89,7 @@ class CustomerSupportAgent:
     def __init__(
         self,
         llm: LLMClient,
-        gatekeeper: GatekeeperImpl,
+        gatekeeper: Gatekeeper,
         registry: NamespacedToolRegistry,
         tools: SupportTools,
         executor: ToolExecutor,
@@ -106,6 +107,7 @@ class CustomerSupportAgent:
         authenticator: CustomerAuthenticator | None = None,
         orders: OrdersRepository | None = None,
         basic_sanity: BasicSanityChecker | None = None,
+        agent_policy: AgentPolicy | None = None,
     ) -> None:
         settings = get_agent_settings()
         self._llm = llm
@@ -126,10 +128,12 @@ class CustomerSupportAgent:
         self._tracer = tracer
         self._slos = slos
         self._grounding = grounding
+        self._agent_policy = agent_policy
+        if self._agent_policy is None:
+            raise ValueError("CustomerSupportAgent requires an AgentPolicy loaded from persistence")
         self._deliberation_markers = [m.casefold() for m in settings.deliberation_markers]
         self._max_rounds = settings.max_tool_iterations
-        self._actor = settings.default_actor
-        self._role = settings.default_role
+        self._actor = self._agent_policy.agent_id
         self._strategies = StrategySelector()
         # The window the model is handed is measured, not assumed: five
         # failure modes, checked on what was actually assembled.
@@ -940,17 +944,45 @@ class CustomerSupportAgent:
             return await self._llm.complete(request)
 
         attempts_before = self._resilient.attempts
+        api_call = "chat.completions.create"
+        provider = getattr(self._llm, "tier", "") or getattr(self._llm, "provider_name", "")
+        model = getattr(self._llm, "model", "")
         try:
             result = await self._resilient.call(call, idempotency_key=key)
-        except Exception:
-            self._note_recovery(state, attempts_before, succeeded=False)
+        except Exception as exc:
+            self._note_recovery(
+                state,
+                attempts_before,
+                succeeded=False,
+                api_call=api_call,
+                provider=provider,
+                model=model,
+                error=str(exc),
+            )
             self._done_failed("llm_call")
             raise
-        self._note_recovery(state, attempts_before, succeeded=True)
+        self._note_recovery(
+            state,
+            attempts_before,
+            succeeded=True,
+            api_call=api_call,
+            provider=provider,
+            model=result.model or model,
+        )
         self._account_for(result, state)
         return result
 
-    def _note_recovery(self, state: AgentState, attempts_before: int, succeeded: bool) -> None:
+    def _note_recovery(
+        self,
+        state: AgentState,
+        attempts_before: int,
+        succeeded: bool,
+        *,
+        api_call: str,
+        provider: str = "",
+        model: str = "",
+        error: str | None = None,
+    ) -> None:
         """Record whether the resilience patterns actually recovered anything.
 
         Only a call that needed more than one attempt counts: a call that
@@ -966,14 +998,28 @@ class CustomerSupportAgent:
         if succeeded:
             metadata["recoveries_succeeded"] = int(metadata.get("recoveries_succeeded", 0)) + 1
         if self._reporter is not None:
+            fields = {
+                "api_call": api_call,
+                "dependency": self._resilient.name,
+                "attempts": attempts,
+                "retry_count": max(0, attempts - 1),
+                "recovered": succeeded,
+            }
+            if provider:
+                fields["provider"] = provider
+            if model:
+                fields["model"] = model
+            if error:
+                fields["error"] = error
             self._reporter_warning(
                 "resilience",
-                summary=("Recovered after retry" if succeeded else "Retry budget was exhausted"),
+                summary=(
+                    f"Recovered · {api_call} · {attempts} attempts"
+                    if succeeded
+                    else f"Retry exhausted · {api_call} · {attempts} attempts"
+                ),
                 event_kind="resilience",
-                fields={
-                    "attempts": attempts,
-                    "recovered": succeeded,
-                },
+                fields=fields,
             )
 
     def _account_for(self, result: CompletionResult, state: AgentState) -> None:
@@ -1033,6 +1079,25 @@ class CustomerSupportAgent:
                 Message(role="tool", content=text, tool_call_id=requested.id or requested.name)
             )
 
+            # Once a proposal escalates, autonomous execution stops for the
+            # remainder of this assistant turn. Do not execute later batched
+            # side effects from the same model message.
+            gatekeeper = invocation_fields.get("gatekeeper")
+            if isinstance(gatekeeper, dict) and gatekeeper.get("decision") == "escalate":
+                remaining = len(requests) - len(invocation_fields_history)
+                if remaining:
+                    self._reporter_blocked(
+                        "gatekeeper_evaluation",
+                        summary=f"Skipped {remaining} tool proposal(s) after escalation",
+                        event_kind="gatekeeper",
+                        fields={
+                            "decision": "escalate",
+                            "reason_code": "AUTONOMY_STOPPED_AFTER_ESCALATION",
+                            "skipped_requests": remaining,
+                        },
+                    )
+                break
+
         self._done(
             "tool_execution",
             event_kind="tool_result",
@@ -1044,10 +1109,16 @@ class CustomerSupportAgent:
                 "failed": sum(1 for item in invocation_fields_history if item.get("tool_status") == "failed"),
             },
         )
+        turn_escalated = any(
+            item.get("gatekeeper", {}).get("decision") == "escalate"
+            for item in invocation_fields_history
+            if isinstance(item.get("gatekeeper"), dict)
+        )
         return {
             "messages": outputs,
             "tool_results": results,
             "decisions": decisions,
+            "escalated": state.escalated or turn_escalated,
             "metadata": {
                 **state.metadata,
                 "last_tool_invocations": invocation_fields_history,
@@ -1298,7 +1369,12 @@ class CustomerSupportAgent:
         return "act" if last.tool_calls else "finalize"
 
     def _after_act(self, state: AgentState) -> str:
-        """Loop back to reason unless the next round would exceed the cap."""
+        """Continue only while autonomous execution remains permitted."""
+        # A Gatekeeper ESCALATE is a terminal autonomous decision for this turn.
+        # Do not send the model back to reason(), or it could propose another
+        # side effect after the system has explicitly handed control to a human.
+        if state.escalated:
+            return "finalize"
         next_round = state.tool_rounds + 1
         if next_round <= self._max_rounds:
             return "reason"
@@ -1339,11 +1415,10 @@ class CustomerSupportAgent:
         call = call.model_copy(update={"params": self._security.minimize(call.params)})
         authority = AuthorityContext(
             actor=state.actor or self._actor,
-            roles=[self._role],
             granted_by="user_task",
             session_id=state.session_id,
             offered_actions=sorted(offered),
-            sanity_context={
+            request_context={
                 "query": state.query,
                 "customer_id": state.customer_id,
                 "metadata": dict(state.metadata),
@@ -1421,6 +1496,13 @@ class CustomerSupportAgent:
                 result_fields = {
                     "tool": call.action,
                     "result": "not_offered",
+                    "execution_status": "not_executed",
+                }
+            elif decision.verdict == "escalate":
+                text = f"That action requires human review: {decision.reason}"
+                result_fields = {
+                    "tool": call.action,
+                    "result": "human_review_required",
                     "execution_status": "not_executed",
                 }
             else:
@@ -1743,21 +1825,42 @@ def _control_loop_fields(report: ControlLoopReport) -> dict[str, Any]:
 
 
 def _gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
-    """Render one concise Gatekeeper report; checks carry all detailed evidence."""
+    """Expose the exact proposal and deterministic checks behind the ruling."""
     fields: dict[str, Any] = {
         "decision": decision.verdict,
         "action": _display_tool_name(decision.action),
         "effect": "write" if call.side_effecting else "read",
         "reason_code": decision.reason_code,
+        "question": decision.question,
         "checks": [check.model_dump(mode="json") for check in decision.checks],
+        "authority_rank": decision.authority_rank,
+        "required_authority_rank": decision.required_authority_rank,
+        "max_granting_rank": decision.max_granting_rank,
+        "cumulative_total": decision.cumulative_total,
+        "threshold": decision.threshold,
     }
+    order_id = call.params.get("order_id")
+    if isinstance(order_id, (str, int)) and not isinstance(order_id, bool):
+        fields["order_id"] = order_id
     amount = call.params.get("amount")
-    if isinstance(amount, (int, float)) and call.side_effecting:
-        fields["amount"] = f"${float(amount):,.2f}"
-    if decision.advisory is not None and decision.advisory.flagged:
-        fields["advisory"] = decision.advisory.reason or True
-    return fields
+    if isinstance(amount, (int, float)) and not isinstance(amount, bool):
+        fields["amount"] = float(amount)
 
+    for check in decision.checks:
+        if check.check_id == "gatekeeper.actor_authorization":
+            permission = check.observed.get("required_permission")
+            role = check.observed.get("role")
+            if permission:
+                fields["permission"] = permission
+            if role:
+                fields["role"] = role
+    for check in decision.checks:
+        observed = check.observed or {}
+        if "autonomous_limit" in observed:
+            fields["autonomous_limit"] = observed["autonomous_limit"]
+            break
+
+    return fields
 
 def _display_tool_name(name: str) -> str:
     """Return the concise tool name used in the operator-facing dashboard."""

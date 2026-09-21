@@ -145,6 +145,7 @@ class NamespacedToolRegistry:
             reversible=tool.reversible,
             side_effecting=tool.side_effecting,
             requires_authority_rank=tool.requires_authority_rank,
+            required_permission=tool.required_permission,
         )
 
 

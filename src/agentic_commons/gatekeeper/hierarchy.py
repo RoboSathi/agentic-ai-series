@@ -63,20 +63,15 @@ class AuthorityHierarchyResolver:
         return self.rank_of(source) < self.rank_of(other)
 
     def resolve(self, context: AuthorityContext) -> AuthorityContext:
-        """Normalize a context so its rank always matches its named source.
-
-        A caller-supplied rank is never trusted over the source name: a
-        component that could assert its own rank could assert rank 1, and
-        the hierarchy would be decorative.
-        """
-        return context.model_copy(update={"granted_by_rank": self.rank_of(context.granted_by)})
+        """Return the trusted context unchanged; rank is derived from source when needed."""
+        return context
 
     def may_authorize(self, context: AuthorityContext) -> tuple[bool, str]:
-        """Whether this context can authorize an action, and why not if not."""
-        resolved = self.resolve(context)
-        if resolved.granted_by_rank <= self._max_granting_rank:
-            return True, f"'{resolved.granted_by}' is rank {resolved.granted_by_rank}"
+        """Whether this context can authorize an action, using the source-derived rank."""
+        rank = self.rank_of(context.granted_by)
+        if rank <= self._max_granting_rank:
+            return True, f"'{context.granted_by}' is rank {rank}"
         return False, (
-            f"'{resolved.granted_by}' is rank {resolved.granted_by_rank}; only ranks 1-"
+            f"'{context.granted_by}' is rank {rank}; only ranks 1-"
             f"{self._max_granting_rank} may grant or expand authority"
         )
