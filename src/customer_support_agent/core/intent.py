@@ -132,6 +132,14 @@ class CustomerSupportIntentRouter:
                 "Conversational courtesy can be handled without a business tool."
             )
 
+        # High-precision current-turn patterns are deterministic routing rules,
+        # not a substitute for the semantic classifier. They prevent a small
+        # classifier model from turning an obvious support request into UNKNOWN
+        # and let the graph make a safe capability decision without an LLM.
+        deterministic_supported = self._deterministic_supported(text)
+        if deterministic_supported is not None:
+            return deterministic_supported
+
         try:
             await self.ensure_ready()
         except Exception:
@@ -217,6 +225,9 @@ class CustomerSupportIntentRouter:
             return self._supported_unknown(
                 "Conversational courtesy can be handled without a business tool."
             )
+        deterministic_supported = self._deterministic_supported(text)
+        if deterministic_supported is not None:
+            return deterministic_supported
         return self._clarify([], "Synchronous path does not invoke the BERT classifier.")
 
     def permitted_tools(self, message: str, previous: Intent | None = None) -> set[str]:
@@ -245,6 +256,53 @@ class CustomerSupportIntentRouter:
                     )
                 )
         return None
+
+    def _deterministic_supported(self, text: str) -> Intent | None:
+        """Resolve a high-precision business phrase from the current turn.
+
+        This is intentionally conservative. Configured phrases are capability
+        routing rules: the most specific matching phrase wins, while the BERT
+        classifier remains the semantic fallback for paraphrases that are not
+        covered here. The UNKNOWN intent has no positive phrases.
+        """
+        lowered = text.casefold()
+        matches: list[tuple[int, int, str, str]] = []
+        for configured in self._settings.intents:
+            if configured.name == self._default:
+                continue
+            for phrase in configured.phrases:
+                candidate = phrase.strip().casefold()
+                if not candidate:
+                    continue
+                pattern = rf"\b{re.escape(candidate)}\b"
+                if re.search(pattern, lowered):
+                    matches.append((len(candidate.split()), len(candidate), configured.name, phrase.strip()))
+
+        if not matches:
+            return None
+
+        # Prefer the most specific phrase. This matters for cases such as
+        # "where is my refund?": REFUND_STATUS has a longer, more specific
+        # phrase than REQUEST_REFUND's generic "refund" marker.
+        _, _, intent_name, matched_phrase = max(matches, key=lambda item: (item[0], item[1]))
+        configured = self._intents[intent_name]
+        self._logger.debug(
+            "Customer Support intent resolved by deterministic phrase",
+            intent=intent_name,
+            phrase=matched_phrase,
+        )
+        return Intent(
+            IntentAssessment(
+                intent=intent_name,
+                confidence=1.0,
+                disposition=IntentDisposition.SUPPORTED,
+                source="deterministic",
+                matched_rule=f"phrase:{matched_phrase}",
+                allowed_tools=list(configured.tools),
+                candidates=[IntentCandidate(intent=intent_name, score=1.0)],
+                reason="A high-precision current-turn business phrase selected the capability.",
+            )
+        )
 
     async def _classify_with_backend(self, text: str) -> list[IntentCandidate]:
         try:
@@ -323,6 +381,13 @@ class CustomerSupportIntentRouter:
     ) -> Intent | None:
         """Use previous intent only when the current turn lacks evidence."""
         if previous.disposition is not IntentDisposition.SUPPORTED:
+            return None
+
+        previous_config = self._intents.get(previous.name)
+        if previous_config is None or previous_config.mode != "read":
+            # A vague follow-up must never inherit a write capability. That
+            # would silently expand the LLM's authority on the basis of
+            # conversational continuity rather than a current-turn request.
             return None
 
         threshold = self._settings.intent_router.confidence_threshold

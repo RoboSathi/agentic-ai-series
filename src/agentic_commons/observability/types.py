@@ -18,6 +18,7 @@ EventKind = Literal[
     "stage",
     "decision",
     "security",
+    "authorization",
     "intent",
     "memory",
     "context",

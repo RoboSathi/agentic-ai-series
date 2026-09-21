@@ -155,7 +155,7 @@ class CustomerSupportAgent:
         self._menus: dict[str, OrderMenu] = {}
         self._history_turns = settings.history_turns
         self._conversations: dict[str, list[Message]] = {}
-        self._last_intent: dict[str, Intent] = {}
+        self._last_supported_intent: dict[str, Intent] = {}
         self._control_loop = ToolControlLoop()
         # Plan, reflect, evaluate (E06). Injected as one composition so a
         # deployment can swap any of the three; deterministic by default,
@@ -625,14 +625,14 @@ class CustomerSupportAgent:
             ),
         )
         intent = await self._intents.classify_async(
-            state.query, previous=self._last_intent.get(state.session_id)
+            state.query, previous=self._last_supported_intent.get(state.session_id)
         )
 
         if intent.disposition.value == "out_of_scope":
             if state.session_id:
-                # Do not replace the previous supported intent with an
-                # out-of-scope request; a later follow-up should not inherit it.
-                self._last_intent.pop(state.session_id, None)
+                # Explicitly out-of-scope turns clear the contextual business
+                # intent; UNKNOWN/clarify turns must not poison a good prior one.
+                self._last_supported_intent.pop(state.session_id, None)
             self._reporter_blocked(
                 "intent_classification",
                 summary="Request rejected as out of scope",
@@ -707,9 +707,10 @@ class CustomerSupportAgent:
                 },
             }
 
-        if state.session_id:
-            self._last_intent[state.session_id] = intent
+        if state.session_id and intent.name != "UNKNOWN":
+            self._last_supported_intent[state.session_id] = intent
         plan = self._deliberation.plan(state.query, intent.name, list(intent.allowed_tools))
+        intent_route = self._intent_route(intent)
         self._done(
             "intent_classification",
             summary=f"Intent: {intent.name} ({intent.confidence:.0%})",
@@ -726,6 +727,7 @@ class CustomerSupportAgent:
                 "model": intent.model,
                 "score_type": intent.score_type,
                 "reason": intent.reason,
+                "execution_route": intent_route,
             },
         )
         self._note(state, "current_intent", intent.name, category="intent")
@@ -753,9 +755,152 @@ class CustomerSupportAgent:
                 "intent_score_type": intent.score_type,
                 "intent_candidates": [c.model_dump(mode="json") for c in intent.candidates],
                 "intent_tools": intent.allowed_tools,
+                "intent_execution_route": intent_route,
                 "plan": [step.model_dump() for step in plan.steps],
             },
         }
+
+    async def read_intent(self, state: AgentState) -> dict[str, Any]:
+        """Execute a classified read capability without an LLM completion.
+
+        Intent selects a read-only capability; this node then checks that the
+        authenticated customer owns the referenced order before invoking the
+        read tool. The Gatekeeper still performs its trusted agent/tool
+        authorization checks inside `_invoke`.
+        """
+        tool = self._read_tool_for_state(state)
+        if tool is None:
+            return {}
+
+        order_id = self._resolve_read_order_id(state)
+        if order_id is None:
+            self._reporter_waiting(
+                "read_authorization",
+                summary="Read capability needs an order reference",
+                event_kind="authorization",
+                fields={"intent": state.metadata.get("intent", ""), "tool": tool.qualified_name},
+            )
+            return self._halt(
+                state,
+                "Which order should I check? Please provide the order number.",
+                "read: awaiting order reference",
+            )
+
+        self._report(
+            "read_authorization",
+            event_kind="authorization",
+            summary="Checking customer access to the requested order",
+            fields={"order_id": order_id, "intent": state.metadata.get("intent", "")},
+        )
+        owned = self._orders.get_for_customer(order_id, state.customer_id) if self._orders else None
+        if owned is None:
+            fields = {
+                "order_id": order_id,
+                "customer_id": state.customer_id,
+                "allowed": False,
+                "reason_code": "ORDER_NOT_OWNED_BY_CUSTOMER",
+            }
+            self._reporter_blocked(
+                "read_authorization",
+                summary="Read access denied for this order",
+                event_kind="authorization",
+                fields=fields,
+            )
+            return self._halt(
+                state,
+                f"I couldn't find order {order_id} on your account.",
+                f"read: access denied for order {order_id}",
+            )
+
+        self._done(
+            "read_authorization",
+            event_kind="authorization",
+            summary="Customer is authorized to read this order",
+            fields={
+                "order_id": order_id,
+                "customer_id": state.customer_id,
+                "allowed": True,
+                "permission": tool.required_permission or "none",
+            },
+        )
+
+        allowed_actions = state.metadata.get("allowed_actions", [])
+        if isinstance(allowed_actions, list) and tool.qualified_name not in set(allowed_actions):
+            self._reporter_blocked(
+                "read_authorization",
+                summary="Read capability blocked by security tool scope",
+                event_kind="authorization",
+                fields={
+                    "order_id": order_id,
+                    "tool": tool.qualified_name,
+                    "reason_code": "READ_TOOL_NOT_ALLOWED",
+                },
+            )
+            return self._halt(
+                state,
+                "I couldn't safely access that order with the permissions available for this request.",
+                f"read: security scope denied {tool.name}",
+            )
+
+        payload = json.dumps({"order_id": order_id})
+        text, decision, _stage, invocation = await self._invoke(
+            tool.qualified_name,
+            payload,
+            state,
+            {tool.qualified_name},
+        )
+        self._note(
+            state,
+            f"result_of_{tool.name}",
+            text,
+            category="tool_result",
+        )
+        base = self._halt(
+            state,
+            text,
+            f"read: {tool.name} for order {order_id}"
+            if invocation.get("tool_status") == "completed"
+            else decision,
+        )
+        return {
+            **base,
+            "tool_results": [text],
+            "metadata": {
+                **base["metadata"],
+                "last_tool_invocations": [invocation],
+            },
+        }
+
+    def _read_tool_for_state(self, state: AgentState) -> Any | None:
+        """Return the sole non-side-effecting tool granted by the intent."""
+        names = list(state.metadata.get("intent_tools", []))
+        tools = [tool for name in names if (tool := self._registry.get(name)) is not None]
+        if len(tools) != 1 or tools[0].side_effecting:
+            return None
+        return tools[0]
+
+    def _intent_route(self, intent: Intent) -> str:
+        """Map intent to a graph capability route from trusted tool metadata."""
+        tools = [tool for name in intent.allowed_tools if (tool := self._registry.get(name)) is not None]
+        if len(tools) == 1 and not tools[0].side_effecting:
+            return "deterministic_read"
+        if any(tool.side_effecting for tool in tools):
+            return "llm_write"
+        return "llm"
+
+    def _resolve_read_order_id(self, state: AgentState) -> int | None:
+        """Resolve an order id only from the current turn or verified working memory."""
+        explicit = _extract_order_id(state.query)
+        if explicit is not None:
+            return explicit
+        if self._memory is not None and state.session_id:
+            for fact in self._memory.active_window(state.session_id):
+                if fact.key != "order_under_discussion":
+                    continue
+                match = re.search(r"\border\s+(\d+)\b", fact.value, flags=re.IGNORECASE)
+                if match:
+                    return int(match.group(1))
+        return None
 
     def _offer_to_memory(self, state: AgentState) -> list[str]:
         """Put what the customer said to the write pipeline.
@@ -1328,6 +1473,7 @@ class CustomerSupportAgent:
         graph.add_node("authenticate", self.authenticate)
         graph.add_node("choose_order", self.choose_order)
         graph.add_node("basic_sanity", self.basic_sanity)
+        graph.add_node("read_intent", self.read_intent)
         graph.add_node("assemble_context", self.assemble_context)
         graph.add_node("reason", self.reason)
         graph.add_node("act", self.act)
@@ -1353,8 +1499,15 @@ class CustomerSupportAgent:
             "basic_sanity", self._after_basic_sanity, {"intake": "intake", "done": END}
         )
         graph.add_conditional_edges(
-            "intake", self._after_intake, {"assemble_context": "assemble_context", "done": END}
+            "intake",
+            self._after_intake,
+            {
+                "read_intent": "read_intent",
+                "assemble_context": "assemble_context",
+                "done": END,
+            },
         )
+        graph.add_edge("read_intent", END)
         graph.add_edge("assemble_context", "reason")
         graph.add_conditional_edges(
             "reason", self._after_reason, {"act": "act", "finalize": "finalize"}
@@ -1375,8 +1528,12 @@ class CustomerSupportAgent:
         return "done" if state.metadata.get("halted") else "choose_order"
 
     def _after_intake(self, state: AgentState) -> str:
-        """Route supported requests onward; stop on reject or clarification."""
-        return "done" if state.metadata.get("halted") else "assemble_context"
+        """Route reads deterministically; keep writes/ambiguous work on the LLM path."""
+        if state.metadata.get("halted"):
+            return "done"
+        if state.metadata.get("intent_execution_route") == "deterministic_read":
+            return "read_intent"
+        return "assemble_context"
 
     def _after_choose(self, state: AgentState) -> str:
         """A menu choice is answered from the database and finishes here."""
@@ -1880,6 +2037,22 @@ def _gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
             break
 
     return fields
+
+def _extract_order_id(message: str) -> int | None:
+    """Extract an order id only when it is anchored to the word "order"."""
+    match = re.search(
+        r"\border\s*(?:#|no\.?|number)?\s*(\d{4,})\b|\b(\d{4,})\s+order\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    raw = match.group(1) or match.group(2)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
 
 def _display_tool_name(name: str) -> str:
     """Return the concise tool name used in the operator-facing dashboard."""

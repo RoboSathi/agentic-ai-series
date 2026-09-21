@@ -10,22 +10,56 @@ customer_support_agent:
   max_tool_iterations: 5
   intents:
   - name: ORDER_STATUS
-    phrases: []
+    mode: read
+    phrases:
+    - where is my order
+    - where is the order
+    - where is order
+    - track my order
+    - track order
+    - order status
+    - has my order arrived
+    - when will my order arrive
     tools:
     - get_order_status
     description: checking whether an order has shipped, arrived, or where it is
   - name: ORDER_DETAILS
-    phrases: []
+    mode: read
+    phrases:
+    - order details
+    - details of my order
+    - details of the order
+    - show me my order
+    - what did i order
     tools:
     - get_order_status
     description: asking for details about a specific order
   - name: REFUND_STATUS
-    phrases: []
+    mode: read
+    phrases:
+    - refund status
+    - where is my refund
+    - where is the refund
+    - has my refund
+    - refund update
+    - refund pending
+    - when will my refund
+    - refund completed
+    - refund approved
+    - refund denied
     tools:
     - get_refund_status
     description: checking the status or timing of an existing refund
   - name: REQUEST_REFUND
+    mode: write
     phrases:
+    - i want a refund
+    - want a refund
+    - request a refund
+    - please refund
+    - issue a refund
+    - get a refund
+    - refund this order
     - refund
     - money back
     - reimburse

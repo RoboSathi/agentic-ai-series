@@ -11,6 +11,7 @@ The values still come from the same merged YAML: the agent's
 """
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel
 from pydantic_settings import SettingsConfigDict
@@ -20,12 +21,13 @@ from agentic_commons.config.settings import YamlBackedSettings
 
 
 class IntentSettings(BaseModel):
-    """One customer intent, and the tools it unlocks."""
+    """One customer intent, its capability class, and the tools it unlocks."""
 
     name: str
     phrases: list[str]
     tools: list[str]
     description: str
+    mode: Literal["read", "write"] = "read"
 
 
 class DeterministicRejectRule(BaseModel):
