@@ -399,6 +399,8 @@ resilience:
     enabled: true
   saga:
     enabled: true
+  dead_letter_queue:
+    enabled: true
 
 evals:
   enabled: true

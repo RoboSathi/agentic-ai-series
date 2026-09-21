@@ -500,8 +500,14 @@ class BulkheadSettings(BaseModel):
     pool_size: int
 
 
+class DeadLetterQueueSettings(BaseModel):
+    """Durable quarantine for requests blocked before model execution."""
+
+    enabled: bool
+
+
 class ResilienceSettings(YamlBackedSettings):
-    """The seven Nygard patterns (LLD §13)."""
+    """Resilience controls, including durable dead-letter quarantine."""
 
     _yaml_section = "resilience"
     enabled: bool
@@ -511,6 +517,7 @@ class ResilienceSettings(YamlBackedSettings):
     bulkhead: BulkheadSettings
     idempotency: MemoryStoreToggle
     saga: MemoryStoreToggle
+    dead_letter_queue: DeadLetterQueueSettings
 
     model_config = SettingsConfigDict(env_prefix="RESILIENCE__")
 

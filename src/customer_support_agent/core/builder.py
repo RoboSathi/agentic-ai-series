@@ -39,7 +39,7 @@ from agentic_commons.observability import (
 )
 from agentic_commons.observability.tracer import LocalTracer
 from agentic_commons.persistence import SqliteConnectionPool, SqlitePlatformStore
-from agentic_commons.resilience import SqliteIdempotencyGuard
+from agentic_commons.resilience import DeadLetterQueue, SqliteIdempotencyGuard
 from agentic_commons.security import Authorizer, PIIFilterImpl, SecuritySuite
 from agentic_commons.security.auth.policy import AgentPolicy, AgentPolicyRepository
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
@@ -244,6 +244,11 @@ def build_agent(
     refunds = RefundLedgerRepository(connection)
 
     idempotency = SqliteIdempotencyGuard(platform_store)
+    dead_letter_queue = DeadLetterQueue(
+        platform_store,
+        agent_id=agent_id,
+        enabled=settings.resilience.dead_letter_queue.enabled,
+    )
     saga = RefundSaga(orders, refunds, idempotency=idempotency)
     tools = SupportTools(orders, hitl, refunds, saga)
 
@@ -313,6 +318,7 @@ def build_agent(
             idempotency=idempotency,
             reporter=reporter,
         ),
+        dead_letter_queue=dead_letter_queue,
         security=SecuritySuite(authorizer=authorizer),
         memory=facade,
         context=context,

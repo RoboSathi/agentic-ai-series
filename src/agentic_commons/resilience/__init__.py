@@ -7,6 +7,12 @@ from agentic_commons.resilience.circuit_breaker import (
     TimeoutOnlyCircuitBreaker,
 )
 from agentic_commons.resilience.composition import ResilientCaller
+from agentic_commons.resilience.dead_letter_queue import (
+    DeadLetterEntry,
+    DeadLetterQueue,
+    DeadLetterReason,
+    DeadLetterStatus,
+)
 from agentic_commons.resilience.idempotency import IdempotencyGuard, SqliteIdempotencyGuard
 from agentic_commons.resilience.pub_sub import (
     EventHandler,
@@ -44,6 +50,10 @@ __all__ = [
     "NonIdempotentRetryError",
     "PubSub",
     "ResilientCaller",
+    "DeadLetterEntry",
+    "DeadLetterQueue",
+    "DeadLetterReason",
+    "DeadLetterStatus",
     "ResourcePoolBulkhead",
     "RetryPolicy",
     "Saga",

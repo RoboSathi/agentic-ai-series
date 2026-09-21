@@ -46,7 +46,7 @@ from agentic_commons.observability import (
     StageReporter,
     Tracer,
 )
-from agentic_commons.resilience import ResilientCaller
+from agentic_commons.resilience import DeadLetterQueue, ResilientCaller
 from agentic_commons.security import SecuritySuite
 from agentic_commons.security.auth.policy import AgentPolicy
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
@@ -100,6 +100,7 @@ class CustomerSupportAgent:
         cascade: NollmScoringCascadeImpl | None = None,
         reporter: StageReporter | None = None,
         resilient: ResilientCaller | None = None,
+        dead_letter_queue: DeadLetterQueue | None = None,
         tracer: Tracer | None = None,
         slos: SLORegistry | None = None,
         deliberation: DeliberationLoop | None = None,
@@ -126,6 +127,7 @@ class CustomerSupportAgent:
         # timeout, retried under an idempotency key, and behind a breaker
         # so a provider outage fails fast instead of queueing.
         self._resilient = resilient or ResilientCaller("llm")
+        self._dead_letter_queue = dead_letter_queue
         self._tracer = tracer
         self._slos = slos
         self._grounding = grounding
@@ -549,6 +551,70 @@ class CustomerSupportAgent:
             },
         }
 
+    def _quarantine_security_request(
+        self,
+        state: AgentState,
+        *,
+        reason: str,
+        assessment: Any,
+        moderation: Any,
+    ) -> dict[str, Any]:
+        """Persist a security-rejected request and stop before intent/LLM execution."""
+        entry = None
+        enqueue_error = None
+        if self._dead_letter_queue is not None and self._dead_letter_queue.enabled:
+            try:
+                sanitized_query = self._security.redact(state.query)
+                entry = self._dead_letter_queue.enqueue(
+                    reason=reason,
+                    payload=sanitized_query,
+                    trace_id=str(state.metadata.get("trace_id", "")),
+                    session_id=state.session_id,
+                    customer_id=state.customer_id,
+                    metadata={
+                        "prompt_injection": bool(assessment.suspicious),
+                        "content_moderation": bool(moderation.flagged),
+                        "injection_reason": assessment.reason if assessment.suspicious else "",
+                        "moderation_categories": list(moderation.categories),
+                        "moderation_reason": moderation.reason if moderation.flagged else "",
+                    },
+                )
+            except Exception as exc:
+                # Security remains fail-closed even if the quarantine store is
+                # temporarily unavailable. Never continue to intent or the LLM.
+                enqueue_error = str(exc)
+                self._logger.error(
+                    "Security quarantine store failed; request remains blocked",
+                    error=enqueue_error,
+                )
+
+        self._done(
+            "dead_letter_queue",
+            summary="Request quarantined for human review",
+            event_kind="escalation",
+            fields={
+                "queued": entry is not None,
+                "queue_id": entry.id if entry is not None else None,
+                "reason": reason,
+                "prompt_injection": bool(assessment.suspicious),
+                "content_moderation": bool(moderation.flagged),
+                "persistence_error": bool(enqueue_error),
+            },
+        )
+        return {
+            "response": "I’m unable to help with that request right now. Please rephrase your request.",
+            "decisions": [
+                *state.decisions,
+                "security: request quarantined",
+            ],
+            "metadata": {
+                **state.metadata,
+                "halted": "security_quarantine",
+                "security_quarantine": True,
+                "dead_letter_queue_id": entry.id if entry is not None else None,
+            },
+        }
+
     async def intake(self, state: AgentState) -> dict[str, Any]:
         """Run the front door: security first, then one intent decision.
 
@@ -613,6 +679,25 @@ class CustomerSupportAgent:
                 summary="Content policy check passed",
                 event_kind="security",
                 fields=moderation_fields,
+            )
+
+        # Security findings are control-plane failures, not advisory hints.
+        # Quarantine before intent classification, context assembly, memory writes,
+        # or any LLM call. The customer receives a generic response; detection
+        # details remain internal in the TUI, log, and dead-letter record.
+        if assessment.suspicious or moderation.flagged:
+            reason = (
+                "security_policy"
+                if assessment.suspicious and moderation.flagged
+                else "prompt_injection"
+                if assessment.suspicious
+                else "content_moderation"
+            )
+            return self._quarantine_security_request(
+                state,
+                reason=reason,
+                assessment=assessment,
+                moderation=moderation,
             )
 
         self._report(
