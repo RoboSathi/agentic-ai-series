@@ -12,7 +12,11 @@ from typing import Awaitable, Callable, Protocol, TypeVar, runtime_checkable
 
 from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger
-from agentic_commons.resilience.types import CircuitBreakerOpenError, NonIdempotentRetryError
+from agentic_commons.resilience.types import (
+    CircuitBreakerOpenError,
+    NonIdempotentRetryError,
+    external_api_error_fields,
+)
 
 T = TypeVar("T")
 
@@ -80,6 +84,7 @@ class ExponentialBackoffRetry:
                 if attempt == self._max_attempts:
                     break
                 delay = self._delay_for(attempt)
+                fields = external_api_error_fields(exc)
                 self._logger.warning(
                     "Retrying after failure",
                     key=idempotency_key,
@@ -87,6 +92,7 @@ class ExponentialBackoffRetry:
                     of=self._max_attempts,
                     delay_s=round(delay, 3),
                     error=str(exc),
+                    **(fields or {}),
                 )
                 await asyncio.sleep(delay)
         assert last_error is not None

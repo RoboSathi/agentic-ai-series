@@ -360,7 +360,7 @@ class GuardrailsSettings(YamlBackedSettings):
     enabled: bool
     mode: Literal["reject", "auto_repair", "constrained"]
     max_repair_attempts: int
-    constrained_backend: Literal["nim_guided_json"]
+    constrained_backend: Literal["llamacpp_grammar", "nim_guided_json"]
 
     model_config = SettingsConfigDict(env_prefix="GUARDRAILS__")
 
@@ -372,9 +372,19 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     enabled: bool
     enforce_grounding: bool
     confidence_threshold: float
+    # Grounding-specific NLI threshold. Keep the generic confidence threshold
+    # for compatibility with the rest of the evaluation configuration.
+    nli_entailment_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
     consistency_samples: int
     consistency_agreement_threshold: float
     grounding_overlap_threshold: float
+    # Number of evidence chunks retrieved for each claim before NLI verification.
+    # This is a retrieval parameter, not a claim count. Keep it small for the
+    # support agent; the same primitive can later be reused by larger RAG corpora.
+    embedding_top_k: int = Field(default=3, ge=1, le=20)
+    # Hallucination repair is deliberately bounded. A model that repeats an
+    # unsupported claim must not be given an unbounded generative retry loop.
+    max_repair_attempts: int = Field(default=1, ge=0, le=3)
 
     model_config = SettingsConfigDict(env_prefix="HALLUCINATION_PROTECTION__")
 

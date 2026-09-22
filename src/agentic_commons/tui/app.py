@@ -101,6 +101,16 @@ class AgenticTuiApp(App[None]):
         color: red;
         background: transparent;
     }
+
+    /* A partial hallucination is still blocked, but the response contained
+       some grounded claims. Keep the block semantics while distinguishing it
+       from a completely unsupported response. */
+    .stage-blocked.stage-hallucination-partial > CollapsibleTitle,
+    .stage-blocked.stage-hallucination-partial > CollapsibleTitle:hover,
+    .stage-blocked.stage-hallucination-partial > CollapsibleTitle:focus {
+        color: yellow;
+        background: transparent;
+    }
     
     .stage-details {
         padding: 0 1 1 3;

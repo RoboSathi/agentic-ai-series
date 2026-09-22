@@ -127,6 +127,11 @@ class AgentState(BaseModel):
     context: str = ""
     tool_rounds: int = 0
     tool_results: list[str] = Field(default_factory=list)
+    # Only successfully completed tool results may ground customer-facing
+    # business claims. ``tool_results`` intentionally retains blocked/failed
+    # observations for the model and audit trail; this field is the
+    # authority boundary used by reflection and hallucination protection.
+    authoritative_tool_results: list[str] = Field(default_factory=list)
     authoritative_facts: dict[str, Any] = Field(default_factory=dict)
     decisions: list[str] = Field(default_factory=list)
     escalated: bool = False

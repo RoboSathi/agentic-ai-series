@@ -40,7 +40,7 @@ from agentic_commons.evals.entailment import (
 )
 from agentic_commons.logging import get_logger
 from agentic_commons.memory.store import RelevanceScorer
-from agentic_commons.resilience import ResilientCaller
+from agentic_commons.resilience import ResilientCaller, external_api_error_fields
 
 # The three NLI labels, lower-cased. Hugging Face models spell them
 # ENTAILMENT/NEUTRAL/CONTRADICTION or entailment/neutral/contradiction
@@ -107,7 +107,8 @@ class HuggingFaceEncoderClient:
         try:
             results = await asyncio.gather(*(self._score_one(pair) for pair in pairs))
         except Exception as exc:
-            self._disable(str(exc))
+            error_fields = external_api_error_fields(exc)
+            self._disable(str(exc), error_fields=error_fields)
             return []
         return [result for result in results]
 
@@ -147,13 +148,19 @@ class HuggingFaceEncoderClient:
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:20]
         return f"hf-encoder:{self._model}:{digest}"
 
-    def _disable(self, reason: str) -> None:
+    def _disable(
+        self,
+        reason: str,
+        *,
+        error_fields: dict[str, Any] | None = None,
+    ) -> None:
         """Stop calling this model, and say so once."""
         self._unavailable = True
         self._logger.warning(
             "Hosted encoder unavailable; falling back",
             model=self._model,
             error=reason,
+            **(error_fields or {}),
         )
 
 
@@ -176,6 +183,11 @@ class HostedNliModel:
         self._fallback = fallback or LexicalEntailmentModel()
         self._logger = get_logger("llm")
 
+    @property
+    def model_name(self) -> str:
+        """Expose the configured hosted NLI model for observability."""
+        return self._client.model if self._client.available else self._fallback.model_name
+
     async def entails(self, premise: str, hypothesis: str) -> EntailmentResult:
         """Whether the premise entails the hypothesis, per the model."""
         scored = await self._client.score_pairs([(premise, hypothesis)])
@@ -184,16 +196,23 @@ class HostedNliModel:
         labels = {item.label.casefold(): item.score for item in scored[0]}
         entailment = labels.get(ENTAILMENT, 0.0)
         contradiction = labels.get(CONTRADICTION, 0.0)
-        entailed = entailment >= contradiction
+        neutral = labels.get("neutral", 0.0)
+        winning = max(
+            (entailment, "entailment"),
+            (contradiction, "contradiction"),
+            (neutral, "unknown"),
+            key=lambda item: item[0],
+        )
         return EntailmentResult(
-            entailed=entailed,
-            # The score is the winning label's probability, so the
-            # cascade's threshold means "how sure is the model", not
-            # "how much text overlapped".
-            score=max(entailment, contradiction),
+            label=winning[1],
+            entailed=winning[1] == "entailment",
+            # The winning label's probability is confidence in the
+            # classification, not text similarity.
+            score=winning[0],
+            model=self._client.model,
             rationale=(
                 f"{self._client.model}: entailment {entailment:.2f}, "
-                f"contradiction {contradiction:.2f}"
+                f"contradiction {contradiction:.2f}, neutral {neutral:.2f}"
             ),
         )
 

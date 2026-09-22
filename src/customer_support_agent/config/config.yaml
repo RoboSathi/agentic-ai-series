@@ -34,33 +34,20 @@ customer_support_agent:
     tools:
     - get_order_status
     description: asking for details about a specific order
-  - name: REFUND_STATUS
-    mode: read
-    phrases:
-    - refund status
-    - where is my refund
-    - where is the refund
-    - has my refund
-    - refund update
-    - refund pending
-    - when will my refund
-    - when will i get money
-    - where is money
-    - refund denied
-    - refund
-    tools:
-    - get_refund_status
-    description: checking the status or timing of an existing refund
   - name: REQUEST_REFUND
     mode: write
     phrases:
     - i want a refund
     - want a refund
+    - want refund
     - request a refund
+    - request refund
+    - refund request
     - please refund
     - issue a refund
-    - get a refund
+    - give a refund
     - refund this order
+    - refund for order
     - refund
     - money back
     - reimburse
@@ -84,9 +71,6 @@ customer_support_agent:
     ORDER_DETAILS:
     - description: look the order up and report its details
       tool: get_order_status
-    REFUND_STATUS:
-    - description: check the current refund status
-      tool: get_refund_status
     REQUEST_REFUND:
     - description: confirm the order and its current state
       tool: get_order_status
@@ -119,10 +103,9 @@ customer_support_agent:
       - delivery_period
       - delivery_options
       ORDER_DETAILS: []
-      REFUND_STATUS:
-      - track_refund
       REQUEST_REFUND:
       - get_refund
+      - track_refund
       UNKNOWN:
       - fallback
       - FALLBACK

@@ -277,15 +277,30 @@ guardrails:
   enabled: true
   mode: auto_repair
   max_repair_attempts: 2
-  constrained_backend: nim_guided_json
+  constrained_backend: llamacpp_grammar
 
 hallucination_protection:
   enabled: true
   enforce_grounding: true
   confidence_threshold: 0.7
+  # Minimum NLI probability required to accept an entailment as grounded.
+  # This is separate from the generic cascade confidence threshold so the
+  # hallucination guard can be calibrated independently. 0.60 is the initial
+  # operating point for this support agent; tune it against labeled grounding
+  # examples rather than individual production traces.
+  nli_entailment_threshold: 0.60
   consistency_samples: 3
   consistency_agreement_threshold: 0.67
   grounding_overlap_threshold: 0.3
+  # Number of evidence chunks retrieved for EACH customer-response claim
+  # before NLI verification. k=3 is intentionally small for this agent:
+  # refund/order turns normally have only a few relevant tool results.
+  # This is retrieval breadth, not the number of claims. If the evidence
+  # corpus grows for RAG later, increase this without changing the verifier.
+  embedding_top_k: 3
+  # At most one generative repair. If the model repeats an unsupported
+  # claim, the verifier stops generating and falls back to verified claims.
+  max_repair_attempts: 1
 
 gatekeeper:
   # The Gatekeeper is always invoked (PRD G1). These are its sub-features.

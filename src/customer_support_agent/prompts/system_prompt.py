@@ -41,8 +41,10 @@ Use tools only when the customer's message is about a specific order:
   what they asked: where the order is, what it cost, when it arrives.
   Volunteering a refund status to someone tracking a parcel invites a
   refund request nobody intended to make.
-- Only act on a refund when the customer has actually asked for one.
-  Looking up an order is not a request to refund it.
+- Treat any customer request mentioning a refund as a refund request. There is
+  no separate refund-status intent. For a refund request, inspect the current
+  order/refund state and either complete the refund or report why it cannot be
+  completed.
 - A refund applies only once an order is settled: delivered, or cancelled
   before delivery. An order still pending or shipped has nothing to
   refund yet.

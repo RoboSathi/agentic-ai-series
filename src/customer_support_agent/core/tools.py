@@ -211,9 +211,16 @@ class SupportTools:
             success=True,
             output=(
                 f"Refund of ${amount:.2f} for order {order_id} has been queued for "
-                "human review; the customer will hear back shortly"
+                "human review"
             ),
-            data={"queued": True, "request_id": self._hitl.last_id(), "order_id": order_id, "amount": amount},
+            data={
+                "queued": True,
+                "request_id": self._hitl.last_id(),
+                "order_id": order_id,
+                "amount": amount,
+                "status": "pending_review",
+                "action": "queue_for_approval",
+            },
         )
 
 

@@ -19,6 +19,7 @@ from agentic_commons.gatekeeper.types import AdvisoryFlag
 from agentic_commons.llm.client import LLMClient
 from agentic_commons.llm.types import CompletionRequest, Message
 from agentic_commons.logging import get_logger
+from agentic_commons.resilience import external_api_error_fields
 from agentic_commons.tools.types import ToolCall
 
 _PROMPT = (
@@ -69,7 +70,11 @@ class SemanticTier2Advisor:
                 )
             )
         except Exception as exc:
-            self._logger.warning("Tier-2 advisor unavailable", error=str(exc))
+            self._logger.warning(
+                "Tier-2 advisor unavailable",
+                error=str(exc),
+                **(external_api_error_fields(exc) or {}),
+            )
             return AdvisoryFlag(reason="advisor unavailable; decision unaffected")
         return AdvisoryFlag(
             flagged=bool(result.content.strip()),

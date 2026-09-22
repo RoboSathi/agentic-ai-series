@@ -119,7 +119,7 @@ class CustomerSupportIntentRouter:
 
         if not self._settings.intent_router.enabled:
             return self._supported_unknown(
-                "Intent routing is disabled; the request is handled without tool access."
+                "Intent routing is disabled; the request is handled by the contextual LLM fallback."
             )
 
         # IMPORTANT: previous intent is context, not a classification result.
@@ -197,21 +197,19 @@ class CustomerSupportIntentRouter:
             if contextual is not None:
                 return contextual
 
-        if top.intent == self._default and top.score >= threshold:
-            return Intent(
-                IntentAssessment(
-                    intent=self._default,
-                    confidence=top.score,
-                    disposition=IntentDisposition.OUT_OF_SCOPE,
-                    source="huggingface_local",
-                    candidates=mapped_candidates,
-                    model=self._backend_model_name(),
-                    score_type=self._backend_score_type(),
-                    reason="The classifier confidently mapped the request to UNKNOWN.",
-                )
+        # UNKNOWN is uncertainty, not proof that the request is outside the
+        # agent's scope. Preserve the candidates and let the LLM use the full
+        # conversation context to resolve an ambiguous/follow-up turn.
+        if top.intent == self._default:
+            return self._unknown_for_llm(
+                candidates=mapped_candidates,
+                reason="The classifier could not resolve the current turn; LLM context fallback is required.",
             )
 
-        return self._clarify(candidates=mapped_candidates, reason="Classifier score is below the configured routing threshold.")
+        return self._unknown_for_llm(
+            candidates=mapped_candidates,
+            reason="Classifier score is below the configured routing threshold; LLM context fallback is required.",
+        )
 
     def classify(self, message: str, previous: Intent | None = None) -> Intent:
         """Synchronous deterministic-only path, retained for small tests/callers."""
@@ -290,20 +288,12 @@ class CustomerSupportIntentRouter:
             intents = list(best_by_intent)
             score = round(1.0 / len(intents), 3)
             candidates = [IntentCandidate(intent=name, score=score) for name in intents]
-            return Intent(
-                IntentAssessment(
-                    intent=self._default,
-                    confidence=score,
-                    disposition=IntentDisposition.CLARIFY,
-                    source="deterministic",
-                    matched_rule="ambiguous:" + ",".join(sorted(intents)),
-                    candidates=candidates,
-                    clarification=self._clarification_for(intents),
-                    reason=(
-                        f"The phrase '{best[0][3]}' "
-                        "matches multiple business capabilities, so no capability was granted."
-                    ),
-                )
+            return self._unknown_for_llm(
+                candidates=candidates,
+                reason=(
+                    f"The phrase '{best[0][3]}' matches multiple business capabilities; "
+                    "LLM context is required to resolve the request."
+                ),
             )
 
         intent_name, matched_phrase = next(iter(best_by_intent.items()))
@@ -480,8 +470,29 @@ class CustomerSupportIntentRouter:
             )
         )
 
+    def _unknown_for_llm(self, candidates: list[IntentCandidate], reason: str) -> Intent:
+        """Preserve uncertainty and let the LLM resolve it from conversation context."""
+        return Intent(
+            IntentAssessment(
+                intent="UNKNOWN",
+                confidence=candidates[0].score if candidates else 0.0,
+                disposition=IntentDisposition.SUPPORTED,
+                source="huggingface_local" if candidates else "classifier_unavailable",
+                candidates=candidates,
+                allowed_tools=[],
+                model=self._backend_model_name(),
+                score_type=self._backend_score_type(),
+                reason=reason,
+            )
+        )
+
     def _clarify(self, candidates: list[IntentCandidate], reason: str) -> Intent:
-        top = [candidate for candidate in candidates if candidate.intent != self._default][: self._settings.intent_router.clarification_top_k]
+        """Compatibility helper for callers that explicitly request a clarification."""
+        top = [
+            candidate
+            for candidate in candidates
+            if candidate.intent != self._default
+        ][: self._settings.intent_router.clarification_top_k]
         clarification = self._clarification_for([candidate.intent for candidate in top])
         return Intent(
             IntentAssessment(
@@ -502,9 +513,6 @@ class CustomerSupportIntentRouter:
         key = frozenset(intents)
         templates = {
             frozenset({"ORDER_STATUS", "ORDER_DETAILS"}): "Are you asking about your order status or order details?",
-            frozenset({"ORDER_STATUS", "REFUND_STATUS"}): "Are you asking about your order status or a refund?",
-            frozenset({"ORDER_DETAILS", "REFUND_STATUS"}): "Do you need order details or help with a refund?",
-            frozenset({"REQUEST_REFUND", "REFUND_STATUS"}): "Are you asking to request a refund or check the status of a refund?",
         }
         if key in templates:
             return templates[key]
@@ -519,6 +527,5 @@ class CustomerSupportIntentRouter:
         return {
             "ORDER_STATUS": "your order status",
             "ORDER_DETAILS": "your order details",
-            "REFUND_STATUS": "a refund",
-            "REQUEST_REFUND": "requesting a refund",
+            "REQUEST_REFUND": "a refund",
         }.get(intent, "your request")

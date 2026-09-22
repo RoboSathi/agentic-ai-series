@@ -23,13 +23,17 @@ class AtomicClaim(BaseModel):
 
 
 class DetectionVerdict(BaseModel):
-    """Whether a claim is supported by the evidence, and how that was decided."""
+    """Whether a claim is supported, with the evidence and detector behind it."""
 
     claim: str
     supported: bool
     confidence: float
     tier: str = ""
     rationale: str = ""
+    detector_model: str = ""
+    retrieval_top_k: int = 0
+    retrieval_method: str = ""
+    retrieved_evidence: list[str] = Field(default_factory=list)
     escalated_to_human: bool = False
 
 

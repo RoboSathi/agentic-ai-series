@@ -229,15 +229,14 @@ class NvidiaNimClient(OpenAICompatibleClient):
     provider_name: ProviderName = "nim"
 
     def _structured_output_kwargs(self, request: CompletionRequest) -> dict[str, Any]:
-        """Ask NIM for guided JSON when a schema was requested.
+        """Do not send unsupported guided-decoding fields to NVIDIA API Catalog.
 
-        NIM accepts `nvext.guided_json`, but not every hosted model honors
-        it — `guardrails` therefore still validates the result rather than
-        trusting the request to have constrained anything.
+        The configured NVIDIA hosted model accepts the OpenAI-compatible chat
+        completion request, but rejects the legacy ``nvext.guided_json``
+        extension with HTTP 400. Structured output is therefore validated
+        after generation by the provider-neutral Pydantic/response guardrails.
         """
-        if not request.json_schema:
-            return {}
-        return {"extra_body": {"nvext": {"guided_json": request.json_schema}}}
+        return {}
 
 
 class LocalLlamaCppClient(OpenAICompatibleClient):

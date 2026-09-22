@@ -9,7 +9,7 @@ answers the question is a hosted cross-encoder
 that cannot be reached.
 """
 
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -18,11 +18,13 @@ from agentic_commons.llm.embeddings import tokenize
 
 
 class EntailmentResult(BaseModel):
-    """Whether premise entails hypothesis, and how confidently."""
+    """Three-way NLI result: entailment, contradiction, or unknown."""
 
+    label: Literal["entailment", "contradiction", "unknown"]
     entailed: bool
     score: float
     rationale: str = ""
+    model: str = ""
 
 
 @runtime_checkable
@@ -53,22 +55,32 @@ class LexicalEntailmentModel:
         self._min_overlap = settings.min_overlap
         self._negations = {marker.casefold() for marker in settings.negation_markers}
 
+    @property
+    def model_name(self) -> str:
+        """Name the deterministic fallback used for this decision."""
+        return "lexical-entailment-fallback"
+
     async def entails(self, premise: str, hypothesis: str) -> EntailmentResult:
         """Score hypothesis coverage by the premise, then compare polarity."""
         coverage = self._coverage(premise, hypothesis)
         if coverage < self._min_overlap:
             return EntailmentResult(
+                label="unknown",
                 entailed=False,
                 score=0.0,
                 rationale=f"premise covers only {coverage:.0%} of the hypothesis",
+                model="lexical-entailment-fallback",
             )
         same_polarity = self._is_negated(premise) == self._is_negated(hypothesis)
+        label = "entailment" if same_polarity else "contradiction"
         return EntailmentResult(
+            label=label,
             entailed=same_polarity,
             score=coverage,
             rationale=(
                 f"coverage {coverage:.0%}, {'matching' if same_polarity else 'opposing'} polarity"
             ),
+            model="lexical-entailment-fallback",
         )
 
     def _coverage(self, premise: str, hypothesis: str) -> float:

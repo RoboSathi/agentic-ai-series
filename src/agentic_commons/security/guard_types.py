@@ -17,6 +17,8 @@ class GuardVerdict(BaseModel):
     model: str = ""
     provider: str = ""
     reason: str = ""
+    error_code: str = ""
+    http_status: int | None = None
     endpoint: str = ""
     api_called: bool = False
     latency_ms: float | None = None

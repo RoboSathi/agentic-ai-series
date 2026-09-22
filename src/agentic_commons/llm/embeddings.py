@@ -15,6 +15,7 @@ from openai import AsyncOpenAI
 from agentic_commons.config import get_settings
 from agentic_commons.config.settings import LLMSettings
 from agentic_commons.logging import get_logger
+from agentic_commons.resilience import external_api_error_fields
 
 _TOKEN_PATTERN = re.compile(r"[a-z0-9']+")
 
@@ -113,7 +114,11 @@ class NimEmbeddingClient:
                 extra_body={"input_type": "query", "truncate": "END"},
             )
         except Exception as exc:
-            self._logger.warning("NIM embeddings unavailable, using local fallback", error=str(exc))
+            self._logger.warning(
+                "NIM embeddings unavailable, using local fallback",
+                error=str(exc),
+                **(external_api_error_fields(exc) or {}),
+            )
             return await self._fallback.embed(texts)
         vectors = [item.embedding for item in response.data]
         self._dimensions = len(vectors[0]) if vectors else 0

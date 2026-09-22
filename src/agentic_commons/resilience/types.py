@@ -35,6 +35,68 @@ class NonIdempotentRetryError(Exception):
     """
 
 
+def external_api_error_fields(exc: Exception) -> dict[str, Any] | None:
+    """Extract structured error details returned by an external API.
+
+    Supports provider SDK exceptions (for example OpenAI's ``APIStatusError``)
+    and raw HTTP exceptions (for example ``httpx.HTTPStatusError``) without
+    importing either provider into the resilience layer. Returns ``None`` for
+    ordinary local/programming errors so callers only add API fields when an
+    external dependency actually failed.
+    """
+    response = getattr(exc, "response", None)
+    status_code = getattr(exc, "status_code", None)
+    if status_code is None and response is not None:
+        status_code = getattr(response, "status_code", None)
+
+    body = getattr(exc, "body", None)
+    if body is None and response is not None:
+        try:
+            body = response.json()
+        except Exception:
+            body = None
+
+    if not (status_code is not None or body is not None or response is not None):
+        return None
+
+    payload = body if isinstance(body, dict) else {}
+    nested = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+
+    error_code = (
+        nested.get("code")
+        or payload.get("code")
+        or payload.get("error_code")
+        or nested.get("type")
+        or payload.get("type")
+    )
+    reason = (
+        nested.get("message")
+        or payload.get("message")
+        or payload.get("error_message")
+        or payload.get("detail")
+        or payload.get("title")
+    )
+    if reason is None and response is not None:
+        try:
+            text = str(response.text).strip()
+        except Exception:
+            text = ""
+        reason = text or None
+    if reason is None:
+        reason = str(exc) or type(exc).__name__
+
+    if error_code is None and status_code is not None:
+        error_code = f"HTTP_{status_code}"
+    if error_code is None:
+        error_code = type(exc).__name__.upper()
+
+    return {
+        "error_code": str(error_code),
+        "reason": str(reason),
+        "http_status": status_code,
+    }
+
+
 class Event(BaseModel):
     """One published message."""
 

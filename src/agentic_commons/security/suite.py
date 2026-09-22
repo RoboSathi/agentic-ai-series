@@ -144,6 +144,14 @@ class SecuritySuite:
                 "decision": verdict.decision,
                 "score": verdict.score,
                 "latency_ms": verdict.latency_ms,
+                **(
+                    {
+                        "error_code": verdict.error_code,
+                        "http_status": verdict.http_status,
+                    }
+                    if not verdict.available
+                    else {}
+                ),
                 "reason": verdict.reason,
             }
         )
@@ -196,6 +204,14 @@ class SecuritySuite:
                 "decision": model_verdict.decision,
                 "categories": list(model_verdict.categories),
                 "latency_ms": model_verdict.latency_ms,
+                **(
+                    {
+                        "error_code": model_verdict.error_code,
+                        "http_status": model_verdict.http_status,
+                    }
+                    if not model_verdict.available
+                    else {}
+                ),
                 "reason": model_verdict.reason,
             }
         )

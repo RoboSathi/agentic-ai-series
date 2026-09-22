@@ -47,7 +47,11 @@ from agentic_commons.observability import (
     StageReporter,
     Tracer,
 )
-from agentic_commons.resilience import DeadLetterQueue, ResilientCaller
+from agentic_commons.resilience import (
+    DeadLetterQueue,
+    ResilientCaller,
+    external_api_error_fields,
+)
 from agentic_commons.security import SecuritySuite
 from agentic_commons.security.auth.policy import AgentPolicy
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
@@ -77,10 +81,10 @@ from customer_support_agent.prompts.system_prompt import (
     build_system_prompt,
 )
 
-# Shown when the model produces nothing a customer could read. Rare, and
-# an honest hand-off beats a confident non-answer.
+# Shown when the model produces nothing a customer could read.
+# Keep it free of unsupported operational promises.
 _FALLBACK_REPLY = (
-    "Sorry — I wasn't able to complete that. Let me pass you to a colleague who can help."
+    "Sorry — I wasn't able to complete that. Please try again."
 )
 
 
@@ -159,6 +163,10 @@ class CustomerSupportAgent:
         self._menus: dict[str, OrderMenu] = {}
         self._history_turns = settings.history_turns
         self._conversations: dict[str, list[Message]] = {}
+        # Tool observations are not customer dialogue. Keep a bounded,
+        # separate history so follow-up turns can resolve references from
+        # authoritative facts without treating an old action as a new one.
+        self._authoritative_history: dict[str, list[str]] = {}
         self._last_supported_intent: dict[str, Intent] = {}
         self._control_loop = ToolControlLoop()
         # Plan, reflect, evaluate (E06). Injected as one composition so a
@@ -216,6 +224,11 @@ class CustomerSupportAgent:
         final = await self._graph.ainvoke(initial)
         state = AgentState.model_validate(final)
         self._remember_turn(session_id, query, state.response)
+        if session_id and state.authoritative_tool_results:
+            observations = self._authoritative_history.setdefault(session_id, [])
+            observations.extend(state.authoritative_tool_results)
+            max_observations = max(4, self._history_turns * 4)
+            self._authoritative_history[session_id] = observations[-max_observations:]
         self._accountant.settle(self._score(state))
         return state
 
@@ -638,8 +651,9 @@ class CustomerSupportAgent:
         The Customer Support intent router is the only scope/intent mechanism.
         Its deterministic rules may reject only explicit, agent-specific
         out-of-scope requests. Everything else is sent to the BERT-family
-        classifier, and low-confidence classifications produce a fixed
-        clarification question instead of an unsafe rejection.
+        classifier; unresolved classifications remain UNKNOWN and are handed
+        to the LLM with conversation context instead of being treated as
+        out-of-scope.
         """
         self._report(
             "prompt_injection_check",
@@ -687,6 +701,8 @@ class CustomerSupportAgent:
             injection_fields.update({
                 "model": jailbreak_check.get("model", "unknown"),
                 "latency_ms": jailbreak_check.get("latency_ms"),
+                "error_code": jailbreak_check.get("error_code"),
+                "http_status": jailbreak_check.get("http_status"),
                 "reason": jailbreak_check.get("reason", "Hosted jailbreak guard unavailable"),
             })
             self._reporter_warning(
@@ -755,6 +771,8 @@ class CustomerSupportAgent:
             moderation_fields.update({
                 "model": content_guard_check.get("model", "unknown"),
                 "latency_ms": content_guard_check.get("latency_ms"),
+                "error_code": content_guard_check.get("error_code"),
+                "http_status": content_guard_check.get("http_status"),
                 "reason": content_guard_check.get("reason", "Hosted content-safety guard unavailable"),
             })
             self._reporter_warning(
@@ -853,35 +871,30 @@ class CustomerSupportAgent:
             }
 
         if intent.disposition.value == "clarify":
+            # A lightweight classifier is a routing optimization, not the
+            # final semantic authority. Preserve the ambiguity and let the
+            # LLM resolve it from conversation context. No business
+            # capability is granted by this branch; Gatekeeper remains the
+            # authority if the model proposes a tool.
             self._reporter_waiting(
                 "intent_classification",
-                summary="Intent ambiguous · clarification required",
+                summary="Intent unresolved · handing to contextual LLM",
                 event_kind="intent",
-                fields=self._intent_status_fields(intent),
-            )
-            return {
-                "response": intent.clarification,
-                "decisions": [
-                    *state.decisions,
-                    f"intent: clarify ({intent.reason})",
-                ],
-                "metadata": {
-                    **state.metadata,
-                    "intent": intent.name,
-                    "intent_confidence": intent.confidence,
-                    "intent_disposition": intent.disposition.value,
-                    "intent_source": intent.source,
-                    "intent_candidates": [c.model_dump(mode="json") for c in intent.candidates],
-                    "intent_clarification": intent.clarification,
-                    "intent_reason": intent.reason,
-                    "halted": "intent_clarification",
+                fields={
+                    **self._intent_status_fields(intent),
+                    "fallback": "llm_context",
                 },
-            }
+            )
+            intent_route = "llm_fallback"
+        else:
+            intent_route = None
 
         if state.session_id and intent.name != "UNKNOWN":
             self._last_supported_intent[state.session_id] = intent
         plan = self._deliberation.plan(state.query, intent.name, list(intent.allowed_tools))
-        intent_route = self._intent_route(intent)
+        intent_route = intent_route or self._intent_route(intent)
+        if intent.name == "UNKNOWN":
+            intent_route = "llm_fallback"
         self._done(
             "intent_classification",
             summary=self._intent_status_summary(intent),
@@ -1020,9 +1033,15 @@ class CustomerSupportAgent:
             if invocation.get("tool_status") == "completed"
             else decision,
         )
+        authoritative = (
+            [text]
+            if invocation.get("tool_status") == "completed"
+            else []
+        )
         return {
             **base,
             "tool_results": [text],
+            "authoritative_tool_results": authoritative,
             "metadata": {
                 **base["metadata"],
                 "last_tool_invocations": [invocation],
@@ -1039,6 +1058,8 @@ class CustomerSupportAgent:
 
     def _intent_route(self, intent: Intent) -> str:
         """Map intent to a graph capability route from trusted tool metadata."""
+        if intent.name == "UNKNOWN":
+            return "llm_fallback"
         tools = [tool for name in intent.allowed_tools if (tool := self._registry.get(name)) is not None]
         if len(tools) == 1 and not tools[0].side_effecting:
             return "deterministic_read"
@@ -1269,16 +1290,6 @@ class CustomerSupportAgent:
         round_report = self._control_loop.evaluate_round(
             state.tool_rounds + 1, self._max_rounds
         )
-        self._done(
-            "control_loop",
-            event_kind="control_loop",
-            summary=(
-                "Tool round admitted"
-                if round_report.decision == "continue"
-                else "Tool round limit reached"
-            ),
-            fields=_control_loop_fields(round_report),
-        )
         self._report(
             "llm_call",
             event_kind="model",
@@ -1293,13 +1304,15 @@ class CustomerSupportAgent:
         try:
             result = await self._call_model(request, state, f"{state.session_id}:{state.tool_rounds}")
         except Exception as exc:
+            error_fields = external_api_error_fields(exc)
             self._reporter_warning(
                 "llm_call",
                 summary="LLM unavailable after retries",
                 event_kind="resilience",
                 fields={
                     "dependency": self._resilient.name,
-                    "reason": str(exc),
+                    **(error_fields or {}),
+                    **({"reason": str(exc)} if not error_fields else {}),
                 },
             )
             return {
@@ -1391,15 +1404,34 @@ class CustomerSupportAgent:
         attempts_before = self._resilient.attempts
         try:
             result = await self._resilient.call(call, idempotency_key=key)
-        except Exception:
-            self._note_recovery(state, attempts_before, succeeded=False)
-            self._done_failed("llm_call")
+        except Exception as exc:
+            error_fields = external_api_error_fields(exc)
+            self._note_recovery(
+                state,
+                attempts_before,
+                succeeded=False,
+                error_fields=error_fields,
+            )
+            self._done_failed(
+                "llm_call",
+                summary="LLM call failed",
+                event_kind="model",
+                fields=error_fields,
+            )
+            if error_fields:
+                self._logger.error("LLM API call failed", **error_fields)
             raise
         self._note_recovery(state, attempts_before, succeeded=True)
         self._account_for(result, state)
         return result
 
-    def _note_recovery(self, state: AgentState, attempts_before: int, succeeded: bool) -> None:
+    def _note_recovery(
+        self,
+        state: AgentState,
+        attempts_before: int,
+        succeeded: bool,
+        error_fields: dict[str, Any] | None = None,
+    ) -> None:
         """Record whether the resilience patterns actually recovered anything.
 
         Only a call that needed more than one attempt counts: a call that
@@ -1422,6 +1454,7 @@ class CustomerSupportAgent:
                 fields={
                     "attempts": attempts,
                     "recovered": succeeded,
+                    **(error_fields or {}),
                 },
             )
 
@@ -1517,9 +1550,18 @@ class CustomerSupportAgent:
             for item in invocation_fields_history
             if isinstance(item.get("gatekeeper"), dict)
         )
+        authoritative_results = [
+            text
+            for text, invocation in zip(results, invocation_fields_history, strict=True)
+            if invocation.get("tool_status") == "completed"
+        ]
         return {
             "messages": outputs,
             "tool_results": results,
+            "authoritative_tool_results": [
+                *state.authoritative_tool_results,
+                *authoritative_results,
+            ],
             "decisions": decisions,
             "escalated": state.escalated or turn_escalated,
             "metadata": {
@@ -1550,7 +1592,32 @@ class CustomerSupportAgent:
                 "metadata": state.metadata,
             }
         last = state.messages[-1] if state.messages else Message()
-        critique = self._deliberation.reflect(last.content, state.tool_results)
+        authoritative_evidence = list(state.authoritative_tool_results)
+        critique = self._deliberation.reflect(last.content, authoritative_evidence)
+        reflection_comment = critique.summary
+        self._logger.info(
+            "Customer response reflection completed",
+            acceptable=critique.acceptable,
+            problems=critique.problems,
+            evidence_count=len(authoritative_evidence),
+        )
+        # Reflection is part of the control loop, not a standalone workflow
+        # stage. Only expose an actual reflector comment from the current
+        # Critique; do not manufacture a success message for the TUI.
+        if reflection_comment:
+            reflection_event_fields = {"reflection_comment": reflection_comment}
+            if critique.acceptable:
+                self._done(
+                    "control_loop",
+                    event_kind="control_loop",
+                    fields=reflection_event_fields,
+                )
+            else:
+                self._reporter_warning(
+                    "control_loop",
+                    event_kind="control_loop",
+                    fields=reflection_event_fields,
+                )
         if (
             last.role == "assistant"
             and not last.tool_calls
@@ -1566,22 +1633,32 @@ class CustomerSupportAgent:
             # when a second call was needed, which is the *rarer* path —
             # so the reply that usually reached the customer was the one
             # never checked.
-            evidence = [Chunk(content=text, kind="tool_result") for text in state.tool_results]
+            evidence = [
+                Chunk(content=text, kind="tool_result")
+                for text in authoritative_evidence
+            ]
             guardrail_result = await self._response_guardrail.enforce(last.content, evidence)
-            self._done(
-                "hallucination_check",
-                summary=(
-                    f"Grounded: {guardrail_result.supported}/{guardrail_result.claims} claims supported"
-                    if not guardrail_result.escalated
-                    else "Response blocked by hallucination guard"
-                ),
-                event_kind="grounding",
-                fields={
-                    **guardrail_result.model_dump(exclude={"response", "unsupported_claims"}),
-                    "schema_valid": True,
-                    "unsupported_claims": guardrail_result.unsupported_claims,
-                },
-            )
+            guardrail_fields = {
+                **guardrail_result.model_dump(exclude={"response", "unsupported_claims"}),
+                "schema_valid": True,
+                "unsupported_claims": guardrail_result.unsupported_claims,
+            }
+            if guardrail_result.escalated:
+                self._reporter_blocked(
+                    "hallucination_check",
+                    summary="Response blocked by hallucination guard",
+                    event_kind="grounding",
+                    fields=guardrail_fields,
+                )
+            else:
+                self._done(
+                    "hallucination_check",
+                    summary=(
+                        f"Grounded: {guardrail_result.supported}/{guardrail_result.claims} claims supported"
+                    ),
+                    event_kind="grounding",
+                    fields=guardrail_fields,
+                )
             return {
                 "response": guardrail_result.response,
                 "decisions": [
@@ -1590,6 +1667,37 @@ class CustomerSupportAgent:
                 ],
                 "escalated": state.escalated or guardrail_result.escalated,
             }
+        # If reflection found an issue and there is no authoritative tool
+        # evidence, run the deterministic hallucination gate before asking
+        # another LLM to rewrite the answer. Otherwise the repair model can
+        # manufacture a plausible business outcome from the same unsupported
+        # draft, which is exactly the 0/0 grounding failure this gate prevents.
+        if not critique.acceptable and not authoritative_evidence:
+            evidence = []
+            guardrail_result = await self._response_guardrail.enforce(
+                last.content,
+                evidence,
+            )
+            if guardrail_result.escalated:
+                guardrail_fields = guardrail_result.model_dump(
+                    exclude={"response"},
+                )
+                self._reporter_blocked(
+                    "hallucination_check",
+                    summary="Response blocked before LLM repair · no authoritative tool evidence",
+                    event_kind="grounding",
+                    fields=guardrail_fields,
+                )
+                return {
+                    "response": guardrail_result.response,
+                    "decisions": [
+                        *state.decisions,
+                        f"reflection: rejected ({critique.summary})",
+                        f"grounding: {guardrail_result.reason_code}",
+                    ],
+                    "escalated": state.escalated or guardrail_result.escalated,
+                }
+
         # The reflector already logged what it found; saying it twice
         # here would double every rejection in the trace.
         self._report(
@@ -1611,13 +1719,15 @@ class CustomerSupportAgent:
                 f"{state.session_id}:finalize",
             )
         except Exception as exc:
+            error_fields = external_api_error_fields(exc)
             self._reporter_warning(
                 "llm_call",
                 summary="LLM unavailable after retries",
                 event_kind="resilience",
                 fields={
                     "dependency": self._resilient.name,
-                    "reason": str(exc),
+                    **(error_fields or {}),
+                    **({"reason": str(exc)} if not error_fields else {}),
                 },
             )
             return {
@@ -1658,8 +1768,8 @@ class CustomerSupportAgent:
                 "unsupported detail. Do not invent facts. Return only JSON "
                 "matching the response schema.\n\n"
                 f"Draft:\n{candidate}\n\n"
-                "Tool results:\n"
-                + "\n".join(f"- {item}" for item in state.tool_results)
+                "Authoritative tool results:\n"
+                + "\n".join(f"- {item}" for item in authoritative_evidence)
             )
             repaired_result = await self._call_model(
                 CompletionRequest(
@@ -1672,13 +1782,35 @@ class CustomerSupportAgent:
             repaired, _ = self._response_guardrail.validate_schema(repaired_result.content)
             return repaired or _FALLBACK_REPLY
 
-        evidence = [Chunk(content=text, kind="tool_result") for text in state.tool_results]
+        evidence = [
+            Chunk(content=text, kind="tool_result")
+            for text in authoritative_evidence
+        ]
         guardrail_result = await self._response_guardrail.enforce(
             reply,
             evidence,
             revise=revise_unsupported,
         )
         reply = guardrail_result.response
+        guardrail_fields = guardrail_result.model_dump(
+            exclude={"response"},
+        )
+        if guardrail_result.escalated:
+            self._reporter_blocked(
+                "hallucination_check",
+                summary="Response blocked by hallucination guard",
+                event_kind="grounding",
+                fields=guardrail_fields,
+            )
+        else:
+            self._done(
+                "hallucination_check",
+                summary=(
+                    f"Grounded: {guardrail_result.supported}/{guardrail_result.claims} claims supported"
+                ),
+                event_kind="grounding",
+                fields=guardrail_fields,
+            )
         state.metadata["hallucination_rate"] = guardrail_result.hallucination_rate
         state.metadata["guardrail_reason_code"] = guardrail_result.reason_code
         state.metadata["guardrail_escalated"] = guardrail_result.escalated
@@ -1700,8 +1832,8 @@ class CustomerSupportAgent:
         # Scored by something independent of what wrote it. One bounded
         # pass: the loop revises once and reports, rather than iterating
         # towards a sentence nobody is waiting for.
-        score = await self._deliberation.score(reply, state.tool_results)
-        if state.tool_results:
+        score = await self._deliberation.score(reply, authoritative_evidence)
+        if authoritative_evidence:
             decisions.append(f"evaluation: {score:.2f} supported")
         self._done(
             "finalize",
@@ -1709,15 +1841,14 @@ class CustomerSupportAgent:
             fields={
                 "response_ready": True,
                 "revised": not critique.acceptable,
-                "reflection": "revised" if not critique.acceptable else "accepted",
-                "reflection_detail": critique.summary or "no issues detected",
-                "evaluation_score": score if state.tool_results else None,
+                "evaluation_score": score if authoritative_evidence else None,
                 "grounding_issues": guardrail_result.unsupported,
                 "schema_valid": schema_fields.get("schema_valid", True),
                 "validation_mode": schema_fields.get("validation_mode"),
                 "validation_attempts": schema_fields.get("validation_attempts"),
                 "repair_attempts": guardrail_result.repair_attempts,
                 "grounded": guardrail_result.grounded,
+                "hallucination_scope": guardrail_result.hallucination_scope,
                 "enforcement": "ESCALATE" if guardrail_result.escalated else "PASS",
                 "failure_kinds": guardrail_result.failure_kinds,
                 "nollm_resolved_ratio": round(guardrail_result.nollm_resolved_ratio, 3),
@@ -2054,12 +2185,21 @@ class CustomerSupportAgent:
         removes what this task does not need. Neither substitutes for the
         Gatekeeper, which still rules on whatever is actually called.
         """
+        allowed = set(state.metadata.get("allowed_actions", []))
+        if state.metadata.get("intent_execution_route") == "llm_fallback":
+            # The classifier could not safely narrow the capability. Give the
+            # LLM the security-allowed tool surface so conversation context can
+            # resolve the user's intent. This does NOT grant authority:
+            # Gatekeeper + RBAC still decide every invocation.
+            return [
+                tool
+                for tool in self._registry.all_tools()
+                if not allowed or tool.qualified_name in allowed
+            ]
+
         by_intent = set(state.metadata.get("intent_tools", []))
         if not by_intent:
-            # A message that raises no actionable intent gets no tools.
-            # It is answered, not acted upon.
             return []
-        allowed = set(state.metadata.get("allowed_actions", []))
         tools = [
             tool
             for tool in self._registry.all_tools()
@@ -2105,6 +2245,28 @@ class CustomerSupportAgent:
         system = self._system_prompt()
         if state.context:
             system = f"{system}\n\n# Retrieved context\n{state.context}"
+        if state.metadata.get("intent_execution_route") == "llm_fallback":
+            prior_observations = self._authoritative_history.get(state.session_id, [])
+            prior_context = (
+                "\n\n# Prior authoritative tool observations\n"
+                + "\n".join(f"- {item}" for item in prior_observations[-8:])
+                if prior_observations
+                else ""
+            )
+            system = (
+                f"{system}{prior_context}\n\n"
+                "# Intent fallback\n"
+                "The lightweight intent classifier could not resolve this turn. "
+                "Use the full conversation context, prior authoritative tool "
+                "observations, the current user message, and any current-turn "
+                "tool results to infer what the customer means. Prior tool "
+                "observations are context only; they do not prove that a new "
+                "action happened in this turn. You may ask a clarifying "
+                "question when context is still insufficient. Never claim "
+                "that a refund, approval, queueing, cancellation, or other "
+                "business action occurred unless you actually call the "
+                "corresponding tool and receive a successful tool result.\n"
+            )
         return [
             Message(role="system", content=system),
             *self.history_for(state.session_id),

@@ -80,6 +80,9 @@ FIELD_PRIORITY = (
     "remaining_before",
     "remaining_after",
     "policy_version",
+    "error_code",
+    "http_status",
+    "reason",
     "actor",
     "roles",
     "permission",
@@ -136,12 +139,19 @@ FIELD_PRIORITY = (
     "claims",
     "supported",
     "unsupported",
+    "unsupported_claims",
+    "unsupported_diagnostics",
+    "detector_model",
+    "retrieval_method",
+    "retrieval_top_k",
+    "best_evidence_overlap",
     "hallucination_rate",
     "response_ready",
     "revised",
-    "reflection",
-    "reflection_detail",
+    "reflection_comment",
+    "comment",
     "grounding_issues",
+    "fallback",
     "schema_valid",
     "validation_mode",
     "validation_attempts",
@@ -153,6 +163,7 @@ FIELD_PRIORITY = (
     "nollm_resolved_ratio",
     "tier_counts",
     "reason_code",
+    "hallucination_scope",
     "advisory_flagged",
     "advisory_reason",
 )
@@ -169,6 +180,8 @@ FIELD_LABELS = {
     "input_tokens": "input_tokens",
     "output_tokens": "output_tokens",
     "total_tokens": "total_tokens",
+    "comment": "comment",
+    "reflection_comment": "reflection_comment",
 }
 
 AMOUNT_FIELDS = {
@@ -347,13 +360,22 @@ class StageEventWidget(Collapsible):
         title = self._build_title()
         body = self._build_body()
 
+        partial_hallucination = (
+            event.stage in {"hallucination_check", "hallucination_repair"}
+            and str(event.fields.get("hallucination_scope") or "").lower() == "partial"
+            and event.status == "blocked"
+        )
+        classes = f"stage-event stage-{self._status}"
+        if partial_hallucination:
+            classes += " stage-hallucination-partial"
+
         super().__init__(
             Static(body, classes="stage-details"),
             title=title,
             collapsed=True,
             collapsed_symbol="›",
             expanded_symbol="⌄",
-            classes=f"stage-event stage-{self._status}",
+            classes=classes,
         )
 
     def _build_title(self) -> str:
@@ -384,6 +406,12 @@ class StageEventWidget(Collapsible):
                 if rendered_fields:
                     body.append("\n")
                 self._append_three_gates(body, value)
+                rendered_fields = True
+                continue
+            if name == "unsupported_diagnostics" and isinstance(value, list):
+                if rendered_fields:
+                    body.append("\n")
+                self._append_hallucination_diagnostics(body, value)
                 rendered_fields = True
                 continue
 
@@ -571,8 +599,20 @@ class StageEventWidget(Collapsible):
         if stage in {"hallucination_check", "hallucination_repair"}:
             supported = fields.get("supported")
             claims = fields.get("claims")
-            if fields.get("reason_code") == "HALLUCINATION_GUARD_BLOCK":
-                return "BLOCK · unsupported claims after repair"
+            scope = str(fields.get("hallucination_scope") or "").lower()
+            blocked = fields.get("reason_code") == "HALLUCINATION_GUARD_BLOCK" or self.event.status == "blocked"
+
+            if blocked and scope == "partial":
+                unsupported = fields.get("unsupported")
+                if unsupported is not None and claims is not None:
+                    return f"BLOCK · PARTIAL HALLUCINATION · {unsupported}/{claims} unsupported"
+                return "BLOCK · PARTIAL HALLUCINATION"
+
+            if blocked and scope == "complete":
+                if claims is not None:
+                    return f"BLOCK · COMPLETE HALLUCINATION · 0/{claims} supported"
+                return "BLOCK · COMPLETE HALLUCINATION"
+
             if supported is not None and claims is not None:
                 suffix = " · repaired" if fields.get("repaired") else ""
                 return f"{supported}/{claims} claims supported{suffix}"
@@ -616,6 +656,30 @@ class StageEventWidget(Collapsible):
             if isinstance(evidence, Mapping) and evidence:
                 body.append("\n      evidence = ", style="dim")
                 body.append(_format_mapping(evidence), style="dim")
+
+    def _append_hallucination_diagnostics(self, body: Text, diagnostics: list[Any]) -> None:
+        """Render why each unsupported claim failed grounding."""
+        body.append("  UNSUPPORTED CLAIM DIAGNOSTICS", style="bold bright_white")
+        for item in diagnostics:
+            if not isinstance(item, Mapping):
+                continue
+            claim = str(item.get("claim") or "")
+            kind = str(item.get("failure_kind") or "unknown").upper()
+            tier = str(item.get("tier") or "unknown")
+            confidence = item.get("confidence")
+            overlap = item.get("best_evidence_overlap")
+            evidence = str(item.get("best_evidence") or "no evidence excerpt")
+            rationale = str(item.get("rationale") or "no rationale returned")
+            body.append("\n    ✗ ", style="red")
+            body.append(claim, style="bright_white")
+            body.append(f"\n      failure = {kind}", style="red")
+            body.append(f" · tier = {tier}", style="dim")
+            if confidence is not None:
+                body.append(f" · confidence = {confidence}", style="dim")
+            if overlap is not None:
+                body.append(f" · evidence_overlap = {overlap}", style="dim")
+            body.append(f"\n      why = {rationale}", style="yellow")
+            body.append(f"\n      evidence = {evidence}", style="dim")
 
     def _append_three_gates(self, body: Text, gates: Mapping[str, Any]) -> None:
         """Render the three gate dimensions in the same order as the policy."""
@@ -718,6 +782,49 @@ class FeedNote(Static):
         self.plain_text = text
 
 
+def _merge_control_loop_events(
+    previous: StatusEvent,
+    current: StatusEvent,
+) -> StatusEvent:
+    """Coalesce adjacent control-loop facts into one operator card.
+
+    The graph may emit the loop decision before and the reflection result
+    after the model turn. They describe one control-loop round, so the TUI
+    should render one card rather than two consecutive CONTROL LOOP sections.
+    """
+    fields = dict(previous.fields)
+    fields.update(current.fields)
+
+    severity = {
+        "started": 0,
+        "completed": 1,
+        "waiting": 2,
+        "warning": 2,
+        "failed": 3,
+        "blocked": 3,
+    }
+    status = (
+        current.status
+        if severity[current.status] >= severity[previous.status]
+        else previous.status
+    )
+
+    tokens_delta = previous.tokens_delta
+    if current.tokens_delta is not None:
+        tokens_delta = (tokens_delta or 0) + current.tokens_delta
+
+    return previous.model_copy(
+        update={
+            "status": status,
+            "timestamp": current.timestamp,
+            "tokens_delta": tokens_delta,
+            "detail": current.detail or previous.detail,
+            "summary": previous.summary or current.summary,
+            "fields": fields,
+        }
+    )
+
+
 class LiveStatusPanel(VerticalScroll):
     """Scrollable dashboard containing semantic stage cards and notes."""
 
@@ -738,6 +845,24 @@ class LiveStatusPanel(VerticalScroll):
         ``✓ X`` as two unrelated records.
         """
         if event.status == "started":
+            return
+
+        if (
+            event.stage == "control_loop"
+            and event.event_kind == "control_loop"
+            and self._entries
+            and isinstance(self._entries[-1], StageEventWidget)
+            and self._entries[-1].event.stage == "control_loop"
+            and self._entries[-1].event.event_kind == "control_loop"
+        ):
+            previous = self._entries[-1]
+            merged = _merge_control_loop_events(previous.event, event)
+            try:
+                previous.remove()
+            except Exception:
+                pass
+            self._entries[-1] = StageEventWidget(merged, self._labels)
+            self.mount(self._entries[-1])
             return
 
         card = StageEventWidget(
@@ -797,6 +922,8 @@ def _decision_summary(
 
 
 def _field_style(event_kind: str, name: str) -> str:
+    if name == "reflection_comment":
+        return "yellow"
     if name in {"decision", "intent"}:
         return "magenta"
     if name in {"reason"}:

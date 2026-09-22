@@ -12,11 +12,14 @@ was right there and the model concluded otherwise, more retrieval makes
 it worse.
 """
 
+import asyncio
 import re
 from typing import Protocol, runtime_checkable
 
 from agentic_commons.config import get_settings
+from agentic_commons.context.retrieval import DenseRetriever, RelevanceRanker
 from agentic_commons.context.types import Chunk
+from agentic_commons.evals.entailment import EntailmentResult, create_entailment_model
 from agentic_commons.evals.types import Claim, Verdict
 from agentic_commons.hallucination_protection.types import (
     AtomicClaim,
@@ -83,34 +86,183 @@ class ClaimDecomposer:
 
 
 @instrument("hallucination_protection")
+class GroundingResolver:
+    """Retrieve relevant evidence, then verify it with NLI.
+
+    Embeddings have one job here: retrieve the best evidence for a claim.
+    They never decide whether the claim is true. NLI makes that decision.
+    This separation lets the same DenseRetriever be reused by future RAG
+    flows without turning semantic similarity into a truth signal.
+    """
+
+    def __init__(
+        self,
+        ranker: RelevanceRanker,
+        entailment=None,
+    ) -> None:
+        settings = get_settings().hallucination_protection
+        self._retriever = DenseRetriever(ranker)
+        self._top_k = settings.embedding_top_k
+        self._threshold = settings.nli_entailment_threshold
+        self._entailment = entailment or create_entailment_model()
+        self._logger = get_logger("hallucination_protection")
+
+    async def resolve(self, claim: str, evidence: list[Chunk]) -> DetectionVerdict:
+        """Resolve one claim using top-k retrieval followed by NLI."""
+        self._retriever.index(evidence)
+        retrieved = await self._retriever.retrieve(claim, self._top_k)
+        if not retrieved:
+            return DetectionVerdict(
+                claim=claim,
+                supported=False,
+                confidence=0.0,
+                tier="nli_entailment",
+                rationale="no evidence was retrieved for the claim",
+                detector_model=self._detector_model,
+                retrieval_top_k=self._top_k,
+                retrieval_method=self._retrieval_method,
+            )
+
+        results = await asyncio.gather(
+            *(self._entailment.entails(chunk.content, claim) for chunk in retrieved)
+        )
+        return self._combine(claim, retrieved, results)
+
+    @property
+    def _retrieval_method(self) -> str:
+        """Report the actual retrieval path used by the injected ranker."""
+        cascade = getattr(self._retriever, "_ranker", None)
+        enabled = getattr(get_settings().evals.cascade, "embedding_similarity", False)
+        return "embedding" if enabled and cascade is not None else "lexical_fallback"
+
+    @property
+    def _detector_model(self) -> str:
+        """Expose the concrete NLI model, including its deterministic fallback."""
+        return str(getattr(self._entailment, "model_name", "")) or (
+            "lexical-entailment-fallback"
+        )
+
+    def _combine(
+        self,
+        claim: str,
+        retrieved: list[Chunk],
+        results: list[EntailmentResult],
+    ) -> DetectionVerdict:
+        """Collapse per-chunk NLI decisions without treating similarity as truth."""
+        entailed = [
+            (result, chunk)
+            for result, chunk in zip(results, retrieved)
+            if result.label == "entailment"
+        ]
+        contradicted = [
+            (result, chunk)
+            for result, chunk in zip(results, retrieved)
+            if result.label == "contradiction"
+        ]
+
+        best_entailment = max(entailed, key=lambda item: item[0].score, default=None)
+        best_contradiction = max(contradicted, key=lambda item: item[0].score, default=None)
+
+        # Conflicting high-confidence evidence is unsafe to collapse into PASS.
+        if (
+            best_entailment
+            and best_contradiction
+            and best_entailment[0].score >= self._threshold
+            and best_contradiction[0].score >= self._threshold
+        ):
+            result, _ = best_entailment
+            return self._verdict(
+                claim,
+                retrieved,
+                result,
+                supported=False,
+                rationale=(
+                    "conflicting evidence: one retrieved chunk entails the claim "
+                    "while another contradicts it"
+                ),
+            )
+
+        if best_entailment and best_entailment[0].score >= self._threshold:
+            result, _ = best_entailment
+            return self._verdict(claim, retrieved, result, supported=True)
+
+        if best_contradiction and best_contradiction[0].score >= self._threshold:
+            result, _ = best_contradiction
+            return self._verdict(claim, retrieved, result, supported=False)
+
+        # Neutral/low-confidence NLI is UNKNOWN, not contradiction. If the
+        # model selected entailment but its probability is below the grounding
+        # threshold, retain that fact in the audit trail so the TUI explains
+        # why an apparently matching claim was rejected.
+        result = max(results, key=lambda item: item.score, default=None)
+        if result is None:
+            return self._verdict(
+                claim,
+                retrieved,
+                EntailmentResult(
+                    label="unknown",
+                    entailed=False,
+                    score=0.0,
+                    rationale="NLI returned no result",
+                    model=self._detector_model,
+                ),
+                supported=False,
+            )
+        if result.label == "entailment":
+            result = result.model_copy(
+                update={
+                    "rationale": (
+                        f"NLI predicted entailment ({result.score:.3f}) but "
+                        f"confidence is below the configured threshold "
+                        f"({self._threshold:.3f})"
+                    )
+                }
+            )
+        return self._verdict(claim, retrieved, result, supported=False)
+
+    def _verdict(
+        self,
+        claim: str,
+        retrieved: list[Chunk],
+        result: EntailmentResult,
+        *,
+        supported: bool,
+        rationale: str | None = None,
+    ) -> DetectionVerdict:
+        """Build an auditable verdict with the exact evidence sent to NLI."""
+        detail = rationale or result.rationale
+        if result.label == "unknown" and not rationale:
+            detail = f"unknown: {result.rationale}"
+        return DetectionVerdict(
+            claim=claim,
+            supported=supported,
+            confidence=result.score,
+            tier="nli_entailment",
+            rationale=detail,
+            detector_model=result.model or self._detector_model,
+            retrieval_top_k=self._top_k,
+            retrieval_method=self._retrieval_method,
+            retrieved_evidence=[chunk.content for chunk in retrieved],
+        )
+
+
 class DetectionLadder:
-    """The detection ladder, delegating every tier to the shared cascade."""
+    """Compatibility facade over the retrieval → NLI grounding verifier."""
 
     def __init__(self, cascade: ClaimResolver, decomposer: ClaimDecomposer | None = None) -> None:
         settings = get_settings().hallucination_protection
-        self._cascade = cascade
+        self._resolver = GroundingResolver(cascade)
         self._decomposer = decomposer or ClaimDecomposer()
-        self._confidence_threshold = settings.confidence_threshold
         self._enabled = settings.enabled
         self._logger = get_logger("hallucination_protection")
 
     @logged("hallucination_protection")
     async def score(self, claim: str, evidence: list[Chunk]) -> DetectionVerdict:
-        """Resolve one claim against its evidence through the cascade."""
-        verdict = await self._cascade.resolve(
-            Claim(text=claim, evidence=[chunk.content for chunk in evidence])
-        )
-        return DetectionVerdict(
-            claim=claim,
-            supported=verdict.label == "supported",
-            confidence=verdict.score,
-            tier=verdict.tier,
-            rationale=verdict.rationale,
-            escalated_to_human=verdict.label == "deferred",
-        )
+        """Retrieve relevant evidence and ask NLI whether it entails the claim."""
+        return await self._resolver.resolve(claim, evidence)
 
     async def assess(self, generation: str, evidence: list[Chunk]) -> GenerationAssessment:
-        """Check every verifiable claim in a generation."""
+        """Check every verifiable claim independently."""
         if not self._enabled:
             return GenerationAssessment()
         claims = [claim for claim in self._decomposer.decompose(generation) if claim.is_verifiable]
@@ -120,16 +272,13 @@ class DetectionLadder:
             verdicts=verdicts,
             unsupported=unsupported,
             hallucination_rate=len(unsupported) / len(verdicts) if verdicts else 0.0,
-            nollm_resolved_ratio=self._cascade.nollm_scorer_ratio,
+            # This verifier is deliberately model-based. The embedding
+            # retriever is retrieval infrastructure, not a NOLLM truth tier.
+            nollm_resolved_ratio=0.0,
         )
 
     def consistency(self, samples: list[str]) -> float:
-        """Agreement across repeated samples of the same question.
-
-        Self-consistency is a cheap, model-only signal: a fabricated
-        detail varies between samples, while a grounded one does not. It
-        needs no evidence, which is why it sits high in the ladder.
-        """
+        """Agreement across repeated samples of the same question."""
         if len(samples) < 2:
             return 1.0
         token_sets = [set(tokenize(sample)) for sample in samples]

@@ -11,7 +11,7 @@ from typing import Any, Protocol, runtime_checkable
 import httpx
 
 from agentic_commons.logging import get_logger
-from agentic_commons.resilience import ResilientCaller
+from agentic_commons.resilience import ResilientCaller, external_api_error_fields
 from agentic_commons.security.guard_types import GuardVerdict
 from agentic_commons.security.remote_http import post_json_with_poll
 
@@ -108,18 +108,24 @@ class NvidiaHostedContentSafetyGuard:
             )
         except Exception as exc:
             latency_ms = round((time.perf_counter() - started) * 1000, 2)
+            error_fields = external_api_error_fields(exc) or {
+                "reason": str(exc),
+            }
             self._logger.warning(
                 "Hosted content-safety guard unavailable after retries",
                 model=self._model,
                 error=str(exc),
                 latency_ms=latency_ms,
                 attempts=self._resilient.attempts,
+                **error_fields,
             )
             return GuardVerdict(
                 decision="unavailable",
                 model=self._model,
                 provider="nvidia",
-                reason=str(exc),
+                reason=(error_fields.get("reason", str(exc)) if error_fields else str(exc)),
+                error_code=(error_fields.get("error_code", "") if error_fields else ""),
+                http_status=(error_fields.get("http_status") if error_fields else None),
                 endpoint=self._endpoint,
                 api_called=True,
                 latency_ms=latency_ms,
