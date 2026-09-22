@@ -275,12 +275,13 @@ memory:
 
 guardrails:
   enabled: true
-  mode: auto_repair        # reject | auto_repair | constrained
+  mode: auto_repair
   max_repair_attempts: 2
-  constrained_backend: llamacpp_grammar   # llamacpp_grammar | nim_guided_json
+  constrained_backend: nim_guided_json
 
 hallucination_protection:
   enabled: true
+  enforce_grounding: true
   confidence_threshold: 0.7
   consistency_samples: 3
   consistency_agreement_threshold: 0.67
@@ -382,7 +383,9 @@ security:
     # the existing deterministic checks remain in place and the application
     # must quarantine a positive model verdict before the LLM is reached.
     enabled: true
-    fail_open_on_unavailable: true
+    # Security-model outages are security failures, not reasons to continue.
+    # After bounded retries/timeouts, quarantine the request in the DLQ.
+    fail_open_on_unavailable: false
     jailbreak:
       enabled: true
       provider: nvidia

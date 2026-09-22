@@ -44,7 +44,7 @@ class NvidiaHostedContentSafetyGuard:
         self._max_tokens = max(16, min(max_tokens, 128))
         self._client = client
         self._resilient = resilient or ResilientCaller("nvidia-content-safety")
-        self._logger = get_logger("security")
+        self._logger = get_logger("content_moderation")
 
     @property
     def model(self) -> str:

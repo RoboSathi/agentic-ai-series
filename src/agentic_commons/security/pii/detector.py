@@ -47,7 +47,7 @@ class PatternPIIDetector:
         self._patterns = {
             category: re.compile(pattern) for category, pattern in settings.patterns.items()
         }
-        self._logger = get_logger("security")
+        self._logger = get_logger("pii")
 
     def detect(self, text: str) -> list[PIISpan]:
         """Every match, de-overlapped so the longest span for a region wins."""
@@ -75,7 +75,7 @@ class NERPIIDetector:
     def __init__(self, model: PIIDetector | None = None) -> None:
         self._model = model
         self._enabled = get_settings().security.pii.ner_enabled
-        self._logger = get_logger("security")
+        self._logger = get_logger("pii")
 
     @property
     def available(self) -> bool:
@@ -99,7 +99,7 @@ class PIIFilterImpl:
         self._mask_token = settings.mask_token
         self._allowed_fields = set(settings.tool_call_allowed_fields)
         self._enabled = settings.enabled
-        self._logger = get_logger("security")
+        self._logger = get_logger("pii")
 
     def detect(self, text: str) -> list[PIISpan]:
         """Union of every detector's findings, de-overlapped."""

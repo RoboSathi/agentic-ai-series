@@ -49,9 +49,9 @@ class InstructionDataSeparator:
         self._open = settings.data_open_tag
         self._close = settings.data_close_tag
         self._phrases = [phrase.casefold() for phrase in settings.suspicious_phrases]
-        self._logger = get_logger("security")
+        self._logger = get_logger("prompt_injection")
 
-    @logged("security")
+    @logged("prompt_injection")
     def separate(self, instructions: str, data: str) -> SeparatedContext:
         """Wrap untrusted data in its delimiters and scan it for injections."""
         return SeparatedContext(
@@ -86,9 +86,9 @@ class ToolScopeLimiter:
 
     def __init__(self) -> None:
         self._enabled = get_settings().security.prompt_injection.enabled
-        self._logger = get_logger("security")
+        self._logger = get_logger("prompt_injection")
 
-    @logged("security")
+    @logged("prompt_injection")
     def scope_tools(
         self, context: SeparatedContext, tools: list[ToolDefinition]
     ) -> list[ToolDefinition]:

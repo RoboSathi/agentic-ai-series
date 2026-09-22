@@ -41,7 +41,7 @@ class NvidiaHostedJailbreakGuard:
         self._model = model
         self._client = client
         self._resilient = resilient or ResilientCaller("nvidia-jailbreak")
-        self._logger = get_logger("security")
+        self._logger = get_logger("prompt_injection")
 
     @property
     def model(self) -> str:

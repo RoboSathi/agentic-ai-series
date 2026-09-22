@@ -1,5 +1,6 @@
 """Structured-output guarantees (LLD §9)."""
 
+from agentic_commons.guardrails.response import CustomerResponse, ResponseGuardrail, ResponseGuardrailResult
 from agentic_commons.guardrails.guards import (
     ConstrainedGenerator,
     LlmConstrainedGenerator,
@@ -14,6 +15,9 @@ from agentic_commons.guardrails.types import (
 )
 
 __all__ = [
+    "CustomerResponse",
+    "ResponseGuardrail",
+    "ResponseGuardrailResult",
     "ConstrainedGenerator",
     "GuardrailMode",
     "GuardrailViolationError",

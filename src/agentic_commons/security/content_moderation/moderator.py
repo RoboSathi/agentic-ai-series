@@ -39,9 +39,9 @@ class TermContentModerator:
             if self._terms
             else None
         )
-        self._logger = get_logger("security")
+        self._logger = get_logger("content_moderation")
 
-    @logged("security")
+    @logged("content_moderation")
     def moderate(self, text: str) -> ModerationVerdict:
         """Flag matched terms; always advisory, never blocking."""
         if not self._enabled or self._pattern is None:

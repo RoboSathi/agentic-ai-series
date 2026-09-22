@@ -15,7 +15,7 @@ customer_support_agent:
     - where is my order
     - where is the order
     - where is order
-    - track my order
+    - what about order
     - track order
     - order status
     - has my order arrived
@@ -44,8 +44,8 @@ customer_support_agent:
     - refund update
     - refund pending
     - when will my refund
-    - refund completed
-    - refund approved
+    - when will i get money
+    - where is money
     - refund denied
     - refund
     tools:

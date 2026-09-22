@@ -142,6 +142,17 @@ FIELD_PRIORITY = (
     "reflection",
     "reflection_detail",
     "grounding_issues",
+    "schema_valid",
+    "validation_mode",
+    "validation_attempts",
+    "repair_attempts",
+    "enforcement",
+    "grounded",
+    "escalated",
+    "failure_kinds",
+    "nollm_resolved_ratio",
+    "tier_counts",
+    "reason_code",
     "advisory_flagged",
     "advisory_reason",
 )
@@ -557,11 +568,14 @@ class StageEventWidget(Collapsible):
                 )
             return self.event.summary or "recovery event"
 
-        if stage == "hallucination_check":
+        if stage in {"hallucination_check", "hallucination_repair"}:
             supported = fields.get("supported")
             claims = fields.get("claims")
+            if fields.get("reason_code") == "HALLUCINATION_GUARD_BLOCK":
+                return "BLOCK · unsupported claims after repair"
             if supported is not None and claims is not None:
-                return f"{supported}/{claims} claims supported"
+                suffix = " · repaired" if fields.get("repaired") else ""
+                return f"{supported}/{claims} claims supported{suffix}"
 
         if stage == "finalize":
             return "response ready" if fields.get("response_ready", True) else "response not ready"

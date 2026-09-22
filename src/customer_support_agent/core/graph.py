@@ -35,6 +35,7 @@ from agentic_commons.basic_sanity import BasicSanityChecker, BasicSanityRequest
 from agentic_commons.control_loop import ControlLoopReport, ToolControlLoop
 from agentic_commons.executor import ApprovedToolCall, ToolExecutor
 from agentic_commons.gatekeeper import AuthorityContext, Gatekeeper
+from agentic_commons.guardrails import CustomerResponse, ResponseGuardrail
 from agentic_commons.hallucination_protection import DetectionLadder, GroundingReasoningDiagnoser
 from agentic_commons.llm.client import LLMClient
 from agentic_commons.llm.embeddings import tokenize
@@ -142,6 +143,7 @@ class CustomerSupportAgent:
         # failure modes, checked on what was actually assembled.
         self._context_health = ContextFailureDetector()
         self._diagnoser = GroundingReasoningDiagnoser()
+        self._response_guardrail = ResponseGuardrail(self._grounding)
         if intent_router is None:
             raise ValueError("CustomerSupportAgent requires an intent_router from the composition root")
         self._intents = intent_router
@@ -1564,19 +1566,30 @@ class CustomerSupportAgent:
             # when a second call was needed, which is the *rarer* path —
             # so the reply that usually reached the customer was the one
             # never checked.
-            grounded = await self._check_grounding(last.content, state)
+            evidence = [Chunk(content=text, kind="tool_result") for text in state.tool_results]
+            guardrail_result = await self._response_guardrail.enforce(last.content, evidence)
             self._done(
-                "finalize",
-                summary="Response ready",
+                "hallucination_check",
+                summary=(
+                    f"Grounded: {guardrail_result.supported}/{guardrail_result.claims} claims supported"
+                    if not guardrail_result.escalated
+                    else "Response blocked by hallucination guard"
+                ),
+                event_kind="grounding",
                 fields={
-                    "response_ready": True,
-                    "revised": False,
-                    "reflection": "accepted",
-                    "reflection_detail": critique.summary or "no issues detected",
-                    "grounding_issues": len(grounded),
+                    **guardrail_result.model_dump(exclude={"response", "unsupported_claims"}),
+                    "schema_valid": True,
+                    "unsupported_claims": guardrail_result.unsupported_claims,
                 },
             )
-            return {"response": last.content, "decisions": [*state.decisions, *grounded]}
+            return {
+                "response": guardrail_result.response,
+                "decisions": [
+                    *state.decisions,
+                    f"grounding: {guardrail_result.reason_code}",
+                ],
+                "escalated": state.escalated or guardrail_result.escalated,
+            }
         # The reflector already logged what it found; saying it twice
         # here would double every rejection in the trace.
         self._report(
@@ -1591,7 +1604,8 @@ class CustomerSupportAgent:
                     messages=[
                         *self._prompt_messages(state),
                         Message(role="user", content=build_reply_instruction()),
-                    ]
+                    ],
+                    json_schema=CustomerResponse.model_json_schema(),
                 ),
                 state,
                 f"{state.session_id}:finalize",
@@ -1626,11 +1640,63 @@ class CustomerSupportAgent:
                 "total_tokens": result.usage.total_tokens,
             },
         )
-        reply = result.content if is_customer_ready(result.content) else _FALLBACK_REPLY
-        grounding = await self._check_grounding(reply, state)
+        reply, schema_fields = self._response_guardrail.validate_schema(result.content)
+        if reply is None or not is_customer_ready(reply):
+            reply = _FALLBACK_REPLY
+            schema_fields["schema_valid"] = False
+
+        async def revise_unsupported(candidate: str, unsupported: list[str]) -> str:
+            self._report(
+                "hallucination_repair",
+                event_kind="grounding",
+                summary="Revising unsupported claims against tool evidence",
+                fields={"unsupported": unsupported, "attempt": 1},
+            )
+            repair_prompt = (
+                "Rewrite the customer response so that every factual claim is "
+                "strictly supported by the tool results below. Remove any "
+                "unsupported detail. Do not invent facts. Return only JSON "
+                "matching the response schema.\n\n"
+                f"Draft:\n{candidate}\n\n"
+                "Tool results:\n"
+                + "\n".join(f"- {item}" for item in state.tool_results)
+            )
+            repaired_result = await self._call_model(
+                CompletionRequest(
+                    messages=[Message(role="user", content=repair_prompt)],
+                    json_schema=CustomerResponse.model_json_schema(),
+                ),
+                state,
+                f"{state.session_id}:hallucination-repair",
+            )
+            repaired, _ = self._response_guardrail.validate_schema(repaired_result.content)
+            return repaired or _FALLBACK_REPLY
+
+        evidence = [Chunk(content=text, kind="tool_result") for text in state.tool_results]
+        guardrail_result = await self._response_guardrail.enforce(
+            reply,
+            evidence,
+            revise=revise_unsupported,
+        )
+        reply = guardrail_result.response
+        state.metadata["hallucination_rate"] = guardrail_result.hallucination_rate
+        state.metadata["guardrail_reason_code"] = guardrail_result.reason_code
+        state.metadata["guardrail_escalated"] = guardrail_result.escalated
+        grounding = [
+            (
+                f"grounding: {guardrail_result.reason_code} "
+                f"claims={guardrail_result.claims} "
+                f"supported={guardrail_result.supported} "
+                f"unsupported={guardrail_result.unsupported}"
+            )
+        ]
         decisions = [*state.decisions, *grounding]
         if not critique.acceptable:
             decisions.append(f"reflection: revised ({critique.summary})")
+        if guardrail_result.escalated:
+            decisions.append(
+                f"guardrail: escalated ({', '.join(guardrail_result.failure_kinds) or 'unsupported'})"
+            )
         # Scored by something independent of what wrote it. One bounded
         # pass: the loop revises once and reports, rather than iterating
         # towards a sentence nobody is waiting for.
@@ -1646,7 +1712,17 @@ class CustomerSupportAgent:
                 "reflection": "revised" if not critique.acceptable else "accepted",
                 "reflection_detail": critique.summary or "no issues detected",
                 "evaluation_score": score if state.tool_results else None,
-                "grounding_issues": len([d for d in grounding if d.startswith("grounding:")]),
+                "grounding_issues": guardrail_result.unsupported,
+                "schema_valid": schema_fields.get("schema_valid", True),
+                "validation_mode": schema_fields.get("validation_mode"),
+                "validation_attempts": schema_fields.get("validation_attempts"),
+                "repair_attempts": guardrail_result.repair_attempts,
+                "grounded": guardrail_result.grounded,
+                "enforcement": "ESCALATE" if guardrail_result.escalated else "PASS",
+                "failure_kinds": guardrail_result.failure_kinds,
+                "nollm_resolved_ratio": round(guardrail_result.nollm_resolved_ratio, 3),
+                "tier_counts": guardrail_result.tier_counts,
+                "guardrail_reason_code": guardrail_result.reason_code,
             },
         )
         return {
@@ -1676,65 +1752,6 @@ class CustomerSupportAgent:
         """
         lowered = content.casefold()
         return any(marker in lowered for marker in self._deliberation_markers)
-
-    async def _check_grounding(self, reply: str, state: AgentState) -> list[str]:
-        """Check the reply against what the tools actually returned.
-
-        Advisory, not blocking. An unsupported claim is recorded and fed
-        to the hallucination SLO; it does not withhold the answer,
-        because a detector that can be wrong must not be the thing that
-        decides whether a customer hears anything at all.
-        """
-        if self._grounding is None or not state.tool_results:
-            return []
-        self._report(
-            "hallucination_check",
-            event_kind="grounding",
-            summary="Checking the answer against tool evidence",
-        )
-        evidence = [Chunk(content=text, kind="tool_result") for text in state.tool_results]
-        assessment = await self._grounding.assess(reply, evidence)
-        state.metadata["hallucination_rate"] = assessment.hallucination_rate
-        supported = sum(1 for verdict in assessment.verdicts if verdict.supported)
-        grounding_fields = {
-            "claims": len(assessment.verdicts),
-            "supported": supported,
-            "unsupported": len(assessment.unsupported),
-            "hallucination_rate": round(assessment.hallucination_rate, 3),
-            "nollm_resolved_ratio": round(assessment.nollm_resolved_ratio, 3),
-        }
-        if assessment.clean:
-            self._done(
-                "hallucination_check",
-                summary=f"Grounded: {supported}/{len(assessment.verdicts)} claims supported",
-                event_kind="grounding",
-                fields=grounding_fields,
-            )
-            return []
-        # One symptom, two causes, opposite fixes: evidence that was
-        # never retrieved is a retrieval problem, evidence that was
-        # retrieved and ignored is a reasoning problem. Routing every
-        # hallucination to "improve retrieval" is why some are never
-        # fixed.
-        kinds = {self._diagnoser.diagnose(claim, evidence) for claim in assessment.unsupported}
-        grounding_fields["failure_kinds"] = sorted(kinds)
-        self._reporter_warning(
-            "hallucination_check",
-            summary=(
-                f"Grounding warning: {len(assessment.unsupported)} unsupported claim(s)"
-            ),
-            event_kind="grounding",
-            fields=grounding_fields,
-        )
-        self._logger.warning(
-            "Reply contains claims the tool results do not support",
-            unsupported=assessment.unsupported,
-            failure_kinds=sorted(kinds),
-        )
-        return [
-            f"grounding: {len(assessment.unsupported)} unsupported claim(s) "
-            f"({', '.join(sorted(kinds))} failure)"
-        ]
 
     # ---- wiring ------------------------------------------------------
 
@@ -2053,9 +2070,35 @@ class CustomerSupportAgent:
         # Retrieval narrows further *within* what the intent permits. It
         # can never widen it, and an empty result means no tools rather
         # than every tool.
+        # Deterministic plan steps are mandatory execution prerequisites.
+        # Retrieval may narrow optional tools, but it must never remove a
+        # tool explicitly required by the trusted intent plan.
+        plan_tools = {
+            step.get("tool")
+            for step in state.metadata.get("plan", [])
+            if isinstance(step, dict) and step.get("tool")
+        }
+
+        mandatory = [
+            tool
+            for tool in tools
+            if tool.name in plan_tools
+        ]
+
         selected = await self._selector.select(state.query)
         narrowed = [tool for tool in selected if tool in tools]
-        return narrowed or tools
+
+        mandatory_names = {tool.qualified_name for tool in mandatory}
+        return (
+            mandatory
+            + [
+                tool
+                for tool in narrowed
+                if tool.qualified_name not in mandatory_names
+            ]
+            or mandatory
+            or tools
+        )
 
     def _prompt_messages(self, state: AgentState) -> list[Message]:
         """System prompt, assembled context, the query, and the turns so far."""

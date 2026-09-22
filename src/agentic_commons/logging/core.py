@@ -7,6 +7,7 @@ detail for the same event always lands here (PRD FR-56).
 
 import json
 import logging
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
@@ -19,6 +20,8 @@ from agentic_commons.logging.narration import NARRATION, Narration
 from agentic_commons.logging.trace_context import get_current_trace_id
 
 Level = Literal["debug", "info", "warning", "error"]
+
+_STRUCTURED_FIELDS = "_agentic_structured_fields"
 
 _LEVEL_TO_INT: dict[Level, int] = {
     "debug": logging.DEBUG,
@@ -109,14 +112,27 @@ class StructuredLogger(Protocol):
 
 
 class PlainFormatter(logging.Formatter):
-    """Formatter that strips Rich markup for handlers that don't render it."""
+    """Human-readable structured formatter for authoritative subsystem logs."""
 
-    def format(
-        self,
-        record: logging.LogRecord,
-    ) -> str:
-        rendered = super().format(record)
-        return Text.from_markup(rendered).plain
+    def format(self, record: logging.LogRecord) -> str:
+        timestamp = datetime.fromtimestamp(record.created).astimezone().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        module = record.name.removeprefix("agentic.")
+        level = record.levelname
+        message = Text.from_markup(record.getMessage()).plain
+        fields = getattr(record, _STRUCTURED_FIELDS, {}) or {}
+
+        lines = [f"{timestamp} | {module} | {level:<7} | {message}"]
+        if fields:
+            rendered = json.dumps(
+                _json_safe(fields),
+                indent=2,
+                ensure_ascii=False,
+                default=str,
+            )
+            lines.extend(f"  {line}" for line in rendered.splitlines())
+        if record.exc_info:
+            lines.append(self.formatException(record.exc_info))
+        return "\n".join(lines)
 
 
 class RichLogger:
@@ -165,13 +181,14 @@ class RichLogger:
 
         self._logger.log(
             _LEVEL_TO_INT[level],
-            f"{message}{suffix}",
+            message,
             extra={
                 NARRATION: Narration(
                     subsystem=self._subsystem,
                     headline=message,
                     fields=fields,
-                )
+                ),
+                _STRUCTURED_FIELDS: fields,
             },
         )
 
@@ -241,7 +258,10 @@ class RichLogger:
         )
 
         self._logger.exception(
-            f"{msg}{suffix}"
+            msg,
+            extra={
+                _STRUCTURED_FIELDS: fields,
+            },
         )
 
     def log_called(
@@ -276,6 +296,10 @@ class RichLogger:
                     for name, value in arguments.items()
                 },
             ),
+            structured_fields={
+                "function": func_name,
+                "arguments": arguments,
+            },
         )
 
     def log_returned(
@@ -309,6 +333,12 @@ class RichLogger:
                     1,
                 ),
             ),
+            structured_fields={
+                "function": func_name,
+                "arguments": arguments or {},
+                "result": result,
+                "elapsed_ms": round(elapsed_ms, 1),
+            },
         )
 
     def log_skipped(
@@ -337,13 +367,15 @@ class RichLogger:
         self,
         message: str,
         narration: "Narration",
+        structured_fields: dict[str, Any] | None = None,
     ) -> None:
-        """One call-trace record."""
+        """One call-trace record with machine-readable file details."""
 
         self._logger.debug(
             message,
             extra={
-                NARRATION: narration
+                NARRATION: narration,
+                _STRUCTURED_FIELDS: structured_fields or {},
             },
         )
 
@@ -520,6 +552,27 @@ def get_logger(
     return LoggerFactory.for_subsystem(
         subsystem
     )
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert structured log payloads to readable JSON without object addresses."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    if hasattr(value, "model_dump"):
+        try:
+            return _json_safe(value.model_dump(mode="json"))
+        except Exception:
+            pass
+    if hasattr(value, "__dict__"):
+        try:
+            return {str(k): _json_safe(v) for k, v in vars(value).items() if not str(k).startswith("_")}
+        except Exception:
+            pass
+    return str(value)
 
 
 def _summarize(

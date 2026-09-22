@@ -127,10 +127,10 @@ class CustomerSupportIntentRouter:
         # only as a constrained fallback when the current turn is genuinely
         # underspecified. This prevents a follow-up such as "what about a
         # refund?" from being forced into the previous intent.
-        if self._is_courtesy(text):
-            return self._supported_unknown(
-                "Conversational courtesy can be handled without a business tool."
-            )
+        # Courtesy/greeting messages are intentionally NOT terminal deterministic
+        # UNKNOWN results. If no deterministic rule recognizes them, they must
+        # reach the semantic classifier just like any other unrecognized turn.
+        # This preserves the deterministic -> BERT fallback contract.
 
         # High-precision current-turn patterns are deterministic routing rules,
         # not a substitute for the semantic classifier. They prevent a small

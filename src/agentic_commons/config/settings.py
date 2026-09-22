@@ -354,22 +354,23 @@ class MemorySettings(YamlBackedSettings):
 
 
 class GuardrailsSettings(YamlBackedSettings):
-    """Structured-output guarantees (LLD §9)."""
+    """Output/schema guardrail settings."""
 
     _yaml_section = "guardrails"
     enabled: bool
-    mode: GuardrailMode
+    mode: Literal["reject", "auto_repair", "constrained"]
     max_repair_attempts: int
-    constrained_backend: Literal["llamacpp_grammar", "nim_guided_json"]
+    constrained_backend: Literal["nim_guided_json"]
 
     model_config = SettingsConfigDict(env_prefix="GUARDRAILS__")
 
 
 class HallucinationProtectionSettings(YamlBackedSettings):
-    """Detection ladder thresholds (LLD §10)."""
+    """Detection ladder thresholds (LLD)."""
 
     _yaml_section = "hallucination_protection"
     enabled: bool
+    enforce_grounding: bool
     confidence_threshold: float
     consistency_samples: int
     consistency_agreement_threshold: float

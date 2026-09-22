@@ -12,9 +12,9 @@ class Authorizer:
     def __init__(self, policy: AgentPolicy | None = None) -> None:
         self._policy = policy
         self._enabled = get_settings().security.auth.enabled
-        self._logger = get_logger("security")
+        self._logger = get_logger("auth")
 
-    @logged("security")
+    @logged("auth")
     def authorize(
         self,
         principal: Principal,
