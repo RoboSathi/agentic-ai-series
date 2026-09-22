@@ -258,13 +258,7 @@ class CustomerSupportIntentRouter:
         return None
 
     def _deterministic_supported(self, text: str) -> Intent | None:
-        """Resolve a high-precision business phrase from the current turn.
-
-        This is intentionally conservative. Configured phrases are capability
-        routing rules: the most specific matching phrase wins, while the BERT
-        classifier remains the semantic fallback for paraphrases that are not
-        covered here. The UNKNOWN intent has no positive phrases.
-        """
+        """Resolve high-precision phrases, or clarify when one phrase maps to multiple intents."""
         lowered = text.casefold()
         matches: list[tuple[int, int, str, str]] = []
         for configured in self._settings.intents:
@@ -276,15 +270,43 @@ class CustomerSupportIntentRouter:
                     continue
                 pattern = rf"\b{re.escape(candidate)}\b"
                 if re.search(pattern, lowered):
-                    matches.append((len(candidate.split()), len(candidate), configured.name, phrase.strip()))
+                    matches.append(
+                        (len(candidate.split()), len(candidate), configured.name, phrase.strip())
+                    )
 
         if not matches:
             return None
 
-        # Prefer the most specific phrase. This matters for cases such as
-        # "where is my refund?": REFUND_STATUS has a longer, more specific
-        # phrase than REQUEST_REFUND's generic "refund" marker.
-        _, _, intent_name, matched_phrase = max(matches, key=lambda item: (item[0], item[1]))
+        # Specific phrases beat generic phrases. If the most-specific phrase
+        # belongs to multiple business intents, do not silently grant one of
+        # them — return an ambiguity assessment with the competing candidates.
+        best_specificity = max((item[0], item[1]) for item in matches)
+        best = [item for item in matches if (item[0], item[1]) == best_specificity]
+        best_by_intent: dict[str, str] = {}
+        for _, _, intent_name, matched_phrase in best:
+            best_by_intent.setdefault(intent_name, matched_phrase)
+
+        if len(best_by_intent) > 1:
+            intents = list(best_by_intent)
+            score = round(1.0 / len(intents), 3)
+            candidates = [IntentCandidate(intent=name, score=score) for name in intents]
+            return Intent(
+                IntentAssessment(
+                    intent=self._default,
+                    confidence=score,
+                    disposition=IntentDisposition.CLARIFY,
+                    source="deterministic",
+                    matched_rule="ambiguous:" + ",".join(sorted(intents)),
+                    candidates=candidates,
+                    clarification=self._clarification_for(intents),
+                    reason=(
+                        f"The phrase '{best[0][3]}' "
+                        "matches multiple business capabilities, so no capability was granted."
+                    ),
+                )
+            )
+
+        intent_name, matched_phrase = next(iter(best_by_intent.items()))
         configured = self._intents[intent_name]
         self._logger.debug(
             "Customer Support intent resolved by deterministic phrase",

@@ -40,7 +40,7 @@ from agentic_commons.observability import (
 from agentic_commons.observability.tracer import LocalTracer
 from agentic_commons.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agentic_commons.resilience import DeadLetterQueue, SqliteIdempotencyGuard
-from agentic_commons.security import Authorizer, PIIFilterImpl, SecuritySuite
+from agentic_commons.security import (Authorizer, PIIFilterImpl, SecuritySuite)
 from agentic_commons.security.auth.policy import AgentPolicy, AgentPolicyRepository
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from customer_support_agent.config import get_agent_settings

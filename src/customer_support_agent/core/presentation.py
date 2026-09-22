@@ -12,23 +12,10 @@ It is also the cheap path: listing a customer's orders is one SELECT, and
 paying for a completion to read a table aloud is waste.
 """
 
-import re
-
 from pydantic import BaseModel
 
 from customer_support_agent.core.repositories import OrdersRepository
 from customer_support_agent.core.schema import Order, User
-
-# Words a customer wraps a menu choice in. Stripped before deciding
-# whether what remains is *only* a selection — "2" and "order 2" are
-# choices, "refund order 2" is a request and belongs on the normal path.
-_SELECTION_FILLER = re.compile(
-    r"\b(order|orders|number|no|num|option|item|show|see|me|my|the|details?|detail|"
-    r"about|for|on|please|tell|more|info|information|check|view|pick|choose|"
-    r"what|whats|how|and|also|then|next|status|of)\b",
-    re.IGNORECASE,
-)
-_SELECTION_NOISE = re.compile(r"[^\w\s]")
 
 # How an order's state reads to a customer.
 _STATUS_WORDS = {
@@ -130,27 +117,21 @@ def build_menu(orders: list[Order]) -> OrderMenu:
 
 
 def resolve_selection(message: str, menu: OrderMenu) -> int | None:
-    """The order id a message selects, or None if it is not a selection.
+    """Resolve only an explicit menu-number reply.
 
-    Only a message that is *nothing but* a choice resolves. "2",
-    "order 2" and "what about 10286" pick from the menu, because all
-    three are asking to look at something. "refund order 2" states an
-    intent and belongs on the normal path, where the Gatekeeper and the
-    refund rules apply — hijacking it here would route a refund request
-    through a read-only view and answer the wrong question.
+    Menu interaction is deliberately separate from conversation. A bare
+    number is the UI gesture described by the menu ("Reply with a number"),
+    while text such as "order 10560" is a conversational order reference and
+    must continue through BasicSanity → Intent → the normal agent path.
 
-    The filler list is what draws that line: words that only frame a
-    request are stripped, and any word left over means the customer
-    asked for something more than a look.
+    This distinction matters when the assistant has just asked which order
+    should be refunded: showing order details would answer a different
+    question and would bypass the user's pending intent.
     """
-    stripped = _SELECTION_NOISE.sub(" ", message)
-    remainder = _SELECTION_FILLER.sub(" ", stripped)
-    tokens = remainder.split()
-    if len(tokens) != 1 or not tokens[0].isdigit():
+    normalized = message.strip()
+    if not normalized.isdigit():
         return None
-    value = int(tokens[0])
-    # A menu position, or the order id itself — the customer may read
-    # either off the list.
+    value = int(normalized)
     if menu.contains(value):
         return value
     return menu.at(value)

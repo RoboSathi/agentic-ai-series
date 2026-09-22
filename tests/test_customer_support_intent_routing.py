@@ -100,3 +100,44 @@ async def test_underspecified_followup_uses_previous_supported_intent_as_fallbac
     assert result.matched_phrase == "continued_context"
     assert result.allowed_tools == ["get_order_status"]
     assert backend.calls == 1
+
+
+def test_intent_operator_fields_are_concise_and_distinguish_source() -> None:
+    from customer_support_agent.core.graph import CustomerSupportAgent
+
+    class DeterministicIntent:
+        name = "ORDER_STATUS"
+        source = "deterministic"
+        matched_phrase = "phrase:order status"
+        model = ""
+        confidence = 1.0
+        disposition = type("Disposition", (), {"value": "supported"})()
+        reason = ""
+        clarification = ""
+        candidates = []
+
+    deterministic_fields = CustomerSupportAgent._intent_status_fields(DeterministicIntent())
+    assert deterministic_fields == {
+        "intent": "ORDER_STATUS",
+        "classification": "deterministic",
+        "matched": "order status",
+    }
+
+    class BertIntent:
+        name = "ORDER_STATUS"
+        source = "huggingface_local"
+        matched_phrase = ""
+        model = "bert-test-model"
+        confidence = 0.8437
+        disposition = type("Disposition", (), {"value": "supported"})()
+        reason = ""
+        clarification = ""
+        candidates = []
+
+    bert_fields = CustomerSupportAgent._intent_status_fields(BertIntent())
+    assert bert_fields == {
+        "intent": "ORDER_STATUS",
+        "classification": "bert",
+        "model": "bert-test-model",
+        "score": 0.844,
+    }

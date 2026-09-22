@@ -1,52 +1,31 @@
-"""Security: RBAC, PII, prompt injection, moderation (LLD §12)."""
+"""Security plane: identity, privacy, prompt injection and content moderation."""
 
-from agentic_commons.security.auth import (
-    AccessDecision,
-    Authorizer,
-    Permission,
-    Principal,
-)
 from agentic_commons.security.content_moderation import (
     ContentModerator,
-    ModerationVerdict,
+    ContentSafetyGuard,
+    NvidiaHostedContentSafetyGuard,
     TermContentModerator,
 )
-from agentic_commons.security.pii import (
-    PatternPIIDetector,
-    PIIFilter,
-    PIIFilterImpl,
-    PIISpan,
-    RedactionMode,
-)
+from agentic_commons.security.guard_types import GuardVerdict
 from agentic_commons.security.prompt_injection import (
-    InjectionAssessment,
-    InstructionDataSeparator,
+    JailbreakGuard,
+    NvidiaHostedJailbreakGuard,
     PromptInjectionGuard,
-    SeparatedContext,
-    ToolScopeLimiter,
 )
 from agentic_commons.security.suite import SecuritySuite
+from agentic_commons.security.auth import Authorizer
+from agentic_commons.security.pii.detector import PIIFilterImpl
 
 __all__ = [
-    "AccessDecision",
     "Authorizer",
-    "ContentModerator",
-    "ElevationGrant",
-    "InjectionAssessment",
-    "InstructionDataSeparator",
-    "JustInTimeElevator",
-    "ModerationVerdict",
-    "PIIFilter",
     "PIIFilterImpl",
-    "PIISpan",
-    "PatternPIIDetector",
-    "Permission",
-    "Principal",
+    "ContentModerator",
+    "ContentSafetyGuard",
+    "GuardVerdict",
+    "JailbreakGuard",
+    "NvidiaHostedContentSafetyGuard",
+    "NvidiaHostedJailbreakGuard",
     "PromptInjectionGuard",
-    "RBACRoleStore",
-    "RedactionMode",
     "SecuritySuite",
-    "SeparatedContext",
     "TermContentModerator",
-    "ToolScopeLimiter",
 ]

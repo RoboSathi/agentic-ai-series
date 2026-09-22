@@ -1,5 +1,7 @@
 """Content-moderation value types (LLD §12.4)."""
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -17,3 +19,4 @@ class ModerationVerdict(BaseModel):
     matched_terms: list[str] = Field(default_factory=list)
     reason: str = ""
     advisory_only: bool = True
+    checks: list[dict[str, Any]] = Field(default_factory=list)

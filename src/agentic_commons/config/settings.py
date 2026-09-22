@@ -448,6 +448,37 @@ class PiiSettings(BaseModel):
     tool_call_allowed_fields: list[str]
 
 
+class SecurityGuardModelSettings(BaseModel):
+    """Hosted security-model endpoint settings; credentials stay in env vars."""
+
+    enabled: bool
+    provider: Literal["nvidia"]
+    base_url: str
+    endpoint: str
+    model: str
+    timeout_seconds: float
+    max_tokens: int = 16
+
+    @property
+    def api_key(self) -> str:
+        """Return the existing NVIDIA credential from the bare environment."""
+        return os.environ.get("nvidia_api_key") or os.environ.get("NVIDIA_API_KEY", "")
+
+    @property
+    def usable(self) -> bool:
+        """Whether this hosted guard can be invoked."""
+        return self.enabled and bool(self.api_key)
+
+
+class SecurityGuardSettings(BaseModel):
+    """Input/output guard-model configuration."""
+
+    enabled: bool
+    fail_open_on_unavailable: bool
+    jailbreak: SecurityGuardModelSettings
+    content_safety: SecurityGuardModelSettings
+
+
 class PromptInjectionSettings(BaseModel):
     """Instruction/data separation and tool scoping (E30)."""
 
@@ -473,6 +504,7 @@ class SecuritySettings(YamlBackedSettings):
     pii: PiiSettings
     prompt_injection: PromptInjectionSettings
     content_moderation: ContentModerationSettings
+    guards: SecurityGuardSettings
 
     model_config = SettingsConfigDict(env_prefix="SECURITY__")
 

@@ -377,6 +377,27 @@ security:
   content_moderation:
     enabled: true
     blocked_terms: [kill, bomb, terrorist]
+  guards:
+    # Hosted model guards. These are optional defense-in-depth detectors;
+    # the existing deterministic checks remain in place and the application
+    # must quarantine a positive model verdict before the LLM is reached.
+    enabled: true
+    fail_open_on_unavailable: true
+    jailbreak:
+      enabled: true
+      provider: nvidia
+      base_url: https://ai.api.nvidia.com
+      endpoint: /v1/security/nvidia/nemoguard-jailbreak-detect
+      model: nvidia/nemoguard-jailbreak-detect
+      timeout_seconds: 8
+    content_safety:
+      enabled: true
+      provider: nvidia
+      base_url: https://integrate.api.nvidia.com/v1
+      endpoint: /chat/completions
+      model: nvidia/llama-3.1-nemotron-safety-guard-8b-v3
+      timeout_seconds: 8
+      max_tokens: 128
 
 resilience:
   enabled: true

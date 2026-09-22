@@ -24,6 +24,8 @@ answering because a reranker is warming up.
 """
 
 import asyncio
+import hashlib
+import json
 from typing import Any, Protocol, runtime_checkable
 
 import httpx
@@ -38,6 +40,7 @@ from agentic_commons.evals.entailment import (
 )
 from agentic_commons.logging import get_logger
 from agentic_commons.memory.store import RelevanceScorer
+from agentic_commons.resilience import ResilientCaller
 
 # The three NLI labels, lower-cased. Hugging Face models spell them
 # ENTAILMENT/NEUTRAL/CONTRADICTION or entailment/neutral/contradiction
@@ -73,10 +76,12 @@ class HuggingFaceEncoderClient:
         model: str,
         settings: EncoderSettings | None = None,
         client: httpx.AsyncClient | None = None,
+        resilient: ResilientCaller | None = None,
     ) -> None:
         self._settings = settings or get_settings().llm.encoders
         self._model = model
         self._client = client
+        self._resilient = resilient or ResilientCaller(f"huggingface-encoder:{model}")
         self._logger = get_logger("llm")
         self._unavailable = False
 
@@ -116,17 +121,31 @@ class HuggingFaceEncoderClient:
         return _parse_labels(response)
 
     async def _post(self, payload: dict[str, Any]) -> Any:
-        """POST to the model endpoint, honouring the configured timeout."""
+        """POST to the model endpoint through the shared resilience stack."""
         url = f"{self._settings.base_url.rstrip('/')}/{self._model}"
         headers = {"Authorization": f"Bearer {self._settings.api_key}"}
         timeout = self._settings.timeout_seconds
-        if self._client is not None:
-            response = await self._client.post(url, json=payload, headers=headers, timeout=timeout)
-        else:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(url, json=payload, headers=headers)
-        response.raise_for_status()
+
+        async def call() -> httpx.Response:
+            if self._client is not None:
+                response = await self._client.post(url, json=payload, headers=headers, timeout=timeout)
+            else:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            return response
+
+        response = await self._resilient.call(
+            call,
+            idempotency_key=self._idempotency_key(payload),
+            timeout_seconds=timeout,
+        )
         return response.json()
+
+    def _idempotency_key(self, payload: dict[str, Any]) -> str:
+        """Stable key for retrying one hosted encoder classification."""
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:20]
+        return f"hf-encoder:{self._model}:{digest}"
 
     def _disable(self, reason: str) -> None:
         """Stop calling this model, and say so once."""

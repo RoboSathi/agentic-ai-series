@@ -47,6 +47,7 @@ customer_support_agent:
     - refund completed
     - refund approved
     - refund denied
+    - refund
     tools:
     - get_refund_status
     description: checking the status or timing of an existing refund

@@ -373,9 +373,9 @@ class CustomerSupportAgent:
         costs a completion to read a row aloud, and risks the model
         getting a digit wrong about the customer's own order.
 
-        Only a message that is *nothing but* a choice lands here.
-        "refund order 2" states an intent and continues to the normal
-        path, where the Gatekeeper and the refund rules apply.
+        Only an explicit menu-number reply lands here.
+        "order 10560" is an order reference, not a menu command, and
+        continues through the normal conversational path.
         """
         menu = self._menus.get(state.session_id)
         if menu is None or self._orders is None or state.customer_id is None:
@@ -508,6 +508,18 @@ class CustomerSupportAgent:
 
         if result.passed:
             deferred = result.reason_code == "ORDER_REFERENCE_NOT_PRESENT"
+            order_id = result.facts.get("order_id") if isinstance(result.facts, dict) else None
+            if isinstance(order_id, int):
+                # This is the authoritative current order reference for the
+                # conversation. Store only the identifier in working memory;
+                # order data itself must still come from an ownership-scoped
+                # repository/tool read on the path that needs it.
+                self._note(
+                    state,
+                    "order_under_discussion",
+                    f"order {order_id}",
+                    category="order",
+                )
             self._done(
                 "basic_sanity",
                 summary=(
@@ -517,6 +529,12 @@ class CustomerSupportAgent:
                 ),
                 fields=fields,
             )
+            metadata = {
+                **state.metadata,
+                "basic_sanity": result.model_dump(mode="json"),
+            }
+            if isinstance(order_id, int):
+                metadata["order_under_discussion"] = order_id
             return {
                 "decisions": [
                     *state.decisions,
@@ -526,10 +544,7 @@ class CustomerSupportAgent:
                         else f"basic_sanity: pass ({result.reason_code})"
                     ),
                 ],
-                "metadata": {
-                    **state.metadata,
-                    "basic_sanity": result.model_dump(mode="json"),
-                },
+                "metadata": metadata,
             }
 
         self._reporter_blocked(
@@ -629,26 +644,71 @@ class CustomerSupportAgent:
             event_kind="security",
             summary="Checking untrusted input for injection",
         )
-        assessment = self._security.prepare_untrusted(
+        assessment = await self._security.prepare_untrusted_async(
             self._system_prompt(), state.query, self._registry.all_tools()
         )
-        injection_fields = {
-            "detected": assessment.suspicious,
-            "phrases": len(assessment.phrases),
-            "allowed_tools": len(assessment.allowed_actions),
-            "reason": assessment.reason,
+        injection_checks = list(getattr(assessment, "checks", []))
+        jailbreak_check = next(
+            (check for check in injection_checks if check.get("name") == "NVIDIA NemoGuard JailbreakDetect"),
+            None,
+        )
+        deterministic_injection = any(
+            check.get("name") == "Deterministic prompt-injection scan"
+            and check.get("status") == "FAIL"
+            for check in injection_checks
+        )
+        injection_fields: dict[str, Any] = {
+            "deterministic": "MATCH" if deterministic_injection else "NO_MATCH"
         }
-        if assessment.suspicious:
+        if deterministic_injection:
+            injection_fields["reason"] = assessment.reason
             self._reporter_warning(
                 "prompt_injection_check",
-                summary="Suspicious instruction pattern detected",
+                summary="Prompt injection blocked · deterministic match",
+                event_kind="security",
+                fields=injection_fields,
+            )
+        elif jailbreak_check and jailbreak_check.get("status") == "FAIL":
+            injection_fields.update({
+                "model": jailbreak_check.get("model", "unknown"),
+                "score": jailbreak_check.get("score"),
+                "latency_ms": jailbreak_check.get("latency_ms"),
+                "reason": jailbreak_check.get("reason", "Hosted jailbreak guard flagged the input"),
+            })
+            self._reporter_warning(
+                "prompt_injection_check",
+                summary="Prompt injection blocked · model detection",
+                event_kind="security",
+                fields=injection_fields,
+            )
+        elif jailbreak_check and jailbreak_check.get("status") == "SKIPPED":
+            injection_fields.update({
+                "model": jailbreak_check.get("model", "unknown"),
+                "latency_ms": jailbreak_check.get("latency_ms"),
+                "reason": jailbreak_check.get("reason", "Hosted jailbreak guard unavailable"),
+            })
+            self._reporter_warning(
+                "prompt_injection_check",
+                summary="Prompt injection model check unavailable",
+                event_kind="security",
+                fields=injection_fields,
+            )
+        elif jailbreak_check:
+            injection_fields.update({
+                "model": jailbreak_check.get("model", "unknown"),
+                "score": jailbreak_check.get("score"),
+                "latency_ms": jailbreak_check.get("latency_ms"),
+            })
+            self._done(
+                "prompt_injection_check",
+                summary="Prompt injection check passed · model verified",
                 event_kind="security",
                 fields=injection_fields,
             )
         else:
             self._done(
                 "prompt_injection_check",
-                summary="No injection pattern detected",
+                summary="Prompt injection check passed · deterministic scan",
                 event_kind="security",
                 fields=injection_fields,
             )
@@ -658,25 +718,64 @@ class CustomerSupportAgent:
             event_kind="security",
             summary="Checking content policy",
         )
-        moderation = self._security.moderate(state.query)
-        moderation_fields = {
-            "flagged": moderation.flagged,
-            "categories": moderation.categories,
-            "matched_terms": len(moderation.matched_terms),
-            "reason": moderation.reason,
-            "advisory_only": moderation.advisory_only,
+        moderation = await self._security.moderate_async(state.query)
+        moderation_checks = list(getattr(moderation, "checks", []))
+        content_guard_check = next(
+            (check for check in moderation_checks if check.get("name") == "NVIDIA Nemotron Safety Guard 8B v3"),
+            None,
+        )
+        deterministic_content = bool(moderation.matched_terms)
+        moderation_fields: dict[str, Any] = {
+            "deterministic": "MATCH" if deterministic_content else "NO_MATCH"
         }
-        if moderation.flagged:
+        if deterministic_content:
+            moderation_fields["reason"] = moderation.reason
             self._reporter_warning(
                 "content_moderation",
-                summary="Content policy flagged the request",
+                summary="Content safety blocked · deterministic match",
+                event_kind="security",
+                fields=moderation_fields,
+            )
+        elif content_guard_check and content_guard_check.get("status") == "FAIL":
+            moderation_fields.update({
+                "model": content_guard_check.get("model", "unknown"),
+                "categories": list(content_guard_check.get("categories", [])),
+                "latency_ms": content_guard_check.get("latency_ms"),
+                "reason": content_guard_check.get("reason", "Hosted content-safety guard flagged the input"),
+            })
+            self._reporter_warning(
+                "content_moderation",
+                summary="Content safety blocked · model detection",
+                event_kind="security",
+                fields=moderation_fields,
+            )
+        elif content_guard_check and content_guard_check.get("status") == "SKIPPED":
+            moderation_fields.update({
+                "model": content_guard_check.get("model", "unknown"),
+                "latency_ms": content_guard_check.get("latency_ms"),
+                "reason": content_guard_check.get("reason", "Hosted content-safety guard unavailable"),
+            })
+            self._reporter_warning(
+                "content_moderation",
+                summary="Content safety model check unavailable",
+                event_kind="security",
+                fields=moderation_fields,
+            )
+        elif content_guard_check:
+            moderation_fields.update({
+                "model": content_guard_check.get("model", "unknown"),
+                "latency_ms": content_guard_check.get("latency_ms"),
+            })
+            self._done(
+                "content_moderation",
+                summary="Content safety check passed · model verified",
                 event_kind="security",
                 fields=moderation_fields,
             )
         else:
             self._done(
                 "content_moderation",
-                summary="Content policy check passed",
+                summary="Content safety check passed · deterministic scan",
                 event_kind="security",
                 fields=moderation_fields,
             )
@@ -712,6 +811,10 @@ class CustomerSupportAgent:
         intent = await self._intents.classify_async(
             state.query, previous=self._last_supported_intent.get(state.session_id)
         )
+        self._logger.info(
+            "Customer Support intent resolved",
+            **self._intent_status_fields(intent),
+        )
 
         if intent.disposition.value == "out_of_scope":
             if state.session_id:
@@ -720,18 +823,9 @@ class CustomerSupportAgent:
                 self._last_supported_intent.pop(state.session_id, None)
             self._reporter_blocked(
                 "intent_classification",
-                summary="Request rejected as out of scope",
+                summary="Intent rejected · deterministic rule",
                 event_kind="intent",
-                fields={
-                    "intent": intent.name,
-                    "confidence": intent.confidence,
-                    "disposition": intent.disposition.value,
-                    "source": intent.source,
-                    "model": intent.model,
-                    "score_type": intent.score_type,
-                    "matched_rule": intent.matched_phrase,
-                    "reason": intent.reason,
-                },
+                fields=self._intent_status_fields(intent),
             )
             return {
                 "response": (
@@ -759,19 +853,9 @@ class CustomerSupportAgent:
         if intent.disposition.value == "clarify":
             self._reporter_waiting(
                 "intent_classification",
-                summary="Intent is ambiguous; clarification required",
+                summary="Intent ambiguous · clarification required",
                 event_kind="intent",
-                fields={
-                    "intent": intent.name,
-                    "confidence": intent.confidence,
-                    "disposition": intent.disposition.value,
-                    "source": intent.source,
-                    "model": intent.model,
-                    "score_type": intent.score_type,
-                    "candidates": [c.model_dump(mode="json") for c in intent.candidates],
-                    "clarification": intent.clarification,
-                    "reason": intent.reason,
-                },
+                fields=self._intent_status_fields(intent),
             )
             return {
                 "response": intent.clarification,
@@ -798,26 +882,13 @@ class CustomerSupportAgent:
         intent_route = self._intent_route(intent)
         self._done(
             "intent_classification",
-            summary=f"Intent: {intent.name} ({intent.confidence:.0%})",
+            summary=self._intent_status_summary(intent),
             event_kind="intent",
-            fields={
-                "intent": intent.name,
-                "confidence": intent.confidence,
-                "disposition": intent.disposition.value,
-                "source": intent.source,
-                "candidates": [c.model_dump(mode="json") for c in intent.candidates],
-                "matched_rule": intent.matched_phrase or "none",
-                "allowed_tools": intent.allowed_tools,
-                "plan_steps": len(plan.steps),
-                "model": intent.model,
-                "score_type": intent.score_type,
-                "reason": intent.reason,
-                "execution_route": intent_route,
-            },
+            fields=self._intent_status_fields(intent),
         )
         self._note(state, "current_intent", intent.name, category="intent")
         decisions = [
-            f"intent: {intent.name} ({intent.confidence:.0%})",
+            f"intent: {self._intent_decision_label(intent)}",
             f"injection: {assessment.reason}",
         ]
         if moderation.flagged:
@@ -974,10 +1045,19 @@ class CustomerSupportAgent:
         return "llm"
 
     def _resolve_read_order_id(self, state: AgentState) -> int | None:
-        """Resolve an order id only from the current turn or verified working memory."""
+        """Resolve the most recent order under discussion, newest evidence first."""
+        metadata_id = state.metadata.get("order_under_discussion")
+        if isinstance(metadata_id, int) and metadata_id > 0:
+            return metadata_id
+
         explicit = _extract_order_id(state.query)
         if explicit is not None:
             return explicit
+
+        # Working memory is recency ordered. The first matching fact is the
+        # most recent validated order reference; do not search older facts
+        # once one is found. This keeps follow-ups anchored to the latest
+        # order without asking the model to infer which identifier wins.
         if self._memory is not None and state.session_id:
             for fact in self._memory.active_window(state.session_id):
                 if fact.key != "order_under_discussion":
@@ -986,6 +1066,66 @@ class CustomerSupportAgent:
                 if match:
                     return int(match.group(1))
         return None
+
+    @staticmethod
+    def _intent_status_fields(intent: Intent) -> dict[str, Any]:
+        """Return concise operator-facing intent facts; keep routing metadata internal."""
+        source = intent.source or "unknown"
+        classification = {
+            "huggingface_local": "bert",
+            "context_fallback": "context_fallback",
+            "deterministic": "deterministic",
+            "classifier_unavailable": "unavailable",
+        }.get(source, source)
+        fields: dict[str, Any] = {"intent": intent.name, "classification": classification}
+
+        if source == "deterministic":
+            fields["matched"] = (intent.matched_phrase or "rule").removeprefix("phrase:")
+        elif source == "context_fallback":
+            fields["context"] = intent.matched_phrase or "previous_supported_intent"
+        elif intent.model:
+            fields["model"] = intent.model
+            fields["score"] = round(float(intent.confidence), 3)
+
+        if intent.disposition.value != "supported":
+            fields["disposition"] = intent.disposition.value
+            if intent.reason:
+                fields["reason"] = intent.reason
+            if intent.clarification:
+                fields["clarification"] = intent.clarification
+            if intent.candidates:
+                fields["options"] = [
+                    candidate.intent
+                    for candidate in intent.candidates
+                    if candidate.intent != "UNKNOWN"
+                ][:2]
+
+        return fields
+
+    @staticmethod
+    def _intent_status_summary(intent: Intent) -> str:
+        source = intent.source or "unknown"
+        if source == "deterministic":
+            matched = (intent.matched_phrase or "rule").removeprefix("phrase:")
+            return f"Intent: {intent.name} · deterministic match ({matched})"
+        if source == "context_fallback":
+            return f"Intent: {intent.name} · context fallback"
+        if source == "huggingface_local":
+            return f"Intent: {intent.name} · BERT score {intent.confidence:.2f}"
+        if source == "classifier_unavailable":
+            return f"Intent: {intent.name} · classifier unavailable"
+        return f"Intent: {intent.name} · {source}"
+
+    @staticmethod
+    def _intent_decision_label(intent: Intent) -> str:
+        source = intent.source or "unknown"
+        if source == "deterministic":
+            return f"{intent.name} [deterministic]"
+        if source == "context_fallback":
+            return f"{intent.name} [context fallback]"
+        if intent.model:
+            return f"{intent.name} [BERT {intent.confidence:.2f}]"
+        return intent.name
 
     def _offer_to_memory(self, state: AgentState) -> list[str]:
         """Put what the customer said to the write pipeline.
@@ -1148,7 +1288,25 @@ class CustomerSupportAgent:
             messages=self._prompt_messages(state),
             tools=self._registry.to_openai_tools([tool.qualified_name for tool in tools]),
         )
-        result = await self._call_model(request, state, f"{state.session_id}:{state.tool_rounds}")
+        try:
+            result = await self._call_model(request, state, f"{state.session_id}:{state.tool_rounds}")
+        except Exception as exc:
+            self._reporter_warning(
+                "llm_call",
+                summary="LLM unavailable after retries",
+                event_kind="resilience",
+                fields={
+                    "dependency": self._resilient.name,
+                    "reason": str(exc),
+                },
+            )
+            return {
+                "messages": [Message(role="assistant", content=_FALLBACK_REPLY)],
+                "tool_rounds": state.tool_rounds + 1,
+                "escalated": True,
+                "decisions": [*state.decisions, "resilience: llm unavailable after retries"],
+                "metadata": {**state.metadata, "external_dependency_failed": True},
+            }
         message = Message(role="assistant", content=result.content, tool_calls=result.tool_calls)
         tool_names = [call.name for call in (result.tool_calls or [])]
         metrics = self._selector.last_metrics if self._selector is not None else None
@@ -1379,6 +1537,16 @@ class CustomerSupportAgent:
             "finalize",
             summary="Preparing the customer-facing response",
         )
+        # A previous model call can already have exhausted its retry budget.
+        # Do not immediately spend another retry budget on finalize; surface
+        # the outage and hand the turn to the human-facing fallback.
+        if state.metadata.get("external_dependency_failed"):
+            return {
+                "response": _FALLBACK_REPLY,
+                "decisions": [*state.decisions, "resilience: llm unavailable after retries"],
+                "escalated": True,
+                "metadata": state.metadata,
+            }
         last = state.messages[-1] if state.messages else Message()
         critique = self._deliberation.reflect(last.content, state.tool_results)
         if (
@@ -1417,14 +1585,33 @@ class CustomerSupportAgent:
             summary="Generating the final customer response",
             fields={"purpose": "reply_revision"},
         )
-        result = await self._llm.complete(
-            CompletionRequest(
-                messages=[
-                    *self._prompt_messages(state),
-                    Message(role="user", content=build_reply_instruction()),
-                ]
+        try:
+            result = await self._call_model(
+                CompletionRequest(
+                    messages=[
+                        *self._prompt_messages(state),
+                        Message(role="user", content=build_reply_instruction()),
+                    ]
+                ),
+                state,
+                f"{state.session_id}:finalize",
             )
-        )
+        except Exception as exc:
+            self._reporter_warning(
+                "llm_call",
+                summary="LLM unavailable after retries",
+                event_kind="resilience",
+                fields={
+                    "dependency": self._resilient.name,
+                    "reason": str(exc),
+                },
+            )
+            return {
+                "response": _FALLBACK_REPLY,
+                "decisions": [*state.decisions, "resilience: llm unavailable after retries"],
+                "escalated": True,
+                "metadata": {**state.metadata, "external_dependency_failed": True},
+            }
         self._done(
             "llm_call",
             tokens=result.usage.total_tokens,
