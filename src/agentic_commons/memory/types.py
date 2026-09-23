@@ -7,7 +7,7 @@ is the question every post-incident review asks.
 """
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
@@ -109,3 +109,17 @@ class MemoryConflict(BaseModel):
     existing: MemoryFact
     resolution: Literal["supersede", "curator_queue", "reject"] = "curator_queue"
     reason: str = ""
+
+
+@runtime_checkable
+class TextRedactor(Protocol):
+    """Removes personal data from text before memory persists it.
+
+    Deliberately narrower than the security plane's full PII filter:
+    memory needs one verb, and depending on the whole filter would tie
+    the storage layer to the detector's detection and minimization
+    surface as well. Any redactor that can rewrite a string satisfies
+    this.
+    """
+
+    def redact(self, text: str) -> str: ...

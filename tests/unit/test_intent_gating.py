@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.tools import NamespacedToolRegistry, ToolDefinition
 from customer_support_agent.core import HitlQueueRepository, OrdersRepository, build_agent
-from customer_support_agent.core.intent import IntentClassifier
+from customer_support_agent.core.intent import CustomerSupportIntentRouter
 from tests.conftest import ScriptedLLM, tool_call
 
 MONEY_MOVING = {"process_refund", "queue_for_approval"}
@@ -42,35 +42,35 @@ class TestIntentClassification:
         ],
     )
     def test_classifies_the_message(self, message: str, expected: str) -> None:
-        assert IntentClassifier().classify(message).name == expected
+        assert CustomerSupportIntentRouter().classify(message).name == expected
 
     def test_a_refund_request_wins_over_the_order_words_it_contains(self) -> None:
         """ "a refund for order 10005" is a refund request, not an enquiry."""
-        intent = IntentClassifier().classify("I want a refund for order 10005")
+        intent = CustomerSupportIntentRouter().classify("I want a refund for order 10005")
         assert intent.name == "refund_request"
 
     def test_an_order_enquiry_unlocks_no_money_moving_tool(self) -> None:
         """The reported bug, stated as a property."""
-        permitted = IntentClassifier().permitted_tools("what is the status of order 10005")
+        permitted = CustomerSupportIntentRouter().permitted_tools("what is the status of order 10005")
         assert permitted.isdisjoint(MONEY_MOVING)
 
     def test_an_order_enquiry_still_unlocks_the_lookups(self) -> None:
-        permitted = IntentClassifier().permitted_tools("status of order 10005")
+        permitted = CustomerSupportIntentRouter().permitted_tools("status of order 10005")
         assert "get_order_status" in permitted
 
     def test_a_general_enquiry_unlocks_nothing(self) -> None:
-        assert IntentClassifier().permitted_tools("who are you") == set()
+        assert CustomerSupportIntentRouter().permitted_tools("who are you") == set()
 
     def test_a_refund_request_unlocks_the_refund_path(self) -> None:
-        permitted = IntentClassifier().permitted_tools("I want a refund for order 10005")
+        permitted = CustomerSupportIntentRouter().permitted_tools("I want a refund for order 10005")
         assert MONEY_MOVING <= permitted
 
     def test_matching_is_case_insensitive(self) -> None:
-        assert IntentClassifier().classify("I WANT A REFUND").name == "refund_request"
+        assert CustomerSupportIntentRouter().classify("I WANT A REFUND").name == "refund_request"
 
     def test_the_matched_phrase_is_reported(self) -> None:
         """An operator should see *why* the agent was given refund tools."""
-        assert IntentClassifier().classify("I want a refund").matched_phrase == "refund"
+        assert CustomerSupportIntentRouter().classify("I want a refund").matched_phrase == "refund"
 
 
 class TestTheAgentHonoursTheGate:
@@ -259,21 +259,21 @@ class TestSemanticFallback:
     async def test_a_phrase_match_never_reaches_the_encoder(self) -> None:
         """Deterministic policy wins outright; the encoder is not consulted."""
         encoder = self.StubEncoder()
-        intent = await IntentClassifier(embeddings=encoder).classify_async("where is my order")
+        intent = await CustomerSupportIntentRouter(embeddings=encoder).classify_async("where is my order")
         assert intent.name == "order_enquiry"
         assert encoder.calls == 0
 
     @pytest.mark.asyncio
     async def test_a_paraphrase_is_recognised_by_similarity(self) -> None:
         encoder = self.StubEncoder(similar=True)
-        intent = await IntentClassifier(embeddings=encoder).classify_async("when will it get here?")
+        intent = await CustomerSupportIntentRouter(embeddings=encoder).classify_async("when will it get here?")
         assert intent.name == "order_enquiry"
         assert "similarity" in intent.matched_phrase
 
     @pytest.mark.asyncio
     async def test_a_weak_match_stays_on_the_default_intent(self) -> None:
         encoder = self.StubEncoder(similar=False)
-        intent = await IntentClassifier(embeddings=encoder).classify_async("mattress thread count?")
+        intent = await CustomerSupportIntentRouter(embeddings=encoder).classify_async("mattress thread count?")
         assert intent.name == "general_enquiry"
         assert not intent.permits_tools
 
@@ -286,7 +286,7 @@ class TestSemanticFallback:
         space, it cannot unlock the refund tools without saying so.
         """
         encoder = self.StubEncoder(similar=True)
-        intent = await IntentClassifier(embeddings=encoder).classify_async("sort out the charge?")
+        intent = await CustomerSupportIntentRouter(embeddings=encoder).classify_async("sort out the charge?")
         assert intent.name != "refund_request"
         assert "process_refund" not in intent.allowed_tools
 
@@ -294,7 +294,7 @@ class TestSemanticFallback:
     async def test_the_phrase_vocabulary_is_embedded_once(self) -> None:
         """The phrases cannot have moved, so re-embedding them is waste."""
         encoder = self.StubEncoder()
-        classifier = IntentClassifier(embeddings=encoder)
+        classifier = CustomerSupportIntentRouter(embeddings=encoder)
         await classifier.classify_async("first question?")
         after_first = encoder.calls
         await classifier.classify_async("second question?")
@@ -312,5 +312,5 @@ class TestSemanticFallback:
             async def embed(self, texts: list[str]) -> list[list[float]]:
                 raise RuntimeError("no entitlement")
 
-        intent = await IntentClassifier(embeddings=Broken()).classify_async("something vague?")
+        intent = await CustomerSupportIntentRouter(embeddings=Broken()).classify_async("something vague?")
         assert intent.name == "general_enquiry"

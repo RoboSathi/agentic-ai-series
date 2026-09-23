@@ -11,13 +11,24 @@ from pydantic import BaseModel, Field
 
 
 class BasicSanityRequest(BaseModel):
-    """Information available to an agent-specific sanity checker."""
+    """Information available to an agent-specific sanity checker.
+
+    `actor` is who is asking; `subject_id` is whose records the request
+    concerns, as an opaque string. Deliberately not `customer_id`: the
+    platform owns this contract and must not oblige every agent built on
+    it to have customers, or to number them. An agent that reasons about
+    patients, tenants or accounts puts its own identifier here and parses
+    it back in its own checker, where that vocabulary belongs.
+
+    Empty means no subject was established — which a checker should treat
+    as a reason to stop, not as permission to proceed.
+    """
 
     query: str
     agent_id: str = ""
     session_id: str = ""
     actor: str = ""
-    customer_id: int | None = None
+    subject_id: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

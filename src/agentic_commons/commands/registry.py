@@ -71,6 +71,23 @@ class CommandRegistry:
         stem = partial.strip().lstrip(PREFIX).casefold()
         return [name for name in sorted(self._commands) if name.startswith(stem)]
 
+    def argument_completions(self, line: str) -> list[str]:
+        """What the named command offers for the argument being typed.
+
+        Only a command that *has* a closed set answers this. Most do not:
+        an order id or a status is a value, and guessing one would be
+        guessing at intent. A feature path is different — the set is
+        fixed and the operator is choosing from it, which is the same
+        kind of completion as the command word itself.
+        """
+        head, _, rest = line.strip().lstrip(PREFIX).partition(" ")
+        command = self._commands.get(head.casefold())
+        offered = getattr(command, "argument_completions", None)
+        if offered is None:
+            return []
+        stem = rest.rsplit(" ", maxsplit=1)[-1].casefold()
+        return [value for value in offered() if value.startswith(stem)]
+
     async def dispatch(self, line: str) -> CommandResult:
         """Run the command a line names.
 

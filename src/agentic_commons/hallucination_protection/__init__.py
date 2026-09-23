@@ -4,8 +4,8 @@ from agentic_commons.hallucination_protection.checker import (
     ClaimDecomposer,
     ClaimResolver,
     DetectionLadder,
-    GroundingResolver,
     GroundingReasoningDiagnoser,
+    GroundingResolver,
     HallucinationDetector,
     TrustCalibrationTracker,
 )

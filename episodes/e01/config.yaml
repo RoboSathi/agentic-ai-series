@@ -33,13 +33,21 @@ security:
   enabled: true
   auth:
     enabled: true
-  # Off — E30 and E32 are where these arrive.
-  prompt_injection:
-    enabled: false
-  pii:
-    enabled: false
-  content_moderation:
-    enabled: false
+
+# This episode's harness, stated as the features it has and has not been
+# given. Almost everything is withheld: the screening checks arrive in
+# E30 and E32, memory in E13, context in E19, grounding in M11. What is
+# left is a model, a database, tools, and the one authority check the
+# episode exists to remove.
+features:
+  prompt_injection: false
+  pii: false
+  content_moderation: false
+  intent_classification: true
+  hallucination_guard: false
+  gatekeeper: true
+  memory: false
+  context: false
 
 # The Gatekeeper is always invoked (PRD G1), but at E01 it asks one
 # question only: is this amount above what anybody has agreed the agent
@@ -58,13 +66,7 @@ gatekeeper:
     enabled: false
 
 # Not yet built, as far as the series is concerned.
-memory:
-  enabled: false
-context:
-  enabled: false
 guardrails:
-  enabled: false
-hallucination_protection:
   enabled: false
 resilience:
   enabled: false

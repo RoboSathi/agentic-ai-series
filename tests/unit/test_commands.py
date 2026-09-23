@@ -22,7 +22,7 @@ from agentic_commons.commands.data import OrdersCommand, UsersCommand
 from agentic_commons.commands.harness import HarnessCommand
 from agentic_commons.commands.inspection import AuditCommand, ConfigCommand, QueueCommand
 from agentic_commons.commands.system import ClearCommand, LogsCommand
-from agentic_commons.config import get_settings, is_enabled
+from agentic_commons.config import active_features, get_settings, set_active_features
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.tui.command_view import CommandView
 from agentic_commons.tui.suggest import CommandSuggester
@@ -243,51 +243,128 @@ class TestCommandView:
 
 
 class TestHarnessCommand:
-    """E01's switch: the same model, with and without what surrounds it."""
+    """E01's switch: the same model, with and without what surrounds it.
 
-    async def test_it_reports_every_control(self, restore_settings: None) -> None:
+    The harness *is* the feature tree, so these assert against it rather
+    than a separate list that could drift from what the builder reads.
+    """
+
+    def _features(self) -> object:
+        return active_features()
+
+    async def test_it_reports_every_feature(self, restore_settings: None) -> None:
+        set_active_features(get_settings().features)
         result = await HarnessCommand().run([])
-        reported = {row.cells[0] for row in result.rows}
-        assert reported == set(get_settings().commands.harness.controls)
+        assert len(result.rows) == len(active_features().paths())
 
-    async def test_off_disables_every_control(self, restore_settings: None) -> None:
+    async def test_off_withholds_every_feature(self, restore_settings: None) -> None:
+        set_active_features(get_settings().features)
         await HarnessCommand().run(["off"])
-        assert not any(is_enabled(control) for control in _harness_controls())
+        features = active_features()
+        assert not any(features.is_on(path) for path in features.paths())
 
-    async def test_on_restores_them_from_configuration(self, restore_settings: None) -> None:
-        """`on` re-reads config rather than remembering what it changed.
-
-        That is what makes it correct inside an episode: the harness it
-        restores is the episode's, not the platform's defaults, and the
-        command needs no memory of a state it might restore wrongly.
-        """
+    async def test_on_grants_every_feature(self, restore_settings: None) -> None:
+        set_active_features(get_settings().features)
         await HarnessCommand().run(["off"])
         await HarnessCommand().run(["on"])
-        assert all(is_enabled(control) for control in _harness_controls())
+        features = active_features()
+        assert all(features.is_on(path) for path in features.paths())
 
-    async def test_both_directions_ask_for_a_rebuild(self, restore_settings: None) -> None:
-        """Components read their flags when constructed, so a running agent
-        was wired under the previous answer."""
-        for argument in ("off", "on"):
-            result = await HarnessCommand().run([argument])
-            assert result.effect.rebuild_agent
+    async def test_a_named_feature_moves_alone(self, restore_settings: None) -> None:
+        set_active_features(get_settings().features)
+        await HarnessCommand().run(["hallucination_guard", "off"])
+        features = active_features()
+        assert features.is_on("hallucination_guard") is False
+        assert features.is_on("gatekeeper") is True
+
+    async def test_a_sub_feature_can_be_named(self, restore_settings: None) -> None:
+        set_active_features(get_settings().features)
+        await HarnessCommand().run(["memory.episodic", "off"])
+        features = active_features()
+        assert features.is_on("memory.episodic") is False
+        assert features.is_on("memory.working") is True
+
+    async def test_switching_a_parent_off_takes_its_children(
+        self, restore_settings: None
+    ) -> None:
+        set_active_features(get_settings().features)
+        await HarnessCommand().run(["memory", "off"])
+        assert active_features().is_on("memory.semantic") is False
+
+    async def test_it_never_reads_from_disk(self, restore_settings: None) -> None:
+        """A hot reload. `on` grants everything rather than restoring a file,
+        so the console never pauses on I/O mid-demonstration."""
+        set_active_features(get_settings().features.with_override("memory", False))
+        await HarnessCommand().run(["on"])
+        assert active_features().is_on("memory") is True
+
+    async def test_every_mutating_form_asks_for_a_rebuild(
+        self, restore_settings: None
+    ) -> None:
+        """The composition root decides what to wire, so a running agent
+        was built under the previous answer."""
+        set_active_features(get_settings().features)
+        for args in (["off"], ["on"], ["gatekeeper", "off"]):
+            assert (await HarnessCommand().run(args)).effect.rebuild_agent
 
     async def test_reporting_alone_rebuilds_nothing(self, restore_settings: None) -> None:
+        set_active_features(get_settings().features)
         assert not (await HarnessCommand().run([])).effect.rebuild_agent
 
     async def test_it_rejects_anything_but_on_or_off(self) -> None:
         with pytest.raises(CommandError):
             await HarnessCommand().run(["maybe"])
 
-    def test_auth_is_not_one_of_the_controls(self) -> None:
+    async def test_an_unknown_feature_names_the_real_ones(
+        self, restore_settings: None
+    ) -> None:
+        """A typo should cost a glance, not a silent no-op."""
+        set_active_features(get_settings().features)
+        with pytest.raises(CommandError, match="hallucination_guard"):
+            await HarnessCommand().run(["hallucinaton_guard", "off"])
+
+    def test_auth_is_not_a_feature(self, restore_settings: None) -> None:
         """Identity is not an approval control.
 
         Switching RBAC off does not make the agent reckless, it makes it
         unable to authenticate anybody — so it can do nothing at all,
         which is the opposite of the demonstration E01 is making.
         """
-        assert "security.auth" not in _harness_controls()
+        assert "security.auth" not in get_settings().features.paths()
+        assert "auth" not in get_settings().features.paths()
 
 
-def _harness_controls() -> list[str]:
-    return get_settings().commands.harness.controls
+
+
+class TestConfigStaysReadOnly:
+    """`/config` shows; `/harness` changes. One command per verb.
+
+    Worth asserting rather than assuming: an operator who can change
+    configuration from the inspection command has two ways to move the
+    same state, and only one of them rebuilds the agent afterwards.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_feature_tree_is_visible(self) -> None:
+        result = await ConfigCommand().run(["features"])
+        shown = {row.cells[0] for row in result.rows}
+        assert "gatekeeper" in shown
+        assert "memory.working" in shown
+
+    @pytest.mark.asyncio
+    async def test_showing_it_changes_nothing(self, restore_settings: None) -> None:
+        set_active_features(get_settings().features)
+        before = active_features()
+        await ConfigCommand().run(["features"])
+        assert active_features().tree == before.tree
+
+    @pytest.mark.asyncio
+    async def test_it_never_asks_for_a_rebuild(self) -> None:
+        """Nothing it does could require one."""
+        assert not (await ConfigCommand().run(["features"])).effect.rebuild_agent
+
+    @pytest.mark.asyncio
+    async def test_it_offers_no_way_to_write(self) -> None:
+        registry = CommandRegistry(commands=[ConfigCommand()])
+        result = await registry.dispatch("/config features gatekeeper off")
+        assert not result.ok

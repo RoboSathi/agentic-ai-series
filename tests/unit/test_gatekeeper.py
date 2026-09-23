@@ -6,17 +6,18 @@ assumed. The four E12 live attacks live in the integration tests, where
 they run against the whole assembled harness.
 """
 
+import asyncio
+from typing import Any
+
 import pytest
 
-from agentic_commons.audit import SqliteAuditLedger
+from agentic_commons.audit import NullAuditLedger, SqliteAuditLedger
 from agentic_commons.config import get_settings
+from agentic_commons.executor import ApprovedToolCall
 from agentic_commons.gatekeeper import (
     AuthorityContext,
     AuthorityHierarchyResolver,
-    AutomationLevelPolicy,
     GatekeeperImpl,
-    SurfaceClassifier,
-    ThreeGatesEvaluator,
 )
 from agentic_commons.gatekeeper.ledger import CumulativeLedger
 from agentic_commons.gatekeeper.tier2 import NullTier2Advisor
@@ -24,14 +25,19 @@ from agentic_commons.gatekeeper.types import LedgerEntry
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.security import Authorizer
 from agentic_commons.tools import ToolCall
+from customer_support_agent.core import build_agent
+from customer_support_agent.core.business_rules import CustomerSupportBusinessRules
+from customer_support_agent.core.repositories import OrdersRepository
+from tests.conftest import ScriptedLLM, tool_call
 
 
 @pytest.fixture
-def gatekeeper(pool: SqliteConnectionPool) -> GatekeeperImpl:
+def gatekeeper(seeded_pool: SqliteConnectionPool, agent_policy: Any) -> GatekeeperImpl:
     return GatekeeperImpl(
-        authorizer=Authorizer(),
-        ledger=CumulativeLedger(pool),
-        audit=SqliteAuditLedger(pool),
+        authorizer=Authorizer(policy=agent_policy),
+        policy=agent_policy,
+        ledger=CumulativeLedger(seeded_pool),
+        audit=SqliteAuditLedger(seeded_pool),
     )
 
 
@@ -76,66 +82,6 @@ class TestAuthorityHierarchy:
         resolver = AuthorityHierarchyResolver()
         assert resolver.outranks("provider", "user_task") is True
         assert resolver.outranks("tool_observations", "user_task") is False
-
-
-class TestSurfaceClassifier:
-    @pytest.mark.parametrize(
-        "action,surface",
-        [
-            ("get_order_status", "editable"),
-            ("queue_for_approval", "append_only"),
-            ("update_refund_policy", "locked"),
-            ("approve_hitl_request", "human_controlled"),
-        ],
-    )
-    def test_classifies_configured_actions(self, action: str, surface: str) -> None:
-        assert SurfaceClassifier().classify(action) == surface
-
-    def test_an_unclassified_action_defaults_to_human_controlled(self) -> None:
-        assert SurfaceClassifier().classify("invented_action") == "human_controlled"
-
-    def test_locked_surfaces_are_never_agent_writable(self) -> None:
-        writable, reason = SurfaceClassifier().is_writable_by_agent("locked")
-        assert writable is False
-        assert "locked" in reason
-
-    def test_namespaced_actions_resolve_to_their_bare_name(self) -> None:
-        assert SurfaceClassifier().classify("support.process_refund") == "editable"
-
-
-class TestThreeGates:
-    def test_a_narrow_certifiable_action_passes(self) -> None:
-        assert ThreeGatesEvaluator().evaluate("single", "single_record", True).passes
-
-    def test_open_path_with_global_radius_fails(self) -> None:
-        result = ThreeGatesEvaluator().evaluate("open", "global", True)
-        assert result.passes is False
-        assert "open-ended" in result.reason
-
-    def test_uncertifiable_wide_action_fails(self) -> None:
-        assert ThreeGatesEvaluator().evaluate("bounded", "tenant", False).passes is False
-
-
-class TestAutomationLevels:
-    def test_reads_the_configured_sheridan_level(self) -> None:
-        assert AutomationLevelPolicy().level_for("get_order_status") == 10
-
-    def test_an_amount_over_the_ceiling_requires_a_human(self) -> None:
-        assessment = AutomationLevelPolicy().assess("process_refund", 200.0)
-        assert assessment.requires_human is True
-
-    def test_an_amount_under_the_ceiling_does_not(self) -> None:
-        assert AutomationLevelPolicy().assess("process_refund", 20.0).requires_human is False
-
-    def test_the_boundary_amount_is_permitted(self) -> None:
-        """Exactly at the ceiling is within policy; only above it escalates."""
-        ceiling = get_settings().gatekeeper.automation.per_action_amount_escalation_usd[
-            "process_refund"
-        ]
-        assert AutomationLevelPolicy().assess("process_refund", ceiling).requires_human is False
-
-    def test_an_unconfigured_action_needs_approval(self) -> None:
-        assert AutomationLevelPolicy().assess("invented_action").requires_human is False
 
 
 class TestCumulativeLedger:
@@ -261,3 +207,214 @@ class TestGatekeeperDecisions:
         assert ledger.window_total("agent-1", "refund") == 0.0
         gatekeeper.commit(call, agent_authority)
         assert ledger.window_total("agent-1", "refund") == 25.0
+
+
+class TestWithholdingTheGatekeeper:
+    """What an episode is demonstrating when it switches the feature off.
+
+    The settled rule has two halves and both matter: authorization,
+    budgets and surface policy stop happening, *and* the audit entry is
+    still written. An ungoverned execution that leaves no trace is worse
+    than the one the demo is about — nobody watching could tell it
+    apart from an execution that never occurred.
+    """
+
+    def _agent(self, on: bool, pool: SqliteConnectionPool) -> object:
+        settings = get_settings()
+        settings.features = settings.features.with_override("gatekeeper", on)
+        return build_agent(llm=ScriptedLLM(), pool=pool)
+
+    def test_it_is_wired_when_the_feature_is_declared(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        assert self._agent(True, seeded_pool)._gatekeeper is not None
+
+    def test_it_is_absent_when_the_feature_is_withheld(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        assert self._agent(False, seeded_pool)._gatekeeper is None
+
+    def test_the_audit_ledger_survives_the_bypass(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        """The trail is what still distinguishes it from nothing happening."""
+        agent = self._agent(False, seeded_pool)
+        assert not isinstance(agent._audit, NullAuditLedger)
+
+    def test_an_ungoverned_approval_says_so_rather_than_mimicking_one(self) -> None:
+        """Whatever reads this later must be able to tell the two apart."""
+        approved = ApprovedToolCall.ungoverned(
+            ToolCall(action="process_refund", params={"amount": 4000.0}),
+            AuthorityContext(actor="agent", granted_by="user_task"),
+        )
+        assert approved.decision.reason_code == "GATEKEEPER_DISABLED"
+        assert approved.decision.question == "ungoverned"
+        assert "without authorization" in approved.decision.reason
+
+
+class TestOwnershipIsAnAuthorityQuestion:
+    """Another customer's order must be refused here, not further down.
+
+    It used to be refused by arithmetic: the Gatekeeper's business rules
+    ran only for `process_refund` and `queue_for_approval`, so a *read*
+    of somebody else's order was ALLOWED, executed, and then returned
+    nothing because `OrdersRepository.get_for_customer` scopes its SQL.
+    The audit trail recorded an authorized read of an order the caller
+    had no standing to name, and one forgotten `WHERE user_id` anywhere
+    downstream turns that into a disclosure.
+    """
+
+    def _rules(self, pool: SqliteConnectionPool, policy: Any) -> CustomerSupportBusinessRules:
+        return CustomerSupportBusinessRules(OrdersRepository(pool), None, policy)
+
+    def _verdict(self, pool: SqliteConnectionPool, policy: Any, action: str, order_id: int) -> Any:
+        return self._rules(pool, policy).evaluate(
+            ToolCall(action=action, params={"order_id": order_id, "amount": 10.0}),
+            AuthorityContext(
+                actor="agent", granted_by="user_task", request_context={"customer_id": 1}
+            ),
+        )
+
+    @pytest.mark.parametrize(
+        "action", ["get_order_status", "get_refund_status", "process_refund"]
+    )
+    def test_another_customers_order_is_refused_for_every_action(
+        self, action: str, seeded_pool: SqliteConnectionPool, agent_policy: Any
+    ) -> None:
+        """Order 10003 belongs to customer 2; customer 1 may not touch it."""
+        result = self._verdict(seeded_pool, agent_policy, action, 10003)
+        assert result.verdict != "allow"
+        assert result.reason_code == "ORDER_NOT_FOUND_FOR_CUSTOMER"
+
+    def test_a_nonexistent_order_is_refused_identically(
+        self, seeded_pool: SqliteConnectionPool, agent_policy: Any
+    ) -> None:
+        """Same refusal either way, so the gate is not an id oracle."""
+        missing = self._verdict(seeded_pool, agent_policy, "get_order_status", 999999)
+        foreign = self._verdict(seeded_pool, agent_policy, "get_order_status", 10003)
+        assert missing.reason_code == foreign.reason_code
+
+    def test_the_customers_own_order_passes_ownership(
+        self, seeded_pool: SqliteConnectionPool, agent_policy: Any
+    ) -> None:
+        result = self._verdict(seeded_pool, agent_policy, "get_order_status", 10001)
+        assert result.verdict == "allow"
+        assert any(
+            check.reason_code == "ORDER_OWNED_BY_CUSTOMER" for check in result.checks
+        )
+
+    def test_an_unauthenticated_read_is_refused(
+        self, seeded_pool: SqliteConnectionPool, agent_policy: Any
+    ) -> None:
+        result = self._rules(seeded_pool, agent_policy).evaluate(
+            ToolCall(action="get_order_status", params={"order_id": 10001}),
+            AuthorityContext(actor="agent", granted_by="user_task", request_context={}),
+        )
+        assert result.verdict != "allow"
+        assert result.reason_code == "CUSTOMER_NOT_AUTHENTICATED"
+
+    def test_an_action_naming_no_order_is_still_not_applicable(
+        self, seeded_pool: SqliteConnectionPool, agent_policy: Any
+    ) -> None:
+        """Ownership applies to orders; it must not start gating everything."""
+        result = self._rules(seeded_pool, agent_policy).evaluate(
+            ToolCall(action="list_orders", params={}),
+            AuthorityContext(
+                actor="agent", granted_by="user_task", request_context={"customer_id": 1}
+            ),
+        )
+        assert result.verdict == "allow"
+
+
+class TestTheUngovernedPathSkipsTheExecutionBoundary:
+    """`gatekeeper: false` removes the governed path, not just its verdict.
+
+    The Gatekeeper decides; the Executor bounds. With the feature
+    withheld the graph calls the agent's domain adapter directly, so
+    neither stage appears in the trace — the absence *is* the
+    demonstration, and a GATEKEEPER line reading "no gatekeeper" would be
+    the screen describing a control that is not there.
+
+    What this removes is the execution boundary: the executor's
+    idempotency key, its deadline, and its normalized outcome. It does
+    not remove every guard beneath it — `RefundSaga` keeps its own
+    idempotency, and the repositories keep scoping to the authenticated
+    customer. See the last test here, which pins that down.
+    """
+
+    class _Feed:
+        def __init__(self) -> None:
+            self.events: list[Any] = []
+
+        def publish(self, event: Any) -> None:
+            self.events.append(event)
+
+        def emit(self, event: Any) -> None:
+            self.events.append(event)
+
+    async def _stages(self, on: bool, pool: SqliteConnectionPool) -> tuple[list[str], list[str]]:
+        from agentic_commons.observability import StageReporter
+
+        feed = self._Feed()
+        agent = build_agent(
+            llm=ScriptedLLM(
+                [
+                    {"tool_calls": tool_call("support.get_order_status", order_id=10001)},
+                    {"content": "Order 10001 was delivered."},
+                ]
+            ),
+            pool=pool,
+            features=get_settings().features.with_all(True).with_override("gatekeeper", on),
+            reporter=StageReporter(feed, "test"),
+        )
+        state = await agent.handle("what happened with order 10001?", session_id="s")
+        return [str(getattr(e, "stage", "")) for e in feed.events], state.tool_results
+
+    async def test_neither_stage_narrates_when_the_gatekeeper_is_withheld(
+        self, seeded_pool: SqliteConnectionPool, agent_policy: Any, restore_settings: None
+    ) -> None:
+        stages, _ = await self._stages(False, seeded_pool)
+        assert "gatekeeper_evaluation" not in stages
+        assert "executor" not in stages
+
+    async def test_the_gatekeeper_still_narrates_when_it_is_declared(
+        self, seeded_pool: SqliteConnectionPool, agent_policy: Any, restore_settings: None
+    ) -> None:
+        stages, _ = await self._stages(True, seeded_pool)
+        assert "gatekeeper_evaluation" in stages
+
+    async def test_the_tool_still_runs_ungoverned(
+        self, seeded_pool: SqliteConnectionPool, agent_policy: Any, restore_settings: None
+    ) -> None:
+        """Ungoverned means unchecked, not inert."""
+        _, results = await self._stages(False, seeded_pool)
+        assert results and "10001" in results[0]
+
+    def test_the_saga_keeps_its_own_idempotency(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        """What dropping the execution boundary does *not* remove.
+
+        The executor's idempotency key is gone on this path, but
+        `RefundSaga` holds a second one keyed on order plus amount. A
+        repeated refund is still a replay, not a second payment — so this
+        is not a double-spend demonstration, and should not be sold as one.
+        """
+        from agentic_commons.persistence import SqlitePlatformStore
+        from agentic_commons.resilience import SqliteIdempotencyGuard
+        from customer_support_agent.core.refund_saga import RefundSaga
+        from customer_support_agent.core.repositories import RefundLedgerRepository
+
+        store = SqlitePlatformStore(seeded_pool, agent_id=get_settings().agent.id)
+        saga = RefundSaga(
+            OrdersRepository(seeded_pool),
+            RefundLedgerRepository(seeded_pool),
+            idempotency=SqliteIdempotencyGuard(store),
+        )
+        orders = OrdersRepository(seeded_pool)
+        order = orders.get(10001)
+        assert order is not None
+        first = asyncio.run(saga.issue(order, 32.0, "damaged"))
+        second = asyncio.run(saga.issue(orders.get(10001), 32.0, "damaged"))  # type: ignore[arg-type]
+        assert first.succeeded and second.succeeded
+        assert orders.get(10001).refund_status == "completed"  # type: ignore[union-attr]

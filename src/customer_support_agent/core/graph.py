@@ -23,6 +23,9 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
+from agentic_commons.audit import AuditEntry, AuditLedger, NullAuditLedger
+from agentic_commons.basic_sanity import BasicSanityChecker, BasicSanityRequest
+from agentic_commons.config import FeatureSet, get_settings
 from agentic_commons.context import (
     Chunk,
     ContextFailureDetector,
@@ -30,10 +33,14 @@ from agentic_commons.context import (
     StrategySelector,
     Task,
 )
-from agentic_commons.evals import NollmScoringCascadeImpl
-from agentic_commons.basic_sanity import BasicSanityChecker, BasicSanityRequest
 from agentic_commons.control_loop import ControlLoopReport, ToolControlLoop
-from agentic_commons.executor import ApprovedToolCall, ToolExecutor
+from agentic_commons.evals import NollmScoringCascadeImpl
+from agentic_commons.executor import (
+    ApprovedToolCall,
+    ExecutionOutcome,
+    ToolExecutionHandler,
+    ToolExecutor,
+)
 from agentic_commons.gatekeeper import AuthorityContext, Gatekeeper
 from agentic_commons.guardrails import CustomerResponse, ResponseGuardrail
 from agentic_commons.hallucination_protection import DetectionLadder, GroundingReasoningDiagnoser
@@ -47,6 +54,7 @@ from agentic_commons.observability import (
     StageReporter,
     Tracer,
 )
+from agentic_commons.observability.types import utc_now
 from agentic_commons.resilience import (
     DeadLetterQueue,
     ResilientCaller,
@@ -55,6 +63,7 @@ from agentic_commons.resilience import (
 from agentic_commons.security import SecuritySuite
 from agentic_commons.security.auth.policy import AgentPolicy
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
+from agentic_commons.tools.types import ToolResult
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.control_loop import CascadeEvaluator, DeliberationLoop
 from customer_support_agent.core.accounting import TurnAccountant, TurnOutcome
@@ -88,13 +97,23 @@ _FALLBACK_REPLY = (
 )
 
 
+# Each optional stage and the feature that decides whether it is built.
+_STAGE_FEATURES = {
+    "basic_sanity": "basic_sanity",
+    "prompt_injection": "prompt_injection",
+    "content_moderation": "content_moderation",
+    "classify_intent": "intent_classification",
+    "assemble_context": "context",
+}
+
+
 class CustomerSupportAgent:
     """The refund agent: a graph plus the subsystems its nodes call."""
 
     def __init__(
         self,
         llm: LLMClient,
-        gatekeeper: Gatekeeper,
+        gatekeeper: Gatekeeper | None,
         registry: NamespacedToolRegistry,
         tools: SupportTools,
         executor: ToolExecutor,
@@ -115,13 +134,27 @@ class CustomerSupportAgent:
         basic_sanity: BasicSanityChecker | None = None,
         agent_policy: AgentPolicy | None = None,
         intent_router: CustomerSupportIntentRouter | None = None,
+        features: FeatureSet | None = None,
+        handler: ToolExecutionHandler | None = None,
+        audit: AuditLedger | None = None,
     ) -> None:
         settings = get_agent_settings()
+        # Which stages this agent has. Read once, here, because the graph
+        # is compiled from it — a feature flipped afterwards reaches a
+        # running agent only by rebuilding one.
+        self._features = features if features is not None else get_settings().features
         self._llm = llm
         self._gatekeeper = gatekeeper
+        # Written by the Gatekeeper when there is one, and by the agent
+        # itself when there is not — an ungoverned execution is exactly
+        # the one the trail must not be missing.
+        self._audit = audit or NullAuditLedger()
         self._registry = registry
         self._tools = tools
         self._executor = executor
+        # The raw domain adapter, used only where the governed execution
+        # boundary has been withheld. See `_execute_ungoverned`.
+        self._handler = handler
         self._security = security
         self._memory = memory
         self._context = context
@@ -180,6 +213,22 @@ class CustomerSupportAgent:
         self._accountant = TurnAccountant(slos=slos)
         self._logger = get_logger("customer_support_agent")
         self._graph = self._build()
+
+    def adopt_conversation(self, previous: "CustomerSupportAgent") -> None:
+        """Take over the conversation a previous build was holding.
+
+        Who has verified, the order menu they were shown, the transcript
+        and the observations a follow-up refers to all belong to the
+        customer — not to the wiring. A rebuild swaps which controls are
+        wired, and `/harness off` exists precisely to be asked the *same*
+        question again; an agent that dropped the session would demand
+        the customer code back before the comparison could be made.
+        """
+        self._sessions.update(previous._sessions)
+        self._menus.update(previous._menus)
+        self._conversations.update(previous._conversations)
+        self._authoritative_history.update(previous._authoritative_history)
+        self._last_supported_intent.update(previous._last_supported_intent)
 
     async def handle(
         self, query: str, session_id: str = "", customer: Customer | None = None
@@ -488,23 +537,16 @@ class CustomerSupportAgent:
         }
 
     async def basic_sanity(self, state: AgentState) -> dict[str, Any]:
-        """Run cheap, deterministic domain checks before any model call."""
-        if self._basic_sanity is None:
-            self._done(
-                "basic_sanity",
-                summary="No basic sanity checker configured",
-                fields={"configured": False},
-            )
-            return {
-                "metadata": {
-                    **state.metadata,
-                    "basic_sanity": {
-                        "passed": True,
-                        "reason_code": "CHECKER_NOT_CONFIGURED",
-                    },
-                }
-            }
+        """Run cheap, deterministic domain checks before any model call.
 
+        Reached only when this agent was given a checker — `_build` omits
+        the node otherwise, so there is no "not configured" step to
+        narrate. The checks are an *early* duplicate, not the only
+        enforcement: business rules, the tools and the review queue all
+        re-ask the same questions. Withholding this stage therefore costs
+        a model call and a cheap refusal, it does not open a hole.
+        """
+        assert self._basic_sanity is not None
         self._report(
             "basic_sanity",
             event_kind="stage",
@@ -513,9 +555,10 @@ class CustomerSupportAgent:
         result = self._basic_sanity.check(
             BasicSanityRequest(
                 query=state.query,
+                agent_id=self._actor,
                 session_id=state.session_id,
                 actor=state.actor,
-                customer_id=state.customer_id,
+                subject_id="" if state.customer_id is None else str(state.customer_id),
                 metadata=state.metadata,
             )
         )
@@ -586,8 +629,11 @@ class CustomerSupportAgent:
         state: AgentState,
         *,
         reason: str,
-        assessment: Any,
-        moderation: Any,
+        injection_detected: bool = False,
+        injection_reason: str = "",
+        moderation_flagged: bool = False,
+        moderation_reason: str = "",
+        moderation_categories: list[str] | None = None,
     ) -> dict[str, Any]:
         """Persist a security-rejected request and stop before intent/LLM execution."""
         entry = None
@@ -602,11 +648,11 @@ class CustomerSupportAgent:
                     session_id=state.session_id,
                     customer_id=state.customer_id,
                     metadata={
-                        "prompt_injection": bool(assessment.suspicious),
-                        "content_moderation": bool(moderation.flagged),
-                        "injection_reason": assessment.reason if assessment.suspicious else "",
-                        "moderation_categories": list(moderation.categories),
-                        "moderation_reason": moderation.reason if moderation.flagged else "",
+                        "prompt_injection": injection_detected,
+                        "content_moderation": moderation_flagged,
+                        "injection_reason": injection_reason,
+                        "moderation_categories": list(moderation_categories or []),
+                        "moderation_reason": moderation_reason,
                     },
                 )
             except Exception as exc:
@@ -626,8 +672,8 @@ class CustomerSupportAgent:
                 "queued": entry is not None,
                 "queue_id": entry.id if entry is not None else None,
                 "reason": reason,
-                "prompt_injection": bool(assessment.suspicious),
-                "content_moderation": bool(moderation.flagged),
+                "prompt_injection": injection_detected,
+                "content_moderation": moderation_flagged,
                 "persistence_error": bool(enqueue_error),
             },
         )
@@ -645,15 +691,13 @@ class CustomerSupportAgent:
             },
         }
 
-    async def intake(self, state: AgentState) -> dict[str, Any]:
-        """Run the front door: security first, then one intent decision.
+    async def prompt_injection(self, state: AgentState) -> dict[str, Any]:
+        """Screen untrusted input before any of it reaches a prompt.
 
-        The Customer Support intent router is the only scope/intent mechanism.
-        Its deterministic rules may reject only explicit, agent-specific
-        out-of-scope requests. Everything else is sent to the BERT-family
-        classifier; unresolved classifications remain UNKNOWN and are handed
-        to the LLM with conversation context instead of being treated as
-        out-of-scope.
+        A node rather than a step inside one, so that an agent configured
+        without this defence has no injection stage in its graph at all —
+        the trace shows the gap instead of showing a check that passed
+        without looking at anything.
         """
         self._report(
             "prompt_injection_check",
@@ -731,6 +775,23 @@ class CustomerSupportAgent:
                 fields=injection_fields,
             )
 
+        if assessment.suspicious:
+            return self._quarantine_security_request(
+                state,
+                reason="prompt_injection",
+                injection_detected=True,
+                injection_reason=assessment.reason,
+            )
+        return {
+            "decisions": [*state.decisions, f"injection: {assessment.reason}"],
+            "metadata": {
+                **state.metadata,
+                "allowed_actions": assessment.allowed_actions,
+            },
+        }
+
+    async def content_moderation(self, state: AgentState) -> dict[str, Any]:
+        """Screen the message against the content policy."""
         self._report(
             "content_moderation",
             event_kind="security",
@@ -800,25 +861,29 @@ class CustomerSupportAgent:
                 fields=moderation_fields,
             )
 
-        # Security findings are control-plane failures, not advisory hints.
-        # Quarantine before intent classification, context assembly, memory writes,
-        # or any LLM call. The customer receives a generic response; detection
-        # details remain internal in the TUI, log, and dead-letter record.
-        if assessment.suspicious or moderation.flagged:
-            reason = (
-                "security_policy"
-                if assessment.suspicious and moderation.flagged
-                else "prompt_injection"
-                if assessment.suspicious
-                else "content_moderation"
-            )
+        if moderation.flagged:
             return self._quarantine_security_request(
                 state,
-                reason=reason,
-                assessment=assessment,
-                moderation=moderation,
+                reason="content_moderation",
+                moderation_flagged=True,
+                moderation_reason=moderation.reason,
+                moderation_categories=list(moderation.categories),
             )
+        return {
+            "decisions": [*state.decisions],
+            "metadata": {**state.metadata},
+        }
 
+    async def classify_intent(self, state: AgentState) -> dict[str, Any]:
+        """Decide what the customer is asking for, and what that permits.
+
+        The Customer Support intent router is the only scope/intent
+        mechanism. Its deterministic rules may reject only explicit,
+        agent-specific out-of-scope requests. Everything else is sent to
+        the BERT-family classifier; unresolved classifications remain
+        UNKNOWN and are handed to the LLM with conversation context
+        instead of being treated as out-of-scope.
+        """
         self._report(
             "intent_classification",
             event_kind="intent",
@@ -902,12 +967,7 @@ class CustomerSupportAgent:
             fields=self._intent_status_fields(intent),
         )
         self._note(state, "current_intent", intent.name, category="intent")
-        decisions = [
-            f"intent: {self._intent_decision_label(intent)}",
-            f"injection: {assessment.reason}",
-        ]
-        if moderation.flagged:
-            decisions.append(f"moderation: {moderation.reason}")
+        decisions = [f"intent: {self._intent_decision_label(intent)}"]
         if self._memory is not None:
             self._memory.record_event(f"query: {state.query}", self._actor, state.session_id)
             decisions.extend(self._offer_to_memory(state))
@@ -917,7 +977,6 @@ class CustomerSupportAgent:
             "decisions": [*state.decisions, *decisions],
             "metadata": {
                 **state.metadata,
-                "allowed_actions": assessment.allowed_actions,
                 "intent": intent.name,
                 "intent_confidence": intent.confidence,
                 "intent_disposition": intent.disposition.value,
@@ -995,7 +1054,11 @@ class CustomerSupportAgent:
             },
         )
 
-        allowed_actions = state.metadata.get("allowed_actions", [])
+        # Absent means the injection stage was never built, so nothing
+        # narrowed the surface. An empty *list* is a real narrowing to
+        # nothing and still blocks — the two must not be conflated, or
+        # switching the guard off would block every read instead.
+        allowed_actions = state.metadata.get("allowed_actions")
         if isinstance(allowed_actions, list) and tool.qualified_name not in set(allowed_actions):
             self._reporter_blocked(
                 "read_authorization",
@@ -1258,7 +1321,7 @@ class CustomerSupportAgent:
                 event_kind="memory",
                 summary="Checking working memory",
             )
-            held = self._memory.working.size(state.session_id)
+            held = self._memory.window_size(state.session_id)
             self._done(
                 "memory_recall",
                 event_kind="memory",
@@ -1477,6 +1540,21 @@ class CustomerSupportAgent:
             self._tracer.end_span(span, result=result.finish_reason or "")
         self._record_slo("tool_failure_rate", 0.0)
 
+    def _report_grounding(self, *, blocked: bool, summary: str, fields: dict[str, Any]) -> None:
+        """Narrate the grounding stage — but only when there is one.
+
+        With `hallucination_guard` withheld no detector is built, and
+        `ResponseGuardrail.enforce` returns the draft unexamined. Printing
+        "Grounded: 0/0 claims supported" for that would describe a check
+        that never ran, which is worse than silence: it is the screen
+        telling an operator a control is there when it is not. A stage
+        that was not built has nothing to report.
+        """
+        if self._grounding is None:
+            return
+        report = self._reporter_blocked if blocked else self._done
+        report("hallucination_check", summary=summary, event_kind="grounding", fields=fields)
+
     def _record_slo(self, metric: str, value: float) -> None:
         """Feed one observation to the SLO registry, when one is wired."""
         if self._slos is not None:
@@ -1643,22 +1721,16 @@ class CustomerSupportAgent:
                 "schema_valid": True,
                 "unsupported_claims": guardrail_result.unsupported_claims,
             }
-            if guardrail_result.escalated:
-                self._reporter_blocked(
-                    "hallucination_check",
-                    summary="Response blocked by hallucination guard",
-                    event_kind="grounding",
-                    fields=guardrail_fields,
-                )
-            else:
-                self._done(
-                    "hallucination_check",
-                    summary=(
-                        f"Grounded: {guardrail_result.supported}/{guardrail_result.claims} claims supported"
-                    ),
-                    event_kind="grounding",
-                    fields=guardrail_fields,
-                )
+            self._report_grounding(
+                blocked=guardrail_result.escalated,
+                summary=(
+                    "LLM hallucinated"
+                    if guardrail_result.escalated
+                    else f"Grounded: {guardrail_result.supported}/"
+                    f"{guardrail_result.claims} claims supported"
+                ),
+                fields=guardrail_fields,
+            )
             return {
                 "response": guardrail_result.response,
                 "decisions": [
@@ -1682,10 +1754,11 @@ class CustomerSupportAgent:
                 guardrail_fields = guardrail_result.model_dump(
                     exclude={"response"},
                 )
-                self._reporter_blocked(
-                    "hallucination_check",
-                    summary="Response blocked before LLM repair · no authoritative tool evidence",
-                    event_kind="grounding",
+                self._report_grounding(
+                    blocked=True,
+                    summary=(
+                        "Response blocked before LLM repair · no authoritative tool evidence"
+                    ),
                     fields=guardrail_fields,
                 )
                 return {
@@ -1795,22 +1868,16 @@ class CustomerSupportAgent:
         guardrail_fields = guardrail_result.model_dump(
             exclude={"response"},
         )
-        if guardrail_result.escalated:
-            self._reporter_blocked(
-                "hallucination_check",
-                summary="Response blocked by hallucination guard",
-                event_kind="grounding",
-                fields=guardrail_fields,
-            )
-        else:
-            self._done(
-                "hallucination_check",
-                summary=(
-                    f"Grounded: {guardrail_result.supported}/{guardrail_result.claims} claims supported"
-                ),
-                event_kind="grounding",
-                fields=guardrail_fields,
-            )
+        self._report_grounding(
+            blocked=guardrail_result.escalated,
+            summary=(
+                "Response blocked by hallucination guard"
+                if guardrail_result.escalated
+                else f"Grounded: {guardrail_result.supported}/"
+                f"{guardrail_result.claims} claims supported"
+            ),
+            fields=guardrail_fields,
+        )
         state.metadata["hallucination_rate"] = guardrail_result.hallucination_rate
         state.metadata["guardrail_reason_code"] = guardrail_result.reason_code
         state.metadata["guardrail_escalated"] = guardrail_result.escalated
@@ -1887,17 +1954,41 @@ class CustomerSupportAgent:
     # ---- wiring ------------------------------------------------------
 
     def _build(self) -> Any:
-        """Assemble the state graph."""
+        """Assemble the state graph from the stages this agent was given.
+
+        Only enabled stages become nodes, and the edges are wired to the
+        next enabled one — so a withheld capability is absent from the
+        compiled graph rather than present and declining to act. That is
+        the difference an episode is trying to show: the trace has a gap
+        where the control used to be, not a step reporting that it did
+        nothing.
+        """
         graph: StateGraph[AgentState, None, AgentState, AgentState] = StateGraph(AgentState)
-        graph.add_node("intake", self.intake)
         graph.add_node("authenticate", self.authenticate)
         graph.add_node("choose_order", self.choose_order)
-        graph.add_node("basic_sanity", self.basic_sanity)
         graph.add_node("read_intent", self.read_intent)
-        graph.add_node("assemble_context", self.assemble_context)
         graph.add_node("reason", self.reason)
         graph.add_node("act", self.act)
         graph.add_node("finalize", self.finalize)
+
+        # The screening-and-routing run, in order, each present only if
+        # this deployment declared it.
+        front_door = [
+            stage
+            for stage in (
+                # Deliberately first: deterministic domain contradictions are
+                # settled from the database before anything spends a model call.
+                ("basic_sanity", self.basic_sanity),
+                ("prompt_injection", self.prompt_injection),
+                ("content_moderation", self.content_moderation),
+                ("classify_intent", self.classify_intent),
+                ("assemble_context", self.assemble_context),
+            )
+            if self._features.is_on(_STAGE_FEATURES[stage[0]])
+            and self._has_collaborator(stage[0])
+        ]
+        for name, node in front_door:
+            graph.add_node(name, node)
 
         # Authentication is the hard front-door gate.  An unauthenticated
         # request never reaches security screening, intent classification,
@@ -1908,27 +1999,30 @@ class CustomerSupportAgent:
             self._after_authenticate,
             {"choose_order": "choose_order", "done": END},
         )
-        # Resolve deterministic menu choices before anything model-driven.
+        # Resolve deterministic menu choices before anything model-driven,
+        # then hand to the first stage this agent actually has.
+        names = [name for name, _ in front_door]
+        first = names[0] if names else "reason"
         graph.add_conditional_edges(
-            "choose_order", self._after_choose, {"basic_sanity": "basic_sanity", "done": END}
+            "choose_order", self._after_choose, {"next": first, "done": END}
         )
-        # BasicSanity deliberately runs before the BERT intent classifier, so
-        # deterministic domain contradictions (e.g. an already-refunded
-        # order) never spend a model call.
-        graph.add_conditional_edges(
-            "basic_sanity", self._after_basic_sanity, {"intake": "intake", "done": END}
-        )
-        graph.add_conditional_edges(
-            "intake",
-            self._after_intake,
-            {
-                "read_intent": "read_intent",
-                "assemble_context": "assemble_context",
-                "done": END,
-            },
-        )
+
+        # Each stage continues to the next one that exists. Every one of
+        # them can halt the turn, so each edge carries a `done` branch.
+        for position, name in enumerate(names):
+            following = names[position + 1] if position + 1 < len(names) else "reason"
+            if name == "classify_intent":
+                graph.add_conditional_edges(
+                    name,
+                    self._after_classify_intent,
+                    {"read_intent": "read_intent", "next": following, "done": END},
+                )
+            else:
+                graph.add_conditional_edges(
+                    name, self._after_screening, {"next": following, "done": END}
+                )
+
         graph.add_edge("read_intent", END)
-        graph.add_edge("assemble_context", "reason")
         graph.add_conditional_edges(
             "reason", self._after_reason, {"act": "act", "finalize": "finalize"}
         )
@@ -1937,6 +2031,28 @@ class CustomerSupportAgent:
         )
         graph.add_edge("finalize", END)
         return graph.compile()
+
+    def _has_collaborator(self, stage: str) -> bool:
+        """Whether the object a stage needs was actually injected.
+
+        Belt and braces for a caller that constructs the agent directly:
+        a declared feature whose collaborator is missing would otherwise
+        compile a node that raises on its first turn.
+        """
+        required = {"basic_sanity": self._basic_sanity, "assemble_context": self._context}
+        return required.get(stage, self) is not None
+
+    def _after_screening(self, state: AgentState) -> str:
+        """A screening stage either halted the turn or passed it along."""
+        return "done" if state.metadata.get("halted") else "next"
+
+    def _after_classify_intent(self, state: AgentState) -> str:
+        """Route reads deterministically; keep writes and ambiguity on the LLM path."""
+        if state.metadata.get("halted"):
+            return "done"
+        if state.metadata.get("intent_execution_route") == "deterministic_read":
+            return "read_intent"
+        return "next"
 
     def _after_authenticate(self, state: AgentState) -> str:
         """Stop until identity is verified; only verified sessions enter intake.
@@ -1947,21 +2063,9 @@ class CustomerSupportAgent:
         """
         return "done" if state.metadata.get("halted") else "choose_order"
 
-    def _after_intake(self, state: AgentState) -> str:
-        """Route reads deterministically; keep writes/ambiguous work on the LLM path."""
-        if state.metadata.get("halted"):
-            return "done"
-        if state.metadata.get("intent_execution_route") == "deterministic_read":
-            return "read_intent"
-        return "assemble_context"
-
     def _after_choose(self, state: AgentState) -> str:
         """A menu choice is answered from the database and finishes here."""
-        return "done" if state.metadata.get("halted") else "basic_sanity"
-
-    def _after_basic_sanity(self, state: AgentState) -> str:
-        """Blocked sanity checks finish the turn before the model sees it."""
-        return "done" if state.metadata.get("halted") else "intake"
+        return "done" if state.metadata.get("halted") else "next"
 
     def _after_reason(self, state: AgentState) -> str:
         """Act on requested tools, or finish."""
@@ -1986,6 +2090,66 @@ class CustomerSupportAgent:
             fields=_control_loop_fields(report),
         )
         return "finalize"
+
+    async def _execute_ungoverned(
+        self,
+        call: Any,
+        authority: AuthorityContext,
+        control_fields: dict[str, Any],
+    ) -> tuple[str, str, str, dict[str, Any]]:
+        """Run a tool with nothing standing between the model and execution.
+
+        Reachable only where the `gatekeeper` feature has been withheld,
+        which is what an episode does to show the difference. Two things
+        still hold: the audit entry is written, so the trail shows that an
+        unauthorized execution happened rather than showing nothing at
+        all; and no budget is committed, because no budget was consulted.
+        """
+        # No report. A stage that was not built has nothing to say, and a
+        # GATEKEEPER line reading "no gatekeeper" is the screen describing
+        # a control that is not there — the absence is the demonstration,
+        # so the trace should show a gap where the check used to be. The
+        # audit entry below still records the ungoverned execution.
+        approved = ApprovedToolCall.ungoverned(call, authority)
+        self._audit.record(
+            AuditEntry(
+                trace_id=str(authority.request_context.get("metadata", {}).get("trace_id", "")),
+                actor=authority.actor,
+                action=call.action,
+                authority_context=authority.model_dump(mode="json"),
+                decision="allow",
+                rationale=approved.decision.reason,
+            )
+        )
+        # Straight to the agent's domain adapter, with no execution
+        # boundary around it: no idempotency key, so asking twice really
+        # does refund twice, and no timeout, so a slow tool holds the turn
+        # open. Those are the Executor's guarantees, and this is what the
+        # absence of them looks like.
+        outcome = await self._execute_directly(call)
+        return self._after_execution(call, outcome, control_fields, gatekeeper_fields={})
+
+    async def _execute_directly(self, call: Any) -> ExecutionOutcome:
+        """Run one tool with nothing wrapped around it.
+
+        Shaped as an `ExecutionOutcome` so the reporting path downstream
+        cannot tell the difference — what changed is that no idempotency
+        key was taken and no deadline applied, not how the result reads.
+        `replayed` is False by construction here: replay is exactly the
+        thing an idempotency guard provides, and there is none.
+        """
+        started = utc_now()
+        if self._handler is None:
+            result = ToolResult(success=False, error="No tool handler is wired for direct execution")
+        else:
+            result = await self._handler.execute(call)
+        return ExecutionOutcome(
+            result=result,
+            status="completed" if result.success else "failed",
+            replayed=False,
+            started_at=started,
+            ended_at=utc_now(),
+        )
 
     async def _invoke(
         self, name: str, arguments: str, state: AgentState, offered: set[str]
@@ -2075,6 +2239,9 @@ class CustomerSupportAgent:
                 },
             )
 
+        if self._gatekeeper is None:
+            return await self._execute_ungoverned(call, authority, control_fields)
+
         self._report(
             "gatekeeper_evaluation",
             event_kind="gatekeeper",
@@ -2140,12 +2307,22 @@ class CustomerSupportAgent:
         )
         approved = ApprovedToolCall.from_decision(call, decision, authority)
         outcome = await self._executor.execute(approved)
+        if outcome.result.success and not outcome.replayed:
+            # Budget is charged only for a real completion, not a replay.
+            self._gatekeeper.commit(call, authority)
+        return self._after_execution(call, outcome, control_fields, gatekeeper_fields)
+
+    def _after_execution(
+        self,
+        call: Any,
+        outcome: Any,
+        control_fields: dict[str, Any],
+        gatekeeper_fields: dict[str, Any],
+    ) -> tuple[str, str, str, dict[str, Any]]:
+        """Report one completed tool call, governed or not."""
         result = outcome.result
         result_fields = _safe_tool_result_fields(call, result, outcome=outcome)
         if result.success:
-            # Budget is charged only for a real completion, not a replay.
-            if not outcome.replayed:
-                self._gatekeeper.commit(call, authority)
             self._control_loop.record_success(call, result.output)
             self._done(
                 "tool_result",
@@ -2170,7 +2347,7 @@ class CustomerSupportAgent:
                 "control_loop": control_fields,
                 "control_loop_status": "completed",
                 "gatekeeper": gatekeeper_fields,
-                "gatekeeper_status": "completed",
+                "gatekeeper_status": "completed" if gatekeeper_fields else "absent",
                 "executor": result_fields,
                 "tool_result": result_fields,
                 "tool_status": tool_status,
@@ -2186,11 +2363,18 @@ class CustomerSupportAgent:
         Gatekeeper, which still rules on whatever is actually called.
         """
         allowed = set(state.metadata.get("allowed_actions", []))
-        if state.metadata.get("intent_execution_route") == "llm_fallback":
-            # The classifier could not safely narrow the capability. Give the
-            # LLM the security-allowed tool surface so conversation context can
-            # resolve the user's intent. This does NOT grant authority:
-            # Gatekeeper + RBAC still decide every invocation.
+        classified = "intent" in state.metadata
+        if not classified or state.metadata.get("intent_execution_route") == "llm_fallback":
+            # Either the classifier could not safely narrow the capability, or
+            # this agent has no classifier at all. Both mean *nothing narrowed
+            # by intent* — which is not the same as nothing permitted. Treating
+            # the absent classifier as an empty permission set offered the model
+            # no tools whatsoever, so `/harness off` produced an agent that
+            # could not act rather than one free to act: the exact inverse of
+            # what switching the harness off is meant to show.
+            #
+            # This grants no authority. The Gatekeeper and RBAC still rule on
+            # every invocation, and the injection guard's narrowing still holds.
             return [
                 tool
                 for tool in self._registry.all_tools()

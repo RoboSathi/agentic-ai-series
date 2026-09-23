@@ -102,10 +102,10 @@ class TestFeatureToggles:
         self, restore_settings: None
     ) -> None:
         """A sub-feature decides for itself, once its parent has allowed it."""
-        get_settings().security.pii.enabled = False
-        toggle = ConfigFeatureToggle()
-        assert toggle.is_enabled("security", "auth") is True
-        assert toggle.is_enabled("security", "pii") is False
+        settings = get_settings()
+        settings.features = settings.features.with_override("memory.episodic", False)
+        assert settings.features.is_on("memory.working") is True
+        assert settings.features.is_on("memory.episodic") is False
 
     def test_a_section_without_an_enabled_flag_is_always_on(self) -> None:
         """The Gatekeeper has no off switch, by construction (PRD G1)."""
@@ -135,9 +135,9 @@ class TestRunScopedOverlays:
     def test_an_overlay_changes_the_live_settings(
         self, tmp_path: Path, restore_settings: None
     ) -> None:
-        assert get_settings().memory.enabled is True
-        use_overlay(self._write(tmp_path, "memory:\n  enabled: false\n"))
-        assert reload_settings().memory.enabled is False
+        assert get_settings().features.is_on("memory") is True
+        use_overlay(self._write(tmp_path, "features:\n  memory: false\n"))
+        assert reload_settings().features.is_on("memory") is False
 
     def test_it_merges_deeply_rather_than_replacing_the_section(
         self, tmp_path: Path, restore_settings: None
@@ -148,9 +148,10 @@ class TestRunScopedOverlays:
         switched off `security.pii` and took the injection patterns with
         it would leave an agent that looks configured and is undefended.
         """
-        use_overlay(self._write(tmp_path, "security:\n  pii:\n    enabled: false\n"))
+        use_overlay(self._write(tmp_path, "security:\n  pii:\n    mode: remove\n"))
         settings = reload_settings()
-        assert settings.security.pii.enabled is False
+        assert settings.security.pii.mode == "remove"
+        assert settings.security.pii.patterns
         assert settings.security.prompt_injection.suspicious_phrases
 
     def test_it_applies_after_the_agent_overlay(
@@ -173,14 +174,14 @@ class TestRunScopedOverlays:
 
     def test_sources_report_the_overlay(self, tmp_path: Path, restore_settings: None) -> None:
         """`/session` answers "which config is live?" from this list."""
-        overlay = self._write(tmp_path, "memory:\n  enabled: false\n")
+        overlay = self._write(tmp_path, "features:\n  memory: false\n")
         use_overlay(overlay)
         assert overlay.resolve() in config_sources()
 
     def test_adding_the_same_overlay_twice_is_the_same_as_once(
         self, tmp_path: Path, restore_settings: None
     ) -> None:
-        overlay = self._write(tmp_path, "memory:\n  enabled: false\n")
+        overlay = self._write(tmp_path, "features:\n  memory: false\n")
         use_overlay(overlay)
         use_overlay(overlay)
         assert config_sources().count(overlay.resolve()) == 1
@@ -188,17 +189,17 @@ class TestRunScopedOverlays:
     def test_clearing_restores_the_base_configuration(
         self, tmp_path: Path, restore_settings: None
     ) -> None:
-        use_overlay(self._write(tmp_path, "memory:\n  enabled: false\n"))
-        assert reload_settings().memory.enabled is False
+        use_overlay(self._write(tmp_path, "features:\n  memory: false\n"))
+        assert reload_settings().features.is_on("memory") is False
         clear_overlays()
-        assert reload_settings().memory.enabled is True
+        assert reload_settings().features.is_on("memory") is True
 
     def test_a_missing_overlay_is_not_an_error(
         self, tmp_path: Path, restore_settings: None
     ) -> None:
         """An episode with no config of its own still runs, fully featured."""
         use_overlay(tmp_path / "absent.yaml")
-        assert reload_settings().memory.enabled is True
+        assert reload_settings().features.is_on("memory") is True
 
     def test_reload_actually_rereads_the_file(self, tmp_path: Path, restore_settings: None) -> None:
         """The defect this guards, which was real.
@@ -209,8 +210,8 @@ class TestRunScopedOverlays:
         nothing — so an overlay applied afterwards appeared in
         `config_sources()` and changed nothing at all.
         """
-        overlay = self._write(tmp_path, "memory:\n  enabled: false\n")
+        overlay = self._write(tmp_path, "features:\n  memory: false\n")
         use_overlay(overlay)
-        assert reload_settings().memory.enabled is False
-        overlay.write_text("memory:\n  enabled: true\n")
-        assert reload_settings().memory.enabled is True
+        assert reload_settings().features.is_on("memory") is False
+        overlay.write_text("features:\n  memory: true\n")
+        assert reload_settings().features.is_on("memory") is True

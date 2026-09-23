@@ -31,7 +31,6 @@ class EpisodicStore:
     def __init__(self, root: Path | None = None) -> None:
         settings = get_settings().memory.episodic
         self._root = root or settings.resolved_path
-        self._enabled = settings.enabled
         self._root.mkdir(parents=True, exist_ok=True)
         self._logger = get_logger("memory")
 
@@ -42,8 +41,6 @@ class EpisodicStore:
     @logged("memory")
     def write(self, fact: MemoryFact, provenance: Provenance) -> WriteResult:
         """Append one event. Nothing is ever updated or deleted in place."""
-        if not self._enabled:
-            return WriteResult(route="discard", written=False, reason="episodic memory disabled")
         recorded = fact.model_copy(update={"memory_type": "episodic", "provenance": provenance})
         session_id = recorded.metadata.get("session_id", "default")
         with self.session_path(str(session_id)).open("a", encoding="utf-8") as handle:

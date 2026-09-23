@@ -14,7 +14,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header, Input
 
-from agentic_commons.commands import Command, CommandRegistry
+from agentic_commons.commands import Command, CommandRegistry, ConsoleEffect
 from agentic_commons.commands.data import MemoryCommand
 from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger
@@ -222,7 +222,7 @@ class AgenticTuiApp(App[None]):
 
         self._panel.note(
             "Before I can look anything up, I need to verify your account.\n"
-            f"Please share your 7-character user code.",
+            "Please share your 7-character user code.",
             style="yellow",
         )
 
@@ -251,9 +251,7 @@ class AgenticTuiApp(App[None]):
             style="bold bright_cyan",
         )
         result = await self._commands.dispatch(line)
-
-        if result.effect.clear_transcript:
-            self.action_clear_feed()
+        self._apply(result.effect)
 
         if not result.effect.clear_transcript:
             self._panel.show_lines(
@@ -261,6 +259,45 @@ class AgenticTuiApp(App[None]):
             )
 
         self._schedule_follow_latest()
+
+    def _apply(self, effect: ConsoleEffect) -> None:
+        """Do the things only the console can do.
+
+        A command states an effect and this applies it; giving commands a
+        handle on the widgets would make every command a UI component.
+
+        The rebuild is the one that matters for `/harness`. Which
+        subsystems get wired is decided when the agent is composed, so an
+        agent already on screen was built under the previous answer — and
+        would go on running the harness the operator just switched off.
+        """
+        if effect.clear_transcript:
+            self.action_clear_feed()
+        if effect.rebuild_agent:
+            self._rebuild_agent()
+
+    def _rebuild_agent(self) -> None:
+        """Compose the agent again under the configuration as it now stands.
+
+        The conversation carries across when the agent knows how to take
+        one over. A rebuild changes which controls are wired, not who is
+        on the other end — `/harness off` is meant to be asked the same
+        question again, and an agent that had forgotten the customer
+        would ask them to verify before every comparison.
+
+        Asked for by name rather than required: the console composes
+        whatever agent it was given, and one with no conversation to
+        carry simply does not offer the method.
+        """
+        if self._factory is None:
+            return
+        previous = self._agent
+        self._agent = self._factory(StageReporter(self._feed, "tui"))
+        adopt = getattr(self._agent, "adopt_conversation", None)
+        if previous is not None and callable(adopt):
+            adopt(previous)
+        self._bind_live_commands()
+
 
     async def _run(self, query: str) -> None:
         self._turn += 1
@@ -425,8 +462,8 @@ def main() -> None:
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-    from customer_support_agent.core import CustomerSupportIntentRouter, build_agent
     from agentic_commons.intent import create_intent_classifier
+    from customer_support_agent.core import CustomerSupportIntentRouter, build_agent
 
     classifier = create_intent_classifier()
     print(f"Loading intent classifier: {classifier.model_name}")

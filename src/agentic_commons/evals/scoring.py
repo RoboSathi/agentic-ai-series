@@ -176,7 +176,13 @@ class NliEntailmentScorer:
         if not claim.evidence:
             return None
         result = await self._model.entails(" ".join(claim.evidence), claim.text)
-        if result.score < self._threshold:
+        # The threshold is a probability, so it applies only to a model that
+        # returns one. Against the lexical fallback's token coverage it
+        # declined every paraphrase and pushed it down to the judge, which
+        # is why nollm_resolved_ratio sat at zero.
+        if result.calibrated and result.score < self._threshold:
+            return None
+        if result.label == "unknown":
             return None
         return Verdict(
             label="supported" if result.entailed else "contradicted",

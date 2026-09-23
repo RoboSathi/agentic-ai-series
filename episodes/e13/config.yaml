@@ -26,30 +26,30 @@ episode:
     - "what do you know about how I like to be contacted?"
 
 memory:
-  enabled: true
-  working:
-    enabled: true
-  episodic:
-    enabled: true
-  semantic:
-    enabled: true
-  procedural:
-    enabled: true
   write_pipeline:
     enabled: true
 
-context:
-  enabled: true
+# All four CoALA classes, because the episode is about which store a fact
+# belongs in — and that question is unanswerable with any of them absent.
+# The security suite has its own module (M13) and grounding has its own
+# (M11); narrating them here would bury the memory steps.
+features:
+  prompt_injection: false
+  content_moderation: false
+  pii: true
+  intent_classification: true
+  hallucination_guard: false
+  gatekeeper: true
+  memory:
+    enabled: true
+    working: true
+    episodic: true
+    semantic: true
+    procedural: true
+  context:
+    enabled: true
+    rerank: true
+    failure_detection: true
 
-# Off for this episode. The security suite has its own module (M13) and
-# grounding has its own (M11); narrating them here would bury the memory
-# steps this episode exists to show.
-security:
-  prompt_injection:
-    enabled: false
-  content_moderation:
-    enabled: false
-hallucination_protection:
-  enabled: false
 guardrails:
   enabled: false

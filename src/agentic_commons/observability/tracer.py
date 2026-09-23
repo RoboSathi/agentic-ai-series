@@ -11,8 +11,8 @@ from typing import Any, Iterator, Protocol, runtime_checkable
 
 from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger, set_current_trace_id
-from agentic_commons.observability.types import Span, utc_now
 from agentic_commons.observability.store import DuckDbObservabilityStore
+from agentic_commons.observability.types import Span, utc_now
 from agentic_commons.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
 
 _CREATE_SQLITE_SPANS_TABLE = """

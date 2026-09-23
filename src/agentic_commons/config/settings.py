@@ -14,6 +14,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from agentic_commons.config.features import FeatureSet
 from agentic_commons.config.paths import resolve_path
 from agentic_commons.config.yaml_config import load_section
 
@@ -245,7 +246,6 @@ class ObservabilitySettings(YamlBackedSettings):
 class RerankSettings(BaseModel):
     """Cross-encoder reranking of the retrieved shortlist (LLD §7)."""
 
-    enabled: bool
     shortlist: int
     min_candidates: int
 
@@ -264,7 +264,6 @@ class ContextStrategySettings(BaseModel):
 class ContextFailureDetectionSettings(BaseModel):
     """Context-failure detection thresholds (E17)."""
 
-    enabled: bool
     checkpoints_tokens: list[int]
     degradation_threshold: float
 
@@ -273,7 +272,6 @@ class ContextSettings(YamlBackedSettings):
     """Five-stage assembly pipeline, retrieval and strategies (LLD §7)."""
 
     _yaml_section = "context"
-    enabled: bool
     token_budget: int
     chars_per_token: int
     retrieval_mode: RetrievalMode
@@ -289,8 +287,8 @@ class ContextSettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="CONTEXT__")
 
 
-class MemoryStoreToggle(BaseModel):
-    """Independent toggle for one CoALA store."""
+class EnabledToggle(BaseModel):
+    """A section whose only setting is whether it runs."""
 
     enabled: bool
 
@@ -298,7 +296,6 @@ class MemoryStoreToggle(BaseModel):
 class EpisodicMemorySettings(BaseModel):
     """Episodic store — append-only, one file per session (E14)."""
 
-    enabled: bool
     path: str
 
     @property
@@ -309,7 +306,6 @@ class EpisodicMemorySettings(BaseModel):
 class SemanticMemorySettings(BaseModel):
     """Semantic store — structured facts with fuzzy key lookup."""
 
-    enabled: bool
     fuzzy_match_threshold: float
 
 
@@ -339,12 +335,9 @@ class MemorySettings(YamlBackedSettings):
     """All four CoALA stores plus the write pipeline (LLD §8)."""
 
     _yaml_section = "memory"
-    enabled: bool
     schema_version: str
-    working: MemoryStoreToggle
     episodic: EpisodicMemorySettings
     semantic: SemanticMemorySettings
-    procedural: MemoryStoreToggle
     write_pipeline: MemoryWritePipelineSettings
     retrieval_weights: MemoryRetrievalWeights
     provenance_weights: dict[str, float]
@@ -369,7 +362,6 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     """Detection ladder thresholds (LLD)."""
 
     _yaml_section = "hallucination_protection"
-    enabled: bool
     enforce_grounding: bool
     confidence_threshold: float
     # Grounding-specific NLI threshold. Keep the generic confidence threshold
@@ -451,7 +443,6 @@ class AuthSettings(BaseModel):
 class PiiSettings(BaseModel):
     """PII detection/redaction/minimization (E32)."""
 
-    enabled: bool
     mode: RedactionMode
     mask_token: str
     ner_enabled: bool
@@ -493,7 +484,6 @@ class SecurityGuardSettings(BaseModel):
 class PromptInjectionSettings(BaseModel):
     """Instruction/data separation and tool scoping (E30)."""
 
-    enabled: bool
     data_open_tag: str
     data_close_tag: str
     suspicious_phrases: list[str]
@@ -502,7 +492,6 @@ class PromptInjectionSettings(BaseModel):
 class ContentModerationSettings(BaseModel):
     """Tier-2 advisory content classifier."""
 
-    enabled: bool
     blocked_terms: list[str]
 
 
@@ -558,8 +547,8 @@ class ResilienceSettings(YamlBackedSettings):
     retry: RetrySettings
     timeout: TimeoutSettings
     bulkhead: BulkheadSettings
-    idempotency: MemoryStoreToggle
-    saga: MemoryStoreToggle
+    idempotency: EnabledToggle
+    saga: EnabledToggle
     dead_letter_queue: DeadLetterQueueSettings
 
     model_config = SettingsConfigDict(env_prefix="RESILIENCE__")
@@ -624,13 +613,6 @@ class ToolsSettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="TOOLS__")
 
 
-class HarnessCommandSettings(BaseModel):
-    """What `/harness` considers to be the harness (E01)."""
-
-    # Dotted feature paths, each one `set_enabled` accepts.
-    controls: list[str]
-
-
 class CommandSettings(YamlBackedSettings):
     """Console slash commands (LLD §20)."""
 
@@ -638,7 +620,6 @@ class CommandSettings(YamlBackedSettings):
     default_limit: int
     value_preview_chars: int
     recent_window: int
-    harness: HarnessCommandSettings
 
     model_config = SettingsConfigDict(env_prefix="COMMANDS__")
 
@@ -724,6 +705,11 @@ class AppConfig(BaseSettings):
     tools: ToolsSettings = Field(default_factory=lambda: ToolsSettings())  # type: ignore[call-arg]
     tui: TuiSettings = Field(default_factory=lambda: TuiSettings())  # type: ignore[call-arg]
     commands: CommandSettings = Field(default_factory=lambda: CommandSettings())  # type: ignore[call-arg]
+    # Which capabilities this deployment was given. Declared by the agent
+    # rather than the platform, and merged here by the same overlay chain
+    # as everything else — so an episode narrows the posture by declaring
+    # a `features:` block, not by calling a setter.
+    features: FeatureSet = Field(default_factory=lambda: FeatureSet(tree=load_section("features")))
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

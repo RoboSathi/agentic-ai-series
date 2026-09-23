@@ -1,5 +1,5 @@
-from customer_support_agent.core.intent import CustomerSupportIntentRouter
 from agentic_commons.intent import IntentDisposition
+from customer_support_agent.core.intent import CustomerSupportIntentRouter
 
 
 def test_refund_request_phrases_are_deterministically_supported():

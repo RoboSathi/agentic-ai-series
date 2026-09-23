@@ -17,47 +17,47 @@ from agentic_commons.persistence import SqliteConnectionPool
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.core import build_agent
 from customer_support_agent.core.graph import is_customer_ready
-from customer_support_agent.core.intent import IntentClassifier
+from customer_support_agent.core.intent import CustomerSupportIntentRouter
 from tests.conftest import ScriptedLLM, tool_call
 
 
 class TestFollowupInheritsTheSubject:
     def test_a_bare_reference_continues_the_previous_intent(self) -> None:
-        classifier = IntentClassifier()
+        classifier = CustomerSupportIntentRouter()
         first = classifier.classify("status of order 10005")
         assert classifier.classify("what about 10010", previous=first).name == "order_enquiry"
 
     def test_a_bare_order_number_alone_continues_it(self) -> None:
-        classifier = IntentClassifier()
+        classifier = CustomerSupportIntentRouter()
         first = classifier.classify("status of order 10005")
         assert classifier.classify("10010?", previous=first).name == "order_enquiry"
 
     def test_the_continuation_is_marked_as_such(self) -> None:
         """An operator should see the intent was inherited, not matched."""
-        classifier = IntentClassifier()
+        classifier = CustomerSupportIntentRouter()
         first = classifier.classify("status of order 10005")
         assert classifier.classify("how about 10008", previous=first).matched_phrase == "continued"
 
     def test_an_unrelated_follow_up_does_not_inherit(self) -> None:
         """ "thanks, bye" is not a continuation of an order enquiry."""
-        classifier = IntentClassifier()
+        classifier = CustomerSupportIntentRouter()
         first = classifier.classify("status of order 10005")
         assert classifier.classify("thanks, goodbye", previous=first).name == "general_enquiry"
 
     def test_nothing_is_inherited_from_a_toolless_intent(self) -> None:
-        classifier = IntentClassifier()
+        classifier = CustomerSupportIntentRouter()
         first = classifier.classify("who are you")
         assert classifier.classify("what about 10010", previous=first).name == "general_enquiry"
 
     def test_inheritance_never_widens_authority(self) -> None:
         """A follow-up reuses the earlier intent; it cannot escalate it."""
-        classifier = IntentClassifier()
+        classifier = CustomerSupportIntentRouter()
         enquiry = classifier.classify("status of order 10005")
         continued = classifier.classify("what about 10010", previous=enquiry)
         assert "process_refund" not in continued.allowed_tools
 
     def test_an_explicit_refund_still_wins_over_inheritance(self) -> None:
-        classifier = IntentClassifier()
+        classifier = CustomerSupportIntentRouter()
         enquiry = classifier.classify("status of order 10005")
         assert classifier.classify("refund it then", previous=enquiry).name == "refund_request"
 

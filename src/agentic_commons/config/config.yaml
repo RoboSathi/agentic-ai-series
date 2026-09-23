@@ -1,10 +1,17 @@
 # Tracked defaults for every live subsystem. Never put API keys here — those
 # come from bare environment variables (nvidia_api_key, hf_api_key).
 #
-# Every governance feature and sub-feature is an independent `enabled` flag
-# (PRD G6) and can be flipped live at runtime via agentic_commons.config's
-# FeatureToggle — no restart. The Gatekeeper itself is always invoked (PRD
-# G1); only its sub-features are toggleable.
+# Governance capabilities are declared in the `features:` block below and
+# by each agent in its own config. `/harness` flips them live — a hot
+# reload that rebuilds the agent, never a restart.
+#
+# PRD G1 ("the Gatekeeper is always invoked; no execution path can bypass
+# it") no longer holds as written. The Gatekeeper is a feature like the
+# others and an episode may withhold it, because a control nobody has
+# seen removed is a control nobody has seen. Two things still hold on
+# that path: the audit entry is written, so an ungoverned execution
+# leaves a record rather than leaving nothing; and no budget is committed,
+# because no budget was consulted.
 #
 # Override anything locally via config/local.yaml (gitignored). Paths are
 # resolved relative to the repository root, never the shell's CWD.
@@ -24,6 +31,48 @@ agent:
 
 config:
   enabled: true
+
+# The harness: the controls you can remove and still get an agent that
+# runs — just a worse or more dangerous one. Everything absent from this
+# list is always on, because removing it does not produce a reckless
+# agent, it produces a broken program: the control loop and its budgets,
+# resilience, observability, audit, logging, persistence, tool calling
+# and schema validation are plumbing, not capabilities to argue about.
+#
+# These are platform *defaults*. Each agent declares its own posture in
+# its own config.yaml and an episode narrows it further in its overlay —
+# both merged here by the ordinary overlay chain, so nothing special
+# happens to this section. The composition root reads it once and wires
+# what it names; a feature switched off is a stage that is never built
+# and never appears in the graph, not a component that runs and reports
+# having done nothing.
+#
+# A sub-feature is on only if its parent is: switching `memory` off
+# switches off all four CoALA stores without restating them.
+features:
+  # Cheap deterministic domain checks before any model call: does this
+  # order exist, is it the customer's, has it already been refunded, is
+  # the amount sane. Withheld, the agent still answers — it just spends a
+  # model call on a question the database had already settled, and leans
+  # on the Gatekeeper and business rules downstream instead of stopping
+  # early. The implementation is the agent's; only the contract is here.
+  basic_sanity: true
+  prompt_injection: true
+  content_moderation: true
+  pii: true
+  intent_classification: true
+  hallucination_guard: true
+  gatekeeper: true
+  memory:
+    enabled: true
+    working: true
+    episodic: true
+    semantic: true
+    procedural: true
+  context:
+    enabled: true
+    rerank: true
+    failure_detection: true
 
 logging:
   enabled: true
@@ -167,7 +216,6 @@ observability:
   # evaluator passes and human review are what actually add up.
 
 context:
-  enabled: true
   token_budget: 3000
   chars_per_token: 4
   retrieval_mode: hybrid   # lexical | dense | hybrid | graph
@@ -178,7 +226,6 @@ context:
   # together. Bounded to a shortlist because that cost is what stops a
   # cross-encoder being usable over a corpus.
   rerank:
-    enabled: true
     shortlist: 10
     # Below this, reranking cannot change the answer — reordering two
     # chunks that both fit the budget buys nothing for a network call.
@@ -194,24 +241,16 @@ context:
     consolidate: true
   reduce_keep_ratio: 0.5
   failure_detection:
-    enabled: true
     checkpoints_tokens: [10000, 30000, 60000, 100000, 150000]
     degradation_threshold: 0.2
 
 memory:
-  enabled: true
   schema_version: memory-schema-v1
-  working:
-    enabled: true
   episodic:
-    enabled: true
     # Neutral default; each agent overlays its own session-log directory.
     path: data/episodic
   semantic:
-    enabled: true
     fuzzy_match_threshold: 0.6
-  procedural:
-    enabled: true
   write_pipeline:
     enabled: true
     # Openers that mark a question rather than a claim. A question states
@@ -280,7 +319,6 @@ guardrails:
   constrained_backend: llamacpp_grammar
 
 hallucination_protection:
-  enabled: true
   enforce_grounding: true
   confidence_threshold: 0.7
   # Minimum NLI probability required to accept an entailment as grounded.
@@ -303,7 +341,9 @@ hallucination_protection:
   max_repair_attempts: 1
 
 gatekeeper:
-  # The Gatekeeper is always invoked (PRD G1). These are its sub-features.
+  # Parameters and sub-features. Whether the Gatekeeper is invoked at all
+  # is `features.gatekeeper` — see the header above for what withholding
+  # it does and does not switch off.
   authority_grant_max_rank: 5
   # The Authority Hierarchy, strongest first. Only the first
   # `authority_grant_max_rank` sources can grant or expand authority;
@@ -355,11 +395,8 @@ security:
     roles: {}
     action_permissions: {}
   pii:
-    # On. Traces, logs and tool calls all carry customer text, and a
-    # detector that is switched off is a detector that is not there.
     # `mask` keeps the shape of a value without its content, so a
     # redacted trace is still readable as a trace.
-    enabled: true
     mode: mask             # mask | tokenize | remove
     mask_token: "[REDACTED]"
     ner_enabled: false
@@ -375,10 +412,6 @@ security:
     # call leaves the harness (data minimization, E32).
     tool_call_allowed_fields: [order_id, user_id, amount, reason, status]
   prompt_injection:
-    # On: untrusted text is delimited and the tool surface narrowed before
-    # anything is concatenated into a prompt. This is an agent talking to
-    # the public, and the defence costs one pass over the message.
-    enabled: true
     data_open_tag: "<untrusted_data>"
     data_close_tag: "</untrusted_data>"
     suspicious_phrases:
@@ -391,7 +424,6 @@ security:
       - override your
       - my refund limit is now
   content_moderation:
-    enabled: true
     blocked_terms: [kill, bomb, terrorist]
   guards:
     # Hosted model guards. These are optional defense-in-depth detectors;
@@ -496,35 +528,6 @@ commands:
   default_limit: 15        # rows a listing shows when no limit is given
   value_preview_chars: 40  # where a long stored value is elided in a table
   recent_window: 20        # how many recent records the summaries look back over
-  # What `/harness off` switches off, and what `/harness` reports on.
-  #
-  # These are the controls that stand between a model's proposal and its
-  # execution — the difference E01 exists to show. Turning them off
-  # leaves the model, the plumbing it needs to run (config, logging, the
-  # provider adapter, the database) and nothing that would stop it.
-  #
-  # A list rather than a constant in Python: which controls count as
-  # "the harness" is exactly the question the series spends 48 episodes
-  # answering, and it should be arguable in a file rather than compiled
-  # in. Each entry is a dotted feature path `set_enabled` accepts.
-  #
-  # `security.auth` is deliberately NOT here. It is how the agent knows
-  # who is asking, not something standing between a proposal and its
-  # execution — and switching it off does not produce a reckless agent,
-  # it produces one that cannot authenticate anybody and so can do
-  # nothing at all. That is a different demonstration, and a duller one.
-  harness:
-    controls:
-      - security.prompt_injection
-      - security.pii
-      - security.content_moderation
-      - gatekeeper.ledger
-      - gatekeeper.surface_policy
-      - gatekeeper.automation
-      - guardrails
-      - hallucination_protection
-      - memory
-      - resilience
 
 tui:
   refresh_interval_ms: 100

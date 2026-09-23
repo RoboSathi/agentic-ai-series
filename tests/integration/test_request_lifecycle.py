@@ -134,7 +134,7 @@ class TestMemoryAcrossTurns:
         """E16's cross-session recall, through the real facade."""
         from agentic_commons.memory import EpisodicStore, SemanticStore
 
-        memory = MemoryFacade(semantic=SemanticStore(seeded_pool), episodic=EpisodicStore(tmp_path))
+        memory = MemoryFacade.complete(semantic=SemanticStore(seeded_pool), episodic=EpisodicStore(tmp_path))
         agent = build_agent(
             llm=ScriptedLLM([{"content": "Noted."}]),
             pool=seeded_pool,

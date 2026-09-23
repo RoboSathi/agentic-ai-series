@@ -32,19 +32,20 @@ tools:
   # handed something that moves money.
   selection_min_score: 0.15
 
-context:
-  enabled: true
-
 # Off: this episode is about the tool surface, not about memory, content
 # screening or grounding.
-memory:
-  enabled: false
-security:
-  prompt_injection:
-    enabled: false
-  content_moderation:
-    enabled: false
-hallucination_protection:
-  enabled: false
+features:
+  prompt_injection: false
+  content_moderation: false
+  pii: true
+  intent_classification: true
+  hallucination_guard: false
+  gatekeeper: true
+  memory: false
+  context:
+    enabled: true
+    rerank: true
+    failure_detection: true
+
 guardrails:
   enabled: false

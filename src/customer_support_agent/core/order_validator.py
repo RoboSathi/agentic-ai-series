@@ -22,7 +22,6 @@ from agentic_commons.logging import get_logger
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.core.repositories import OrdersRepository
 
-
 # Deliberately conservative: only treat a number as an order id when the
 # customer explicitly labels it as an order. Bare numbers are left to the
 # existing menu-selection path so BasicSanity never guesses.
@@ -70,6 +69,9 @@ class OrderSanityCheck(BasicSanityChecker):
         """Run only deterministic checks that are safe before the model."""
         order_id = self._extract_order_id(request.query, request.metadata)
         operation = self._operation(request.query, request.metadata)
+        # The platform hands over an opaque subject id; reading it back as
+        # a customer number is this agent's business, not the platform's.
+        customer_id = int(request.subject_id) if request.subject_id.isdigit() else None
         if order_id is None:
             return BasicSanityResult(
                 passed=True,
@@ -102,7 +104,7 @@ class OrderSanityCheck(BasicSanityChecker):
                 },
             )
 
-        if request.customer_id is None:
+        if customer_id is None:
             # Fail closed. The normal graph authenticates before this node,
             # but the component remains safe when invoked independently.
             return BasicSanityResult(
@@ -120,7 +122,7 @@ class OrderSanityCheck(BasicSanityChecker):
                 facts={"order_id": order_id},
             )
 
-        order = self._orders.get_for_customer(order_id, request.customer_id)
+        order = self._orders.get_for_customer(order_id, customer_id)
         if order is None:
             return BasicSanityResult(
                 passed=False,
@@ -133,7 +135,7 @@ class OrderSanityCheck(BasicSanityChecker):
                         reason="The order does not exist for the authenticated customer.",
                         evidence={
                             "order_id": order_id,
-                            "customer_id": request.customer_id,
+                            "customer_id": customer_id,
                         },
                     )
                 ],
@@ -157,7 +159,7 @@ class OrderSanityCheck(BasicSanityChecker):
                 reason="Order exists and belongs to the authenticated customer.",
                 evidence={
                     "order_id": order.order_id,
-                    "customer_id": request.customer_id,
+                    "customer_id": customer_id,
                     "order_exists": True,
                     "customer_owns_order": True,
                 },
@@ -168,7 +170,7 @@ class OrderSanityCheck(BasicSanityChecker):
             self._logger.info(
                 "BasicSanity blocked an already-refunded order",
                 order_id=order.order_id,
-                customer_id=request.customer_id,
+                customer_id=customer_id,
             )
             findings.append(
                 BasicSanityFinding(

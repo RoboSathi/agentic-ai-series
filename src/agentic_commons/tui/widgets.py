@@ -10,14 +10,14 @@ small collapsible card:
 The logger remains responsible for implementation-level debugging.
 """
 
+import time
 from collections.abc import Mapping
 from typing import Any
-import time
 
 from rich.text import Text
 from textual.containers import VerticalScroll
-from textual.widgets import Collapsible, Static
 from textual.reactive import reactive
+from textual.widgets import Collapsible, Static
 
 from agentic_commons.config import get_settings
 from agentic_commons.observability.types import StatusEvent
@@ -670,10 +670,16 @@ class StageEventWidget(Collapsible):
             overlap = item.get("best_evidence_overlap")
             evidence = str(item.get("best_evidence") or "no evidence excerpt")
             rationale = str(item.get("rationale") or "no rationale returned")
+            detector = str(item.get("detector_model") or "")
             body.append("\n    ✗ ", style="red")
             body.append(claim, style="bright_white")
             body.append(f"\n      failure = {kind}", style="red")
             body.append(f" · tier = {tier}", style="dim")
+            # Which model actually decided. Without it, a lexical fallback
+            # verdict reads as an NLI verdict and sends whoever is watching
+            # after the wrong problem.
+            if detector:
+                body.append(f" · detector = {detector}", style="dim")
             if confidence is not None:
                 body.append(f" · confidence = {confidence}", style="dim")
             if overlap is not None:

@@ -4,8 +4,10 @@ Textual offers the completion as ghost text after the cursor, which is
 the behaviour a Claude Code user already has in their fingers: type `/a`,
 see `/audit`, press → to take it.
 
-Only the command word completes. Arguments are values — order ids,
-statuses, config sections — and suggesting one would be guessing at what
+The command word always completes. An argument completes only when the
+command declares a closed set for it — `/harness` does, because a feature
+path is chosen from a fixed list. Order ids, statuses and config sections
+do not: those are values, and suggesting one would be guessing at what
 the operator meant rather than saving them typing.
 """
 
@@ -24,8 +26,14 @@ class CommandSuggester(Suggester):
         self._registry = registry
 
     async def get_suggestion(self, value: str) -> str | None:
-        """The first command matching what has been typed so far."""
-        if not value.startswith(PREFIX) or " " in value:
+        """The first completion matching what has been typed so far."""
+        if not value.startswith(PREFIX):
             return None
-        matches = self._registry.completions(value)
-        return f"{PREFIX}{matches[0]}" if matches else None
+        if " " not in value:
+            matches = self._registry.completions(value)
+            return f"{PREFIX}{matches[0]}" if matches else None
+        matches = self._registry.argument_completions(value)
+        if not matches:
+            return None
+        typed = value.rsplit(" ", maxsplit=1)[0]
+        return f"{typed} {matches[0]}"

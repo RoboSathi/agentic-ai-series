@@ -13,7 +13,12 @@ wiring that ships.
 
 from agentic_commons.audit import AuditLedger, create_audit_ledger
 from agentic_commons.basic_sanity import BasicSanityChecker
-from agentic_commons.config import get_settings
+from agentic_commons.config import (
+    FeatureSet,
+    active_features,
+    get_settings,
+    set_active_features,
+)
 from agentic_commons.context import (
     Chunk,
     CrossEncoderReranker,
@@ -31,7 +36,13 @@ from agentic_commons.gatekeeper.ledger import CumulativeLedger
 from agentic_commons.hallucination_protection import DetectionLadder
 from agentic_commons.llm.client import LLMClient, create_llm_client
 from agentic_commons.llm.encoders import create_reranker
-from agentic_commons.memory import MemoryFacade
+from agentic_commons.memory import (
+    EpisodicStore,
+    MemoryFacade,
+    ProceduralStore,
+    SemanticStore,
+    WorkingMemory,
+)
 from agentic_commons.observability import (
     DuckDbObservabilityStore,
     SLORegistry,
@@ -40,15 +51,21 @@ from agentic_commons.observability import (
 from agentic_commons.observability.tracer import LocalTracer
 from agentic_commons.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agentic_commons.resilience import DeadLetterQueue, SqliteIdempotencyGuard
-from agentic_commons.security import (Authorizer, PIIFilterImpl, SecuritySuite)
-from agentic_commons.security.auth.policy import AgentPolicy, AgentPolicyRepository
+from agentic_commons.security import (
+    Authorizer,
+    PIIFilterImpl,
+    PromptInjectionGuard,
+    SecuritySuite,
+    TermContentModerator,
+)
+from agentic_commons.security.auth.policy import AgentPolicyRepository
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.core.authentication import CustomerAuthenticator
 from customer_support_agent.core.business_rules import CustomerSupportBusinessRules
 from customer_support_agent.core.graph import CustomerSupportAgent
-from customer_support_agent.core.intent import CustomerSupportIntentRouter
 from customer_support_agent.core.identity import current_customer_id
+from customer_support_agent.core.intent import CustomerSupportIntentRouter
 from customer_support_agent.core.order_validator import OrderSanityCheck
 from customer_support_agent.core.refund_saga import RefundSaga
 from customer_support_agent.core.repositories import (
@@ -186,6 +203,32 @@ def _order_chunk(order: Order) -> Chunk:
 
 
 
+
+def _build_memory(
+    features: FeatureSet,
+    scoring: NollmScoringCascadeImpl,
+    platform_store: SqlitePlatformStore,
+    redactor: PIIFilterImpl | None,
+) -> MemoryFacade:
+    """Memory holding only the CoALA classes this agent was granted.
+
+    Each class is built or withheld here rather than inside the facade,
+    so `memory.episodic: false` produces an agent with no episodic log —
+    not one that has an episodic log it has been asked to ignore.
+    """
+    return MemoryFacade(
+        working=WorkingMemory() if features.is_on("memory.working") else None,
+        episodic=EpisodicStore() if features.is_on("memory.episodic") else None,
+        semantic=SemanticStore(platform_store) if features.is_on("memory.semantic") else None,
+        procedural=(
+            ProceduralStore(platform_store) if features.is_on("memory.procedural") else None
+        ),
+        relevance=scoring,
+        platform_store=platform_store,
+        redactor=redactor,
+    )
+
+
 def build_agent(
     llm: LLMClient | None = None,
     pool: SqliteConnectionPool | None = None,
@@ -198,6 +241,7 @@ def build_agent(
     observe: bool | None = None,
     basic_sanity: BasicSanityChecker | None = None,
     intent_router: CustomerSupportIntentRouter | None = None,
+    features: FeatureSet | None = None,
 ) -> CustomerSupportAgent:
     """Wire the refund agent from config, honouring any injected parts.
 
@@ -219,13 +263,23 @@ def build_agent(
     """
     settings = get_settings()
     agent_settings = get_agent_settings()
+    # The one place a feature flag is read. Everything below is wiring,
+    # not policy — which is what lets two agents with different postures
+    # run in one process: pass a set explicitly and this deployment is
+    # composed from it, whatever any other agent was given.
+    # What a console last set, else what this agent declared. Reading only
+    # the declared config here meant `/harness off` rebuilt the agent with
+    # every feature back on: the command moved one store and the builder
+    # read another.
+    features = features if features is not None else active_features(settings.features)
+    set_active_features(features)
     agent_id = settings.agent.id
     connection = pool or SqliteConnectionPool(agent_settings.resolved_db_path)
     platform_store = SqlitePlatformStore(connection, agent_id=agent_id)
     policy_repo = AgentPolicyRepository(platform_store)
     agent_policy = policy_repo.get()
     scoring = cascade or create_scoring_cascade()
-    remember = settings.memory.enabled if with_memory is None else with_memory
+    remember = features.is_on("memory") if with_memory is None else with_memory
     observing = settings.observability.enabled if observe is None else observe
 
     # One shared analytics connection per running agent process. The store is
@@ -256,16 +310,29 @@ def build_agent(
     registry.register_all(tools.definitions())
     authorizer = Authorizer(policy=agent_policy)
 
-    sanity_checker = basic_sanity or OrderSanityCheck(orders)
+    # BasicSanity is the one feature whose *rules* are the agent's own.
+    # `agentic_commons` owns only the contract — `BasicSanityChecker`, a
+    # Protocol taking a request and returning findings — and never learns
+    # what an order or a refund is. Customer Support supplies
+    # `OrderSanityCheck`; another agent built on this platform declares
+    # `basic_sanity` in its own config and injects its own checker here,
+    # with nothing in the platform to change.
+    tool_handler = CustomerSupportToolHandler(tools)
+    sanity_checker = (
+        basic_sanity or OrderSanityCheck(orders) if features.is_on("basic_sanity") else None
+    )
     # Intent routing is an agent-owned component, but the concrete provider is
     # selected by the shared classifier factory. The graph receives the router
     # by dependency injection and never constructs one itself.
     resolved_intent_router = intent_router or CustomerSupportIntentRouter()
 
+    # PII redaction reaches three surfaces: tool-call payloads, traces,
+    # and — the one that was missing — everything memory persists.
+    redactor = PIIFilterImpl() if features.is_on("pii") else None
     facade = (
         memory
         if memory is not None
-        else (MemoryFacade(relevance=scoring, platform_store=platform_store) if remember else None)
+        else (_build_memory(features, scoring, platform_store, redactor) if remember else None)
     )
 
     sources: list[object] = [PolicyContextSource(), OrderCorpusContextSource(orders, scoring)]
@@ -276,7 +343,9 @@ def build_agent(
     # embedding model, then a cross-encoder rescores the shortlist. The
     # reranker is None when no hosted encoder is reachable, and the
     # pipeline then keeps the cheaper ordering rather than pretending.
-    reranker = create_reranker(fallback=scoring)
+    # The second pass is its own capability: with `context.rerank` off the
+    # pipeline keeps the cheap ordering, which is the E19 contrast.
+    reranker = create_reranker(fallback=scoring) if features.is_on("context.rerank") else None
     # With context assembly off, the agent still gets its policy — the
     # graph falls back to it. An agent reasoning without its own refund
     # policy is not a narrower agent, it is a wrong one.
@@ -286,13 +355,17 @@ def build_agent(
             ranker=scoring,
             reranker=CrossEncoderReranker(reranker) if reranker is not None else None,
         )
-        if settings.context.enabled
+        if features.is_on("context")
         else None
     )
 
-    return CustomerSupportAgent(
-        llm=llm or create_llm_client(),
-        gatekeeper=gatekeeper
+    ledger = audit or create_audit_ledger(store=observability_store, agent_id=agent_id)
+    # Withholding the Gatekeeper is the sharpest demonstration in the set:
+    # the same refund that was escalated a moment ago simply happens. The
+    # audit entry is still written on that path, so the trail records an
+    # ungoverned execution rather than recording nothing at all.
+    governed = (
+        gatekeeper
         or GatekeeperImpl(
             authorizer=authorizer,
             policy=agent_policy,
@@ -304,22 +377,42 @@ def build_agent(
                 thresholds={"refund": agent_policy.refund_budget_limit},
                 window_hours=agent_policy.refund_budget_window_hours,
             ),
-            audit=audit
-            or create_audit_ledger(
-                store=observability_store,
-                agent_id=agent_id,
-            ),
+            audit=ledger,
             business_rules=CustomerSupportBusinessRules(orders, hitl, agent_policy),
-        ),
+        )
+        if features.is_on("gatekeeper")
+        else None
+    )
+
+    return CustomerSupportAgent(
+        llm=llm or create_llm_client(),
+        gatekeeper=governed,
+        audit=ledger,
+        features=features,
         registry=registry,
         tools=tools,
         executor=ToolExecutorImpl(
-            handler=CustomerSupportToolHandler(tools),
+            handler=tool_handler,
             idempotency=idempotency,
             reporter=reporter,
         ),
+        # The same adapter, unwrapped. With the Gatekeeper withheld the
+        # graph calls this directly, so there is no idempotency key and no
+        # deadline — which is precisely what the execution boundary was
+        # providing, shown by its absence.
+        handler=tool_handler,
         dead_letter_queue=dead_letter_queue,
-        security=SecuritySuite(authorizer=authorizer),
+        # Each screening detector is wired only if this agent declared
+        # it. Absent means the stage does not run and has nothing to
+        # narrate — not a detector that runs and reports finding nothing.
+        security=SecuritySuite(
+            authorizer=authorizer,
+            pii=redactor,
+            injection=PromptInjectionGuard() if features.is_on("prompt_injection") else None,
+            moderator=(
+                TermContentModerator() if features.is_on("content_moderation") else None
+            ),
+        ),
         memory=facade,
         context=context,
         # Retrieval-based tool selection narrows within what the intent
@@ -350,7 +443,7 @@ def build_agent(
         # not an observability one. Gating it on `observe` meant an agent
         # configured to be quiet was also an agent that stopped checking
         # its own answers.
-        grounding=DetectionLadder(scoring) if settings.hallucination_protection.enabled else None,
+        grounding=DetectionLadder(scoring) if features.is_on("hallucination_guard") else None,
         authenticator=CustomerAuthenticator(UsersRepository(connection), orders),
         orders=orders,
         basic_sanity=sanity_checker,

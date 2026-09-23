@@ -11,7 +11,6 @@ from agentic_commons.security.content_moderation import (
     ContentModerator,
     ContentSafetyGuard,
     NvidiaHostedContentSafetyGuard,
-    TermContentModerator,
 )
 from agentic_commons.security.content_moderation.types import ModerationVerdict
 from agentic_commons.security.pii.detector import PIIFilterImpl
@@ -41,9 +40,13 @@ class SecuritySuite:
         content_safety_resilient: ResilientCaller | None = None,
     ) -> None:
         self.authorizer = authorizer or Authorizer()
-        self.pii = pii or PIIFilterImpl()
-        self.injection = injection or PromptInjectionGuard()
-        self.moderator = moderator or TermContentModerator()
+        # Each detector is absent when this deployment was not given it.
+        # The hosted guards are paired with their deterministic partner:
+        # a jailbreak model behind a disabled injection check would be a
+        # prompt-injection defence that the configuration says is off.
+        self.pii = pii
+        self.injection = injection
+        self.moderator = moderator
         guard_settings = get_settings().security.guards
         self.jailbreak_guard = jailbreak_guard or (
             NvidiaHostedJailbreakGuard(
@@ -53,7 +56,9 @@ class SecuritySuite:
                 model=guard_settings.jailbreak.model,
                 resilient=jailbreak_resilient or ResilientCaller("nvidia-jailbreak"),
             )
-            if guard_settings.enabled and guard_settings.jailbreak.enabled
+            if injection is not None
+            and guard_settings.enabled
+            and guard_settings.jailbreak.enabled
             else None
         )
         self.content_safety_guard = content_safety_guard or (
@@ -65,10 +70,11 @@ class SecuritySuite:
                 max_tokens=guard_settings.content_safety.max_tokens,
                 resilient=content_safety_resilient or ResilientCaller("nvidia-content-safety"),
             )
-            if guard_settings.enabled and guard_settings.content_safety.enabled
+            if moderator is not None
+            and guard_settings.enabled
+            and guard_settings.content_safety.enabled
             else None
         )
-        self._enabled = get_settings().security.enabled
         self._logger = get_logger("security")
 
     def authorize(self, principal: Principal, action: str) -> AccessDecision:
@@ -79,18 +85,26 @@ class SecuritySuite:
         self, instructions: str, data: str, tools: list[ToolDefinition]
     ) -> InjectionAssessment:
         """Assess untrusted content and narrow the toolset accordingly."""
+        if self.injection is None:
+            # Nothing found, nothing narrowed: with no guard wired, every
+            # offered tool stays offered and the text is passed through.
+            return InjectionAssessment(
+                suspicious=False, allowed_actions=[tool.name for tool in tools]
+            )
         return self.injection.assess(instructions, data, tools)
 
     def redact(self, text: str, mode: RedactionMode | None = None) -> str:
         """Remove personal data before the text is logged or persisted."""
-        return self.pii.redact(text, mode)
+        return self.pii.redact(text, mode) if self.pii else text
 
     def minimize(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Strip fields a tool call is not entitled to carry."""
-        return self.pii.minimize(payload)
+        return self.pii.minimize(payload) if self.pii else dict(payload)
 
     def moderate(self, text: str) -> ModerationVerdict:
         """Run deterministic content checks synchronously."""
+        if self.moderator is None:
+            return ModerationVerdict(flagged=False)
         verdict = self.moderator.moderate(text)
         verdict.checks.append(
             {
@@ -238,5 +252,5 @@ class SecuritySuite:
 
     @property
     def enabled(self) -> bool:
-        """Whether the security package is active at all."""
-        return self._enabled
+        """Whether any content-level screening was wired at all."""
+        return self.injection is not None or self.moderator is not None

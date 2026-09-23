@@ -316,7 +316,7 @@ class TestMemoryFacade:
     async def test_recall_ranks_across_stores(
         self, pool: SqliteConnectionPool, tmp_path: Path
     ) -> None:
-        facade = MemoryFacade(semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path))
+        facade = MemoryFacade.complete(semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path))
         facade.semantic.write(_fact("policy", "refunds within 30 days"), Provenance(source="p"))
         recalled = await facade.recall(MemoryQuery(text="refunds"))
         assert recalled and recalled[0].fact.key == "policy"
@@ -324,10 +324,67 @@ class TestMemoryFacade:
     async def test_recall_is_empty_when_nothing_matches(
         self, pool: SqliteConnectionPool, tmp_path: Path
     ) -> None:
-        facade = MemoryFacade(semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path))
+        facade = MemoryFacade.complete(semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path))
         assert await facade.recall(MemoryQuery(text="nothing here")) == []
 
     def test_forget_removes_a_fact(self, pool: SqliteConnectionPool, tmp_path: Path) -> None:
-        facade = MemoryFacade(semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path))
+        facade = MemoryFacade.complete(semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path))
         facade.semantic.write(_fact("k", "v"), Provenance(source="t"))
         assert facade.forget("k") == 1
+
+
+class TestEachCoalaClassIsIndependent:
+    """A store withheld is a store absent, and the facade degrades.
+
+    The four classes are toggled separately because they answer different
+    questions. An agent given semantic memory but no episodic log should
+    still remember what a customer prefers while having no record of what
+    happened — not raise on the first write.
+    """
+
+    def _facade(self, tmp_path: Path, pool: SqliteConnectionPool, **have: bool) -> MemoryFacade:
+        return MemoryFacade(
+            working=WorkingMemory() if have.get("working") else None,
+            episodic=EpisodicStore(tmp_path) if have.get("episodic") else None,
+            semantic=SemanticStore(pool) if have.get("semantic") else None,
+            procedural=ProceduralStore(pool) if have.get("procedural") else None,
+            platform_store=pool,
+        )
+
+    def test_without_working_memory_a_note_is_discarded_not_raised(
+        self, tmp_path: Path, pool: SqliteConnectionPool
+    ) -> None:
+        facade = self._facade(tmp_path, pool, semantic=True)
+        result = facade.note("k", "v", "s1", source="tool")
+        assert result.written is False
+        assert facade.active_window("s1") == []
+
+    def test_without_episodic_memory_an_event_is_discarded_not_raised(
+        self, tmp_path: Path, pool: SqliteConnectionPool
+    ) -> None:
+        facade = self._facade(tmp_path, pool, working=True)
+        assert facade.record_event("something happened", "tool", "s1").written is False
+
+    def test_without_procedural_memory_a_lookup_returns_nothing(
+        self, tmp_path: Path, pool: SqliteConnectionPool
+    ) -> None:
+        assert self._facade(tmp_path, pool, working=True).procedure("how_to_refund") is None
+
+    def test_without_semantic_memory_revocation_removes_nothing(
+        self, tmp_path: Path, pool: SqliteConnectionPool
+    ) -> None:
+        assert self._facade(tmp_path, pool, working=True).forget("k") == 0
+
+    async def test_recall_spans_only_the_long_term_stores_present(
+        self, tmp_path: Path, pool: SqliteConnectionPool
+    ) -> None:
+        facade = self._facade(tmp_path, pool, working=True)
+        assert await facade.recall(MemoryQuery(text="anything")) == []
+
+    def test_a_facade_with_no_stores_at_all_still_answers(
+        self, tmp_path: Path, pool: SqliteConnectionPool
+    ) -> None:
+        """`memory: false` reaches the graph as a facade, not as a crash."""
+        facade = self._facade(tmp_path, pool)
+        assert facade.window_size("s1") == 0
+        facade.end_session("s1")

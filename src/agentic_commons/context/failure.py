@@ -33,7 +33,6 @@ class ContextFailureDetector:
 
     def __init__(self) -> None:
         settings = get_settings().context.failure_detection
-        self._enabled = settings.enabled
         self._checkpoints = settings.checkpoints_tokens
         self._degradation_threshold = settings.degradation_threshold
         self._logger = get_logger("context")
@@ -45,8 +44,6 @@ class ContextFailureDetector:
 
     def assess(self, context: AssembledContext, task_terms: set[str]) -> list[ContextFailureMode]:
         """Which failure modes this window currently shows."""
-        if not self._enabled:
-            return []
         modes: list[ContextFailureMode] = []
         if self.distraction_ratio(context, task_terms) > 0.5:
             modes.append("distraction")

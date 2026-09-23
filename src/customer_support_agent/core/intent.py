@@ -16,17 +16,19 @@ controls every side effect.
 
 from __future__ import annotations
 
-import asyncio
 import re
-from functools import lru_cache
-from typing import Any
 
 from agentic_commons.config import get_settings
-from agentic_commons.intent import IntentAssessment, IntentCandidate, IntentClassifierInterface, IntentDisposition, create_intent_classifier
+from agentic_commons.intent import (
+    IntentAssessment,
+    IntentCandidate,
+    IntentClassifierInterface,
+    IntentDisposition,
+    create_intent_classifier,
+)
 from agentic_commons.logging import get_logger
 from agentic_commons.observability import traced
 from customer_support_agent.config import get_agent_settings
-from customer_support_agent.config.settings import IntentSettings
 
 
 class Intent:
@@ -116,11 +118,6 @@ class CustomerSupportIntentRouter:
         deterministic = self._deterministic_rejection(text)
         if deterministic is not None:
             return deterministic
-
-        if not self._settings.intent_router.enabled:
-            return self._supported_unknown(
-                "Intent routing is disabled; the request is handled by the contextual LLM fallback."
-            )
 
         # IMPORTANT: previous intent is context, not a classification result.
         # Always classify the current turn first. The previous intent is used

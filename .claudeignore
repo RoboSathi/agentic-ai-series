@@ -39,6 +39,7 @@ data/*.sqlite3
 *.db-journal
 .deepeval/
 harness.db
+agent.db
 
 # --- Env / secrets ---
 .env
@@ -63,3 +64,10 @@ node_modules/
 # --- Build/dist for docs ---
 docs/_build/
 site/
+
+# Local Models
+local_models/*
+
+# Project Zip
+project.zip
+

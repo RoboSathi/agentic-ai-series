@@ -7,7 +7,6 @@ agent's domain tables.
 """
 
 from datetime import timedelta
-from typing import Any
 
 from agentic_commons.config import get_settings
 from agentic_commons.gatekeeper.types import LedgerEntry, LedgerState

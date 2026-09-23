@@ -29,7 +29,7 @@ from customer_support_agent.core import (
     SupportTools,
     build_agent,
 )
-from customer_support_agent.core.intent import IntentClassifier
+from customer_support_agent.core.intent import CustomerSupportIntentRouter
 from customer_support_agent.dummy_data.generate_dummy_data import refund_status_for
 from tests.conftest import ScriptedLLM, tool_call
 
@@ -108,11 +108,11 @@ class TestRefundsAreNotVolunteered:
 
     def test_an_order_enquiry_does_not_unlock_the_refund_lookup(self) -> None:
         """Checking refund state is itself a refund conversation."""
-        permitted = IntentClassifier().permitted_tools("where is my parcel for order 10001")
+        permitted = CustomerSupportIntentRouter().permitted_tools("where is my parcel for order 10001")
         assert permitted == {"get_order_status"}
 
     def test_a_refund_request_does_unlock_it(self) -> None:
-        assert "get_refund_status" in IntentClassifier().permitted_tools("I want a refund")
+        assert "get_refund_status" in CustomerSupportIntentRouter().permitted_tools("I want a refund")
 
     async def test_the_agent_does_not_check_refunds_on_a_status_query(
         self, seeded_pool: SqliteConnectionPool

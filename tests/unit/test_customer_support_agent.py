@@ -1,8 +1,11 @@
 """The refund agent's repositories, tools, saga and graph (LLD §21)."""
 
+from types import SimpleNamespace
+from typing import Any
+
 import pytest
 
-from agentic_commons.config import set_enabled
+from agentic_commons.config import get_settings, set_enabled
 from agentic_commons.persistence import SqliteConnectionPool
 from customer_support_agent.core import (
     HitlQueueRepository,
@@ -309,12 +312,35 @@ class TestTheBuilderHonoursConfiguration:
     still called and still narrates a step to anyone watching the trace.
     """
 
-    def _off(self, section: str, seeded_pool: SqliteConnectionPool) -> object:
-        set_enabled(section, None, False)
-        return build_agent(llm=ScriptedLLM(), pool=seeded_pool)
+    def _build(self, seeded_pool: SqliteConnectionPool, off: str = "") -> object:
+        """Build from an everything-on posture, minus one capability.
 
-    def test_everything_is_wired_by_default(self, seeded_pool: SqliteConnectionPool) -> None:
-        agent = build_agent(llm=ScriptedLLM(), pool=seeded_pool)
+        Starting from all-on rather than from the declared config is
+        deliberate: whoever is working here may have switched a feature
+        off for their own demo, and this class is testing the wiring
+        mechanism, not their current posture.
+
+        Features declared in the `features:` block are flipped there;
+        anything still carrying a plain section `enabled:` flag goes
+        through the older toggle. Both routes end at the same question —
+        what did the composition root wire?
+        """
+        settings = get_settings()
+        features = settings.features.with_all(True)
+        if off and off in features.paths():
+            features = features.with_override(off, False)
+        elif off:
+            set_enabled(off, None, False)
+        return build_agent(llm=ScriptedLLM(), pool=seeded_pool, features=features)
+
+    def _off(self, section: str, seeded_pool: SqliteConnectionPool) -> object:
+        """Build an agent with one capability switched off."""
+        return self._build(seeded_pool, off=section)
+
+    def test_everything_is_wired_by_default(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        agent = self._build(seeded_pool)
         assert agent._memory is not None
         assert agent._context is not None
         assert agent._selector is not None
@@ -329,7 +355,7 @@ class TestTheBuilderHonoursConfiguration:
             ("tools", "_selector"),
             ("observability", "_tracer"),
             ("observability", "_slos"),
-            ("hallucination_protection", "_grounding"),
+            ("hallucination_guard", "_grounding"),
         ],
     )
     def test_disabling_a_section_leaves_its_collaborator_out(
@@ -360,6 +386,186 @@ class TestTheBuilderHonoursConfiguration:
         self, seeded_pool: SqliteConnectionPool, restore_settings: None
     ) -> None:
         """A caller that knows what it wants is not overruled by a file."""
-        set_enabled("memory", None, False)
+        settings = get_settings()
+        settings.features = settings.features.with_override("memory", False)
         agent = build_agent(llm=ScriptedLLM(), pool=seeded_pool, with_memory=True)
         assert agent._memory is not None
+
+
+class TestAWithheldFeatureLeavesNoStage:
+    """The claim an episode makes on screen, asserted.
+
+    Two halves, and the second is what makes it a demonstration rather
+    than a breakage: the stage is gone from the compiled graph, *and* the
+    turn still runs to an answer. An agent that crashes without its
+    grounding check has not shown you what grounding was doing.
+    """
+
+    STAGES = [
+        ("basic_sanity", "basic_sanity"),
+        ("prompt_injection", "prompt_injection"),
+        ("content_moderation", "content_moderation"),
+        ("intent_classification", "classify_intent"),
+        ("context", "assemble_context"),
+    ]
+
+    def _agent(self, feature: str, on: bool, pool: SqliteConnectionPool) -> object:
+        settings = get_settings()
+        return build_agent(
+            llm=ScriptedLLM([{"content": "Order 10001 was delivered."}]),
+            pool=pool,
+            features=settings.features.with_override(feature, on),
+        )
+
+    def _nodes(self, agent: object) -> set[str]:
+        return set(agent._graph.get_graph().nodes)  # type: ignore[attr-defined]
+
+    @pytest.mark.parametrize(("feature", "node"), STAGES)
+    def test_the_stage_is_present_when_declared(
+        self, feature: str, node: str, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        assert node in self._nodes(self._agent(feature, True, seeded_pool))
+
+    @pytest.mark.parametrize(("feature", "node"), STAGES)
+    def test_the_stage_is_absent_when_withheld(
+        self, feature: str, node: str, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        assert node not in self._nodes(self._agent(feature, False, seeded_pool))
+
+    @pytest.mark.parametrize(("feature", "node"), STAGES)
+    async def test_the_turn_still_completes_without_it(
+        self, feature: str, node: str, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        agent = self._agent(feature, False, seeded_pool)
+        state = await agent.handle("what is the status of order 10001?")  # type: ignore[attr-defined]
+        assert state.response
+
+    async def test_every_stage_withheld_at_once_still_answers(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        """`/harness off` — the E01 gesture — must not produce a broken agent."""
+        settings = get_settings()
+        agent = build_agent(
+            llm=ScriptedLLM([{"content": "Order 10001 was delivered."}]),
+            pool=seeded_pool,
+            features=settings.features.with_all(False),
+        )
+        nodes = self._nodes(agent)
+        assert not {node for _, node in self.STAGES} & nodes
+        assert (await agent.handle("what is the status of order 10001?")).response
+
+
+class TestAWithheldStageSaysNothing:
+    """Reported from a live run: the guard was off and the trace still showed it.
+
+    `hallucination_guard` is not a graph node — it is a step inside
+    `finalize` — so withholding it left `ResponseGuardrail` in place with
+    no detector, returning the draft unexamined while `finalize` printed
+    "Grounded: 0/0 claims supported" regardless. The screen was telling an
+    operator a control was running when it was not, which is worse than
+    showing nothing at all.
+    """
+
+    class _Feed:
+        def __init__(self) -> None:
+            self.events: list[object] = []
+
+        def publish(self, event: object) -> None:
+            self.events.append(event)
+
+        def emit(self, event: object) -> None:
+            self.events.append(event)
+
+    async def _stages(self, on: bool, pool: SqliteConnectionPool) -> list[str]:
+        from agentic_commons.observability import StageReporter
+
+        feed = self._Feed()
+        agent = build_agent(
+            llm=ScriptedLLM([{"content": "Order 10001 was delivered on March 3."}]),
+            pool=pool,
+            features=get_settings().features.with_override("hallucination_guard", on),
+            reporter=StageReporter(feed, "test"),
+        )
+        await agent.handle("please help me with something about my account", session_id="s")
+        return [str(getattr(event, "stage", "")) for event in feed.events]
+
+    async def test_the_grounding_stage_narrates_when_it_was_built(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        assert "hallucination_check" in await self._stages(True, seeded_pool)
+
+    async def test_it_says_nothing_at_all_when_it_was_not(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        assert "hallucination_check" not in await self._stages(False, seeded_pool)
+
+
+class TestHarnessOffLeavesTheModelFree:
+    """Reported from a live run: with the harness off, no tool ever ran.
+
+    Switching the harness off is meant to produce an agent free to act
+    with nothing standing between its proposals and execution. It
+    produced the opposite. `_offered_tools` reads `intent_tools` from
+    state, and with `intent_classification` withheld nothing writes that
+    key — so an *absent* classifier was read as a classifier that
+    permitted nothing, and the model was handed an empty toolset. The
+    demonstration inverted itself: the unguarded agent was the one that
+    could do nothing at all.
+    """
+
+    def _agent(self, on: bool, pool: SqliteConnectionPool) -> Any:
+        features = get_settings().features.with_all(True)
+        return build_agent(
+            llm=ScriptedLLM(
+                [
+                    {"tool_calls": tool_call("support.get_order_status", order_id=10001)},
+                    {"content": "Order 10001 was delivered on March 3."},
+                ]
+            ),
+            pool=pool,
+            features=features.with_override("intent_classification", on),
+        )
+
+    async def test_without_a_classifier_the_model_is_still_offered_tools(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        agent = self._agent(False, seeded_pool)
+        offered = await agent._offered_tools(SimpleNamespace(metadata={}))
+        assert offered, "an absent classifier narrowed nothing, so nothing is excluded"
+
+    async def test_a_classifier_that_permits_nothing_still_offers_nothing(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        """The distinction the fix turns on, asserted from the other side."""
+        agent = self._agent(True, seeded_pool)
+        offered = await agent._offered_tools(
+            SimpleNamespace(metadata={"intent": "UNKNOWN", "intent_tools": []})
+        )
+        assert offered == []
+
+    async def test_the_security_narrowing_still_applies_without_a_classifier(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        """Losing intent routing must not lose the injection guard's scoping."""
+        agent = self._agent(False, seeded_pool)
+        offered = await agent._offered_tools(
+            SimpleNamespace(metadata={"allowed_actions": ["support.get_order_status"]})
+        )
+        assert [tool.qualified_name for tool in offered] == ["support.get_order_status"]
+
+    async def test_a_turn_with_the_whole_harness_off_still_calls_a_tool(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        """End to end: the trace an operator watches must show the call."""
+        agent = build_agent(
+            llm=ScriptedLLM(
+                [
+                    {"tool_calls": tool_call("support.get_order_status", order_id=10001)},
+                    {"content": "Order 10001 was delivered on March 3."},
+                ]
+            ),
+            pool=seeded_pool,
+            features=get_settings().features.with_all(False),
+        )
+        state = await agent.handle("what happened with order 10001?", session_id="s")
+        assert state.tool_results

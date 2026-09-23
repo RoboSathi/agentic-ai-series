@@ -31,19 +31,23 @@ episode:
 # actually proposes, which is the layer that makes detection optional.
 security:
   enabled: true
-  prompt_injection:
-    enabled: true
-  pii:
-    enabled: true
-  content_moderation:
-    enabled: true
 
-# Off for this episode. Each is a real subsystem with its own episode —
-# leaving them on here would narrate memory writes and grounding checks
-# over the top of the attack being stopped.
-memory:
-  enabled: false
+# The screening features the episode is about, and the Gatekeeper that
+# makes detecting the attack optional. Memory and grounding are each a
+# real subsystem with its own episode — on here, they would narrate over
+# the top of the attack being stopped.
+features:
+  prompt_injection: true
+  pii: true
+  content_moderation: true
+  intent_classification: true
+  hallucination_guard: false
+  gatekeeper: true
+  memory: false
+  context:
+    enabled: true
+    rerank: true
+    failure_detection: true
+
 guardrails:
-  enabled: false
-hallucination_protection:
   enabled: false

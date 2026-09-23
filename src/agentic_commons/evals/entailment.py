@@ -18,13 +18,27 @@ from agentic_commons.llm.embeddings import tokenize
 
 
 class EntailmentResult(BaseModel):
-    """Three-way NLI result: entailment, contradiction, or unknown."""
+    """Three-way NLI result: entailment, contradiction, or unknown.
+
+    `calibrated` says what `score` means, and callers must not compare
+    the two kinds. A cross-encoder returns the winning label's
+    probability, which a confidence threshold can be set against. The
+    lexical fallback returns token coverage, which cannot: a sentence
+    restating its evidence exactly still covers only the content words
+    the evidence happens to share, so "A refund has already been
+    approved for order 10864" scores 0.44 against "Order 10864 refund
+    status: approved" — a perfect paraphrase, four tokens out of nine.
+    Judging that against a probability threshold rejects true claims.
+    """
 
     label: Literal["entailment", "contradiction", "unknown"]
     entailed: bool
     score: float
     rationale: str = ""
     model: str = ""
+    # False when `score` is a heuristic rather than a probability, so a
+    # caller knows its confidence threshold does not apply.
+    calibrated: bool = True
 
 
 @runtime_checkable
@@ -70,6 +84,7 @@ class LexicalEntailmentModel:
                 score=0.0,
                 rationale=f"premise covers only {coverage:.0%} of the hypothesis",
                 model="lexical-entailment-fallback",
+                calibrated=False,
             )
         same_polarity = self._is_negated(premise) == self._is_negated(hypothesis)
         label = "entailment" if same_polarity else "contradiction"
@@ -81,6 +96,7 @@ class LexicalEntailmentModel:
                 f"coverage {coverage:.0%}, {'matching' if same_polarity else 'opposing'} polarity"
             ),
             model="lexical-entailment-fallback",
+            calibrated=False,
         )
 
     def _coverage(self, premise: str, hypothesis: str) -> float:

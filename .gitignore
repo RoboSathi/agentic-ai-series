@@ -29,6 +29,7 @@ data/observability.duckdb*
 
 # Data
 data/agent.db
+data/*
 
 # Local Models
 local_models/*

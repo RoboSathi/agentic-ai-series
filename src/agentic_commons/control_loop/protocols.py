@@ -5,7 +5,6 @@ from typing import Protocol, runtime_checkable
 from agentic_commons.control_loop.types import (
     AgentState,
     Checkpoint,
-    IllegalTransitionError,
     LoopVerdict,
     StepResult,
     Trajectory,

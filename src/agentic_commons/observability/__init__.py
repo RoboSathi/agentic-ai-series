@@ -8,13 +8,13 @@ from agentic_commons.observability.queue import (
     ReviewQueueModel,
 )
 from agentic_commons.observability.slo import SLORegistry, SLOTracker
-from agentic_commons.observability.store import DuckDbObservabilityStore, create_observability_store
 from agentic_commons.observability.status_feed import (
     InMemoryLiveStatusFeed,
     LiveStatusFeed,
     NullLiveStatusFeed,
     StageReporter,
 )
+from agentic_commons.observability.store import DuckDbObservabilityStore, create_observability_store
 from agentic_commons.observability.tracer import (
     LangSmithTracer,
     LocalTracer,
@@ -24,8 +24,8 @@ from agentic_commons.observability.tracer import (
 from agentic_commons.observability.tracing import traced
 from agentic_commons.observability.types import (
     CostComponent,
-    EventKind,
     CostStack,
+    EventKind,
     SLOMeasurement,
     SLOStatus,
     Span,

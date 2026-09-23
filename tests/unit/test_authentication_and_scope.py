@@ -18,7 +18,6 @@ from agentic_commons.persistence import SqliteConnectionPool
 from customer_support_agent.core import build_agent
 from customer_support_agent.core.authentication import CustomerAuthenticator
 from customer_support_agent.core.repositories import UsersRepository
-from customer_support_agent.core.scope import ScopeGuard
 from tests.conftest import CUSTOMER_CODE, ScriptedLLM
 
 
@@ -27,47 +26,6 @@ def authenticator(seeded_pool: SqliteConnectionPool) -> CustomerAuthenticator:
     from customer_support_agent.core.repositories import OrdersRepository
 
     return CustomerAuthenticator(UsersRepository(seeded_pool), OrdersRepository(seeded_pool))
-
-
-class TestScopeGuard:
-    @pytest.mark.parametrize(
-        "message",
-        [
-            "what is the weather today in London",
-            "write me a python script to sort a list",
-            "who is the prime minister of India",
-            "what is 2 plus 2 times 8",
-            "tell me a joke about cats please",
-        ],
-    )
-    def test_off_topic_requests_are_refused(self, message: str) -> None:
-        assert ScopeGuard().check(message).in_scope is False
-
-    @pytest.mark.parametrize(
-        "message",
-        [
-            "what is the status of order 10005",
-            "I want a refund for my order",
-            "my parcel never arrived",
-            "the item was damaged in delivery",
-            "hello, who are you?",
-            "can I speak to a human",
-            "here is my customer code",
-        ],
-    )
-    def test_support_requests_are_in_scope(self, message: str) -> None:
-        assert ScopeGuard().check(message).in_scope is True
-
-    def test_short_courtesy_is_not_refused(self) -> None:
-        """Refusing "ok" reads as hostile."""
-        assert ScopeGuard().check("ok").in_scope is True
-
-    def test_the_refusal_says_what_it_can_help_with(self) -> None:
-        verdict = ScopeGuard().check("what is the airspeed velocity of a swallow")
-        assert "orders" in verdict.refusal and "refunds" in verdict.refusal
-
-    def test_an_empty_message_is_not_refused(self) -> None:
-        assert ScopeGuard().check("   ").in_scope is True
 
 
 class TestAuthentication:

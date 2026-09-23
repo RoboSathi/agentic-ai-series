@@ -1,6 +1,28 @@
 agent:
   id: customer_support_agent
   version: 0.1.0
+
+# This agent's harness. Overrides the platform defaults; an episode
+# overlay overrides these in turn. Everything on: a support agent that
+# moves money talks to the public, so every control it could have, it has.
+features:
+  basic_sanity: false
+  prompt_injection: true
+  content_moderation: true
+  pii: true
+  intent_classification: true
+  hallucination_guard: false
+  gatekeeper: true
+  memory:
+    enabled: true
+    working: true
+    episodic: true
+    semantic: true
+    procedural: true
+  context:
+    enabled: true
+    rerank: true
+    failure_detection: true
 memory:
   episodic:
     path: src/customer_support_agent/dummy_data/episodic
@@ -80,7 +102,6 @@ customer_support_agent:
       tool: process_refund
     UNKNOWN: []
   intent_router:
-    enabled: true
     # Routing threshold applied to the mapped model-softmax score. This is an
     # agent-level routing policy, not a calibrated probability guarantee.
     confidence_threshold: 0.75

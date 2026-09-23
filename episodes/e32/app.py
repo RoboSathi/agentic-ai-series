@@ -11,7 +11,6 @@ Redaction mode matters: masking is irreversible, tokenizing is stable so
 records still join, removal destroys the shape of the text.
 """
 
-from agentic_commons.config import get_settings
 from agentic_commons.security import PIIFilterImpl
 from episodes._shared import EpisodeOutput, main
 
@@ -28,8 +27,6 @@ async def run() -> EpisodeOutput:
         title="PII: Detection, Redaction, Minimization",
         principle="Redacting the response leaves the same data in three places that outlive it.",
     )
-    settings = get_settings().security.pii
-    settings.enabled = True
     pii = PIIFilterImpl()
 
     spans = pii.detect(TEXT)
@@ -64,7 +61,6 @@ async def run() -> EpisodeOutput:
     output.say("  A field added upstream is excluded until somebody decides it")
     output.say("  belongs, which is the failure direction you want.")
 
-    settings.enabled = False
     return output.model_copy(
         update={
             "artifact": {

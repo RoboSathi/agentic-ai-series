@@ -159,12 +159,12 @@ class TestEveryConfiguredEpisodeRuns:
         switched_off = [
             section
             for section, enabled in (
-                ("memory", settings.memory.enabled),
-                ("context", settings.context.enabled),
                 ("tools", settings.tools.enabled),
                 ("guardrails", settings.guardrails.enabled),
-                ("hallucination_protection", settings.hallucination_protection.enabled),
-                ("prompt_injection", settings.security.prompt_injection.enabled),
+                *(
+                    (feature, settings.features.is_on(feature))
+                    for feature in settings.features.paths()
+                ),
             )
             if not enabled
         ]

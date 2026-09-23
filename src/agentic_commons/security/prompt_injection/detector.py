@@ -85,7 +85,6 @@ class ToolScopeLimiter:
     """
 
     def __init__(self) -> None:
-        self._enabled = get_settings().security.prompt_injection.enabled
         self._logger = get_logger("prompt_injection")
 
     @logged("prompt_injection")
@@ -93,8 +92,6 @@ class ToolScopeLimiter:
         self, context: SeparatedContext, tools: list[ToolDefinition]
     ) -> list[ToolDefinition]:
         """The tools still on offer given what the untrusted data contained."""
-        if not self._enabled:
-            return tools
         scoped = [tool for tool in tools if tool.surface not in _UNTRUSTED_FORBIDDEN_SURFACES]
         if context.is_suspicious:
             scoped = [tool for tool in scoped if tool.reversible]
@@ -116,7 +113,6 @@ class PromptInjectionGuard:
     ) -> None:
         self._separator = separator or InstructionDataSeparator()
         self._limiter = limiter or ToolScopeLimiter()
-        self._enabled = get_settings().security.prompt_injection.enabled
 
     def separate(self, instructions: str, data: str) -> SeparatedContext:
         """Delimit and scan untrusted data."""
@@ -132,18 +128,6 @@ class PromptInjectionGuard:
         self, instructions: str, data: str, tools: list[ToolDefinition]
     ) -> InjectionAssessment:
         """Full assessment: what was found, and what remains callable."""
-        if not self._enabled:
-            return InjectionAssessment(
-                suspicious=False,
-                allowed_actions=[tool.qualified_name for tool in tools],
-                reason="prompt injection defense disabled",
-                checks=[
-                    {"name": "Instruction/data separation", "status": "SKIPPED", "reason_code": "INJECTION_DEFENSE_DISABLED"},
-                    {"name": "Injection phrase scan", "status": "SKIPPED", "reason_code": "INJECTION_DEFENSE_DISABLED"},
-                    {"name": "Protected surface filter", "status": "SKIPPED", "reason_code": "INJECTION_DEFENSE_DISABLED"},
-                    {"name": "Reversibility enforcement", "status": "SKIPPED", "reason_code": "INJECTION_DEFENSE_DISABLED"},
-                ],
-            )
         context = self.separate(instructions, data)
         allowed = self.scope_tools(context, tools)
         forbidden_surfaces_removed = len(allowed) <= len(tools)

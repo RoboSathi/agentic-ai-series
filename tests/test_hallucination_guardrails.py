@@ -1,9 +1,9 @@
 import pytest
 from pydantic import BaseModel
 
+from agentic_commons.context.types import Chunk
 from agentic_commons.guardrails import PydanticValidator
 from agentic_commons.guardrails.response import ResponseGuardrail
-from agentic_commons.context.types import Chunk
 
 
 class _Schema(BaseModel):

@@ -1,5 +1,10 @@
 """Configuration module for agentic commons."""
 
+from agentic_commons.config.features import (
+    FeatureSet,
+    active_features,
+    set_active_features,
+)
 from agentic_commons.config.paths import REPO_ROOT, resolve_path
 from agentic_commons.config.settings import (
     AppConfig,
@@ -22,15 +27,18 @@ from agentic_commons.config.yaml_config import (
 __all__ = [
     "AppConfig",
     "ConfigFeatureToggle",
+    "FeatureSet",
     "FeatureToggle",
     "REPO_ROOT",
     "YamlBackedSettings",
+    "active_features",
     "clear_overlays",
     "config_sources",
     "get_settings",
     "is_enabled",
     "reload_settings",
     "resolve_path",
+    "set_active_features",
     "set_enabled",
     "use_overlay",
 ]

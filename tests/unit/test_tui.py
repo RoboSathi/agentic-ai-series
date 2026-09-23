@@ -5,16 +5,19 @@ from types import SimpleNamespace
 
 from agentic_commons.commands import ConsoleEffect
 from agentic_commons.commands.harness import HarnessCommand
-from agentic_commons.observability.types import StatusEvent
+from agentic_commons.llm.types import Message
+from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.tui import (
     Osc52ClipboardService,
     StageLabelRegistry,
-    StatusFeedBuffer,
     StatusLineWidget,
     TokenCounterWidget,
 )
 from agentic_commons.tui.app import AgenticTuiApp
 from agentic_commons.tui.widgets import _compact, _elapsed
+from customer_support_agent.core import build_agent
+from customer_support_agent.core.identity import Customer
+from tests.conftest import ScriptedLLM
 
 # Every stage key the harness emits this phase. The contract test below
 # fails if one of these has no configured label — a silent fallback would
@@ -127,43 +130,6 @@ class TestStatusLine:
         line.begin("working")
         line.finish()
         assert line.render().plain.startswith("•")
-
-
-class TestStatusFeedBuffer:
-    def test_renders_a_completed_stage_with_a_check(self) -> None:
-        panel = StatusFeedBuffer()
-        panel.show_status(StatusEvent(stage="llm_call", status="completed"))
-        assert panel.as_text().startswith("✓")
-
-    def test_renders_a_failure_with_its_detail(self) -> None:
-        panel = StatusFeedBuffer()
-        panel.show_status(StatusEvent(stage="llm_call", status="failed", detail="timeout"))
-        assert "✗" in panel.as_text() and "timeout" in panel.as_text()
-
-    def test_started_events_do_not_add_a_line(self) -> None:
-        """They drive the status line instead; a line per start would double up."""
-        panel = StatusFeedBuffer()
-        panel.show_status(StatusEvent(stage="llm_call", status="started"))
-        assert panel.as_text() == ""
-
-    def test_token_deltas_are_shown(self) -> None:
-        panel = StatusFeedBuffer()
-        panel.show_status(
-            StatusEvent(stage="llm_response_received", status="completed", tokens_delta=2400)
-        )
-        assert "2.4k" in panel.as_text()
-
-    def test_the_backlog_is_bounded(self) -> None:
-        panel = StatusFeedBuffer()
-        for index in range(600):
-            panel.note(str(index))
-        assert len(panel.as_text().splitlines()) <= 500
-
-    def test_clearing_empties_the_panel(self) -> None:
-        panel = StatusFeedBuffer()
-        panel.note("something")
-        panel.clear()
-        assert panel.as_text() == ""
 
 
 class TestClipboard:
@@ -285,3 +251,49 @@ class TestTheAppRebuildsItsAgent:
     def test_an_episode_can_add_its_own_commands(self) -> None:
         app = AgenticTuiApp(commands=[HarnessCommand()])
         assert "harness" in [command.name for command in app._commands.all_commands()]
+
+
+class TestARebuildKeepsTheConversation:
+    """Reported from a live run: `/harness off` asked for the code again.
+
+    Verification, the order menu and the transcript live on the agent
+    object, so composing a new one dropped them and the customer had to
+    authenticate before every comparison. A rebuild changes which
+    controls are wired, not who is on the other end — and `/harness off`
+    exists precisely to be asked the *same* question again.
+    """
+
+    def _app(self, pool: SqliteConnectionPool) -> AgenticTuiApp:
+        return AgenticTuiApp(lambda reporter: build_agent(llm=ScriptedLLM(), pool=pool))
+
+    def test_a_verified_session_survives(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        app = self._app(seeded_pool)
+        app._agent._sessions["s1"] = Customer(customer_id=1, name="Ada", email="ada@example.com")
+        app._apply(ConsoleEffect(rebuild_agent=True))
+        assert "s1" in app._agent._sessions
+
+    def test_the_transcript_survives(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        app = self._app(seeded_pool)
+        app._agent._conversations["s1"] = [Message(role="user", content="where is order 10001")]
+        app._apply(ConsoleEffect(rebuild_agent=True))
+        assert app._agent._conversations["s1"]
+
+    def test_it_is_still_a_different_agent(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        """Carrying the conversation must not quietly skip the rebuild."""
+        app = self._app(seeded_pool)
+        before = app._agent
+        app._apply(ConsoleEffect(rebuild_agent=True))
+        assert app._agent is not before
+
+    def test_an_agent_with_no_conversation_to_carry_still_rebuilds(self) -> None:
+        """The console composes whatever it was given, not only this agent."""
+        app = AgenticTuiApp(lambda reporter: SimpleNamespace(memory=None, handle=None))
+        before = app._agent
+        app._apply(ConsoleEffect(rebuild_agent=True))
+        assert app._agent is not before

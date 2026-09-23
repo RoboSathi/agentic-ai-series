@@ -14,10 +14,14 @@ from agentic_commons.config import get_settings
 from agentic_commons.gatekeeper.contracts import AllowAllBusinessRules, DeterministicBusinessRules
 from agentic_commons.gatekeeper.hierarchy import AuthorityHierarchyResolver
 from agentic_commons.gatekeeper.ledger import CumulativeLedger
-from agentic_commons.gatekeeper.types import AuthorityContext, AuthorityDecision, CheckReport, LedgerEntry
+from agentic_commons.gatekeeper.types import (
+    AuthorityContext,
+    AuthorityDecision,
+    CheckReport,
+    LedgerEntry,
+)
 from agentic_commons.logging import get_logger, instrument, logged
 from agentic_commons.logging.trace_context import get_current_trace_id
-from agentic_commons.security.auth.auth import Authorizer
 from agentic_commons.security.auth.policy import AgentPolicy
 from agentic_commons.security.auth.types import AccessDecision, Principal
 from agentic_commons.tools.types import ToolCall

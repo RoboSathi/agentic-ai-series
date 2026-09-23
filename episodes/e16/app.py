@@ -39,7 +39,7 @@ async def run() -> EpisodeOutput:
     )
     pool = SqliteConnectionPool(IN_MEMORY)
     semantic = SemanticStore(pool)
-    facade = MemoryFacade(semantic=semantic, episodic=EpisodicStore(Path(tempfile.mkdtemp())))
+    facade = MemoryFacade.complete(semantic=semantic, episodic=EpisodicStore(Path(tempfile.mkdtemp())))
     verified = Provenance(source="policy", kind="verified_system_of_record")
 
     semantic.write(MemoryFact(key="refund_limit", value="50", provenance=verified), verified)

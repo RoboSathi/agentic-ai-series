@@ -6,8 +6,8 @@ claims.  A failed factual check is repaired once and then fails closed into
 HITL rather than sending an unsupported customer-facing assertion.
 """
 
-from collections.abc import Awaitable, Callable
 import re
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -59,14 +59,33 @@ class ResponseGuardrail:
         self,
         grounding: DetectionLadder | None,
         validator: PydanticValidator | None = None,
+        enforce_grounding: bool | None = None,
+        max_repair_attempts: int | None = None,
     ) -> None:
+        """Structural validation and factual grounding, wired independently.
+
+        `grounding` is the entire switch for the factual half: given a
+        detector this gate verifies claims and refuses unsupported ones;
+        given None it validates shape and nothing else.
+
+        Schema validation deliberately does not depend on it. The two
+        used to share a single flag computed as `guardrails OR
+        hallucination_protection`, which meant switching either off took
+        half of the other with it — a malformed envelope reaching the
+        customer because grounding was disabled, or claims going
+        unverified because schema checking was. They are different
+        guarantees and they now have different switches.
+        """
         self._grounding = grounding
         self._validator = validator or PydanticValidator()
         self._diagnoser = GroundingReasoningDiagnoser()
-        settings = get_settings()
-        self._enabled = settings.guardrails.enabled or settings.hallucination_protection.enabled
-        self._enforce_grounding = settings.hallucination_protection.enforce_grounding
-        self._max_repairs = settings.hallucination_protection.max_repair_attempts
+        settings = get_settings().hallucination_protection
+        self._enforce_grounding = (
+            settings.enforce_grounding if enforce_grounding is None else enforce_grounding
+        )
+        self._max_repairs = (
+            settings.max_repair_attempts if max_repair_attempts is None else max_repair_attempts
+        )
         self._logger = get_logger("guardrails")
 
     def validate_schema(self, raw: str) -> tuple[str | None, dict[str, Any]]:
@@ -97,7 +116,7 @@ class ResponseGuardrail:
         revise: Callable[[str, list[str]], Awaitable[str]] | None = None,
     ) -> ResponseGuardrailResult:
         """Check, bounded-repair, then fail closed if unsupported claims remain."""
-        if not self._enabled or not self._enforce_grounding:
+        if self._grounding is None or not self._enforce_grounding:
             return ResponseGuardrailResult(response=response)
 
         # No successful tool result is not the same thing as "nothing to
@@ -177,12 +196,6 @@ class ResponseGuardrail:
                 reason_code=reason,
                 hallucination_scope="complete",
             )
-
-        # Deterministic provenance is independent of the NLI detector. If
-        # the semantic detector is unavailable, do not skip the deterministic
-        # authority boundary; only skip the semantic tier after it passes.
-        if self._grounding is None:
-            return ResponseGuardrailResult(response=response)
 
         if not evidence:
             return ResponseGuardrailResult(response=response)

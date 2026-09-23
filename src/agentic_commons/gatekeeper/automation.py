@@ -2,6 +2,7 @@
 
 from agentic_commons.config import get_settings
 from agentic_commons.gatekeeper.types import AutomationAssessment
+from agentic_commons.logging import get_logger
 
 SHERIDAN_LEVELS = {
     1: "human does everything",
@@ -26,6 +27,7 @@ class AutomationLevelPolicy:
         self._approval_below = settings.human_approval_below
         self._levels = settings.levels
         self._escalation_amounts = settings.per_action_amount_escalation_usd
+        self._logger = get_logger("gatekeeper")
 
     @property
     def approval_floor(self) -> int:

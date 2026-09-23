@@ -217,7 +217,6 @@ class HuggingFaceIntentClassifier(IntentClassifierInterface):
     def _download_and_load(self) -> tuple[Any, Any, Any]:
         import torch
         from huggingface_hub import snapshot_download
-        from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
         parent = self._local_model_dir.parent
         parent.mkdir(parents=True, exist_ok=True)
@@ -257,8 +256,8 @@ class HuggingFaceIntentClassifier(IntentClassifierInterface):
             raise
 
     def _load_local_from(self, model_dir: Path) -> tuple[Any, Any, Any]:
-        from transformers import AutoModelForSequenceClassification, AutoTokenizer
         import torch
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
         weight_files = (
             list(model_dir.glob("*.safetensors"))

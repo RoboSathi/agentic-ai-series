@@ -24,8 +24,25 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
         self._max_refund_amount = policy.max_refund_amount if policy is not None else float("inf")
 
     def evaluate(self, call: ToolCall, authority: AuthorityContext) -> BusinessRuleResult:
+        """Rule on one proposal: who owns the order first, then what may be done to it.
+
+        Ownership is an *authority* question, not a data-access one, so it
+        is settled here — before execution — for every action that names an
+        order, read or write alike. Leaving reads to a customer-scoped
+        repository meant another customer's order was refused by returning
+        nothing from a query: the Gatekeeper allowed the call, the executor
+        ran it, and the audit trail recorded an authorized read of an order
+        the caller had no standing to name. One forgotten `WHERE user_id`
+        and that becomes a disclosure. Here it is a denial with a reason.
+        """
         action = call.action.rsplit(".", maxsplit=1)[-1]
-        if action not in {"process_refund", "queue_for_approval"}:
+        is_write = action in {"process_refund", "queue_for_approval"}
+        customer_id = authority.request_context.get("customer_id")
+        order_id = call.params.get("order_id")
+        amount = call.params.get("amount")
+        checks: list[CheckReport] = []
+
+        if order_id is None and not is_write:
             return BusinessRuleResult(
                 checks=[
                     CheckReport(
@@ -33,21 +50,16 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
                         name="Agent business rules",
                         status="SKIPPED",
                         reason_code="BUSINESS_RULES_NOT_APPLICABLE",
-                        reason=f"No Customer Support write rule applies to '{action}'.",
+                        reason=f"'{action}' names no order, so no ownership rule applies.",
                     )
                 ]
             )
-
-        customer_id = authority.request_context.get("customer_id")
-        order_id = call.params.get("order_id")
-        amount = call.params.get("amount")
-        checks: list[CheckReport] = []
 
         if not isinstance(customer_id, int):
             return self._deny(
                 checks,
                 "CUSTOMER_NOT_AUTHENTICATED",
-                "An authenticated customer id is required before a refund action can execute.",
+                "An authenticated customer id is required before an order action can execute.",
                 observed={"customer_id_present": False},
             )
         checks.append(CheckReport(
@@ -63,12 +75,15 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
             return self._deny(
                 checks,
                 "ORDER_ID_REQUIRED",
-                "A concrete order id is required for a refund action.",
+                f"A concrete order id is required for '{action}'.",
                 observed={"order_id": order_id},
             )
 
         order = self._orders.get_for_customer(order_id, customer_id)
         if order is None:
+            # Deliberately the same refusal whether the order belongs to
+            # somebody else or does not exist. Distinguishing them would
+            # turn this gate into an oracle for which order ids are real.
             return self._deny(
                 checks,
                 "ORDER_NOT_FOUND_FOR_CUSTOMER",
@@ -83,6 +98,10 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
             reason="The order exists and belongs to the authenticated customer.",
             observed={"order_id": order_id, "customer_id": customer_id},
         ))
+
+        if not is_write:
+            # Ownership settled, and nothing else here governs a read.
+            return BusinessRuleResult(checks=checks)
 
         if order.already_refunded:
             return self._deny(

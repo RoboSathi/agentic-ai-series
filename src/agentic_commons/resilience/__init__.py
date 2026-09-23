@@ -28,10 +28,10 @@ from agentic_commons.resilience.types import (
     CircuitBreakerOpenError,
     CircuitState,
     Event,
-    external_api_error_fields,
     NonIdempotentRetryError,
     SagaResult,
     SagaStep,
+    external_api_error_fields,
 )
 
 __all__ = [

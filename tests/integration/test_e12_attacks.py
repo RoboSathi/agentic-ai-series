@@ -6,6 +6,8 @@ executes anyway is not defended. Each of these was demonstrated live in
 E12; here they are the tests that keep the defence in place.
 """
 
+from typing import Any
+
 import pytest
 
 from agentic_commons.audit import SqliteAuditLedger
@@ -25,9 +27,14 @@ def audit(seeded_pool: SqliteConnectionPool) -> SqliteAuditLedger:
 
 
 @pytest.fixture
-def gatekeeper(seeded_pool: SqliteConnectionPool, audit: SqliteAuditLedger) -> GatekeeperImpl:
+def gatekeeper(
+    seeded_pool: SqliteConnectionPool, audit: SqliteAuditLedger, agent_policy: Any
+) -> GatekeeperImpl:
     return GatekeeperImpl(
-        authorizer=Authorizer(), ledger=CumulativeLedger(seeded_pool), audit=audit
+        authorizer=Authorizer(policy=agent_policy),
+        policy=agent_policy,
+        ledger=CumulativeLedger(seeded_pool),
+        audit=audit,
     )
 
 

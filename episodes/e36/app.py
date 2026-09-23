@@ -11,7 +11,6 @@ And PII is redacted before persistence, because a trace outlives the
 request that produced it.
 """
 
-from agentic_commons.config import get_settings
 from agentic_commons.observability import LocalTracer
 from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
 from agentic_commons.security import PIIFilterImpl
@@ -25,7 +24,6 @@ async def run() -> EpisodeOutput:
         title="Observability for Agents",
         principle="A trace that cannot answer 'why' is telemetry, not audit.",
     )
-    get_settings().security.pii.enabled = True
     pool = SqliteConnectionPool(IN_MEMORY)
     tracer = LocalTracer(pool, redactor=PIIFilterImpl())
 
@@ -65,7 +63,6 @@ async def run() -> EpisodeOutput:
     output.say("  The live view keeps the text an operator needs. What outlives")
     output.say("  the request does not.")
 
-    get_settings().security.pii.enabled = False
     return output.model_copy(
         update={
             "artifact": {

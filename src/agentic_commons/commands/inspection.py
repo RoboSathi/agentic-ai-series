@@ -38,7 +38,23 @@ class ConfigCommand:
 
         section = args[0]
         if section not in config:
-            raise CommandError(f"No config section named '{section}'")
+            # `/config feature <name> off` is the shape people reach for
+            # first. Naming the command that actually moves a feature
+            # costs one line and saves a trip to /help.
+            hint = (
+                " Features are shown with '/config features' and changed with '/harness'."
+                if section.casefold().startswith("feature")
+                else ""
+            )
+            raise CommandError(f"No config section named '{section}'.{hint}")
+        if len(args) > 1:
+            # Silently ignoring the rest would let `/config features
+            # gatekeeper off` print a config dump and read as success, so
+            # the operator walks away believing they changed something.
+            raise CommandError(
+                f"/config only shows configuration. To change a feature, "
+                f"use '/harness {' '.join(args[1:])}'."
+            )
         result = CommandResult(title=f"config.{section}")
         result.headers = ["key", "value"]
         for key, value in _flatten(config[section]):

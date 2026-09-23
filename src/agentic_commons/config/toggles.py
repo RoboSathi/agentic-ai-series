@@ -5,9 +5,14 @@ runtime, with no restart, so its marginal effect is measurable rather than
 merely asserted. Reads are live — never cached — because the TUI flips
 these mid-run.
 
-Sub-features are parent-gated: `security.pii` is only enabled if `security`
-is too. A section with no `enabled` field (the Gatekeeper) is always on by
-construction — PRD G1 requires that no execution path can bypass it.
+Sub-features are parent-gated: a section is only enabled if its parent is
+too, and a section with no `enabled` field is on by construction.
+
+This is the older mechanism, and it now covers only the always-on
+plumbing an agent cannot be composed without. Governance *capabilities*
+live in `features.py` instead: they are read once, by a composition root,
+so that two agents in one process can hold different postures — which a
+process-wide toggle cannot express.
 """
 
 from typing import Any, Protocol, runtime_checkable

@@ -47,7 +47,6 @@ class WorkingMemory:
 
     def __init__(self, capacity: int | None = None) -> None:
         settings = get_settings()
-        self._enabled = settings.memory.working.enabled
         self._capacity = capacity or settings.context.top_k
         self._facts: dict[str, list[MemoryFact]] = {}
         self._scratch: dict[str, dict[str, Any]] = {}
@@ -82,8 +81,6 @@ class WorkingMemory:
 
     def write(self, fact: MemoryFact, provenance: Provenance) -> WriteResult:
         """Place a fact in this session's window, evicting the oldest if full."""
-        if not self._enabled:
-            return WriteResult(route="discard", written=False, reason="working memory disabled")
         session = str(fact.metadata.get(SESSION_KEY) or DEFAULT_SESSION)
         placed = fact.model_copy(
             update={

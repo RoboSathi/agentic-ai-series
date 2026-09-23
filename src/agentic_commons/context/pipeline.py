@@ -75,7 +75,6 @@ class FiveStagePipeline:
         self._rerank = settings.rerank
         self._budget = settings.token_budget
         self._chars_per_token = settings.chars_per_token
-        self._enabled = settings.enabled
         self._logger = get_logger("context")
 
     def add_source(self, source: CandidateSource) -> None:
@@ -131,7 +130,7 @@ class FiveStagePipeline:
         Pinned chunks are excluded. They do not compete on relevance, so
         paying a model to score them would buy a number nothing reads.
         """
-        if self._reranker is None or not self._rerank.enabled:
+        if self._reranker is None:
             return chunks
         pinned = [chunk for chunk in chunks if chunk.pinned]
         competing = sorted(

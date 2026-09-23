@@ -61,7 +61,6 @@ class SemanticStore:
         settings = get_settings().memory.semantic
         self._store = as_platform_store(store, agent_id=agent_id)
         self._agent_id = agent_id or self._store.agent_id
-        self._enabled = settings.enabled
         self._fuzzy_threshold = settings.fuzzy_match_threshold
         self._logger = get_logger("memory")
         self._store.execute_script(_SCHEMA)
@@ -74,8 +73,6 @@ class SemanticStore:
     @logged("memory")
     def write(self, fact: MemoryFact, provenance: Provenance) -> WriteResult:
         """Store a fact. Conflicts are the write pipeline's business, not ours."""
-        if not self._enabled:
-            return WriteResult(route="discard", written=False, reason="semantic memory disabled")
         stored = fact.model_copy(update={"memory_type": "semantic", "provenance": provenance})
         self._store.execute(
             _INSERT,

@@ -2,11 +2,10 @@
 
 from typing import Any
 
-from agentic_commons.config import get_settings
-from agentic_commons.logging import get_logger, instrument, logged
+from agentic_commons.logging import get_logger, logged
 from agentic_commons.memory.types import MemoryFact, MemoryQuery, Provenance, WriteResult
-from agentic_commons.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
 from agentic_commons.observability.types import utc_now
+from agentic_commons.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS platform_procedures (
@@ -36,10 +35,8 @@ class ProceduralStore:
         *,
         agent_id: str | None = None,
     ) -> None:
-        settings = get_settings().memory.procedural
         self._store = as_platform_store(store, agent_id=agent_id)
         self._agent_id = agent_id or self._store.agent_id
-        self._enabled = settings.enabled
         self._logger = get_logger("memory")
         self._store.execute_script(_SCHEMA)
         self._migrate_legacy_table()
@@ -51,8 +48,6 @@ class ProceduralStore:
     @logged("memory")
     def write(self, fact: MemoryFact, provenance: Provenance) -> WriteResult:
         """Record a new version of a procedure and make it the active one."""
-        if not self._enabled:
-            return WriteResult(route="discard", written=False, reason="procedural memory disabled")
         version = self.latest_version(fact.key) + 1
         self._store.execute(
             "UPDATE platform_procedures SET active = 0 WHERE agent_id = ? AND name = ?",

@@ -304,19 +304,19 @@ class TestWorkingMemory:
 
 class TestMemoryFacadeWindow:
     def test_note_lands_in_the_window_and_reads_back(self) -> None:
-        facade = MemoryFacade()
+        facade = MemoryFacade.complete()
         facade.note("verified_customer", "Ada (#1)", "session-1", "agent", category="identity")
         window = facade.active_window("session-1")
         assert [fact.value for fact in window] == ["Ada (#1)"]
 
     def test_a_noted_fact_is_treated_as_the_system_of_record(self) -> None:
         """Tool results and database reads are verified, not self-reported."""
-        facade = MemoryFacade()
+        facade = MemoryFacade.complete()
         facade.note("order", "order 10001 delivered", "session-2", "agent")
         assert facade.active_window("session-2")[0].provenance.kind == "verified_system_of_record"
 
     def test_ending_a_session_clears_its_window_only(self) -> None:
-        facade = MemoryFacade()
+        facade = MemoryFacade.complete()
         facade.note("a", "1", "one", "agent")
         facade.note("b", "2", "two", "agent")
         facade.end_session("one")
@@ -333,7 +333,7 @@ class TestWorkingMemoryInTheAgent:
     ) -> None:
         from customer_support_agent.core.builder import build_agent
 
-        memory = MemoryFacade()
+        memory = MemoryFacade.complete()
         agent = build_agent(llm=scripted_llm, pool=seeded_pool, memory=memory, observe=False)
         await agent.handle("where is order 10001", session_id="s1")
         held = {fact.key for fact in memory.active_window("s1")}
@@ -347,7 +347,7 @@ class TestWorkingMemoryInTheAgent:
         from agentic_commons.context import Task
         from customer_support_agent.core.builder import WorkingMemoryContextSource
 
-        memory = MemoryFacade()
+        memory = MemoryFacade.complete()
         memory.note("verified_customer", "Ada (#1)", "s2", "agent", category="identity")
         chunks = await WorkingMemoryContextSource(memory).candidates(
             Task(query="anything", session_id="s2", actor="agent")

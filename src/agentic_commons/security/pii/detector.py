@@ -90,7 +90,13 @@ class NERPIIDetector:
 
 
 class PIIFilterImpl:
-    """The filter used at all three surfaces (Facade + Strategy on mode)."""
+    """The filter used at all three surfaces (Facade + Strategy on mode).
+
+    A filter that exists, filters. Switching PII protection off is the
+    composition root declining to build one, not this object being asked
+    to stand there doing nothing — a detector that is present but inert
+    still appears in traces and still reads as a defence.
+    """
 
     def __init__(self, detectors: list[PIIDetector] | None = None) -> None:
         settings = get_settings().security.pii
@@ -98,13 +104,10 @@ class PIIFilterImpl:
         self._mode: RedactionMode = settings.mode
         self._mask_token = settings.mask_token
         self._allowed_fields = set(settings.tool_call_allowed_fields)
-        self._enabled = settings.enabled
         self._logger = get_logger("pii")
 
     def detect(self, text: str) -> list[PIISpan]:
         """Union of every detector's findings, de-overlapped."""
-        if not self._enabled:
-            return []
         return _resolve_overlaps(
             [span for detector in self._detectors for span in detector.detect(text)]
         )
@@ -135,8 +138,6 @@ class PIIFilterImpl:
         excluded until someone decides it belongs, which is the failure
         direction you want.
         """
-        if not self._enabled:
-            return dict(payload)
         allowed = allowed_fields if allowed_fields is not None else self._allowed_fields
         dropped = set(payload) - allowed
         if dropped:

@@ -167,8 +167,8 @@ class GroundingResolver:
         if (
             best_entailment
             and best_contradiction
-            and best_entailment[0].score >= self._threshold
-            and best_contradiction[0].score >= self._threshold
+            and self._is_decisive(best_entailment[0])
+            and self._is_decisive(best_contradiction[0])
         ):
             result, _ = best_entailment
             return self._verdict(
@@ -182,11 +182,11 @@ class GroundingResolver:
                 ),
             )
 
-        if best_entailment and best_entailment[0].score >= self._threshold:
+        if best_entailment and self._is_decisive(best_entailment[0]):
             result, _ = best_entailment
             return self._verdict(claim, retrieved, result, supported=True)
 
-        if best_contradiction and best_contradiction[0].score >= self._threshold:
+        if best_contradiction and self._is_decisive(best_contradiction[0]):
             result, _ = best_contradiction
             return self._verdict(claim, retrieved, result, supported=False)
 
@@ -209,16 +209,38 @@ class GroundingResolver:
                 supported=False,
             )
         if result.label == "entailment":
+            # Name the detector that actually decided. Saying "NLI" when the
+            # lexical fallback ran sent a reader looking for a model problem
+            # that was not there.
             result = result.model_copy(
                 update={
                     "rationale": (
-                        f"NLI predicted entailment ({result.score:.3f}) but "
-                        f"confidence is below the configured threshold "
-                        f"({self._threshold:.3f})"
+                        f"{result.model or 'the detector'} predicted entailment "
+                        f"({result.score:.3f}) but confidence is below the configured "
+                        f"threshold ({self._threshold:.3f})"
                     )
                 }
             )
         return self._verdict(claim, retrieved, result, supported=False)
+
+    def _is_decisive(self, result: EntailmentResult) -> bool:
+        """Whether a result settles the claim, judged on its own scale.
+
+        `nli_entailment_threshold` is a probability, and only a calibrated
+        classifier produces one. The lexical fallback scores token
+        coverage instead, and a claim that restates its evidence exactly
+        still covers only the words the evidence happens to contain —
+        "A refund has already been approved for order 10864" covers four
+        of nine against "Order 10864 refund status: approved". Comparing
+        that ratio to 0.60 rejected true claims and escalated correct
+        answers to a human.
+
+        So the threshold applies only where it means something. An
+        uncalibrated model's label is its decision: it has already gated
+        on `evals.nli.min_overlap` and checked negation polarity, and
+        there is no second, comparable number to test.
+        """
+        return result.score >= self._threshold if result.calibrated else True
 
     def _verdict(
         self,
@@ -250,10 +272,8 @@ class DetectionLadder:
     """Compatibility facade over the retrieval → NLI grounding verifier."""
 
     def __init__(self, cascade: ClaimResolver, decomposer: ClaimDecomposer | None = None) -> None:
-        settings = get_settings().hallucination_protection
         self._resolver = GroundingResolver(cascade)
         self._decomposer = decomposer or ClaimDecomposer()
-        self._enabled = settings.enabled
         self._logger = get_logger("hallucination_protection")
 
     @logged("hallucination_protection")
@@ -263,8 +283,6 @@ class DetectionLadder:
 
     async def assess(self, generation: str, evidence: list[Chunk]) -> GenerationAssessment:
         """Check every verifiable claim independently."""
-        if not self._enabled:
-            return GenerationAssessment()
         claims = [claim for claim in self._decomposer.decompose(generation) if claim.is_verifiable]
         verdicts = [await self.score(claim.text, evidence) for claim in claims]
         unsupported = [verdict.claim for verdict in verdicts if not verdict.supported]

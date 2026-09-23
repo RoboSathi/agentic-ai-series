@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from agentic_commons.executor import ToolExecutionHandler
 from agentic_commons.logging import get_logger, instrument
-from agentic_commons.tools import PathCardinality, ToolCall, ToolDefinition, ToolResult
+from agentic_commons.tools import ToolCall, ToolDefinition, ToolResult
 from customer_support_agent.core.identity import current_customer_id
 from customer_support_agent.core.refund_saga import RefundSaga
 from customer_support_agent.core.repositories import (

@@ -312,7 +312,7 @@ class TestAgenticRetrieval:
 class TestMemorySystems:
     @pytest.fixture
     def memory(self, pool: SqliteConnectionPool, tmp_path) -> MemoryFacade:  # type: ignore[no-untyped-def]
-        return MemoryFacade(semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path))
+        return MemoryFacade.complete(semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path))
 
     async def test_it_recalls_what_is_relevant(self, memory: MemoryFacade) -> None:
         memory.remember(

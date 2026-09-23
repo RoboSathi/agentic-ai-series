@@ -2,7 +2,7 @@
 
 from agentic_commons.commands._pool import PoolBackedCommand
 from agentic_commons.commands.types import CommandError, CommandResult, ConsoleEffect
-from agentic_commons.config import get_settings, is_enabled, reload_settings, set_enabled
+from agentic_commons.config import active_features, get_settings, set_active_features
 from agentic_commons.evals import (
     TIER_ORDER,
     Claim,
@@ -202,7 +202,7 @@ class PatternsCommand:
 
 
 class HarnessCommand:
-    """Switch the harness off and on around an unchanged model (E01).
+    """The harness, and every switch on it (E01).
 
     The series' first claim is that an agent is a model plus a harness,
     and that nearly everything worth having in production is a property
@@ -210,33 +210,61 @@ class HarnessCommand:
     show — so this makes it switchable: ask for a refund, turn the
     harness off, ask for the identical refund.
 
-    `off` disables the controls named in `commands.harness.controls`.
-    `on` does not restore a remembered set, it re-reads configuration
-    from disk — so an episode gets *its* harness back rather than the
-    platform's, and the command needs no memory of what it changed.
+    *The harness is the set of declared features* — the controls you can
+    remove and still get an agent that runs, just a worse or more
+    dangerous one. Everything else the agent is made of (the control
+    loop and its budgets, resilience, observability, audit, logging,
+    persistence, tool calling, schema validation) is always on, because
+    removing it does not produce a reckless agent, it produces a broken
+    program. That line is why this command no longer reads a
+    hand-maintained list: the list *is* the feature tree.
 
-    Both rebuild the agent. Components read their `enabled` flag when
-    they are constructed, and the composition root decides what to wire
-    at all, so an agent already running was built under the old answer.
+    Every form is a hot reload. Nothing is re-read from disk and nothing
+    is remembered — `off` withholds every feature, `on` grants every
+    feature, and a named path moves exactly one. A restart returns to
+    whatever the agent's config declared.
+
+    All of them rebuild the agent: the composition root decides what to
+    wire, so an agent already running was built under the old answer.
     """
 
     name = "harness"
-    summary = "Turn the harness off or on around the same model"
-    usage = "/harness [on|off]"
+    summary = "Turn the whole harness, or one feature, off and on"
+    usage = "/harness [on|off] | /harness <feature> [on|off]"
+
+    def argument_completions(self) -> list[str]:
+        """Every feature path, plus the two words that move one."""
+        return [*active_features().paths(), "on", "off"]
 
     async def run(self, args: list[str]) -> CommandResult:
         if not args:
             return self._report()
-        wanted = args[0].lower()
-        if wanted not in {"on", "off"}:
-            raise CommandError(f"Say 'on' or 'off', not {args[0]!r}")
-        if wanted == "off":
-            for control in _controls():
-                set_enabled(control, None, False)
-        else:
-            reload_settings()
+        if len(args) == 1:
+            return self._bulk(args[0])
+        return self._one(args[0], args[1])
+
+    def _bulk(self, word: str) -> CommandResult:
+        """Move every feature at once — the E01 gesture."""
+        value = _state(word)
+        set_active_features(active_features().with_all(value))
+        return self._applied(f"Harness {word.lower()}")
+
+    def _one(self, path: str, word: str) -> CommandResult:
+        """Move one feature, or one sub-feature, leaving the rest alone."""
+        value = _state(word)
+        features = active_features()
+        try:
+            set_active_features(features.with_override(path, value))
+        except KeyError:
+            raise CommandError(
+                f"No feature '{path}'. Try one of: {', '.join(features.paths())}"
+            ) from None
+        return self._applied(f"{path} {word.lower()}")
+
+    def _applied(self, title: str) -> CommandResult:
+        """Report the new posture and ask the console to rebuild."""
         result = self._report()
-        result.title = f"Harness {wanted.upper()}"
+        result.title = title
         result.line("")
         result.line(
             "The model, the prompt and the tools are unchanged. Ask the same question again."
@@ -245,16 +273,25 @@ class HarnessCommand:
         return result
 
     def _report(self) -> CommandResult:
-        """Each control, and whether it currently stands between the model
+        """Every feature and whether it currently stands between the model
         and execution."""
+        features = active_features()
         result = CommandResult(title="Harness")
-        result.headers = ["control", "state"]
-        for control in _controls():
-            live = is_enabled(control)
-            result.row(control, "on" if live else "off", style="" if live else "bright_black")
+        result.headers = ["feature", "state"]
+        for path in features.paths():
+            live = features.is_on(path)
+            indent = "  " * path.count(".")
+            result.row(
+                f"{indent}{path.rsplit('.', maxsplit=1)[-1]}",
+                "on" if live else "off",
+                style="" if live else "bright_black",
+            )
         return result
 
 
-def _controls() -> list[str]:
-    """The controls this console counts as the harness."""
-    return get_settings().commands.harness.controls
+def _state(word: str) -> bool:
+    """Read 'on' or 'off', and refuse anything else."""
+    wanted = word.lower()
+    if wanted not in {"on", "off"}:
+        raise CommandError(f"Say 'on' or 'off', not {word!r}")
+    return wanted == "on"

@@ -32,7 +32,6 @@ class TermContentModerator:
 
     def __init__(self) -> None:
         settings = get_settings().security.content_moderation
-        self._enabled = settings.enabled
         self._terms = [term.casefold() for term in settings.blocked_terms]
         self._pattern = (
             re.compile(r"\b(" + "|".join(re.escape(term) for term in self._terms) + r")\b")
@@ -44,8 +43,8 @@ class TermContentModerator:
     @logged("content_moderation")
     def moderate(self, text: str) -> ModerationVerdict:
         """Flag matched terms; always advisory, never blocking."""
-        if not self._enabled or self._pattern is None:
-            return ModerationVerdict(reason="content moderation disabled")
+        if self._pattern is None:
+            return ModerationVerdict(reason="no blocked terms are configured")
         matched = sorted(set(self._pattern.findall(text.casefold())))
         if not matched:
             return ModerationVerdict(reason="no flagged terms found")

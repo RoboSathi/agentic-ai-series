@@ -41,7 +41,6 @@ class DeterministicRejectRule(BaseModel):
 class IntentRouterSettings(BaseModel):
     """Customer Support intent routing policy."""
 
-    enabled: bool = True
     confidence_threshold: float
     clarification_top_k: int
     clarification_template: str

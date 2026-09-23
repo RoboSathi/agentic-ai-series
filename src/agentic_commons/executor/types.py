@@ -36,6 +36,30 @@ class ApprovedToolCall(BaseModel):
             )
         return cls(call=call, decision=decision, authority=authority)
 
+    @classmethod
+    def ungoverned(cls, call: ToolCall, authority: AuthorityContext) -> "ApprovedToolCall":
+        """An execution with no Gatekeeper standing behind it.
+
+        Only reachable when a deployment has explicitly withheld the
+        `gatekeeper` feature, which episodes do to show what the control
+        was holding back. The synthesized decision says exactly that
+        rather than mimicking an approval — whatever reads this later
+        (the audit trail especially) must be able to tell an execution
+        nobody authorized from one somebody did.
+        """
+        return cls(
+            call=call,
+            decision=AuthorityDecision(
+                verdict="allow",
+                action=call.action,
+                actor=authority.actor,
+                reason="Executed without authorization: the gatekeeper feature is switched off.",
+                reason_code="GATEKEEPER_DISABLED",
+                question="ungoverned",
+            ),
+            authority=authority,
+        )
+
 
 class ExecutionOutcome(BaseModel):
     """Normalized result plus execution metadata."""

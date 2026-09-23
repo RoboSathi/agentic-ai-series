@@ -67,9 +67,13 @@ class MemoryWritePipelineImpl:
         platform_store: PlatformStore | None = None,
     ) -> None:
         settings = get_settings().memory.write_pipeline
-        self._semantic = semantic or SemanticStore(platform_store)
-        self._episodic = episodic or EpisodicStore()
-        self._procedural = procedural or ProceduralStore(platform_store)
+        # Absent, not defaulted: which CoALA classes exist is the
+        # composition root's decision, and rebuilding a store that was
+        # deliberately withheld would write to disk a class the
+        # configuration says this agent does not have.
+        self._semantic = semantic
+        self._episodic = episodic
+        self._procedural = procedural
         self._authorizer = authorizer
         self._enabled = settings.enabled
         self._auto_commit = settings.auto_commit_threshold
@@ -144,7 +148,7 @@ class MemoryWritePipelineImpl:
                     stage="conflict",
                 )
             )
-        if conflict is not None and conflict.resolution == "supersede":
+        if conflict is not None and conflict.resolution == "supersede" and self._semantic:
             self._semantic.supersede(conflict.existing.key, candidate.key)
 
         return self.route(candidate)
@@ -182,7 +186,7 @@ class MemoryWritePipelineImpl:
         verified system-of-record fact is not a temporal update; it is the
         poisoning case, and it goes to a human.
         """
-        existing = self._semantic.get(candidate.key)
+        existing = self._semantic.get(candidate.key) if self._semantic else []
         if not existing:
             return None
         prior = existing[0]
@@ -275,6 +279,14 @@ class MemoryWritePipelineImpl:
                 )
             )
         store = self._store_for(_store_type(candidate.category))
+        if store is None:
+            return WriteResult(
+                route="discard",
+                written=False,
+                fact=candidate,
+                reason="this agent has no store for that memory type",
+                stage="route",
+            )
         result = store.write(candidate, candidate.provenance)
         return result.model_copy(update={"stage": "route"})
 
@@ -295,6 +307,14 @@ class MemoryWritePipelineImpl:
         )
         fact = pending.fact.model_copy(update={"confidence": 1.0, "provenance": confirmed})
         store = self._store_for(_store_type(fact.category))
+        if store is None:
+            return WriteResult(
+                route="discard",
+                written=False,
+                fact=fact,
+                reason="this agent has no store for that memory type",
+                stage="approve",
+            )
         return store.write(fact, confirmed)
 
     def _queue(self, result: WriteResult) -> WriteResult:
@@ -304,8 +324,8 @@ class MemoryWritePipelineImpl:
 
     def _store_for(
         self, memory_type: MemoryType
-    ) -> SemanticStore | EpisodicStore | ProceduralStore:
-        """The store a memory type belongs to."""
+    ) -> SemanticStore | EpisodicStore | ProceduralStore | None:
+        """The store a memory type belongs to, if this agent has it."""
         if memory_type == "episodic":
             return self._episodic
         if memory_type == "procedural":
@@ -314,7 +334,7 @@ class MemoryWritePipelineImpl:
 
     def recent(self, limit: int = 10) -> list[MemoryFact]:
         """Most recently committed semantic facts — an inspection helper."""
-        return self._semantic.search(MemoryQuery(limit=limit))
+        return self._semantic.search(MemoryQuery(limit=limit)) if self._semantic else []
 
 
 def _store_type(category: str) -> MemoryType:
