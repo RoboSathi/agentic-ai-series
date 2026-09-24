@@ -117,12 +117,78 @@ _REFUND_STATUS_WEIGHTS: list[tuple[str, float]] = [
 # The only refund status an in-flight order can carry.
 _NO_REFUND = "none"
 
+# One shop, one currency.
+_CURRENCY = "USD"
+
+# The catalogue this shop sells. A name and a price band, so an order's
+# total is consistent with what it claims to be: a $7 laptop is the kind
+# of fixture that makes a grounding check look broken when it is right.
+_CATALOGUE: list[tuple[str, str, float, float]] = [
+    ("Wireless Noise-Cancelling Headphones", "AUD-WH-100", 120.00, 320.00),
+    ("Mechanical Keyboard, 87-key", "PER-KB-087", 60.00, 180.00),
+    ("USB-C Charging Cable, 2m", "ACC-CBL-2M", 8.00, 22.00),
+    ("Cotton Crew T-Shirt", "APP-TS-CRW", 12.00, 35.00),
+    ("Stainless Water Bottle, 750ml", "HOM-WB-750", 15.00, 40.00),
+    ("Espresso Grinder", "KIT-GR-ESP", 90.00, 260.00),
+    ("Running Shoes", "APP-SH-RUN", 55.00, 160.00),
+    ("Desk Lamp, Adjustable", "HOM-LMP-ADJ", 25.00, 75.00),
+    ("Bluetooth Speaker", "AUD-SPK-BT", 35.00, 130.00),
+    ("Laptop Stand, Aluminium", "ACC-STD-ALU", 30.00, 85.00),
+]
+
+_CARRIERS = ["Parcelforce", "DHL", "UPS", "Royal Mail", "FedEx"]
+
+# Where a parcel in transit has got to. Any of these is consistent with
+# "shipped"; none of them is consistent with "delivered" or "cancelled",
+# which is the rule `_whereabouts` below enforces.
+_TRANSIT_LOCATIONS = [
+    "Birmingham depot",
+    "Manchester sorting centre",
+    "London Heathrow hub",
+    "Leeds distribution centre",
+    "Bristol depot",
+    "out for delivery",
+]
+
 
 def refund_status_for(rng: random.Random, order_status: str) -> str:
     """The refund status an order in this state is allowed to have."""
     if order_status not in _REFUNDABLE_ORDER_STATUSES:
         return _NO_REFUND
     return _weighted_choice(rng, _REFUND_STATUS_WEIGHTS)
+
+
+def _whereabouts(
+    rng: random.Random, order_status: str, timestamp: str, now: datetime
+) -> tuple[str | None, str | None, str | None, str | None, str | None]:
+    """Carrier, tracking, ETA, delivered_at and location for this status.
+
+    The rule the agent applies is the rule the fixtures obey, exactly as
+    `refund_status_for` already does for refunds. A cancelled order with
+    a delivery date, or a pending one already in a depot, is data that
+    contradicts the policy — and the agent then learns the contradiction.
+    """
+    placed = datetime.fromisoformat(timestamp)
+    if order_status == "pending":
+        # Not handed to a carrier yet: an estimate, and nothing else.
+        eta = (placed + timedelta(days=rng.randint(3, 10))).isoformat()
+        return None, None, eta, None, None
+    if order_status == "cancelled":
+        # Never shipped, so there is nothing on its way and no date to give.
+        return None, None, None, None, None
+    carrier = rng.choice(_CARRIERS)
+    tracking = f"{carrier[:2].upper()}{rng.randint(10**9, 10**10 - 1)}GB"
+    if order_status == "delivered":
+        delivered = placed + timedelta(days=rng.randint(1, 9))
+        delivered = min(delivered, now)
+        return carrier, tracking, delivered.isoformat(), delivered.isoformat(), None
+    eta = (placed + timedelta(days=rng.randint(2, 8))).isoformat()
+    return carrier, tracking, eta, None, rng.choice(_TRANSIT_LOCATIONS)
+
+
+def _sql_null(value: str | None) -> str:
+    """Inline SQL for an optional text column."""
+    return _sql_str(value) if value is not None else "NULL"
 
 
 def _sql_str(value: str) -> str:
@@ -164,13 +230,27 @@ def _generate_seed_sql() -> str:
         timestamp = (now - timedelta(days=rng.randint(0, 90))).isoformat()
         order_status = _weighted_choice(rng, _ORDER_STATUS_WEIGHTS)
         refund_status = refund_status_for(rng, order_status)
-        amount = round(rng.uniform(5.0, 500.0), 2)
+        product_name, sku, low, high = rng.choice(_CATALOGUE)
+        quantity = rng.choices([1, 2, 3], weights=[0.75, 0.18, 0.07], k=1)[0]
+        unit_price = round(rng.uniform(low, high), 2)
+        # The total is what was actually bought, not an unrelated number.
+        amount = round(unit_price * quantity, 2)
+        carrier, tracking, eta, delivered_at, location = _whereabouts(
+            rng, order_status, timestamp, now
+        )
         lines.append(
             "INSERT INTO orders "
-            "(order_id, user_id, timestamp, order_status, refund_status, amount) "
+            "(order_id, user_id, timestamp, order_status, refund_status, amount, "
+            "product_name, product_sku, quantity, unit_price, currency, "
+            "carrier, tracking_number, estimated_delivery_date, delivered_at, "
+            "current_location) "
             f"VALUES ({order_id}, {user_id}, "
             f"{_sql_str(timestamp)}, {_sql_str(order_status)}, "
-            f"{_sql_str(refund_status)}, {amount});"
+            f"{_sql_str(refund_status)}, {amount}, "
+            f"{_sql_str(product_name)}, {_sql_str(sku)}, {quantity}, {unit_price}, "
+            f"{_sql_str(_CURRENCY)}, "
+            f"{_sql_null(carrier)}, {_sql_null(tracking)}, {_sql_null(eta)}, "
+            f"{_sql_null(delivered_at)}, {_sql_null(location)});"
         )
 
     return "\n".join(lines) + "\n"

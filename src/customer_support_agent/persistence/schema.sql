@@ -35,7 +35,23 @@ CREATE TABLE IF NOT EXISTS orders (
     timestamp TEXT NOT NULL,
     order_status TEXT NOT NULL,
     refund_status TEXT NOT NULL,
-    amount REAL NOT NULL
+    amount REAL NOT NULL,
+    -- What was bought. `amount` stays the order total; unit_price times
+    -- quantity is what makes it up, kept separately so a partial-refund
+    -- conversation has something to be partial about.
+    product_name TEXT NOT NULL DEFAULT '',
+    product_sku TEXT NOT NULL DEFAULT '',
+    quantity INTEGER NOT NULL DEFAULT 1,
+    unit_price REAL NOT NULL DEFAULT 0,
+    currency TEXT NOT NULL DEFAULT 'USD',
+    -- Where it is. Nullable on purpose, and the generator honours the
+    -- same rule the agent does: a cancelled order has no ETA, and a
+    -- delivered one has a delivered_at rather than a location in transit.
+    carrier TEXT,
+    tracking_number TEXT,
+    estimated_delivery_date TEXT,
+    delivered_at TEXT,
+    current_location TEXT
 );
 
 -- Every order lookup is scoped to the authenticated customer, so the

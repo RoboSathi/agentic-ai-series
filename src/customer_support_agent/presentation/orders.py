@@ -101,10 +101,19 @@ def render_order_detail(order: Order, include_refund: bool = False) -> str:
     """
     lines = [
         f"Order {order.order_id}",
+        f"  Item   : {order.description}",
         f"  Placed : {order.timestamp[:10]}",
         f"  Status : {_STATUS_WORDS.get(order.order_status, order.order_status)}",
-        f"  Total  : ${order.amount:,.2f}",
     ]
+    if order.quantity > 1:
+        lines.append(f"  Each   : ${order.unit_price:,.2f}")
+    lines.append(f"  Total  : ${order.amount:,.2f}")
+    # Only when there is something true to say. A tracking line on an
+    # order nobody has shipped reads as a promise the record cannot keep.
+    if order.is_trackable or order.estimated_delivery_date:
+        lines.append(f"  Parcel : {order.whereabouts}")
+    if order.tracking_number and order.carrier:
+        lines.append(f"  Track  : {order.carrier} {order.tracking_number}")
     if include_refund:
         refund = _REFUND_WORDS.get(order.refund_status, order.refund_status)
         lines.append(f"  Refund : {refund or 'none requested'}")
@@ -143,6 +152,10 @@ def customer_orders(orders_repository: OrdersRepository, customer_id: int) -> li
     return sorted(found, key=lambda order: order.timestamp, reverse=True)
 
 
+# How much of a product name one menu row shows before it is elided.
+_ITEM_WIDTH = 34
+
+
 def _menu_lines(orders: list[Order]) -> list[str]:
     """One aligned row per order: id, date, order status, refund status, total.
 
@@ -153,8 +166,14 @@ def _menu_lines(orders: list[Order]) -> list[str]:
     """
     return [
         f"  {position:>2}. Order {order.order_id}  {order.timestamp[:10]}  "
+        f"{_shorten(order.description):<34} "
         f"{_STATUS_WORDS.get(order.order_status, order.order_status):<14} "
         f"{('Refund: ' + _REFUND_WORDS.get(order.refund_status, order.refund_status) if _REFUND_WORDS.get(order.refund_status, order.refund_status) else 'Refund: none'): <25} "
         f"${order.amount:>9,.2f}"
         for position, order in enumerate(orders, start=1)
     ]
+
+
+def _shorten(text: str) -> str:
+    """Keep one order to one line, whatever it is called."""
+    return text if len(text) <= _ITEM_WIDTH else text[: _ITEM_WIDTH - 1] + "…"

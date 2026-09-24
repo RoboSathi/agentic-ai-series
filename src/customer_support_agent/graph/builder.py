@@ -196,11 +196,18 @@ class MemoryContextSource:
 
 
 def _order_chunk(order: Order) -> Chunk:
-    """One order, as a sentence a retriever can match against."""
+    """One order, as a sentence a retriever can match against.
+
+    The product name is in here because a customer describes rather than
+    names: "the parcel that never turned up" and "my headphones" are the
+    queries dense retrieval exists for, and neither matches a row that
+    says only an id, a status and an amount.
+    """
     return Chunk(
         content=(
-            f"Order {order.order_id} placed {order.timestamp[:10]}: {order.order_status}, "
-            f"${order.amount:,.2f}, refund {order.refund_status}"
+            f"Order {order.order_id} placed {order.timestamp[:10]}: {order.description}, "
+            f"{order.order_status}, {order.whereabouts}, ${order.amount:,.2f}, "
+            f"refund {order.refund_status}"
         ),
         kind="retrieved",
         source=str(order.order_id),
@@ -512,15 +519,7 @@ def build_lexical_index(pool: SqliteConnectionPool) -> LexicalRetriever:
     orders = OrdersRepository(pool)
     return LexicalRetriever(
         [
-            Chunk(
-                content=(
-                    f"Order {order.order_id} for {order.user_id}: {order.order_status}, "
-                    f"${order.amount:.2f}, refund {order.refund_status}"
-                ),
-                kind="retrieved",
-                source=str(order.order_id),
-            )
-            for order in orders.query()
+            _order_chunk(order) for order in orders.query()
         ]
     )
 

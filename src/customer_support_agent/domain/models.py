@@ -28,7 +28,7 @@ HitlStatus = Literal["pending", "approved", "denied"]
 REFUNDABLE_ORDER_STATUSES: frozenset[str] = frozenset({"delivered", "cancelled"})
 
 class Order(BaseModel):
-    """One customer order."""
+    """One customer order: what was bought, and where it has got to."""
 
     order_id: int
     user_id: int
@@ -36,6 +36,59 @@ class Order(BaseModel):
     order_status: OrderStatus
     refund_status: RefundStatus
     amount: float
+
+    # What was bought.
+    product_name: str = ""
+    product_sku: str = ""
+    quantity: int = 1
+    unit_price: float = 0.0
+    currency: str = "USD"
+
+    # Where it is. All optional, because each only exists at some point in
+    # an order's life: a pending order has no carrier, a cancelled one has
+    # no ETA, and a delivered one has a delivery date rather than a
+    # location in transit.
+    carrier: str | None = None
+    tracking_number: str | None = None
+    estimated_delivery_date: str | None = None
+    delivered_at: str | None = None
+    current_location: str | None = None
+
+    @property
+    def is_trackable(self) -> bool:
+        """Whether there is anything to say about where this order is."""
+        return bool(self.tracking_number or self.current_location or self.delivered_at)
+
+    @property
+    def whereabouts(self) -> str:
+        """Where this order has got to, in words a customer can read.
+
+        Deterministic, and deliberately so. "Where is my order" is
+        answerable from the record; routing it through a model would be
+        inviting an invented delivery date.
+        """
+        if self.order_status == "delivered" and self.delivered_at:
+            return f"delivered on {self.delivered_at[:10]}"
+        if self.order_status == "cancelled":
+            return "cancelled, so it is not on its way"
+        if self.current_location and self.estimated_delivery_date:
+            return (
+                f"in transit, last seen at {self.current_location}, "
+                f"due {self.estimated_delivery_date[:10]}"
+            )
+        if self.current_location:
+            return f"in transit, last seen at {self.current_location}"
+        if self.estimated_delivery_date:
+            return f"not yet shipped, due {self.estimated_delivery_date[:10]}"
+        return "not yet shipped"
+
+    @property
+    def description(self) -> str:
+        """What this order is, for a line a person reads."""
+        if not self.product_name:
+            return f"Order {self.order_id}"
+        quantity = f"{self.quantity} x " if self.quantity > 1 else ""
+        return f"{quantity}{self.product_name}"
 
     @property
     def already_refunded(self) -> bool:

@@ -19,7 +19,16 @@ from customer_support_agent.domain.models import (
     User,
 )
 
-_ORDER_COLUMNS = "order_id, user_id, timestamp, order_status, refund_status, amount"
+# Listed once. Every query below is built from this, so a column added to
+# the schema reaches `get`, `save`, `query`, `for_user` and the
+# customer-scoped read together rather than one at a time.
+_ORDER_COLUMNS = (
+    "order_id, user_id, timestamp, order_status, refund_status, amount, "
+    "product_name, product_sku, quantity, unit_price, currency, "
+    "carrier, tracking_number, estimated_delivery_date, delivered_at, current_location"
+)
+_ORDER_COLUMN_NAMES = tuple(name.strip() for name in _ORDER_COLUMNS.split(","))
+_ORDER_PLACEHOLDERS = ", ".join("?" for _ in _ORDER_COLUMN_NAMES)
 _USER_COLUMNS = "user_id, user_code, created_at, name, email, phone"
 
 
@@ -36,17 +45,15 @@ class OrdersRepository:
         return Order.model_validate(row) if row else None
 
     def save(self, entity: Order) -> None:
-        """Insert or replace an order."""
+        """Insert or replace an order.
+
+        The values are taken from the model in column order rather than
+        listed by hand: a hand-written tuple is the thing that silently
+        stops matching when a column is added.
+        """
         self._pool.execute(
-            f"INSERT OR REPLACE INTO orders ({_ORDER_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                entity.order_id,
-                entity.user_id,
-                entity.timestamp,
-                entity.order_status,
-                entity.refund_status,
-                entity.amount,
-            ),
+            f"INSERT OR REPLACE INTO orders ({_ORDER_COLUMNS}) VALUES ({_ORDER_PLACEHOLDERS})",
+            tuple(getattr(entity, column) for column in _ORDER_COLUMN_NAMES),
         )
 
     def query(self, **filters: Any) -> list[Order]:

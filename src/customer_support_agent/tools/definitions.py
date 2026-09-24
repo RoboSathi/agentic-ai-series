@@ -70,9 +70,12 @@ class SupportTools:
                 name="get_order_status",
                 namespace=NAMESPACE,
                 description=(
-                    "Look up an order's delivery status and total. Use this to "
-                    "answer any question about where an order is or what it cost. "
-                    "Also call it before any refund action, to confirm the amount."
+                    "Look up an order: what was bought, its delivery status, "
+                    "where the parcel is, its tracking number and estimated "
+                    "delivery date, and the total. Use this to answer any "
+                    "question about where an order is, what it was, or what it "
+                    "cost. Also call it before any refund action, to confirm "
+                    "the amount."
                 ),
                 args_schema=OrderLookupArgs,
                 handler=self.get_order_status,
@@ -143,13 +146,29 @@ class SupportTools:
         return self._orders.get_for_customer(order_id, current_customer_id())
 
     def get_order_status(self, order_id: int) -> ToolResult:
-        """Read one order belonging to the current customer."""
+        """Read one order belonging to the current customer.
+
+        The output is the sentence the model is grounded against, so it
+        carries what a customer actually asks about: what the order was,
+        where it has got to, and what it cost. A tool that reported only
+        a status word left the delivery date as something the model had
+        to invent.
+        """
         order = self._owned_order(order_id)
         if order is None:
             return ToolResult(success=False, error=_NOT_FOUND.format(order_id=order_id))
+        parcel = f", {order.whereabouts}" if order.is_trackable or order.estimated_delivery_date else ""
+        tracking = (
+            f", tracking {order.carrier} {order.tracking_number}"
+            if order.tracking_number and order.carrier
+            else ""
+        )
         return ToolResult(
             success=True,
-            output=(f"Order {order.order_id}: {order.order_status}, total ${order.amount:.2f}"),
+            output=(
+                f"Order {order.order_id}: {order.description}, {order.order_status}"
+                f"{parcel}{tracking}, total ${order.amount:.2f}"
+            ),
             data=order.model_dump(),
         )
 

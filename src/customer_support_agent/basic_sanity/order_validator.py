@@ -148,6 +148,12 @@ class OrderSanityCheck(BasicSanityChecker):
             "order_status": order.order_status,
             "refund_status": order.refund_status,
             "amount": order.amount,
+            # Established here so a "where is it" question can be answered
+            # from the record rather than left for the model to guess at.
+            "product_name": order.product_name,
+            "whereabouts": order.whereabouts,
+            "estimated_delivery_date": order.estimated_delivery_date,
+            "tracking_number": order.tracking_number,
             "already_refunded": order.already_refunded,
             "refund_eligible": order.is_refund_eligible,
             "operation": operation,
