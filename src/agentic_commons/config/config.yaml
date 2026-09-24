@@ -93,7 +93,11 @@ logging:
   # screen someone is watching.
   file_level: DEBUG
   dir: logs
-  per_subsystem_color: true
+  # How a record's fields are drawn in the log files. `tree` is an
+  # indented structure a person can follow; `json` is the parseable
+  # object, for anything that reads these files rather than a human.
+  # Neither truncates.
+  file_format: tree
   # How much of a traced argument or return value is written. 0 means all
   # of it: the argument you need to read back is always the long one, and
   # an elided payload turns the log from evidence into a hint.
@@ -204,10 +208,8 @@ audit:
 
 observability:
   enabled: true
-  analytics_backend: duckdb
   analytics_db_path: data/observability.duckdb
   langsmith_enabled: false
-  langsmith_project: agentic-harness-core
   persist_traces: true
   slo_targets:
     task_success_rate: 0.95
@@ -424,11 +426,7 @@ security:
   enabled: true
   auth:
     enabled: true
-    elevation_max_ttl_seconds: 900
     # Roles and the action -> permission mapping. Empty here: an agent's
-    # actions are its own. Unmapped means denied, which fails safe.
-    roles: {}
-    action_permissions: {}
   pii:
     # `mask` keeps the shape of a value without its content, so a
     # redacted trace is still readable as a trace.

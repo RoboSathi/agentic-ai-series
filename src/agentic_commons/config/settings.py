@@ -79,7 +79,7 @@ class LoggingSettings(YamlBackedSettings):
     file_enabled: bool
     file_level: str
     dir: str
-    per_subsystem_color: bool
+    file_format: Literal["tree", "json"]
     payload_max_chars: int
     max_bytes: int
     backup_count: int
@@ -236,10 +236,8 @@ class ObservabilitySettings(YamlBackedSettings):
 
     _yaml_section = "observability"
     enabled: bool
-    analytics_backend: str
     analytics_db_path: str
     langsmith_enabled: bool
-    langsmith_project: str
     persist_traces: bool
     slo_targets: dict[str, float]
     review_queue: ReviewQueueSettings
@@ -455,9 +453,6 @@ class AuthSettings(BaseModel):
     """RBAC + just-in-time privilege elevation (E10)."""
 
     enabled: bool
-    elevation_max_ttl_seconds: int
-    roles: dict[str, list[str]]
-    action_permissions: dict[str, str]
 
 
 class PiiSettings(BaseModel):

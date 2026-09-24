@@ -10,6 +10,7 @@ small collapsible card:
 The logger remains responsible for implementation-level debugging.
 """
 
+import textwrap
 import time
 from collections.abc import Mapping
 from typing import Any
@@ -61,6 +62,11 @@ SUMMARY_ACCENT_STYLES = {
 # Common field ordering for expanded cards.  Any other safe semantic fields
 # follow alphabetically.
 FIELD_PRIORITY = (
+    # A model card reads in the order the exchange happened: what the
+    # customer asked, what we sent, what came back.
+    "user_query",
+    "system_prompt",
+    "response",
     "decision",
     "action",
     "effect",
@@ -198,20 +204,35 @@ MUTED_FIELDS = {
     "kwargs",
     "content",
     "context",
-    "messages",
-    "text",
     "value",
     "chunks_raw",
     "facts_raw",
     "payload",
-    "prompt",
     "trace_id",
-    "evidence",
-    "instructions",
     "raw_arguments",
     "session_id",
     "source_payload",
 }
+
+# Fields that are documents rather than values. A system prompt or a
+# model reply rendered as `name = value` on one elided line tells you
+# nothing you did not already know; these get a labelled block, wrapped
+# and indented, so the thing you opened the card to read is readable.
+#
+# They were muted entirely until now, which is why the LLM card could
+# show a token count and a finish reason but never the prompt or the
+# answer — the two things a person watching actually wants.
+BLOCK_FIELDS = (
+    "system_prompt",
+    "user_query",
+    "prompt",
+    "messages",
+    "instructions",
+    "response",
+    "response_text",
+    "evidence",
+    "text",
+)
 
 
 class TokenCounterWidget(Static):
@@ -415,6 +436,13 @@ class StageEventWidget(Collapsible):
                 rendered_fields = True
                 continue
 
+            if name in BLOCK_FIELDS and value:
+                if rendered_fields:
+                    body.append("\n")
+                self._append_block(body, name, value)
+                rendered_fields = True
+                continue
+
             if rendered_fields:
                 body.append("\n")
             body.append("  ")
@@ -458,6 +486,19 @@ class StageEventWidget(Collapsible):
             )
 
         return body
+
+    def _append_block(self, body: Text, name: str, value: Any) -> None:
+        """A document-shaped field, as a labelled and indented block.
+
+        Wrapped rather than elided: the point of expanding a card is to
+        read the thing, and a prompt cut at eighty characters is a prompt
+        you still have to go to the log files for.
+        """
+        body.append(f"  {FIELD_LABELS.get(name, name)}:\n", style="bright_white")
+        for line in _block_lines(value):
+            body.append(f"    {line}\n", style="dim")
+        # Drop the trailing newline so blocks sit flush with plain fields.
+        body.right_crop(1)
 
     def _summary(self) -> str:
         stage = self.event.stage
@@ -754,6 +795,36 @@ class StageEventWidget(Collapsible):
         title = self._build_title()
         body = self._build_body().plain
         return f"{title}\n{body}"
+
+
+# Where a block-rendered line is folded. Narrower than the log files:
+# this shares a terminal with the rest of the feed.
+_BLOCK_WIDTH = 88
+
+
+def _block_lines(value: Any) -> list[str]:
+    """A document-shaped value as wrapped, readable lines."""
+    if isinstance(value, Mapping):
+        return [f"{key}: {item}" for key, item in value.items()]
+    if isinstance(value, list):
+        text = "\n".join(
+            _message_line(item) if isinstance(item, Mapping) else str(item) for item in value
+        )
+    else:
+        text = str(value)
+    lines: list[str] = []
+    for raw in text.splitlines() or [""]:
+        # Wrapped on word boundaries. Cutting mid-word saves a column and
+        # costs the reader the sentence.
+        lines.extend(textwrap.wrap(raw, width=_BLOCK_WIDTH) or [""])
+    return lines
+
+
+def _message_line(message: Mapping[str, Any]) -> str:
+    """One chat message, as `role: content`."""
+    role = message.get("role", "?")
+    content = message.get("content", "")
+    return f"{role}: {content}"
 
 
 def _format_mapping(value: Mapping[str, Any]) -> str:

@@ -38,6 +38,15 @@ class ReasoningNodes(NodeSupport):
             "llm_call",
             event_kind="model",
             summary="Selecting the next action",
+            # What the model is about to be asked. Redacted on the way to
+            # the feed like every other field, but no longer withheld: a
+            # card that showed a token count and a finish reason left the
+            # one question worth asking — what did we send it? — to the
+            # log files.
+            fields={
+                "system_prompt": self._system_prompt(),
+                "user_query": state.query,
+            },
         )
         tools = await self._offered_tools(state)
         offered = sorted(tool.qualified_name for tool in tools)
@@ -75,6 +84,10 @@ class ReasoningNodes(NodeSupport):
         ]
         llm_fields = {
             "model": result.model,
+            # The reply itself, not a description of it. Empty when the
+            # model asked for a tool instead of answering, which the
+            # requested_tools field then explains.
+            "response": result.content or "",
             "finish_reason": result.finish_reason or "unknown",
             "tool_calls": len(result.tool_calls or []),
             "requested_tools": tool_names,

@@ -111,8 +111,33 @@ class StructuredLogger(Protocol):
         ...
 
 
+# Drawing characters for the field tree. A record's structure is the
+# thing you are usually reading past in a log, so it is drawn rather
+# than punctuated: the eye follows a line down a page faster than it
+# counts braces.
+_BRANCH = "├─ "
+_LAST = "└─ "
+_PIPE = "│  "
+_GAP = "   "
+
+# Long values are wrapped rather than cut. Full payloads are the point of
+# these files — the screen is where things are summarised.
+_WRAP_AT = 100
+
+
 class PlainFormatter(logging.Formatter):
-    """Human-readable structured formatter for authoritative subsystem logs."""
+    """Human-readable structured formatter for authoritative subsystem logs.
+
+    Two shapes, chosen by `logging.file_format`. `tree` draws a record's
+    fields as an indented tree; `json` emits the pretty-printed object,
+    for anything that parses these files rather than reads them.
+
+    The tree exists because the JSON did not survive contact with a real
+    payload. A logged LLM call is a system prompt, a transcript and a
+    completion, and as `json.dumps(indent=2)` that is a wall of escaped
+    newlines and quotes in which the one line you wanted is invisible.
+    Nothing is truncated in either shape.
+    """
 
     def format(self, record: logging.LogRecord) -> str:
         timestamp = datetime.fromtimestamp(record.created).astimezone().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -123,16 +148,86 @@ class PlainFormatter(logging.Formatter):
 
         lines = [f"{timestamp} | {module} | {level:<7} | {message}"]
         if fields:
-            rendered = json.dumps(
-                _json_safe(fields),
-                indent=2,
-                ensure_ascii=False,
-                default=str,
-            )
-            lines.extend(f"  {line}" for line in rendered.splitlines())
+            lines.extend(self._render(_json_safe(fields)))
         if record.exc_info:
             lines.append(self.formatException(record.exc_info))
         return "\n".join(lines)
+
+    def _render(self, fields: dict[str, Any]) -> list[str]:
+        """The record's fields, in whichever shape is configured."""
+        if _file_format() == "json":
+            rendered = json.dumps(fields, indent=2, ensure_ascii=False, default=str)
+            return [f"  {line}" for line in rendered.splitlines()]
+        return _tree(fields, prefix="  ")
+
+
+def _file_format() -> str:
+    """How file records are drawn, defaulting to the readable shape.
+
+    Read defensively: the logger is initialised early, and a logging
+    subsystem that raised because configuration was not ready yet would
+    take down the thing it exists to explain.
+    """
+    try:
+        from agentic_commons.config import get_settings
+
+        return str(get_settings().logging.file_format)
+    except Exception:
+        return "tree"
+
+
+def _tree(node: Any, prefix: str) -> list[str]:
+    """One value, drawn as an indented tree."""
+    if isinstance(node, dict):
+        return _branches(list(node.items()), prefix, labelled=True)
+    if isinstance(node, list):
+        return _branches(list(enumerate(node)), prefix, labelled=False)
+    return [f"{prefix}{line}" for line in _scalar_lines(node)]
+
+
+def _branches(items: list[Any], prefix: str, labelled: bool) -> list[str]:
+    """Each child of a mapping or sequence, with its connector."""
+    lines: list[str] = []
+    for index, (key, value) in enumerate(items):
+        last = index == len(items) - 1
+        connector = _LAST if last else _BRANCH
+        label = f"{key}" if labelled else f"[{key}]"
+        below = prefix + (_GAP if last else _PIPE)
+        if isinstance(value, (dict, list)) and value:
+            lines.append(f"{prefix}{connector}{label}:")
+            lines.extend(_tree(value, below))
+            continue
+        rendered = _scalar_lines(value)
+        lines.append(f"{prefix}{connector}{label}: {rendered[0]}")
+        lines.extend(f"{below}{line}" for line in rendered[1:])
+    return lines
+
+
+def _scalar_lines(value: Any) -> list[str]:
+    """A leaf value as one or more lines, never elided.
+
+    Embedded newlines are honoured, because a system prompt is a document
+    and reading it as one escaped string is how these files stopped being
+    worth opening.
+    """
+    if value is None:
+        return ["null"]
+    if isinstance(value, bool):
+        return ["true" if value else "false"]
+    if isinstance(value, (dict, list)):
+        return ["{}" if isinstance(value, dict) else "[]"]
+    text = str(value)
+    lines: list[str] = []
+    for raw in text.splitlines() or [""]:
+        lines.extend(_wrapped(raw))
+    return lines or [""]
+
+
+def _wrapped(line: str) -> list[str]:
+    """One line, folded at a readable width rather than cut."""
+    if len(line) <= _WRAP_AT:
+        return [line]
+    return [line[start : start + _WRAP_AT] for start in range(0, len(line), _WRAP_AT)]
 
 
 class RichLogger:
