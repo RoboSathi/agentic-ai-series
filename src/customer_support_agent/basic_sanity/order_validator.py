@@ -20,6 +20,7 @@ from agentic_commons.basic_sanity import (
 )
 from agentic_commons.logging import get_logger
 from customer_support_agent.config import get_agent_settings
+from customer_support_agent.domain.refund_policy import RefundPolicy
 from customer_support_agent.persistence.repositories import OrdersRepository
 
 # Deliberately conservative: only treat a number as an order id when the
@@ -51,9 +52,11 @@ class OrderSanityCheck(BasicSanityChecker):
         self,
         orders: OrdersRepository,
         *,
+        refund_policy: RefundPolicy | None = None,
         refund_markers: Iterable[str] | None = None,
     ) -> None:
         self._orders = orders
+        self._refund_policy = refund_policy or RefundPolicy(orders)
         self._refund_markers = tuple(
             marker.casefold()
             for marker in (
@@ -122,25 +125,56 @@ class OrderSanityCheck(BasicSanityChecker):
                 facts={"order_id": order_id},
             )
 
-        order = self._orders.get_for_customer(order_id, customer_id)
-        if order is None:
-            return BasicSanityResult(
-                passed=False,
-                reason_code="ORDER_NOT_FOUND_FOR_CUSTOMER",
-                message=f"I couldn't find order {order_id} on your account.",
-                findings=[
-                    BasicSanityFinding(
-                        check="order_exists_and_is_owned",
-                        passed=False,
-                        reason="The order does not exist for the authenticated customer.",
-                        evidence={
-                            "order_id": order_id,
-                            "customer_id": customer_id,
-                        },
-                    )
-                ],
-                facts={"order_id": order_id, "operation": self._operation(request.query)},
+        if operation == "REQUEST_REFUND":
+            requested_amount = _requested_amount(request.metadata)
+            validation = self._refund_policy.validate(
+                order_id=order_id,
+                customer_id=customer_id,
+                amount=requested_amount,
             )
+            order = validation.order
+            if order is None:
+                return BasicSanityResult(
+                    passed=False,
+                    reason_code=validation.reason_code,
+                    message=validation.reason,
+                    findings=[
+                        BasicSanityFinding(
+                            check="refund_policy",
+                            passed=False,
+                            reason=validation.reason,
+                            evidence={
+                                "order_id": order_id,
+                                "customer_id": customer_id,
+                            },
+                        )
+                    ],
+                    facts={
+                        "order_id": order_id,
+                        "operation": operation,
+                        **({"requested_amount": requested_amount} if requested_amount is not None else {}),
+                    },
+                )
+        else:
+            order = self._orders.get_for_customer(order_id, customer_id)
+            if order is None:
+                return BasicSanityResult(
+                    passed=False,
+                    reason_code="ORDER_NOT_FOUND_FOR_CUSTOMER",
+                    message=f"I couldn't find order {order_id} on your account.",
+                    findings=[
+                        BasicSanityFinding(
+                            check="order_exists_and_is_owned",
+                            passed=False,
+                            reason="The order does not exist for the authenticated customer.",
+                            evidence={
+                                "order_id": order_id,
+                                "customer_id": customer_id,
+                            },
+                        )
+                    ],
+                    facts={"order_id": order_id, "operation": operation},
+                )
 
         facts = {
             "order_id": order.order_id,
@@ -172,75 +206,65 @@ class OrderSanityCheck(BasicSanityChecker):
             )
         ]
 
-        if operation == "REQUEST_REFUND" and order.already_refunded:
-            self._logger.info(
-                "BasicSanity blocked an already-refunded order",
-                order_id=order.order_id,
-                customer_id=customer_id,
-            )
-            findings.append(
-                BasicSanityFinding(
-                    check="not_already_refunded",
-                    passed=False,
-                    reason="The order has already been refunded in full.",
-                    evidence={
-                        "order_id": order.order_id,
-                        "refund_status": order.refund_status,
-                    },
-                )
-            )
-            return BasicSanityResult(
-                passed=False,
-                reason_code="ORDER_ALREADY_REFUNDED",
-                message=f"Order {order.order_id} has already been refunded in full.",
-                findings=findings,
-                facts=facts,
-            )
-
         if operation == "REQUEST_REFUND":
             requested_amount = _requested_amount(request.metadata)
-            if requested_amount is not None and requested_amount <= 0:
-                findings.append(
-                    BasicSanityFinding(
-                        check="requested_amount_positive",
-                        passed=False,
-                        reason="A refund amount must be greater than zero.",
-                        evidence={"requested_amount": requested_amount},
-                    )
-                )
-                return BasicSanityResult(
-                    passed=False,
-                    reason_code="INVALID_REFUND_AMOUNT",
-                    message="The refund amount must be greater than zero.",
-                    findings=findings,
-                    facts={**facts, "requested_amount": requested_amount},
-                )
-            if requested_amount is not None and requested_amount > order.amount:
-                findings.append(
-                    BasicSanityFinding(
-                        check="requested_amount_within_order_total",
-                        passed=False,
-                        reason=(
-                            f"The requested refund of ${requested_amount:,.2f} exceeds the "
-                            f"order total of ${order.amount:,.2f}."
-                        ),
-                        evidence={
+            if requested_amount is not None:
+                facts["requested_amount"] = requested_amount
+
+            if not validation.allowed:
+                finding_map = {
+                    "ORDER_ALREADY_REFUNDED": (
+                        "not_already_refunded",
+                        {"order_id": order_id, "refund_status": order.refund_status},
+                    ),
+                    "ORDER_NOT_REFUND_ELIGIBLE": (
+                        "refund_eligible",
+                        {
+                            "order_id": order_id,
+                            "order_status": order.order_status,
+                            "refund_status": order.refund_status,
+                        },
+                    ),
+                    "INVALID_REFUND_AMOUNT": (
+                        "requested_amount_positive",
+                        {"requested_amount": requested_amount},
+                    ),
+                    "REFUND_AMOUNT_EXCEEDS_ORDER_TOTAL": (
+                        "requested_amount_within_order_total",
+                        {
                             "requested_amount": requested_amount,
                             "order_amount": order.amount,
                         },
+                    ),
+                    "PARTIAL_REFUND_NOT_SUPPORTED": (
+                        "full_refund_only",
+                        {
+                            "requested_amount": requested_amount,
+                            "order_amount": order.amount,
+                        },
+                    ),
+                }
+                check_name, evidence = finding_map.get(
+                    validation.reason_code,
+                    ("refund_policy", {"order_id": order_id}),
+                )
+                findings.append(
+                    BasicSanityFinding(
+                        check=check_name,
+                        passed=False,
+                        reason=validation.reason,
+                        evidence=evidence,
                     )
                 )
                 return BasicSanityResult(
                     passed=False,
-                    reason_code="REFUND_AMOUNT_EXCEEDS_ORDER_TOTAL",
-                    message=(
-                        f"The requested refund exceeds the ${order.amount:,.2f} order total."
-                    ),
+                    reason_code=validation.reason_code,
+                    message=validation.reason,
                     findings=findings,
-                    facts={**facts, "requested_amount": requested_amount},
+                    facts=facts,
                 )
+
             if requested_amount is not None:
-                facts["requested_amount"] = requested_amount
                 findings.append(
                     BasicSanityFinding(
                         check="requested_amount_positive",
@@ -262,49 +286,27 @@ class OrderSanityCheck(BasicSanityChecker):
                     )
                 )
 
-        if operation == "REQUEST_REFUND" and not order.is_refund_eligible:
-            findings.append(
-                BasicSanityFinding(
-                    check="refund_eligible",
-                    passed=False,
-                    reason=order.refund_ineligibility_reason,
-                    evidence={
-                        "order_id": order.order_id,
-                        "order_status": order.order_status,
-                        "refund_status": order.refund_status,
-                    },
-                )
-            )
-            return BasicSanityResult(
-                passed=False,
-                reason_code="ORDER_NOT_REFUND_ELIGIBLE",
-                message=order.refund_ineligibility_reason,
-                findings=findings,
-                facts=facts,
-            )
-
-        if operation == "REQUEST_REFUND":
-            findings.append(
-                BasicSanityFinding(
-                    check="not_already_refunded",
-                    passed=True,
-                    reason="The order is not fully refunded.",
-                    evidence={
-                        "refund_status": order.refund_status,
-                        "already_refunded": False,
-                    },
-                )
-            )
-            findings.append(
-                BasicSanityFinding(
-                    check="refund_eligible",
-                    passed=True,
-                    reason="The order is in a refundable state.",
-                    evidence={
-                    "order_status": order.order_status,
-                    "refund_eligible": True,
-                },
-                )
+            findings.extend(
+                [
+                    BasicSanityFinding(
+                        check="not_already_refunded",
+                        passed=True,
+                        reason="The order is not fully refunded.",
+                        evidence={
+                            "refund_status": order.refund_status,
+                            "already_refunded": False,
+                        },
+                    ),
+                    BasicSanityFinding(
+                        check="refund_eligible",
+                        passed=True,
+                        reason="The order is in a refundable state.",
+                        evidence={
+                            "order_status": order.order_status,
+                            "refund_eligible": True,
+                        },
+                    ),
+                ]
             )
 
         return BasicSanityResult(

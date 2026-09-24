@@ -41,6 +41,11 @@ class LLMClient(ABC):
         """Check that the configured endpoint is reachable and authorized."""
 
     @property
+    def model(self) -> str:
+        """Configured model name, when the adapter exposes one."""
+        return ""
+
+    @property
     @abstractmethod
     def tier(self) -> str:
         """Name of this adapter's tier, used for cost attribution."""
@@ -164,9 +169,15 @@ class OpenAICompatibleClient(LLMClient):
             model=self._provider.model,
             tools=[tool["function"]["name"] for tool in request.tools or []],
             messages=[
-                {"role": message.role, "content": self._clip(message.content)}
+                {
+                    **message.model_dump(mode="json"),
+                    "content": self._clip(message.content),
+                }
                 for message in request.messages
             ],
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            json_schema=request.json_schema,
         )
 
     def _log_response(self, result: CompletionResult) -> None:
@@ -176,12 +187,21 @@ class OpenAICompatibleClient(LLMClient):
         self._logger.debug(
             "LLM response",
             model=result.model,
+            tier=result.tier,
             finish_reason=result.finish_reason,
-            tokens=result.usage.total_tokens,
-            latency_ms=round(result.latency_ms),
+            prompt_tokens=result.usage.prompt_tokens,
+            completion_tokens=result.usage.completion_tokens,
+            total_tokens=result.usage.total_tokens,
+            latency_ms=round(result.latency_ms, 2),
+            cost_usd=result.cost_usd,
             content=self._clip(result.content),
             tool_calls=[
-                {"name": call.name, "arguments": call.arguments} for call in result.tool_calls or []
+                {
+                    "id": call.id,
+                    "name": call.name,
+                    "arguments": call.arguments,
+                }
+                for call in result.tool_calls or []
             ],
         )
 

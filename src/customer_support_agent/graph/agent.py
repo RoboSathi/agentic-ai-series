@@ -52,7 +52,13 @@ from agentic_commons.hallucination_protection import DetectionLadder, GroundingR
 from agentic_commons.llm.client import LLMClient
 from agentic_commons.llm.types import Message, TokenUsage
 from agentic_commons.logging import get_logger
-from agentic_commons.memory import MemoryFacade
+from agentic_commons.memory import (
+    MemoryAction,
+    MemoryEvent,
+    MemoryEventSink,
+    MemoryObservation,
+    WorkingMemoryStore,
+)
 from agentic_commons.observability import (
     SLORegistry,
     StageReporter,
@@ -114,7 +120,8 @@ class CustomerSupportAgent(
         tools: SupportTools,
         executor: ToolExecutor,
         security: SecuritySuite,
-        memory: MemoryFacade | None = None,
+        working_memory: WorkingMemoryStore | None = None,
+        memory_event_sink: MemoryEventSink | None = None,
         context: FiveStagePipeline | None = None,
         selector: ToolRetrievalSelector | None = None,
         cascade: NollmScoringCascadeImpl | None = None,
@@ -154,7 +161,8 @@ class CustomerSupportAgent(
         # boundary has been withheld. See `_execute_ungoverned`.
         self._handler = handler
         self._security = security
-        self._memory = memory
+        self._working_memory = working_memory
+        self._memory_event_sink = memory_event_sink
         self._context = context
         self._selector = selector
         self._cascade = cascade
@@ -200,12 +208,6 @@ class CustomerSupportAgent(
         # The order list each session was last shown, so a bare "2"
         # resolves back to an order.
         self._menus: dict[str, OrderMenu] = {}
-        self._history_turns = settings.history_turns
-        self._conversations: dict[str, list[Message]] = {}
-        # Tool observations are not customer dialogue. Keep a bounded,
-        # separate history so follow-up turns can resolve references from
-        # authoritative facts without treating an old action as a new one.
-        self._authoritative_history: dict[str, list[str]] = {}
         self._last_supported_intent: dict[str, Intent] = {}
         self._control_loop = ToolControlLoop()
         # Plan, reflect, evaluate (E06). Injected as one composition so a
@@ -232,8 +234,7 @@ class CustomerSupportAgent(
         """
         self._sessions.update(previous._sessions)
         self._menus.update(previous._menus)
-        self._conversations.update(previous._conversations)
-        self._authoritative_history.update(previous._authoritative_history)
+        self._working_memory = previous._working_memory
         self._last_supported_intent.update(previous._last_supported_intent)
 
     async def handle(
@@ -275,15 +276,15 @@ class CustomerSupportAgent(
             session_id=session_id,
             actor=self._actor,
             customer_id=customer.customer_id if customer else None,
+            working_memory=(
+                self._working_memory.get(session_id)
+                if self._working_memory is not None
+                else WorkingMemoryStore().get(session_id)
+            ),
         )
         final = await self._graph.ainvoke(initial)
         state = AgentState.model_validate(final)
-        self._remember_turn(session_id, query, state.response)
-        if session_id and state.authoritative_tool_results:
-            observations = self._authoritative_history.setdefault(session_id, [])
-            observations.extend(state.authoritative_tool_results)
-            max_observations = max(4, self._history_turns * 4)
-            self._authoritative_history[session_id] = observations[-max_observations:]
+        self._complete_turn(state)
         self._accountant.settle(self._score(state))
         return state
 
@@ -304,7 +305,7 @@ class CustomerSupportAgent(
             policy_refusals=sum(
                 1 for line in decisions if "refused" in line and "not offered" not in line
             ),
-            tool_calls=len(state.tool_results),
+            tool_calls=sum(1 for item in state.working_memory.current_turn if isinstance(item, dict) and item.get("kind") == "action"),
             tool_failures=sum(1 for line in decisions if ": failed" in line),
             retrievals=sum(1 for line in decisions if line.startswith("context:")),
             evaluator_calls=sum(1 for line in decisions if line.startswith("grounding:")),
@@ -317,20 +318,55 @@ class CustomerSupportAgent(
         )
 
     @property
-    def memory(self) -> MemoryFacade | None:
-        """The memory this agent uses, for a console that wants to inspect it."""
-        return self._memory
+    def working_memory(self) -> WorkingMemoryStore | None:
+        """Working memory available to the live agent and operator console."""
+        return self._working_memory
 
     def history_for(self, session_id: str) -> list[Message]:
-        """The recent turns of one conversation, oldest first."""
-        return list(self._conversations.get(session_id, []))
+        """The bounded conversation history from common working memory."""
+        if self._working_memory is None:
+            return []
+        history = self._working_memory.get(session_id).history
+        return [Message(**item) if isinstance(item, dict) else item for item in history]
 
-    def _remember_turn(self, session_id: str, query: str, response: str) -> None:
-        """Keep the customer/agent exchange, bounded to the configured depth."""
-        if not session_id or not response:
+    def _complete_turn(self, state: AgentState) -> None:
+        """Emit one memory event, then retain only the completed dialogue."""
+        if self._working_memory is None:
             return
-        turns = self._conversations.setdefault(session_id, [])
-        turns.append(Message(role="user", content=query))
-        turns.append(Message(role="assistant", content=response))
-        # Two messages per turn, so the cap is doubled.
-        self._conversations[session_id] = turns[-self._history_turns * 2 :]
+        working = self._working_memory.get(state.session_id)
+        if self._memory_event_sink is not None:
+            observations: list[MemoryObservation] = []
+            actions: list[MemoryAction] = []
+            for item in working.current_turn:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("kind") == "observation":
+                    content = item.get("content", "")
+                    observations.append(
+                        MemoryObservation(
+                            content=self._security.redact(str(content)),
+                            source=str(item.get("source", "")),
+                        )
+                    )
+                elif item.get("kind") == "action":
+                    arguments = item.get("arguments", {})
+                    actions.append(
+                        MemoryAction(
+                            name=str(item.get("name", "")),
+                            arguments=arguments if isinstance(arguments, dict) else {"raw": str(arguments)},
+                            result=self._security.redact(str(item.get("result", ""))),
+                            source=str(item.get("source", "")),
+                        )
+                    )
+            event = MemoryEvent(
+                agent_id=self._actor,
+                session_id=state.session_id,
+                user_input=self._security.redact(state.model_query or state.query),
+                assistant_output=self._security.redact(state.response),
+                observations=observations,
+                actions=actions,
+            )
+            self._memory_event_sink.emit(event)
+        if state.response:
+            working.add_history(state.model_query or state.query, state.response)
+        working.clear_current_turn()

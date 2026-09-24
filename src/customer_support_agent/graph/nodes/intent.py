@@ -109,9 +109,6 @@ class IntentNodes(NodeSupport):
         )
         self._note(state, "current_intent", intent.name, category="intent")
         decisions = [f"intent: {self._intent_decision_label(intent)}"]
-        if self._memory is not None:
-            self._memory.record_event(f"query: {state.query}", self._actor, state.session_id)
-            decisions.extend(self._offer_to_memory(state))
         if not plan.is_single_step:
             decisions.append(f"plan: {len(plan.steps)} steps — {plan.steps[0].description}")
         return {
@@ -224,11 +221,9 @@ class IntentNodes(NodeSupport):
             state,
             {tool.qualified_name},
         )
-        self._note(
-            state,
-            f"result_of_{tool.name}",
-            text,
-            category="tool_result",
+        self._add_action(
+            state, tool.name, {"order_id": order_id}, text,
+            successful=invocation.get("tool_status") == "completed",
         )
         base = self._halt(
             state,
@@ -237,15 +232,8 @@ class IntentNodes(NodeSupport):
             if invocation.get("tool_status") == "completed"
             else decision,
         )
-        authoritative = (
-            [text]
-            if invocation.get("tool_status") == "completed"
-            else []
-        )
         return {
             **base,
-            "tool_results": [text],
-            "authoritative_tool_results": authoritative,
             "metadata": {
                 **base["metadata"],
                 "last_tool_invocations": [invocation],

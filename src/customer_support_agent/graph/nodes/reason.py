@@ -18,14 +18,8 @@ from agentic_commons.resilience import (
 )
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
-from customer_support_agent.presentation.reporting import (
-    FALLBACK_REPLY,
-    control_loop_fields,
-    tool_request_fields,
-)
-from customer_support_agent.prompts.system_prompt import (
-    build_system_prompt,
-)
+from customer_support_agent.presentation.reporting import FALLBACK_REPLY, control_loop_fields
+from customer_support_agent.prompts.system_prompt import build_system_prompt
 
 
 class ReasoningNodes(NodeSupport):
@@ -34,32 +28,19 @@ class ReasoningNodes(NodeSupport):
         round_report = self._control_loop.evaluate_round(
             state.tool_rounds + 1, self._max_rounds
         )
-        self._report(
-            "llm_call",
-            event_kind="model",
-            summary="Selecting the next action",
-            # What the model is about to be asked. Redacted on the way to
-            # the feed like every other field, but no longer withheld: a
-            # card that showed a token count and a finish reason left the
-            # one question worth asking — what did we send it? — to the
-            # log files.
-            fields={
-                "system_prompt": self._system_prompt(),
-                "user_query": state.query,
-            },
-        )
         tools = await self._offered_tools(state)
         offered = sorted(tool.qualified_name for tool in tools)
         request = CompletionRequest(
             messages=self._prompt_messages(state),
             tools=self._registry.to_openai_tools([tool.qualified_name for tool in tools]),
         )
+        self._report_llm_request(request, purpose="tool_selection")
         try:
             result = await self._call_model(request, state, f"{state.session_id}:{state.tool_rounds}")
         except Exception as exc:
             error_fields = external_api_error_fields(exc)
             self._reporter_warning(
-                "llm_call",
+                "resilience",
                 summary="LLM unavailable after retries",
                 event_kind="resilience",
                 fields={
@@ -69,52 +50,19 @@ class ReasoningNodes(NodeSupport):
                 },
             )
             return {
-                "messages": [Message(role="assistant", content=FALLBACK_REPLY)],
+                "response": FALLBACK_REPLY,
                 "tool_rounds": state.tool_rounds + 1,
                 "escalated": True,
                 "decisions": [*state.decisions, "resilience: llm unavailable after retries"],
                 "metadata": {**state.metadata, "external_dependency_failed": True},
             }
         message = Message(role="assistant", content=result.content, tool_calls=result.tool_calls)
+        state.working_memory.add_current_turn(message)
         tool_names = [call.name for call in (result.tool_calls or [])]
-        metrics = self._selector.last_metrics if self._selector is not None else None
-        requested_tool_calls = [
-            tool_request_fields(call.name, call.arguments)
-            for call in (result.tool_calls or [])
-        ]
-        llm_fields = {
-            "model": result.model,
-            # The reply itself, not a description of it. Empty when the
-            # model asked for a tool instead of answering, which the
-            # requested_tools field then explains.
-            "response": result.content or "",
-            "finish_reason": result.finish_reason or "unknown",
-            "tool_calls": len(result.tool_calls or []),
-            "requested_tools": tool_names,
-            "requested_tool_calls": requested_tool_calls,
-            "tools_offered": offered,
-            "input_tokens": result.usage.prompt_tokens,
-            "output_tokens": result.usage.completion_tokens,
-            "total_tokens": result.usage.total_tokens,
-        }
-        if metrics is not None:
-            llm_fields.update(
-                {
-                    "tools_available": metrics.tools_available,
-                    "tools_exposed": metrics.tools_exposed,
-                    "tool_selection_latency_ms": round(metrics.latency_ms, 1),
-                }
-            )
-        self._done(
-            "llm_call",
-            tokens=result.usage.total_tokens,
-            event_kind="model",
-            summary=(
-                f"Requested tool: {tool_names[0]}"
-                if tool_names
-                else "Produced a final response"
-            ),
-            fields=llm_fields,
+        self._report_llm_response(
+            result,
+            purpose="tool_selection",
+            tools_offered=offered,
         )
         self._done(
             "control_loop",
@@ -132,7 +80,6 @@ class ReasoningNodes(NodeSupport):
             },
         )
         return {
-            "messages": [message],
             "tool_rounds": state.tool_rounds + 1,
             # The offered set is carried, not recomputed. Selection can
             # involve a network-backed ranker, so recomputing it in `act`
@@ -170,7 +117,7 @@ class ReasoningNodes(NodeSupport):
                 error_fields=error_fields,
             )
             self._done_failed(
-                "llm_call",
+                "llm_response_received",
                 summary="LLM call failed",
                 event_kind="model",
                 fields=error_fields,
@@ -304,50 +251,29 @@ class ReasoningNodes(NodeSupport):
             or tools
         )
 
+    def _system_prompt(self) -> str:
+        """Return the agent system prompt for security screening and LLM calls."""
+        return build_system_prompt()
+
     def _prompt_messages(self, state: AgentState) -> list[Message]:
-        """System prompt, assembled context, the query, and the turns so far."""
-        system = self._system_prompt()
-        if state.context:
-            system = f"{system}\n\n# Retrieved context\n{state.context}"
+        """Build the small provider payload from working memory and context."""
+        system = build_system_prompt()
+        if state.context is not None and state.context.text:
+            system = f"{system}\n\n# Retrieved context\n{state.context.text}"
         if state.metadata.get("intent_execution_route") == "llm_fallback":
-            prior_observations = self._authoritative_history.get(state.session_id, [])
-            prior_context = (
-                "\n\n# Prior authoritative tool observations\n"
-                + "\n".join(f"- {item}" for item in prior_observations[-8:])
-                if prior_observations
-                else ""
-            )
             system = (
-                f"{system}{prior_context}\n\n"
+                f"{system}\n\n"
                 "# Intent fallback\n"
                 "The lightweight intent classifier could not resolve this turn. "
-                "Use the full conversation context, prior authoritative tool "
-                "observations, the current user message, and any current-turn "
-                "tool results to infer what the customer means. Prior tool "
-                "observations are context only; they do not prove that a new "
-                "action happened in this turn. You may ask a clarifying "
-                "question when context is still insufficient. Never claim "
-                "that a refund, approval, queueing, cancellation, or other "
-                "business action occurred unless you actually call the "
-                "corresponding tool and receive a successful tool result.\n"
+                "Use the current conversation and current-turn tool results to "
+                "infer what the customer means. You may ask a clarifying question "
+                "when context is still insufficient. Never claim that a refund, "
+                "approval, queueing, cancellation, or other business action "
+                "occurred unless you actually call the corresponding tool and "
+                "receive a successful tool result.\n"
             )
         return [
             Message(role="system", content=system),
-            *self.history_for(state.session_id),
-            # The redacted text, never the raw one. Falls back to `query`
-            # only when the pii stage was withheld, in which case there is
-            # no redaction to apply and the absence is the demonstration.
             Message(role="user", content=state.model_query or state.query),
-            *state.messages,
+            *self._current_messages(state),
         ]
-
-    def _system_prompt(self) -> str:
-        """The active prompt, versioned in procedural memory.
-
-        Read through the store rather than from the module so that the
-        prompt this agent is running has a version and a history —
-        rolling back becomes selecting an earlier version rather than
-        finding the commit that changed a string.
-        """
-        procedures = self._memory.procedural if self._memory is not None else None
-        return build_system_prompt(procedures)

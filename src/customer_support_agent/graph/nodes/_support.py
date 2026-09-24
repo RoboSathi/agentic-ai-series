@@ -30,7 +30,7 @@ from agentic_commons.guardrails import ResponseGuardrail
 from agentic_commons.hallucination_protection import DetectionLadder, GroundingReasoningDiagnoser
 from agentic_commons.llm.client import LLMClient
 from agentic_commons.llm.types import CompletionRequest, CompletionResult, Message
-from agentic_commons.memory import MemoryFacade
+from agentic_commons.memory import WorkingMemoryStore
 from agentic_commons.observability import (
     SLORegistry,
     StageReporter,
@@ -58,6 +58,7 @@ from customer_support_agent.presentation.orders import (
 )
 from customer_support_agent.security.authentication import CustomerAuthenticator
 from customer_support_agent.tools.definitions import SupportTools
+from customer_support_agent.presentation.reporting import llm_request_fields, llm_response_fields
 
 
 class NodeSupport:
@@ -73,7 +74,7 @@ class NodeSupport:
     _executor: ToolExecutor
     _handler: ToolExecutionHandler | None
     _security: SecuritySuite
-    _memory: MemoryFacade | None
+    _working_memory: WorkingMemoryStore | None
     _context: FiveStagePipeline | None
     _selector: ToolRetrievalSelector | None
     _cascade: NollmScoringCascadeImpl | None
@@ -100,9 +101,6 @@ class NodeSupport:
     _response_guardrail: ResponseGuardrail
     _sessions: dict[str, Customer]
     _menus: dict[str, OrderMenu]
-    _history_turns: int
-    _conversations: dict[str, list[Message]]
-    _authoritative_history: dict[str, list[str]]
     _last_supported_intent: dict[str, Intent]
     _control_loop: ToolControlLoop
     _deliberation: OutputQualityGate
@@ -187,19 +185,77 @@ class NodeSupport:
         """Run one proposed tool call through governance and execution."""
         raise NotImplementedError
 
-    def _offer_to_memory(self, state: AgentState) -> list[str]:
-        """Write what this turn established into memory."""
-        raise NotImplementedError
-
     def _resolve_read_order_id(self, state: AgentState) -> int | None:
         """Which order a read-shaped request is about, if any."""
         raise NotImplementedError
 
     def history_for(self, session_id: str) -> list[Message]:
-        """The transcript this session is carrying."""
-        raise NotImplementedError
+        """The bounded conversation history from common working memory."""
+        if self._working_memory is None:
+            return []
+        history = self._working_memory.get(session_id).history
+        return [Message(**item) if isinstance(item, dict) else item for item in history]
 
-    def _note(self, state: AgentState, key: str, value: str, category: str = "") -> None:
+    def _current_messages(self, state: AgentState) -> list[Message]:
+        """Return message-shaped entries from the current working-memory turn."""
+        return [
+            item
+            for item in state.working_memory.current_messages()
+            if isinstance(item, Message)
+        ]
+
+    def _authoritative_observations(self, state: AgentState) -> list[str]:
+        """Return successful tool results recorded in the current turn."""
+        return [
+            str(item.get("result", ""))
+            for item in state.working_memory.current_turn
+            if isinstance(item, dict)
+            and item.get("kind") == "action"
+            and item.get("successful") is True
+        ]
+
+    def _add_action(
+        self,
+        state: AgentState,
+        name: str,
+        arguments: Any,
+        result: str,
+        *,
+        successful: bool,
+    ) -> None:
+        """Record one tool action in current-turn working memory."""
+        if isinstance(arguments, str):
+            try:
+                import json
+
+                arguments = json.loads(arguments)
+            except (TypeError, ValueError):
+                arguments = {"raw": arguments}
+        state.working_memory.add_current_turn(
+            {
+                "kind": "action",
+                "name": name,
+                "arguments": arguments,
+                "result": result,
+                "source": name,
+                "successful": successful,
+            }
+        )
+
+    def _add_observation(
+        self, state: AgentState, content: str, source: str, *, authoritative: bool
+    ) -> None:
+        """Record one tool/system observation for the current turn."""
+        state.working_memory.add_current_turn(
+            {
+                "kind": "observation",
+                "content": content,
+                "source": source,
+                "authoritative": authoritative,
+            }
+        )
+
+    def _note(self, state: AgentState, key: str, value: Any, category: str = "") -> None:
         """Hold a fact this turn established in the session's window.
 
         Working memory is what stops the next turn re-deriving what this
@@ -211,15 +267,9 @@ class NodeSupport:
         Silent when no memory is wired: memory is optional in this
         graph, and an agent without it must still answer.
         """
-        if self._memory is None or not state.session_id:
+        if self._working_memory is None or not state.session_id:
             return
-        result = self._memory.note(
-            key=key,
-            value=value,
-            session_id=state.session_id,
-            source=self._actor,
-            category=category,
-        )
+        self._working_memory.get(state.session_id).set(key, value)
         self._done(
             "working_memory_write",
             event_kind="memory",
@@ -228,8 +278,7 @@ class NodeSupport:
                 "operation": "write",
                 "key": key,
                 "category": category or "unspecified",
-                "written": result.written,
-                "route": result.route,
+                "written": True,
             },
         )
 
@@ -245,6 +294,48 @@ class NodeSupport:
         """Feed one observation to the SLO registry, when one is wired."""
         if self._slos is not None:
             self._slos.record(metric, value)
+
+    def _report_llm_request(
+        self,
+        request: CompletionRequest,
+        *,
+        purpose: str,
+    ) -> None:
+        """Expose the important inputs sent to the model as a feed event."""
+        self._done(
+            "llm_request",
+            event_kind="model",
+            summary=f"LLM request · {purpose}",
+            fields={
+                **llm_request_fields(request, model=self._llm.model),
+                "purpose": purpose,
+            },
+        )
+
+    def _report_llm_response(
+        self,
+        result: CompletionResult,
+        *,
+        purpose: str,
+        tools_offered: list[str] | None = None,
+        requested_tool_calls: list[dict[str, Any]] | None = None,
+        extra_fields: dict[str, Any] | None = None,
+    ) -> None:
+        """Expose the exact provider-neutral response and its accounting."""
+        fields = {
+            **llm_response_fields(result, tools_offered=tools_offered),
+            "purpose": purpose,
+        }
+        self._done(
+            "llm_response_received",
+            event_kind="model",
+            summary=(
+                f"LLM response · tool requested: {result.tool_calls[0].name}"
+                if result.tool_calls
+                else f"LLM response · {purpose}"
+            ),
+            fields=fields,
+        )
 
     def _report(
         self,

@@ -1,4 +1,4 @@
-"""Context value types (LLD §7)."""
+"""Context value types used by agents and the common context pipeline."""
 
 from typing import Any, Literal
 
@@ -9,6 +9,34 @@ ChunkKind = Literal["system", "policy", "history", "retrieved", "memory", "tool_
 
 # E17's five context failure modes.
 ContextFailureMode = Literal["rot", "distraction", "confusion", "clash", "poisoning"]
+
+
+class Context(BaseModel):
+    """The runtime context assembled for one model request.
+
+    The contents are intentionally untyped at this layer. Each agent builds
+    whatever representation its model request needs; commons only provides
+    a small container for passing that runtime context around.
+    """
+
+    items: list[Any] = Field(default_factory=list)
+
+    def add(self, item: Any) -> None:
+        """Append one item to the context."""
+        self.items.append(item)
+
+    def extend(self, items: list[Any]) -> None:
+        """Append several items to the context."""
+        self.items.extend(items)
+
+    def clear(self) -> None:
+        """Remove all items from the context."""
+        self.items.clear()
+
+    @property
+    def text(self) -> str:
+        """Render context items as a prompt fragment."""
+        return "\n\n".join(str(item) for item in self.items)
 
 
 class Chunk(BaseModel):
@@ -39,12 +67,7 @@ class Task(BaseModel):
 
 
 class AssembledContext(BaseModel):
-    """The window as assembled, plus the accounting behind it.
-
-    `dropped` and `applied_strategies` are not diagnostics — they are the
-    record of what the model was *not* shown, which is the first question
-    to ask when an answer is wrong.
-    """
+    """The detailed output of the common context assembly pipeline."""
 
     chunks: list[Chunk] = Field(default_factory=list)
     budget_tokens: int = 0

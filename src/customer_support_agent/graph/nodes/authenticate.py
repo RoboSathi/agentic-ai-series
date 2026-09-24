@@ -205,11 +205,11 @@ class AuthenticationNodes(NodeSupport):
         # most recent validated order reference; do not search older facts
         # once one is found. This keeps follow-ups anchored to the latest
         # order without asking the model to infer which identifier wins.
-        if self._memory is not None and state.session_id:
-            for fact in self._memory.active_window(state.session_id):
-                if fact.key != "order_under_discussion":
-                    continue
-                match = re.search(r"\border\s+(\d+)\b", fact.value, flags=re.IGNORECASE)
-                if match:
-                    return int(match.group(1))
+        value = state.working_memory.get("order_under_discussion")
+        if isinstance(value, str):
+            match = re.search(r"\border\s+(\d+)\b", value, flags=re.IGNORECASE)
+            if match:
+                return int(match.group(1))
+        elif isinstance(value, int) and value > 0:
+            return value
         return None

@@ -9,16 +9,14 @@ domain concept: an `Order` is something this business has, while
 `AgentState` is an artefact of running a turn through a state machine.
 """
 
-from typing import Annotated, Any
+from typing import Any
 
 from pydantic import BaseModel, Field
 
+from agentic_commons.context import Context
 from agentic_commons.llm.types import Message
+from agentic_commons.memory import WorkingMemory
 
-
-def _merge_messages(existing: list[Message], incoming: list[Message]) -> list[Message]:
-    """Reducer: graph nodes append to the transcript rather than replace it."""
-    return [*existing, *incoming]
 
 
 class AgentState(BaseModel):
@@ -40,16 +38,9 @@ class AgentState(BaseModel):
     session_id: str = ""
     actor: str = ""
     customer_id: int | None = None
-    messages: Annotated[list[Message], _merge_messages] = Field(default_factory=list)
-    context: str = ""
+    working_memory: WorkingMemory = Field(default_factory=WorkingMemory)
+    context: Context | None = None
     tool_rounds: int = 0
-    tool_results: list[str] = Field(default_factory=list)
-    # Only successfully completed tool results may ground customer-facing
-    # business claims. ``tool_results`` intentionally retains blocked/failed
-    # observations for the model and audit trail; this field is the
-    # authority boundary used by reflection and hallucination protection.
-    authoritative_tool_results: list[str] = Field(default_factory=list)
-    authoritative_facts: dict[str, Any] = Field(default_factory=dict)
     decisions: list[str] = Field(default_factory=list)
     escalated: bool = False
     response: str = ""

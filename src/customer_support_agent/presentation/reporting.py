@@ -36,6 +36,89 @@ def tool_request_fields(name: str, arguments: str) -> dict[str, Any]:
             fields[key] = f"${value:,.2f}" if key == "amount" and isinstance(value, (int, float)) else value
     return fields
 
+
+def llm_request_fields(request: Any, *, model: str = "") -> dict[str, Any]:
+    """Render the important inputs supplied to the LLM.
+
+    Keep the operator-facing event concise: the system prompt and latest user
+    query are the actual prompt, while the offered tool names explain the
+    action space. Provider-specific request envelopes are deliberately not
+    repeated here.
+    """
+    system_prompt = next(
+        (message.content for message in request.messages if message.role == "system"),
+        "",
+    )
+    user_messages = [
+        message.content
+        for message in request.messages
+        if message.role == "user"
+    ]
+    tools = request.tools or []
+    tool_names: list[str] = []
+    for tool in tools:
+        if isinstance(tool, dict):
+            function = tool.get("function", tool)
+            if isinstance(function, dict) and function.get("name"):
+                tool_names.append(str(function["name"]))
+                continue
+        name = getattr(tool, "name", None)
+        if name:
+            tool_names.append(str(name))
+
+    return {
+        "model": model or "unknown",
+        "system_prompt": system_prompt,
+        "user_query": user_messages[-1] if user_messages else "",
+        "tools_offered": tool_names,
+    }
+
+
+def memory_fact_fields(fact: Any, *, score: float | None = None) -> dict[str, Any]:
+    """Render one memory fact with its provenance and optional retrieval score."""
+    fields: dict[str, Any] = {
+        "key": fact.key,
+        "value": fact.value,
+        "memory_type": fact.memory_type,
+        "category": fact.category,
+        "source": fact.provenance.source,
+        "provenance": fact.provenance.kind,
+        "confidence": fact.confidence,
+        "importance": fact.importance,
+    }
+    if score is not None:
+        fields["score"] = round(float(score), 4)
+    return fields
+
+# Backward-compatible spelling for callers from the first Phase 1 integration.
+# The canonical helper name is `memory_fact_fields` (singular `fact`).
+memory_facts_field = memory_fact_fields
+
+def llm_response_fields(
+    result: Any,
+    *,
+    tools_offered: list[str] | None = None,
+) -> dict[str, Any]:
+    """Render only the operator-useful parts of an LLM response."""
+    fields: dict[str, Any] = {
+        "model": result.model,
+        "finish_reason": result.finish_reason or "unknown",
+        "tools_offered": tools_offered or [],
+        "input_tokens": result.usage.prompt_tokens,
+        "output_tokens": result.usage.completion_tokens,
+        "total_tokens": result.usage.total_tokens,
+        "latency_ms": round(float(result.latency_ms), 2),
+    }
+    if result.tool_calls:
+        fields["tool_calls"] = [
+            {"tool": call.name, "arguments": call.arguments}
+            for call in result.tool_calls
+        ]
+    elif result.content:
+        fields["response"] = result.content
+    return fields
+
+
 def basic_sanity_fields(result: Any) -> dict[str, Any]:
     """Render BasicSanity findings consistently with the TUI check contract."""
     fields: dict[str, Any] = {

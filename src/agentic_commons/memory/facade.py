@@ -20,7 +20,7 @@ from agentic_commons.memory.types import (
     TextRedactor,
     WriteResult,
 )
-from agentic_commons.memory.working.memory import WorkingMemory
+from agentic_commons.memory.working.memory import WorkingMemoryStore
 from agentic_commons.memory.write_pipeline import MemoryWritePipelineImpl
 from agentic_commons.persistence import PlatformStore
 
@@ -31,7 +31,7 @@ class MemoryFacade:
 
     def __init__(
         self,
-        working: WorkingMemory | None = None,
+        working: WorkingMemoryStore | None = None,
         episodic: EpisodicStore | None = None,
         semantic: SemanticStore | None = None,
         procedural: ProceduralStore | None = None,
@@ -73,7 +73,7 @@ class MemoryFacade:
     @classmethod
     def complete(
         cls,
-        working: WorkingMemory | None = None,
+        working: WorkingMemoryStore | None = None,
         episodic: EpisodicStore | None = None,
         semantic: SemanticStore | None = None,
         procedural: ProceduralStore | None = None,
@@ -84,7 +84,7 @@ class MemoryFacade:
     ) -> "MemoryFacade":
         """A facade holding all four CoALA classes, building any not given."""
         return cls(
-            working=working or WorkingMemory(),
+            working=working or WorkingMemoryStore(),
             episodic=episodic or EpisodicStore(),
             semantic=semantic or SemanticStore(platform_store),
             procedural=procedural or ProceduralStore(platform_store),
@@ -119,50 +119,48 @@ class MemoryFacade:
         category: str = "",
         provenance_kind: ProvenanceKind = "verified_system_of_record",
     ) -> WriteResult:
-        """Hold a fact in this session's active window.
-
-        This is the short-term path, and it is deliberately not the write
-        pipeline: what the customer just selected, what a tool just
-        returned, who is verified. Those are true for this conversation
-        and meaningless outside it, so they belong in the window rather
-        than in long-term storage, where they would need conflict
-        resolution and a curator.
-
-        Default provenance is the system of record, because that is what
-        almost every caller is: a tool result or a database read. A
-        caller relaying something the *customer* said passes
-        `self_reported` and it is weighted down at retrieval.
-        """
+        """Hold one compact value in the session's working memory."""
         if self.working is None:
             return WriteResult(route="discard", written=False, reason="no working memory")
+        memory = self.working.get(session_id)
+        memory.set(key, value)
         fact = MemoryFact(
             key=key,
-            value=self._redact(value),
+            value=value,
             memory_type="working",
             category=category,
-            metadata={"session_id": session_id},
             provenance=Provenance(source=source, kind=provenance_kind),
+            metadata={"session_id": session_id},
         )
-        return self.working.write(fact, fact.provenance)
+        return WriteResult(
+            route="auto_commit", written=True, fact=fact, reason="in active window"
+        )
 
     def active_window(self, session_id: str, limit: int = 0) -> list[MemoryFact]:
-        """What this session currently holds, newest first."""
+        """Expose compact working-memory state for legacy callers."""
         if self.working is None:
             return []
-        query = MemoryQuery(session_id=session_id)
-        return self.working.read(query.model_copy(update={"limit": limit or query.limit}))
+        memory = self.working.get(session_id)
+        items = list(memory.state.items())
+        if limit:
+            items = items[-limit:]
+        return [
+            MemoryFact(
+                key=key,
+                value=str(value),
+                memory_type="working",
+                provenance=Provenance(source="working_memory", kind="agent_inference"),
+                metadata={"session_id": session_id},
+            )
+            for key, value in items
+        ]
 
     def window_size(self, session_id: str) -> int:
-        """How many facts this session is holding.
-
-        Asked here rather than by reaching through to the store: callers
-        ask memory questions, and one that walks into `.working` breaks
-        the moment a deployment is composed without that class.
-        """
-        return self.working.size(session_id) if self.working else 0
+        """How many compact state entries this session holds."""
+        return len(self.working.get(session_id).state) if self.working else 0
 
     def end_session(self, session_id: str) -> None:
-        """Drop one conversation's window. Long-term memory is untouched."""
+        """Drop one conversation's working memory."""
         if self.working is None:
             return
         self.working.clear(session_id)

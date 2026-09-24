@@ -10,7 +10,6 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
-from agentic_commons.llm.types import Message
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.reporting import (
@@ -160,8 +159,8 @@ class GraphWiring(NodeSupport):
 
     def _after_reason(self, state: AgentState) -> str:
         """Act on requested tools, or finish."""
-        last = state.messages[-1] if state.messages else Message()
-        return "act" if last.tool_calls else "finalize"
+        last = self._current_messages(state)[-1] if self._current_messages(state) else None
+        return "act" if last is not None and last.tool_calls else "finalize"
 
     def _after_act(self, state: AgentState) -> str:
         """Continue only while autonomous execution remains permitted."""

@@ -14,6 +14,7 @@ from agentic_commons.logging import get_logger, instrument
 from agentic_commons.tools import ToolCall, ToolDefinition, ToolResult
 from customer_support_agent.domain.identity import current_customer_id
 from customer_support_agent.domain.models import HitlRequest, Order
+from customer_support_agent.domain.refund_policy import RefundPolicy
 from customer_support_agent.persistence.repositories import (
     HitlQueueRepository,
     OrdersRepository,
@@ -56,8 +57,10 @@ class SupportTools:
         hitl: HitlQueueRepository,
         refunds: RefundLedgerRepository,
         saga: RefundSaga,
+        refund_policy: RefundPolicy | None = None,
     ) -> None:
         self._orders = orders
+        self._refund_policy = refund_policy or RefundPolicy(orders)
         self._hitl = hitl
         self._refunds = refunds
         self._saga = saga
@@ -187,12 +190,16 @@ class SupportTools:
 
     async def process_refund(self, order_id: int, amount: float, reason: str = "") -> ToolResult:
         """Issue a refund through the saga with domain-level defense in depth."""
-        order = self._owned_order(order_id)
-        if order is None:
-            return ToolResult(success=False, error=_NOT_FOUND.format(order_id=order_id))
-        if not order.is_refund_eligible or order.already_refunded:
-            return ToolResult(success=False, error=order.refund_ineligibility_reason)
-        result = await self._saga.issue(order, amount, reason)
+        customer_id = current_customer_id()
+        validation = self._refund_policy.validate(
+            order_id,
+            customer_id,
+            amount,
+            action="process_refund",
+        )
+        if not validation.allowed or validation.order is None:
+            return ToolResult(success=False, error=validation.reason)
+        result = await self._saga.issue(validation.order, amount, reason)
         if not result.succeeded:
             return ToolResult(
                 success=False,
@@ -210,11 +217,16 @@ class SupportTools:
 
     def queue_for_approval(self, order_id: int, amount: float) -> ToolResult:
         """Enqueue a refund for a human to decide."""
-        order = self._owned_order(order_id)
-        if order is None:
-            return ToolResult(success=False, error=_NOT_FOUND.format(order_id=order_id))
-        if not order.is_refund_eligible or order.already_refunded:
-            return ToolResult(success=False, error=order.refund_ineligibility_reason)
+        customer_id = current_customer_id()
+        validation = self._refund_policy.validate(
+            order_id,
+            customer_id,
+            amount,
+            action="queue_for_approval",
+        )
+        if not validation.allowed or validation.order is None:
+            return ToolResult(success=False, error=validation.reason)
+        order = validation.order
         existing = self._hitl.pending_for_order(order_id)
         if existing is not None:
             return ToolResult(

@@ -18,7 +18,7 @@ from agentic_commons.config import get_settings
 from agentic_commons.persistence import SqliteConnectionPool
 
 if TYPE_CHECKING:
-    from agentic_commons.memory import MemoryFacade
+    from agentic_commons.memory import WorkingMemoryStore
 
 
 class MemoryCommand(PoolBackedCommand):
@@ -39,11 +39,11 @@ class MemoryCommand(PoolBackedCommand):
     def __init__(
         self,
         pool: SqliteConnectionPool | None = None,
-        memory: "MemoryFacade | None" = None,
+        working_memory: "WorkingMemoryStore | None" = None,
         session_id: str = "",
     ) -> None:
         super().__init__(pool)
-        self._memory = memory
+        self._working_memory = working_memory
         self._session_id = session_id
 
     async def run(self, args: list[str]) -> CommandResult:
@@ -78,24 +78,20 @@ class MemoryCommand(PoolBackedCommand):
 
     def _working_window(self, preview: int) -> CommandResult:
         """This session's active window — what the next turn will see."""
-        if self._memory is None:
+        if self._working_memory is None:
             return CommandResult(title="Working memory", ok=False).line(
                 "No live agent is attached to this console."
             )
-        facts = self._memory.active_window(self._session_id)
+        memory = self._working_memory.get(self._session_id)
         result = CommandResult(
-            title=f"Working memory — {len(facts)} fact(s) active in this conversation"
+            title=f"Working memory — {len(memory.state)} state item(s), {len(memory.history) // 2} conversation turn(s)"
         )
-        if not facts:
+        if not memory.state and not memory.history:
             return result.line("Nothing established yet. Verify, and it fills as you talk.")
-        result.headers = ["category", "key", "value", "source"]
-        for fact in facts:
-            result.row(
-                fact.category or "—",
-                fact.key,
-                fact.value[:preview],
-                fact.provenance.source,
-            )
-        result.line("These are pinned into the context window on the next turn.")
+        if memory.state:
+            result.headers = ["key", "value"]
+            for key, value in memory.state.items():
+                result.row(key, str(value)[:preview])
+        result.line("The bounded history and state are projected into context on the next turn.")
         result.line("They are dropped when the conversation ends; nothing here is long-term.")
         return result

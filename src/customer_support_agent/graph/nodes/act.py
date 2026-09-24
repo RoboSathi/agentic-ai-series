@@ -38,7 +38,8 @@ from customer_support_agent.presentation.reporting import (
 class ToolUseNodes(NodeSupport):
     async def act(self, state: AgentState) -> dict[str, Any]:
         """Execute the requested tool calls, each through the Gatekeeper."""
-        last = state.messages[-1] if state.messages else Message()
+        messages = self._current_messages(state)
+        last = messages[-1] if messages else Message()
         requests = last.tool_calls or []
         self._report(
             "tool_execution",
@@ -46,8 +47,6 @@ class ToolUseNodes(NodeSupport):
             event_kind="stage",
             fields={"requested": len(requests)},
         )
-        outputs: list[Message] = []
-        results: list[str] = []
         decisions: list[str] = []
         invocation_fields_history: list[dict[str, Any]] = []
         offered = set(state.metadata.get("offered_actions", []))
@@ -62,12 +61,15 @@ class ToolUseNodes(NodeSupport):
                 requested.name, requested.arguments, state, offered
             )
             invocation_fields_history.append(invocation_fields)
-            results.append(text)
             decisions.append(decision)
-            self._note(state, f"result_of_{requested.name}", text, category="tool_result")
-            outputs.append(
-                Message(role="tool", content=text, tool_call_id=requested.id or requested.name)
+            tool_message = Message(
+                role="tool", content=text, tool_call_id=requested.id or requested.name
             )
+            self._add_action(
+                state, requested.name, requested.arguments, text,
+                successful=invocation_fields.get("tool_status") == "completed",
+            )
+            state.working_memory.add_current_turn(tool_message)
 
             # Once a proposal escalates, autonomous execution stops for the
             # remainder of this assistant turn. Do not execute later batched
@@ -104,18 +106,7 @@ class ToolUseNodes(NodeSupport):
             for item in invocation_fields_history
             if isinstance(item.get("gatekeeper"), dict)
         )
-        authoritative_results = [
-            text
-            for text, invocation in zip(results, invocation_fields_history, strict=True)
-            if invocation.get("tool_status") == "completed"
-        ]
         return {
-            "messages": outputs,
-            "tool_results": results,
-            "authoritative_tool_results": [
-                *state.authoritative_tool_results,
-                *authoritative_results,
-            ],
             "decisions": decisions,
             "escalated": state.escalated or turn_escalated,
             "metadata": {

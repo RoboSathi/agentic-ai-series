@@ -1,5 +1,5 @@
-"""Working memory — a pointer into the context window (LLD §8)."""
+"""Working memory for live conversations."""
 
-from agentic_commons.memory.working.memory import WorkingMemory
+from agentic_commons.memory.working.memory import WorkingMemory, WorkingMemoryStore
 
-__all__ = ["WorkingMemory"]
+__all__ = ["WorkingMemory", "WorkingMemoryStore"]

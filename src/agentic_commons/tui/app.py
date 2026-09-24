@@ -211,11 +211,11 @@ class AgenticTuiApp(App[None]):
         switched off, which is the exact thing `/harness` exists to make
         visible.
         """
-        memory = getattr(self._agent, "memory", None)
+        memory = getattr(self._agent, "working_memory", None)
         if memory is not None:
             self._commands.register(
                 MemoryCommand(
-                    memory=memory,
+                    working_memory=memory,
                     session_id=self._session_id,
                 )
             )
@@ -384,8 +384,9 @@ class AgenticTuiApp(App[None]):
 
         except Exception as exc:
             self._journal.exception("Agent run failed")
+            detail = str(exc) or type(exc).__name__
             self._panel.note(
-                f"\n✗ RUN FAILED: {exc}",
+                f"\n✗ RUN FAILED: {detail}",
                 style="red",
             )
             self._status.fail()

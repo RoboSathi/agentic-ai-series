@@ -49,8 +49,9 @@ class FinalizeNodes(NodeSupport):
                 "escalated": True,
                 "metadata": state.metadata,
             }
-        last = state.messages[-1] if state.messages else Message()
-        authoritative_evidence = list(state.authoritative_tool_results)
+        messages = self._current_messages(state)
+        last = messages[-1] if messages else Message()
+        authoritative_evidence = self._authoritative_observations(state)
         critique = self._deliberation.reflect(last.content, authoritative_evidence)
         reflection_comment = critique.summary
         self._logger.info(
@@ -155,28 +156,24 @@ class FinalizeNodes(NodeSupport):
 
         # The reflector already logged what it found; saying it twice
         # here would double every rejection in the trace.
-        self._report(
-            "llm_call",
-            event_kind="model",
-            summary="Generating the final customer response",
-            fields={"purpose": "reply_revision"},
+        request = CompletionRequest(
+            messages=[
+                *self._prompt_messages(state),
+                Message(role="user", content=build_reply_instruction()),
+            ],
+            json_schema=CustomerResponse.model_json_schema(),
         )
+        self._report_llm_request(request, purpose="reply_revision")
         try:
             result = await self._call_model(
-                CompletionRequest(
-                    messages=[
-                        *self._prompt_messages(state),
-                        Message(role="user", content=build_reply_instruction()),
-                    ],
-                    json_schema=CustomerResponse.model_json_schema(),
-                ),
+                request,
                 state,
                 f"{state.session_id}:finalize",
             )
         except Exception as exc:
             error_fields = external_api_error_fields(exc)
             self._reporter_warning(
-                "llm_call",
+                "resilience",
                 summary="LLM unavailable after retries",
                 event_kind="resilience",
                 fields={
@@ -191,19 +188,9 @@ class FinalizeNodes(NodeSupport):
                 "escalated": True,
                 "metadata": {**state.metadata, "external_dependency_failed": True},
             }
-        self._done(
-            "llm_call",
-            tokens=result.usage.total_tokens,
-            summary="Final customer response generated",
-            event_kind="model",
-            fields={
-                "purpose": "reply_revision",
-                "model": result.model,
-                "finish_reason": result.finish_reason or "unknown",
-                "input_tokens": result.usage.prompt_tokens,
-                "output_tokens": result.usage.completion_tokens,
-                "total_tokens": result.usage.total_tokens,
-            },
+        self._report_llm_response(
+            result,
+            purpose="reply_revision",
         )
         reply, schema_fields = self._response_guardrail.validate_schema(result.content)
         if reply is None or not is_customer_ready(reply):
@@ -226,14 +213,17 @@ class FinalizeNodes(NodeSupport):
                 "Authoritative tool results:\n"
                 + "\n".join(f"- {item}" for item in authoritative_evidence)
             )
+            request = CompletionRequest(
+                messages=[Message(role="user", content=repair_prompt)],
+                json_schema=CustomerResponse.model_json_schema(),
+            )
+            self._report_llm_request(request, purpose="hallucination_repair")
             repaired_result = await self._call_model(
-                CompletionRequest(
-                    messages=[Message(role="user", content=repair_prompt)],
-                    json_schema=CustomerResponse.model_json_schema(),
-                ),
+                request,
                 state,
                 f"{state.session_id}:hallucination-repair",
             )
+            self._report_llm_response(repaired_result, purpose="hallucination_repair")
             repaired, _ = self._response_guardrail.validate_schema(repaired_result.content)
             return repaired or FALLBACK_REPLY
 
@@ -307,7 +297,6 @@ class FinalizeNodes(NodeSupport):
         )
         return {
             "response": reply,
-            "messages": [Message(role="assistant", content=reply)],
             "decisions": decisions,
         }
 
@@ -321,10 +310,17 @@ class FinalizeNodes(NodeSupport):
 
         async def resample(count: int) -> list[str]:
             request = CompletionRequest(messages=self._prompt_messages(state))
-            results = [
-                await self._call_model(request, state, key=f"{state.session_id}:resample:{index}")
-                for index in range(max(0, count))
-            ]
+            results = []
+            for index in range(max(0, count)):
+                purpose = f"response_resample_{index + 1}"
+                self._report_llm_request(request, purpose=purpose)
+                result = await self._call_model(
+                    request,
+                    state,
+                    key=f"{state.session_id}:resample:{index}",
+                )
+                self._report_llm_response(result, purpose=purpose)
+                results.append(result)
             return [result.content for result in results if result.content]
 
         return resample

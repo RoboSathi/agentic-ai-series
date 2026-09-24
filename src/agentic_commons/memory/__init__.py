@@ -20,11 +20,17 @@ from agentic_commons.memory.types import (
     WriteResult,
     WriteRoute,
 )
-from agentic_commons.memory.working import WorkingMemory
+from agentic_commons.memory.events import DreamInbox, MemoryAction, MemoryEvent, MemoryEventSink, MemoryObservation
+from agentic_commons.memory.working import WorkingMemory, WorkingMemoryStore
 from agentic_commons.memory.write_pipeline import MemoryWritePipelineImpl, WriteAuthorizer
 
 __all__ = [
     "CompositeRetrievalScorer",
+    "DreamInbox",
+    "MemoryAction",
+    "MemoryEvent",
+    "MemoryEventSink",
+    "MemoryObservation",
     "EpisodicStore",
     "MemoryConflict",
     "MemoryFacade",
@@ -40,6 +46,7 @@ __all__ = [
     "ScoredFact",
     "SemanticStore",
     "WorkingMemory",
+    "WorkingMemoryStore",
     "WriteAuthorizer",
     "WriteResult",
     "WriteRoute",

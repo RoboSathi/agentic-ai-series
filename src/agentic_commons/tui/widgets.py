@@ -10,6 +10,7 @@ small collapsible card:
 The logger remains responsible for implementation-level debugging.
 """
 
+import json
 import textwrap
 import time
 from collections.abc import Mapping
@@ -562,14 +563,26 @@ class StageEventWidget(Collapsible):
                 return f"{chunks} sources · {used} tokens"
             return self._compact_from_fields(fields, ("selected", "used_tokens"))
 
-        if stage in {"llm_call", "llm_response_received"}:
-            requested_calls = fields.get("requested_tool_calls")
-            if isinstance(requested_calls, list) and requested_calls:
-                first = requested_calls[0]
+        if stage in {"llm_request", "llm_call", "llm_response_received"}:
+            calls = fields.get("tool_calls")
+            if isinstance(calls, list) and calls:
+                first = calls[0]
                 if isinstance(first, Mapping):
-                    tool = first.get("tool") or first.get("qualified_tool")
-                    order_id = first.get("order_id")
-                    amount = first.get("amount")
+                    tool = first.get("tool") or first.get("name")
+                    arguments = first.get("arguments")
+                    order_id = None
+                    amount = None
+                    if isinstance(arguments, str):
+                        try:
+                            parsed = json.loads(arguments)
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            parsed = {}
+                        if isinstance(parsed, Mapping):
+                            order_id = parsed.get("order_id")
+                            amount = parsed.get("amount")
+                    elif isinstance(arguments, Mapping):
+                        order_id = arguments.get("order_id")
+                        amount = arguments.get("amount")
                     parts = [
                         "tool requested",
                         self._labels.tool_label(str(tool)) if tool else "tool",
@@ -579,10 +592,10 @@ class StageEventWidget(Collapsible):
                     if amount is not None:
                         parts.append(_format_value("amount", amount))
                     return " · ".join(parts)
-            requested = fields.get("requested_tools")
-            if requested:
-                first = requested[0] if isinstance(requested, list) else requested
-                return f"tool requested · {self._labels.tool_label(str(first))}"
+            requested = fields.get("tools_offered")
+            if stage == "llm_request" and requested:
+                count = len(requested) if isinstance(requested, list) else 0
+                return f"prompt sent · {count} tools offered" if count else "prompt sent"
             if fields.get("finish_reason") == "tool_calls":
                 return "tool requested"
             return "response generated"

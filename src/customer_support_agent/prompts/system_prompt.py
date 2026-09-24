@@ -14,13 +14,6 @@ queue, which is worth fixing on its own terms.
 
 from pathlib import Path
 
-from agentic_commons.config import get_settings
-from agentic_commons.logging import get_logger
-from agentic_commons.memory import MemoryFact, ProceduralStore, Provenance
-
-# The name this prompt is stored under. One artifact, many versions,
-# exactly one active — which is what `procedural` memory is for.
-PROMPT_ARTIFACT = "customer_support_system_prompt"
 
 _POLICY_FILE = Path(__file__).resolve().parent / "customer_policy.md"
 
@@ -95,47 +88,6 @@ def build_reply_instruction() -> str:
     return _REPLY_INSTRUCTION
 
 
-def build_system_prompt(procedures: ProceduralStore | None = None) -> str:
-    """The active system prompt, embedding customer_policy.md verbatim.
-
-    The prompt is a *procedural memory artifact*, not a constant. That is
-    what makes it versioned like everything else it ships with: each
-    change is a new version with exactly one active, the previous ones
-    are retained, and rolling back is selecting an earlier version rather
-    than finding the commit that changed a string.
-
-    Given no store, the file's text is returned unchanged — an episode or
-    a test should not need a database to build a prompt.
-    """
-    rendered = _INSTRUCTIONS.format(policy=_POLICY_FILE.read_text())
-    if procedures is None:
-        return rendered
-    return _active_version(procedures, rendered)
-
-
-def _active_version(procedures: ProceduralStore, rendered: str) -> str:
-    """The stored prompt, recording this one as a new version if it differs.
-
-    Reads before it writes. A prompt written on every call would create a
-    new version per request, and a version history where every entry is
-    identical is a history nobody can read a change out of.
-    """
-    active = procedures.get(PROMPT_ARTIFACT)
-    if active is not None and active.value == rendered:
-        return active.value
-    version = get_settings().audit.prompt_version
-    procedures.write(
-        MemoryFact(
-            key=PROMPT_ARTIFACT,
-            value=rendered,
-            memory_type="procedural",
-            category="prompt",
-            metadata={"artifact_type": "prompt", "declared_version": version},
-            provenance=Provenance(source="customer_support_agent", kind="agent_inference"),
-        ),
-        Provenance(source="customer_support_agent", kind="agent_inference"),
-    )
-    get_logger("customer_support_agent").info(
-        "Recorded a new version of the system prompt", declared_version=version
-    )
-    return rendered
+def build_system_prompt() -> str:
+    """Build the customer-support system prompt from the local policy file."""
+    return _INSTRUCTIONS.format(policy=_POLICY_FILE.read_text())

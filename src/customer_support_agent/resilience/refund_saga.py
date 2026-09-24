@@ -34,6 +34,7 @@ from agentic_commons.resilience import (
     SqliteIdempotencyGuard,
 )
 from customer_support_agent.domain.models import Order
+from customer_support_agent.domain.refund_policy import RefundPolicy
 from customer_support_agent.persistence.repositories import (
     OrdersRepository,
     RefundLedgerRepository,
@@ -53,8 +54,10 @@ class RefundSaga:
         ledger: RefundLedgerRepository,
         notifier: Notifier | None = None,
         idempotency: SqliteIdempotencyGuard | None = None,
+        refund_policy: RefundPolicy | None = None,
     ) -> None:
         self._orders = orders
+        self._refund_policy = refund_policy or RefundPolicy(orders)
         self._ledger = ledger
         self._notifier = notifier
         self._idempotency = idempotency
@@ -90,28 +93,14 @@ class RefundSaga:
         return result
 
     def _refuse(self, order: Order, amount: float) -> SagaResult | None:
-        """Why this refund must not run, or None if it may.
-
-        Read fresh from the repository rather than taken from the `Order`
-        passed in. The caller's copy may have been loaded several awaits
-        ago, and the only state worth paying out against is the state as
-        it is now.
-        """
-        current = self._orders.get(order.order_id)
-        if current is None:
-            return self._refused(f"Order {order.order_id} no longer exists")
-        if current.user_id != order.user_id:
-            return self._refused(f"Order {order.order_id} does not belong to that customer")
-        if current.already_refunded or not current.is_refund_eligible:
-            return self._refused(current.refund_ineligibility_reason)
-        if amount <= 0:
-            return self._refused("A refund must be for more than zero")
-        if amount > current.amount:
-            return self._refused(
-                f"Refund of ${amount:,.2f} exceeds order {order.order_id}'s "
-                f"${current.amount:,.2f} total"
-            )
-        return None
+        """Re-check the authoritative refund policy against fresh repository state."""
+        validation = self._refund_policy.validate(
+            order_id=order.order_id,
+            customer_id=order.user_id,
+            amount=amount,
+            action="process_refund",
+        )
+        return None if validation.allowed else self._refused(validation.reason)
 
     def _refused(self, reason: str) -> SagaResult:
         """A refund that never started, reported as a failed saga.

@@ -28,6 +28,7 @@ from agentic_commons.context import (
     LexicalRetriever,
     RelevanceRanker,
     Task,
+    WorkingMemoryContextSource,
 )
 from agentic_commons.evals import NollmScoringCascadeImpl, create_scoring_cascade
 from agentic_commons.executor import ToolExecutorImpl
@@ -36,13 +37,7 @@ from agentic_commons.gatekeeper.ledger import CumulativeLedger
 from agentic_commons.hallucination_protection import DetectionLadder
 from agentic_commons.llm.client import LLMClient, create_llm_client
 from agentic_commons.llm.encoders import create_reranker
-from agentic_commons.memory import (
-    EpisodicStore,
-    MemoryFacade,
-    ProceduralStore,
-    SemanticStore,
-    WorkingMemory,
-)
+from agentic_commons.memory import DreamInbox, WorkingMemoryStore
 from agentic_commons.observability import (
     DuckDbObservabilityStore,
     SLORegistry,
@@ -65,6 +60,7 @@ from customer_support_agent.basic_sanity.order_validator import OrderSanityCheck
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.identity import current_customer_id
 from customer_support_agent.domain.models import Order
+from customer_support_agent.domain.refund_policy import RefundPolicy
 from customer_support_agent.gatekeeper.business_rules import CustomerSupportBusinessRules
 from customer_support_agent.gatekeeper.mandates import RefundMandateIssuer
 from customer_support_agent.graph.agent import CustomerSupportAgent
@@ -102,35 +98,6 @@ class PolicyContextSource:
         """The policy, as one pinned chunk."""
         return [
             Chunk(content=self._policy, kind="policy", source="customer_policy.md", pinned=True)
-        ]
-
-
-class WorkingMemoryContextSource:
-    """Contributes what this conversation has already established.
-
-    Pinned, and for the same reason the policy is: these are not
-    retrieval results competing on relevance, they are the facts of the
-    conversation in progress. An agent that drops "this customer is
-    verified as #41" under budget pressure asks for the code again.
-
-    This is the source that makes working memory *used* rather than
-    merely written. Without it the window is a store nothing reads, which
-    is how it sat for several episodes.
-    """
-
-    def __init__(self, memory: MemoryFacade) -> None:
-        self._memory = memory
-
-    async def candidates(self, task: Task) -> list[Chunk]:
-        """This session's active facts, newest first."""
-        return [
-            Chunk(
-                content=f"{fact.key}: {fact.value}",
-                kind="memory",
-                source=fact.provenance.source,
-                pinned=True,
-            )
-            for fact in self._memory.active_window(task.session_id)
         ]
 
 
@@ -174,30 +141,6 @@ class OrderCorpusContextSource:
         return await retriever.retrieve(task.query, self._top_k)
 
 
-class MemoryContextSource:
-    """Contributes recalled memory to the window."""
-
-    def __init__(self, memory: MemoryFacade) -> None:
-        self._memory = memory
-
-    async def candidates(self, task: Task) -> list[Chunk]:
-        """Facts recalled for this query."""
-        from agentic_commons.memory import MemoryQuery
-
-        recalled = await self._memory.recall(
-            MemoryQuery(text=task.query, session_id=task.session_id)
-        )
-        return [
-            Chunk(
-                content=f"{scored.fact.key}: {scored.fact.value}",
-                kind="memory",
-                source=scored.fact.provenance.source,
-                score=scored.score,
-            )
-            for scored in recalled
-        ]
-
-
 def _order_chunk(order: Order) -> Chunk:
     """One order, as a sentence a retriever can match against.
 
@@ -217,31 +160,6 @@ def _order_chunk(order: Order) -> Chunk:
     )
 
 
-
-
-def _build_memory(
-    features: FeatureSet,
-    scoring: NollmScoringCascadeImpl,
-    platform_store: SqlitePlatformStore,
-    redactor: PIIFilterImpl | None,
-) -> MemoryFacade:
-    """Memory holding only the CoALA classes this agent was granted.
-
-    Each class is built or withheld here rather than inside the facade,
-    so `memory.episodic: false` produces an agent with no episodic log —
-    not one that has an episodic log it has been asked to ignore.
-    """
-    return MemoryFacade(
-        working=WorkingMemory() if features.is_on("memory.working") else None,
-        episodic=EpisodicStore() if features.is_on("memory.episodic") else None,
-        semantic=SemanticStore(platform_store) if features.is_on("memory.semantic") else None,
-        procedural=(
-            ProceduralStore(platform_store) if features.is_on("memory.procedural") else None
-        ),
-        relevance=scoring,
-        platform_store=platform_store,
-        redactor=redactor,
-    )
 
 
 def _cumulative_ledger(
@@ -274,7 +192,7 @@ def build_agent(
     llm: LLMClient | None = None,
     pool: SqliteConnectionPool | None = None,
     gatekeeper: Gatekeeper | None = None,
-    memory: MemoryFacade | None = None,
+    working_memory: WorkingMemoryStore | None = None,
     cascade: NollmScoringCascadeImpl | None = None,
     audit: AuditLedger | None = None,
     reporter: StageReporter | None = None,
@@ -320,7 +238,7 @@ def build_agent(
     policy_repo = AgentPolicyRepository(platform_store)
     agent_policy = policy_repo.get()
     scoring = cascade or create_scoring_cascade()
-    remember = features.is_on("memory") if with_memory is None else with_memory
+    memory_enabled = features.is_on("memory") if with_memory is None else with_memory
     observing = settings.observability.enabled if observe is None else observe
 
     # One shared analytics connection per running agent process. The store is
@@ -337,6 +255,7 @@ def build_agent(
     orders = OrdersRepository(connection)
     hitl = HitlQueueRepository(connection)
     refunds = RefundLedgerRepository(connection)
+    refund_policy = RefundPolicy(orders)
 
     idempotency = SqliteIdempotencyGuard(platform_store)
     dead_letter_queue = DeadLetterQueue(
@@ -344,8 +263,13 @@ def build_agent(
         agent_id=agent_id,
         enabled=settings.resilience.dead_letter_queue.enabled,
     )
-    saga = RefundSaga(orders, refunds, idempotency=idempotency)
-    tools = SupportTools(orders, hitl, refunds, saga)
+    saga = RefundSaga(
+        orders,
+        refunds,
+        idempotency=idempotency,
+        refund_policy=refund_policy,
+    )
+    tools = SupportTools(orders, hitl, refunds, saga, refund_policy=refund_policy)
 
     registry = NamespacedToolRegistry()
     registry.register_all(tools.definitions())
@@ -360,26 +284,27 @@ def build_agent(
     # with nothing in the platform to change.
     tool_handler = CustomerSupportToolHandler(tools)
     sanity_checker = (
-        basic_sanity or OrderSanityCheck(orders) if features.is_on("basic_sanity") else None
+        basic_sanity or OrderSanityCheck(orders, refund_policy=refund_policy)
+        if features.is_on("basic_sanity")
+        else None
     )
     # Intent routing is an agent-owned component, but the concrete provider is
     # selected by the shared classifier factory. The graph receives the router
     # by dependency injection and never constructs one itself.
     resolved_intent_router = intent_router or CustomerSupportIntentRouter()
 
-    # PII redaction reaches three surfaces: tool-call payloads, traces,
-    # and — the one that was missing — everything memory persists.
+    # PII redaction reaches tool-call payloads, traces, and memory events.
     redactor = PIIFilterImpl() if features.is_on("pii") else None
-    facade = (
-        memory
-        if memory is not None
-        else (_build_memory(features, scoring, platform_store, redactor) if remember else None)
+    live_working_memory = (
+        working_memory
+        if working_memory is not None
+        else (WorkingMemoryStore(max_history=agent_settings.history_turns) if memory_enabled else None)
     )
+    memory_event_sink = DreamInbox(platform_store) if live_working_memory is not None else None
 
     sources: list[object] = [PolicyContextSource(), OrderCorpusContextSource(orders, scoring)]
-    if facade is not None:
-        sources.append(WorkingMemoryContextSource(facade))
-        sources.append(MemoryContextSource(facade))
+    if live_working_memory is not None:
+        sources.append(WorkingMemoryContextSource(live_working_memory, reporter))
     # Two-pass relevance: the NOLLM cascade scores every candidate with an
     # embedding model, then a cross-encoder rescores the shortlist. The
     # reranker is None when no hosted encoder is reachable, and the
@@ -414,7 +339,9 @@ def build_agent(
                 platform_store, agent_id, agent_policy, settings.gatekeeper.ledger.enabled
             ),
             audit=ledger,
-            business_rules=CustomerSupportBusinessRules(orders, hitl, agent_policy),
+            business_rules=CustomerSupportBusinessRules(
+                orders, hitl, agent_policy, refund_policy=refund_policy
+            ),
         )
         if features.is_on("gatekeeper")
         else None
@@ -449,7 +376,8 @@ def build_agent(
                 TermContentModerator() if features.is_on("content_moderation") else None
             ),
         ),
-        memory=facade,
+        working_memory=live_working_memory,
+        memory_event_sink=memory_event_sink,
         context=context,
         # Retrieval-based tool selection narrows within what the intent
         # already permits. Without it the agent is offered every tool the

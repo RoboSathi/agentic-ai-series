@@ -42,6 +42,7 @@ _DISPLAY_NAMES = {
     "memory_write": "MEMORY UPDATED",
     "working_memory_write": "WORKING MEMORY UPDATED",
     "context_assembly": "CONTEXT",
+    "llm_request": "LLM REQUEST",
     "llm_call": "LLM CALL",
     "llm_response_received": "LLM RESPONSE",
     "output_parsing": "OUTPUT PARSER",
