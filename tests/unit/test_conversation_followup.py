@@ -15,9 +15,9 @@ because the leak check only recognised the one JSON shape seen first.
 from agentic_commons.config import get_settings
 from agentic_commons.persistence import SqliteConnectionPool
 from customer_support_agent.config import get_agent_settings
-from customer_support_agent.core import build_agent
-from customer_support_agent.core.graph import is_customer_ready
-from customer_support_agent.core.intent import CustomerSupportIntentRouter
+from customer_support_agent.graph import build_agent
+from customer_support_agent.graph.agent import is_customer_ready
+from customer_support_agent.intent.router import CustomerSupportIntentRouter
 from tests.conftest import ScriptedLLM, tool_call
 
 

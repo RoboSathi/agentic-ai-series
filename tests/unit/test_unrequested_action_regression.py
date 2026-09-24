@@ -25,10 +25,11 @@ from agentic_commons.evals import create_scoring_cascade
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.tools import NamespacedToolRegistry, ToolCall, ToolRetrievalSelector
 from customer_support_agent.control_loop import DuplicateActionDetector, action_fingerprint
-from customer_support_agent.core import HitlQueueRepository, OrdersRepository, build_agent
-from customer_support_agent.core.refund_saga import RefundSaga
-from customer_support_agent.core.repositories import RefundLedgerRepository
-from customer_support_agent.core.tools import SupportTools
+from customer_support_agent.graph import build_agent
+from customer_support_agent.persistence import HitlQueueRepository, OrdersRepository
+from customer_support_agent.persistence.repositories import RefundLedgerRepository
+from customer_support_agent.resilience.refund_saga import RefundSaga
+from customer_support_agent.tools.definitions import SupportTools
 from tests.conftest import ScriptedLLM, tool_call
 
 # A message with no order and no refund intent.

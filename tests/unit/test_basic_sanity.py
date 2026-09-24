@@ -18,9 +18,9 @@ from agentic_commons.basic_sanity import (
 )
 from agentic_commons.config import get_settings
 from agentic_commons.persistence import SqliteConnectionPool
-from customer_support_agent.core import build_agent
-from customer_support_agent.core.order_validator import OrderSanityCheck
-from customer_support_agent.core.repositories import OrdersRepository
+from customer_support_agent.basic_sanity.order_validator import OrderSanityCheck
+from customer_support_agent.graph import build_agent
+from customer_support_agent.persistence.repositories import OrdersRepository
 from tests.conftest import ScriptedLLM
 
 

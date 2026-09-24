@@ -11,7 +11,7 @@ from typing import Any
 from agentic_commons.logging import get_logger, logged
 from agentic_commons.observability.types import utc_now
 from agentic_commons.persistence import SqliteConnectionPool
-from customer_support_agent.core.schema import (
+from customer_support_agent.domain.models import (
     HitlRequest,
     HitlStatus,
     Order,

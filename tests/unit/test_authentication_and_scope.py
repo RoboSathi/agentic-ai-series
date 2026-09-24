@@ -15,15 +15,15 @@ answer is the point of putting them first.
 import pytest
 
 from agentic_commons.persistence import SqliteConnectionPool
-from customer_support_agent.core import build_agent
-from customer_support_agent.core.authentication import CustomerAuthenticator
-from customer_support_agent.core.repositories import UsersRepository
+from customer_support_agent.graph import build_agent
+from customer_support_agent.persistence.repositories import UsersRepository
+from customer_support_agent.security.authentication import CustomerAuthenticator
 from tests.conftest import CUSTOMER_CODE, ScriptedLLM
 
 
 @pytest.fixture
 def authenticator(seeded_pool: SqliteConnectionPool) -> CustomerAuthenticator:
-    from customer_support_agent.core.repositories import OrdersRepository
+    from customer_support_agent.persistence.repositories import OrdersRepository
 
     return CustomerAuthenticator(UsersRepository(seeded_pool), OrdersRepository(seeded_pool))
 
@@ -103,7 +103,7 @@ class TestTheConversationFlow:
         llm = ScriptedLLM([{"content": "should not be called"}])
         agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
         agent._sessions.clear()
-        from customer_support_agent.core.identity import set_current_customer
+        from customer_support_agent.domain.identity import set_current_customer
 
         set_current_customer(None)
         state = await agent.handle("what is the status of my order", session_id="fresh")
@@ -115,7 +115,7 @@ class TestTheConversationFlow:
     ) -> None:
         llm = ScriptedLLM([{"content": "should not be called"}])
         agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
-        from customer_support_agent.core.identity import set_current_customer
+        from customer_support_agent.domain.identity import set_current_customer
 
         set_current_customer(None)
         state = await agent.handle(f"my code is {CUSTOMER_CODE}", session_id="fresh")
@@ -126,7 +126,7 @@ class TestTheConversationFlow:
         self, seeded_pool: SqliteConnectionPool
     ) -> None:
         """A customer verifies once, not every turn."""
-        from customer_support_agent.core.identity import set_current_customer
+        from customer_support_agent.domain.identity import set_current_customer
 
         llm = ScriptedLLM([{"content": "Order 10001 was delivered."}])
         agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
@@ -139,7 +139,7 @@ class TestTheConversationFlow:
         self, seeded_pool: SqliteConnectionPool
     ) -> None:
         """Verified as u1, order 10003 belongs to u2 and stays invisible."""
-        from customer_support_agent.core.identity import set_current_customer
+        from customer_support_agent.domain.identity import set_current_customer
 
         llm = ScriptedLLM(
             [
@@ -150,7 +150,7 @@ class TestTheConversationFlow:
         agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
         set_current_customer(None)
         await agent.handle(f"my code is {CUSTOMER_CODE}", session_id="fresh")
-        from customer_support_agent.core.tools import SupportTools  # noqa: F401
+        from customer_support_agent.tools.definitions import SupportTools  # noqa: F401
 
         assert agent._sessions["fresh"].customer_id == 1
 
@@ -174,7 +174,7 @@ class TestIdentitySurvivesTheGraph:
         the lookup is ownership-scoped, so an unbound customer would see
         nothing.
         """
-        from customer_support_agent.core.identity import set_current_customer
+        from customer_support_agent.domain.identity import set_current_customer
 
         llm = ScriptedLLM([{"content": "(should not be reached)"}])
         agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
@@ -187,7 +187,7 @@ class TestIdentitySurvivesTheGraph:
         self, seeded_pool: SqliteConnectionPool
     ) -> None:
         """The same property on the governed path, where a tool actually runs."""
-        from customer_support_agent.core.identity import set_current_customer
+        from customer_support_agent.domain.identity import set_current_customer
         from tests.conftest import tool_call
 
         llm = ScriptedLLM(

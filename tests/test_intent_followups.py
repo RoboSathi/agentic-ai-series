@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from agentic_commons.intent import IntentCandidate, IntentDisposition
-from customer_support_agent.core.intent import CustomerSupportIntentRouter, Intent
+from customer_support_agent.intent.router import CustomerSupportIntentRouter, Intent
 
 
 class FakeBackend:
@@ -70,7 +70,7 @@ def _intent(name: str) -> Intent:
 
 
 def _router(monkeypatch: pytest.MonkeyPatch, candidates: list[IntentCandidate]) -> CustomerSupportIntentRouter:
-    monkeypatch.setattr("customer_support_agent.core.intent.get_agent_settings", _settings)
+    monkeypatch.setattr("customer_support_agent.intent.router.get_agent_settings", _settings)
     return CustomerSupportIntentRouter(backend=FakeBackend(candidates))
 
 

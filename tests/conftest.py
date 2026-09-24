@@ -37,8 +37,9 @@ from agentic_commons.llm.types import (
     TokenUsage,
 )
 from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
-from customer_support_agent.core.identity import Customer, set_current_customer
-from customer_support_agent.core.schema import Order, User, ensure_schema
+from customer_support_agent.domain.identity import Customer, set_current_customer
+from customer_support_agent.domain.models import Order, User
+from customer_support_agent.persistence.schema import ensure_schema
 from episodes._shared import CONFIG_FILENAME, EpisodeSettings
 
 _ANALYTICS_PATH_VAR = "OBSERVABILITY__ANALYTICS_DB_PATH"
@@ -105,7 +106,7 @@ def seeded_pool(pool: SqliteConnectionPool) -> SqliteConnectionPool:
     auto-approved" needs a $32 order to exist by construction.
     """
     ensure_schema(pool)
-    from customer_support_agent.core.repositories import OrdersRepository, UsersRepository
+    from customer_support_agent.persistence.repositories import OrdersRepository, UsersRepository
 
     users = UsersRepository(pool)
     orders = OrdersRepository(pool)

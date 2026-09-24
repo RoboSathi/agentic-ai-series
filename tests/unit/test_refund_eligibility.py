@@ -20,17 +20,17 @@ from agentic_commons.gatekeeper.ledger import CumulativeLedger
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.security import Authorizer
 from agentic_commons.tools import ToolCall
-from customer_support_agent.core import (
+from customer_support_agent.domain import Order
+from customer_support_agent.dummy_data.generate_dummy_data import refund_status_for
+from customer_support_agent.graph import build_agent
+from customer_support_agent.intent.router import CustomerSupportIntentRouter
+from customer_support_agent.persistence import (
     HitlQueueRepository,
-    Order,
     OrdersRepository,
     RefundLedgerRepository,
-    RefundSaga,
-    SupportTools,
-    build_agent,
 )
-from customer_support_agent.core.intent import CustomerSupportIntentRouter
-from customer_support_agent.dummy_data.generate_dummy_data import refund_status_for
+from customer_support_agent.resilience import RefundSaga
+from customer_support_agent.tools import SupportTools
 from tests.conftest import ScriptedLLM, tool_call
 
 

@@ -1,20 +1,21 @@
-"""Domain models and graph state (LLD §21).
+"""What this business is made of (LLD §21).
 
-The domain vocabulary is deliberately narrow: an Order, a User, a
-HITL request, and the state the graph carries between nodes. Everything
-else — authority, memory, context, resilience — belongs to
-`agentic_commons` and arrives here by injection.
+The domain vocabulary is deliberately narrow: an Order, a User, and a
+request waiting on a human. Everything else — authority, memory,
+context, resilience — belongs to `agentic_commons` and arrives by
+injection.
+
+Nothing here reaches a database or a model. These are the nouns; the
+verbs live in `tools/`, the tables in `persistence/`, and the state of a
+turn in `graph/state.py`.
 """
 
-from pathlib import Path
-from typing import Annotated, Any, Literal
+
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.llm.types import Message
 from agentic_commons.observability.types import utc_now
-from agentic_commons.persistence import SqliteConnectionPool
-from customer_support_agent.config import get_agent_settings
 
 OrderStatus = Literal["pending", "shipped", "delivered", "cancelled"]
 RefundStatus = Literal["none", "pending_review", "approved", "denied", "completed"]
@@ -25,9 +26,6 @@ HitlStatus = Literal["pending", "approved", "denied"]
 # data generator applies the same rule so the fixtures cannot contradict
 # the policy the agent is asked to enforce.
 REFUNDABLE_ORDER_STATUSES: frozenset[str] = frozenset({"delivered", "cancelled"})
-
-_SCHEMA_FILE = Path(__file__).resolve().parents[1] / "dummy_data" / "schema.sql"
-
 
 class Order(BaseModel):
     """One customer order."""
@@ -104,52 +102,3 @@ class HitlRequest(BaseModel):
     requested_amount: float
     status: HitlStatus = "pending"
     created_at: str = Field(default_factory=lambda: utc_now().isoformat())
-
-
-def _merge_messages(existing: list[Message], incoming: list[Message]) -> list[Message]:
-    """Reducer: graph nodes append to the transcript rather than replace it."""
-    return [*existing, *incoming]
-
-
-class AgentState(BaseModel):
-    """What flows between graph nodes.
-
-    A pydantic model rather than a loose dict so that a node returning
-    the wrong shape fails where it happened, not three nodes later where
-    the value is finally read.
-    """
-
-    query: str = ""
-    session_id: str = ""
-    actor: str = ""
-    customer_id: int | None = None
-    messages: Annotated[list[Message], _merge_messages] = Field(default_factory=list)
-    context: str = ""
-    tool_rounds: int = 0
-    tool_results: list[str] = Field(default_factory=list)
-    # Only successfully completed tool results may ground customer-facing
-    # business claims. ``tool_results`` intentionally retains blocked/failed
-    # observations for the model and audit trail; this field is the
-    # authority boundary used by reflection and hallucination protection.
-    authoritative_tool_results: list[str] = Field(default_factory=list)
-    authoritative_facts: dict[str, Any] = Field(default_factory=dict)
-    decisions: list[str] = Field(default_factory=list)
-    escalated: bool = False
-    response: str = ""
-    error: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-def ensure_schema(pool: SqliteConnectionPool) -> None:
-    """Create the domain tables from the single source of truth.
-
-    The DDL lives in `dummy_data/schema.sql` and is read from disk rather
-    than duplicated here: two copies of a schema drift, and the one in
-    the test fixture is always the one that drifts.
-    """
-    pool.execute_script(_SCHEMA_FILE.read_text())
-
-
-def policy_text() -> str:
-    """The refund policy, resolved package-relative and never from the CWD."""
-    return get_agent_settings().resolved_policy_path.read_text()

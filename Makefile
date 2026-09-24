@@ -169,7 +169,7 @@ verify:
 	@echo "$(BLUE)3/4 Pytest with coverage gate (80%)...$(NC)"
 	./venv/bin/pytest tests/ --cov=src -q > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
 	@echo "$(BLUE)4/4 Composition root imports...$(NC)"
-	./venv/bin/python -c "from customer_support_agent.core import build_agent; build_agent" \
+	./venv/bin/python -c "from customer_support_agent.graph import build_agent; build_agent" \
 	  && echo "$(GREEN)✓$(NC)" || exit 1
 	@echo ""
 	@echo "$(GREEN)✓ Verification complete - all gates green$(NC)"

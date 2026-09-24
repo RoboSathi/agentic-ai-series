@@ -20,12 +20,12 @@ from agentic_commons.commands._pool import PoolBackedCommand
 from agentic_commons.config import get_settings
 from agentic_commons.observability.queue import LittlesLawQueueModel
 from agentic_commons.persistence import SqliteConnectionPool
-from customer_support_agent.core.repositories import (
+from customer_support_agent.domain.models import OrderStatus
+from customer_support_agent.persistence.repositories import (
     HitlQueueRepository,
     OrdersRepository,
     UsersRepository,
 )
-from customer_support_agent.core.schema import OrderStatus
 
 
 class UsersCommand(PoolBackedCommand):

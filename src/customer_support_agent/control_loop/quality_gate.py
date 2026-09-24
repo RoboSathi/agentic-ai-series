@@ -1,10 +1,16 @@
-"""Plan, reflect, evaluate — the agent's own quality loop (E06, FR-16).
+"""The Output Quality Gate: plan, critique, score (E06, FR-16).
+
+Not a loop, and no longer named as one. What happens here is one pass: a
+plan is looked up, a draft is critiqued once, at most one repair is
+attempted, and the result is scored by something independent. The
+iteration in this agent lives elsewhere — the Tool-Use Loop in the graph.
 
 Three roles, three Protocols, three swappable implementations:
 
-- a **Planner** decomposes a request into ordered steps *before* acting,
-  so the work is a stated plan rather than whatever the model reaches for
-  next;
+- a **Planner** states the ordered steps *before* acting, so the work is
+  a committed plan rather than whatever the model reaches for next. This
+  one is a config lookup, not a decomposition: the order tools must run
+  in is a property of the domain, not a judgement call;
 - a **Reflector** critiques a draft reply after the work, against what
   the tools actually returned;
 - an **Evaluator** scores the reply with something independent of the
@@ -89,7 +95,7 @@ class Evaluator(Protocol):
 
 
 @instrument("customer_support_agent")
-class IntentPlanner:
+class PlanLookup:
     """Plans from the classified intent, deterministically.
 
     The intent already decided which tools this turn may use, and the
@@ -117,7 +123,7 @@ class IntentPlanner:
 
 
 @instrument("customer_support_agent")
-class GroundedReflector:
+class GroundedCritic:
     """Critiques a draft against the tool results behind it.
 
     Deterministic checks only, and each one is a mistake this agent has
@@ -149,7 +155,7 @@ class GroundedReflector:
 
 
 @instrument("customer_support_agent")
-class CascadeEvaluator:
+class IndependentScorer:
     """Scores a reply with the NOLLM cascade — independent of the model.
 
     Independent is the whole requirement. Asking the model that wrote the
@@ -170,16 +176,17 @@ class CascadeEvaluator:
 
 
 @instrument("customer_support_agent")
-class DeliberationLoop:
+class OutputQualityGate:
     """Plan, then reflect on the result, then score it.
 
     Composed of the three roles rather than implementing them, so any one
     can be replaced without touching the other two — a hosted planner, a
     model-backed reflector, a human evaluator.
 
-    Bounded by construction: it reflects once. An unbounded revise loop
+    Bounded by construction: it critiques once. An unbounded revise loop
     is the generate-test-debug cycle with no exit condition, which is how
-    an agent spends a customer's afternoon improving a sentence.
+    an agent spends a customer's afternoon improving a sentence — and is
+    why this is a gate rather than a loop.
     """
 
     def __init__(
@@ -188,8 +195,8 @@ class DeliberationLoop:
         reflector: Reflector | None = None,
         evaluator: Evaluator | None = None,
     ) -> None:
-        self._planner = planner or IntentPlanner()
-        self._reflector = reflector or GroundedReflector()
+        self._planner = planner or PlanLookup()
+        self._reflector = reflector or GroundedCritic()
         self._evaluator = evaluator
         self._logger = get_logger("customer_support_agent")
 

@@ -19,15 +19,15 @@ from pydantic import BaseModel
 
 from agentic_commons.logging import get_logger, instrument, logged
 from customer_support_agent.config import get_agent_settings
-from customer_support_agent.core.identity import Customer
-from customer_support_agent.core.presentation import (
+from customer_support_agent.domain.identity import Customer
+from customer_support_agent.domain.models import User
+from customer_support_agent.persistence.repositories import OrdersRepository, UsersRepository
+from customer_support_agent.presentation.orders import (
     OrderMenu,
     build_menu,
     customer_orders,
     describe_customer,
 )
-from customer_support_agent.core.repositories import OrdersRepository, UsersRepository
-from customer_support_agent.core.schema import User
 
 
 class AuthResult(BaseModel):

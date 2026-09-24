@@ -1,0 +1,12 @@
+"""The deterministic rules the platform Gatekeeper calls into.
+
+`agentic_commons` owns the reference monitor and the check sequence; it
+does not know what an order is. This is where that knowledge lives.
+"""
+
+from customer_support_agent.gatekeeper.business_rules import (
+    REFUND_ACTION_CLASS,
+    CustomerSupportBusinessRules,
+)
+
+__all__ = ["REFUND_ACTION_CLASS", "CustomerSupportBusinessRules"]

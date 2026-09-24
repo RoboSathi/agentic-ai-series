@@ -19,7 +19,9 @@ from agentic_commons.persistence import SqliteConnectionPool
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.dummy_data import DUMMY_DATA_DIR
 
-_SCHEMA_FILE = DUMMY_DATA_DIR / "schema.sql"
+# The DDL lives with the persistence layer that owns it, not with the
+# fixture data that happens to be loaded into it.
+_SCHEMA_FILE = DUMMY_DATA_DIR.parent / "persistence" / "schema.sql"
 _SEED_DATA_FILE = DUMMY_DATA_DIR / "seed_data.sql"
 _AGENT_POLICY_FILE = DUMMY_DATA_DIR / "agent_policy_seed.sql"
 

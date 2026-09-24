@@ -60,23 +60,24 @@ from agentic_commons.security import (
 )
 from agentic_commons.security.auth.policy import AgentPolicy, AgentPolicyRepository
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
+from customer_support_agent.basic_sanity.order_validator import OrderSanityCheck
 from customer_support_agent.config import get_agent_settings
-from customer_support_agent.core.authentication import CustomerAuthenticator
-from customer_support_agent.core.business_rules import CustomerSupportBusinessRules
-from customer_support_agent.core.graph import CustomerSupportAgent
-from customer_support_agent.core.identity import current_customer_id
-from customer_support_agent.core.intent import CustomerSupportIntentRouter
-from customer_support_agent.core.order_validator import OrderSanityCheck
-from customer_support_agent.core.refund_saga import RefundSaga
-from customer_support_agent.core.repositories import (
+from customer_support_agent.domain.identity import current_customer_id
+from customer_support_agent.domain.models import Order
+from customer_support_agent.gatekeeper.business_rules import CustomerSupportBusinessRules
+from customer_support_agent.graph.agent import CustomerSupportAgent
+from customer_support_agent.intent.router import CustomerSupportIntentRouter
+from customer_support_agent.persistence.repositories import (
     HitlQueueRepository,
     OrdersRepository,
     RefundLedgerRepository,
     UsersRepository,
 )
-from customer_support_agent.core.review import ReviewQueueService
-from customer_support_agent.core.schema import Order, policy_text
-from customer_support_agent.core.tools import CustomerSupportToolHandler, SupportTools
+from customer_support_agent.prompts.policy import policy_text
+from customer_support_agent.resilience.refund_saga import RefundSaga
+from customer_support_agent.review.queue import ReviewQueueService
+from customer_support_agent.security.authentication import CustomerAuthenticator
+from customer_support_agent.tools.definitions import CustomerSupportToolHandler, SupportTools
 
 # Used only when this agent declares no budgeted action at all, in which
 # case the window never matters because nothing is charged against it.

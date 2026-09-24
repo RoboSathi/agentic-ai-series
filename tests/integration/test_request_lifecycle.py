@@ -20,11 +20,11 @@ from agentic_commons.observability import (
 )
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.security import Authorizer
-from customer_support_agent.core import (
+from customer_support_agent.graph import build_agent
+from customer_support_agent.persistence import (
     HitlQueueRepository,
     OrdersRepository,
     RefundLedgerRepository,
-    build_agent,
 )
 from tests.conftest import ScriptedLLM, tool_call
 

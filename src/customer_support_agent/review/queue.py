@@ -22,9 +22,9 @@ from agentic_commons.gatekeeper.types import AuthorityContext
 from agentic_commons.hallucination_protection import TrustCalibrationTracker, TrustReport
 from agentic_commons.logging import get_logger, logged
 from agentic_commons.observability.types import utc_now
-from customer_support_agent.core.refund_saga import RefundSaga
-from customer_support_agent.core.repositories import HitlQueueRepository, OrdersRepository
-from customer_support_agent.core.schema import HitlRequest
+from customer_support_agent.domain.models import HitlRequest
+from customer_support_agent.persistence.repositories import HitlQueueRepository, OrdersRepository
+from customer_support_agent.resilience.refund_saga import RefundSaga
 
 
 class ReviewOutcome(BaseModel):

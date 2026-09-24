@@ -7,16 +7,16 @@ import pytest
 
 from agentic_commons.config import get_settings, set_enabled
 from agentic_commons.persistence import SqliteConnectionPool
-from customer_support_agent.core import (
+from customer_support_agent.graph import build_agent
+from customer_support_agent.persistence import (
     HitlQueueRepository,
     OrdersRepository,
     RefundLedgerRepository,
-    RefundSaga,
-    SupportTools,
     UsersRepository,
-    build_agent,
-    policy_text,
 )
+from customer_support_agent.prompts.policy import policy_text
+from customer_support_agent.resilience import RefundSaga
+from customer_support_agent.tools import SupportTools
 from tests.conftest import ScriptedLLM, tool_call
 
 
@@ -134,7 +134,7 @@ class TestTools:
         Order 10003 belongs to u2, so the test authenticates as u2 — the
         default fixture binds u1, and to u1 that order does not exist.
         """
-        from customer_support_agent.core.identity import Customer, set_current_customer
+        from customer_support_agent.domain.identity import Customer, set_current_customer
 
         set_current_customer(Customer(customer_id=2))
         result = await tools.process_refund(10003, 45.0)

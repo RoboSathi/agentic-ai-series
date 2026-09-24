@@ -13,7 +13,7 @@ rebuilt so the composition root re-reads it.
 """
 
 from agentic_commons.config import is_enabled, set_enabled
-from customer_support_agent.core import build_agent
+from customer_support_agent.graph import build_agent
 from episodes._shared import EpisodeRun
 
 

@@ -12,14 +12,14 @@ from pydantic import BaseModel, Field
 from agentic_commons.executor import ToolExecutionHandler
 from agentic_commons.logging import get_logger, instrument
 from agentic_commons.tools import ToolCall, ToolDefinition, ToolResult
-from customer_support_agent.core.identity import current_customer_id
-from customer_support_agent.core.refund_saga import RefundSaga
-from customer_support_agent.core.repositories import (
+from customer_support_agent.domain.identity import current_customer_id
+from customer_support_agent.domain.models import HitlRequest, Order
+from customer_support_agent.persistence.repositories import (
     HitlQueueRepository,
     OrdersRepository,
     RefundLedgerRepository,
 )
-from customer_support_agent.core.schema import HitlRequest, Order
+from customer_support_agent.resilience.refund_saga import RefundSaga
 
 _NOT_FOUND = "No order found with id {order_id}"
 NAMESPACE = "support"

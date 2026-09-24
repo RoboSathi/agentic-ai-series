@@ -25,12 +25,12 @@ from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.security import PIIFilterImpl
 from agentic_commons.tools import NamespacedToolRegistry, ToolDefinition
 from customer_support_agent.control_loop import (
-    CascadeEvaluator,
-    DeliberationLoop,
-    GroundedReflector,
-    IntentPlanner,
+    GroundedCritic,
+    IndependentScorer,
+    OutputQualityGate,
+    PlanLookup,
 )
-from customer_support_agent.core.accounting import TurnAccountant, TurnOutcome
+from customer_support_agent.observability.accounting import TurnAccountant, TurnOutcome
 from customer_support_agent.prompts.system_prompt import PROMPT_ARTIFACT, build_system_prompt
 from tests.conftest import ScriptedLLM
 
@@ -143,7 +143,7 @@ class TestTracesAreRedacted:
     """FR-44: the composition root built a tracer with no redactor."""
 
     def test_the_agent_traces_through_a_redactor(self, seeded_pool: SqliteConnectionPool) -> None:
-        from customer_support_agent.core.builder import build_agent
+        from customer_support_agent.graph.builder import build_agent
 
         agent = build_agent(llm=ScriptedLLM(), pool=seeded_pool, with_memory=False)
         assert isinstance(agent._tracer._redactor, PIIFilterImpl)  # type: ignore[union-attr]
@@ -211,42 +211,42 @@ class TestDeliberation:
     """FR-16: planner, reflector and evaluator, each swappable."""
 
     def test_the_plan_comes_from_the_intent(self) -> None:
-        plan = IntentPlanner().plan(
+        plan = PlanLookup().plan(
             "refund order 10001", "refund_request", ["get_order_status", "process_refund"]
         )
         assert [step.tool for step in plan.steps] == ["get_order_status", "process_refund"]
 
     def test_a_plan_is_filtered_to_what_the_intent_allows(self) -> None:
         """Planning cannot widen authority — it works inside the intent."""
-        plan = IntentPlanner().plan("where is 10001", "refund_request", ["get_order_status"])
+        plan = PlanLookup().plan("where is 10001", "refund_request", ["get_order_status"])
         assert [step.tool for step in plan.steps] == ["get_order_status"]
 
     def test_reflection_rejects_deliberation_shipped_as_a_reply(self) -> None:
-        critique = GroundedReflector().reflect("We need to check the policy first.", [])
+        critique = GroundedCritic().reflect("We need to check the policy first.", [])
         assert critique.acceptable is False
 
     def test_reflection_rejects_an_order_no_tool_returned(self) -> None:
-        critique = GroundedReflector().reflect(
+        critique = GroundedCritic().reflect(
             "Order 99999 is on its way.", ["Order 10001: shipped"]
         )
         assert critique.acceptable is False
         assert "99999" in critique.summary
 
     def test_a_grounded_reply_passes(self) -> None:
-        critique = GroundedReflector().reflect(
+        critique = GroundedCritic().reflect(
             "Order 10001 is on its way.", ["Order 10001: shipped"]
         )
         assert critique.acceptable is True
 
     @pytest.mark.asyncio
     async def test_an_absent_evaluator_scores_unmeasured_not_failing(self) -> None:
-        assert await DeliberationLoop(evaluator=None).score("anything", ["evidence"]) == 1.0
+        assert await OutputQualityGate(evaluator=None).score("anything", ["evidence"]) == 1.0
 
     @pytest.mark.asyncio
     async def test_the_evaluator_is_independent_of_the_generator(self) -> None:
         from agentic_commons.evals import create_scoring_cascade
 
-        loop = DeliberationLoop(evaluator=CascadeEvaluator(create_scoring_cascade()))
+        loop = OutputQualityGate(evaluator=IndependentScorer(create_scoring_cascade()))
         assert await loop.score("Order 10001 was delivered", ["Order 10001 was delivered"]) > 0.0
 
 
@@ -340,9 +340,9 @@ class TestRetrievalOverTheOrderCorpus:
     ) -> None:
         from agentic_commons.context import Task
         from agentic_commons.evals import create_scoring_cascade
-        from customer_support_agent.core.builder import OrderCorpusContextSource
-        from customer_support_agent.core.identity import Customer, set_current_customer
-        from customer_support_agent.core.repositories import OrdersRepository
+        from customer_support_agent.domain.identity import Customer, set_current_customer
+        from customer_support_agent.graph.builder import OrderCorpusContextSource
+        from customer_support_agent.persistence.repositories import OrdersRepository
 
         set_current_customer(Customer(customer_id=1))
         source = OrderCorpusContextSource(OrdersRepository(seeded_pool), create_scoring_cascade())
@@ -356,9 +356,9 @@ class TestRetrievalOverTheOrderCorpus:
         """A retriever over every customer's orders is one bug from a leak."""
         from agentic_commons.context import Task
         from agentic_commons.evals import create_scoring_cascade
-        from customer_support_agent.core.builder import OrderCorpusContextSource
-        from customer_support_agent.core.identity import Customer, set_current_customer
-        from customer_support_agent.core.repositories import OrdersRepository
+        from customer_support_agent.domain.identity import Customer, set_current_customer
+        from customer_support_agent.graph.builder import OrderCorpusContextSource
+        from customer_support_agent.persistence.repositories import OrdersRepository
 
         set_current_customer(Customer(customer_id=1))
         source = OrderCorpusContextSource(OrdersRepository(seeded_pool), create_scoring_cascade())
@@ -371,9 +371,9 @@ class TestRetrievalOverTheOrderCorpus:
     ) -> None:
         from agentic_commons.context import Task
         from agentic_commons.evals import create_scoring_cascade
-        from customer_support_agent.core.builder import OrderCorpusContextSource
-        from customer_support_agent.core.identity import set_current_customer
-        from customer_support_agent.core.repositories import OrdersRepository
+        from customer_support_agent.domain.identity import set_current_customer
+        from customer_support_agent.graph.builder import OrderCorpusContextSource
+        from customer_support_agent.persistence.repositories import OrdersRepository
 
         set_current_customer(None)
         source = OrderCorpusContextSource(OrdersRepository(seeded_pool), create_scoring_cascade())
@@ -417,9 +417,9 @@ class TestReviewerCalibration:
     async def test_agreement_and_override_are_both_recorded(
         self, seeded_pool: SqliteConnectionPool
     ) -> None:
-        from customer_support_agent.core.builder import build_review_service
-        from customer_support_agent.core.repositories import HitlQueueRepository
-        from customer_support_agent.core.schema import HitlRequest
+        from customer_support_agent.domain.models import HitlRequest
+        from customer_support_agent.graph.builder import build_review_service
+        from customer_support_agent.persistence.repositories import HitlQueueRepository
 
         service = build_review_service(pool=seeded_pool)
         queue = HitlQueueRepository(seeded_pool)

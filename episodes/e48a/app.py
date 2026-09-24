@@ -16,7 +16,7 @@ from agentic_commons.evals import NollmScoringCascade
 from agentic_commons.llm.client import LLMClient
 from agentic_commons.memory import MemoryStore
 from agentic_commons.tools import ToolRegistry
-from customer_support_agent.core.graph import CustomerSupportAgent
+from customer_support_agent.graph.agent import CustomerSupportAgent
 from episodes._shared import EpisodeOutput, main
 
 LAYERS = [

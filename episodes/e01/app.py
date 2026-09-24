@@ -21,8 +21,9 @@ from agentic_commons.logging import get_logger
 from agentic_commons.observability.types import utc_now
 from agentic_commons.persistence import SqliteConnectionPool
 from customer_support_agent.config import get_agent_settings
-from customer_support_agent.core.repositories import OrdersRepository, UsersRepository
-from customer_support_agent.core.schema import Order, ensure_schema
+from customer_support_agent.domain.models import Order
+from customer_support_agent.persistence.repositories import OrdersRepository, UsersRepository
+from customer_support_agent.persistence.schema import ensure_schema
 
 
 class RefundScenario(YamlBackedSettings):

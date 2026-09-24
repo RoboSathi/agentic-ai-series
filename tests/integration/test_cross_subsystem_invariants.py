@@ -21,8 +21,9 @@ from agentic_commons.memory import (
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.security import Authorizer
 from agentic_commons.tools import ToolCall
-from customer_support_agent.core import OrdersRepository, build_agent
-from customer_support_agent.core.graph import CustomerSupportAgent
+from customer_support_agent.graph import build_agent
+from customer_support_agent.graph.agent import CustomerSupportAgent
+from customer_support_agent.persistence import OrdersRepository
 from tests.conftest import ScriptedLLM, tool_call
 
 
@@ -152,7 +153,8 @@ class TestEverySideEffectHasATrace:
 class TestEveryRetryIsIdempotent:
     async def test_a_repeated_refund_pays_once(self, seeded_pool: SqliteConnectionPool) -> None:
         from agentic_commons.resilience import SqliteIdempotencyGuard
-        from customer_support_agent.core import RefundLedgerRepository, RefundSaga
+        from customer_support_agent.persistence import RefundLedgerRepository
+        from customer_support_agent.resilience import RefundSaga
 
         orders = OrdersRepository(seeded_pool)
         refunds = RefundLedgerRepository(seeded_pool)

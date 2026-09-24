@@ -25,9 +25,9 @@ from agentic_commons.gatekeeper.types import LedgerEntry
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.security import Authorizer
 from agentic_commons.tools import ToolCall
-from customer_support_agent.core import build_agent
-from customer_support_agent.core.business_rules import CustomerSupportBusinessRules
-from customer_support_agent.core.repositories import OrdersRepository
+from customer_support_agent.gatekeeper.business_rules import CustomerSupportBusinessRules
+from customer_support_agent.graph import build_agent
+from customer_support_agent.persistence.repositories import OrdersRepository
 from tests.conftest import ScriptedLLM, tool_call
 
 
@@ -402,8 +402,8 @@ class TestTheUngovernedPathSkipsTheExecutionBoundary:
         """
         from agentic_commons.persistence import SqlitePlatformStore
         from agentic_commons.resilience import SqliteIdempotencyGuard
-        from customer_support_agent.core.refund_saga import RefundSaga
-        from customer_support_agent.core.repositories import RefundLedgerRepository
+        from customer_support_agent.persistence.repositories import RefundLedgerRepository
+        from customer_support_agent.resilience.refund_saga import RefundSaga
 
         store = SqlitePlatformStore(seeded_pool, agent_id=get_settings().agent.id)
         saga = RefundSaga(

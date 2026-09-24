@@ -15,8 +15,8 @@ from agentic_commons.tui import (
 )
 from agentic_commons.tui.app import AgenticTuiApp
 from agentic_commons.tui.widgets import _compact, _elapsed
-from customer_support_agent.core import build_agent
-from customer_support_agent.core.identity import Customer
+from customer_support_agent.domain.identity import Customer
+from customer_support_agent.graph import build_agent
 from tests.conftest import ScriptedLLM
 
 # Every stage key the harness emits this phase. The contract test below

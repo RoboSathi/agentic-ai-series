@@ -13,10 +13,11 @@ Which reframes "escalate when unsure" as a budget, not a safety net.
 
 from agentic_commons.observability import LittlesLawQueueModel
 from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
-from customer_support_agent.core import HitlQueueRepository, OrdersRepository, ReviewQueueService
-from customer_support_agent.core.refund_saga import RefundSaga
-from customer_support_agent.core.repositories import RefundLedgerRepository
-from customer_support_agent.core.schema import ensure_schema
+from customer_support_agent.persistence import HitlQueueRepository, OrdersRepository
+from customer_support_agent.persistence.repositories import RefundLedgerRepository
+from customer_support_agent.persistence.schema import ensure_schema
+from customer_support_agent.resilience.refund_saga import RefundSaga
+from customer_support_agent.review import ReviewQueueService
 from episodes._shared import EpisodeOutput, main
 
 SCENARIOS = [

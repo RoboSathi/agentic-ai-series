@@ -15,15 +15,17 @@ from agentic_commons.memory.write_pipeline import MemoryWritePipelineImpl
 from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
 from agentic_commons.security import Authorizer
 from agentic_commons.tools import ToolCall
-from customer_support_agent.core import OrdersRepository, SupportTools
-from customer_support_agent.core.identity import Customer, set_current_customer
-from customer_support_agent.core.refund_saga import RefundSaga
-from customer_support_agent.core.repositories import (
+from customer_support_agent.domain.identity import Customer, set_current_customer
+from customer_support_agent.domain.models import Order, User
+from customer_support_agent.persistence import OrdersRepository
+from customer_support_agent.persistence.repositories import (
     HitlQueueRepository,
     RefundLedgerRepository,
     UsersRepository,
 )
-from customer_support_agent.core.schema import Order, User, ensure_schema
+from customer_support_agent.persistence.schema import ensure_schema
+from customer_support_agent.resilience.refund_saga import RefundSaga
+from customer_support_agent.tools import SupportTools
 from episodes._shared import EpisodeOutput, main
 
 

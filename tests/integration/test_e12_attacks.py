@@ -17,7 +17,8 @@ from agentic_commons.gatekeeper.ledger import CumulativeLedger
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.security import Authorizer
 from agentic_commons.tools import ToolCall
-from customer_support_agent.core import OrdersRepository, build_agent
+from customer_support_agent.graph import build_agent
+from customer_support_agent.persistence import OrdersRepository
 from tests.conftest import ScriptedLLM, tool_call
 
 

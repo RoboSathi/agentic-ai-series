@@ -14,8 +14,8 @@ number at the end of the run is the whole argument.
 """
 
 from agentic_commons.persistence import SqliteConnectionPool
-from customer_support_agent.core.identity import current_customer
-from customer_support_agent.core.repositories import RefundLedgerRepository
+from customer_support_agent.domain.identity import current_customer
+from customer_support_agent.persistence.repositories import RefundLedgerRepository
 from episodes._shared import EpisodeRun
 
 

@@ -20,7 +20,7 @@ from agentic_commons.basic_sanity import (
 )
 from agentic_commons.logging import get_logger
 from customer_support_agent.config import get_agent_settings
-from customer_support_agent.core.repositories import OrdersRepository
+from customer_support_agent.persistence.repositories import OrdersRepository
 
 # Deliberately conservative: only treat a number as an order id when the
 # customer explicitly labels it as an order. Bare numbers are left to the
@@ -67,7 +67,7 @@ class OrderSanityCheck(BasicSanityChecker):
 
     def check(self, request: BasicSanityRequest) -> BasicSanityResult:
         """Run only deterministic checks that are safe before the model."""
-        order_id = self._extract_order_id(request.query, request.metadata)
+        order_id = self.extract_order_id(request.query, request.metadata)
         operation = self._operation(request.query, request.metadata)
         # The platform hands over an opaque subject id; reading it back as
         # a customer number is this agent's business, not the platform's.
@@ -309,7 +309,7 @@ class OrderSanityCheck(BasicSanityChecker):
         )
 
     @staticmethod
-    def _extract_order_id(query: str, metadata: dict[str, object] | None = None) -> int | None:
+    def extract_order_id(query: str, metadata: dict[str, object] | None = None) -> int | None:
         """Extract an order id from the user query or an exact tool call.
 
         The tool-call fallback is only used by the Gatekeeper's final

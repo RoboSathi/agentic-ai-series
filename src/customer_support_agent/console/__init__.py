@@ -59,8 +59,8 @@ class CustomerSupportHost:
 
     def build(self, reporter: StageReporter, features: FeatureSet | None = None) -> Any:
         """Compose the agent, reporting its stages to this feed."""
-        from customer_support_agent.core import build_agent
-        from customer_support_agent.core.intent import CustomerSupportIntentRouter
+        from customer_support_agent.graph import build_agent
+        from customer_support_agent.intent.router import CustomerSupportIntentRouter
 
         classifier = getattr(self, "_classifier", None)
         router = (
@@ -79,7 +79,7 @@ class CustomerSupportHost:
 
     def session_rows(self, agent: Any) -> list[tuple[str, str]]:
         """Who `/session` is talking to, in this agent's vocabulary."""
-        from customer_support_agent.core.identity import current_customer
+        from customer_support_agent.domain.identity import current_customer
 
         customer = current_customer()
         shown = f"{customer.name} (#{customer.customer_id})" if customer else "not verified"

@@ -331,7 +331,7 @@ class TestWorkingMemoryInTheAgent:
     async def test_a_turn_establishes_facts_the_next_turn_can_see(
         self, seeded_pool: Any, scripted_llm: Any
     ) -> None:
-        from customer_support_agent.core.builder import build_agent
+        from customer_support_agent.graph.builder import build_agent
 
         memory = MemoryFacade.complete()
         agent = build_agent(llm=scripted_llm, pool=seeded_pool, memory=memory, observe=False)
@@ -345,7 +345,7 @@ class TestWorkingMemoryInTheAgent:
     ) -> None:
         """A store nothing reads is not memory — this is that regression."""
         from agentic_commons.context import Task
-        from customer_support_agent.core.builder import WorkingMemoryContextSource
+        from customer_support_agent.graph.builder import WorkingMemoryContextSource
 
         memory = MemoryFacade.complete()
         memory.note("verified_customer", "Ada (#1)", "s2", "agent", category="identity")

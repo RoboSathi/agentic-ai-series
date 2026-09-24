@@ -14,17 +14,16 @@ Four gaps closed here:
 import pytest
 
 from agentic_commons.persistence import SqliteConnectionPool
-from customer_support_agent.core import (
-    Customer,
+from customer_support_agent.domain import Customer, set_current_customer
+from customer_support_agent.graph import build_agent
+from customer_support_agent.persistence import (
     HitlQueueRepository,
     OrdersRepository,
     RefundLedgerRepository,
-    RefundSaga,
-    ReviewQueueService,
-    SupportTools,
-    build_agent,
-    set_current_customer,
 )
+from customer_support_agent.resilience import RefundSaga
+from customer_support_agent.review import ReviewQueueService
+from customer_support_agent.tools import SupportTools
 from tests.conftest import ScriptedLLM, tool_call
 
 
@@ -77,7 +76,7 @@ class TestOrdersAreScopedToTheirOwner:
 
     def test_identity_is_not_a_tool_argument(self) -> None:
         """Anything in the schema is something the model can choose."""
-        from customer_support_agent.core.tools import OrderLookupArgs, RefundArgs
+        from customer_support_agent.tools.definitions import OrderLookupArgs, RefundArgs
 
         for schema in (OrderLookupArgs, RefundArgs):
             fields = set(schema.model_fields)

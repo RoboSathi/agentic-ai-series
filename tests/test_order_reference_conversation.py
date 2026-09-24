@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from customer_support_agent.core.presentation import OrderMenu, resolve_selection
+from customer_support_agent.presentation.orders import OrderMenu, resolve_selection
 
 
 def test_order_reference_is_not_interpreted_as_menu_selection() -> None:

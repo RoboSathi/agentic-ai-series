@@ -1,8 +1,19 @@
-"""Customer Support control-loop composition and public imports.
+"""This agent's two loops, named for what they actually are.
 
-Implementation belongs in dedicated modules (for example ``deliberation``),
-not in this package initializer. Generic trajectory watchdogs come from
-``agentic_commons.control_loop``.
+The **Tool-Use Loop** is the `reason ⇄ act` cycle in the graph: the model
+proposes a typed tool call, the harness executes it, the observation comes
+back, bounded by `max_tool_iterations`. It is deliberately *not* ReAct —
+there is no natural-language thought step, and calling it ReAct would
+teach the wrong thing. `design_patterns/agentic/react.py` is the pure form.
+
+The **Output Quality Gate** is `quality_gate`. It was called a
+"deliberation loop", which oversold it: it looks a plan up in config,
+applies one deterministic critique, allows at most one repair, and scores
+the result with something independent of the model that wrote it. Single
+pass, no iteration. Naming it honestly is the point — a viewer who sees
+"loop" and finds a lookup has learned something false.
+
+Generic trajectory watchdogs come from `agentic_commons.control_loop`.
 """
 
 from agentic_commons.control_loop import (
@@ -12,30 +23,30 @@ from agentic_commons.control_loop import (
     ToolControlLoop,
     action_fingerprint,
 )
-from customer_support_agent.control_loop.deliberation import (
-    CascadeEvaluator,
+from customer_support_agent.control_loop.quality_gate import (
     Critique,
-    DeliberationLoop,
     Evaluator,
-    GroundedReflector,
-    IntentPlanner,
+    GroundedCritic,
+    IndependentScorer,
+    OutputQualityGate,
     Plan,
+    PlanLookup,
     Planner,
     PlanStep,
     Reflector,
 )
 
 __all__ = [
-    "CascadeEvaluator",
     "ControlCheck",
     "ControlLoopReport",
     "Critique",
-    "DeliberationLoop",
     "DuplicateActionDetector",
     "Evaluator",
-    "GroundedReflector",
-    "IntentPlanner",
+    "GroundedCritic",
+    "IndependentScorer",
+    "OutputQualityGate",
     "Plan",
+    "PlanLookup",
     "PlanStep",
     "Planner",
     "Reflector",

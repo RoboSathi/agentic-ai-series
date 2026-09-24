@@ -14,8 +14,8 @@ paying for a completion to read a table aloud is waste.
 
 from pydantic import BaseModel
 
-from customer_support_agent.core.repositories import OrdersRepository
-from customer_support_agent.core.schema import Order, User
+from customer_support_agent.domain.models import Order, User
+from customer_support_agent.persistence.repositories import OrdersRepository
 
 # How an order's state reads to a customer.
 _STATUS_WORDS = {

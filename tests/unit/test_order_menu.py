@@ -15,10 +15,11 @@ import pytest
 
 from agentic_commons.llm.types import CompletionResult, HealthCheckResult, TokenUsage
 from agentic_commons.persistence import SqliteConnectionPool
-from customer_support_agent.core import OrdersRepository, build_agent
-from customer_support_agent.core.authentication import CustomerAuthenticator
-from customer_support_agent.core.identity import set_current_customer
-from customer_support_agent.core.presentation import (
+from customer_support_agent.domain.identity import set_current_customer
+from customer_support_agent.graph import build_agent
+from customer_support_agent.persistence import OrdersRepository
+from customer_support_agent.persistence.repositories import UsersRepository
+from customer_support_agent.presentation.orders import (
     OrderMenu,
     build_menu,
     customer_orders,
@@ -27,7 +28,7 @@ from customer_support_agent.core.presentation import (
     render_order_list,
     resolve_selection,
 )
-from customer_support_agent.core.repositories import UsersRepository
+from customer_support_agent.security.authentication import CustomerAuthenticator
 from tests.conftest import CUSTOMER_CODE, ScriptedLLM
 
 

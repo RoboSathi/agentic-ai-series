@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from agentic_commons.intent import IntentCandidate
-from customer_support_agent.core.intent import CustomerSupportIntentRouter
+from customer_support_agent.intent.router import CustomerSupportIntentRouter
 
 
 class FakeBackend:
@@ -103,7 +103,7 @@ async def test_underspecified_followup_uses_previous_supported_intent_as_fallbac
 
 
 def test_intent_operator_fields_are_concise_and_distinguish_source() -> None:
-    from customer_support_agent.core.graph import CustomerSupportAgent
+    from customer_support_agent.graph.agent import CustomerSupportAgent
 
     class DeterministicIntent:
         name = "ORDER_STATUS"

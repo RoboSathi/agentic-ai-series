@@ -30,8 +30,8 @@ from agentic_commons.commands import Command
 from agentic_commons.config import get_settings, reload_settings, use_overlay
 from agentic_commons.logging import TraceStream
 from agentic_commons.tui.app import AgenticTuiApp
-from customer_support_agent.core import AgentState, build_agent
-from customer_support_agent.core.graph import CustomerSupportAgent
+from customer_support_agent.graph import AgentState, build_agent
+from customer_support_agent.graph.agent import CustomerSupportAgent
 from episodes._shared.settings import EpisodeSettings
 
 # The episode's own config, found by convention beside its `app.py`. A

@@ -22,11 +22,11 @@ from agentic_commons.resilience import (
     SagaStep,
     SqliteIdempotencyGuard,
 )
-from customer_support_agent.core.repositories import (
+from customer_support_agent.domain.models import Order
+from customer_support_agent.persistence.repositories import (
     OrdersRepository,
     RefundLedgerRepository,
 )
-from customer_support_agent.core.schema import Order
 
 # Notifier is injected: the agent does not own how a customer is reached.
 Notifier = Callable[[int, str], Awaitable[None]]

@@ -15,8 +15,9 @@ from pydantic import BaseModel
 
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.tools import NamespacedToolRegistry, ToolDefinition
-from customer_support_agent.core import HitlQueueRepository, OrdersRepository, build_agent
-from customer_support_agent.core.intent import CustomerSupportIntentRouter
+from customer_support_agent.graph import build_agent
+from customer_support_agent.intent.router import CustomerSupportIntentRouter
+from customer_support_agent.persistence import HitlQueueRepository, OrdersRepository
 from tests.conftest import ScriptedLLM, tool_call
 
 MONEY_MOVING = {"process_refund", "queue_for_approval"}
@@ -188,23 +189,23 @@ class TestProviderLegalToolNames:
 class TestMachineOutputNeverReachesTheCustomer:
     def test_a_tool_call_emitted_as_text_is_not_an_answer(self) -> None:
         """Seen live: the final reply was `{"name": ..., "parameters": ...}`."""
-        from customer_support_agent.core.graph import is_customer_ready
+        from customer_support_agent.graph.agent import is_customer_ready
 
         leaked = '{"name": "support.get_order_status", "parameters": {"order_id": "10005"}}'
         assert is_customer_ready(leaked) is False
 
     def test_ordinary_prose_is_an_answer(self) -> None:
-        from customer_support_agent.core.graph import is_customer_ready
+        from customer_support_agent.graph.agent import is_customer_ready
 
         assert is_customer_ready("Order 10005 was delivered on March 3.") is True
 
     def test_an_empty_reply_is_not_an_answer(self) -> None:
-        from customer_support_agent.core.graph import is_customer_ready
+        from customer_support_agent.graph.agent import is_customer_ready
 
         assert is_customer_ready("   ") is False
 
     def test_prose_that_merely_mentions_braces_is_still_an_answer(self) -> None:
-        from customer_support_agent.core.graph import is_customer_ready
+        from customer_support_agent.graph.agent import is_customer_ready
 
         assert is_customer_ready("Your order {reference} is on its way.") is True
 

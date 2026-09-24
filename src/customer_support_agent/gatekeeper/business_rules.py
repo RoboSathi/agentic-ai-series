@@ -7,7 +7,7 @@ from agentic_commons.gatekeeper.contracts import BusinessRuleResult, Determinist
 from agentic_commons.gatekeeper.types import AuthorityContext, CheckReport
 from agentic_commons.security.auth.policy import UNLIMITED, AgentPolicy
 from agentic_commons.tools.types import ToolCall
-from customer_support_agent.core.repositories import HitlQueueRepository, OrdersRepository
+from customer_support_agent.persistence.repositories import HitlQueueRepository, OrdersRepository
 
 # The budget class this agent's money-moving action belongs to. One name,
 # used by the seed data, the Gatekeeper ledger and the rule below.

@@ -9,7 +9,7 @@ from agentic_commons.config.features import (
     set_active_features,
 )
 from agentic_commons.persistence import SqliteConnectionPool
-from customer_support_agent.core import build_agent
+from customer_support_agent.graph import build_agent
 from tests.conftest import ScriptedLLM
 
 TREE = {
