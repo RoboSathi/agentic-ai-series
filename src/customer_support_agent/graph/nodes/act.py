@@ -41,12 +41,6 @@ class ToolUseNodes(NodeSupport):
         messages = self._current_messages(state)
         last = messages[-1] if messages else Message()
         requests = last.tool_calls or []
-        self._report(
-            "tool_execution",
-            summary=f"Executing {len(requests)} requested tool(s)",
-            event_kind="stage",
-            fields={"requested": len(requests)},
-        )
         decisions: list[str] = []
         invocation_fields_history: list[dict[str, Any]] = []
         offered = set(state.metadata.get("offered_actions", []))
@@ -90,17 +84,6 @@ class ToolUseNodes(NodeSupport):
                     )
                 break
 
-        self._done(
-            "tool_execution",
-            event_kind="tool_result",
-            summary=f"Processed {len(requests)} requested tool(s)",
-            fields={
-                "requested": len(requests),
-                "completed": sum(1 for item in invocation_fields_history if item.get("tool_status") == "completed"),
-                "blocked": sum(1 for item in invocation_fields_history if item.get("tool_status") == "blocked"),
-                "failed": sum(1 for item in invocation_fields_history if item.get("tool_status") == "failed"),
-            },
-        )
         turn_escalated = any(
             item.get("gatekeeper", {}).get("decision") == "escalate"
             for item in invocation_fields_history

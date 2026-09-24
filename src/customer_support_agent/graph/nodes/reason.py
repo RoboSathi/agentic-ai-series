@@ -18,16 +18,13 @@ from agentic_commons.resilience import (
 )
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
-from customer_support_agent.presentation.reporting import FALLBACK_REPLY, control_loop_fields
+from customer_support_agent.presentation.reporting import FALLBACK_REPLY
 from customer_support_agent.prompts.system_prompt import build_system_prompt
 
 
 class ReasoningNodes(NodeSupport):
     async def reason(self, state: AgentState) -> dict[str, Any]:
         """One model turn, with the tools this turn is allowed to use."""
-        round_report = self._control_loop.evaluate_round(
-            state.tool_rounds + 1, self._max_rounds
-        )
         tools = await self._offered_tools(state)
         offered = sorted(tool.qualified_name for tool in tools)
         request = CompletionRequest(
@@ -58,26 +55,10 @@ class ReasoningNodes(NodeSupport):
             }
         message = Message(role="assistant", content=result.content, tool_calls=result.tool_calls)
         state.working_memory.add_current_turn(message)
-        tool_names = [call.name for call in (result.tool_calls or [])]
         self._report_llm_response(
             result,
             purpose="tool_selection",
             tools_offered=offered,
-        )
-        self._done(
-            "control_loop",
-            event_kind="control_loop",
-            summary=(
-                f"Round {state.tool_rounds + 1}: tool execution requested"
-                if tool_names
-                else f"Round {state.tool_rounds + 1}: ready to finalize"
-            ),
-            fields={
-                **control_loop_fields(round_report),
-                "tool_calls": len(tool_names),
-                "next_stage": "act" if tool_names else "finalize",
-                "termination_reason": "tool_request" if tool_names else "no_tool_call",
-            },
         )
         return {
             "tool_rounds": state.tool_rounds + 1,

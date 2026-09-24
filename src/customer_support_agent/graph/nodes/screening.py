@@ -57,22 +57,20 @@ class ScreeningNodes(NodeSupport):
             event_kind="security",
             summary="Removing personal data before the model call",
         )
+        detected = bool(spans)
         self._done(
             "pii_filtering",
             event_kind="security",
             summary=(
-                f"PII filtered: {', '.join(categories)}"
-                if categories
-                else "No personal data found in the message"
+                f"REDACTED · {', '.join(categories)} · {len(spans)} match{'es' if len(spans) != 1 else ''}"
+                if detected
+                else "PASS · no PII detected"
             ),
             fields={
-                "found": len(spans),
+                "detected": detected,
+                "matches": len(spans),
                 "categories": categories,
-                # What the provider will actually receive. Shown because
-                # a redaction nobody can see is a redaction nobody can
-                # check — and getting it wrong in either direction
-                # matters.
-                "model_query": redacted,
+                "redacted": detected,
                 "mode": get_settings().security.pii.mode,
             },
         )

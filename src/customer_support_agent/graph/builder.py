@@ -304,7 +304,7 @@ def build_agent(
 
     sources: list[object] = [PolicyContextSource(), OrderCorpusContextSource(orders, scoring)]
     if live_working_memory is not None:
-        sources.append(WorkingMemoryContextSource(live_working_memory, reporter))
+        sources.append(WorkingMemoryContextSource(live_working_memory))
     # Two-pass relevance: the NOLLM cascade scores every candidate with an
     # embedding model, then a cross-encoder rescores the shortlist. The
     # reranker is None when no hosted encoder is reachable, and the

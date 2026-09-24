@@ -179,10 +179,13 @@ def basic_sanity_fields(result: Any) -> dict[str, Any]:
     return fields
 
 def control_loop_fields(report: ControlLoopReport) -> dict[str, Any]:
-    """Render only the active control-loop decision and its evidence."""
+    """Render a control-loop intervention with its evidence and limits."""
     fields: dict[str, Any] = {
         "decision": report.decision,
         "reason_code": report.reason_code,
+        "reason": report.reason,
+        "round": report.round_number,
+        "max_rounds": report.max_rounds,
         "checks": [check.model_dump(mode="json") for check in report.checks],
     }
     # The fingerprint is only useful when diagnosing duplicate suppression.

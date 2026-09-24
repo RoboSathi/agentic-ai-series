@@ -142,7 +142,6 @@ FIELD_PRIORITY = (
     "previous_result",
     "fingerprint",
     "next_stage",
-    "termination_reason",
     "claims",
     "supported",
     "unsupported",
@@ -232,6 +231,8 @@ BLOCK_FIELDS = (
     "response",
     "response_text",
     "evidence",
+    "working_memory_history",
+    "working_memory_state",
     "text",
 )
 
@@ -533,7 +534,13 @@ class StageEventWidget(Collapsible):
             return "blocked" if fields.get("detected") else "checks passed"
 
         if stage == "pii_filtering":
-            return self._compact_from_fields(fields, ("redacted", "entities"))
+            if fields.get("detected"):
+                categories = fields.get("categories") or []
+                matches = fields.get("matches")
+                category_text = ", ".join(str(item) for item in categories) or "PII"
+                suffix = f" · {matches} match{'es' if matches != 1 else ''}" if matches is not None else ""
+                return f"REDACTED · {category_text}{suffix}"
+            return "PASS · no PII detected"
 
         if stage == "content_moderation":
             return "flagged" if fields.get("flagged") else "no issues detected"
@@ -547,21 +554,37 @@ class StageEventWidget(Collapsible):
                 return f"{intent} · model score {float(score):.0%}{route}"
             return str(intent)
 
-        if stage in {"memory_recall", "working_memory_check"}:
-            count = fields.get("facts_held", fields.get("selected", fields.get("count")))
-            return f"recalled {count} facts" if count is not None else "memory checked"
-
-        if stage in {"memory_write", "working_memory_write"}:
-            operation = fields.get("operation", "write")
+        if stage == "working_memory_write":
+            operation = str(fields.get("operation") or "set").upper()
             key = fields.get("key")
-            return f"{operation} · {key}" if key else str(operation)
+            value = fields.get("memory_value")
+            if key and value is not None:
+                return f"{operation} · {key}={_format_value(str(key), value)}"
+            return f"{operation} · {key}" if key else operation
+
+        if stage == "memory_recall":
+            count = fields.get("selected", fields.get("count"))
+            return f"recalled {count} items" if count is not None else "memory read"
 
         if stage == "context_assembly":
             chunks = fields.get("chunks")
             used = fields.get("used_tokens")
+            turns = fields.get("working_memory_history_turns")
+            state = fields.get("working_memory_state")
+            parts = []
+            if turns is not None:
+                parts.append(f"{turns} history turn{'s' if turns != 1 else ''}")
+            state_items = fields.get("working_memory_state_items")
+            if isinstance(state_items, int):
+                parts.append(f"{state_items} state item{'s' if state_items != 1 else ''}")
+            if isinstance(state, Mapping) and state:
+                preview = []
+                for key, value in list(state.items())[:3]:
+                    preview.append(f"{key}={_format_value(str(key), value)}")
+                parts.append("state: " + ", ".join(preview))
             if chunks is not None and used is not None:
-                return f"{chunks} sources · {used} tokens"
-            return self._compact_from_fields(fields, ("selected", "used_tokens"))
+                parts.append(f"{chunks} sources · {used} tokens")
+            return " · ".join(parts) or self._compact_from_fields(fields, ("selected", "used_tokens"))
 
         if stage in {"llm_request", "llm_call", "llm_response_received"}:
             calls = fields.get("tool_calls")
@@ -601,15 +624,16 @@ class StageEventWidget(Collapsible):
             return "response generated"
 
         if stage == "control_loop":
-            decision = fields.get("decision")
-            reason_code = fields.get("reason_code")
+            decision = str(fields.get("decision") or "").upper()
+            reason_code = str(fields.get("reason_code") or "")
+            round_number = fields.get("round")
+            max_rounds = fields.get("max_rounds")
             if reason_code == "DUPLICATE_ACTION":
-                return "SUPPRESS · DUPLICATE_ACTION"
+                return "SUPPRESS · duplicate action"
             if reason_code == "MAX_TOOL_ITERATIONS":
-                return "ABORT · MAX_TOOL_ITERATIONS"
-            if decision:
-                return str(decision).upper()
-            return "control decision"
+                limit = f" · round {round_number}/{max_rounds}" if round_number and max_rounds else ""
+                return f"ABORT · tool iteration limit{limit}"
+            return f"{decision} · {reason_code}" if decision and reason_code else decision or "control intervention"
 
         if stage == "tool_request":
             return self._tool_summary(fields)

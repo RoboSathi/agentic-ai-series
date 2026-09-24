@@ -37,7 +37,6 @@ _DISPLAY_NAMES = {
     "content_moderation": "CONTENT POLICY",
     "basic_sanity": "BASIC SANITY",
     "intent_classification": "INTENT",
-    "working_memory_check": "WORKING MEMORY CHECK",
     "memory_recall": "MEMORY RECALL",
     "memory_write": "MEMORY UPDATED",
     "working_memory_write": "WORKING MEMORY UPDATED",

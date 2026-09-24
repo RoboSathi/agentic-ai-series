@@ -136,9 +136,14 @@ class ToolControlLoop:
         return self._duplicates.reject(call)
 
     def _log(self, report: ControlLoopReport) -> None:
-        self._logger.info(
-            "Control loop evaluated",
+        """Log only when the watchdog actually changes execution."""
+        if report.decision != "abort":
+            return
+        self._logger.warning(
+            "Control loop intervention",
             decision=report.decision,
             reason_code=report.reason_code,
+            round=report.round_number,
+            max_rounds=report.max_rounds,
             checks=[check.model_dump(mode="json") for check in report.checks],
         )

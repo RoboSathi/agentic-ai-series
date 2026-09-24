@@ -17,6 +17,29 @@ from customer_support_agent.prompts.policy import policy_text
 
 
 class ContextNodes(NodeSupport):
+    def _working_memory_fields(self, state: AgentState) -> dict[str, Any]:
+        """Return the bounded working-memory content actually available to context."""
+        memory = state.working_memory
+        history = []
+        for item in memory.history:
+            if isinstance(item, dict):
+                history.append({
+                    "role": item.get("role", ""),
+                    "content": self._security.redact(str(item.get("content", ""))),
+                })
+            else:
+                history.append(self._security.redact(str(item)))
+        working_state = {
+            str(key): self._security.redact(str(value))
+            for key, value in memory.state.items()
+        }
+        return {
+            "working_memory_history_turns": len(memory.history) // 2,
+            "working_memory_history": history,
+            "working_memory_state_items": len(working_state),
+            "working_memory_state": working_state,
+        }
+
     async def assemble_context(self, state: AgentState) -> dict[str, Any]:
         """Build the window: policy, recalled memory, and the query."""
         self._report(
@@ -28,9 +51,13 @@ class ContextNodes(NodeSupport):
             context = policy_text()
             self._done(
                 "context_assembly",
-                summary="Policy context loaded",
+                summary="Policy context loaded · working memory read",
                 event_kind="context",
-                fields={"source": "policy", "used_tokens": len(tokenize(context))},
+                fields={
+                    "source": "policy",
+                    "used_tokens": len(tokenize(context)),
+                    **self._working_memory_fields(state),
+                },
             )
             return {"context": Context(items=[context])}
         assembled = await self._context.assemble(
@@ -47,6 +74,7 @@ class ContextNodes(NodeSupport):
         context_fields = {
             "chunks": len(fitted.chunks),
             "dropped": len(fitted.dropped),
+            **self._working_memory_fields(state),
             "budget_tokens": fitted.budget_tokens,
             "used_tokens": fitted.used_tokens,
             "utilization": (
@@ -73,4 +101,3 @@ class ContextNodes(NodeSupport):
                 fields=context_fields,
             )
         return {"context": Context(items=[fitted.text]), "decisions": [*state.decisions, *decisions]}
-

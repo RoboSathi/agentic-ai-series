@@ -270,13 +270,15 @@ class NodeSupport:
         if self._working_memory is None or not state.session_id:
             return
         self._working_memory.get(state.session_id).set(key, value)
+        safe_value = self._security.redact(str(value))
         self._done(
             "working_memory_write",
             event_kind="memory",
-            summary="Working memory updated",
+            summary=f"SET · {key} = {safe_value}",
             fields={
-                "operation": "write",
+                "operation": "set",
                 "key": key,
+                "memory_value": safe_value,
                 "category": category or "unspecified",
                 "written": True,
             },
