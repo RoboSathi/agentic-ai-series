@@ -559,6 +559,53 @@ prompt-injection suite.
 
 ---
 
+## 11.1 `gatekeeper.mandate` — what was actually asked for
+
+**Purpose.** The other Gatekeeper checks ask whether an action is
+*legal*. None asked whether it was *requested*, and those are different
+questions: a refund for the right customer, on an order they own, within
+every limit, is still the wrong refund if they asked about a different
+order.
+
+Before this, WRITE authorization was implicit in tool availability —
+classifying an intent as a refund request put the refund tool on the
+menu, and the `offered` check only confirmed the menu had been respected.
+Exposure and authorization were the same act, so anything that widened
+exposure widened authority.
+
+**Interfaces**
+
+```python
+class ActionMandate(BaseModel):
+    subject_id: str          # opaque, like BasicSanityRequest's
+    action: str
+    target: str
+    max_amount: float = UNBOUNDED
+    granted_by: str = "user_task"
+    turn: int
+
+class MandateIssuer(Protocol):
+    def mandates_for(self, subject_id: str, query: str, turn: int) -> list[ActionMandate]: ...
+```
+
+**Where it runs.** A `mandate` check sits immediately after `offered` in
+`GatekeeperImpl._CHECK_ORDER`. A side-effecting call with no covering
+mandate is denied `NO_MANDATE_FOR_ACTION`. Reads are skipped. A `None`
+mandate set means no issuer is wired and is reported as such; an *empty*
+set means the issuer looked and found nothing was asked for, and a write
+is refused.
+
+**The rule the platform imposes.** A mandate is issued from what the
+person said and what the record holds — never from model output. A
+mandate derived from the model's own proposal authorizes the model to
+authorize itself.
+
+**Config surface.** `GATEKEEPER__MANDATE__TARGET_PARAM` — which call
+parameter names the thing being acted on. Empty in the platform
+defaults; the agent that has targets says what they are called.
+
+---
+
 ## 12. `security`
 
 ### 12.1 `security/auth` — RBAC + PoLP
@@ -889,6 +936,36 @@ agentic_commons.multi_agent` succeeds) is the only test this phase.
 
 ---
 
+## 16.1 `mcp` `[new — parked, interface-only]`
+
+**Purpose (future).** An MCP server publishes tools, resources and
+prompts over a transport, and an agent that speaks the protocol can use
+them without its author having written any of them.
+
+**Why here rather than in `multi_agent`.** MCP is a *tool-transport*
+concern first. Whatever a server offers must arrive as an ordinary
+`ToolDefinition` and enter through the same `NamespacedToolRegistry` as
+everything else, so the Gatekeeper sees one kind of proposal and not two.
+`McpToolSource` is structurally a `tools.ToolSource`: the seam already
+exists, and this package only names what fills it. A remote tool reaching
+the executor by a private side door would be a tool nobody authorized.
+
+**The governance question, which is the part to design before any code.**
+A `ToolDefinition` carries `surface`, `blast_radius`, `reversible`,
+`side_effecting` and `requires_authority_rank` — and a remote server is
+not a trustworthy source for any of them. A server describing its own
+tool as reversible has asserted, not established, that. So
+`McpToolSource` takes a `ToolGovernancePolicy`: the envelope is supplied
+locally, per server, by whoever decided to trust that server. The
+description is the server's; the authority is not. Same rule as the
+Authority Hierarchy — a tool catalogue is a tool observation.
+
+**Status.** Contracts only (`McpServerSpec`, `McpTransport`,
+`McpSession`, `McpToolInfo`, `McpToolSource`, `ToolGovernancePolicy`).
+No transport is implemented and nothing calls this package.
+
+---
+
 ## 17. `prompt_compilation` `[new — parked, TODO next phase]`
 
 **Purpose.** DSPy-based compiled prompts as an alternative to
@@ -1147,17 +1224,29 @@ above. Owns *no* duplicate logic — this is the invariant that was
 violated once (E01/E02 duplication) and fixed; regression-tested going
 forward.
 
-**Structure (existing, confirmed by the uploaded code)**
+**Structure.** `core/` no longer exists. Each folder pairs with the
+`agentic_commons` package it composes, so the mapping is visible in the
+tree; see `Program_Design.md` §1 for the full listing.
 
-- `core/graph.py` — the LangGraph `StateGraph` definition; nodes call
-  into `agentic_commons` subsystems only.
-- `core/schema.py` — Pydantic models for graph state, validated via
-  `guardrails`.
-- `core/tools.py` — domain tools (refund, lookup order, apply goodwill
-  credit), each a thin wrapper registered with `tools.ToolRegistry` and
-  gated by `gatekeeper`.
-- `core/repositories.py` — `persistence.Repository[T]` implementations
-  for `Order`, `Ticket`.
+- `graph/` — the LangGraph app. `state.py` (AgentState), `edges.py`
+  (wiring and the routing predicates), `builder.py` (the composition
+  root), `agent.py` (dependencies and one turn's lifecycle), and
+  `nodes/` — one module per concern, mixed into the agent over a single
+  injected dependency set declared once in `nodes/_support.py`.
+- `domain/` — `Order`, `User`, `HitlRequest`, ambient identity. Orders
+  carry the product, price breakdown and parcel tracking, with
+  `whereabouts` answering "where is my order" deterministically from the
+  record rather than leaving a delivery date for the model to invent.
+- `persistence/` — `schema.sql` (single source of truth for the DDL) and
+  the four repositories.
+- `tools/` — domain tools, each registered with `tools.ToolRegistry` and
+  gated by `gatekeeper`. Tools belong to the agent; the platform provides
+  the registry, the selector and the executor.
+- `gatekeeper/` — `business_rules.py` (the deterministic rules the
+  reference monitor calls into) and `mandates.py` (what this customer
+  actually asked for — see §11.1).
+- `verification/` — what a write claimed, and how to read it back (§24).
+- `console/` — this agent's slash commands and its `AgentHost`.
 - `control_loop/` — thin composition layer: calls
   `agentic_commons.control_loop`'s `LoopControllerImpl` and `AgentFSM`
   when that package is built (see `agentic_commons/control_loop`,
@@ -1205,6 +1294,47 @@ task that a single completion fails).
 
 ---
 
+## 24. `verification` — did it actually happen?
+
+**Purpose.** An executor returning success means the call did not raise.
+It does not mean the money moved. Nothing checked the difference:
+`set_refund_status` returned `affected > 0` and every layer above read
+that as proof.
+
+**Interfaces**
+
+```python
+class IntendedEffect(BaseModel):
+    action: str
+    target: str
+    expected: dict[str, Any]
+
+class EffectSource(Protocol):
+    def intended(self, call: ToolCall, result: ToolResult) -> IntendedEffect | None: ...
+    def observed(self, effect: IntendedEffect) -> dict[str, Any]: ...
+
+class EffectVerifier(Protocol):
+    async def verify(self, call: ToolCall, result: ToolResult) -> VerificationReport | None: ...
+```
+
+**Key classes.** `ReadBackVerifier(EffectVerifier)` — re-reads and
+compares. The platform owns the comparison because comparing values is
+generic; it owns neither `intended` nor `observed`, which are the
+agent's (`customer_support_agent/verification/refund_effects.py`).
+
+**On failure.** The result never enters `authoritative_tool_results`, so
+no customer-facing claim rests on it; `escalated` is set; an audit entry
+records `EFFECT_NOT_VERIFIED`; no budget is committed. `None` means
+there was nothing to verify — a read, or a failed call — and is
+deliberately not treated as a passed check.
+
+**Test strategy.** A phantom effect (the tool claims a refund, nothing
+was written) and a half-done one (the order is marked refunded with
+nothing in the ledger — the saga's own failure mode) must both fail
+verification.
+
+---
+
 ## 23. Cross-subsystem invariants (tested at the integration level, owned by no single module)
 
 | Invariant | Verified by |
@@ -1214,4 +1344,7 @@ task that a single completion fails).
 | Every side effect has a trace, PII-filtered before persistence | `tests/integration/test_trace_completeness.py` |
 | Every retry is idempotent | `tests/integration/test_resilience_idempotency.py` |
 | No `MemoryStore` Protocol without a real implementation | mypy --strict, CI-gated |
+| No side-effecting result becomes authoritative without a verification report | `tests/integration/test_effect_verification.py` |
+| No write executes without a covering Action Mandate | `tests/integration/test_mandates.py` |
+| `agentic_commons` names no specific agent | `tests/unit/test_platform_boundary.py` |
 | Coverage ≥ 80% on every merged module | CI-gated, no exceptions without sign-off |

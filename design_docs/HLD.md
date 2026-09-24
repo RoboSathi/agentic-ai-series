@@ -84,7 +84,9 @@ implementation deferred to a later phase) and one (`multi_agent`) is a
 | `resilience` | Circuit breaker, retry, timeout, bulkhead, saga, idempotency, pub-sub | live | E12 (general), E35 |
 | `sandbox` | Docker-container execution isolation (full tier ladder documented, only `docker_container` in scope) | **parked, TODO** | E34 |
 | `control_loop` | `AgentFSM` (legal-transition table, checkpoint shape) **+** `LoopController` (six-layer watchdog stack) — merged into one package, replacing the earlier separate `state_management`/`loop_engineering` split | **parked, TODO** | E05, E20, E23 |
-| `multi_agent` | Topologies, MCP/A2A, compounding-reliability calculator, coordination cost | **stub only — not designed** | E07, E40–E43 |
+| `verification` | Effect read-back: re-read what changed, reconcile it against what the action claimed, refuse to call an unverified result authoritative | live | E12, E35 |
+| `mcp` | Model Context Protocol contracts. Remote tools arrive as ordinary `ToolDefinition`s through the existing registry, with their governance envelope supplied locally rather than by the server | **parked — interface only** | E42 |
+| `multi_agent` | Topologies, A2A, compounding-reliability calculator, coordination cost | **stub only — not designed** | E07, E40–E43 |
 | `prompt_compilation` | DSPy signatures/modules/optimizers, prompt-as-artifact versioning | **parked, TODO** | E21 |
 | `evals` | Eval Pyramid, NOLLM Scoring Cascade, judge calibration | live | E09–E11 |
 | `tools` | Typed `ToolCall`, registry, namespacing, retrieval-based selection | live | E01, E05, E22 |
@@ -154,6 +156,17 @@ sequenceDiagram
 - **Authority is never inferred from source plausibility.** Every request
   into `gatekeeper` is evaluated against the Authority Hierarchy
   regardless of who or what appears to be asking (Zero Trust, E12/E30).
+- **Exposure is not authorization.** Which tools a turn offers and which
+  actions it authorizes are separate decisions. A side-effecting call
+  must be covered by an Action Mandate issued from what the person asked
+  and what the record holds — never from what the model proposed.
+- **A side effect is not believed until it is read back.** "The executor
+  returned success" and "the world changed" are different claims. An
+  unverified result never becomes authoritative, so no customer-facing
+  statement can rest on an action that did not land.
+- **The platform names no agent.** `agentic_commons` reaches its running
+  product through `AgentHost`, resolved from configuration. An agent
+  composes the platform; the platform never imports an agent.
 - **No action is un-audited.** `observability` and `audit` are invoked on
   every branch of the request lifecycle, including denials — a trace that
   can't reconstruct *why* is telemetry, not audit (E36).
@@ -220,7 +233,8 @@ config, logging                          (layer 0 — no deps)
              └─ context, guardrails, hallucination_protection  (layer 3)
                   └─ gatekeeper                              (layer 4 — depends on security, resilience, audit)
                        └─ evals, observability, audit         (layer 5 — cross-cutting, may be read by any layer ≤4, never depended on by layer 0-1)
-                            └─ sandbox, control_loop, multi_agent, prompt_compilation  (layer 6 — parked/stub this phase; see §3)
+                            └─ verification                            (layer 5b — depends on tools + logging)
+        └─ sandbox, control_loop, mcp, multi_agent, prompt_compilation  (layer 6 — parked/stub this phase; see §3)
                                  └─ customer_support_agent      (layer 7 — composes everything)
                                       └─ episodes/, design_patterns/, tui  (layer 8 — consumers only)
 ```

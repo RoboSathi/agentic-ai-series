@@ -29,8 +29,11 @@ agentic-harness-core/
 │   │   ├── resilience/
 │   │   │   ├── circuit_breaker/  ├── retry/  ├── timeout/  ├── bulkhead/
 │   │   │   ├── saga/  ├── idempotency/  └── pub_sub/
+│   │   ├── verification/            # effect read-back — see LLD §24
+│   │   ├── host.py                  # AgentHost: how an agent reaches the shell
 │   │   ├── sandbox/                 # [new — parked, TODO]
 │   │   ├── control_loop/            # [new — parked, TODO; merges the earlier loop_engineering + state_management split]
+│   │   ├── mcp/                     # [new — parked, interface-only; see LLD §16.1]
 │   │   ├── multi_agent/             # [new — stub only, design parked]
 │   │   ├── prompt_compilation/      # [new — parked, TODO]
 │   │   ├── evals/
@@ -38,10 +41,28 @@ agentic-harness-core/
 │   │   ├── tui/                     # live status feed only this phase — DB browser/memory inspector/audit view deferred
 │   │   └── data/                    # seed/fixture data, not runtime state
 │   └── customer_support_agent/
-│       ├── core/          # graph.py, schema.py, tools.py, repositories.py
-│       ├── control_loop/  # thin composer of agentic_commons/control_loop (interim: wires LangGraph's checkpointer directly)
+│       │   # Each folder pairs with the agentic_commons package it
+│       │   # composes, so the mapping is visible in the tree rather
+│       │   # than only in the imports. `core/` is gone: it had become
+│       │   # fifteen unrelated concerns and a 2,814-line graph.py.
+│       ├── domain/        # Order, User, HitlRequest, identity
+│       ├── persistence/   # schema.sql, repositories
+│       ├── security/      # authentication
+│       ├── gatekeeper/    # business_rules, mandates
+│       ├── resilience/    # refund_saga
+│       ├── verification/  # refund_effects — the read-back for this agent
+│       ├── tools/         # definitions, handler
+│       ├── intent/        # router
+│       ├── basic_sanity/  # order_validator
+│       ├── context/       # context sources
+│       ├── control_loop/  # quality_gate (was deliberation)
+│       ├── observability/ # accounting
+│       ├── presentation/  # orders, reporting
+│       ├── console/       # this agent's slash commands + its AgentHost
+│       ├── review/        # the human side of escalation
+│       ├── graph/         # state, edges, builder, agent, nodes/
 │       ├── prompts/
-│       └── dev/           # run_demo.py, seed_db.py — dev-only
+│       └── __main__.py    # `python -m customer_support_agent` — dev entry
 ├── episodes/
 │   └── e01 .. e48/        # each: app.py + episode-scoped README
 ├── design_patterns/
@@ -102,6 +123,11 @@ series is a naming bug).
 | **RBAC / PoLP** | NIST role model + Principle of Least Privilege; just-in-time scoped elevation only, never standing (E10 in v6 numbering). |
 | **Topology** | Supervisor / Hierarchy / Peer Network / Swarm — multi-agent coordination shape (E41). |
 | **Blast Radius** | Scope of damage a wrong action can cause — one of the Three Gates variables, also drives `sandbox` isolation-tier selection (E03, E34). |
+| **Tool-Use Loop** | The `reason ⇄ act` cycle: the model proposes a *typed tool call*, the harness executes it, the observation returns. Bounded by `max_tool_iterations`. Deliberately **not ReAct** — there is no natural-language thought step, and the proposal is a validated call rather than parsed prose. `design_patterns/agentic/react.py` remains the pure form. |
+| **Output Quality Gate** | Plan lookup → deterministic critique → at most one repair → independent score. A single pass, not a loop; named `quality_gate` after being called a "deliberation loop" it never was. |
+| **Action Mandate** | A deterministic record that *this* subject asked for *this* action on *this* target, up to *this* much, on *this* turn. Issued from the request and the authoritative record, never from model output. Separates authorization from tool exposure, which had been the same act. |
+| **Effect Verification** | Reading the changed thing back after a side effect and reconciling it against what the action claimed. "The executor returned success" and "the money moved" are different claims; an unverified result never becomes authoritative. |
+| **AgentHost** | How an agent reaches the operator shell — title, commands, stage labels, session rows, and how to build it. Named in the agent's own config (`agent.host`) and resolved, never imported, so `agentic_commons` names no agent. |
 
 ## 3. Design process (mandatory order — do not skip ahead)
 
