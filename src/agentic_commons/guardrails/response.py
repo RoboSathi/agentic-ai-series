@@ -18,6 +18,7 @@ from agentic_commons.guardrails.guards import PydanticValidator
 from agentic_commons.hallucination_protection.checker import (
     DetectionLadder,
     GroundingReasoningDiagnoser,
+    Resampler,
 )
 from agentic_commons.logging import get_logger
 
@@ -114,8 +115,14 @@ class ResponseGuardrail:
         response: str,
         evidence: list[Chunk],
         revise: Callable[[str, list[str]], Awaitable[str]] | None = None,
+        resample: Resampler | None = None,
     ) -> ResponseGuardrailResult:
-        """Check, bounded-repair, then fail closed if unsupported claims remain."""
+        """Check, bounded-repair, then fail closed if unsupported claims remain.
+
+        `resample` is handed to the detection ladder, which uses it only
+        where the entailment tier could not decide. Passing it does not
+        mean it will be called.
+        """
         if self._grounding is None or not self._enforce_grounding:
             return ResponseGuardrailResult(response=response)
 
@@ -203,7 +210,7 @@ class ResponseGuardrail:
         repaired = False
         last = None
         for attempt in range(self._max_repairs + 1):
-            last = await self._grounding.assess(candidate, evidence)
+            last = await self._grounding.assess(candidate, evidence, resample=resample)
             if last.clean:
                 return ResponseGuardrailResult(
                     response=candidate,

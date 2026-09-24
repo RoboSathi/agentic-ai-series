@@ -40,6 +40,9 @@ class DetectionVerdict(BaseModel):
 class GenerationAssessment(BaseModel):
     """Per-claim verdicts for a whole generation."""
 
+    # Agreement across resamples, when that tier ran at all. `None`
+    # means it did not: unmeasured is not the same as consistent.
+    self_consistency: float | None = None
     verdicts: list[DetectionVerdict] = Field(default_factory=list)
     unsupported: list[str] = Field(default_factory=list)
     hallucination_rate: float = 0.0

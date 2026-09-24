@@ -14,7 +14,10 @@ features:
   content_moderation: true
   pii: true
   intent_classification: true
-  hallucination_guard: false
+  # On. An agent that states an order's delivery date and a refund's
+  # outcome must be checkable against what its tools actually
+  # returned; without this the draft reaches the customer unread.
+  hallucination_guard: true
   gatekeeper: true
   memory:
     enabled: true

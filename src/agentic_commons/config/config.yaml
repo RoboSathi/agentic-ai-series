@@ -339,6 +339,11 @@ hallucination_protection:
   # operating point for this support agent; tune it against labeled grounding
   # examples rather than individual production traces.
   nli_entailment_threshold: 0.60
+  # Resampling the model to see whether it answers the same way twice.
+  # Off by default: it costs one completion per extra sample, and only
+  # earns that on the inconclusive path where the hosted NLI could not
+  # answer. On, it runs there and nowhere else.
+  consistency_enabled: false
   consistency_samples: 3
   consistency_agreement_threshold: 0.67
   grounding_overlap_threshold: 0.3

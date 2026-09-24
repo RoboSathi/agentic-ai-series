@@ -371,6 +371,7 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     # Grounding-specific NLI threshold. Keep the generic confidence threshold
     # for compatibility with the rest of the evaluation configuration.
     nli_entailment_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
+    consistency_enabled: bool
     consistency_samples: int
     consistency_agreement_threshold: float
     grounding_overlap_threshold: float

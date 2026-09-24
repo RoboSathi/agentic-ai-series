@@ -11,6 +11,7 @@ from agentic_commons.context import (
     Chunk,
 )
 from agentic_commons.guardrails import CustomerResponse
+from agentic_commons.hallucination_protection.checker import Resampler
 from agentic_commons.llm.types import CompletionRequest, Message
 from agentic_commons.resilience import (
     external_api_error_fields,
@@ -94,7 +95,9 @@ class FinalizeNodes(NodeSupport):
                 Chunk(content=text, kind="tool_result")
                 for text in authoritative_evidence
             ]
-            guardrail_result = await self._response_guardrail.enforce(last.content, evidence)
+            guardrail_result = await self._response_guardrail.enforce(
+                last.content, evidence, resample=self._resampler(state)
+            )
             guardrail_fields = {
                 **guardrail_result.model_dump(exclude={"response", "unsupported_claims"}),
                 "schema_valid": True,
@@ -307,6 +310,24 @@ class FinalizeNodes(NodeSupport):
             "messages": [Message(role="assistant", content=reply)],
             "decisions": decisions,
         }
+
+    def _resampler(self, state: AgentState) -> Resampler:
+        """Ask the model the same question again, n more times.
+
+        Handed to the detection ladder, which calls it only where the
+        entailment tier could not decide — so on an ordinary turn this
+        closure is created and never invoked.
+        """
+
+        async def resample(count: int) -> list[str]:
+            request = CompletionRequest(messages=self._prompt_messages(state))
+            results = [
+                await self._call_model(request, state, key=f"{state.session_id}:resample:{index}")
+                for index in range(max(0, count))
+            ]
+            return [result.content for result in results if result.content]
+
+        return resample
 
     def _report_grounding(self, *, blocked: bool, summary: str, fields: dict[str, Any]) -> None:
         """Narrate the grounding stage — but only when there is one.

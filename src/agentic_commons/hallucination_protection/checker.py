@@ -14,6 +14,7 @@ it worse.
 
 import asyncio
 import re
+from collections.abc import Awaitable, Callable
 from typing import Protocol, runtime_checkable
 
 from agentic_commons.config import get_settings
@@ -39,6 +40,12 @@ _CONJUNCTION = re.compile(r",?\s+\b(?:and|but|however|although|while)\b\s+")
 
 # A claim with no content words is not checkable ("Sure!", "Let me know.").
 _MIN_CONTENT_TOKENS = 3
+
+
+# Asks the same question again, n more times. Injected rather than held,
+# because the detector must not own an LLM client: a checker that can
+# call a model on its own is a checker with its own opinions.
+Resampler = Callable[[int], Awaitable[list[str]]]
 
 
 @runtime_checkable
@@ -281,12 +288,32 @@ class DetectionLadder:
         """Retrieve relevant evidence and ask NLI whether it entails the claim."""
         return await self._resolver.resolve(claim, evidence)
 
-    async def assess(self, generation: str, evidence: list[Chunk]) -> GenerationAssessment:
-        """Check every verifiable claim independently."""
+    async def assess(
+        self,
+        generation: str,
+        evidence: list[Chunk],
+        resample: Resampler | None = None,
+    ) -> GenerationAssessment:
+        """Check every verifiable claim independently.
+
+        `resample` is the next rung of the ladder, and is used only when
+        the entailment tier could not decide — which in practice means the
+        hosted NLI was unreachable and the lexical fallback answered on a
+        scale that is not a probability. Comparing that score against a
+        probability threshold is what previously blocked true claims as
+        hallucinations.
+
+        Asking the model the same question again costs completions, so it
+        happens on the rare inconclusive path rather than every turn. A
+        detector that tripled the cost of an ordinary reply is a detector
+        that gets switched off.
+        """
         claims = [claim for claim in self._decomposer.decompose(generation) if claim.is_verifiable]
         verdicts = [await self.score(claim.text, evidence) for claim in claims]
+        agreement = await self._agreement(verdicts, generation, resample)
         unsupported = [verdict.claim for verdict in verdicts if not verdict.supported]
         return GenerationAssessment(
+            self_consistency=agreement,
             verdicts=verdicts,
             unsupported=unsupported,
             hallucination_rate=len(unsupported) / len(verdicts) if verdicts else 0.0,
@@ -294,6 +321,36 @@ class DetectionLadder:
             # retriever is retrieval infrastructure, not a NOLLM truth tier.
             nollm_resolved_ratio=0.0,
         )
+
+    async def _agreement(
+        self,
+        verdicts: list[DetectionVerdict],
+        generation: str,
+        resample: Resampler | None,
+    ) -> float | None:
+        """Self-consistency, measured only where it can change the answer.
+
+        `None` means the tier did not run: either nothing was
+        inconclusive, or no resampler was wired. That is deliberately not
+        1.0 — "unmeasured" and "perfectly consistent" are different
+        claims, and reporting the second for the first is how a detector
+        comes to look like it is working.
+        """
+        settings = get_settings().hallucination_protection
+        if resample is None or not settings.consistency_enabled:
+            return None
+        if not any(verdict.tier == "nli_entailment" and not verdict.supported for verdict in verdicts):
+            return None
+        samples = [generation, *await resample(settings.consistency_samples - 1)]
+        agreement = self.consistency(samples)
+        self._logger.info(
+            "Self-consistency checked after an inconclusive entailment verdict",
+            samples=len(samples),
+            agreement=round(agreement, 3),
+            threshold=settings.consistency_agreement_threshold,
+            stable=agreement >= settings.consistency_agreement_threshold,
+        )
+        return agreement
 
     def consistency(self, samples: list[str]) -> float:
         """Agreement across repeated samples of the same question."""
