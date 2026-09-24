@@ -14,7 +14,7 @@ from agentic_commons.security.content_moderation import (
 )
 from agentic_commons.security.content_moderation.types import ModerationVerdict
 from agentic_commons.security.pii.detector import PIIFilterImpl
-from agentic_commons.security.pii.types import RedactionMode
+from agentic_commons.security.pii.types import PIISpan, RedactionMode
 from agentic_commons.security.prompt_injection import (
     JailbreakGuard,
     NvidiaHostedJailbreakGuard,
@@ -92,6 +92,10 @@ class SecuritySuite:
                 suspicious=False, allowed_actions=[tool.name for tool in tools]
             )
         return self.injection.assess(instructions, data, tools)
+
+    def detect_pii(self, text: str) -> list[PIISpan]:
+        """What personal data this text contains, or nothing when the filter is withheld."""
+        return self.pii.detect(text) if self.pii else []
 
     def redact(self, text: str, mode: RedactionMode | None = None) -> str:
         """Remove personal data before the text is logged or persisted."""

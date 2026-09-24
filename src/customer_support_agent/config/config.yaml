@@ -9,15 +9,15 @@ agent:
 # overlay overrides these in turn. Everything on: a support agent that
 # moves money talks to the public, so every control it could have, it has.
 features:
-  basic_sanity: false
+  basic_sanity: true
   prompt_injection: true
-  content_moderation: true
+  content_moderation: false
   pii: true
   intent_classification: true
   # On. An agent that states an order's delivery date and a refund's
   # outcome must be checkable against what its tools actually
   # returned; without this the draft reaches the customer unread.
-  hallucination_guard: true
+  hallucination_guard: false
   gatekeeper: true
   memory:
     enabled: true

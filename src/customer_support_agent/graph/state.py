@@ -30,6 +30,13 @@ class AgentState(BaseModel):
     """
 
     query: str = ""
+    # The query with personal data removed — what the model is given.
+    # Kept beside `query` rather than replacing it, because the two have
+    # different jobs: deterministic in-process logic (ownership checks,
+    # order resolution, mandates) must see what the customer actually
+    # typed, while anything leaving this process must not. Empty until
+    # the pii stage runs, and the model path falls back to `query` then.
+    model_query: str = ""
     session_id: str = ""
     actor: str = ""
     customer_id: int | None = None

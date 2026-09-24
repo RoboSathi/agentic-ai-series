@@ -135,6 +135,10 @@ class NodeSupport:
         """Screen the request against the content policy."""
         raise NotImplementedError
 
+    async def pii_filtering(self, state: AgentState) -> dict[str, Any]:
+        """Take personal data out of what the model will be sent."""
+        raise NotImplementedError
+
     async def classify_intent(self, state: AgentState) -> dict[str, Any]:
         """Decide what is being asked, and what that permits."""
         raise NotImplementedError

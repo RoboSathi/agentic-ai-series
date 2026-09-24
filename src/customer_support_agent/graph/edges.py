@@ -22,6 +22,7 @@ _STAGE_FEATURES = {
     "basic_sanity": "basic_sanity",
     "prompt_injection": "prompt_injection",
     "content_moderation": "content_moderation",
+    "pii_filtering": "pii",
     "classify_intent": "intent_classification",
     "assemble_context": "context",
 }
@@ -55,6 +56,12 @@ class GraphWiring(NodeSupport):
                 # Deliberately first: deterministic domain contradictions are
                 # settled from the database before anything spends a model call.
                 ("basic_sanity", self.basic_sanity),
+                # Before both hosted guards, not after them. The
+                # injection and moderation detectors call a provider of
+                # their own, so redacting after they ran would mean the
+                # customer's email had already left the building twice
+                # before the "redact before the LLM call" step reached it.
+                ("pii_filtering", self.pii_filtering),
                 ("prompt_injection", self.prompt_injection),
                 ("content_moderation", self.content_moderation),
                 ("classify_intent", self.classify_intent),
@@ -115,7 +122,15 @@ class GraphWiring(NodeSupport):
         a declared feature whose collaborator is missing would otherwise
         compile a node that raises on its first turn.
         """
-        required = {"basic_sanity": self._basic_sanity, "assemble_context": self._context}
+        required = {
+            "basic_sanity": self._basic_sanity,
+            "assemble_context": self._context,
+            # The suite is always present; its filter is not. Without one
+            # there is nothing to redact with, and a stage that narrated
+            # "no personal data found" would be reporting the absence of a
+            # detector as a clean bill of health.
+            "pii_filtering": self._security.pii,
+        }
         return required.get(stage, self) is not None
 
     def _after_screening(self, state: AgentState) -> str:

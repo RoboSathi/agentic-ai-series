@@ -334,7 +334,10 @@ class ReasoningNodes(NodeSupport):
         return [
             Message(role="system", content=system),
             *self.history_for(state.session_id),
-            Message(role="user", content=state.query),
+            # The redacted text, never the raw one. Falls back to `query`
+            # only when the pii stage was withheld, in which case there is
+            # no redaction to apply and the absence is the demonstration.
+            Message(role="user", content=state.model_query or state.query),
             *state.messages,
         ]
 

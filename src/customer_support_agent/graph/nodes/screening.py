@@ -9,6 +9,7 @@ quarantined, and the audit trail says why.
 from typing import Any
 
 from agentic_commons.basic_sanity import BasicSanityRequest
+from agentic_commons.config import get_settings
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.reporting import (
@@ -16,7 +17,73 @@ from customer_support_agent.presentation.reporting import (
 )
 
 
+def _outbound(state: AgentState) -> str:
+    """The text a remote detector may be shown.
+
+    Redacted when the pii stage ran, raw when it was withheld. Masking an
+    email does not hide "ignore previous instructions", so detection is
+    unaffected — what changes is whose data reaches the provider.
+    """
+    return state.model_query or state.query
+
+
 class ScreeningNodes(NodeSupport):
+    async def pii_filtering(self, state: AgentState) -> dict[str, Any]:
+        """Take personal data out of the message before the model sees it.
+
+        The filter already ran on three surfaces — traces, memory writes
+        and tool arguments — but not on the one that leaves the building.
+        The customer's own sentence went to the provider verbatim, so an
+        email address or a card number typed into a support chat was sent
+        to a third party and nothing in the harness had an opinion about
+        it.
+
+        Redaction is not destructive here. `state.query` keeps what the
+        customer actually wrote, because ownership checks, order
+        resolution and mandates all reason about it in-process and would
+        be wrong about a masked order number. `state.model_query` is what
+        the prompt is built from. The distinction is the point: personal
+        data may be *used* locally and must not be *transmitted*.
+
+        Never blocks. Finding a phone number in a support message is
+        ordinary, not an attack — the stage that refuses things is
+        `prompt_injection`, which runs alongside this one.
+        """
+        spans = self._security.detect_pii(state.query)
+        redacted = self._security.redact(state.query) if spans else state.query
+        categories = sorted({span.category for span in spans})
+        self._report(
+            "pii_filtering",
+            event_kind="security",
+            summary="Removing personal data before the model call",
+        )
+        self._done(
+            "pii_filtering",
+            event_kind="security",
+            summary=(
+                f"PII filtered: {', '.join(categories)}"
+                if categories
+                else "No personal data found in the message"
+            ),
+            fields={
+                "found": len(spans),
+                "categories": categories,
+                # What the provider will actually receive. Shown because
+                # a redaction nobody can see is a redaction nobody can
+                # check — and getting it wrong in either direction
+                # matters.
+                "model_query": redacted,
+                "mode": get_settings().security.pii.mode,
+            },
+        )
+        return {
+            "model_query": redacted,
+            "decisions": [
+                *state.decisions,
+                f"pii: {', '.join(categories)} redacted" if categories else "pii: none found",
+            ],
+        }
+
     async def basic_sanity(self, state: AgentState) -> dict[str, Any]:
         """Run cheap, deterministic domain checks before any model call.
 
@@ -190,7 +257,7 @@ class ScreeningNodes(NodeSupport):
             summary="Checking untrusted input for injection",
         )
         assessment = await self._security.prepare_untrusted_async(
-            self._system_prompt(), state.query, self._registry.all_tools()
+            self._system_prompt(), _outbound(state), self._registry.all_tools()
         )
         injection_checks = list(getattr(assessment, "checks", []))
         jailbreak_check = next(
@@ -282,7 +349,7 @@ class ScreeningNodes(NodeSupport):
             event_kind="security",
             summary="Checking content policy",
         )
-        moderation = await self._security.moderate_async(state.query)
+        moderation = await self._security.moderate_async(_outbound(state))
         moderation_checks = list(getattr(moderation, "checks", []))
         content_guard_check = next(
             (check for check in moderation_checks if check.get("name") == "NVIDIA Nemotron Safety Guard 8B v3"),
