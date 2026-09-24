@@ -19,9 +19,12 @@ from agentic_commons.executor import (
     ExecutionOutcome,
 )
 from agentic_commons.gatekeeper import AuthorityContext
+from agentic_commons.gatekeeper.mandate import MandateSet
 from agentic_commons.llm.types import Message
+from agentic_commons.logging.trace_context import get_current_trace_id
 from agentic_commons.observability.types import utc_now
 from agentic_commons.tools.types import ToolResult
+from agentic_commons.verification import VerificationReport
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.reporting import (
@@ -157,7 +160,7 @@ class ToolUseNodes(NodeSupport):
         # open. Those are the Executor's guarantees, and this is what the
         # absence of them looks like.
         outcome = await self._execute_directly(call)
-        return self._after_execution(call, outcome, control_fields, decision_fields={})
+        return await self._after_execution(call, outcome, control_fields, decision_fields={})
 
     async def _execute_directly(self, call: Any) -> ExecutionOutcome:
         """Run one tool with nothing wrapped around it.
@@ -219,6 +222,12 @@ class ToolUseNodes(NodeSupport):
                 "tool_action": call.action,
                 "tool_params": dict(call.params),
             },
+            # What this customer actually asked for, this turn. Issued
+            # from the request and the record before the model was
+            # consulted, so a proposal is checked against the ask rather
+            # than against its own plausibility.
+            mandates=self._mandates_for(state),
+            turn=state.tool_rounds,
         )
 
         control_report = self._control_loop.before_action(
@@ -340,16 +349,22 @@ class ToolUseNodes(NodeSupport):
         if outcome.result.success and not outcome.replayed:
             # Budget is charged only for a real completion, not a replay.
             self._gatekeeper.commit(call, authority)
-        return self._after_execution(call, outcome, control_fields, decision_fields)
+        return await self._after_execution(call, outcome, control_fields, decision_fields)
 
-    def _after_execution(
+    async def _after_execution(
         self,
         call: Any,
         outcome: Any,
         control_fields: dict[str, Any],
         decision_fields: dict[str, Any],
     ) -> tuple[str, str, str, dict[str, Any]]:
-        """Report one completed tool call, governed or not."""
+        """Report one completed tool call, governed or not.
+
+        A side-effecting call that reported success is read back before it
+        is believed. "The executor returned success" and "the money moved"
+        are different claims, and only the second one may ground what the
+        customer is told.
+        """
         result = outcome.result
         result_fields = tool_result_fields(call, result, outcome=outcome)
         if result.success:
@@ -361,6 +376,14 @@ class ToolUseNodes(NodeSupport):
                 fields=result_fields,
             )
             tool_status = "completed"
+            verification = await self._verify(call, result)
+            if verification is not None:
+                result_fields = {**result_fields, "verification": verification.summary}
+                if not verification.verified:
+                    # Not "failed": the call did run, and may well have
+                    # done something. It is *unverified*, which means no
+                    # customer-facing claim may rest on it.
+                    tool_status = "unverified"
         else:
             self._done_failed(
                 "tool_result",
@@ -383,3 +406,56 @@ class ToolUseNodes(NodeSupport):
                 "tool_status": tool_status,
             },
         )
+
+    def _mandates_for(self, state: AgentState) -> MandateSet | None:
+        """This turn's mandates, or None when no issuer is wired.
+
+        `None` and an empty set mean different things to the Gatekeeper:
+        no issuer means the question was not asked, while an empty set
+        means it was asked and the answer was "nothing".
+        """
+        if self._mandate_issuer is None or state.customer_id is None:
+            return None
+        return MandateSet(
+            mandates=self._mandate_issuer.mandates_for(
+                str(state.customer_id), state.query, state.tool_rounds
+            )
+        )
+
+    async def _verify(self, call: Any, result: Any) -> VerificationReport | None:
+        """Read the effect back, and record it if it did not take.
+
+        `None` means there was nothing to verify — a read, or a call whose
+        effect this agent does not describe. That is not a passed check,
+        and the caller does not treat it as one.
+        """
+        if self._verifier is None:
+            return None
+        report = await self._verifier.verify(call, result)
+        if report is None or report.verified:
+            return report
+        self._reporter_warning(
+            "effect_verification",
+            summary=f"Effect not verified: {call.action}",
+            event_kind="executor",
+            fields={
+                "action": report.effect.action,
+                "target": report.effect.target,
+                "expected": report.effect.expected,
+                "observed": report.observed,
+                "mismatches": report.mismatches,
+                "reason_code": report.reason_code,
+            },
+        )
+        self._audit.record(
+            AuditEntry(
+                trace_id=get_current_trace_id() or "",
+                actor=self._actor,
+                action=report.effect.action,
+                authority_context={"target": report.effect.target, "verified": False},
+                model_version="",
+                decision=report.reason_code,
+                rationale=report.summary,
+            )
+        )
+        return report

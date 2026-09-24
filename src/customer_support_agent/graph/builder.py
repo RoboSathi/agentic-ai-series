@@ -60,11 +60,13 @@ from agentic_commons.security import (
 )
 from agentic_commons.security.auth.policy import AgentPolicy, AgentPolicyRepository
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
+from agentic_commons.verification import ReadBackVerifier
 from customer_support_agent.basic_sanity.order_validator import OrderSanityCheck
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.identity import current_customer_id
 from customer_support_agent.domain.models import Order
 from customer_support_agent.gatekeeper.business_rules import CustomerSupportBusinessRules
+from customer_support_agent.gatekeeper.mandates import RefundMandateIssuer
 from customer_support_agent.graph.agent import CustomerSupportAgent
 from customer_support_agent.intent.router import CustomerSupportIntentRouter
 from customer_support_agent.persistence.repositories import (
@@ -78,6 +80,7 @@ from customer_support_agent.resilience.refund_saga import RefundSaga
 from customer_support_agent.review.queue import ReviewQueueService
 from customer_support_agent.security.authentication import CustomerAuthenticator
 from customer_support_agent.tools.definitions import CustomerSupportToolHandler, SupportTools
+from customer_support_agent.verification import RefundEffectSource
 
 # Used only when this agent declares no budgeted action at all, in which
 # case the window never matters because nothing is charged against it.
@@ -477,6 +480,15 @@ def build_agent(
         # configured to be quiet was also an agent that stopped checking
         # its own answers.
         grounding=DetectionLadder(scoring) if features.is_on("hallucination_guard") else None,
+        # Every side effect is read back before anything is claimed about
+        # it. Not a feature toggle: an agent that cannot tell whether its
+        # own refund landed is not a narrower agent, it is an unreliable
+        # one, and "the executor returned success" was never evidence the
+        # money moved.
+        verifier=ReadBackVerifier(RefundEffectSource(orders, refunds, hitl)),
+        # Only built when the Gatekeeper is: a mandate with nothing
+        # to check it is a record nobody reads.
+        mandate_issuer=RefundMandateIssuer(orders) if governed is not None else None,
         authenticator=CustomerAuthenticator(UsersRepository(connection), orders),
         orders=orders,
         basic_sanity=sanity_checker,

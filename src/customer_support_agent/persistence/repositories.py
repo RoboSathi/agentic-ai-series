@@ -93,11 +93,31 @@ class OrdersRepository:
         return self.query(user_id=user_id)
 
     @logged("customer_support_agent")
-    def set_refund_status(self, order_id: int, status: RefundStatus) -> bool:
-        """Move an order to a new refund state, reporting whether it existed."""
-        result = self._pool.execute(
-            "UPDATE orders SET refund_status = ? WHERE order_id = ?", (status, order_id)
-        )
+    def set_refund_status(
+        self, order_id: int, status: RefundStatus, expected: RefundStatus | None = None
+    ) -> bool:
+        """Move an order to a new refund state.
+
+        With `expected`, this is a compare-and-swap: the row moves only if
+        it is still in the state the caller believed it was in, and the
+        return value says whether that held. Without it, the write is
+        unconditional.
+
+        The conditional form is what makes a concurrent refund lose rather
+        than double-pay. A blind `UPDATE ... WHERE order_id = ?` succeeds
+        just as happily against a row another turn has already marked
+        completed, and reports success either way.
+        """
+        if expected is None:
+            result = self._pool.execute(
+                "UPDATE orders SET refund_status = ? WHERE order_id = ?", (status, order_id)
+            )
+        else:
+            result = self._pool.execute(
+                "UPDATE orders SET refund_status = ? "
+                "WHERE order_id = ? AND refund_status = ?",
+                (status, order_id, expected),
+            )
         return result.affected > 0
 
 
@@ -270,6 +290,19 @@ class RefundLedgerRepository:
             "UPDATE refunds SET reversed = 1 WHERE refund_id = ?", (refund_id,)
         )
         return result.affected > 0
+
+    def settled_for_order(self, order_id: int) -> float:
+        """Total actually paid out against one order, reversals excluded.
+
+        The read-back half of effect verification: a refund is not what
+        the tool said it did, it is what the ledger says was paid.
+        """
+        row = self._pool.query_one(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM refunds "
+            "WHERE order_id = ? AND reversed = 0",
+            (order_id,),
+        )
+        return float(row["total"]) if row else 0.0
 
     def total_for_user(self, user_id: int) -> float:
         """Total refunded to one customer, excluding reversals."""

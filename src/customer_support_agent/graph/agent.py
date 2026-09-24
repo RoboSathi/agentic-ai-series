@@ -46,6 +46,7 @@ from agentic_commons.executor import (
     ToolExecutor,
 )
 from agentic_commons.gatekeeper import Gatekeeper
+from agentic_commons.gatekeeper.mandate import MandateIssuer
 from agentic_commons.guardrails import ResponseGuardrail
 from agentic_commons.hallucination_protection import DetectionLadder, GroundingReasoningDiagnoser
 from agentic_commons.llm.client import LLMClient
@@ -64,6 +65,7 @@ from agentic_commons.resilience import (
 from agentic_commons.security import SecuritySuite
 from agentic_commons.security.auth.policy import AgentPolicy
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
+from agentic_commons.verification import EffectVerifier
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.control_loop import IndependentScorer, OutputQualityGate
 from customer_support_agent.domain.identity import (
@@ -131,6 +133,8 @@ class CustomerSupportAgent(
         features: FeatureSet | None = None,
         handler: ToolExecutionHandler | None = None,
         audit: AuditLedger | None = None,
+        verifier: EffectVerifier | None = None,
+        mandate_issuer: MandateIssuer | None = None,
     ) -> None:
         settings = get_agent_settings()
         # Which stages this agent has. Read once, here, because the graph
@@ -163,6 +167,14 @@ class CustomerSupportAgent(
         self._tracer = tracer
         self._slos = slos
         self._grounding = grounding
+        # Reads an effect back after execution. A result it cannot
+        # verify never becomes authoritative, so no customer-facing
+        # claim can rest on an action that did not actually land.
+        self._verifier = verifier
+        # Says what this turn's request authorizes. Without one the
+        # Gatekeeper reports that the question was never asked,
+        # rather than quietly treating silence as consent.
+        self._mandate_issuer = mandate_issuer
         self._agent_policy = agent_policy
         if self._agent_policy is None:
             raise ValueError("CustomerSupportAgent requires an AgentPolicy loaded from persistence")

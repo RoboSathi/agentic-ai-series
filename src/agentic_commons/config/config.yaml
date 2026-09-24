@@ -377,6 +377,12 @@ gatekeeper:
     # actions belong to the agent, so the agent supplies both.
     action_classes: {}
     thresholds_usd: {}
+  # A side-effecting proposal must match something the person asked for.
+  # `target_param` is the call parameter naming what is acted on; the
+  # agent that has targets says what they are called.
+  mandate:
+    target_param: ""
+
   tier2:
     enabled: false
     # Deliberately generic. An agent that wants the advisor to know what

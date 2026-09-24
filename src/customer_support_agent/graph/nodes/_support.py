@@ -25,6 +25,7 @@ from agentic_commons.executor import (
     ToolExecutor,
 )
 from agentic_commons.gatekeeper import Gatekeeper
+from agentic_commons.gatekeeper.mandate import MandateIssuer
 from agentic_commons.guardrails import ResponseGuardrail
 from agentic_commons.hallucination_protection import DetectionLadder, GroundingReasoningDiagnoser
 from agentic_commons.llm.client import LLMClient
@@ -43,6 +44,7 @@ from agentic_commons.resilience import (
 from agentic_commons.security import SecuritySuite
 from agentic_commons.security.auth.policy import AgentPolicy
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
+from agentic_commons.verification import EffectVerifier
 from customer_support_agent.control_loop import OutputQualityGate
 from customer_support_agent.domain.identity import (
     Customer,
@@ -81,6 +83,8 @@ class NodeSupport:
     _tracer: Tracer | None
     _slos: SLORegistry | None
     _grounding: DetectionLadder | None
+    _verifier: EffectVerifier | None
+    _mandate_issuer: MandateIssuer | None
     _agent_policy: AgentPolicy
     _features: FeatureSet
     _intents: CustomerSupportIntentRouter

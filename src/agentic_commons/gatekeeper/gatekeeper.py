@@ -53,9 +53,14 @@ class Gatekeeper(Protocol):
 class GatekeeperImpl:
     """Generic deterministic reference monitor with agent-owned business rules."""
 
+    # `mandate` sits immediately after `offered` on purpose. `offered`
+    # asks whether the menu was respected; `mandate` asks whether anybody
+    # asked for this. Those had been the same question, which made tool
+    # exposure and authorization the same act.
     _CHECK_ORDER = (
         "agent_enabled",
         "offered",
+        "mandate",
         "actor",
         "authority",
         "business_rules",
@@ -99,6 +104,8 @@ class GatekeeperImpl:
                 check, fail = self._eval_agent_enabled()
             elif check_name == "offered":
                 check, fail = self._eval_offered(call, context)
+            elif check_name == "mandate":
+                check, fail = self._eval_mandate(call, context, amount)
             elif check_name == "actor":
                 check, fail = self._eval_actor(call, context)
             elif check_name == "authority":
@@ -179,6 +186,73 @@ class GatekeeperImpl:
             evidence={"offered_actions": sorted(offered or [])},
         )
         return [check], None if passed else ("offered", "deny", "ACTION_NOT_OFFERED", check.reason)
+
+    def _eval_mandate(self, call: ToolCall, context: AuthorityContext, amount: float):
+        """Whether this exact proposal is one the person asked for.
+
+        Only side-effecting calls need a mandate. A read changes nothing,
+        so "did they ask for this?" is answered well enough by the intent
+        that put the tool on the menu in the first place.
+
+        A `None` mandate set means no issuer is wired — an older
+        deployment, or an agent that has not adopted mandates — and the
+        check reports that rather than inventing a verdict. An *empty* set
+        is a different statement: the issuer looked and found nothing was
+        asked for, and a write is then refused.
+        """
+        if not call.side_effecting:
+            return [CheckReport(
+                check_id="gatekeeper.mandate", name="Requested action", status="SKIPPED",
+                reason_code="MANDATE_NOT_REQUIRED",
+                reason="A read changes nothing, so it needs no mandate.",
+                observed={"action": call.action},
+            )], None
+        if context.mandates is None:
+            return [CheckReport(
+                check_id="gatekeeper.mandate", name="Requested action", status="SKIPPED",
+                reason_code="MANDATE_NOT_CONFIGURED",
+                reason="This deployment issues no mandates, so the request was not checked.",
+                observed={"action": call.action},
+            )], None
+        target = self._target_of(call)
+        mandate = context.mandates.covering(call, target, amount, context.turn)
+        passed = mandate is not None
+        check = CheckReport(
+            check_id="gatekeeper.mandate", name="Requested action",
+            status="PASS" if passed else "FAIL",
+            reason_code="ACTION_REQUESTED" if passed else "NO_MANDATE_FOR_ACTION",
+            reason=(
+                f"The customer asked for this action on {target} this turn."
+                if passed
+                else f"Nothing in this turn's request authorizes '{_bare(call.action)}' "
+                     f"on {target}"
+                     + (f" for ${amount:,.2f}" if amount else "")
+                     + "."
+            ),
+            observed={"action": call.action, "target": target, "amount": amount,
+                      "turn": context.turn},
+            evidence={
+                "mandates": [
+                    {"action": m.action, "target": m.target, "max_amount": m.max_amount,
+                     "granted_by": m.granted_by, "evidence": m.evidence}
+                    for m in context.mandates.mandates
+                ]
+            },
+        )
+        return [check], None if passed else (
+            "mandate", "deny", "NO_MANDATE_FOR_ACTION", check.reason
+        )
+
+    def _target_of(self, call: ToolCall) -> str:
+        """What this call acts on, as a mandate names it.
+
+        Built from the call's own parameters using the agent's configured
+        target key, so the platform needs no opinion about what a target
+        is called.
+        """
+        key = get_settings().gatekeeper.mandate.target_param
+        value = call.params.get(key)
+        return f"{key.removesuffix('_id')}:{value}" if value is not None else ""
 
     def _eval_actor(self, call: ToolCall, context: AuthorityContext):
         outcome = self._authorizer.authorize(
@@ -288,6 +362,11 @@ def _compact_check(check: CheckReport) -> dict[str, object]:
     if check.evidence:
         payload["evidence"] = check.evidence
     return payload
+
+
+def _bare(action: str) -> str:
+    """A tool's own name, without its namespace."""
+    return action.rsplit(".", maxsplit=1)[-1]
 
 
 def _amount_of(call: ToolCall) -> float:

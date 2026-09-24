@@ -394,6 +394,14 @@ class LedgerSettings(BaseModel):
     thresholds_usd: dict[str, float]
 
 
+class MandateSettings(BaseModel):
+    """Binding a proposed write to what was actually requested (LLD §11.1)."""
+
+    # Which call parameter names the thing being acted on. The platform
+    # compares targets; it does not know they are called orders.
+    target_param: str
+
+
 class Tier2Settings(BaseModel):
     """Semantic advisor — advisory only, structurally unable to block (E12).
 
@@ -435,6 +443,7 @@ class GatekeeperSettings(YamlBackedSettings):
     authority_hierarchy: list[str]
     ledger: LedgerSettings
     tier2: Tier2Settings
+    mandate: MandateSettings
     surface_policy: SurfacePolicySettings
     automation: AutomationSettings
 

@@ -16,6 +16,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from agentic_commons.gatekeeper.mandate import MandateSet
 from agentic_commons.observability.types import utc_now
 from agentic_commons.tools.types import BlastRadius
 
@@ -32,6 +33,11 @@ class AuthorityContext(BaseModel):
     session_id: str = ""
     offered_actions: list[str] | None = None
     request_context: dict[str, Any] = Field(default_factory=dict)
+    # What the person actually asked for this turn. `None` means no
+    # issuer is wired, which is not the same as an empty set: an empty
+    # set says "they asked for nothing", and a write is then refused.
+    mandates: "MandateSet | None" = None
+    turn: int = 0
 
 
 class AdvisoryFlag(BaseModel):
@@ -126,3 +132,6 @@ class AuthorityContextMeta(BaseModel):
     """Serialized authority context for the audit trail."""
 
     data: dict[str, Any] = Field(default_factory=dict)
+
+
+AuthorityContext.model_rebuild()

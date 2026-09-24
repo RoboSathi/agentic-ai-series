@@ -64,6 +64,11 @@ security:
       # This agent moves money, so a claimed limit change is an attack on it.
       - my refund limit is now
 
+gatekeeper:
+  mandate:
+    # This agent's writes all act on an order.
+    target_param: order_id
+
 evals:
   # This agent's own golden-task and production-shadow evals.
   additional_manifest_paths:
