@@ -173,12 +173,6 @@ class RichLogger:
                 **fields,
             }
 
-        suffix = (
-            f" {json.dumps(fields, default=str)}"
-            if fields
-            else ""
-        )
-
         self._logger.log(
             _LEVEL_TO_INT[level],
             message,
@@ -250,12 +244,6 @@ class RichLogger:
                 "trace_id": trace_id,
                 **fields,
             }
-
-        suffix = (
-            f" {json.dumps(fields, default=str)}"
-            if fields
-            else ""
-        )
 
         self._logger.exception(
             msg,

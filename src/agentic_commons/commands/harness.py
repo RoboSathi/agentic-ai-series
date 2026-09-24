@@ -1,6 +1,5 @@
 """Commands that exercise or describe the harness itself (LLD §20)."""
 
-from agentic_commons.commands._pool import PoolBackedCommand
 from agentic_commons.commands.types import CommandError, CommandResult, ConsoleEffect
 from agentic_commons.config import active_features, get_settings, set_active_features
 from agentic_commons.evals import (
@@ -11,6 +10,7 @@ from agentic_commons.evals import (
     create_scoring_cascade,
     load_manifest,
 )
+from agentic_commons.tools import ToolRegistry
 
 
 class EvalCommand:
@@ -106,33 +106,39 @@ class CascadeCommand:
         return result
 
 
-class ToolsCommand(PoolBackedCommand):
-    """Show the agent's registered tools and their governance."""
+class ToolsCommand:
+    """Show the registered tools and their governance envelope.
+
+    Reads the registry of the agent that is actually running, rather
+    than constructing a fresh copy of one product's toolset. Building
+    its own meant this command could only ever describe a single agent,
+    and could describe it wrongly: a tool added at composition time, or
+    withheld because a feature was off, would not appear in a set built
+    from scratch here.
+    """
 
     name = "tools"
     summary = "Registered tools and what each may break"
     usage = "/tools"
 
-    async def run(self, args: list[str]) -> CommandResult:
-        from customer_support_agent.core.refund_saga import RefundSaga
-        from customer_support_agent.core.repositories import (
-            HitlQueueRepository,
-            OrdersRepository,
-            RefundLedgerRepository,
-        )
-        from customer_support_agent.core.tools import SupportTools
+    def __init__(self, registry: ToolRegistry | None = None) -> None:
+        self._registry = registry
 
-        pool = self.pool
-        orders = OrdersRepository(pool)
-        refunds = RefundLedgerRepository(pool)
-        tools = SupportTools(
-            orders, HitlQueueRepository(pool), refunds, RefundSaga(orders, refunds)
-        )
+    def bind(self, registry: ToolRegistry | None) -> None:
+        """Attach the running agent's registry, or detach on rebuild."""
+        self._registry = registry
+
+    async def run(self, args: list[str]) -> CommandResult:
+        if self._registry is None:
+            return CommandResult(title="Tools", ok=False).line(
+                "No live agent is attached to this console."
+            )
+        definitions = self._registry.all_tools()
         automation = get_settings().gatekeeper.automation
 
-        result = CommandResult(title=f"{len(tools.definitions())} registered tools")
+        result = CommandResult(title=f"{len(definitions)} registered tools")
         result.headers = ["tool", "surface", "blast radius", "reversible", "sheridan"]
-        for tool in tools.definitions():
+        for tool in definitions:
             level = automation.levels.get(tool.name, automation.human_approval_below)
             result.row(
                 tool.qualified_name,

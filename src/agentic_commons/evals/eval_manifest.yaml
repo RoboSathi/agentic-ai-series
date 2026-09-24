@@ -92,21 +92,3 @@ evals:
     scorer: deterministic_rule
     regression_threshold: 1.0
     level: integration
-
-  - component: customer_support_agent.refund
-    input_distribution: golden refund conversations across auto-approve and escalation paths
-    expected_properties:
-      - refunds above the threshold are queued, never auto-approved
-      - the response cites the order it acted on
-    scorer: calibrated_llm_judge
-    regression_threshold: 0.9
-    level: golden_task
-
-  - component: customer_support_agent.live
-    input_distribution: production traffic, scored but not served
-    expected_properties:
-      - hallucination rate stays within its SLO
-      - cost per successful outcome stays within budget
-    scorer: calibrated_llm_judge
-    regression_threshold: 0.85
-    level: production_shadow

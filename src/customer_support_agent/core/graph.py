@@ -646,7 +646,11 @@ class CustomerSupportAgent:
                     payload=sanitized_query,
                     trace_id=str(state.metadata.get("trace_id", "")),
                     session_id=state.session_id,
-                    customer_id=state.customer_id,
+                    # The platform quarantines on behalf of a principal, not
+                    # a customer — this agent's principal happens to be one.
+                    principal_id=(
+                        str(state.customer_id) if state.customer_id is not None else None
+                    ),
                     metadata={
                         "prompt_injection": injection_detected,
                         "content_moderation": moderation_flagged,

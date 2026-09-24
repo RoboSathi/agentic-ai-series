@@ -5,9 +5,13 @@ from typing import Any
 
 from agentic_commons.gatekeeper.contracts import BusinessRuleResult, DeterministicBusinessRules
 from agentic_commons.gatekeeper.types import AuthorityContext, CheckReport
-from agentic_commons.security.auth.policy import AgentPolicy
+from agentic_commons.security.auth.policy import UNLIMITED, AgentPolicy
 from agentic_commons.tools.types import ToolCall
 from customer_support_agent.core.repositories import HitlQueueRepository, OrdersRepository
+
+# The budget class this agent's money-moving action belongs to. One name,
+# used by the seed data, the Gatekeeper ledger and the rule below.
+REFUND_ACTION_CLASS = "refund"
 
 
 class CustomerSupportBusinessRules(DeterministicBusinessRules):
@@ -21,7 +25,12 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
     ) -> None:
         self._orders = orders
         self._hitl = hitl
-        self._max_refund_amount = policy.max_refund_amount if policy is not None else float("inf")
+        # This agent's own action class. The platform stores budgets keyed
+        # by class and does not know what "refund" means; naming it is this
+        # module's job, because this is the module that has refunds.
+        self._max_refund_amount = (
+            policy.per_action_limit(REFUND_ACTION_CLASS) if policy is not None else UNLIMITED
+        )
 
     def evaluate(self, call: ToolCall, authority: AuthorityContext) -> BusinessRuleResult:
         """Rule on one proposal: who owns the order first, then what may be done to it.

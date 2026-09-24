@@ -3,20 +3,16 @@
 
 INSERT INTO platform_agents (
     agent_id, agent_name, version, enabled, role, authority_rank,
-    max_refund_amount, refund_budget_limit, refund_budget_window_hours,
     created_at, updated_at
 ) VALUES (
     '__AGENT_ID__', '__AGENT_ID__', '__AGENT_VERSION__', 1, 'support_agent', 4,
-    50.00, 4000.00, 24, datetime('now'), datetime('now')
+    datetime('now'), datetime('now')
 )
 ON CONFLICT(agent_id) DO UPDATE SET
     agent_name = excluded.agent_name,
     version = excluded.version,
     role = excluded.role,
     authority_rank = excluded.authority_rank,
-    max_refund_amount = excluded.max_refund_amount,
-    refund_budget_limit = excluded.refund_budget_limit,
-    refund_budget_window_hours = excluded.refund_budget_window_hours,
     updated_at = excluded.updated_at;
 
 DELETE FROM platform_agent_permissions WHERE agent_id = '__AGENT_ID__';
@@ -25,3 +21,20 @@ INSERT INTO platform_agent_permissions (agent_id, permission) VALUES
 ('__AGENT_ID__', 'read_orders'),
 ('__AGENT_ID__', 'process_refund'),
 ('__AGENT_ID__', 'queue_for_approval');
+
+-- What this agent may spend, per class of action.
+--
+-- `refund` is this agent's word, not the platform's: the budget table is
+-- keyed by action class so an agent with three budgeted actions, or none,
+-- needs no change to the shared schema.
+--
+-- per_action 50.00  — above this one refund escalates to a human.
+-- window     4000.00 over 24h — the structuring defence (E02): eighty
+--            individually-permitted $50 refunds are not eighty permitted
+--            actions, they are one unpermitted $4000 one.
+DELETE FROM platform_agent_budgets WHERE agent_id = '__AGENT_ID__';
+
+INSERT INTO platform_agent_budgets (
+    agent_id, action_class, per_action_limit, window_limit, window_hours
+) VALUES
+('__AGENT_ID__', 'refund', 50.00, 4000.00, 24);

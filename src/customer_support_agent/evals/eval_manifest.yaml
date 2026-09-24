@@ -1,0 +1,25 @@
+# This agent's own declared evals, merged over the platform manifest.
+#
+# The golden-task and production-shadow levels are necessarily about a
+# product: "refunds above the threshold are queued" is not a property
+# any agent has, it is a property this one has. So they are declared
+# here rather than in the shared manifest, which would otherwise make
+# every future agent inherit this one's regression plan.
+
+evals:
+  - component: customer_support_agent.refund
+    input_distribution: golden refund conversations across auto-approve and escalation paths
+    expected_properties:
+      - refunds above the threshold are queued, never auto-approved
+      - the response cites the order it acted on
+    scorer: calibrated_llm_judge
+    regression_threshold: 0.9
+    level: golden_task
+  - component: customer_support_agent.live
+    input_distribution: production traffic, scored but not served
+    expected_properties:
+      - hallucination rate stays within its SLO
+      - cost per successful outcome stays within budget
+    scorer: calibrated_llm_judge
+    regression_threshold: 0.85
+    level: production_shadow

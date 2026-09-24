@@ -61,6 +61,10 @@ class AgentIdentitySettings(YamlBackedSettings):
 
     id: str
     version: str
+    # `module.path:attribute` naming this agent's `AgentHost`. Empty in the
+    # platform defaults on purpose: the platform must not name an agent, so
+    # an agent declares its own host in its own overlay.
+    host: str = ""
 
     model_config = SettingsConfigDict(env_prefix="AGENT__")
 
@@ -391,9 +395,15 @@ class LedgerSettings(BaseModel):
 
 
 class Tier2Settings(BaseModel):
-    """Semantic advisor — advisory only, structurally unable to block (E12)."""
+    """Semantic advisor — advisory only, structurally unable to block (E12).
+
+    The prompt is configuration because it has to name the kind of agent
+    being reviewed — "unusual for a *what*?" is the whole question — and
+    the platform does not know what kind of agent it is running.
+    """
 
     enabled: bool
+    prompt: str
 
 
 class SurfacePolicySettings(BaseModel):
@@ -490,9 +500,15 @@ class PromptInjectionSettings(BaseModel):
 
 
 class ContentModerationSettings(BaseModel):
-    """Tier-2 advisory content classifier."""
+    """Tier-2 advisory content classifier.
+
+    `system_prompt` describes the application being protected, which is
+    the agent's to say: "ordinary requests are safe" means something
+    different for a support desk than for a medical triage line.
+    """
 
     blocked_terms: list[str]
+    system_prompt: str
 
 
 class SecuritySettings(YamlBackedSettings):
@@ -586,6 +602,10 @@ class EvalsSettings(YamlBackedSettings):
     enabled: bool
     manifest_version: str
     manifest_path: str
+    # Further manifests merged over the platform's, in order. Empty here:
+    # a golden-task eval is necessarily about some product's behaviour, so
+    # an agent declares its own rather than adding to everyone's.
+    additional_manifest_paths: list[str] = []
     cascade: CascadeTierToggles
     embedding_similarity_threshold: float
     embedding_dissimilarity_threshold: float
@@ -600,6 +620,14 @@ class EvalsSettings(YamlBackedSettings):
     @property
     def resolved_manifest_path(self) -> Path:
         return resolve_path(self.manifest_path)
+
+    @property
+    def resolved_manifest_paths(self) -> list[Path]:
+        """Every manifest that contributes, platform first."""
+        return [
+            self.resolved_manifest_path,
+            *(resolve_path(entry) for entry in self.additional_manifest_paths),
+        ]
 
 
 class ToolsSettings(YamlBackedSettings):
@@ -630,7 +658,6 @@ class TraceStreamSettings(BaseModel):
     enabled: bool
     level: str
     subsystem_width: int
-    action_width: int
     subsystem_labels: dict[str, str]
     max_values: int
     max_value_chars: int
@@ -662,6 +689,10 @@ class TuiSettings(YamlBackedSettings):
     max_feed_lines: int
     spinner_frames: str
     command_output: CommandOutputSettings
+    # `/session` and `/debug` have always read this. It was never
+    # declared, so both commands raised AttributeError on every
+    # invocation and the registry's catch-all reported "/debug failed".
+    trace: TraceStreamSettings
 
     model_config = SettingsConfigDict(env_prefix="TUI__")
 

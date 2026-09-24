@@ -62,11 +62,21 @@ CREATE TABLE IF NOT EXISTS platform_agents (
     enabled                      INTEGER NOT NULL DEFAULT 1,
     role                         TEXT NOT NULL DEFAULT 'unconfigured',
     authority_rank               INTEGER NOT NULL DEFAULT 999,
-    max_refund_amount            REAL NOT NULL DEFAULT 0,
-    refund_budget_limit          REAL NOT NULL DEFAULT 0,
-    refund_budget_window_hours   INTEGER NOT NULL DEFAULT 24,
     created_at                   TEXT NOT NULL,
     updated_at                   TEXT NOT NULL
+);
+
+-- What an agent may spend, per class of action. Keyed by action class
+-- rather than columns named after one product's verbs, so this schema
+-- describes any agent the platform runs.
+CREATE TABLE IF NOT EXISTS platform_agent_budgets (
+    agent_id            TEXT NOT NULL,
+    action_class        TEXT NOT NULL,
+    per_action_limit    REAL NOT NULL DEFAULT 0,
+    window_limit        REAL NOT NULL DEFAULT 0,
+    window_hours        INTEGER NOT NULL DEFAULT 24,
+    PRIMARY KEY (agent_id, action_class),
+    FOREIGN KEY (agent_id) REFERENCES platform_agents(agent_id)
 );
 
 CREATE TABLE IF NOT EXISTS platform_agent_permissions (

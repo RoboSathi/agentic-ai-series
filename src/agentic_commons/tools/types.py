@@ -1,7 +1,7 @@
 """Typed tool contracts used by the common execution boundary."""
 
 import re
-from typing import Any, Awaitable, Callable, Literal, Union
+from typing import Any, Awaitable, Callable, Literal, Protocol, Union, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -86,3 +86,25 @@ class ToolSelection(BaseModel):
     tool: str
     score: float
     reason: str = ""
+
+
+@runtime_checkable
+class ToolSource(Protocol):
+    """Somewhere tools come from.
+
+    A tool is not always a Python function the agent wrote. It can be a
+    definition fetched from a remote server, generated from a schema, or
+    read out of a manifest. The registry does not care which: it cares
+    that whatever arrives is a `ToolDefinition` carrying the governance
+    envelope the Gatekeeper needs, because a tool that arrives without
+    one cannot be authorized and therefore cannot be executed.
+
+    This is the seam an MCP server enters through (see
+    `agentic_commons.mcp`), and the reason `agentic_commons` needs no
+    knowledge of any particular agent's tools: the agent owns its tools,
+    the platform owns the door they come in by.
+    """
+
+    async def tools(self) -> list[ToolDefinition]:
+        """Every tool this source offers, as governed definitions."""
+        ...

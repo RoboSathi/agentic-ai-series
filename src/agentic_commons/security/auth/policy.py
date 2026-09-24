@@ -17,12 +17,30 @@ _REQUIRED_COLUMNS = {
     "enabled",
     "role",
     "authority_rank",
-    "max_refund_amount",
-    "refund_budget_limit",
-    "refund_budget_window_hours",
     "created_at",
     "updated_at",
 }
+
+# What an agent may spend on one class of action. Any agent can have any
+# number of these; the platform does not know what the classes are called.
+UNLIMITED = float("inf")
+
+
+class ActionLimit(BaseModel):
+    """What one class of action may cost this agent.
+
+    `per_action` bounds a single proposal; `window` bounds the running
+    total inside `window_hours`, which is what defeats a structuring
+    attack — eighty individually-permitted actions summing to one that
+    was never permitted.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    action_class: str
+    per_action: float = Field(ge=0)
+    window: float = Field(ge=0)
+    window_hours: int = Field(default=24, gt=0)
 
 
 class AgentPolicy(BaseModel):
@@ -34,11 +52,27 @@ class AgentPolicy(BaseModel):
     role: str
     authority_rank: int = Field(ge=1)
     permissions: set[str] = Field(default_factory=set)
-    max_refund_amount: float = Field(ge=0)
-    refund_budget_limit: float = Field(ge=0)
-    refund_budget_window_hours: int = Field(default=24, gt=0)
+    # Keyed by action class. An agent with no budgeted actions has an
+    # empty map, which is a perfectly ordinary agent — not a broken one.
+    limits: dict[str, ActionLimit] = Field(default_factory=dict)
     enabled: bool = True
     updated_at: str
+
+    def limit_for(self, action_class: str) -> ActionLimit | None:
+        """The limit declared for one action class, if there is one."""
+        return self.limits.get(action_class)
+
+    def per_action_limit(self, action_class: str) -> float:
+        """The single-proposal ceiling, or unlimited when none is declared.
+
+        Unlimited rather than zero on purpose: an undeclared budget means
+        this action is not financially bounded, and defaulting to zero
+        would silently forbid every action nobody thought to budget.
+        Whether the action is *allowed at all* is the permission check's
+        question, not this one's.
+        """
+        limit = self.limits.get(action_class)
+        return limit.per_action if limit is not None else UNLIMITED
 
 
 class AgentPolicyRepository:
@@ -56,16 +90,15 @@ class AgentPolicyRepository:
         missing = sorted(_REQUIRED_COLUMNS - columns)
         if missing:
             raise RuntimeError(
-                "Customer Support agent database has an old platform_agents schema. "
+                "This database has an old platform_agents schema. "
                 f"Database: '{self._store.db_path}'. Missing columns: {', '.join(missing)}. "
-                "Run 'make dummy-data' to rebuild it."
+                "Rebuild it from the agent's own seed data."
             )
 
     def get(self, agent_id: str | None = None) -> AgentPolicy:
         target = agent_id or self._store.agent_id
         row = self._store.query_one(
-            "SELECT agent_id, role, authority_rank, max_refund_amount, "
-            "refund_budget_limit, refund_budget_window_hours, enabled, updated_at "
+            "SELECT agent_id, role, authority_rank, enabled, updated_at "
             "FROM platform_agents WHERE agent_id = ?",
             (target,),
         )
@@ -85,12 +118,26 @@ class AgentPolicyRepository:
             role=str(row["role"]),
             authority_rank=int(row["authority_rank"]),
             permissions=permissions,
-            max_refund_amount=float(row["max_refund_amount"]),
-            refund_budget_limit=float(row["refund_budget_limit"]),
-            refund_budget_window_hours=int(row["refund_budget_window_hours"]),
+            limits=self._limits(target),
             enabled=bool(row["enabled"]),
             updated_at=str(row["updated_at"]),
         )
+
+    def _limits(self, agent_id: str) -> dict[str, ActionLimit]:
+        """Every budgeted action class declared for this agent."""
+        return {
+            str(row["action_class"]): ActionLimit(
+                action_class=str(row["action_class"]),
+                per_action=float(row["per_action_limit"]),
+                window=float(row["window_limit"]),
+                window_hours=int(row["window_hours"]),
+            )
+            for row in self._store.iter_rows(
+                "SELECT action_class, per_action_limit, window_limit, window_hours "
+                "FROM platform_agent_budgets WHERE agent_id = ? ORDER BY action_class",
+                (agent_id,),
+            )
+        }
 
     def upsert(self, policy: AgentPolicy) -> AgentPolicy:
         if policy.agent_id != self._store.agent_id:
@@ -100,18 +147,22 @@ class AgentPolicyRepository:
             )
         self._store.execute(
             "UPDATE platform_agents SET role = ?, authority_rank = ?, "
-            "max_refund_amount = ?, refund_budget_limit = ?, "
-            "refund_budget_window_hours = ?, updated_at = ? WHERE agent_id = ?",
-            (
-                policy.role,
-                policy.authority_rank,
-                policy.max_refund_amount,
-                policy.refund_budget_limit,
-                policy.refund_budget_window_hours,
-                policy.updated_at,
-                policy.agent_id,
-            ),
+            "updated_at = ? WHERE agent_id = ?",
+            (policy.role, policy.authority_rank, policy.updated_at, policy.agent_id),
         )
+        self._store.execute(
+            "DELETE FROM platform_agent_budgets WHERE agent_id = ?", (policy.agent_id,)
+        )
+        if policy.limits:
+            self._store.execute_many(
+                "INSERT INTO platform_agent_budgets (agent_id, action_class, "
+                "per_action_limit, window_limit, window_hours) VALUES (?, ?, ?, ?, ?)",
+                [
+                    (policy.agent_id, limit.action_class, limit.per_action,
+                     limit.window, limit.window_hours)
+                    for limit in sorted(policy.limits.values(), key=lambda item: item.action_class)
+                ],
+            )
         self._store.execute(
             "DELETE FROM platform_agent_permissions WHERE agent_id = ?",
             (policy.agent_id,),

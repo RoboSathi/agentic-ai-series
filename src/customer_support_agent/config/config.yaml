@@ -1,6 +1,9 @@
 agent:
   id: customer_support_agent
   version: 0.1.0
+  # The operator shell runs whatever host this names. The platform never
+  # names an agent; the agent names itself.
+  host: customer_support_agent.console:CustomerSupportHost
 
 # This agent's harness. Overrides the platform defaults; an episode
 # overlay overrides these in turn. Everything on: a support agent that
@@ -23,13 +26,58 @@ features:
     enabled: true
     rerank: true
     failure_detection: true
+# Nine things version independently (E39). These name *this* agent's
+# artifacts; the platform ships neutral placeholders.
+audit:
+  policy_version: refund-policy-v1
+  data_version: dummy-data-v1
+  prompt_version: support-prompt-v1
+  tool_schema_version: support-tools-v1
+
+llm:
+  intent_classifier:
+    # Fine-tuned on this agent's intents, so it is this agent's artifact.
+    model: learn-abc/magicSupport-intent-classifier
+    local_model_dir: local_models/intent_classifier/magicSupport-intent-classifier
+
 memory:
   episodic:
     path: src/customer_support_agent/dummy_data/episodic
+  write_pipeline:
+    classification_hints:
+      # This agent's domain vocabulary for the deterministic first tier.
+      order_fact: ["order", "tracking", "delivered", "shipment"]
+
+security:
+  pii:
+    # The tool-call fields this agent's tools actually take.
+    tool_call_allowed_fields: [order_id, user_id, amount, reason, status]
+  prompt_injection:
+    suspicious_phrases:
+      - ignore previous instructions
+      - ignore all previous
+      - disregard the above
+      - you are now
+      - system prompt
+      - new instructions
+      - override your
+      # This agent moves money, so a claimed limit change is an attack on it.
+      - my refund limit is now
+
+evals:
+  # This agent's own golden-task and production-shadow evals.
+  additional_manifest_paths:
+    - src/customer_support_agent/evals/eval_manifest.yaml
+
 customer_support_agent:
   enabled: true
   db_path: src/customer_support_agent/dummy_data/agentic.db
   max_tool_iterations: 5
+  # Tool -> budget class. A tool absent from this map is not financially
+  # budgeted; whether it is allowed at all is the permission check's
+  # question, not the budget's.
+  action_classes:
+    process_refund: refund
   intents:
   - name: ORDER_STATUS
     mode: read

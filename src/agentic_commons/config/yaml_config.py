@@ -29,6 +29,7 @@ must not erase `gatekeeper.authority_hierarchy` alongside it, which is
 exactly what a shallow merge would do.
 """
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,16 @@ _LOCAL_FILE = _CONFIG_DIR / "local.yaml"
 
 # Key in the platform config listing agent overlays, in merge order.
 _OVERLAYS_KEY = "overlays"
+
+# Where the agent layer comes from when the platform does not declare one.
+#
+# The platform's own `overlays:` is empty and stays empty: a default that
+# listed one agent would make that agent's vocabulary every agent's, and
+# would mean the platform could not be read at all without that agent
+# installed. So the agent layer is named from outside the platform — by
+# whoever decided which agent this process is running.
+_OVERLAYS_ENV = "AGENTIC_OVERLAYS"
+_OVERLAYS_ENV_SEPARATOR = os.pathsep
 
 # Overlays a caller added for this process, in the order they were added.
 # Module state rather than a parameter because the readers are the settings
@@ -70,12 +81,48 @@ def clear_overlays() -> None:
     _run_overlays.clear()
 
 
+class _StrictLoader(yaml.SafeLoader):
+    """A loader that refuses to silently drop a repeated key.
+
+    Plain YAML keeps the last of two identical keys and says nothing. In a
+    layered configuration that is a very quiet way to lose a section: a
+    second `memory:` block further down the file silently deletes the
+    first one, and the setting it held reverts to the platform default
+    with no error anywhere. Caught exactly that way once, which is why
+    this exists.
+    """
+
+
+def _no_duplicate_keys(
+    loader: yaml.SafeLoader, node: yaml.MappingNode, deep: bool = False
+) -> dict[Any, Any]:
+    """Construct a mapping, raising if any key appears twice."""
+    mapping: dict[Any, Any] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise ValueError(
+                f"Duplicate configuration key '{key}' at line {key_node.start_mark.line + 1}. "
+                "The later block would silently replace the earlier one."
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_StrictLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicate_keys
+)
+
+
 def _read_yaml(path: Path) -> dict[str, Any]:
     """Read a YAML file into a dict, or {} if it doesn't exist."""
     if not path.exists():
         return {}
     with path.open() as handle:
-        loaded = yaml.safe_load(handle)
+        try:
+            loaded = yaml.load(handle, Loader=_StrictLoader)
+        except ValueError as exc:
+            raise ValueError(f"{path}: {exc}") from exc
     return loaded if isinstance(loaded, dict) else {}
 
 
@@ -97,9 +144,21 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 
 def _overlay_files() -> list[Path]:
-    """Agent config files the platform config declares, in order."""
-    declared = _read_yaml(_CONFIG_FILE).get(_OVERLAYS_KEY) or []
-    return [resolve_path(str(entry)) for entry in declared]
+    """The agent config layer, in merge order.
+
+    `AGENTIC_OVERLAYS` wins when set, because naming the agent is a
+    deployment decision and the environment is where deployment
+    decisions live. The platform's `overlays:` key remains as the
+    fallback so a self-contained distribution can still declare its own
+    layering — it is simply empty here.
+    """
+    declared = os.environ.get(_OVERLAYS_ENV)
+    entries = (
+        [part for part in declared.split(_OVERLAYS_ENV_SEPARATOR) if part.strip()]
+        if declared
+        else (_read_yaml(_CONFIG_FILE).get(_OVERLAYS_KEY) or [])
+    )
+    return [resolve_path(str(entry)) for entry in entries]
 
 
 def load_config() -> dict[str, Any]:

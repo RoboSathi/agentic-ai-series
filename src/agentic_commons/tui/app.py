@@ -1,9 +1,15 @@
-"""Textual customer-support agent operations dashboard.
+"""Textual agent operations dashboard (LLD §20).
 
-This TUI is intentionally a renderer, not an orchestrator and not a logger.
-The graph and agent components decide what happens.  ``StatusEvent`` objects
-are the semantic input contract.  Logger records remain in the logging
-subsystem and are not mirrored here.
+This TUI is intentionally a renderer, not an orchestrator and not a
+logger. The graph and agent components decide what happens;
+``StatusEvent`` objects are the semantic input contract. Logger records
+remain in the logging subsystem and are not mirrored here.
+
+It renders whatever agent it is given. Which agent that is arrives as an
+``AgentHost`` — the title, the placeholder, the extra slash commands and
+the stage labels a product needs all come from there, so this module
+holds no product's vocabulary and can open against an agent it has never
+heard of.
 """
 
 from collections.abc import Sequence
@@ -16,7 +22,10 @@ from textual.widgets import Footer, Header, Input
 
 from agentic_commons.commands import Command, CommandRegistry, ConsoleEffect
 from agentic_commons.commands.data import MemoryCommand
+from agentic_commons.commands.harness import ToolsCommand
+from agentic_commons.commands.system import SessionCommand
 from agentic_commons.config import get_settings
+from agentic_commons.host import AgentHost, resolve_host
 from agentic_commons.logging import get_logger
 from agentic_commons.observability import InMemoryLiveStatusFeed, StageReporter
 from agentic_commons.observability.types import StatusEvent
@@ -27,7 +36,9 @@ from agentic_commons.tui.suggest import CommandSuggester
 from agentic_commons.tui.widgets import LiveStatusPanel, StatusLineWidget, TokenCounterWidget
 
 AgentFactory = Callable[[StageReporter], Any]
-_DEFAULT_TITLE = "Customer Support Agent"
+# Used only when the console is opened with no host at all — a test, or a
+# developer poking at the shell. A real run always names one.
+_DEFAULT_TITLE = "Agent Harness"
 
 
 class AgenticTuiApp(App[None]):
@@ -56,14 +67,14 @@ class AgenticTuiApp(App[None]):
         margin: 0 0 1 0;
         padding: 0;
     }
-    
+
     /* Textual renders the clickable Collapsible title as a separate
        CollapsibleTitle child. Color that widget, not only the parent. */
-    
+
     .stage-event > CollapsibleTitle {
         text-style: bold;
     }
-    
+
     /* RUNNING */
     .stage-started > CollapsibleTitle,
     .stage-started > CollapsibleTitle:hover,
@@ -71,7 +82,7 @@ class AgenticTuiApp(App[None]):
         color: cyan;
         background: transparent;
     }
-    
+
     /* SUCCESS */
     .stage-completed > CollapsibleTitle,
     .stage-completed > CollapsibleTitle:hover,
@@ -79,7 +90,7 @@ class AgenticTuiApp(App[None]):
         color: #00FF87;
         background: transparent;
     }
-    
+
     /* WARNING / WAITING */
     .stage-warning > CollapsibleTitle,
     .stage-warning > CollapsibleTitle:hover,
@@ -90,7 +101,7 @@ class AgenticTuiApp(App[None]):
         color: yellow;
         background: transparent;
     }
-    
+
     /* FAILURE / BLOCKED */
     .stage-failed > CollapsibleTitle,
     .stage-failed > CollapsibleTitle:hover,
@@ -111,7 +122,7 @@ class AgenticTuiApp(App[None]):
         color: yellow;
         background: transparent;
     }
-    
+
     .stage-details {
         padding: 0 1 1 3;
         color: $text-muted;
@@ -155,9 +166,15 @@ class AgenticTuiApp(App[None]):
         title: str = "",
         subtitle: str = "",
         commands: Sequence[Command] | None = None,
+        host: AgentHost | None = None,
     ) -> None:
         super().__init__()
-        self.title = title or _DEFAULT_TITLE
+        self._host = host
+        # An explicit factory still wins — that is how a test substitutes
+        # a scripted agent without needing a host at all.
+        if agent_factory is None and host is not None:
+            agent_factory = lambda reporter: host.build(reporter)  # noqa: E731
+        self.title = title or (host.title() if host else _DEFAULT_TITLE)
         self.sub_title = subtitle
 
         self._feed = InMemoryLiveStatusFeed()
@@ -168,7 +185,7 @@ class AgenticTuiApp(App[None]):
             else None
         )
 
-        self._labels = StageLabelRegistry()
+        self._labels = StageLabelRegistry(host.stage_labels() if host else None)
         self._copier = Osc52ClipboardService()
         self._panel = LiveStatusPanel(self._labels)
         self._status = StatusLineWidget()
@@ -181,11 +198,19 @@ class AgenticTuiApp(App[None]):
         self._history_pending = 0
         self._journal = get_logger("tui")
 
-        for command in commands or ():
+        # The agent's own commands, then anything this caller added.
+        for command in (*(host.commands() if host else ()), *(commands or ())):
             self._commands.register(command)
         self._bind_live_commands()
 
     def _bind_live_commands(self) -> None:
+        """Point the commands that read live state at the agent on screen.
+
+        Re-run after every rebuild. A command holding the previous
+        agent's registry would describe the harness the operator just
+        switched off, which is the exact thing `/harness` exists to make
+        visible.
+        """
         memory = getattr(self._agent, "memory", None)
         if memory is not None:
             self._commands.register(
@@ -194,12 +219,20 @@ class AgenticTuiApp(App[None]):
                     session_id=self._session_id,
                 )
             )
+        tools = self._commands.get("tools")
+        if isinstance(tools, ToolsCommand):
+            tools.bind(getattr(self._agent, "registry", None))
+        session = self._commands.get("session")
+        if isinstance(session, SessionCommand):
+            session.bind(self._host, self._agent)
 
     def compose(self) -> ComposeResult:
         yield Header()
         yield self._panel
         yield Input(
-            placeholder="Ask the support agent…  (/help for commands)",
+            placeholder=(
+                self._host.placeholder() if self._host else "Ask the agent…  (/help for commands)"
+            ),
             id="query",
             suggester=CommandSuggester(self._commands),
         )
@@ -454,29 +487,18 @@ def _compact(tokens: int) -> str:
 
 
 def main() -> None:
-    # Keep Hugging Face/tokenizer initialization outside the Textual event loop.
-    # On macOS, initializing native ML components after the TUI has opened its
-    # descriptors can surface Python's `fds_to_keep` multiprocessing error.
-    # This is an environment/runtime issue, not an intent-routing decision.
-    import os
+    """Open the console against whatever agent the configuration names.
 
-    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-
-    from agentic_commons.intent import create_intent_classifier
-    from customer_support_agent.core import CustomerSupportIntentRouter, build_agent
-
-    classifier = create_intent_classifier()
-    print(f"Loading intent classifier: {classifier.model_name}")
-    classifier.ensure_loaded_sync()
-    intent_router = CustomerSupportIntentRouter(backend=classifier)
-    print(f"Intent classifier ready: {classifier.cache_path}")
+    The agent is resolved from `agent.host` rather than imported. That
+    one line is the whole reason this package can be a platform: a
+    second agent needs a config entry, not an edit here.
+    """
+    host = resolve_host(get_settings().agent.host)
+    # Slow, native start-up work belongs before the event loop opens, not
+    # on the first turn — see `AgentHost.prepare`.
+    host.prepare()
 
     try:
-        AgenticTuiApp(
-            lambda reporter: build_agent(
-                reporter=reporter,
-                intent_router=intent_router,
-            )
-        ).run()
+        AgenticTuiApp(host=host).run()
     except KeyboardInterrupt:
         pass

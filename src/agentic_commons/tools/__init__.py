@@ -15,6 +15,7 @@ from agentic_commons.tools.types import (
     ToolHandler,
     ToolResult,
     ToolSelection,
+    ToolSource,
 )
 
 __all__ = [
@@ -31,4 +32,5 @@ __all__ = [
     "ToolResult",
     "ToolRetrievalSelector",
     "ToolSelection",
+    "ToolSource",
 ]

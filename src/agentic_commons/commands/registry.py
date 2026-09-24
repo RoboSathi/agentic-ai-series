@@ -6,7 +6,7 @@ It is deliberately the only place that parses a slash: the TUI asks
 API dispatches identically without reimplementing the grammar.
 """
 
-from agentic_commons.commands.data import MemoryCommand, OrdersCommand, UsersCommand
+from agentic_commons.commands.data import MemoryCommand
 from agentic_commons.commands.harness import (
     CascadeCommand,
     EvalCommand,
@@ -20,7 +20,6 @@ from agentic_commons.commands.inspection import (
     ConfigCommand,
     ModelCommand,
     PostmortemCommand,
-    QueueCommand,
     SloCommand,
     VersionsCommand,
 )
@@ -115,18 +114,20 @@ class CommandRegistry:
 
 
 def _default_commands() -> list[Command]:
-    """Every command the console ships with."""
+    """Every command the *platform* ships with.
+
+    Agent-owned commands are not listed here and never were meant to
+    be: they arrive from the running agent's `AgentHost`, which is what
+    lets this registry serve an agent the platform has never heard of.
+    """
     return [
         HelpCommand(),
         ConfigCommand(),
         AuditCommand(),
         SloCommand(),
-        QueueCommand(),
         ModelCommand(),
         VersionsCommand(),
         PostmortemCommand(),
-        UsersCommand(),
-        OrdersCommand(),
         MemoryCommand(),
         EvalCommand(),
         CascadeCommand(),

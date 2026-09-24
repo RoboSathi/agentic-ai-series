@@ -45,9 +45,20 @@ class EvalManifest(BaseModel):
 
 
 def load_manifest(path: Path | None = None) -> EvalManifest:
-    """Load the manifest from its configured, package-relative path."""
-    manifest_path = path or get_settings().evals.resolved_manifest_path
-    if not manifest_path.exists():
-        return EvalManifest()
-    raw: dict[str, Any] = yaml.safe_load(manifest_path.read_text()) or {}
-    return EvalManifest(entries=[EvalManifestEntry(**entry) for entry in raw.get("evals", [])])
+    """Load the manifest, merging every declared source in order.
+
+    The platform declares the evals every agent's harness can regress
+    on; an agent declares the ones only it can. Reading both here — and
+    concatenating rather than overwriting — is what lets a golden-task
+    eval mention refunds without the shared manifest mentioning them.
+    """
+    paths = [path] if path is not None else get_settings().evals.resolved_manifest_paths
+    return EvalManifest(entries=[entry for source in paths for entry in _entries(source)])
+
+
+def _entries(path: Path) -> list[EvalManifestEntry]:
+    """One manifest file's entries, or none when it is not there."""
+    if not path.exists():
+        return []
+    raw: dict[str, Any] = yaml.safe_load(path.read_text()) or {}
+    return [EvalManifestEntry(**entry) for entry in raw.get("evals", [])]

@@ -12,7 +12,7 @@ from agentic_commons.commands._pool import PoolBackedCommand
 from agentic_commons.commands.types import CommandError, CommandResult
 from agentic_commons.config import get_settings
 from agentic_commons.config.yaml_config import config_sources, load_config
-from agentic_commons.observability import LittlesLawQueueModel, SLORegistry
+from agentic_commons.observability import SLORegistry
 from agentic_commons.observability.postmortem import PostmortemRegister
 
 
@@ -123,43 +123,6 @@ class SloCommand:
                 style="" if status.within_target else "red",
             )
         result.line("Targets of 0.00 are zero-tolerance: any occurrence is a breach.")
-        return result
-
-
-class QueueCommand(PoolBackedCommand):
-    """Show the human review queue and the staffing it implies."""
-
-    name = "queue"
-    summary = "Human review queue and its staffing maths"
-    usage = "/queue [arrivals_per_hour] [minutes_each]"
-
-    async def run(self, args: list[str]) -> CommandResult:
-        from customer_support_agent.core.repositories import HitlQueueRepository
-
-        pending = HitlQueueRepository(self.pool).pending()
-        result = CommandResult(title=f"Review queue — {len(pending)} pending")
-        if pending:
-            result.headers = ["id", "order", "customer", "amount", "raised"]
-            for request in pending[: get_settings().commands.recent_window]:
-                result.row(
-                    str(request.id),
-                    str(request.order_id),
-                    str(request.user_id),
-                    f"${request.requested_amount:,.2f}",
-                    request.created_at[:16],
-                )
-        else:
-            result.line("Nothing awaiting review.")
-
-        arrivals = float(args[0]) if args else max(len(pending), 1) * 1.0
-        minutes = float(args[1]) if len(args) > 1 else 4.0
-        capacity = LittlesLawQueueModel().capacity_for(arrivals, minutes)
-        result.line("")
-        result.line(
-            f"Little's Law at {arrivals:g}/hr × {minutes:g} min: "
-            f"{capacity.reviewer_hours_per_hour:.2f} reviewer-hours per hour "
-            f"({capacity.reviewers_required} people)"
-        )
         return result
 
 

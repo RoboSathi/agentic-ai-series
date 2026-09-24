@@ -18,14 +18,18 @@ from agentic_commons.commands import (
     CommandResult,
     CommandRow,
 )
-from agentic_commons.commands.data import OrdersCommand, UsersCommand
 from agentic_commons.commands.harness import HarnessCommand
-from agentic_commons.commands.inspection import AuditCommand, ConfigCommand, QueueCommand
+from agentic_commons.commands.inspection import AuditCommand, ConfigCommand
 from agentic_commons.commands.system import ClearCommand, LogsCommand
 from agentic_commons.config import active_features, get_settings, set_active_features
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.tui.command_view import CommandView
 from agentic_commons.tui.suggest import CommandSuggester
+from customer_support_agent.console.commands import (
+    OrdersCommand,
+    QueueCommand,
+    UsersCommand,
+)
 from tests.conftest import CUSTOMER_CODE
 
 
@@ -36,7 +40,11 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_an_unknown_command_suggests_near_matches(self) -> None:
-        result = await CommandRegistry().dispatch("/ord")
+        # `/orders` is the agent's, not the platform's, so it is registered
+        # the way the console registers it: from the running host.
+        registry = CommandRegistry()
+        registry.register(OrdersCommand())
+        result = await registry.dispatch("/ord")
         assert not result.ok
         assert "/orders" in result.lines[0]
 
@@ -176,7 +184,9 @@ class TestSystemCommands:
 
     @pytest.mark.asyncio
     async def test_help_explains_one_command(self) -> None:
-        result = await CommandRegistry().dispatch("/help orders")
+        registry = CommandRegistry()
+        registry.register(OrdersCommand())
+        result = await registry.dispatch("/help orders")
         assert result.title == "/orders"
         assert result.lines[-1].startswith("/orders")
 

@@ -70,6 +70,10 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     max_tool_iterations: int
     intents: list[IntentSettings]
     default_intent: str
+    # Which tool is charged against which budget class. The platform stores
+    # budgets by class and does not know this agent's verbs, so the mapping
+    # is declared here rather than as a literal in the composition root.
+    action_classes: dict[str, str]
     plans: dict[str, list[PlanStepSettings]]
     intent_router: IntentRouterSettings
     followup: FollowupSettings

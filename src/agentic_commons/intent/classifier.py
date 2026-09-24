@@ -14,7 +14,7 @@ from agentic_commons.intent.types import IntentCandidate, IntentClassifierInterf
 from agentic_commons.logging import get_logger
 
 
-class LocalModelArtifactUnavailable(FileNotFoundError):
+class LocalModelArtifactUnavailableError(FileNotFoundError):
     """The repository-local model artifact is absent or structurally incomplete."""
 
 
@@ -96,7 +96,7 @@ class HuggingFaceIntentClassifier(IntentClassifierInterface):
                     model=self._model_name,
                     path=str(self._local_model_dir),
                 )
-            except LocalModelArtifactUnavailable as local_error:
+            except LocalModelArtifactUnavailableError as local_error:
                 if not self._download_if_missing:
                     raise RuntimeError(
                         f"Intent classifier local model unavailable at {self._local_model_dir}: {local_error}"
@@ -162,7 +162,7 @@ class HuggingFaceIntentClassifier(IntentClassifierInterface):
                     model=self._model_name,
                     path=str(self._local_model_dir),
                 )
-            except LocalModelArtifactUnavailable as local_error:
+            except LocalModelArtifactUnavailableError as local_error:
                 if not self._download_if_missing:
                     raise RuntimeError(
                         f"Intent classifier local model unavailable at {self._local_model_dir}: {local_error}"
@@ -210,7 +210,7 @@ class HuggingFaceIntentClassifier(IntentClassifierInterface):
 
     def _load_local(self) -> tuple[Any, Any, Any]:
         if not self._local_model_dir.exists():
-            raise LocalModelArtifactUnavailable("local model directory does not exist")
+            raise LocalModelArtifactUnavailableError("local model directory does not exist")
         return self._load_local_from(self._local_model_dir)
 
 
@@ -264,11 +264,11 @@ class HuggingFaceIntentClassifier(IntentClassifierInterface):
             + list(model_dir.glob("pytorch_model*.bin"))
         )
         if not (model_dir / "config.json").exists():
-            raise LocalModelArtifactUnavailable("model is missing config.json")
+            raise LocalModelArtifactUnavailableError("model is missing config.json")
         if not weight_files:
-            raise LocalModelArtifactUnavailable("model is missing model weights")
+            raise LocalModelArtifactUnavailableError("model is missing model weights")
         if not ((model_dir / "tokenizer.json").exists() or (model_dir / "vocab.txt").exists()):
-            raise LocalModelArtifactUnavailable("model is missing tokenizer artifacts")
+            raise LocalModelArtifactUnavailableError("model is missing tokenizer artifacts")
 
         tokenizer = AutoTokenizer.from_pretrained(
             str(model_dir),

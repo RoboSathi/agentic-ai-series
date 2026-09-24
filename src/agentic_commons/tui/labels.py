@@ -1,10 +1,17 @@
-"""Presentation labels for the customer-support TUI.
+"""Presentation labels for the TUI (LLD §20).
 
-The graph owns the workflow and stage sequence.  This module only converts
-canonical stage keys and tool names into compact, human-readable titles.
-It contains no workflow logic and no business decisions.
+The graph owns the workflow and stage sequence. This module only
+converts canonical stage keys and tool names into compact, human-readable
+titles. It contains no workflow logic and no business decisions.
+
+The map below covers the stages *every* agent on this platform emits.
+Stages that exist because a particular product has orders or refunds are
+that product's vocabulary: its `AgentHost` supplies them, and they are
+merged over these. An unknown stage still degrades readably rather than
+failing, so a new stage shows up as itself instead of breaking the feed.
 """
 
+from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from agentic_commons.tools.types import WIRE_SEPARATOR
@@ -28,9 +35,7 @@ _DISPLAY_NAMES = {
     "prompt_injection_check": "PROMPT INJECTION",
     "pii_filtering": "PII FILTER",
     "content_moderation": "CONTENT POLICY",
-    "order_lookup": "ORDER LOOKUP",
-    "order_status_check": "ORDER STATUS",
-    "refund_eligibility_check": "REFUND ELIGIBILITY",
+    "basic_sanity": "BASIC SANITY",
     "intent_classification": "INTENT",
     "working_memory_check": "WORKING MEMORY CHECK",
     "memory_recall": "MEMORY RECALL",
@@ -58,7 +63,13 @@ _DISPLAY_NAMES = {
 
 
 class StageLabelRegistry:
-    """Compact display names for the TUI."""
+    """Compact display names for the TUI.
+
+    Platform labels, with the running agent's own merged over them.
+    """
+
+    def __init__(self, agent_labels: Mapping[str, str] | None = None) -> None:
+        self._names = {**_DISPLAY_NAMES, **(agent_labels or {})}
 
     def title_for(
         self,
@@ -67,7 +78,7 @@ class StageLabelRegistry:
     ) -> str:
         """Return a canonical human-facing title for one runtime stage."""
         del substitutions
-        return _DISPLAY_NAMES.get(
+        return self._names.get(
             stage,
             stage.replace("_", " ").upper(),
         )
@@ -82,7 +93,7 @@ class StageLabelRegistry:
 
     def known_stages(self) -> set[str]:
         """Return the presentation aliases known to this renderer."""
-        return set(_DISPLAY_NAMES)
+        return set(self._names)
 
     def missing(self, emitted_stages: set[str]) -> set[str]:
         """Return emitted stages that have no explicit presentation alias."""

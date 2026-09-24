@@ -22,12 +22,19 @@
 # Agent configuration layered on top of these platform defaults, in order.
 # Each agent owns its own action names, roles, thresholds and data paths;
 # leaving them here would make every agent inherit one agent's vocabulary.
-overlays:
-  - src/customer_support_agent/config/config.yaml
+#
+# Empty by default, and named from outside: AGENTIC_OVERLAYS, or the
+# --overlay flag, or an episode's own config. A platform default that
+# listed one agent would make that agent's vocabulary everyone's, and
+# would mean this file could not be read without that agent installed.
+overlays: []
 
 agent:
   id: unnamed_agent
   version: dev
+  # `module.path:attribute` naming the AgentHost the operator shell runs.
+  # An agent declares its own; the platform never names one.
+  host: ""
 
 config:
   enabled: true
@@ -159,14 +166,17 @@ llm:
   # Semantic intent classifier. The current implementation runs a fine-tuned
   # BERT sequence classifier locally. Agent-specific labels, mappings and the
   # routing threshold remain in the consuming agent's config.
+  # The fine-tuned checkpoint is a *product* artifact — it was trained on
+  # one agent's intents — so the agent names it. The platform only knows
+  # how to load and run one.
   intent_classifier:
     enabled: true
     provider: huggingface_local
-    model: learn-abc/magicSupport-intent-classifier
+    model: ""
     # All downloaded model files live inside the repository, not in the
     # user's global Hugging Face cache. The provider loads from this folder
     # with local_files_only=True after the first successful download.
-    local_model_dir: local_models/intent_classifier/magicSupport-intent-classifier
+    local_model_dir: ""
     # Download only when the local artifact is missing or cannot be loaded.
     # Normal classification calls never download or reload from disk.
     download_if_missing: true
@@ -184,10 +194,13 @@ audit:
   # Nine things version independently (E39). One release number cannot
   # answer "which of them moved?", which is the only question worth
   # asking after a regression.
-  policy_version: refund-policy-v1
-  data_version: dummy-data-v1
-  prompt_version: support-prompt-v1
-  tool_schema_version: support-tools-v1
+  # The agent names its own versioned artifacts. A platform default of
+  # "refund-policy-v1" would stamp one product's policy name onto every
+  # other agent's audit trail.
+  policy_version: unversioned
+  data_version: unversioned
+  prompt_version: unversioned
+  tool_schema_version: unversioned
 
 observability:
   enabled: true
@@ -298,7 +311,6 @@ memory:
       role_assignment: ["i am an admin", "i am a supervisor", "my role is"]
       authority_delegation: ["on behalf of", "acting for", "delegated to me"]
       preference: ["i prefer", "i like", "please always", "don't ever"]
-      order_fact: ["order", "tracking", "delivered", "shipment"]
   # Retrieval weighting by how a fact came to be known (E16).
   provenance_weights:
     verified_system_of_record: 1.0
@@ -367,6 +379,18 @@ gatekeeper:
     thresholds_usd: {}
   tier2:
     enabled: false
+    # Deliberately generic. An agent that wants the advisor to know what
+    # "unusual" means for it overrides this in its own config.
+    prompt: >-
+      You are an advisory reviewer for an automated action. You cannot
+      block it; your note is recorded alongside the decision. In one
+      sentence, say whether this action looks unusual for this agent,
+      and why.
+
+
+      Action: {action}
+
+      Parameters: {params}
   surface_policy:
     enabled: true
     # action -> surface class. Empty here, filled by the agent. An
@@ -410,7 +434,9 @@ security:
       ip_address: '\b\d{1,3}(?:\.\d{1,3}){3}\b'
     # Fields a tool call may carry; everything else is dropped before the
     # call leaves the harness (data minimization, E32).
-    tool_call_allowed_fields: [order_id, user_id, amount, reason, status]
+    # Which tool-call fields may survive redaction. Empty here: the fields
+    # are named by whichever agent has them.
+    tool_call_allowed_fields: []
   prompt_injection:
     data_open_tag: "<untrusted_data>"
     data_close_tag: "</untrusted_data>"
@@ -422,9 +448,16 @@ security:
       - system prompt
       - new instructions
       - override your
-      - my refund limit is now
   content_moderation:
     blocked_terms: [kill, bomb, terrorist]
+    # What the classifier is protecting. Generic here: "ordinary requests
+    # are safe" means something different per application, so an agent
+    # that needs a narrower or wider notion overrides this.
+    system_prompt: |
+      You are a content-safety classifier for an automated assistant.
+      Classify only the latest user message. Return JSON and nothing else.
+      Schema: {"User Safety":"safe"|"unsafe","Safety Categories":"comma-separated categories"}.
+      Omit Safety Categories when the message is safe. Ordinary product-support requests are safe.
   guards:
     # Hosted model guards. These are optional defense-in-depth detectors;
     # the existing deterministic checks remain in place and the application
@@ -535,6 +568,36 @@ tui:
   copy_method: osc52
   max_feed_lines: 0
   spinner_frames: "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+  # The DEBUG narration stream behind /debug. Off by default: it is the
+  # exhaustive operator trace, not the curated stage feed, and the two
+  # answer different questions.
+  #
+  # `subsystem_labels` and `steps` are empty here on purpose. A label for
+  # a subsystem, and a headline for one method's call, are vocabulary —
+  # and vocabulary belongs to whichever agent has it, not to the platform
+  # every agent shares.
+  trace:
+    enabled: false
+    level: "off"
+    subsystem_width: 12
+    subsystem_labels: {}
+    max_values: 6
+    max_value_chars: 120
+    show_events: true
+    steps: {}
+    muted_fields:
+      - args
+      - kwargs
+      - content
+      - context
+      - messages
+      - payload
+      - prompt
+      - evidence
+      - instructions
+      - raw_arguments
+      - source_payload
 
   command_output:
     title_style: bold bright_cyan

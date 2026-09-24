@@ -15,6 +15,14 @@ from agentic_commons.config import get_settings
 from agentic_commons.persistence.database import SqliteConnectionPool
 from agentic_commons.persistence.types import ExecutionResult
 
+# An agent's limits are per *action class*, in a table of their own.
+#
+# They used to be three columns on `platform_agents` — max_refund_amount,
+# refund_budget_limit, refund_budget_window_hours — which said this
+# platform only runs agents that issue refunds, and only ever one kind of
+# budgeted action each. A second write tool would have needed a schema
+# change to the shared platform; a second agent would have inherited
+# columns meaningless to it.
 _PLATFORM_SCHEMA = """
 CREATE TABLE IF NOT EXISTS platform_agents (
     agent_id                     TEXT PRIMARY KEY,
@@ -23,9 +31,6 @@ CREATE TABLE IF NOT EXISTS platform_agents (
     enabled                      INTEGER NOT NULL DEFAULT 1,
     role                         TEXT NOT NULL DEFAULT 'unconfigured',
     authority_rank               INTEGER NOT NULL DEFAULT 999,
-    max_refund_amount            REAL NOT NULL DEFAULT 0,
-    refund_budget_limit          REAL NOT NULL DEFAULT 0,
-    refund_budget_window_hours   INTEGER NOT NULL DEFAULT 24,
     created_at                   TEXT NOT NULL,
     updated_at                   TEXT NOT NULL
 );
@@ -34,6 +39,16 @@ CREATE TABLE IF NOT EXISTS platform_agent_permissions (
     agent_id    TEXT NOT NULL,
     permission  TEXT NOT NULL,
     PRIMARY KEY (agent_id, permission),
+    FOREIGN KEY (agent_id) REFERENCES platform_agents(agent_id)
+);
+
+CREATE TABLE IF NOT EXISTS platform_agent_budgets (
+    agent_id            TEXT NOT NULL,
+    action_class        TEXT NOT NULL,
+    per_action_limit    REAL NOT NULL DEFAULT 0,
+    window_limit        REAL NOT NULL DEFAULT 0,
+    window_hours        INTEGER NOT NULL DEFAULT 24,
+    PRIMARY KEY (agent_id, action_class),
     FOREIGN KEY (agent_id) REFERENCES platform_agents(agent_id)
 );
 """
@@ -121,9 +136,6 @@ class SqlitePlatformStore:
         additions = [
             ("role", "TEXT NOT NULL DEFAULT 'unconfigured'"),
             ("authority_rank", "INTEGER NOT NULL DEFAULT 999"),
-            ("max_refund_amount", "REAL NOT NULL DEFAULT 0"),
-            ("refund_budget_limit", "REAL NOT NULL DEFAULT 0"),
-            ("refund_budget_window_hours", "INTEGER NOT NULL DEFAULT 24"),
         ]
         for name, ddl in additions:
             if name not in columns:

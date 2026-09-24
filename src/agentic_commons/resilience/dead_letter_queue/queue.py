@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS platform_resilience_dead_letter_queue (
     agent_id        TEXT NOT NULL,
     trace_id        TEXT NOT NULL DEFAULT '',
     session_id      TEXT NOT NULL DEFAULT '',
-    customer_id     INTEGER,
+    principal_id    TEXT,
     reason          TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'pending',
     payload         TEXT NOT NULL,
@@ -47,7 +47,10 @@ class DeadLetterEntry(BaseModel):
     agent_id: str
     trace_id: str = ""
     session_id: str = ""
-    customer_id: int | None = None
+    # Whoever the quarantined request was on behalf of. A string, and
+    # called `principal` rather than `customer`, because the platform
+    # quarantines requests for agents that have no customers.
+    principal_id: str | None = None
     reason: DeadLetterReason
     status: DeadLetterStatus = "pending"
     payload: str
@@ -90,7 +93,7 @@ class DeadLetterQueue:
         payload: str,
         trace_id: str = "",
         session_id: str = "",
-        customer_id: int | None = None,
+        principal_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> DeadLetterEntry | None:
         """Persist a rejected request for later human review."""
@@ -100,7 +103,7 @@ class DeadLetterQueue:
         self._store.execute(
             """
             INSERT INTO platform_resilience_dead_letter_queue (
-                agent_id, trace_id, session_id, customer_id, reason, status,
+                agent_id, trace_id, session_id, principal_id, reason, status,
                 payload, metadata, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
             """,
@@ -108,7 +111,7 @@ class DeadLetterQueue:
                 self._agent_id,
                 trace_id,
                 session_id,
-                customer_id,
+                principal_id,
                 reason,
                 payload,
                 _json(metadata or {}),
@@ -180,7 +183,9 @@ def _entry(row: dict[str, Any]) -> DeadLetterEntry:
         agent_id=str(row["agent_id"]),
         trace_id=str(row.get("trace_id") or ""),
         session_id=str(row.get("session_id") or ""),
-        customer_id=(int(row["customer_id"]) if row.get("customer_id") is not None else None),
+        principal_id=(
+            str(row["principal_id"]) if row.get("principal_id") is not None else None
+        ),
         reason=row["reason"],
         status=row["status"],
         payload=str(row["payload"]),

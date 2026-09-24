@@ -1,16 +1,19 @@
 """Console slash commands (LLD §20).
 
 An operator asking the harness about itself: `/audit`, `/config`,
-`/orders`, `/eval`. None of them reaches a model and none appears in the
+`/harness`, `/eval`. None of them reaches a model and none appears in the
 customer's transcript — inspecting the system should not consume the
 customer's token budget, and a command answered by a model could be
 wrong about what the system contains.
 
-Add a command by writing a class with `name`, `summary`, `usage` and an
-async `run`, then listing it in `registry._default_commands`.
+Add a *platform* command by writing a class with `name`, `summary`,
+`usage` and an async `run`, then listing it in
+`registry._default_commands`. A command that reads one product's tables
+is not a platform command: it belongs to that agent and reaches the
+console through its `AgentHost`.
 """
 
-from agentic_commons.commands.data import MemoryCommand, OrdersCommand, UsersCommand
+from agentic_commons.commands.data import MemoryCommand
 from agentic_commons.commands.harness import (
     CascadeCommand,
     EvalCommand,
@@ -23,7 +26,6 @@ from agentic_commons.commands.inspection import (
     AuditCommand,
     ConfigCommand,
     ModelCommand,
-    QueueCommand,
     SloCommand,
 )
 from agentic_commons.commands.registry import PREFIX, CommandRegistry
@@ -60,11 +62,8 @@ __all__ = [
     "HelpCommand",
     "LogsCommand",
     "MemoryCommand",
-    "OrdersCommand",
     "PatternsCommand",
-    "QueueCommand",
     "SessionCommand",
     "SloCommand",
     "ToolsCommand",
-    "UsersCommand",
 ]

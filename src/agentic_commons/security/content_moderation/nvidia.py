@@ -10,6 +10,7 @@ from typing import Any, Protocol, runtime_checkable
 
 import httpx
 
+from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger
 from agentic_commons.resilience import ResilientCaller, external_api_error_fields
 from agentic_commons.security.guard_types import GuardVerdict
@@ -68,7 +69,7 @@ class NvidiaHostedContentSafetyGuard:
         payload = {
             "model": self._model,
             "messages": [
-                {"role": "system", "content": _NEMOTRON_SAFETY_SYSTEM_PROMPT},
+                {"role": "system", "content": _safety_system_prompt()},
                 {"role": "user", "content": text},
             ],
             "max_tokens": self._max_tokens,
@@ -147,11 +148,14 @@ def _extract_chat_content(data: dict[str, Any]) -> str:
     return content.strip()
 
 
-_NEMOTRON_SAFETY_SYSTEM_PROMPT = """You are a content-safety classifier for a customer-support application.
-Classify only the latest user message. Return JSON and nothing else.
-Schema: {\"User Safety\":\"safe\"|\"unsafe\",\"Safety Categories\":\"comma-separated categories\"}.
-Omit Safety Categories when the message is safe. Ordinary customer-support requests are safe.
-"""
+def _safety_system_prompt() -> str:
+    """What the classifier is protecting, per configuration.
+
+    A literal here said this platform classifies for a customer-support
+    application, which is a claim about the agent, not about content
+    safety. An agent that protects something else overrides it.
+    """
+    return get_settings().security.content_moderation.system_prompt
 
 
 def _parse_nemotron_safety_output(output: str) -> tuple[bool, list[str]]:

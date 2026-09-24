@@ -1,6 +1,12 @@
 .PHONY: help install clean test lint type-check format check-all run dummy-data logs llm-check \
 	tui verify episode episodes patterns venv-check test-verbose test-fast
 
+# Which agent this repo runs. The platform deliberately does not name one:
+# `agentic_commons/config.yaml` ships `overlays: []`, so the agent layer is
+# named here, where the decision about what to run actually lives. Change
+# this line to run a different agent; change nothing in the platform.
+export AGENTIC_OVERLAYS := src/customer_support_agent/config/config.yaml
+
 # Colors for output
 GREEN := \033[0;32m
 YELLOW := \033[0;33m
@@ -93,7 +99,7 @@ check-all: lint test
 
 run:
 	@echo "$(BLUE)Running customer support agent demo query...$(NC)"
-	./venv/bin/python -m customer_support_agent.dev.run_demo
+	./venv/bin/python -m customer_support_agent
 
 dummy-data:
 	@echo "$(BLUE)Generating dummy_data/seed_data.sql and building dummy_data/agentic.db...$(NC)"

@@ -22,13 +22,6 @@ from agentic_commons.logging import get_logger
 from agentic_commons.resilience import external_api_error_fields
 from agentic_commons.tools.types import ToolCall
 
-_PROMPT = (
-    "You are an advisory reviewer for an automated action. You cannot "
-    "block it; your note is recorded alongside the decision. In one "
-    "sentence, say whether this action looks unusual for a customer "
-    "support agent, and why.\n\nAction: {action}\nParameters: {params}"
-)
-
 
 @runtime_checkable
 class Tier2Advisor(Protocol):
@@ -46,7 +39,11 @@ class SemanticTier2Advisor:
 
     def __init__(self, client: LLMClient | None = None) -> None:
         self._client = client
-        self._enabled = get_settings().gatekeeper.tier2.enabled
+        tier2 = get_settings().gatekeeper.tier2
+        self._enabled = tier2.enabled
+        # Configured, not literal: "unusual for a *what*?" is the whole
+        # question, and the platform does not know what it is running.
+        self._prompt = tier2.prompt
         self._logger = get_logger("gatekeeper")
 
     async def flag(self, call: ToolCall) -> AdvisoryFlag:
@@ -64,7 +61,9 @@ class SemanticTier2Advisor:
                     messages=[
                         Message(
                             role="user",
-                            content=_PROMPT.format(action=call.action, params=call.params),
+                            content=self._prompt.format(
+                                action=call.action, params=call.params
+                            ),
                         )
                     ]
                 )

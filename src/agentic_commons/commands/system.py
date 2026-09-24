@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from agentic_commons.commands.types import CommandError, CommandResult, ConsoleEffect
 from agentic_commons.config import REPO_ROOT, get_settings
@@ -10,6 +10,7 @@ from agentic_commons.config.yaml_config import config_sources
 
 if TYPE_CHECKING:
     from agentic_commons.commands.registry import CommandRegistry
+    from agentic_commons.host import AgentHost
 
 
 class HelpCommand:
@@ -48,24 +49,37 @@ class HelpCommand:
 
 
 class SessionCommand:
-    """Show what this console is connected to."""
+    """Show what this console is connected to.
+
+    The provider, the database and the config layers are the platform's
+    to report. Who is on the other end of the conversation is not: a
+    verified customer is one agent's vocabulary, a tenant or a case
+    number would be another's. So the running agent contributes its own
+    rows and this command prints them, rather than importing one agent
+    to ask it.
+    """
 
     name = "session"
     summary = "Model, config sources and data in use"
     usage = "/session"
 
-    async def run(self, args: list[str]) -> CommandResult:
-        from customer_support_agent.core.identity import current_customer
+    def __init__(self, host: "AgentHost | None" = None, agent: Any = None) -> None:
+        self._host = host
+        self._agent = agent
 
+    def bind(self, host: "AgentHost | None", agent: Any) -> None:
+        """Attach the running host and agent, or detach on rebuild."""
+        self._host = host
+        self._agent = agent
+
+    async def run(self, args: list[str]) -> CommandResult:
         settings = get_settings()
         provider = settings.llm.providers[settings.llm.provider]
         trace = settings.tui.trace
-        customer = current_customer()
         result = CommandResult(title="Session")
         result.headers = ["field", "value"]
-        result.row(
-            "customer", f"{customer.name} (#{customer.customer_id})" if customer else "not verified"
-        )
+        for field, value in self._agent_rows():
+            result.row(field, value)
         result.row("provider", settings.llm.provider)
         result.row("model", provider.model)
         result.row("max tokens", str(settings.llm.max_tokens))
@@ -83,6 +97,12 @@ class SessionCommand:
         result.row("log level", f"file {logging_settings.file_level}, screen {trace.level}")
         result.row("trace on screen", "yes" if trace.enabled else "no — /debug on")
         return result
+
+    def _agent_rows(self) -> list[tuple[str, str]]:
+        """Whatever the running agent wants shown, or nothing."""
+        if self._host is None:
+            return []
+        return list(self._host.session_rows(self._agent))
 
 
 class LogsCommand:

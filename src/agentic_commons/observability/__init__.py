@@ -36,8 +36,10 @@ from agentic_commons.observability.types import (
 
 __all__ = [
     "CostAggregator",
+    "DuckDbObservabilityStore",
     "CostAggregatorImpl",
     "CostComponent",
+    "create_observability_store",
     "EventKind",
     "CostStack",
     "InMemoryLiveStatusFeed",

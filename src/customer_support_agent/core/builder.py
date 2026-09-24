@@ -58,7 +58,7 @@ from agentic_commons.security import (
     SecuritySuite,
     TermContentModerator,
 )
-from agentic_commons.security.auth.policy import AgentPolicyRepository
+from agentic_commons.security.auth.policy import AgentPolicy, AgentPolicyRepository
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.core.authentication import CustomerAuthenticator
@@ -77,6 +77,10 @@ from customer_support_agent.core.repositories import (
 from customer_support_agent.core.review import ReviewQueueService
 from customer_support_agent.core.schema import Order, policy_text
 from customer_support_agent.core.tools import CustomerSupportToolHandler, SupportTools
+
+# Used only when this agent declares no budgeted action at all, in which
+# case the window never matters because nothing is charged against it.
+DEFAULT_WINDOW_HOURS = 24
 
 
 class PolicyContextSource:
@@ -229,6 +233,32 @@ def _build_memory(
     )
 
 
+def _cumulative_ledger(
+    platform_store: SqlitePlatformStore,
+    agent_id: str,
+    policy: AgentPolicy,
+    ledger_enabled: bool,
+) -> CumulativeLedger:
+    """The rolling budget this agent's write actions are charged against.
+
+    Both halves come from outside this function. Which tool belongs to
+    which budget class is the agent's mapping, read from its config; what
+    each class may spend is the agent's persisted policy. A literal
+    `{"process_refund": "refund"}` here was a policy decision hiding in
+    wiring — the next budgeted tool would have had to be added in Python
+    rather than in configuration.
+    """
+    limits = policy.limits.values()
+    return CumulativeLedger(
+        platform_store,
+        agent_id=agent_id,
+        enabled=ledger_enabled,
+        action_classes=get_agent_settings().action_classes,
+        thresholds={limit.action_class: limit.window for limit in limits},
+        window_hours=min((limit.window_hours for limit in limits), default=DEFAULT_WINDOW_HOURS),
+    )
+
+
 def build_agent(
     llm: LLMClient | None = None,
     pool: SqliteConnectionPool | None = None,
@@ -369,13 +399,8 @@ def build_agent(
         or GatekeeperImpl(
             authorizer=authorizer,
             policy=agent_policy,
-            ledger=CumulativeLedger(
-                platform_store,
-                agent_id=agent_id,
-                enabled=settings.gatekeeper.ledger.enabled,
-                action_classes={"process_refund": "refund"},
-                thresholds={"refund": agent_policy.refund_budget_limit},
-                window_hours=agent_policy.refund_budget_window_hours,
+            ledger=_cumulative_ledger(
+                platform_store, agent_id, agent_policy, settings.gatekeeper.ledger.enabled
             ),
             audit=ledger,
             business_rules=CustomerSupportBusinessRules(orders, hitl, agent_policy),
