@@ -559,19 +559,29 @@ prompt-injection suite.
 
 ---
 
-## 11.1 `gatekeeper.mandate` — what was actually asked for
+## 11.1 `gatekeeper.mandate` — what a write may act on
 
 **Purpose.** The other Gatekeeper checks ask whether an action is
-*legal*. None asked whether it was *requested*, and those are different
-questions: a refund for the right customer, on an order they own, within
-every limit, is still the wrong refund if they asked about a different
-order.
+*legal*. None asks *what it acts on*, and those are different questions:
+a refund for the right customer, within every limit, is still the wrong
+refund if it names an order the conversation was never about.
 
 Before this, WRITE authorization was implicit in tool availability —
 classifying an intent as a refund request put the refund tool on the
 menu, and the `offered` check only confirmed the menu had been respected.
 Exposure and authorization were the same act, so anything that widened
 exposure widened authority.
+
+**What this check is not.** It does not certify that the person
+*requested* the action. It once tried to, by matching their message
+against a list of phrases, and that failed in both directions in
+production: `"redunf for order 10979"` — one typo — denied a legitimate
+refund, while the bare word "refund" in the list turned `"do not refund
+order 10979"` into authorization to refund it. Deciding what a sentence
+means is language work and belongs to the model; deciding whether the
+action may proceed is deterministic and belongs to the agent's business
+rules (ownership, eligibility, prior refunds, amount, limits). This check
+is the narrow question between them: *which record*.
 
 **Interfaces**
 
@@ -585,20 +595,26 @@ class ActionMandate(BaseModel):
     turn: int
 
 class MandateIssuer(Protocol):
-    def mandates_for(self, subject_id: str, query: str, turn: int) -> list[ActionMandate]: ...
+    def mandates_for(
+        self, subject_id: str, query: str, turn: int,
+        context: Mapping[str, object] | None = None,
+    ) -> list[ActionMandate]: ...
 ```
 
 **Where it runs.** A `mandate` check sits immediately after `offered` in
-`GatekeeperImpl._CHECK_ORDER`. A side-effecting call with no covering
-mandate is denied `NO_MANDATE_FOR_ACTION`. Reads are skipped. A `None`
-mandate set means no issuer is wired and is reported as such; an *empty*
-set means the issuer looked and found nothing was asked for, and a write
-is refused.
+`GatekeeperImpl._CHECK_ORDER`. A side-effecting call naming a record the
+turn did not establish is denied `TARGET_NOT_IN_SCOPE`. Reads are
+skipped. A `None` set means no issuer is wired and is reported as such;
+an *empty* set means the issuer looked and found no established target,
+so a write has nothing it may legitimately act on.
 
 **The rule the platform imposes.** A mandate is issued from what the
-person said and what the record holds — never from model output. A
+person supplied and what the record holds — never from model output. A
 mandate derived from the model's own proposal authorizes the model to
-authorize itself.
+authorize itself. `context` carries what the turn established before the
+model ran; an issuer that reaches into `query` to decide *whether* the
+person wanted something has put language work back in the authorization
+path.
 
 **Config surface.** `GATEKEEPER__MANDATE__TARGET_PARAM` — which call
 parameter names the thing being acted on. Empty in the platform
@@ -1345,6 +1361,6 @@ verification.
 | Every retry is idempotent | `tests/integration/test_resilience_idempotency.py` |
 | No `MemoryStore` Protocol without a real implementation | mypy --strict, CI-gated |
 | No side-effecting result becomes authoritative without a verification report | `tests/integration/test_effect_verification.py` |
-| No write executes without a covering Action Mandate | `tests/integration/test_mandates.py` |
+| No write executes outside the established target's scope | `tests/unit/test_gatekeeper.py::TestWritesAreScopedToTheEstablishedOrder` |
 | `agentic_commons` names no specific agent | `tests/unit/test_platform_boundary.py` |
 | Coverage ≥ 80% on every merged module | CI-gated, no exceptions without sign-off |

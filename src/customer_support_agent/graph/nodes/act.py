@@ -34,6 +34,33 @@ from customer_support_agent.presentation.reporting import (
     tool_result_fields,
 )
 
+# Appended to every deterministic refusal. The model is good at reading
+# instructions and bad at guessing whether an error is worth retrying;
+# the duplicate-suppression path already learned this lesson.
+_FINAL = (
+    "This decision is deterministic and will not change if you call it again — "
+    "do not retry it. Tell the customer what happened instead."
+)
+
+# Verdicts that cannot become an allow by re-proposing with different
+# arguments. `escalate` is already terminal for the turn; these are the
+# denials that are terminal for the same reason.
+_TERMINAL_DENIALS = frozenset({
+    "TARGET_NOT_IN_SCOPE",
+    "ACTION_NOT_OFFERED",
+    "ACTOR_NOT_AUTHORIZED",
+})
+
+
+def _has_terminal_denial(invocations: list[dict[str, Any]]) -> bool:
+    """Whether any proposal this turn was refused for a reason that will not move."""
+    return any(
+        isinstance(item.get("gatekeeper"), dict)
+        and item["gatekeeper"].get("decision") == "deny"
+        and item["gatekeeper"].get("reason_code") in _TERMINAL_DENIALS
+        for item in invocations
+    )
+
 
 class ToolUseNodes(NodeSupport):
     async def act(self, state: AgentState) -> dict[str, Any]:
@@ -95,6 +122,11 @@ class ToolUseNodes(NodeSupport):
             "metadata": {
                 **state.metadata,
                 "last_tool_invocations": invocation_fields_history,
+                # A refusal that cannot become an allow ends the tool loop
+                # the way an escalation does. Sending the model back to
+                # reason() after one bought three identical proposals and
+                # the iteration ceiling.
+                "refusal_is_final": _has_terminal_denial(invocation_fields_history),
             },
         }
 
@@ -272,7 +304,7 @@ class ToolUseNodes(NodeSupport):
             )
             if decision.question == "offered":
                 self._logger.warning("Model called a tool it was not offered", tool=call.action)
-                text = f"'{call.action}' is not available for this request."
+                text = f"'{call.action}' is not available for this request. {_FINAL}"
                 result_fields = {
                     "tool": call.action,
                     "result": "not_offered",
@@ -286,12 +318,20 @@ class ToolUseNodes(NodeSupport):
                     "execution_status": "not_executed",
                 }
             else:
-                text = f"That action was not permitted: {decision.reason}"
+                # Say that it is final. The previous wording read like a
+                # transient failure, and the model answered it the way it
+                # answers those — by trying again, three times, until the
+                # iteration cap. A deterministic verdict does not move.
+                text = f"That action was not permitted: {decision.reason} {_FINAL}"
                 result_fields = {
                     "tool": call.action,
                     "result": "not_executed",
                     "execution_status": "not_executed",
                 }
+            # Remember the refusal so an identical retry is caught by the
+            # duplicate detector, which otherwise only knows about calls
+            # that succeeded.
+            self._control_loop.record_refusal(call, text)
             self._reporter_blocked(
                 "tool_result",
                 summary=f"Tool not executed: {call.action}",
@@ -392,7 +432,13 @@ class ToolUseNodes(NodeSupport):
             return None
         return MandateSet(
             mandates=self._mandate_issuer.mandates_for(
-                str(state.customer_id), state.query, state.tool_rounds
+                str(state.customer_id),
+                state.query,
+                state.tool_rounds,
+                # What this turn established before the model was
+                # consulted. The issuer decides what of it is evidence;
+                # nothing the model has since proposed is in here.
+                state.metadata,
             )
         )
 

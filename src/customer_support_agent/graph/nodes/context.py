@@ -1,9 +1,15 @@
 """Assembling the window the model is handed, and writing back to memory.
 
-The policy and the facts of this conversation are pinned: they are not
-retrieval results competing on relevance, and an agent that drops its own
-refund policy under budget pressure is not a narrower agent, it is a
-wrong one.
+The facts of this conversation are pinned: the compact working-memory
+state is what anchors the turn, and it is small enough that budget
+pressure should never be the reason it goes. The transcript is not
+pinned — it is the largest thing in the window and the most repetitive,
+and a turn that cannot afford it is better off trimming it than dropping
+a retrieved order.
+
+The refund policy is not here at all. It reaches the model in the system
+prompt, which is always present and never trimmed; contributing a second
+verbatim copy from here meant the model read the same eight lines twice.
 """
 
 from collections import Counter
@@ -11,9 +17,9 @@ from typing import Any
 
 from agentic_commons.context import Context, Task
 from agentic_commons.llm.embeddings import tokenize
+from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
-from customer_support_agent.prompts.policy import policy_text
 
 
 class ContextNodes(NodeSupport):
@@ -40,6 +46,11 @@ class ContextNodes(NodeSupport):
             "working_memory_state": working_state,
         }
 
+    def _task_metadata(self, state: AgentState) -> dict[str, Any]:
+        """What this turn has settled that assembly should know about."""
+        order_id = state.metadata.get(ORDER_UNDER_DISCUSSION)
+        return {ORDER_UNDER_DISCUSSION: order_id} if order_id is not None else {}
+
     async def assemble_context(self, state: AgentState) -> dict[str, Any]:
         """Build the window: policy, recalled memory, and the query."""
         self._report(
@@ -48,20 +59,33 @@ class ContextNodes(NodeSupport):
             summary="Assembling the model context window",
         )
         if self._context is None:
-            context = policy_text()
+            # Nothing to assemble, and nothing that needs standing in for
+            # it: the refund policy reaches the model in the system
+            # prompt either way, so an agent with context assembly
+            # withheld is one that reasons without *retrieved* material,
+            # not one that reasons without its own policy.
             self._done(
                 "context_assembly",
-                summary="Policy context loaded · working memory read",
+                summary="Context assembly withheld · working memory read",
                 event_kind="context",
                 fields={
-                    "source": "policy",
-                    "used_tokens": len(tokenize(context)),
+                    "source": "none",
+                    "used_tokens": 0,
                     **self._working_memory_fields(state),
                 },
             )
-            return {"context": Context(items=[context])}
+            return {"context": Context()}
         assembled = await self._context.assemble(
-            Task(query=state.query, session_id=state.session_id, actor=state.actor)
+            Task(
+                query=state.query,
+                session_id=state.session_id,
+                actor=state.actor,
+                # Assembly needs the task, not just the words. "I want a
+                # refund" names no order; the turn already knows which
+                # one it is about, and a source that is told stops
+                # guessing.
+                metadata=self._task_metadata(state),
+            )
         )
         fitted = self._strategies.fit(assembled)
         decisions = [f"context: {fitted.used_tokens}/{fitted.budget_tokens} tokens"]

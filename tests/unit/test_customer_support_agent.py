@@ -162,7 +162,7 @@ class TestTools:
         by_name = {tool.name: tool for tool in tools.definitions()}
         assert by_name["process_refund"].reversible is False
         assert by_name["queue_for_approval"].surface == "append_only"
-        assert by_name["get_order_status"].blast_radius == "single_record"
+        assert by_name["get_order_status"].surface == "editable"
 
 
 class TestRefundSaga:

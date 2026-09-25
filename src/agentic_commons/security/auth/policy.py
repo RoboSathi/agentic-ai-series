@@ -1,7 +1,7 @@
 """Small DB-backed runtime policy for one deployed agent.
 
-Design-time autonomy decisions (Sheridan / Three Gates) are intentionally not
-stored here. This module only loads runtime authority and operational limits.
+Design-time autonomy decisions are intentionally not stored here. This module
+only loads runtime authority and operational limits.
 """
 
 from __future__ import annotations

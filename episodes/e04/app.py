@@ -3,53 +3,45 @@
 The choice is not about sophistication. It is about who decides the
 control flow: a person at design time (WF) or a model at run time (AG).
 
-The Three Gates decide: how many paths lead to the outcome, how far the
-damage reaches if it is wrong, and whether the result can be checked
-afterwards. An open-ended path with a wide blast radius and no
-certifiable result is the profile that should not be automated — and
-naming *which* gate failed turns "this feels risky" into an argument.
+That is a decision, and a decision needs a record. A catalogue entry
+therefore says both when a shape fits and when it does not — `avoid_when`
+is the half that matters at 2am, because the reason a pattern was chosen
+is rarely the reason it later hurt.
 
 Exit artifact: the pattern-selection decision record.
 """
 
-from agentic_commons.gatekeeper import ThreeGatesEvaluator
-from design_patterns import ALL_PATTERNS, by_family, depth_map, requiring_human_oversight
+from design_patterns import ALL_PATTERNS, by_family, depth_map
 from episodes._shared import EpisodeOutput, main
-
-CANDIDATES = [
-    ("look up an order", "single", "single_record", True),
-    ("refund under the threshold", "bounded", "account", True),
-    ("decide a disputed refund", "open", "account", False),
-    ("rewrite the refund policy", "open", "global", False),
-]
 
 
 async def run() -> EpisodeOutput:
-    """Score candidate tasks through the Three Gates and print the record."""
+    """Print the catalogue as a decision record, split by who decides the path."""
     output = EpisodeOutput(
         episode="E04",
         title="Workflow, Agent, or Hybrid?",
         principle="Who decides the control flow — a person at design time, or a model at run time.",
     )
-    gates = ThreeGatesEvaluator()
-
-    output.say("[bold]The Three Gates[/bold] — path cardinality × blast radius × certifiability")
-    for task, cardinality, radius, certifiable in CANDIDATES:
-        result = gates.evaluate(cardinality, radius, certifiable)  # type: ignore[arg-type]
-        mark = "pass" if result.passes else "FAIL"
-        output.say(f"  {task:<28} {mark:>4}  — {result.reason}")
 
     workflow, agentic = by_family("WF"), by_family("AG")
-    output.say("")
     output.say(f"[bold]The catalogue[/bold]: {len(workflow)} workflow, {len(agentic)} agentic")
-    output.say(f"  WF: {', '.join(card.name for card in workflow)}")
-    output.say(f"  AG: {', '.join(card.name for card in agentic)}")
-
-    oversight = requiring_human_oversight()
     output.say("")
-    output.say("Patterns the gates say should not run unattended:")
-    for card in oversight:
-        output.say(f"  {card.name} — {card.avoid_when}")
+
+    output.say("[bold]WF[/bold] — a person fixed the path before anything ran")
+    for card in workflow:
+        output.say(f"  {card.name:<24} use when {card.use_when}")
+
+    output.say("")
+    output.say("[bold]AG[/bold] — a model chooses the path while it runs")
+    for card in agentic:
+        output.say(f"  {card.name:<24} use when {card.use_when}")
+
+    # The half of the record nobody writes down, and the only half that
+    # is any use once the pattern is already in production.
+    output.say("")
+    output.say("[bold]And when not to[/bold]")
+    for card in ALL_PATTERNS:
+        output.say(f"  {card.name:<24} avoid when {card.avoid_when}")
 
     return output.model_copy(
         update={
@@ -57,8 +49,9 @@ async def run() -> EpisodeOutput:
                 "patterns": len(ALL_PATTERNS),
                 "workflow": len(workflow),
                 "agentic": len(agentic),
-                "needing oversight": ", ".join(card.name for card in oversight),
-                "depth map": f"{len(depth_map())} patterns mapped to the episode that builds each out",
+                "depth map": (
+                    f"{len(depth_map())} patterns mapped to the episode that builds each out"
+                ),
             }
         }
     )

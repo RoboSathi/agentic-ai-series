@@ -24,6 +24,7 @@ from customer_support_agent.presentation.reporting import (
 )
 from customer_support_agent.prompts.system_prompt import (
     build_reply_instruction,
+    build_reply_system_prompt,
 )
 
 
@@ -157,10 +158,7 @@ class FinalizeNodes(NodeSupport):
         # The reflector already logged what it found; saying it twice
         # here would double every rejection in the trace.
         request = CompletionRequest(
-            messages=[
-                *self._prompt_messages(state),
-                Message(role="user", content=build_reply_instruction()),
-            ],
+            messages=self._reply_messages(state),
             json_schema=CustomerResponse.model_json_schema(),
         )
         self._report_llm_request(request, purpose="reply_revision")
@@ -299,6 +297,25 @@ class FinalizeNodes(NodeSupport):
             "response": reply,
             "decisions": decisions,
         }
+
+    def _reply_messages(self, state: AgentState) -> list[Message]:
+        """The smallest payload that can write this reply.
+
+        What writing a reply needs is what the customer asked and what
+        the tools actually returned — the latter because the reply is
+        checked against it immediately afterwards, so anything not in
+        here is an unsupported claim by construction. What it does not
+        need is the tool-selection prompt, the refund policy or the
+        retrieved order corpus: no tool is offered on this call, there is
+        nothing left to decide, and every one of those was re-read in
+        full to produce two sentences.
+        """
+        return [
+            Message(role="system", content=build_reply_system_prompt()),
+            Message(role="user", content=state.model_query or state.query),
+            *self._current_messages(state),
+            Message(role="user", content=build_reply_instruction()),
+        ]
 
     def _resampler(self, state: AgentState) -> Resampler:
         """Ask the model the same question again, n more times.

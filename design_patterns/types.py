@@ -14,10 +14,6 @@ from pydantic import BaseModel, Field
 # AG: the path is chosen at run time by a model.
 PatternFamily = Literal["WF", "AG"]
 
-# The Three Gates (E04/E15) — what decides which family a task belongs to.
-PathCardinality = Literal["single", "bounded", "open"]
-BlastRadius = Literal["single_record", "account", "tenant", "global"]
-
 
 class Step(BaseModel):
     """One observable step of a pattern's execution.
@@ -74,21 +70,5 @@ class PatternCard(BaseModel):
     summary: str
     use_when: str
     avoid_when: str
-    path_cardinality: PathCardinality
-    blast_radius: BlastRadius
-    certifiable: bool
     depth_episode: str
     module: str = ""
-
-    @property
-    def gates_pass(self) -> bool:
-        """Whether the Three Gates permit this shape without a human in line.
-
-        An open-ended path with a wide blast radius and no certifiable
-        result is the profile that should not be automated — naming which
-        gate fails turns "this feels risky" into an argument.
-        """
-        wide = self.blast_radius in {"tenant", "global"}
-        if self.path_cardinality == "open" and wide:
-            return False
-        return not (not self.certifiable and (wide or self.path_cardinality == "open"))

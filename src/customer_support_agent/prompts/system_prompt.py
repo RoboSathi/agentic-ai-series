@@ -12,10 +12,7 @@ the model toward unnecessary tool calls wastes money and fills the review
 queue, which is worth fixing on its own terms.
 """
 
-from pathlib import Path
-
-
-_POLICY_FILE = Path(__file__).resolve().parent / "customer_policy.md"
+from customer_support_agent.prompts.policy import policy_text
 
 _INSTRUCTIONS = """You are a customer support agent for an online store.
 
@@ -58,8 +55,17 @@ Use tools only when the customer's message is about a specific order:
 When you have what you need, stop calling tools and reply to the
 customer.
 
-# Refund Policy
 {policy}
+"""
+
+
+_REPLY_SYSTEM = """You are a customer support agent for an online store,
+writing the message the customer will read.
+
+Everything you may state has already been established. Write from what
+you are given and add nothing to it: no amount, date, tracking number or
+outcome that is not in front of you, and no policy explanation nobody
+asked for.
 """
 
 
@@ -76,6 +82,19 @@ this.
 """
 
 
+def build_reply_system_prompt() -> str:
+    """The system prompt for the final, customer-facing turn.
+
+    Deliberately not `build_system_prompt`. That prompt exists to help
+    the model *choose a tool*: it is most of a page of tool instructions
+    and the full refund policy, and none of it bears on phrasing a
+    sentence for somebody who is waiting. Reusing it meant the last call
+    of every turn — the one that offers no tools at all — re-read the
+    whole policy and every retrieved order to write two lines.
+    """
+    return _REPLY_SYSTEM
+
+
 def build_reply_instruction() -> str:
     """The instruction used for the final, customer-facing turn.
 
@@ -89,5 +108,17 @@ def build_reply_instruction() -> str:
 
 
 def build_system_prompt() -> str:
-    """Build the customer-support system prompt from the local policy file."""
-    return _INSTRUCTIONS.format(policy=_POLICY_FILE.read_text())
+    """Build the customer-support system prompt from the local policy file.
+
+    The policy file carries its own `# Refund Policy` heading, so this
+    template does not add a second one. It is also the *only* place the
+    policy reaches the model: the assembled context window deliberately
+    contributes no policy chunk, because a second verbatim copy teaches
+    the model nothing and costs a third of the window.
+
+    Loaded through `policy_text`, which reads the configured path. There
+    was briefly a second loader here with the filename written into it,
+    and two loaders is one too many: the one that can be pointed at a
+    different policy without editing code is the one that survives.
+    """
+    return _INSTRUCTIONS.format(policy=policy_text().strip())

@@ -158,8 +158,11 @@ sequenceDiagram
   regardless of who or what appears to be asking (Zero Trust, E12/E30).
 - **Exposure is not authorization.** Which tools a turn offers and which
   actions it authorizes are separate decisions. A side-effecting call
-  must be covered by an Action Mandate issued from what the person asked
-  and what the record holds — never from what the model proposed.
+  must be covered by an Action Mandate scoping it to a record the person
+  themselves established — never to one the model nominated. Whether they
+  *asked* for the action is read by the model; whether it may proceed is
+  settled deterministically by the agent's business rules. A keyword list
+  standing in for either gets both wrong.
 - **A side effect is not believed until it is read back.** "The executor
   returned success" and "the world changed" are different claims. An
   unverified result never becomes authoritative, so no customer-facing

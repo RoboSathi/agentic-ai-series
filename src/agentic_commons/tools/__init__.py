@@ -7,8 +7,6 @@ from agentic_commons.tools.selector import (
     ToolRetrievalSelector,
 )
 from agentic_commons.tools.types import (
-    BlastRadius,
-    PathCardinality,
     SurfaceClass,
     ToolCall,
     ToolDefinition,
@@ -19,9 +17,7 @@ from agentic_commons.tools.types import (
 )
 
 __all__ = [
-    "BlastRadius",
     "NamespacedToolRegistry",
-    "PathCardinality",
     "RelevanceRanker",
     "SelectionMetrics",
     "SurfaceClass",

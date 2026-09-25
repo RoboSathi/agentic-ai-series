@@ -91,6 +91,27 @@ def render_order_list(orders: list[Order]) -> str:
     return "\n".join([f"Your {len(orders)} orders:", "", *_menu_lines(orders)])
 
 
+def summarise_verification(name: str, order_count: int) -> str:
+    """The verification greeting as working memory should keep it."""
+    return f"Verified {name} and listed their {order_count} orders."
+
+
+def summarise_order_list(orders: list[Order]) -> str:
+    """The order list as working memory should keep it.
+
+    The rendered table is forty lines wide and is the right answer on
+    screen. Replayed into every subsequent prompt it is forty lines of
+    the model re-reading orders nobody has mentioned since — which is
+    how a fifteen-word refund request came to cost three thousand tokens.
+    What the model actually needs carried forward is that the list was
+    shown and how long it was; the orders themselves are one scoped
+    repository read away on the turn that names one.
+    """
+    if not orders:
+        return "Told the customer they have no orders on this account."
+    return f"Listed the customer's {len(orders)} orders for them to choose from."
+
+
 def render_order_detail(order: Order, include_refund: bool = False) -> str:
     """What is known about one order.
 

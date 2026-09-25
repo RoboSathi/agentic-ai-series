@@ -49,6 +49,10 @@ from customer_support_agent.control_loop import OutputQualityGate
 from customer_support_agent.domain.identity import (
     Customer,
 )
+from customer_support_agent.domain.order_reference import (
+    ORDER_UNDER_DISCUSSION,
+    OrderReferenceResolver,
+)
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.intent.router import CustomerSupportIntentRouter, Intent
 from customer_support_agent.observability.accounting import TurnAccountant
@@ -91,6 +95,7 @@ class NodeSupport:
     _intents: CustomerSupportIntentRouter
     _authenticator: CustomerAuthenticator | None
     _orders: OrdersRepository | None
+    _order_reference: OrderReferenceResolver
     _basic_sanity: BasicSanityChecker | None
     _deliberation_markers: list[str]
     _max_rounds: int
@@ -186,8 +191,30 @@ class NodeSupport:
         raise NotImplementedError
 
     def _resolve_read_order_id(self, state: AgentState) -> int | None:
-        """Which order a read-shaped request is about, if any."""
-        raise NotImplementedError
+        """Which order this request is about, if any.
+
+        Shared rather than per-node: the read path and the write path
+        disagreeing about which order is under discussion is how an agent
+        answers about one order and acts on another.
+        """
+        return self._order_reference.resolve(
+            state.query, state.metadata, state.working_memory
+        )
+
+    def _carry_order_reference(self, state: AgentState) -> dict[str, Any]:
+        """Settle the order under discussion for every stage after this one.
+
+        Resolved once, early, and carried in the turn's metadata, because
+        three components need the same answer: BasicSanity, which will
+        not guess an identifier; retrieval, which otherwise ranks eleven
+        near-identical orders against a query that names none; and the
+        mandate issuer, which must know what the customer asked about
+        before it can say whether they asked for this.
+        """
+        order_id = self._resolve_read_order_id(state)
+        if order_id is None:
+            return {}
+        return {"metadata": {**state.metadata, ORDER_UNDER_DISCUSSION: order_id}}
 
     def history_for(self, session_id: str) -> list[Message]:
         """The bounded conversation history from common working memory."""
@@ -284,12 +311,31 @@ class NodeSupport:
             },
         )
 
-    def _halt(self, state: AgentState, response: str, decision: str) -> dict[str, Any]:
-        """Answer now, without reaching the model."""
+    def _halt(
+        self,
+        state: AgentState,
+        response: str,
+        decision: str,
+        *,
+        remembered_as: str | None = None,
+    ) -> dict[str, Any]:
+        """Answer now, without reaching the model.
+
+        `remembered_as` is what this answer looks like in working memory,
+        for the answers that are much larger on screen than they are in
+        substance. A rendered table of every order the customer has
+        placed is the right reply to "show me my orders" and the wrong
+        thing to replay into every prompt for the rest of the session;
+        the customer still sees the table, and the model reads the line.
+        """
         return {
             "response": response,
             "decisions": [*state.decisions, decision],
-            "metadata": {**state.metadata, "halted": "answered_from_db"},
+            "metadata": {
+                **state.metadata,
+                "halted": "answered_from_db",
+                **({} if remembered_as is None else {"memory_response": remembered_as}),
+            },
         }
 
     def _record_slo(self, metric: str, value: float) -> None:

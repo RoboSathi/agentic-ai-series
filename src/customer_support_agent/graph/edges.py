@@ -169,6 +169,12 @@ class GraphWiring(NodeSupport):
         # side effect after the system has explicitly handed control to a human.
         if state.escalated:
             return "finalize"
+        # Some refusals are terminal for the same reason: no re-proposal
+        # with different arguments can turn them into an allow. Sending the
+        # model back to try again buys a slower version of the same answer,
+        # which is how one refused refund became three and then the cap.
+        if state.metadata.get("refusal_is_final"):
+            return "finalize"
         next_round = state.tool_rounds + 1
         if next_round <= self._max_rounds:
             return "reason"

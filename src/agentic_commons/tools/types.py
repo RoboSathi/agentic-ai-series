@@ -9,8 +9,6 @@ WIRE_SEPARATOR = "__"
 WIRE_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 SurfaceClass = Literal["locked", "editable", "append_only", "human_controlled"]
-BlastRadius = Literal["single_record", "account", "tenant", "global"]
-PathCardinality = Literal["single", "bounded", "open"]
 
 
 class ToolResult(BaseModel):
@@ -36,9 +34,6 @@ class ToolDefinition(BaseModel):
     args_schema: type[BaseModel]
     handler: ToolHandler
     surface: SurfaceClass = "editable"
-    blast_radius: BlastRadius = "single_record"
-    path_cardinality: PathCardinality = "bounded"
-    certifiable: bool = True
     reversible: bool = True
     side_effecting: bool = False
     requires_authority_rank: int = 5
@@ -70,9 +65,6 @@ class ToolCall(BaseModel):
     action: str
     params: dict[str, Any] = Field(default_factory=dict)
     surface: SurfaceClass = "editable"
-    blast_radius: BlastRadius = "single_record"
-    path_cardinality: PathCardinality = "bounded"
-    certifiable: bool = True
     reversible: bool = True
     side_effecting: bool = False
     requires_authority_rank: int = 5

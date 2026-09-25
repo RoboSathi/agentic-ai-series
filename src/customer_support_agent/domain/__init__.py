@@ -15,13 +15,19 @@ from customer_support_agent.domain.models import (
     RefundStatus,
     User,
 )
+from customer_support_agent.domain.order_reference import (
+    ORDER_UNDER_DISCUSSION,
+    OrderReferenceResolver,
+)
 
 __all__ = [
+    "ORDER_UNDER_DISCUSSION",
     "REFUNDABLE_ORDER_STATUSES",
     "Customer",
     "HitlRequest",
     "HitlStatus",
     "Order",
+    "OrderReferenceResolver",
     "OrderStatus",
     "RefundStatus",
     "User",

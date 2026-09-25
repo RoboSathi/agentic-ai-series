@@ -137,18 +137,17 @@ class ToolsCommand:
         automation = get_settings().gatekeeper.automation
 
         result = CommandResult(title=f"{len(definitions)} registered tools")
-        result.headers = ["tool", "surface", "blast radius", "reversible", "sheridan"]
+        result.headers = ["tool", "surface", "reversible", "sheridan"]
         for tool in definitions:
             level = automation.levels.get(tool.name, automation.human_approval_below)
             result.row(
                 tool.qualified_name,
                 tool.surface,
-                tool.blast_radius,
                 "yes" if tool.reversible else "no",
                 str(level),
                 style="yellow" if not tool.reversible else "",
             )
-        result.line("Surface and blast radius are declared by the tool; the Gatekeeper reads them.")
+        result.line("Surface is declared by the tool; the Gatekeeper reads it.")
         return result
 
 
@@ -201,9 +200,7 @@ class PatternsCommand:
                 card.family,
                 card.depth_episode,
                 card.use_when[:48],
-                style="yellow" if not card.gates_pass else "",
             )
-        result.line("Rows in yellow are the ones the Three Gates say need a human in the line.")
         return result
 
 

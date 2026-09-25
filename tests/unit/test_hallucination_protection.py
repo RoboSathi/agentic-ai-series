@@ -257,3 +257,118 @@ class TestAThresholdIsJudgedOnItsOwnScale:
         )
         assert verdict.label == "supported"
         assert verdict.tier in NOLLM_TIERS
+
+
+class TestAnAbstentionIsNotAHallucination:
+    """Found in a live run: a true, tool-grounded reply was blocked.
+
+    The customer asked about a refund; the agent answered "your refund
+    request has not been initiated; the refund status currently shows
+    none", against a tool result reading `Order 10979 refund status:
+    none`. Every word of it was supported. The customer was shown "I
+    couldn't verify all of the details in that response."
+
+    The lexical fallback had returned `label="unknown"` — token coverage
+    36%, below its own 40% floor — which is the detector saying it cannot
+    tell. That reached the guardrail as `supported=False` and blocked the
+    reply. A heuristic that abstains must not be able to silence a
+    correct answer; only evidence to the contrary should.
+    """
+
+    EVIDENCE = [
+        Chunk(content="Order 10979 refund status: none", kind="tool_result"),
+        Chunk(
+            content=(
+                "Order 10979: Laptop Stand, Aluminium, delivered, "
+                "delivered on 2026-09-24, total $56.86"
+            ),
+            kind="tool_result",
+        ),
+    ]
+    DRAFT = (
+        "Your refund request for order 10979 has not been initiated; "
+        "the refund status currently shows none."
+    )
+
+    def test_the_live_draft_is_not_blocked(self) -> None:
+        guard = ResponseGuardrail(DetectionLadder(create_scoring_cascade()))
+        result = asyncio.run(guard.enforce(self.DRAFT, self.EVIDENCE))
+        assert result.escalated is False
+        assert result.response == self.DRAFT
+
+    def test_an_abstention_is_recorded_rather_than_counted_against(self) -> None:
+        """The trace still shows what went unchecked."""
+        assessment = asyncio.run(
+            DetectionLadder(create_scoring_cascade()).assess(self.DRAFT, self.EVIDENCE)
+        )
+        assert assessment.clean is True
+        assert assessment.unsupported == []
+        assert assessment.undetermined
+
+    def test_a_claim_the_record_refutes_is_still_blocked(self) -> None:
+        """The guard must still do the job it exists for."""
+        guard = ResponseGuardrail(DetectionLadder(create_scoring_cascade()))
+        result = asyncio.run(
+            guard.enforce(
+                "The refund for order 10979 has been completed and the money was sent.",
+                self.EVIDENCE,
+            )
+        )
+        assert result.escalated is True
+        assert result.reason_code == "TOOL_EVIDENCE_REFUND_STATE_MISMATCH"
+
+    def test_a_negated_claim_is_not_read_as_an_assertion(self) -> None:
+        """"No refund has been processed" carries the settled wording and denies it."""
+        guard = ResponseGuardrail(DetectionLadder(create_scoring_cascade()))
+        result = asyncio.run(
+            guard.enforce("No refund has been processed for order 10979 yet.", self.EVIDENCE)
+        )
+        assert result.escalated is False
+
+    def test_a_settled_claim_matching_the_record_passes(self) -> None:
+        settled = [Chunk(content="Order 10979 refund status: completed", kind="tool_result")]
+        guard = ResponseGuardrail(DetectionLadder(create_scoring_cascade()))
+        result = asyncio.run(
+            guard.enforce("The refund for order 10979 has been completed.", settled)
+        )
+        assert result.escalated is False
+
+
+class TestClaimsSplitOnSemicolons:
+    """The draft above was one claim because `;` was not a boundary.
+
+    Its two halves were then scored together against evidence that
+    matched only one of them, so a sentence half of which was verbatim
+    supported scored as entirely unsupported.
+    """
+
+    def test_a_semicolon_separates_two_claims(self) -> None:
+        claims = ClaimDecomposer().decompose(
+            "Your refund request has not been initiated; the refund status shows none."
+        )
+        assert [claim.text for claim in claims] == [
+            "Your refund request has not been initiated",
+            "the refund status shows none",
+        ]
+
+
+class TestRepairDoesNotRunTwiceForNothing:
+    """The reviser returning the draft unchanged means it had nothing to remove."""
+
+    def test_an_unchanged_revision_ends_the_loop(self) -> None:
+        calls: list[str] = []
+
+        async def revise(candidate: str, unsupported: list[str]) -> str:
+            calls.append(candidate)
+            return candidate
+
+        guard = ResponseGuardrail(DetectionLadder(create_scoring_cascade()))
+        evidence = [Chunk(content="Order 10001 refund status: none", kind="tool_result")]
+        asyncio.run(
+            guard.enforce(
+                "The refund for order 10001 has been completed.", evidence, revise=revise
+            )
+        )
+        # The deterministic refund-state check settles this before any
+        # repair is attempted, so the model is never asked.
+        assert calls == []

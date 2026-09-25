@@ -35,11 +35,31 @@ from agentic_commons.logging import get_logger, instrument, logged
 
 # Sentence boundaries, and the connectives that join two claims into one
 # sentence — both produce claims that must be checked separately.
-_SENTENCE = re.compile(r"(?<=[.!?])\s+")
+#
+# The semicolon belongs here for the same reason the full stop does. Left
+# out, "the refund has not been initiated; the status shows none" stayed a
+# single claim, and its two halves were scored against evidence that
+# matched only one of them — so a sentence half of which was verbatim
+# supported scored as entirely unsupported.
+_SENTENCE = re.compile(r"(?<=[.!?;])\s+")
 _CONJUNCTION = re.compile(r",?\s+\b(?:and|but|however|although|while)\b\s+")
 
 # A claim with no content words is not checkable ("Sure!", "Let me know.").
 _MIN_CONTENT_TOKENS = 3
+
+# The concrete details a reply can only get from the record: identifiers,
+# amounts, dates, weekdays. They are what separates a claim the detector
+# merely could not score from one that asserts something the evidence
+# does not contain — "the refund status shows none" against a line that
+# says exactly that, versus "your package will arrive on Tuesday" against
+# a line that mentions no day at all. The first is an abstention worth
+# tolerating; the second is a fabrication wearing the same score.
+_SPECIFIC = re.compile(
+    r"\d[\d,.:/-]*"
+    r"|\b(?:mon|tues|wednes|thurs|fri|satur|sun)day\b"
+    r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b",
+    re.IGNORECASE,
+)
 
 
 # Asks the same question again, n more times. Injected rather than held,
@@ -71,6 +91,13 @@ class HallucinationDetector(Protocol):
     async def score(self, claim: str, evidence: list[Chunk]) -> DetectionVerdict: ...
 
 
+def _novel_specifics(claim: str, retrieved: list[Chunk]) -> list[str]:
+    """Concrete details the claim states and the evidence never mentions."""
+    evidence = " ".join(chunk.content for chunk in retrieved).casefold()
+    found = {value.casefold().rstrip(".,:") for value in _SPECIFIC.findall(claim)}
+    return sorted(value for value in found if value and value not in evidence)
+
+
 class ClaimDecomposer:
     """Breaks a generation into atomic, separately checkable claims."""
 
@@ -79,7 +106,7 @@ class ClaimDecomposer:
         claims: list[AtomicClaim] = []
         for sentence in _SENTENCE.split(generation.strip()):
             for part in _CONJUNCTION.split(sentence):
-                text = part.strip().rstrip(".")
+                text = part.strip().rstrip(".;")
                 if not text:
                     continue
                 claims.append(
@@ -214,6 +241,7 @@ class GroundingResolver:
                     model=self._detector_model,
                 ),
                 supported=False,
+                undetermined=True,
             )
         if result.label == "entailment":
             # Name the detector that actually decided. Saying "NLI" when the
@@ -228,7 +256,29 @@ class GroundingResolver:
                     )
                 }
             )
-        return self._verdict(claim, retrieved, result, supported=False)
+        # Nothing here refuted the claim. A neutral label, or an
+        # entailment too weak to count, means the detector abstained —
+        # and an abstention from a token-overlap heuristic is not
+        # evidence that a tool-grounded sentence is a hallucination. It
+        # was, though: "unknown" reached the guardrail as `supported=False`
+        # and silenced a correct reply behind a generic apology.
+        #
+        # An abstention is only safe where the claim adds no detail of its
+        # own. One that introduces an amount, a date or an identifier the
+        # evidence never mentions is not unscored, it is unsourced — the
+        # detector's silence says nothing, and the specific says plenty.
+        novel = _novel_specifics(claim, retrieved)
+        if novel:
+            return self._verdict(
+                claim,
+                retrieved,
+                result,
+                supported=False,
+                rationale=(
+                    f"{', '.join(novel)} appear(s) in the claim but in no retrieved evidence"
+                ),
+            )
+        return self._verdict(claim, retrieved, result, supported=False, undetermined=True)
 
     def _is_decisive(self, result: EntailmentResult) -> bool:
         """Whether a result settles the claim, judged on its own scale.
@@ -257,6 +307,7 @@ class GroundingResolver:
         *,
         supported: bool,
         rationale: str | None = None,
+        undetermined: bool = False,
     ) -> DetectionVerdict:
         """Build an auditable verdict with the exact evidence sent to NLI."""
         detail = rationale or result.rationale
@@ -265,6 +316,7 @@ class GroundingResolver:
         return DetectionVerdict(
             claim=claim,
             supported=supported,
+            undetermined=undetermined,
             confidence=result.score,
             tier="nli_entailment",
             rationale=detail,
@@ -311,11 +363,17 @@ class DetectionLadder:
         claims = [claim for claim in self._decomposer.decompose(generation) if claim.is_verifiable]
         verdicts = [await self.score(claim.text, evidence) for claim in claims]
         agreement = await self._agreement(verdicts, generation, resample)
-        unsupported = [verdict.claim for verdict in verdicts if not verdict.supported]
+        unsupported = [
+            verdict.claim
+            for verdict in verdicts
+            if not verdict.supported and not verdict.undetermined
+        ]
+        undetermined = [verdict.claim for verdict in verdicts if verdict.undetermined]
         return GenerationAssessment(
             self_consistency=agreement,
             verdicts=verdicts,
             unsupported=unsupported,
+            undetermined=undetermined,
             hallucination_rate=len(unsupported) / len(verdicts) if verdicts else 0.0,
             # This verifier is deliberately model-based. The embedding
             # retriever is retrieval infrastructure, not a NOLLM truth tier.

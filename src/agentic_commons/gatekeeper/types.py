@@ -18,7 +18,6 @@ from pydantic import BaseModel, Field
 
 from agentic_commons.gatekeeper.mandate import MandateSet
 from agentic_commons.observability.types import utc_now
-from agentic_commons.tools.types import BlastRadius
 
 Verdict = Literal["allow", "deny", "escalate"]
 CheckStatus = Literal["PASS", "FAIL", "ESCALATE", "SKIPPED"]
@@ -113,19 +112,6 @@ class LedgerState(BaseModel):
     def remaining(self) -> float:
         """Budget left before the threshold trips."""
         return max(0.0, self.threshold - self.window_total)
-
-
-class GateEvaluation(BaseModel):
-    """Path cardinality × blast radius × certifiability (E15)."""
-
-    path_cardinality: Literal["single", "bounded", "open"] = "bounded"
-    blast_radius: BlastRadius = "single_record"
-    certifiable: bool = True
-    passes: bool = True
-    reason: str = ""
-    path_check: CheckReport | None = None
-    blast_radius_check: CheckReport | None = None
-    certifiability_check: CheckReport | None = None
 
 
 class AuthorityContextMeta(BaseModel):

@@ -233,3 +233,61 @@ class TestFailureDetection:
 
     def test_an_empty_curve_is_empty(self) -> None:
         assert ContextFailureDetector().degradation_curve({}) == []
+
+
+class TestATranscriptIsNotASetOfClaims:
+    """Found in a live run: every session reported `health = [clash]`.
+
+    The detector split every line on the first `:`, so a history chunk
+    whose lines read `user: …` / `assistant: …` looked like repeated,
+    disagreeing claims about a key called "user". A warning that fires on
+    every conversation of more than one turn is a warning nobody can act
+    on, and it hid the contradictions the check exists to find.
+    """
+
+    def test_a_multi_turn_transcript_does_not_contradict_itself(self) -> None:
+        context = AssembledContext(
+            chunks=[
+                Chunk(
+                    content=(
+                        "user: where is order 10042\n"
+                        "assistant: it is on its way\n"
+                        "user: what about order 10043\n"
+                        "assistant: that one was delivered"
+                    ),
+                    kind="history",
+                    source="working_memory",
+                )
+            ]
+        )
+        assert ContextFailureDetector().contradictions(context) == []
+
+    def test_recalled_memory_restates_rather_than_asserts(self) -> None:
+        context = AssembledContext(
+            chunks=[
+                Chunk(content="current_intent: ORDER_STATUS", kind="memory", source="wm"),
+                Chunk(content="current_intent: REQUEST_REFUND", kind="memory", source="wm"),
+            ]
+        )
+        assert ContextFailureDetector().contradictions(context) == []
+
+    def test_a_stale_document_disagreeing_with_a_tool_result_still_clashes(self) -> None:
+        """The case the check was written for must keep firing."""
+        context = AssembledContext(
+            chunks=[
+                Chunk(content="refund_status: denied", kind="retrieved", source="10042"),
+                Chunk(content="refund_status: completed", kind="tool_result", source="tool"),
+            ]
+        )
+        assert ContextFailureDetector().contradictions(context)
+
+    def test_a_transcript_cannot_mask_a_real_clash(self) -> None:
+        """Ignoring the transcript must not mean ignoring what is beside it."""
+        context = AssembledContext(
+            chunks=[
+                Chunk(content="user: hello\nassistant: hi", kind="history", source="wm"),
+                Chunk(content="status: shipped", kind="retrieved", source="a"),
+                Chunk(content="status: cancelled", kind="retrieved", source="b"),
+            ]
+        )
+        assert ContextFailureDetector().contradictions(context)

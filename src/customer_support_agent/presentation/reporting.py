@@ -227,21 +227,6 @@ def gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
 
     return fields
 
-def extract_order_id(message: str) -> int | None:
-    """Extract an order id only when it is anchored to the word "order"."""
-    match = re.search(
-        r"\border\s*(?:#|no\.?|number)?\s*(\d{4,})\b|\b(\d{4,})\s+order\b",
-        message,
-        flags=re.IGNORECASE,
-    )
-    if not match:
-        return None
-    raw = match.group(1) or match.group(2)
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
-
 def display_tool_name(name: str) -> str:
     """Return the concise tool name used in the operator-facing dashboard."""
     normalized = name.replace("__", ".")

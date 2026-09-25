@@ -20,6 +20,7 @@ from agentic_commons.basic_sanity import (
 )
 from agentic_commons.logging import get_logger
 from customer_support_agent.config import get_agent_settings
+from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.domain.refund_policy import RefundPolicy
 from customer_support_agent.persistence.repositories import OrdersRepository
 
@@ -318,16 +319,27 @@ class OrderSanityCheck(BasicSanityChecker):
 
     @staticmethod
     def extract_order_id(query: str, metadata: dict[str, object] | None = None) -> int | None:
-        """Extract an order id from the user query or an exact tool call.
+        """Extract an order id from the user query, the turn, or an exact call.
 
-        The tool-call fallback is only used by the Gatekeeper's final
-        re-check. It does not guess from arbitrary text: the agent has already
-        produced a validated ``order_id`` argument.
+        Still no guessing. Both fallbacks are references somebody else
+        already established: ``order_under_discussion`` is the order this
+        turn resolved from what the customer said, and the tool-call
+        fallback — used only by the Gatekeeper's final re-check — is an
+        ``order_id`` the agent has already validated. Neither is a number
+        inferred from arbitrary text.
+
+        Without the first of these, "I want a refund" one turn after
+        "what about order 10301?" reads as a refund request naming no
+        order, and the deterministic eligibility checks are skipped on
+        exactly the turn that moves money.
         """
         for pattern in _ORDER_ID_PATTERNS:
             match = pattern.search(query)
             if match is not None:
                 return int(match.group("order_id"))
+        carried = (metadata or {}).get(ORDER_UNDER_DISCUSSION)
+        if isinstance(carried, int) and not isinstance(carried, bool) and carried > 0:
+            return carried
         tool_params = (metadata or {}).get("tool_params")
         if isinstance(tool_params, dict):
             candidate = tool_params.get("order_id")

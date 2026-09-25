@@ -20,12 +20,15 @@ from agentic_commons.gatekeeper import (
     GatekeeperImpl,
 )
 from agentic_commons.gatekeeper.ledger import CumulativeLedger
+from agentic_commons.gatekeeper.mandate import MandateSet
 from agentic_commons.gatekeeper.tier2 import NullTier2Advisor
 from agentic_commons.gatekeeper.types import LedgerEntry
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.security import Authorizer
 from agentic_commons.tools import ToolCall
+from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.gatekeeper.business_rules import CustomerSupportBusinessRules
+from customer_support_agent.gatekeeper.mandates import EstablishedOrderScope
 from customer_support_agent.graph import build_agent
 from customer_support_agent.persistence.repositories import OrdersRepository
 from tests.conftest import ScriptedLLM, tool_call
@@ -418,3 +421,99 @@ class TestTheUngovernedPathSkipsTheExecutionBoundary:
         second = asyncio.run(saga.issue(orders.get(10001), 32.0, "damaged"))  # type: ignore[arg-type]
         assert first.succeeded and second.succeeded
         assert orders.get(10001).refund_status == "completed"  # type: ignore[union-attr]
+
+
+class TestWritesAreScopedToTheEstablishedOrder:
+    """Found in a live run, twice, in opposite directions.
+
+    The scope used to be decided by matching the customer's message
+    against a list of refund phrases. `"redunf for order 10979"` — one
+    typo — matched nothing and a correct refund was denied. The same
+    matcher granted a full refund mandate for `"do not refund order
+    10979"`, because the bare word "refund" was in the list.
+
+    Reading a sentence is the model's job now. What the Gatekeeper
+    enforces is the part that needs no language at all: a write may only
+    act on the order this conversation established, bounded by that
+    order's authoritative total.
+    """
+
+    @staticmethod
+    def _scope(seeded_pool: SqliteConnectionPool) -> EstablishedOrderScope:
+        return EstablishedOrderScope(OrdersRepository(seeded_pool))
+
+    @staticmethod
+    def _proposal(order_id: int, amount: float) -> ToolCall:
+        return ToolCall(
+            action="support.queue_for_approval",
+            params={"order_id": order_id, "amount": amount},
+            required_permission="process_refunds",
+            side_effecting=True,
+        )
+
+    def _covers(
+        self, seeded_pool: SqliteConnectionPool, query: str, established: int | None,
+        order_id: int = 10001, amount: float = 32.00,
+    ) -> bool:
+        context = {} if established is None else {ORDER_UNDER_DISCUSSION: established}
+        scope = MandateSet(mandates=self._scope(seeded_pool).mandates_for("1", query, 1, context))
+        return scope.covering(self._proposal(order_id, amount), f"order:{order_id}", amount, 1) is not None
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "redunf for order 10001",   # the typo that was denied live
+            "refund for order 10001",
+            "send it back please",      # a refund request with no keyword at all
+            "do not refund order 10001",  # the model must decide this, not a substring
+            "",
+        ],
+    )
+    def test_phrasing_no_longer_decides_authorization(
+        self, seeded_pool: SqliteConnectionPool, query: str
+    ) -> None:
+        """Whatever the wording, the established order is in scope."""
+        assert self._covers(seeded_pool, query, established=10001) is True
+
+    def test_a_different_owned_order_is_out_of_scope(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        """Ownership is not enough: it must be the order under discussion.
+
+        10002 belongs to the same customer and would pass every business
+        rule. Only provenance stops the wrong refund.
+        """
+        assert self._covers(
+            seeded_pool, "refund it", established=10001, order_id=10002, amount=210.00
+        ) is False
+
+    def test_no_established_order_means_no_write(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        assert self._covers(seeded_pool, "refund it", established=None) is False
+
+    def test_the_amount_is_bounded_by_the_authoritative_total(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        assert self._covers(seeded_pool, "refund it", established=10001, amount=500.00) is False
+
+    def test_another_customers_order_is_out_of_scope(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        """Ownership is re-read under the caller's own id, never carried."""
+        assert self._covers(
+            seeded_pool, "refund it", established=10003, order_id=10003, amount=45.00
+        ) is False
+
+    def test_the_proposed_call_cannot_supply_its_own_target(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        """`tool_params` is in metadata by the time a call is proposed.
+
+        Reading it here would let a proposal nominate what it acts on,
+        which is the whole thing this check exists to prevent.
+        """
+        scope = MandateSet(mandates=self._scope(seeded_pool).mandates_for(
+            "1", "refund it", 1, {"tool_params": {"order_id": 10001}}
+        ))
+        assert scope.mandates == []

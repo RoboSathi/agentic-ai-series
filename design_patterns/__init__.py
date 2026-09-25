@@ -25,7 +25,6 @@ from design_patterns.catalogue import (
     by_family,
     by_name,
     depth_map,
-    requiring_human_oversight,
 )
 from design_patterns.types import PatternCard, PatternFamily, PatternRun, Step
 from design_patterns.workflow import (
@@ -66,5 +65,4 @@ __all__ = [
     "by_family",
     "by_name",
     "depth_map",
-    "requiring_human_oversight",
 ]

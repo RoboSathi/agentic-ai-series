@@ -18,10 +18,10 @@ authorized. Hence `McpToolSource` below is just a `tools.ToolSource` —
 the seam already exists; this package only names what fills it.
 
 The governance consequence is the part worth designing before any code:
-a `ToolDefinition` carries `surface`, `blast_radius`, `reversible`,
-`side_effecting` and `requires_authority_rank`, and a *remote* server is
-not a trustworthy source for any of them. A server that describes its own
-tool as reversible and single-record has asserted, not established, that.
+a `ToolDefinition` carries `surface`, `reversible`, `side_effecting` and
+`requires_authority_rank`, and a *remote* server is not a trustworthy
+source for any of them. A server that describes its own tool as
+reversible has asserted, not established, that.
 So `McpToolSource` takes a `ToolGovernancePolicy`: the envelope is
 supplied locally, per server, by the operator who decided to trust that
 server at all. The description is the server's; the authority is not.

@@ -94,9 +94,10 @@ class HuggingFaceEncoderClient:
         """Whether this client is worth calling.
 
         Latches off after a definitive failure. Retrying a model the
-        account has no entitlement for, once per claim, turns a missing
-        credential into a latency problem that looks like a bug
-        elsewhere.
+        account has no entitlement for — or a host that no longer
+        resolves — once per claim turns a dead endpoint into a latency
+        problem that looks like a bug elsewhere. `_disable` is where it
+        says so.
         """
         return not self._unavailable and bool(self._settings.api_key)
 
@@ -154,11 +155,21 @@ class HuggingFaceEncoderClient:
         *,
         error_fields: dict[str, Any] | None = None,
     ) -> None:
-        """Stop calling this model, and say so once."""
+        """Stop calling this model, and say what stopped working.
+
+        Name the endpoint, not just the model. A configured host that no
+        longer answers looks exactly like a model that is merely slow,
+        and the difference is the whole diagnosis: the entailment tier
+        and the reranker both degrade to their deterministic fallbacks
+        here, quietly, for the life of the process. Whoever reads this
+        line is trying to find out why a declared capability is not
+        behaving like one.
+        """
         self._unavailable = True
         self._logger.warning(
-            "Hosted encoder unavailable; falling back",
+            "Hosted encoder unreachable; every later call uses the deterministic fallback",
             model=self._model,
+            endpoint=f"{self._settings.base_url.rstrip('/')}/{self._model}",
             error=reason,
             **(error_fields or {}),
         )

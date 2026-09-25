@@ -35,6 +35,10 @@ class DetectionVerdict(BaseModel):
     retrieval_method: str = ""
     retrieved_evidence: list[str] = Field(default_factory=list)
     escalated_to_human: bool = False
+    # The detector abstained rather than refuting. `supported=False` alone
+    # conflates "the evidence says otherwise" with "I could not tell", and
+    # only the first is a hallucination.
+    undetermined: bool = False
 
 
 class GenerationAssessment(BaseModel):
@@ -45,12 +49,16 @@ class GenerationAssessment(BaseModel):
     self_consistency: float | None = None
     verdicts: list[DetectionVerdict] = Field(default_factory=list)
     unsupported: list[str] = Field(default_factory=list)
+    # Claims the detector could not settle either way. Reported so the
+    # trace shows what went unchecked, but never grounds for blocking a
+    # reply: an abstention is not a finding.
+    undetermined: list[str] = Field(default_factory=list)
     hallucination_rate: float = 0.0
     nollm_resolved_ratio: float = 1.0
 
     @property
     def clean(self) -> bool:
-        """Whether every checkable claim was supported."""
+        """Whether any checkable claim was actually refuted."""
         return not self.unsupported
 
 

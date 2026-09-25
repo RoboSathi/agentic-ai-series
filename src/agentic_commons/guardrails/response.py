@@ -209,7 +209,9 @@ class ResponseGuardrail:
 
         repaired = False
         last = None
+        attempts_made = 0
         for attempt in range(self._max_repairs + 1):
+            attempts_made = attempt
             last = await self._grounding.assess(candidate, evidence, resample=resample)
             if last.clean:
                 return ResponseGuardrailResult(
@@ -225,8 +227,16 @@ class ResponseGuardrail:
                 )
             if attempt >= self._max_repairs or revise is None:
                 break
+            revision = await revise(candidate, last.unsupported)
+            if revision.strip() == candidate.strip():
+                # The reviser had nothing to remove and said so by
+                # returning the draft. Re-scoring identical text produces
+                # an identical verdict, so the second assessment is pure
+                # cost — one completion and a full retrieval pass to
+                # reach a conclusion already in hand.
+                break
             repaired = True
-            candidate = await revise(candidate, last.unsupported)
+            candidate = revision
 
         assert last is not None
         unsupported_verdicts = [
@@ -298,7 +308,10 @@ class ResponseGuardrail:
             grounded=False,
             repaired=repaired,
             escalated=True,
-            repair_attempts=self._max_repairs,
+            # What was actually attempted, not what was configured. The
+            # two differ whenever the loop stopped early, and reporting
+            # the ceiling made a trace look like work that never happened.
+            repair_attempts=attempts_made,
             claims=len(last.verdicts),
             supported=len(last.verdicts) - len(last.unsupported),
             unsupported=len(last.unsupported),
@@ -323,6 +336,32 @@ _OPERATIONAL_TERMS = re.compile(
 )
 _ORDER_REFERENCE = re.compile(r"\border\s*#?\s*(\d{3,})\b", re.IGNORECASE)
 _MONEY = re.compile(r"(?<!\w)\$?\d+(?:,\d{3})*(?:\.\d{2})(?!\w)")
+
+# A reply claiming money has moved, and the field in the record that
+# would have to agree with it. Checked deterministically because it is a
+# deterministic question: the tool result either states a settled refund
+# or it does not, and no amount of entailment scoring improves on
+# reading the field. An NLI tier asked to catch this instead was the
+# thing that also blocked true sentences for want of token overlap.
+_REFUND_SETTLED_CLAIM = re.compile(
+    r"\brefund(?:ed)?\b[^.;]{0,60}?\b(?:has\s+been\s+)?"
+    r"(?:completed|processed|issued|approved|sent|paid)\b"
+    r"|\b(?:completed|processed|issued|approved|sent|paid)\b[^.;]{0,40}?\brefund",
+    re.IGNORECASE,
+)
+_REFUND_STATE = re.compile(r"refund(?:_|\s+)status\s*[:=]\s*(\w+)", re.IGNORECASE)
+# Clause boundaries, and the markers that flip a clause's polarity.
+# "No refund has been processed" matches the settled-claim shape word for
+# word while asserting the opposite, so polarity is checked per clause
+# rather than over the whole reply — one negated clause must not excuse a
+# settled claim elsewhere in the same sentence, and vice versa.
+_CLAUSE = re.compile(r"[.;]|\bbut\b|\band\b", re.IGNORECASE)
+_CLAIM_NEGATIONS = re.compile(
+    r"\b(?:no|not|never|n't|cannot|nothing|neither|nor|unable)\b", re.IGNORECASE
+)
+# The refund_status values that mean money has actually moved, or been
+# authorised to. Anything else ("none", "denied") refutes the claim.
+_SETTLED_REFUND_STATES = frozenset({"completed", "approved", "processed"})
 
 
 def _requires_authoritative_evidence(response: str) -> bool:
@@ -368,7 +407,48 @@ def _deterministic_evidence_failure(
             f"Amount(s) {missing_amounts} appear in the response but not in authoritative tool results.",
         )
 
+    refund_conflict = _refund_state_conflict(response, evidence_text)
+    if refund_conflict is not None:
+        return refund_conflict
+
     return None
+
+
+def _asserts_settled_refund(response: str) -> bool:
+    """Whether any clause positively claims the refund is settled.
+
+    Per clause, because polarity is a property of the clause and not of
+    the reply: "No refund has been processed for order 10979 yet" carries
+    the settled-claim wording exactly while denying it, and blocking that
+    would silence the truthful answer this guard exists to protect.
+    """
+    return any(
+        _REFUND_SETTLED_CLAIM.search(clause) and not _CLAIM_NEGATIONS.search(clause)
+        for clause in _CLAUSE.split(response)
+    )
+
+
+def _refund_state_conflict(response: str, evidence_text: str) -> tuple[str, str, str] | None:
+    """Catch a claim that a refund is settled when the record says otherwise.
+
+    Telling a customer their money is on the way when it is not is the
+    single most expensive thing this agent can say, and it is decidable
+    by reading one field. Anything the evidence does not state a refund
+    status for is left alone — silence is not a refutation.
+    """
+    if not _asserts_settled_refund(response):
+        return None
+    states = {state.casefold() for state in _REFUND_STATE.findall(evidence_text)}
+    if not states or states & _SETTLED_REFUND_STATES:
+        return None
+    return (
+        response,
+        "TOOL_EVIDENCE_REFUND_STATE_MISMATCH",
+        (
+            f"The response says the refund is settled, but the authoritative refund "
+            f"status is {sorted(states)}."
+        ),
+    )
 
 def _tier_counts(assessment: Any) -> dict[str, int]:
     counts: dict[str, int] = {}

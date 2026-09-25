@@ -48,7 +48,6 @@ def registry() -> NamespacedToolRegistry:
             "process_refund",
             namespace="billing",
             description="Issue a refund to a customer for an order",
-            blast_radius="account",
             reversible=False,
         )
     )

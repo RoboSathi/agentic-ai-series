@@ -10,6 +10,7 @@ from typing import Any
 
 from agentic_commons.basic_sanity import BasicSanityRequest
 from agentic_commons.config import get_settings
+from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.reporting import (
@@ -120,7 +121,7 @@ class ScreeningNodes(NodeSupport):
                 # repository/tool read on the path that needs it.
                 self._note(
                     state,
-                    "order_under_discussion",
+                    ORDER_UNDER_DISCUSSION,
                     f"order {order_id}",
                     category="order",
                 )
@@ -138,7 +139,7 @@ class ScreeningNodes(NodeSupport):
                 "basic_sanity": result.model_dump(mode="json"),
             }
             if isinstance(order_id, int):
-                metadata["order_under_discussion"] = order_id
+                metadata[ORDER_UNDER_DISCUSSION] = order_id
             return {
                 "decisions": [
                     *state.decisions,

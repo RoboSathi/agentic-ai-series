@@ -16,19 +16,32 @@ class DuplicateActionDetector:
 
     def __init__(self) -> None:
         self._seen: dict[str, str] = {}
+        self._refused: dict[str, str] = {}
         self._logger = get_logger("control_loop")
 
     def seen_before(self, call: ToolCall) -> str | None:
-        """Return the previous result for the exact same call, if present."""
-        return self._seen.get(action_fingerprint(call))
+        """Return the previous outcome for the exact same call, if present.
+
+        Outcome, not result: a call that was refused is as repeatable as
+        one that succeeded, and rather more tempting to retry. Keying
+        only on successes meant a refused proposal could be made again
+        and again until the iteration ceiling stopped it.
+        """
+        fingerprint = action_fingerprint(call)
+        return self._seen.get(fingerprint) or self._refused.get(fingerprint)
 
     def record(self, call: ToolCall, output: str) -> None:
         """Remember a successfully completed call."""
         self._seen[action_fingerprint(call)] = output
 
+    def record_refusal(self, call: ToolCall, reason: str) -> None:
+        """Remember a call that was refused, and why."""
+        self._refused[action_fingerprint(call)] = reason
+
     def reset(self) -> None:
         """Clear the detector for a new run."""
         self._seen.clear()
+        self._refused.clear()
 
     @property
     def call_count(self) -> int:
@@ -36,13 +49,19 @@ class DuplicateActionDetector:
         return len(self._seen)
 
     def reject(self, call: ToolCall) -> str:
-        """Explain the suppression and provide the previous result."""
+        """Explain the suppression and provide the previous outcome."""
+        fingerprint = action_fingerprint(call)
         previous = self.seen_before(call) or ""
         self._logger.warning(
             "Suppressed a repeated tool call",
             action=call.action,
-            fingerprint=action_fingerprint(call),
+            fingerprint=fingerprint,
         )
+        if fingerprint in self._refused:
+            return (
+                f"You already attempted this and it was refused: {previous} "
+                "Calling it again cannot change that."
+            )
         return (
             f"You already called this and it returned: {previous} "
             "Use that result rather than calling it again."
@@ -111,7 +130,7 @@ class ToolControlLoop:
             reason=(
                 "No previous identical action exists in this trajectory."
                 if duplicate_passed
-                else "The exact action and arguments already succeeded earlier in this trajectory."
+                else "The exact action and arguments were already attempted in this trajectory."
             ),
             observed={"action": call.action, "fingerprint": fingerprint},
             evidence={"previous_result": previous or ""},
@@ -130,6 +149,10 @@ class ToolControlLoop:
     def record_success(self, call: ToolCall, output: str) -> None:
         """Remember a successfully completed call for this trajectory."""
         self._duplicates.record(call, output)
+
+    def record_refusal(self, call: ToolCall, reason: str) -> None:
+        """Remember a refused call, so an identical retry is suppressed."""
+        self._duplicates.record_refusal(call, reason)
 
     def reject_message(self, call: ToolCall) -> str:
         """Return the previous result to the model when a duplicate is suppressed."""

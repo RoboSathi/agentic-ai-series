@@ -5,13 +5,13 @@ who the customer is. Identity is established deterministically, from the
 database — never from something the model concluded.
 """
 
-import re
 from typing import Any
 
 from customer_support_agent.domain.identity import (
     current_customer,
     set_current_customer,
 )
+from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.orders import (
@@ -20,11 +20,10 @@ from customer_support_agent.presentation.orders import (
     render_order_detail,
     render_order_list,
     resolve_selection,
+    summarise_order_list,
+    summarise_verification,
 )
-from customer_support_agent.presentation.reporting import (
-    asks_for_the_list,
-    extract_order_id,
-)
+from customer_support_agent.presentation.reporting import asks_for_the_list
 
 
 class AuthenticationNodes(NodeSupport):
@@ -123,7 +122,18 @@ class AuthenticationNodes(NodeSupport):
             "decisions": [*state.decisions, f"auth: verified #{result.customer.customer_id}"],
             # The verified read-back *is* the answer to "here is my code".
             # Nothing further is needed this turn.
-            "metadata": {**state.metadata, "halted": "just_verified"},
+            "metadata": {
+                **state.metadata,
+                "halted": "just_verified",
+                # The greeting carries the customer's whole order list.
+                # On screen that saves them a round trip; replayed into
+                # every later prompt it is the single largest thing the
+                # model reads, and about none of what it is asked.
+                "memory_response": summarise_verification(
+                    result.customer.name,
+                    result.menu.size if result.menu is not None else 0,
+                ),
+            },
         }
 
     async def choose_order(self, state: AgentState) -> dict[str, Any]:
@@ -137,10 +147,16 @@ class AuthenticationNodes(NodeSupport):
         Only an explicit menu-number reply lands here.
         "order 10560" is an order reference, not a menu command, and
         continues through the normal conversational path.
+
+        This node also settles which order is under discussion for the
+        rest of the turn, because it runs before every stage that can be
+        switched off — a reference resolved here is available whatever
+        this agent's harness is set to.
         """
+        carried = self._carry_order_reference(state)
         menu = self._menus.get(state.session_id)
         if menu is None or self._orders is None or state.customer_id is None:
-            return {}
+            return carried
         if asks_for_the_list(state.query):
             orders = customer_orders(self._orders, state.customer_id)
             self._menus[state.session_id] = build_menu(orders)
@@ -153,10 +169,15 @@ class AuthenticationNodes(NodeSupport):
                 summary="Order list loaded",
                 fields={"count": len(orders)},
             )
-            return self._halt(state, render_order_list(orders), "menu: listed")
+            return self._halt(
+                state,
+                render_order_list(orders),
+                "menu: listed",
+                remembered_as=summarise_order_list(orders),
+            )
         order_id = resolve_selection(state.query, menu)
         if order_id is None:
-            return {}
+            return carried
         self._report(
             "order_lookup",
             summary="Checking order details",
@@ -185,31 +206,8 @@ class AuthenticationNodes(NodeSupport):
         )
         self._note(
             state,
-            "order_under_discussion",
+            ORDER_UNDER_DISCUSSION,
             f"order {order.order_id}, {order.order_status}, ${order.amount:,.2f}",
             category="order",
         )
         return self._halt(state, render_order_detail(order), f"menu: order {order_id}")
-
-    def _resolve_read_order_id(self, state: AgentState) -> int | None:
-        """Resolve the most recent order under discussion, newest evidence first."""
-        metadata_id = state.metadata.get("order_under_discussion")
-        if isinstance(metadata_id, int) and metadata_id > 0:
-            return metadata_id
-
-        explicit = extract_order_id(state.query)
-        if explicit is not None:
-            return explicit
-
-        # Working memory is recency ordered. The first matching fact is the
-        # most recent validated order reference; do not search older facts
-        # once one is found. This keeps follow-ups anchored to the latest
-        # order without asking the model to infer which identifier wins.
-        value = state.working_memory.get("order_under_discussion")
-        if isinstance(value, str):
-            match = re.search(r"\border\s+(\d+)\b", value, flags=re.IGNORECASE)
-            if match:
-                return int(match.group(1))
-        elif isinstance(value, int) and value > 0:
-            return value
-        return None

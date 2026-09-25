@@ -65,7 +65,6 @@ _IDENTIFYING_FIELDS = (
     "allowed_tools",
     "offered_actions",
     "surface",
-    "blast_radius",
     "reversible",
     "requires_authority_rank",
     "steps",

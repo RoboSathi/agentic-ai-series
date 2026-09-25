@@ -425,12 +425,6 @@ class StageEventWidget(Collapsible):
                 self._append_checks(body, value)
                 rendered_fields = True
                 continue
-            if name == "three_gates" and isinstance(value, Mapping):
-                if rendered_fields:
-                    body.append("\n")
-                self._append_three_gates(body, value)
-                rendered_fields = True
-                continue
             if name == "unsupported_diagnostics" and isinstance(value, list):
                 if rendered_fields:
                     body.append("\n")
@@ -764,23 +758,6 @@ class StageEventWidget(Collapsible):
                 body.append(f" · evidence_overlap = {overlap}", style="dim")
             body.append(f"\n      why = {rationale}", style="yellow")
             body.append(f"\n      evidence = {evidence}", style="dim")
-
-    def _append_three_gates(self, body: Text, gates: Mapping[str, Any]) -> None:
-        """Render the three gate dimensions in the same order as the policy."""
-        body.append("  THREE GATES", style="bold bright_white")
-        labels = (
-            ("path_cardinality", "Path cardinality", "path_result"),
-            ("blast_radius", "Blast radius", "blast_radius_result"),
-            ("certifiable", "Certifiability", "certifiability_result"),
-        )
-        for key, label, result_key in labels:
-            value = gates.get(key)
-            result = gates.get(result_key)
-            body.append("\n    ")
-            body.append(label, style="bright_white")
-            body.append(f" = {_format_value(key, value)}", style="white")
-            if result:
-                body.append(f" · {result}", style=_status_style_for_result(str(result)))
 
     def _compact_from_fields(
         self,

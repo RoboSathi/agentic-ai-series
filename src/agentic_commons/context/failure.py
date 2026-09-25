@@ -22,6 +22,10 @@ from agentic_commons.context.types import (
 )
 from agentic_commons.logging import get_logger
 
+# The chunk kinds that state facts about the world, as opposed to
+# recounting what was said about it. Only these can contradict.
+_ASSERTING_KINDS = frozenset({"policy", "retrieved", "tool_result"})
+
 
 class ContextFailureDetector:
     """Watches for the five modes, and for degradation across checkpoints.
@@ -90,9 +94,19 @@ class ContextFailureDetector:
         semantically — cheap, deterministic, and it catches the case that
         actually occurs: a stale retrieved document disagreeing with a
         fresh tool result.
+
+        Only chunks that *assert* things are read. A transcript does not:
+        its lines begin `user:` and `assistant:`, and reading those as
+        claims makes every conversation of more than one turn contradict
+        itself about what "user" is — a warning that fired on every
+        session and therefore meant nothing. The same goes for recalled
+        memory, which restates what was already said rather than
+        asserting it afresh.
         """
         claims: dict[str, list[tuple[str, str]]] = {}
         for chunk in context.chunks:
+            if chunk.kind not in _ASSERTING_KINDS:
+                continue
             for key, value in _claims(chunk):
                 claims.setdefault(key, []).append((value, chunk.source or chunk.kind))
         clashes: list[tuple[str, str]] = []

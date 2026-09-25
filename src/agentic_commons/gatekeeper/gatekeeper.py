@@ -188,44 +188,48 @@ class GatekeeperImpl:
         return [check], None if passed else ("offered", "deny", "ACTION_NOT_OFFERED", check.reason)
 
     def _eval_mandate(self, call: ToolCall, context: AuthorityContext, amount: float):
-        """Whether this exact proposal is one the person asked for.
+        """Whether this proposal acts on a record the turn established.
 
-        Only side-effecting calls need a mandate. A read changes nothing,
-        so "did they ask for this?" is answered well enough by the intent
-        that put the tool on the menu in the first place.
+        Only side-effecting calls are scoped. A read changes nothing, so
+        what it names is a data-access question the business rules settle.
 
-        A `None` mandate set means no issuer is wired — an older
-        deployment, or an agent that has not adopted mandates — and the
-        check reports that rather than inventing a verdict. An *empty* set
-        is a different statement: the issuer looked and found nothing was
-        asked for, and a write is then refused.
+        This check does **not** ask whether the person requested the
+        action — that is language work, and an authorization path that
+        does it with a keyword list gets it wrong in both directions.
+        Whether the action may proceed at all is the agent's deterministic
+        business rules; this is the narrow question of *which* record.
+
+        A `None` set means no issuer is wired, and the check says so
+        rather than inventing a verdict. An *empty* set is a different
+        statement: the issuer looked and found no established target, so
+        a write has nothing it may legitimately act on.
         """
         if not call.side_effecting:
             return [CheckReport(
-                check_id="gatekeeper.mandate", name="Requested action", status="SKIPPED",
+                check_id="gatekeeper.mandate", name="Target in scope", status="SKIPPED",
                 reason_code="MANDATE_NOT_REQUIRED",
-                reason="A read changes nothing, so it needs no mandate.",
+                reason="A read changes nothing, so it needs no write scope.",
                 observed={"action": call.action},
             )], None
         if context.mandates is None:
             return [CheckReport(
-                check_id="gatekeeper.mandate", name="Requested action", status="SKIPPED",
+                check_id="gatekeeper.mandate", name="Target in scope", status="SKIPPED",
                 reason_code="MANDATE_NOT_CONFIGURED",
-                reason="This deployment issues no mandates, so the request was not checked.",
+                reason="This deployment scopes no writes, so the target was not checked.",
                 observed={"action": call.action},
             )], None
         target = self._target_of(call)
         mandate = context.mandates.covering(call, target, amount, context.turn)
         passed = mandate is not None
         check = CheckReport(
-            check_id="gatekeeper.mandate", name="Requested action",
+            check_id="gatekeeper.mandate", name="Target in scope",
             status="PASS" if passed else "FAIL",
-            reason_code="ACTION_REQUESTED" if passed else "NO_MANDATE_FOR_ACTION",
+            reason_code="TARGET_IN_SCOPE" if passed else "TARGET_NOT_IN_SCOPE",
             reason=(
-                f"The customer asked for this action on {target} this turn."
+                f"{target} is the record this conversation established."
                 if passed
-                else f"Nothing in this turn's request authorizes '{_bare(call.action)}' "
-                     f"on {target}"
+                else f"'{_bare(call.action)}' names {target}, which is not a record this "
+                     f"conversation established"
                      + (f" for ${amount:,.2f}" if amount else "")
                      + "."
             ),
@@ -240,7 +244,7 @@ class GatekeeperImpl:
             },
         )
         return [check], None if passed else (
-            "mandate", "deny", "NO_MANDATE_FOR_ACTION", check.reason
+            "mandate", "deny", "TARGET_NOT_IN_SCOPE", check.reason
         )
 
     def _target_of(self, call: ToolCall) -> str:

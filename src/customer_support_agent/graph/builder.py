@@ -60,9 +60,10 @@ from customer_support_agent.basic_sanity.order_validator import OrderSanityCheck
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.identity import current_customer_id
 from customer_support_agent.domain.models import Order
+from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.domain.refund_policy import RefundPolicy
 from customer_support_agent.gatekeeper.business_rules import CustomerSupportBusinessRules
-from customer_support_agent.gatekeeper.mandates import RefundMandateIssuer
+from customer_support_agent.gatekeeper.mandates import EstablishedOrderScope
 from customer_support_agent.graph.agent import CustomerSupportAgent
 from customer_support_agent.intent.router import CustomerSupportIntentRouter
 from customer_support_agent.persistence.repositories import (
@@ -71,7 +72,6 @@ from customer_support_agent.persistence.repositories import (
     RefundLedgerRepository,
     UsersRepository,
 )
-from customer_support_agent.prompts.policy import policy_text
 from customer_support_agent.resilience.refund_saga import RefundSaga
 from customer_support_agent.review.queue import ReviewQueueService
 from customer_support_agent.security.authentication import CustomerAuthenticator
@@ -81,24 +81,6 @@ from customer_support_agent.verification import RefundEffectSource
 # Used only when this agent declares no budgeted action at all, in which
 # case the window never matters because nothing is charged against it.
 DEFAULT_WINDOW_HOURS = 24
-
-
-class PolicyContextSource:
-    """Contributes the refund policy to every assembled window.
-
-    Pinned, because the policy is not a retrieval result competing on
-    relevance — an agent that drops its own policy under budget pressure
-    is an agent operating without one.
-    """
-
-    def __init__(self) -> None:
-        self._policy = policy_text()
-
-    async def candidates(self, task: Task) -> list[Chunk]:
-        """The policy, as one pinned chunk."""
-        return [
-            Chunk(content=self._policy, kind="policy", source="customer_policy.md", pinned=True)
-        ]
 
 
 class OrderCorpusContextSource:
@@ -117,6 +99,16 @@ class OrderCorpusContextSource:
     bug away from putting somebody else's purchase in this customer's
     context window, and no amount of post-filtering makes that safe if
     the filter is ever forgotten.
+
+    **Retrieval is the fallback, not the first answer.** When the turn
+    has already settled which order is under discussion, there is nothing
+    to rank: that order is the context, and it is returned alone. Ranking
+    anyway is how "I want a refund" — a sentence naming no order, so
+    nothing for BM25 to match — produced five of the customer's *other*
+    orders and omitted the one they meant. Eleven one-line orders that
+    differ only in a product name and a price are near-indistinguishable
+    to a dense retriever; asking it to choose between them on a query
+    that describes none of them is asking for an arbitrary answer.
     """
 
     def __init__(self, orders: OrdersRepository, ranker: RelevanceRanker) -> None:
@@ -125,7 +117,7 @@ class OrderCorpusContextSource:
         self._top_k = get_settings().context.top_k
 
     async def candidates(self, task: Task) -> list[Chunk]:
-        """The customer's orders most relevant to this query."""
+        """The order under discussion, or the ones most relevant to this query."""
         customer_id = current_customer_id()
         if customer_id is None:
             # No identity, no corpus. An unauthenticated request retrieves
@@ -134,11 +126,26 @@ class OrderCorpusContextSource:
         corpus = [_order_chunk(order) for order in self._orders.for_user(customer_id)]
         if not corpus:
             return []
+        established = self._established(task, corpus)
+        if established is not None:
+            return [established]
         retriever = HybridRetriever(
             lexical=LexicalRetriever(corpus),
             dense=DenseRetriever(self._ranker, corpus),
         )
         return await retriever.retrieve(task.query, self._top_k)
+
+    def _established(self, task: Task, corpus: list[Chunk]) -> Chunk | None:
+        """The chunk for the order this turn settled on, if it settled on one.
+
+        Matched within the corpus that was already scoped to this
+        customer, never fetched by id: an order this customer does not
+        own cannot become their context by being named.
+        """
+        order_id = task.metadata.get(ORDER_UNDER_DISCUSSION)
+        if isinstance(order_id, bool) or not isinstance(order_id, int):
+            return None
+        return next((chunk for chunk in corpus if chunk.source == str(order_id)), None)
 
 
 def _order_chunk(order: Order) -> Chunk:
@@ -302,7 +309,10 @@ def build_agent(
     )
     memory_event_sink = DreamInbox(platform_store) if live_working_memory is not None else None
 
-    sources: list[object] = [PolicyContextSource(), OrderCorpusContextSource(orders, scoring)]
+    # No policy source. The policy reaches the model in the system prompt,
+    # which is always present and never trimmed; contributing a second
+    # verbatim copy here spent a third of the window restating it.
+    sources: list[object] = [OrderCorpusContextSource(orders, scoring)]
     if live_working_memory is not None:
         sources.append(WorkingMemoryContextSource(live_working_memory))
     # Two-pass relevance: the NOLLM cascade scores every candidate with an
@@ -414,9 +424,9 @@ def build_agent(
         # one, and "the executor returned success" was never evidence the
         # money moved.
         verifier=ReadBackVerifier(RefundEffectSource(orders, refunds, hitl)),
-        # Only built when the Gatekeeper is: a mandate with nothing
-        # to check it is a record nobody reads.
-        mandate_issuer=RefundMandateIssuer(orders) if governed is not None else None,
+        # Only built when the Gatekeeper is: a scope with nothing to
+        # check it is a record nobody reads.
+        mandate_issuer=EstablishedOrderScope(orders) if governed is not None else None,
         authenticator=CustomerAuthenticator(UsersRepository(connection), orders),
         orders=orders,
         basic_sanity=sanity_checker,

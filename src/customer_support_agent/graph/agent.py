@@ -79,6 +79,7 @@ from customer_support_agent.domain.identity import (
     current_customer,
     set_current_customer,
 )
+from customer_support_agent.domain.order_reference import OrderReferenceResolver
 from customer_support_agent.graph.edges import GraphWiring
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.nodes.act import ToolUseNodes
@@ -200,6 +201,10 @@ class CustomerSupportAgent(
         self._intents = intent_router
         self._authenticator = authenticator
         self._orders = orders
+        # Which order the customer is talking about, resolved once a turn
+        # from what they said and what the record holds. One resolver, so
+        # the path that answers and the path that acts cannot drift.
+        self._order_reference = OrderReferenceResolver()
         self._basic_sanity = basic_sanity
         # Who each session has proved itself to be. Authentication is per
         # conversation: a customer verifies once and stays verified for
@@ -368,5 +373,14 @@ class CustomerSupportAgent(
             )
             self._memory_event_sink.emit(event)
         if state.response:
-            working.add_history(state.model_query or state.query, state.response)
+            # What the customer read, unless the turn left a compact form
+            # of it. The two differ only where the reply is much larger on
+            # screen than in substance — a rendered table of every order
+            # on the account — and replaying that verbatim into every
+            # later prompt is the largest avoidable cost in the window.
+            remembered = state.metadata.get("memory_response")
+            working.add_history(
+                state.model_query or state.query,
+                str(remembered) if isinstance(remembered, str) and remembered else state.response,
+            )
         working.clear_current_turn()

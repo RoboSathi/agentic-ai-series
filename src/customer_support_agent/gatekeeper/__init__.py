@@ -8,10 +8,10 @@ from customer_support_agent.gatekeeper.business_rules import (
     REFUND_ACTION_CLASS,
     CustomerSupportBusinessRules,
 )
-from customer_support_agent.gatekeeper.mandates import RefundMandateIssuer
+from customer_support_agent.gatekeeper.mandates import EstablishedOrderScope
 
 __all__ = [
     "REFUND_ACTION_CLASS",
     "CustomerSupportBusinessRules",
-    "RefundMandateIssuer",
+    "EstablishedOrderScope",
 ]

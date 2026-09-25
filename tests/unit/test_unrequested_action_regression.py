@@ -24,7 +24,11 @@ from agentic_commons.config import get_settings
 from agentic_commons.evals import create_scoring_cascade
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.tools import NamespacedToolRegistry, ToolCall, ToolRetrievalSelector
-from customer_support_agent.control_loop import DuplicateActionDetector, action_fingerprint
+from customer_support_agent.control_loop import (
+    DuplicateActionDetector,
+    ToolControlLoop,
+    action_fingerprint,
+)
 from customer_support_agent.graph import build_agent
 from customer_support_agent.persistence import HitlQueueRepository, OrdersRepository
 from customer_support_agent.persistence.repositories import RefundLedgerRepository
@@ -196,3 +200,57 @@ class TestTheCustomerNeverSeesAHarnessError:
         state = await agent.handle("refund my order please")
         assert "unavailable" not in state.response
         assert "Tool failed" not in state.response
+
+
+class TestARefusedCallIsNotRetried:
+    """Found in a live run: one refusal became three, then the iteration cap.
+
+    The Gatekeeper refused `queue_for_approval`; the model proposed it
+    again, then a third time byte-identically, and only the round ceiling
+    stopped it — three model round-trips and ~21 seconds spent on a
+    verdict that could not change. Two causes, both fixed here: the
+    duplicate detector only ever learned about calls that *succeeded*,
+    and the refusal handed back to the model read like a transient error.
+    """
+
+    def test_a_refusal_is_remembered_like_a_success(self) -> None:
+        detector = DuplicateActionDetector()
+        call = ToolCall(
+            action="support.queue_for_approval",
+            params={"order_id": 10979, "amount": 56.86},
+            side_effecting=True,
+        )
+        assert detector.seen_before(call) is None
+        detector.record_refusal(call, "That action was not permitted: not in scope.")
+        assert detector.seen_before(call) is not None
+
+    def test_the_second_attempt_is_suppressed(self) -> None:
+        loop = ToolControlLoop()
+        call = ToolCall(
+            action="support.queue_for_approval",
+            params={"order_id": 10979, "amount": 56.86},
+            side_effecting=True,
+        )
+        loop.record_refusal(call, "refused")
+        report = loop.before_action(call, round_number=2, max_rounds=5)
+        assert report.decision == "abort"
+        assert report.reason_code == "DUPLICATE_ACTION"
+
+    def test_the_model_is_told_the_refusal_is_final(self) -> None:
+        """Not just that it failed — that trying again cannot help."""
+        loop = ToolControlLoop()
+        call = ToolCall(action="support.process_refund", params={"order_id": 1}, side_effecting=True)
+        loop.record_refusal(call, "not in scope")
+        message = loop.reject_message(call)
+        assert "refused" in message.lower()
+        assert "cannot change" in message.lower()
+
+    def test_a_different_call_is_still_allowed_after_a_refusal(self) -> None:
+        """A refusal ends that proposal, not every remaining option."""
+        loop = ToolControlLoop()
+        refused = ToolCall(
+            action="support.process_refund", params={"order_id": 1}, side_effecting=True
+        )
+        loop.record_refusal(refused, "not in scope")
+        other = ToolCall(action="support.get_order_status", params={"order_id": 1})
+        assert loop.before_action(other, round_number=2, max_rounds=5).decision == "continue"
