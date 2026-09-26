@@ -10,12 +10,14 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from agentic_commons.config import get_settings
 from agentic_commons.context.types import Chunk
 from agentic_commons.guardrails.guards import PydanticValidator
 from agentic_commons.hallucination_protection.checker import (
+    COMBINED_TIER,
+    COMBINED_TIER_JOINER,
     DetectionLadder,
     GroundingReasoningDiagnoser,
     Resampler,
@@ -43,6 +45,8 @@ class ResponseGuardrailResult(BaseModel):
     claims: int = 0
     supported: int = 0
     unsupported: int = 0
+    # Claims no evidence spoke to either way. Reported, never blocking.
+    undetermined: int = 0
     hallucination_rate: float = 0.0
     nollm_resolved_ratio: float = 1.0
     failure_kinds: list[str] = Field(default_factory=list)
@@ -59,6 +63,34 @@ class ResponseGuardrailResult(BaseModel):
     # The deterministic stage: each order number and amount, and where found.
     provenance_checks: list[str] = Field(default_factory=list)
     evidence_searched: str = ""
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def outcome(self) -> str:
+        """What happened to the reply, in one line an operator can read.
+
+        `grounded`, `escalated`, `repaired`, `reason_code` and
+        `hallucination_scope` each say part of this; the card says it once.
+        """
+        if self.escalated:
+            why = _BLOCK_REASONS.get(self.reason_code, self.reason_code)
+            return f"BLOCKED · {why} · escalated to human review"
+        if self.repaired:
+            return f"PASSED after {self.repair_attempts} rewrite(s) · rewritten reply sent"
+        return "PASSED · reply sent unchanged"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def tally(self) -> str:
+        """`2 supported · 1 unverified of 3 claims`, flagging a lexical fallback."""
+        names = [_VERDICT_NAMES.get(c["verdict"], c["verdict"]) for c in self.claim_checks]
+        if not names:
+            return "no checkable claims"
+        counts = " · ".join(f"{names.count(name)} {name}" for name in dict.fromkeys(names))
+        plural = "" if len(names) == 1 else "s"
+        lexical = any(str(c.get("detector") or "").startswith(_LEXICAL) for c in self.claim_checks)
+        note = " · lexical fallback (NLI model unavailable)" if lexical else ""
+        return f"{counts} of {len(names)} claim{plural}{note}"
 
 
 class ResponseGuardrail:
@@ -261,7 +293,8 @@ class ResponseGuardrail:
                     repaired=repaired,
                     repair_attempts=attempt,
                     claims=len(last.verdicts),
-                    supported=len(last.verdicts),
+                    supported=sum(verdict.supported for verdict in last.verdicts),
+                    undetermined=len(last.undetermined),
                     hallucination_rate=last.hallucination_rate,
                     nollm_resolved_ratio=last.nollm_resolved_ratio,
                     tier_counts=_tier_counts(last),
@@ -314,7 +347,7 @@ class ResponseGuardrail:
                 }
             )
         failures = sorted({str(item["failure_kind"]) for item in diagnostics})
-        supported_count = len(last.verdicts) - len(last.unsupported)
+        supported_count = sum(verdict.supported for verdict in last.verdicts)
         hallucination_scope = (
             "complete"
             if supported_count == 0 and last.unsupported
@@ -353,8 +386,9 @@ class ResponseGuardrail:
             # the ceiling made a trace look like work that never happened.
             repair_attempts=attempts_made,
             claims=len(last.verdicts),
-            supported=len(last.verdicts) - len(last.unsupported),
+            supported=supported_count,
             unsupported=len(last.unsupported),
+            undetermined=len(last.undetermined),
             hallucination_rate=last.hallucination_rate,
             nollm_resolved_ratio=last.nollm_resolved_ratio,
             failure_kinds=failures,
@@ -391,7 +425,8 @@ NOT_EXECUTED_MARKER = "NOT EXECUTED"
 
 _REFUND_SETTLED_CLAIM = re.compile(
     r"\brefund(?:ed)?\b[^.;]{0,60}?\b(?:has\s+been\s+)?"
-    r"(?:completed|processed|issued|approved|sent|paid)\b"
+    r"(?:completed|complete|processed|issued|approved|sent|paid|done|"
+    r"(?:gone|went)\s+through|on\s+(?:its|the)\s+way)\b"
     r"|\b(?:completed|processed|issued|approved|sent|paid)\b[^.;]{0,40}?\brefund",
     re.IGNORECASE,
 )
@@ -427,8 +462,12 @@ def _deterministic_evidence_failure(
     Ids and amounts may come from any tier the model was given — a tool
     result, the policy, a knowledge passage, a verified memory. Whether a
     refund *happened* may come from tool results alone.
+
+    A settled-refund claim opens the check on its own: "your refund is
+    done" names no operational term, and was the one false outcome the
+    gate let through.
     """
-    if not _requires_authoritative_evidence(response):
+    if not (_requires_authoritative_evidence(response) or _asserts_settled_refund(response)):
         return None
 
     evidence_text = "\n".join(chunk.content for chunk in evidence)
@@ -462,6 +501,26 @@ def _deterministic_evidence_failure(
     return None
 
 
+# A claim's verdict in the words a card shows. "undetermined" reads as
+# "unverified": no evidence spoke to it either way, and it never blocks.
+_VERDICT_NAMES = {
+    "supported": "supported",
+    "undetermined": "unverified",
+    "refuted": "contradicted",
+}
+# The detector name prefix of the word-overlap fallback, which is not NLI.
+_LEXICAL = "lexical"
+
+# Why a reply was blocked, in the words a card shows.
+_BLOCK_REASONS = {
+    "BUSINESS_CLAIM_WITHOUT_TOOL_EVIDENCE": "states an outcome no tool result shows",
+    "TOOL_EVIDENCE_ORDER_MISMATCH": "names an order number found in no evidence",
+    "TOOL_EVIDENCE_AMOUNT_MISMATCH": "states an amount found in no evidence",
+    "TOOL_EVIDENCE_REFUND_STATE_MISMATCH": "says the refund is settled; the record disagrees",
+    "TOOL_EVIDENCE_NOT_EXECUTED": "claims a refund the tool call never executed",
+    "HALLUCINATION_GUARD_BLOCK": "a claim is contradicted by the evidence",
+}
+
 # Evidence tiers, in the words a card shows.
 _TIER_NAMES = {
     "tool_result": "tool result",
@@ -491,7 +550,7 @@ def _claim_check(verdict: DetectionVerdict) -> dict[str, Any]:
             {
                 "rank": check.rank,
                 "similarity": check.similarity,
-                "tier": _TIER_NAMES.get(check.tier, check.tier),
+                "tier": _tier_name(check.tier),
                 "excerpt": check.excerpt,
                 "nli_label": check.nli_label,
                 "nli_score": check.nli_score,
@@ -500,6 +559,15 @@ def _claim_check(verdict: DetectionVerdict) -> dict[str, Any]:
             for check in verdict.evidence_checks
         ],
     }
+
+
+def _tier_name(tier: str) -> str:
+    """`tool result`, or `combined tool result + tool result` for a joined premise."""
+    kind, _, parts = tier.partition(":")
+    if kind != COMBINED_TIER or not parts:
+        return _TIER_NAMES.get(tier, tier)
+    names = [_TIER_NAMES.get(part, part) for part in parts.split(COMBINED_TIER_JOINER)]
+    return f"{COMBINED_TIER} {' + '.join(names)}"
 
 
 def _deterministic_check(claim: str, reason: str, rationale: str) -> dict[str, Any]:
@@ -511,7 +579,8 @@ def _deterministic_check(claim: str, reason: str, rationale: str) -> dict[str, A
         "detector": "deterministic",
         "threshold": None,
         "confidence": 1.0,
-        "rationale": f"{reason}: {rationale}",
+        "rationale": rationale,
+        "reason_code": reason,
         "retrieval": "not needed",
         "evidence": [],
     }

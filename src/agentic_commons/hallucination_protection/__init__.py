@@ -1,6 +1,8 @@
 """Hallucination detection, diagnosis and trust calibration (LLD §10)."""
 
 from agentic_commons.hallucination_protection.checker import (
+    COMBINED_TIER,
+    COMBINED_TIER_JOINER,
     OBSERVATION_SEQUENCE,
     ClaimDecomposer,
     ClaimResolver,
@@ -21,6 +23,8 @@ from agentic_commons.hallucination_protection.types import (
 )
 
 __all__ = [
+    "COMBINED_TIER",
+    "COMBINED_TIER_JOINER",
     "OBSERVATION_SEQUENCE",
     "AtomicClaim",
     "ClaimDecomposer",

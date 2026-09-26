@@ -53,6 +53,10 @@ _CONJUNCTION = re.compile(r",?\s+\b(?:and|but|however|although|while|because|sin
 # `Chunk.metadata` key for the order in which an observation was made this
 # turn. Same-tier evidence that disagrees is settled by the later one.
 OBSERVATION_SEQUENCE = "observation_sequence"
+# The tier name of an evidence check made against several items joined, as
+# `combined:tool_result+tool_result` — so a reader can see which ones.
+COMBINED_TIER = "combined"
+COMBINED_TIER_JOINER = "+"
 
 # A claim with no content words is not checkable ("Sure!", "Let me know.").
 _MIN_CONTENT_TOKENS = 3
@@ -163,6 +167,10 @@ class GroundingResolver:
         self._floor = settings.evidence_min_similarity
         self._authority = settings.evidence_authority
         self._support_only = frozenset(settings.support_only_tiers)
+        self._record_claim = re.compile(settings.record_claim_pattern, re.IGNORECASE)
+        self._record_tiers = frozenset(settings.record_claim_tiers)
+        self._combine_premise = settings.combined_premise_enabled
+        self._premise_separator = settings.combined_premise_separator
         self._entailment = entailment or create_entailment_model()
         self._logger = get_logger("hallucination_protection")
 
@@ -193,12 +201,51 @@ class GroundingResolver:
             if relevant
             else self._nothing_relevant(claim, retrieved)
         )
+        checks = self._evidence_checks(retrieved, dict(zip(map(id, relevant), results)))
+        if verdict.undetermined:
+            combined = await self._combined_support(claim, relevant)
+            if combined is not None:
+                verdict = self._verdict(claim, retrieved, combined[0], supported=True)
+                checks.append(combined[1])
         return verdict.model_copy(
             update={
-                "evidence_checks": self._evidence_checks(retrieved, dict(zip(map(id, relevant), results))),
+                "evidence_checks": checks,
                 "threshold": self._threshold if any(r.calibrated for r in results) else None,
             }
         )
+
+    async def _combined_support(
+        self, claim: str, relevant: list[Chunk]
+    ) -> tuple[EntailmentResult, EvidenceCheck] | None:
+        """Whether the items allowed to support the claim do so together.
+
+        One extra NLI call, only for a claim no single item decided. It
+        may support and never refute: a contradiction found in a joined
+        premise cannot be traced to one source, so the authority and
+        recency rules that settle conflicts would have nothing to weigh.
+        """
+        allowed = [
+            chunk
+            for chunk in relevant
+            if self._may_support(claim, chunk) and chunk.kind not in self._support_only
+        ]
+        if not self._combine_premise or len(allowed) < 2:
+            return None
+        premise = self._premise_separator.join(chunk.content for chunk in allowed)
+        result = await self._entailment.entails(premise, claim)
+        if result.label != "entailment" or not self._is_decisive(result):
+            return None
+        tiers = COMBINED_TIER_JOINER.join(chunk.kind for chunk in allowed)
+        check = EvidenceCheck(
+            rank=len(relevant) + 1,
+            similarity=round(min(chunk.score for chunk in allowed), 3),
+            tier=f"{COMBINED_TIER}:{tiers}",
+            excerpt=premise,
+            nli_label=result.label,
+            nli_score=round(result.score, 3),
+            decisive=True,
+        )
+        return result, check
 
     def _nothing_relevant(self, claim: str, retrieved: list[Chunk]) -> DetectionVerdict:
         """No evidence is close enough to judge the claim by.
@@ -271,7 +318,7 @@ class GroundingResolver:
         entailed = [
             (result, chunk)
             for result, chunk in zip(results, retrieved)
-            if result.label == "entailment"
+            if result.label == "entailment" and self._may_support(claim, chunk)
         ]
         contradicted = [
             (result, chunk)
@@ -356,6 +403,14 @@ class GroundingResolver:
                 ),
             )
         return self._verdict(claim, retrieved, result, supported=False, undetermined=True)
+
+    def _may_support(self, claim: str, chunk: Chunk) -> bool:
+        """Whether this tier may ground this claim at all.
+
+        A claim about the customer's own record needs a record: a rule
+        about how refunds work cannot show that this one happened.
+        """
+        return not self._record_claim.search(claim) or chunk.kind in self._record_tiers
 
     def _conflict(
         self,

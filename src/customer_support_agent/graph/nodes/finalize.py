@@ -96,15 +96,13 @@ class FinalizeNodes(NodeSupport):
             guardrail_result = await self._response_guardrail.enforce(
                 last.content, evidence, resample=self._resampler(state)
             )
-            guardrail_fields = {
-                **guardrail_result.model_dump(exclude={"response", "unsupported_claims"}),
-                "schema_valid": True,
-                "unsupported_claims": guardrail_result.unsupported_claims,
-            }
+            # No schema line here: this draft never went through the JSON
+            # envelope, and reporting it as valid described a check that
+            # did not run.
             self._report_grounding(
                 blocked=guardrail_result.escalated,
-                summary=_grounding_headline(guardrail_result, "LLM hallucinated"),
-                fields=guardrail_fields,
+                summary=_grounding_headline(guardrail_result),
+                fields=guardrail_result.model_dump(exclude={"response"}),
             )
             return {
                 "response": guardrail_result.response,
@@ -131,9 +129,7 @@ class FinalizeNodes(NodeSupport):
                 )
                 self._report_grounding(
                     blocked=True,
-                    summary=(
-                        "Response blocked before LLM repair · no authoritative tool evidence"
-                    ),
+                    summary=_grounding_headline(guardrail_result),
                     fields=guardrail_fields,
                 )
                 return {
@@ -231,7 +227,7 @@ class FinalizeNodes(NodeSupport):
         )
         self._report_grounding(
             blocked=guardrail_result.escalated,
-            summary=_grounding_headline(guardrail_result, "Response blocked by hallucination guard"),
+            summary=_grounding_headline(guardrail_result),
             fields=guardrail_fields,
         )
         state.metadata["hallucination_rate"] = guardrail_result.hallucination_rate
@@ -265,18 +261,11 @@ class FinalizeNodes(NodeSupport):
                 "response_ready": True,
                 "revised": not critique.acceptable,
                 "evaluation_score": score if authoritative_evidence else None,
-                "grounding_issues": guardrail_result.unsupported,
+                # Whether the revision came back as the JSON envelope the
+                # schema asks for, or as plain text used as-is. The
+                # grounding verdict has its own card and is not repeated.
                 "schema_valid": schema_fields.get("schema_valid", True),
                 "validation_mode": schema_fields.get("validation_mode"),
-                "validation_attempts": schema_fields.get("validation_attempts"),
-                "repair_attempts": guardrail_result.repair_attempts,
-                "grounded": guardrail_result.grounded,
-                "hallucination_scope": guardrail_result.hallucination_scope,
-                "enforcement": "ESCALATE" if guardrail_result.escalated else "PASS",
-                "failure_kinds": guardrail_result.failure_kinds,
-                "nollm_resolved_ratio": round(guardrail_result.nollm_resolved_ratio, 3),
-                "tier_counts": guardrail_result.tier_counts,
-                "guardrail_reason_code": guardrail_result.reason_code,
             },
         )
         return {
@@ -355,14 +344,8 @@ class FinalizeNodes(NodeSupport):
         return any(marker in lowered for marker in self._deliberation_markers)
 
 
-def _grounding_headline(result: Any, blocked: str) -> str:
-    """One line: the verdict, and whether a real NLI model or the fallback decided it."""
+def _grounding_headline(result: Any) -> str:
+    """The card title: the outcome when blocked, the claim tally when not."""
     if result.escalated:
-        return f"{blocked} · {result.reason_code}"
-    verdicts = [str(check.get("verdict")) for check in result.claim_checks]
-    counts = " · ".join(f"{verdicts.count(v)} {v}" for v in dict.fromkeys(verdicts))
-    headline = f"Grounded: {counts or 'no checkable claims'}"
-    detectors = {str(check.get("detector") or "") for check in result.claim_checks}
-    if any(detector.startswith("lexical") for detector in detectors):
-        headline += " · lexical fallback (NLI model unavailable)"
-    return headline
+        return str(result.outcome)
+    return str(result.tally)

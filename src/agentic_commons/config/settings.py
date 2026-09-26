@@ -559,6 +559,14 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     # tier wins; only a tie between equal tiers blocks as a conflict.
     evidence_authority: dict[str, int]
     support_only_tiers: list[str]
+    record_claim_pattern: str
+    record_claim_tiers: list[str]
+    # A claim whose facts sit in two evidence items ("order 10892 (Keyboard)
+    # has been queued") is neutral against each alone. When no single item
+    # decides it, the items allowed to support it are joined into one
+    # premise and asked once more — to support only, never to refute.
+    combined_premise_enabled: bool
+    combined_premise_separator: str
     # Hallucination repair is deliberately bounded. A model that repeats an
     # unsupported claim must not be given an unbounded generative retry loop.
     max_repair_attempts: int = Field(default=1, ge=0, le=3)

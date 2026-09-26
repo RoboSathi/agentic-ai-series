@@ -192,6 +192,7 @@ FIELD_LABELS = {
     "total_tokens": "total_tokens",
     "comment": "comment",
     "reflection_comment": "reflection_comment",
+    "schema_valid": "reply_matches_json_schema",
 }
 
 AMOUNT_FIELDS = {
@@ -201,27 +202,18 @@ AMOUNT_FIELDS = {
     "autonomous_limit",
 }
 
-# How a claim's verdict reads, and how each NLI label is coloured.
+# How a claim's verdict is marked on a card; the tally wording comes with
+# the guardrail result, so title, log and card agree.
 _CLAIM_MARKS = {
-    "supported": ("✓", "green"),
-    "undetermined": ("?", "yellow"),
-    "refuted": ("✗", "red"),
+    "supported": ("✓", "green", "supported"),
+    "undetermined": ("?", "yellow", "unverified"),
+    "refuted": ("✗", "red", "contradicted"),
 }
-_NLI_STYLES = {"entailment": "green", "contradiction": "red", "unknown": "yellow"}
-def _claim_tally(checks: list[Any]) -> str:
-    """`1 supported · 1 undetermined of 2 claims` (+ which detector decided)."""
-    counts: dict[str, int] = {}
-    detectors: set[str] = set()
-    for check in checks:
-        if isinstance(check, Mapping):
-            verdict = str(check.get("verdict") or "unknown")
-            counts[verdict] = counts.get(verdict, 0) + 1
-            detectors.add(str(check.get("detector") or ""))
-    parts = " · ".join(f"{count} {verdict}" for verdict, count in counts.items())
-    note = " · lexical fallback (NLI model unavailable)" if any(
-        detector.startswith("lexical") for detector in detectors
-    ) else ""
-    return f"{parts} of {len(checks)} claim{'' if len(checks) == 1 else 's'}{note}"
+# The NLI result each verdict is decided by, and its display name.
+_DECIDING_LABEL = {"supported": "entailment", "refuted": "contradiction"}
+_NLI_NAMES = {"unknown": "neutral"}
+# Policy passages are markdown; emphasis markers are noise in a one-line excerpt.
+_MARKDOWN_BOLD = "**"
 
 
 # How much of an evidence excerpt a row shows; the log keeps it whole.
@@ -455,6 +447,10 @@ class StageEventWidget(Collapsible):
     def _build_body(self) -> Text:
         body = Text()
 
+        if self.event.stage == "hallucination_check":
+            _append_grounding(body, self.event.fields)
+            return body
+
         fields = self._ordered_fields(self.event.fields)
 
         rendered_fields = False
@@ -465,25 +461,6 @@ class StageEventWidget(Collapsible):
                 self._append_checks(body, value)
                 rendered_fields = True
                 continue
-            if name == "claim_checks" and isinstance(value, list) and value:
-                if rendered_fields:
-                    body.append("\n")
-                self._append_claim_checks(body, value)
-                rendered_fields = True
-                continue
-            if name == "provenance_checks" and isinstance(value, list) and value:
-                if rendered_fields:
-                    body.append("\n")
-                self._append_provenance(body, value)
-                rendered_fields = True
-                continue
-            if name == "unsupported_diagnostics" and isinstance(value, list):
-                if rendered_fields:
-                    body.append("\n")
-                self._append_hallucination_diagnostics(body, value)
-                rendered_fields = True
-                continue
-
             if name in BLOCK_FIELDS and value:
                 if rendered_fields:
                     body.append("\n")
@@ -721,29 +698,12 @@ class StageEventWidget(Collapsible):
             return self.event.summary or "recovery event"
 
         if stage in {"hallucination_check", "hallucination_repair"}:
-            supported = fields.get("supported")
-            claims = fields.get("claims")
-            scope = str(fields.get("hallucination_scope") or "").lower()
-            blocked = fields.get("reason_code") == "HALLUCINATION_GUARD_BLOCK" or self.event.status == "blocked"
-
-            if blocked and scope == "partial":
-                unsupported = fields.get("unsupported")
-                if unsupported is not None and claims is not None:
-                    return f"BLOCK · PARTIAL HALLUCINATION · {unsupported}/{claims} unsupported"
-                return "BLOCK · PARTIAL HALLUCINATION"
-
-            if blocked and scope == "complete":
-                if claims is not None:
-                    return f"BLOCK · COMPLETE HALLUCINATION · 0/{claims} supported"
-                return "BLOCK · COMPLETE HALLUCINATION"
-
-            checks = fields.get("claim_checks")
-            if isinstance(checks, list) and checks:
-                suffix = " · repaired" if fields.get("repaired") else ""
-                return _claim_tally(checks) + suffix
-            if supported is not None and claims is not None:
-                suffix = " · repaired" if fields.get("repaired") else ""
-                return f"{supported}/{claims} claims supported{suffix}"
+            # A blocked check has already returned its outcome as the summary.
+            tally = fields.get("tally")
+            if not tally and fields.get("claims") is not None:
+                tally = f"{fields.get('supported')}/{fields['claims']} claims supported"
+            if tally:
+                return f"{tally}{' · repaired' if fields.get('repaired') else ''}"
 
         if stage == "finalize":
             return "response ready" if fields.get("response_ready", True) else "response not ready"
@@ -784,86 +744,6 @@ class StageEventWidget(Collapsible):
             if isinstance(evidence, Mapping) and evidence:
                 body.append("\n      evidence = ", style="dim")
                 body.append(_format_mapping(evidence), style="dim")
-
-    def _append_claim_checks(self, body: Text, checks: list[Any]) -> None:
-        """Every claim, pass or fail: its verdict, then retrieval → NLI per evidence item."""
-        body.append(f"  CLAIM CHECKS · {len(checks)} claim(s)", style="bold bright_white")
-        for check in checks:
-            if isinstance(check, Mapping):
-                self._append_claim(body, check)
-
-    def _append_claim(self, body: Text, check: Mapping[str, Any]) -> None:
-        verdict = str(check.get("verdict") or "unknown")
-        mark, style = _CLAIM_MARKS.get(verdict, ("?", "yellow"))
-        body.append(f"\n    {mark} ", style=style)
-        body.append(str(check.get("claim") or ""), style="bright_white")
-        decided_by = str(check.get("decided_by") or "")
-        if decided_by == "deterministic_provenance":
-            how = "decided by the deterministic id/amount check (no retrieval, no NLI)"
-        else:
-            threshold = check.get("threshold")
-            bar = f"needs ≥ {threshold}" if threshold is not None else "uncalibrated: its label decides"
-            how = f"decided by {decided_by} · {check.get('detector')} ({bar}) · {check.get('retrieval')}"
-        body.append(f"\n      {verdict} · {how}", style=style)
-        body.append(f"\n      why = {check.get('rationale') or '—'}", style="dim")
-        for item in check.get("evidence") or []:
-            if isinstance(item, Mapping):
-                self._append_evidence_row(body, item)
-
-    def _append_evidence_row(self, body: Text, item: Mapping[str, Any]) -> None:
-        """`2. cos 0.41 [policy] "…excerpt…" → neutral 0.61`."""
-        excerpt = " ".join(str(item.get("excerpt") or "").split())
-        if len(excerpt) > _EXCERPT_CHARS:
-            excerpt = excerpt[: _EXCERPT_CHARS - 1] + "…"
-        label = str(item.get("nli_label") or "unknown")
-        checked = label in _NLI_STYLES
-        decisive = " ✓ decisive" if item.get("decisive") else ""
-        body.append(
-            f"\n        {item.get('rank')}. cos {item.get('similarity')} [{item.get('tier')}] "
-            f"\"{excerpt}\"",
-            style="dim",
-        )
-        verdict = f"{label} {item.get('nli_score')}{decisive}" if checked else label
-        body.append(f" → {verdict}", style=_NLI_STYLES.get(label, "dim"))
-
-    def _append_provenance(self, body: Text, lines: list[Any]) -> None:
-        """The deterministic stage: every id and amount, and where it was found."""
-        body.append("  PROVENANCE (deterministic, before NLI)", style="bold bright_white")
-        for line in lines:
-            text = str(line)
-            body.append(f"\n    {text}", style="green" if text.startswith("✓") else "red")
-
-    def _append_hallucination_diagnostics(self, body: Text, diagnostics: list[Any]) -> None:
-        """Render why each unsupported claim failed grounding."""
-        if not diagnostics:
-            return
-        body.append("  UNSUPPORTED CLAIM DIAGNOSTICS", style="bold bright_white")
-        for item in diagnostics:
-            if not isinstance(item, Mapping):
-                continue
-            claim = str(item.get("claim") or "")
-            kind = str(item.get("failure_kind") or "unknown").upper()
-            tier = str(item.get("tier") or "unknown")
-            confidence = item.get("confidence")
-            overlap = item.get("best_evidence_overlap")
-            evidence = str(item.get("best_evidence") or "no evidence excerpt")
-            rationale = str(item.get("rationale") or "no rationale returned")
-            detector = str(item.get("detector_model") or "")
-            body.append("\n    ✗ ", style="red")
-            body.append(claim, style="bright_white")
-            body.append(f"\n      failure = {kind}", style="red")
-            body.append(f" · tier = {tier}", style="dim")
-            # Which model actually decided. Without it, a lexical fallback
-            # verdict reads as an NLI verdict and sends whoever is watching
-            # after the wrong problem.
-            if detector:
-                body.append(f" · detector = {detector}", style="dim")
-            if confidence is not None:
-                body.append(f" · confidence = {confidence}", style="dim")
-            if overlap is not None:
-                body.append(f" · evidence_overlap = {overlap}", style="dim")
-            body.append(f"\n      why = {rationale}", style="yellow")
-            body.append(f"\n      evidence = {evidence}", style="dim")
 
     def _compact_from_fields(
         self,
@@ -915,6 +795,83 @@ class StageEventWidget(Collapsible):
         title = self._build_title()
         body = self._build_body().plain
         return f"{title}\n{body}"
+
+
+def _append_grounding(body: Text, fields: Mapping[str, Any]) -> None:
+    """The hallucination check, as a verdict and one line of proof per claim.
+
+    Everything else the guardrail reports — every retrieved passage with
+    its cosine and NLI scores, the diagnostics, the per-tier counts — is in
+    `guardrails.log`. The card answers three questions: was the reply sent,
+    what was it checked against, and what decided each sentence.
+    """
+    escalated = bool(fields.get("escalated"))
+    _append_row(body, "result", str(fields.get("outcome") or ""), "red" if escalated else "green")
+    checks = [c for c in fields.get("claim_checks") or [] if isinstance(c, Mapping)]
+    if checks:
+        unverified = any(c.get("verdict") == "undetermined" for c in checks)
+        note = " (unverified does not block)" if unverified else ""
+        _append_row(body, "claims", str(fields.get("tally") or "") + note, "bright_white")
+    _append_row(body, "checked against", str(fields.get("evidence_searched") or "no evidence"), "dim")
+    provenance = [str(line) for line in fields.get("provenance_checks") or []]
+    if provenance:
+        _append_row(body, "ids & amounts", "  ".join(provenance), "dim")
+    checker = next((c for c in checks if c.get("decided_by") != "deterministic_provenance"), None)
+    if checker is not None:
+        _append_row(body, "checker", _checker_line(checker), "dim")
+    for check in checks:
+        _append_claim(body, check)
+
+
+def _append_row(body: Text, label: str, value: str, style: str) -> None:
+    if body:
+        body.append("\n")
+    body.append(f"  {label:<16}", style="bright_white")
+    body.append(value, style=style)
+
+
+def _checker_line(check: Mapping[str, Any]) -> str:
+    """`cross-encoder/nli-deberta-v3-base · supports at ≥ 0.6 · top-3 by embedding`."""
+    threshold = check.get("threshold")
+    bar = f"supports at ≥ {threshold}" if threshold is not None else "uncalibrated: its label decides"
+    return f"{check.get('detector')} · {bar} · {check.get('retrieval')}"
+
+
+def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
+    """`✓ claim` then `  ← tool result · entailment 0.99 · "excerpt"`."""
+    verdict = str(check.get("verdict") or "undetermined")
+    mark, style, name = _CLAIM_MARKS.get(verdict, ("?", "yellow", verdict))
+    body.append(f"\n\n  {mark} ", style=style)
+    body.append(str(check.get("claim") or ""), style="bright_white")
+    if check.get("decided_by") == "deterministic_provenance":
+        body.append(f"\n      {name} by the deterministic check · {check.get('rationale')}", style=style)
+        return
+    item = _deciding_evidence(verdict, check.get("evidence") or [])
+    if item is None:
+        body.append(f"\n      {name} · no evidence retrieved", style=style)
+        return
+    label = str(item.get("nli_label") or "unknown")
+    lead = f"{name} by" if verdict in _DECIDING_LABEL else f"{name} · closest is"
+    body.append(
+        f"\n      {lead} {item.get('tier')} ({_NLI_NAMES.get(label, label)} "
+        f"{float(item.get('nli_score') or 0):.2f}) ",
+        style=style,
+    )
+    body.append(f"\"{_excerpt(item)}\"", style="dim")
+
+
+def _deciding_evidence(verdict: str, evidence: list[Any]) -> Mapping[str, Any] | None:
+    """The passage that settled the claim, or the nearest one when none did."""
+    items = [item for item in evidence if isinstance(item, Mapping)]
+    wanted = _DECIDING_LABEL.get(verdict)
+    decisive = [i for i in items if i.get("decisive") and i.get("nli_label") == wanted]
+    ranked = decisive or items
+    return ranked[0] if ranked else None
+
+
+def _excerpt(item: Mapping[str, Any]) -> str:
+    text = " ".join(str(item.get("excerpt") or "").replace(_MARKDOWN_BOLD, "").split())
+    return text if len(text) <= _EXCERPT_CHARS else text[: _EXCERPT_CHARS - 1] + "…"
 
 
 # Where a block-rendered line is folded. Narrower than the log files:

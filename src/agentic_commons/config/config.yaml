@@ -491,6 +491,23 @@ hallucination_protection:
   # customer's own message: a reply may echo it ("I can't issue a $1
   # refund"), but what a customer asserts proves nothing.
   support_only_tiers: [system, history]
+  # A claim about the customer's own record ("your refund is done", "order
+  # 10892 is pending review") is a fact about this case, and only a tool
+  # result can show it. Policy may refute such a claim but never support
+  # it: NLI read "an order already refunded cannot be refunded again" as
+  # entailing "your refund is done". General claims ("you'll hear back
+  # soon") are still supported by any tier. Agents override the pattern.
+  record_claim_pattern: "\\byour\\b|\\border\\s*#?\\s*\\d{3,}\\b"
+  record_claim_tiers: [tool_result]
+  # A claim can be true across two evidence items and neutral against each
+  # alone: "order 10892 (Mechanical Keyboard) has been queued" needs the
+  # order record *and* the queue result. When no single item decides a
+  # claim, the retrieved items allowed to support it are joined into one
+  # premise and checked once more. It can only turn "unverified" into
+  # "supported": a contradiction in a joined premise has no single source
+  # for the authority and recency rules to weigh, so it never blocks.
+  combined_premise_enabled: true
+  combined_premise_separator: "\n"
   # At most one generative repair. If the model repeats an unsupported
   # claim, the verifier stops generating and falls back to verified claims.
   max_repair_attempts: 1
