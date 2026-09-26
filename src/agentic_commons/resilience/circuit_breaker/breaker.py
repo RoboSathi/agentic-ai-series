@@ -94,11 +94,21 @@ class CircuitBreakerImpl:
             )
         try:
             result = await fn()
-        except Exception:
-            await self._record_failure()
+        except Exception as exc:
+            if self.counts_as_failure(exc):
+                await self._record_failure()
             raise
         await self._record_success()
         return result
+
+    def counts_as_failure(self, error: Exception) -> bool:
+        """Whether this error says the dependency is unhealthy (hook).
+
+        Every error counts by default. A subclass narrows it when some
+        errors are answers rather than outages — the state machine,
+        cooldown and trial call stay the platform's.
+        """
+        return True
 
     async def _record_success(self) -> None:
         """A success closes a half-open circuit and clears the failure count."""
@@ -145,19 +155,6 @@ class TimeoutOnlyCircuitBreaker(CircuitBreakerImpl):
     is answering, and tripping on those hides a bug behind an outage.
     """
 
-    async def call(self, fn: Callable[[], Awaitable[T]]) -> T:
-        """Count only timeouts toward the failure threshold."""
-        if not self._enabled:
-            return await fn()
-        if self.state == "open":
-            raise CircuitBreakerOpenError(f"Circuit '{self.name}' is open after repeated timeouts")
-        try:
-            result = await fn()
-        except (asyncio.TimeoutError, TimeoutError):
-            await self._record_failure()
-            raise
-        except Exception:
-            # A prompt error is a live dependency; do not trip on it.
-            raise
-        await self._record_success()
-        return result
+    def counts_as_failure(self, error: Exception) -> bool:
+        """Only a timeout counts; a prompt error is a live dependency."""
+        return isinstance(error, (asyncio.TimeoutError, TimeoutError))

@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from agentic_commons.config import get_settings, set_enabled
+from agentic_commons.money import Money
 from agentic_commons.persistence import SqliteConnectionPool
 from customer_support_agent.graph import build_agent
 from customer_support_agent.persistence import (
@@ -45,7 +46,7 @@ def tools(
 class TestRepositories:
     def test_reads_a_seeded_order(self, orders: OrdersRepository) -> None:
         order = orders.get(10001)
-        assert order is not None and order.amount == 32.00
+        assert order is not None and order.amount == Money.parse("32.00")
 
     def test_a_missing_order_is_none(self, orders: OrdersRepository) -> None:
         assert orders.get(99999) is None
@@ -101,10 +102,10 @@ class TestRepositories:
         assert hitl.decide(request_id, "denied") is False  # type: ignore[arg-type]
 
     def test_the_refund_ledger_excludes_reversals(self, refunds: RefundLedgerRepository) -> None:
-        refunds.record("r1", 10001, 1, 32.0, "damaged")
-        refunds.record("r2", 10002, 1, 10.0, "refund")
+        refunds.record("r1", 10001, 1, Money.parse("32.00"), "damaged")
+        refunds.record("r2", 10002, 1, Money.parse("10.00"), "refund")
         refunds.reverse("r2")
-        assert refunds.total_for_user(1) == 32.0
+        assert refunds.total_for_user(1) == Money.parse("32.00")
 
 
 class TestTools:
@@ -198,7 +199,7 @@ class TestRefundSaga:
         order = orders.get(10001)
         assert order is not None
         await RefundSaga(orders, refunds, notifier=broken_notifier).issue(order, 32.0, "x")
-        assert refunds.total_for_user(1) == 0.0
+        assert refunds.total_for_user(1) == Money.zero()
 
     async def test_the_same_refund_is_not_issued_twice(
         self,
@@ -213,7 +214,7 @@ class TestRefundSaga:
         assert order is not None
         await saga.issue(order, 32.0, "damaged")
         await saga.issue(order, 32.0, "damaged")
-        assert refunds.total_for_user(1) == 32.0
+        assert refunds.total_for_user(1) == Money.parse("32.00")
 
 
 class TestPolicy:

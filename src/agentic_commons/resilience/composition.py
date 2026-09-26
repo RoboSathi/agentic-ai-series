@@ -18,10 +18,10 @@ at a third of the intended threshold.
 from typing import Awaitable, Callable, TypeVar
 
 from agentic_commons.logging import get_logger, instrument
-from agentic_commons.resilience.bulkhead.bulkhead import ResourcePoolBulkhead
-from agentic_commons.resilience.circuit_breaker.breaker import CircuitBreakerImpl
-from agentic_commons.resilience.retry.retry import ExponentialBackoffRetry
-from agentic_commons.resilience.timeout.timeout import AsyncTimeoutGuard
+from agentic_commons.resilience.bulkhead.bulkhead import Bulkhead, ResourcePoolBulkhead
+from agentic_commons.resilience.circuit_breaker.breaker import CircuitBreaker, CircuitBreakerImpl
+from agentic_commons.resilience.retry.retry import ExponentialBackoffRetry, RetryPolicy
+from agentic_commons.resilience.timeout.timeout import AsyncTimeoutGuard, TimeoutGuard
 
 T = TypeVar("T")
 
@@ -33,21 +33,25 @@ class ResilientCaller:
     One instance per dependency, not one shared instance: the breaker's
     failure count and the bulkhead's permits are per-dependency state,
     and sharing them would couple the failures of unrelated services.
+
+    Each layer is typed by its Protocol, so an agent can hand in its own
+    breaker (say, a `TimeoutOnlyCircuitBreaker`) or retry policy and keep
+    the stacking order, which is the part that is easy to get wrong.
     """
 
     def __init__(
         self,
         name: str,
-        breaker: CircuitBreakerImpl | None = None,
-        retry: ExponentialBackoffRetry | None = None,
-        timeout: AsyncTimeoutGuard | None = None,
-        bulkhead: ResourcePoolBulkhead | None = None,
+        breaker: CircuitBreaker | None = None,
+        retry: RetryPolicy | None = None,
+        timeout: TimeoutGuard | None = None,
+        bulkhead: Bulkhead | None = None,
     ) -> None:
         self.name = name
-        self.breaker = breaker or CircuitBreakerImpl(name=name)
-        self.retry = retry or ExponentialBackoffRetry()
-        self.timeout = timeout or AsyncTimeoutGuard()
-        self.bulkhead = bulkhead or ResourcePoolBulkhead()
+        self.breaker: CircuitBreaker = breaker or CircuitBreakerImpl(name=name)
+        self.retry: RetryPolicy = retry or ExponentialBackoffRetry()
+        self.timeout: TimeoutGuard = timeout or AsyncTimeoutGuard()
+        self.bulkhead: Bulkhead = bulkhead or ResourcePoolBulkhead()
         self._logger = get_logger("resilience")
 
     async def call(

@@ -59,6 +59,16 @@ _DISPLAY_NAMES = {
     "hallucination_check": "HALLUCINATION CHECK",
     "escalation": "ESCALATION",
     "finalize": "FINALIZE",
+    "run_failed_resumable": "RUN FAILED · RESUMABLE",
+    "run_resumed": "RESUMED",
+    "run_interrupted": "WAITING",
+    "review_decision": "REVIEW DECISION",
+    "turn_summary": "TURN SUMMARY",
+    "memory_update": "MEMORY UPDATE",
+    "memory_delete": "MEMORY DELETE",
+    "memory_erase": "MEMORY ERASE",
+    "knowledge_search": "KNOWLEDGE",
+    "consolidation": "CONSOLIDATION",
 }
 
 

@@ -14,7 +14,13 @@ from typing import Protocol, runtime_checkable
 from agentic_commons.config import get_settings
 from agentic_commons.context.failure import is_near_duplicate
 from agentic_commons.context.retrieval import CrossEncoderReranker
-from agentic_commons.context.types import AssembledContext, Chunk, ChunkKind, Task
+from agentic_commons.context.types import (
+    AssembledContext,
+    Chunk,
+    ChunkKind,
+    Task,
+    provenance_header,
+)
 from agentic_commons.logging import get_logger, instrument, logged
 
 # Where each kind of content belongs in the window. Instructions lead;
@@ -190,7 +196,7 @@ class FiveStagePipeline:
         """
         return [
             chunk.model_copy(
-                update={"content": f"[{chunk.kind}{_source_suffix(chunk)}]\n{chunk.content}"}
+                update={"content": f"{provenance_header(chunk)}\n{chunk.content}"}
             )
             for chunk in chunks
         ]
@@ -220,6 +226,3 @@ class FiveStagePipeline:
         ]
 
 
-def _source_suffix(chunk: Chunk) -> str:
-    """The source annotation for a formatted chunk, if it has one."""
-    return f": {chunk.source}" if chunk.source else ""

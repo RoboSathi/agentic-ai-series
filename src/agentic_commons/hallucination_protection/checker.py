@@ -25,6 +25,7 @@ from agentic_commons.evals.types import Claim, Verdict
 from agentic_commons.hallucination_protection.types import (
     AtomicClaim,
     DetectionVerdict,
+    EvidenceCheck,
     FailureKind,
     GenerationAssessment,
     TrustMeasurement,
@@ -42,7 +43,16 @@ from agentic_commons.logging import get_logger, instrument, logged
 # matched only one of them — so a sentence half of which was verbatim
 # supported scored as entirely unsupported.
 _SENTENCE = re.compile(r"(?<=[.!?;])\s+")
-_CONJUNCTION = re.compile(r",?\s+\b(?:and|but|however|although|while)\b\s+")
+# Causal connectives split too. "Queued for review because the amount
+# exceeds $50" is two claims from two tiers — the outcome from a tool
+# result, the reason from the policy — and no single premise entails both.
+# "Totals $117.23, so I cannot issue a $1 refund" likewise: joined, NLI
+# read the pair as contradicting "a refund is always for the full total".
+_CONJUNCTION = re.compile(r",?\s+\b(?:and|but|however|although|while|because|since|so)\b\s+")
+
+# `Chunk.metadata` key for the order in which an observation was made this
+# turn. Same-tier evidence that disagrees is settled by the later one.
+OBSERVATION_SEQUENCE = "observation_sequence"
 
 # A claim with no content words is not checkable ("Sure!", "Let me know.").
 _MIN_CONTENT_TOKENS = 3
@@ -98,6 +108,18 @@ def _novel_specifics(claim: str, retrieved: list[Chunk]) -> list[str]:
     return sorted(value for value in found if value and value not in evidence)
 
 
+def _later_observation(
+    first: tuple[EntailmentResult, Chunk],
+    second: tuple[EntailmentResult, Chunk],
+) -> tuple[EntailmentResult, Chunk] | None:
+    """Whichever of two evidence items was observed later, when both say when."""
+    a = first[1].metadata.get(OBSERVATION_SEQUENCE)
+    b = second[1].metadata.get(OBSERVATION_SEQUENCE)
+    if not isinstance(a, int) or not isinstance(b, int) or a == b:
+        return None
+    return first if a > b else second
+
+
 class ClaimDecomposer:
     """Breaks a generation into atomic, separately checkable claims."""
 
@@ -138,6 +160,9 @@ class GroundingResolver:
         self._retriever = DenseRetriever(ranker)
         self._top_k = settings.embedding_top_k
         self._threshold = settings.nli_entailment_threshold
+        self._floor = settings.evidence_min_similarity
+        self._authority = settings.evidence_authority
+        self._support_only = frozenset(settings.support_only_tiers)
         self._entailment = entailment or create_entailment_model()
         self._logger = get_logger("hallucination_protection")
 
@@ -157,10 +182,70 @@ class GroundingResolver:
                 retrieval_method=self._retrieval_method,
             )
 
-        results = await asyncio.gather(
-            *(self._entailment.entails(chunk.content, claim) for chunk in retrieved)
+        relevant = [chunk for chunk in retrieved if chunk.score >= self._floor]
+        results = list(
+            await asyncio.gather(
+                *(self._entailment.entails(chunk.content, claim) for chunk in relevant)
+            )
         )
-        return self._combine(claim, retrieved, results)
+        verdict = (
+            self._combine(claim, relevant, results)
+            if relevant
+            else self._nothing_relevant(claim, retrieved)
+        )
+        return verdict.model_copy(
+            update={
+                "evidence_checks": self._evidence_checks(retrieved, dict(zip(map(id, relevant), results))),
+                "threshold": self._threshold if any(r.calibrated for r in results) else None,
+            }
+        )
+
+    def _nothing_relevant(self, claim: str, retrieved: list[Chunk]) -> DetectionVerdict:
+        """No evidence is close enough to judge the claim by.
+
+        That is an abstention, not a refutation — unless the claim brings
+        a specific (an amount, an id) that no evidence contains, which is
+        unsourced whatever NLI would have said.
+        """
+        novel = _novel_specifics(claim, retrieved)
+        return DetectionVerdict(
+            claim=claim,
+            supported=False,
+            undetermined=not novel,
+            confidence=0.0,
+            tier="nli_entailment",
+            rationale=(
+                f"{', '.join(novel)} appear(s) in the claim but in no evidence"
+                if novel
+                else f"no evidence is related to this claim (all below similarity {self._floor})"
+            ),
+            detector_model=self._detector_model,
+            retrieval_top_k=self._top_k,
+            retrieval_method=self._retrieval_method,
+            retrieved_evidence=[chunk.content for chunk in retrieved],
+        )
+
+    def _evidence_checks(
+        self, retrieved: list[Chunk], judged: dict[int, EntailmentResult]
+    ) -> list[EvidenceCheck]:
+        """Every retrieved item in similarity order, with the NLI result it got (if any)."""
+        checks = []
+        for rank, chunk in enumerate(retrieved, start=1):
+            result = judged.get(id(chunk))
+            checks.append(
+                EvidenceCheck(
+                    rank=rank,
+                    similarity=round(chunk.score, 3),
+                    tier=chunk.kind,
+                    excerpt=chunk.content,
+                    nli_label=result.label if result else f"not checked (below {self._floor})",
+                    nli_score=round(result.score, 3) if result else 0.0,
+                    decisive=result is not None
+                    and result.label != "unknown"
+                    and self._is_decisive(result),
+                )
+            )
+        return checks
 
     @property
     def _retrieval_method(self) -> str:
@@ -191,30 +276,22 @@ class GroundingResolver:
         contradicted = [
             (result, chunk)
             for result, chunk in zip(results, retrieved)
-            if result.label == "contradiction"
+            if result.label == "contradiction" and chunk.kind not in self._support_only
         ]
 
         best_entailment = max(entailed, key=lambda item: item[0].score, default=None)
         best_contradiction = max(contradicted, key=lambda item: item[0].score, default=None)
 
-        # Conflicting high-confidence evidence is unsafe to collapse into PASS.
+        # Decisive evidence on both sides: the more authoritative tier wins
+        # (a tool result on what happened beats a policy paragraph); only a
+        # disagreement between equals is unsafe to collapse into PASS.
         if (
             best_entailment
             and best_contradiction
             and self._is_decisive(best_entailment[0])
             and self._is_decisive(best_contradiction[0])
         ):
-            result, _ = best_entailment
-            return self._verdict(
-                claim,
-                retrieved,
-                result,
-                supported=False,
-                rationale=(
-                    "conflicting evidence: one retrieved chunk entails the claim "
-                    "while another contradicts it"
-                ),
-            )
+            return self._conflict(claim, retrieved, best_entailment, best_contradiction)
 
         if best_entailment and self._is_decisive(best_entailment[0]):
             result, _ = best_entailment
@@ -279,6 +356,51 @@ class GroundingResolver:
                 ),
             )
         return self._verdict(claim, retrieved, result, supported=False, undetermined=True)
+
+    def _conflict(
+        self,
+        claim: str,
+        retrieved: list[Chunk],
+        entails: tuple[EntailmentResult, Chunk],
+        contradicts: tuple[EntailmentResult, Chunk],
+    ) -> DetectionVerdict:
+        """Resolve entailment vs contradiction by the authority of their evidence."""
+        for_rank = self._authority.get(entails[1].kind, 0)
+        against_rank = self._authority.get(contradicts[1].kind, 0)
+        later = _later_observation(entails, contradicts)
+        if for_rank == against_rank and later is not None:
+            # Two observations of the same tier disagreeing are usually one
+            # state read before an action and one after it. The world is
+            # what the last observation saw.
+            return self._verdict(
+                claim,
+                retrieved,
+                later[0],
+                supported=later is entails,
+                rationale=f"the later {later[1].kind} observation ({later[0].label}) supersedes the earlier one",
+            )
+        if for_rank != against_rank:
+            winner, loser = (entails, contradicts) if for_rank > against_rank else (contradicts, entails)
+            return self._verdict(
+                claim,
+                retrieved,
+                winner[0],
+                supported=winner is entails,
+                rationale=(
+                    f"{winner[1].kind} evidence {winner[0].label} outranks "
+                    f"{loser[1].kind} evidence {loser[0].label}"
+                ),
+            )
+        return self._verdict(
+            claim,
+            retrieved,
+            entails[0],
+            supported=False,
+            rationale=(
+                f"conflicting {entails[1].kind} evidence: one item entails the claim "
+                "while another of equal authority contradicts it"
+            ),
+        )
 
     def _is_decisive(self, result: EntailmentResult) -> bool:
         """Whether a result settles the claim, judged on its own scale.

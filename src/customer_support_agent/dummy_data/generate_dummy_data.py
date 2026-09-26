@@ -14,6 +14,7 @@ answers and look like a model problem.
 import random
 from datetime import datetime, timedelta, timezone
 
+from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger
 from agentic_commons.persistence import SqliteConnectionPool
 from customer_support_agent.config import get_agent_settings
@@ -232,22 +233,25 @@ def _generate_seed_sql() -> str:
         refund_status = refund_status_for(rng, order_status)
         product_name, sku, low, high = rng.choice(_CATALOGUE)
         quantity = rng.choices([1, 2, 3], weights=[0.75, 0.18, 0.07], k=1)[0]
-        unit_price = round(rng.uniform(low, high), 2)
+        # Integer cents throughout: a price drawn in cents, a total that is
+        # an exact product — no float ever becomes money.
+        per_major = 10 ** get_settings().money.minor_units
+        unit_price_cents = rng.randint(round(low * per_major), round(high * per_major))
         # The total is what was actually bought, not an unrelated number.
-        amount = round(unit_price * quantity, 2)
+        amount_cents = unit_price_cents * quantity
         carrier, tracking, eta, delivered_at, location = _whereabouts(
             rng, order_status, timestamp, now
         )
         lines.append(
             "INSERT INTO orders "
-            "(order_id, user_id, timestamp, order_status, refund_status, amount, "
-            "product_name, product_sku, quantity, unit_price, currency, "
+            "(order_id, user_id, timestamp, order_status, refund_status, amount_cents, "
+            "product_name, product_sku, quantity, unit_price_cents, currency, "
             "carrier, tracking_number, estimated_delivery_date, delivered_at, "
             "current_location) "
             f"VALUES ({order_id}, {user_id}, "
             f"{_sql_str(timestamp)}, {_sql_str(order_status)}, "
-            f"{_sql_str(refund_status)}, {amount}, "
-            f"{_sql_str(product_name)}, {_sql_str(sku)}, {quantity}, {unit_price}, "
+            f"{_sql_str(refund_status)}, {amount_cents}, "
+            f"{_sql_str(product_name)}, {_sql_str(sku)}, {quantity}, {unit_price_cents}, "
             f"{_sql_str(_CURRENCY)}, "
             f"{_sql_null(carrier)}, {_sql_null(tracking)}, {_sql_null(eta)}, "
             f"{_sql_null(delivered_at)}, {_sql_null(location)});"

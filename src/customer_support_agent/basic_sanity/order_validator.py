@@ -19,6 +19,7 @@ from agentic_commons.basic_sanity import (
     BasicSanityResult,
 )
 from agentic_commons.logging import get_logger
+from agentic_commons.money import Money, money_or_none
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.domain.refund_policy import RefundPolicy
@@ -153,7 +154,7 @@ class OrderSanityCheck(BasicSanityChecker):
                     facts={
                         "order_id": order_id,
                         "operation": operation,
-                        **({"requested_amount": requested_amount} if requested_amount is not None else {}),
+                        **({"requested_amount": str(requested_amount)} if requested_amount is not None else {}),
                     },
                 )
         else:
@@ -182,7 +183,7 @@ class OrderSanityCheck(BasicSanityChecker):
             "customer_id": order.user_id,
             "order_status": order.order_status,
             "refund_status": order.refund_status,
-            "amount": order.amount,
+            "amount": str(order.amount),
             # Established here so a "where is it" question can be answered
             # from the record rather than left for the model to guess at.
             "product_name": order.product_name,
@@ -210,7 +211,7 @@ class OrderSanityCheck(BasicSanityChecker):
         if operation == "REQUEST_REFUND":
             requested_amount = _requested_amount(request.metadata)
             if requested_amount is not None:
-                facts["requested_amount"] = requested_amount
+                facts["requested_amount"] = str(requested_amount)
 
             if not validation.allowed:
                 finding_map = {
@@ -228,20 +229,20 @@ class OrderSanityCheck(BasicSanityChecker):
                     ),
                     "INVALID_REFUND_AMOUNT": (
                         "requested_amount_positive",
-                        {"requested_amount": requested_amount},
+                        {"requested_amount": str(requested_amount)},
                     ),
                     "REFUND_AMOUNT_EXCEEDS_ORDER_TOTAL": (
                         "requested_amount_within_order_total",
                         {
-                            "requested_amount": requested_amount,
-                            "order_amount": order.amount,
+                            "requested_amount": str(requested_amount),
+                            "order_amount": str(order.amount),
                         },
                     ),
                     "PARTIAL_REFUND_NOT_SUPPORTED": (
                         "full_refund_only",
                         {
-                            "requested_amount": requested_amount,
-                            "order_amount": order.amount,
+                            "requested_amount": str(requested_amount),
+                            "order_amount": str(order.amount),
                         },
                     ),
                 }
@@ -271,7 +272,7 @@ class OrderSanityCheck(BasicSanityChecker):
                         check="requested_amount_positive",
                         passed=True,
                         reason="The requested refund amount is greater than zero.",
-                        evidence={"requested_amount": requested_amount},
+                        evidence={"requested_amount": str(requested_amount)},
                     )
                 )
                 findings.append(
@@ -280,8 +281,8 @@ class OrderSanityCheck(BasicSanityChecker):
                         passed=True,
                         reason="The requested refund does not exceed the order total.",
                         evidence={
-                            "requested_amount": requested_amount,
-                            "order_amount": order.amount,
+                            "requested_amount": str(requested_amount),
+                            "order_amount": str(order.amount),
                             "within_order_total": True,
                         },
                     )
@@ -363,20 +364,12 @@ class OrderSanityCheck(BasicSanityChecker):
         )
 
 
-def _requested_amount(metadata: dict[str, object] | None) -> float | None:
-    """Read an already-validated tool amount, when the Gatekeeper rechecks a call."""
+def _requested_amount(metadata: dict[str, object] | None) -> Money | None:
+    """Read an already-validated tool amount, exactly, when the Gatekeeper rechecks a call."""
     params = (metadata or {}).get("tool_params")
     if not isinstance(params, dict):
         return None
-    value = params.get("amount")
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return None
-    return None
+    return money_or_none(params.get("amount"))
 
 
 def _configured_refund_markers() -> list[str]:

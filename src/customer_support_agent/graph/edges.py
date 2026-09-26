@@ -11,6 +11,7 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from customer_support_agent.graph.nodes._support import NodeSupport
+from customer_support_agent.graph.nodes.review_wait import AWAITING_REVIEW
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.reporting import (
     control_loop_fields,
@@ -111,8 +112,19 @@ class GraphWiring(NodeSupport):
         graph.add_conditional_edges(
             "act", self._after_act, {"reason": "reason", "finalize": "finalize"}
         )
-        graph.add_edge("finalize", END)
-        return graph.compile()
+        # A turn that queued a refund for a person pauses after replying,
+        # checkpointed, until the decision resumes it. Only a durable agent
+        # has the node: an interrupt with nowhere to persist the pause
+        # would lose the run it was meant to keep.
+        if self._checkpointer is not None:
+            graph.add_node("await_approval", self.await_approval)
+            graph.add_conditional_edges(
+                "finalize", self._after_finalize, {"await": "await_approval", "done": END}
+            )
+            graph.add_edge("await_approval", END)
+        else:
+            graph.add_edge("finalize", END)
+        return graph.compile(checkpointer=self._checkpointer)
 
     def _has_collaborator(self, stage: str) -> bool:
         """Whether the object a stage needs was actually injected.
@@ -131,6 +143,10 @@ class GraphWiring(NodeSupport):
             "pii_filtering": self._security.pii,
         }
         return required.get(stage, self) is not None
+
+    def _after_finalize(self, state: AgentState) -> str:
+        """Pause for a reviewer if this turn queued a refund, else finish."""
+        return "await" if state.metadata.get(AWAITING_REVIEW) else "done"
 
     def _after_screening(self, state: AgentState) -> str:
         """A screening stage either halted the turn or passed it along."""

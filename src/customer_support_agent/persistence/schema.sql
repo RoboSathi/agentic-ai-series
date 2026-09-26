@@ -35,14 +35,14 @@ CREATE TABLE IF NOT EXISTS orders (
     timestamp TEXT NOT NULL,
     order_status TEXT NOT NULL,
     refund_status TEXT NOT NULL,
-    amount REAL NOT NULL,
-    -- What was bought. `amount` stays the order total; unit_price times
-    -- quantity is what makes it up, kept separately so a partial-refund
-    -- conversation has something to be partial about.
+    -- Money is integer cents, never REAL (see agentic_commons.money).
+    amount_cents INTEGER NOT NULL,
+    -- What was bought. `amount_cents` stays the order total; unit price
+    -- times quantity is what makes it up.
     product_name TEXT NOT NULL DEFAULT '',
     product_sku TEXT NOT NULL DEFAULT '',
     quantity INTEGER NOT NULL DEFAULT 1,
-    unit_price REAL NOT NULL DEFAULT 0,
+    unit_price_cents INTEGER NOT NULL DEFAULT 0,
     currency TEXT NOT NULL DEFAULT 'USD',
     -- Where it is. Nullable on purpose, and the generator honours the
     -- same rule the agent does: a cancelled order has no ETA, and a
@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS hitl_queue (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     order_id INTEGER NOT NULL REFERENCES orders(order_id),
     user_id INTEGER NOT NULL REFERENCES users(user_id),
-    requested_amount REAL NOT NULL,
+    requested_amount_cents INTEGER NOT NULL,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
@@ -88,8 +88,8 @@ CREATE TABLE IF NOT EXISTS platform_agents (
 CREATE TABLE IF NOT EXISTS platform_agent_budgets (
     agent_id            TEXT NOT NULL,
     action_class        TEXT NOT NULL,
-    per_action_limit    REAL NOT NULL DEFAULT 0,
-    window_limit        REAL NOT NULL DEFAULT 0,
+    per_action_limit_cents INTEGER NOT NULL DEFAULT 0,
+    window_limit_cents     INTEGER NOT NULL DEFAULT 0,
     window_hours        INTEGER NOT NULL DEFAULT 24,
     PRIMARY KEY (agent_id, action_class),
     FOREIGN KEY (agent_id) REFERENCES platform_agents(agent_id)
@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS platform_gatekeeper_ledger (
     ledger_key   TEXT NOT NULL,
     action_class TEXT NOT NULL,
     actor        TEXT NOT NULL,
-    amount       REAL NOT NULL,
+    amount_cents INTEGER NOT NULL,
     trace_id     TEXT NOT NULL,
     recorded_at  TEXT NOT NULL
 );

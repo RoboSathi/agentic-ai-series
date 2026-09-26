@@ -5,10 +5,12 @@ panel subscribes rather than polling. Emitting is deliberately cheap and
 never raises, so a UI problem can never break a request.
 """
 
+import time
 from typing import Any, Callable, Iterator, Mapping, Protocol, runtime_checkable
 
 from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger
+from agentic_commons.observability.turn_tally import TurnTally
 from agentic_commons.observability.types import EventKind, StatusEvent, StatusKind
 
 Subscriber = Callable[[StatusEvent], None]
@@ -79,11 +81,48 @@ class StageReporter:
 
     Keeps call sites to one line each and guarantees a stage that starts is
     always closed out, including on failure.
+
+    It also stamps `latency_ms` on every outcome — the time from a
+    stage's `started` to its end, measured here once instead of by forty
+    emitters that each forget — and writes every event, with the turn's
+    operational context (thread, session), to the observability log. The
+    cards show what happened; the ids that find it later live in the file.
     """
 
     def __init__(self, feed: LiveStatusFeed, run_id: str) -> None:
         self._feed = feed
         self._run_id = run_id
+        self._context: dict[str, Any] = {}
+        self._started: dict[str, float] = {}
+        self._logger = get_logger("observability")
+        self._tally: TurnTally | None = None
+        self._turn_started = 0.0
+
+    def begin_turn(self, **context: Any) -> None:
+        """Bind log context (ids) until `end_turn`, and start counting."""
+        self._context = {key: value for key, value in context.items() if value not in (None, "")}
+        self._started.clear()
+        self._tally = TurnTally()
+        self._turn_started = time.monotonic()
+
+    def end_turn(
+        self, status: StatusKind = "completed", outcome: str = "answered", **log_fields: Any
+    ) -> None:
+        """Emit the turn summary card; operational details go to the log only."""
+        tally = self._tally
+        if tally is None:
+            return
+        self._tally = None
+        seconds = time.monotonic() - self._turn_started
+        self._logger.info("Turn finished", outcome=outcome, **self._context, **log_fields)
+        self.emit(
+            "turn_summary",
+            status,
+            event_kind="system",
+            summary=tally.headline(outcome, seconds),
+            fields=tally.fields(outcome, seconds),
+        )
+        self._context = {}
 
     def emit(
         self,
@@ -102,18 +141,36 @@ class StageReporter:
         facts; the TUI decides whether to render them compactly or in
         expanded DEBUG form.
         """
-        self._feed.emit(
-            StatusEvent(
-                run_id=self._run_id,
-                stage=stage,
-                status=status,
-                event_kind=event_kind,
-                tokens_delta=tokens_delta,
-                detail=detail,
-                summary=summary,
-                fields=dict(fields or {}),
-            )
+        event = StatusEvent(
+            run_id=self._run_id,
+            stage=stage,
+            status=status,
+            event_kind=event_kind,
+            tokens_delta=tokens_delta,
+            detail=detail,
+            summary=summary,
+            fields=self._stamped(stage, status, fields),
         )
+        if self._tally is not None:
+            self._tally.observe(event)
+        self._logger.debug(
+            "Stage event", stage=stage, status=status, summary=summary,
+            fields=event.fields, **self._context,
+        )
+        self._feed.emit(event)
+
+    def _stamped(
+        self, stage: str, status: StatusKind, fields: Mapping[str, Any] | None
+    ) -> dict[str, Any]:
+        """The event's own fields plus measured latency (ids stay in the log)."""
+        stamped = dict(fields or {})
+        if status == "started":
+            self._started[stage] = time.monotonic()
+            return stamped
+        began = self._started.pop(stage, None)
+        if began is not None and "latency_ms" not in stamped:
+            stamped["latency_ms"] = round((time.monotonic() - began) * 1000, 1)
+        return stamped
 
     def started(
         self,

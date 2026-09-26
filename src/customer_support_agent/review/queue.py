@@ -21,6 +21,7 @@ from agentic_commons.audit import AuditEntry, AuditLedger, NullAuditLedger
 from agentic_commons.gatekeeper.types import AuthorityContext
 from agentic_commons.hallucination_protection import TrustCalibrationTracker, TrustReport
 from agentic_commons.logging import get_logger, logged
+from agentic_commons.money import Money
 from agentic_commons.observability.types import utc_now
 from customer_support_agent.domain.models import HitlRequest
 from customer_support_agent.persistence.repositories import HitlQueueRepository, OrdersRepository
@@ -33,7 +34,7 @@ class ReviewOutcome(BaseModel):
     request_id: int
     decision: str
     order_id: int | None = None
-    amount: float = 0.0
+    amount: Money | None = None
     refund_issued: bool = False
     reason: str = ""
 

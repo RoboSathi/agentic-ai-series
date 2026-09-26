@@ -25,6 +25,10 @@ T = TypeVar("T")
 class RetryPolicy(Protocol):
     """Re-runs a failed operation under a bounded, keyed policy."""
 
+    # Total attempts made, retries included — how a caller tells "worked
+    # first time" from "recovered".
+    attempts: int
+
     async def execute(self, fn: Callable[[], Awaitable[T]], idempotency_key: str) -> T: ...
 
 
@@ -75,11 +79,9 @@ class ExponentialBackoffRetry:
             try:
                 self.attempts += 1
                 return await fn()
-            except CircuitBreakerOpenError:
-                # The circuit already decided the dependency is down.
-                # Retrying behind an open breaker only burns the budget.
-                raise
             except Exception as exc:
+                if not self.should_retry(exc):
+                    raise
                 last_error = exc
                 if attempt == self._max_attempts:
                     break
@@ -97,6 +99,15 @@ class ExponentialBackoffRetry:
                 await asyncio.sleep(delay)
         assert last_error is not None
         raise last_error
+
+    def should_retry(self, error: Exception) -> bool:
+        """Whether this error is worth another attempt (hook).
+
+        An open circuit is never retried: the breaker already decided the
+        dependency is down, and retrying behind it only burns the budget.
+        A subclass narrows this further — say, to never retry a 4xx.
+        """
+        return not isinstance(error, CircuitBreakerOpenError)
 
     def _delay_for(self, attempt: int) -> float:
         """Full-jitter backoff: a random point in [0, capped exponential]."""

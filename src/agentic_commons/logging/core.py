@@ -16,7 +16,6 @@ from rich.logging import RichHandler
 from rich.text import Text
 
 from agentic_commons.config import get_settings
-from agentic_commons.logging.narration import NARRATION, Narration
 from agentic_commons.logging.trace_context import get_current_trace_id
 
 Level = Literal["debug", "info", "warning", "error"]
@@ -270,14 +269,7 @@ class RichLogger:
         self._logger.log(
             _LEVEL_TO_INT[level],
             message,
-            extra={
-                NARRATION: Narration(
-                    subsystem=self._subsystem,
-                    headline=message,
-                    fields=fields,
-                ),
-                _STRUCTURED_FIELDS: fields,
-            },
+            extra={_STRUCTURED_FIELDS: fields},
         )
 
     def info(
@@ -353,11 +345,7 @@ class RichLogger:
         arguments: dict[str, Any],
         kwargs: dict[str, Any],
     ) -> None:
-        """Trace a call at DEBUG.
-
-        The file receives the full payload.
-        The Narration receives safe summaries for the terminal.
-        """
+        """Trace a call at DEBUG — the file receives the full payload."""
 
         all_args = ", ".join(
             f"{name}={_payload(value)}"
@@ -368,15 +356,6 @@ class RichLogger:
             (
                 f"[bold {color}]CALLED[/bold {color}] "
                 f"[cyan]{func_name}[/cyan]({all_args})"
-            ),
-            Narration(
-                subsystem=self._subsystem,
-                kind="call",
-                qualname=func_name,
-                arguments={
-                    name: _summarize(value)
-                    for name, value in arguments.items()
-                },
             ),
             structured_fields={
                 "function": func_name,
@@ -401,20 +380,6 @@ class RichLogger:
                 f"{_payload(result)} "
                 f"[dim]({elapsed_ms:.1f}ms)[/dim]"
             ),
-            Narration(
-                subsystem=self._subsystem,
-                kind="return",
-                qualname=func_name,
-                arguments={
-                    name: _summarize(value)
-                    for name, value in (arguments or {}).items()
-                },
-                outcome=_summarize(result),
-                elapsed_ms=round(
-                    elapsed_ms,
-                    1,
-                ),
-            ),
             structured_fields={
                 "function": func_name,
                 "arguments": arguments or {},
@@ -437,29 +402,16 @@ class RichLogger:
                 f"[cyan]{func_name}[/cyan] "
                 f"[yellow]({toggle_path}=False)[/yellow]"
             ),
-            Narration(
-                subsystem=self._subsystem,
-                kind="skip",
-                qualname=func_name,
-                outcome=f"{toggle_path} is off",
-            ),
         )
 
     def _traced(
         self,
         message: str,
-        narration: "Narration",
         structured_fields: dict[str, Any] | None = None,
     ) -> None:
         """One call-trace record with machine-readable file details."""
 
-        self._logger.debug(
-            message,
-            extra={
-                NARRATION: narration,
-                _STRUCTURED_FIELDS: structured_fields or {},
-            },
-        )
+        self._logger.debug(message, extra={_STRUCTURED_FIELDS: structured_fields or {}})
 
 
 class LoggerFactory:
@@ -655,185 +607,6 @@ def _json_safe(value: Any) -> Any:
         except Exception:
             pass
     return str(value)
-
-
-def _summarize(
-    value: Any,
-) -> str:
-    """Return a compact, safe summary of a traced value.
-
-    Scalars speak for themselves.
-
-    Collections become counts, except for small lists of strings/integers
-    such as tool names or allowed actions.
-
-    Structured objects expose several identifying fields so a return such as
-    ``AuthorityDecision`` can show:
-
-        action=...
-        verdict=...
-        reason=...
-
-    in one trace line.
-
-    Raw content remains in the file log.
-    """
-
-    if value is None or isinstance(
-        value,
-        bool,
-    ):
-        return str(value)
-
-    if isinstance(
-        value,
-        (int, float),
-    ):
-        return str(value)
-
-    if isinstance(
-        value,
-        str,
-    ):
-        return value
-
-    if isinstance(
-        value,
-        dict,
-    ):
-        return (
-            f"{len(value)} item"
-            if len(value) == 1
-            else f"{len(value)} items"
-        )
-
-    if isinstance(
-        value,
-        (list, tuple, set),
-    ):
-        if value and all(
-            isinstance(
-                item,
-                (str, int),
-            )
-            for item in value
-        ):
-            return ", ".join(
-                str(item)
-                for item in value
-            )
-
-        return (
-            f"{len(value)} item"
-            if len(value) == 1
-            else f"{len(value)} items"
-        )
-
-    details: list[str] = []
-
-    for field in _IDENTIFYING_FIELDS:
-        identity = getattr(
-            value,
-            field,
-            None,
-        )
-
-        if isinstance(
-            identity,
-            bool,
-        ):
-            continue
-
-        if identity in (
-            None,
-            "",
-        ):
-            continue
-
-        if isinstance(
-            identity,
-            (str, int, float),
-        ):
-            details.append(
-                f"{field}={identity}"
-            )
-
-        elif isinstance(
-            identity,
-            (list, tuple, set),
-        ):
-            if identity and all(
-                isinstance(
-                    item,
-                    (str, int),
-                )
-                for item in identity
-            ):
-                rendered = ", ".join(
-                    str(item)
-                    for item in identity
-                )
-
-                details.append(
-                    f"{field}=[{rendered}]"
-                )
-
-            else:
-                details.append(
-                    f"{field}="
-                    f"{len(identity)} item"
-                    if len(identity) == 1
-                    else
-                    f"{field}="
-                    f"{len(identity)} items"
-                )
-
-        if len(details) >= 5:
-            break
-
-    # Many LLM result objects carry token usage under `.usage`.
-    usage = getattr(
-        value,
-        "usage",
-        None,
-    )
-
-    if usage is not None and len(details) < 5:
-        total = getattr(
-            usage,
-            "total_tokens",
-            None,
-        )
-
-        prompt = getattr(
-            usage,
-            "prompt_tokens",
-            None,
-        )
-
-        completion = getattr(
-            usage,
-            "completion_tokens",
-            None,
-        )
-
-        if total not in (
-            None,
-            0,
-        ):
-            details.append(
-                f"tokens={total}"
-            )
-
-        elif (
-            prompt not in (None, 0)
-            or completion not in (None, 0)
-        ):
-            details.append(
-                f"tokens={prompt or 0}+{completion or 0}"
-            )
-
-    return ", ".join(details)
 
 
 def _payload(

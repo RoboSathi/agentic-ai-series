@@ -69,6 +69,18 @@ class CustomerAuthenticator:
         )
         self._logger = get_logger("customer_support_agent")
 
+    def customer_for(self, customer_id: int) -> Customer | None:
+        """The customer a checkpointed run was for, read back from the record.
+
+        Used only to resume a run this customer already authenticated
+        for; it is not a way in, because nothing a customer types can
+        name a checkpoint.
+        """
+        user = self._users.get(customer_id)
+        if user is None:
+            return None
+        return Customer(customer_id=user.user_id, name=user.name, email=user.email)
+
     def extract_code(self, message: str) -> str | None:
         """The candidate code in a message, if one is present."""
         match = self._pattern.search(message.upper())

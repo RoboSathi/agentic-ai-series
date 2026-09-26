@@ -33,11 +33,12 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
+from agentic_commons.money import Money
 from agentic_commons.tools.types import ToolCall
 
 # A mandate that names no ceiling does not bound the amount. Whether the
 # action is affordable is the budget check's question, not this one's.
-UNBOUNDED = float("inf")
+UNBOUNDED: Money | None = None
 
 
 class ActionMandate(BaseModel):
@@ -62,18 +63,19 @@ class ActionMandate(BaseModel):
     subject_id: str
     action: str
     target: str
-    max_amount: float = UNBOUNDED
+    max_amount: Money | None = UNBOUNDED
     granted_by: str = "user_task"
     turn: int = 0
     evidence: str = ""
 
-    def covers(self, call: ToolCall, target: str, amount: float, turn: int) -> bool:
+    def covers(self, call: ToolCall, target: str, amount: Money | None, turn: int) -> bool:
         """Whether this mandate permits exactly this proposal."""
+        within = self.max_amount is None or amount is None or amount <= self.max_amount
         return (
             _bare(self.action) == _bare(call.action)
             and self.target == target
             and self.turn == turn
-            and amount <= self.max_amount
+            and within
         )
 
 
@@ -83,7 +85,7 @@ class MandateSet(BaseModel):
     mandates: list[ActionMandate] = Field(default_factory=list)
 
     def covering(
-        self, call: ToolCall, target: str, amount: float, turn: int
+        self, call: ToolCall, target: str, amount: Money | None, turn: int
     ) -> ActionMandate | None:
         """The mandate that permits this proposal, if any does."""
         return next(

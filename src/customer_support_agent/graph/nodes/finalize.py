@@ -7,9 +7,6 @@ claim no tool result supports does not reach the customer.
 
 from typing import Any
 
-from agentic_commons.context import (
-    Chunk,
-)
 from agentic_commons.guardrails import CustomerResponse
 from agentic_commons.hallucination_protection.checker import Resampler
 from agentic_commons.llm.types import CompletionRequest, Message
@@ -36,6 +33,8 @@ class FinalizeNodes(NodeSupport):
         last turn happened to contain — often nothing. A cap is a
         control, not an excuse to hand the customer an empty reply.
         """
+        # The loop is over; the reply is composed outside it.
+        self._loop_step = None
         self._report(
             "finalize",
             summary="Preparing the customer-facing response",
@@ -93,10 +92,7 @@ class FinalizeNodes(NodeSupport):
             # when a second call was needed, which is the *rarer* path —
             # so the reply that usually reached the customer was the one
             # never checked.
-            evidence = [
-                Chunk(content=text, kind="tool_result")
-                for text in authoritative_evidence
-            ]
+            evidence = self._grounding_evidence(state)
             guardrail_result = await self._response_guardrail.enforce(
                 last.content, evidence, resample=self._resampler(state)
             )
@@ -107,12 +103,7 @@ class FinalizeNodes(NodeSupport):
             }
             self._report_grounding(
                 blocked=guardrail_result.escalated,
-                summary=(
-                    "LLM hallucinated"
-                    if guardrail_result.escalated
-                    else f"Grounded: {guardrail_result.supported}/"
-                    f"{guardrail_result.claims} claims supported"
-                ),
+                summary=_grounding_headline(guardrail_result, "LLM hallucinated"),
                 fields=guardrail_fields,
             )
             return {
@@ -204,12 +195,15 @@ class FinalizeNodes(NodeSupport):
             )
             repair_prompt = (
                 "Rewrite the customer response so that every factual claim is "
-                "strictly supported by the tool results below. Remove any "
-                "unsupported detail. Do not invent facts. Return only JSON "
-                "matching the response schema.\n\n"
+                "strictly supported by the evidence below. Only a tool result can "
+                "show that something happened; policy and knowledge support "
+                "general statements. Remove any unsupported detail. Do not invent "
+                "facts. Return only JSON matching the response schema.\n\n"
                 f"Draft:\n{candidate}\n\n"
-                "Authoritative tool results:\n"
-                + "\n".join(f"- {item}" for item in authoritative_evidence)
+                "Evidence:\n"
+                + "\n".join(
+                    f"- [{chunk.kind}] {chunk.content}" for chunk in self._grounding_evidence(state)
+                )
             )
             request = CompletionRequest(
                 messages=[Message(role="user", content=repair_prompt)],
@@ -225,10 +219,7 @@ class FinalizeNodes(NodeSupport):
             repaired, _ = self._response_guardrail.validate_schema(repaired_result.content)
             return repaired or FALLBACK_REPLY
 
-        evidence = [
-            Chunk(content=text, kind="tool_result")
-            for text in authoritative_evidence
-        ]
+        evidence = self._grounding_evidence(state)
         guardrail_result = await self._response_guardrail.enforce(
             reply,
             evidence,
@@ -240,12 +231,7 @@ class FinalizeNodes(NodeSupport):
         )
         self._report_grounding(
             blocked=guardrail_result.escalated,
-            summary=(
-                "Response blocked by hallucination guard"
-                if guardrail_result.escalated
-                else f"Grounded: {guardrail_result.supported}/"
-                f"{guardrail_result.claims} claims supported"
-            ),
+            summary=_grounding_headline(guardrail_result, "Response blocked by hallucination guard"),
             fields=guardrail_fields,
         )
         state.metadata["hallucination_rate"] = guardrail_result.hallucination_rate
@@ -367,3 +353,16 @@ class FinalizeNodes(NodeSupport):
         """
         lowered = content.casefold()
         return any(marker in lowered for marker in self._deliberation_markers)
+
+
+def _grounding_headline(result: Any, blocked: str) -> str:
+    """One line: the verdict, and whether a real NLI model or the fallback decided it."""
+    if result.escalated:
+        return f"{blocked} · {result.reason_code}"
+    verdicts = [str(check.get("verdict")) for check in result.claim_checks]
+    counts = " · ".join(f"{verdicts.count(v)} {v}" for v in dict.fromkeys(verdicts))
+    headline = f"Grounded: {counts or 'no checkable claims'}"
+    detectors = {str(check.get("detector") or "") for check in result.claim_checks}
+    if any(detector.startswith("lexical") for detector in detectors):
+        headline += " · lexical fallback (NLI model unavailable)"
+    return headline

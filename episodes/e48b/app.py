@@ -12,6 +12,7 @@ from agentic_commons.gatekeeper import AuthorityContext, GatekeeperImpl
 from agentic_commons.gatekeeper.ledger import CumulativeLedger
 from agentic_commons.memory import EpisodicStore, ProceduralStore, SemanticStore
 from agentic_commons.memory.write_pipeline import MemoryWritePipelineImpl
+from agentic_commons.money import Money
 from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
 from agentic_commons.security import Authorizer
 from agentic_commons.tools import ToolCall
@@ -55,7 +56,7 @@ async def run() -> EpisodeOutput:
             timestamp="2026-02-01",
             order_status="delivered",
             refund_status="none",
-            amount=500.0,
+            amount=Money.parse("500.00"),
         )
     )
 

@@ -16,11 +16,22 @@ from collections import Counter
 from typing import Any
 
 from agentic_commons.context import Context, Task
+from agentic_commons.context.types import (
+    AssembledContext,
+    Chunk,
+    ContextFinding,
+    is_provenance_header,
+)
 from agentic_commons.llm.embeddings import tokenize
+from agentic_commons.memory.context_source import SOURCE_PREFIX as MEMORY_SOURCE_PREFIX
+from agentic_commons.memory.context_source import SUBJECT_ID
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
-from customer_support_agent.graph.nodes._support import NodeSupport
+from customer_support_agent.graph.nodes._support import GROUNDING_EVIDENCE, NodeSupport
 from customer_support_agent.graph.state import AgentState
 
+# Recalled semantic facts, by the source prefix `MemoryRecallContextSource` gives them.
+_SEMANTIC_SOURCE = f"{MEMORY_SOURCE_PREFIX}semantic:"
+_VERIFIED = "verified_system_of_record"
 
 class ContextNodes(NodeSupport):
     def _working_memory_fields(self, state: AgentState) -> dict[str, Any]:
@@ -48,8 +59,15 @@ class ContextNodes(NodeSupport):
 
     def _task_metadata(self, state: AgentState) -> dict[str, Any]:
         """What this turn has settled that assembly should know about."""
+        metadata: dict[str, Any] = {}
         order_id = state.metadata.get(ORDER_UNDER_DISCUSSION)
-        return {ORDER_UNDER_DISCUSSION: order_id} if order_id is not None else {}
+        if order_id is not None:
+            metadata[ORDER_UNDER_DISCUSSION] = order_id
+        # Whose long-term memory this turn may recall: the verified
+        # customer's, and no one else's.
+        if state.customer_id is not None:
+            metadata[SUBJECT_ID] = str(state.customer_id)
+        return metadata
 
     async def assemble_context(self, state: AgentState) -> dict[str, Any]:
         """Build the window: policy, recalled memory, and the query."""
@@ -88,10 +106,10 @@ class ContextNodes(NodeSupport):
             )
         )
         fitted = self._strategies.fit(assembled)
+        fitted, findings = self._check_health(fitted, state)
+        modes = sorted({finding.mode for finding in findings})
         decisions = [f"context: {fitted.used_tokens}/{fitted.budget_tokens} tokens"]
-        modes = self._context_health.assess(fitted, set(tokenize(state.query)))
         if modes:
-            self._logger.warning("Context window shows failure modes", modes=modes)
             decisions.append(f"context health: {', '.join(modes)}")
 
         by_kind = Counter(chunk.kind for chunk in fitted.chunks)
@@ -109,11 +127,15 @@ class ContextNodes(NodeSupport):
             "kinds": dict(by_kind),
             "strategies": fitted.applied_strategies,
             "health": modes or ["healthy"],
+            # One line per finding: what, where, which rule, what was done.
+            "context_findings": [
+                f"{f.mode} · {f.source} · {f.rule}: {f.detail} → {f.action}" for f in findings
+            ] or None,
         }
         if modes:
             self._reporter_warning(
                 "context_assembly",
-                summary="Context health warning",
+                summary=f"Context health: {', '.join(modes)} — {_acted(findings)}",
                 event_kind="context",
                 fields=context_fields,
             )
@@ -124,4 +146,53 @@ class ContextNodes(NodeSupport):
                 event_kind="context",
                 fields=context_fields,
             )
-        return {"context": Context(items=[fitted.text]), "decisions": [*state.decisions, *decisions]}
+        return {
+            "context": Context(items=[fitted.text]),
+            "decisions": [*state.decisions, *decisions],
+            # What the model saw that a reply may be grounded on — kept after
+            # mitigation, so a poisoned or dropped chunk is never evidence.
+            "metadata": {**state.metadata, GROUNDING_EVIDENCE: _grounding_sources(fitted)},
+        }
+
+    def _check_health(
+        self, fitted: AssembledContext, state: AgentState
+    ) -> tuple[AssembledContext, list[ContextFinding]]:
+        """Diagnose the window and mitigate before the model sees it (when declared)."""
+        if self._context_health is None:
+            return fitted, []
+        findings = self._context_health.diagnose(fitted, set(tokenize(state.query)))
+        if findings:
+            self._logger.warning(
+                "Context window shows failure modes",
+                findings=[finding.model_dump() for finding in findings],
+            )
+        return self._context_health.mitigate(fitted, findings)
+
+
+def _grounding_sources(window: AssembledContext) -> list[dict[str, str]]:
+    """Knowledge passages, order records and *verified* semantic memories in the window.
+
+    Episodic memory records what the customer said, not what is true, and
+    working-memory state is bookkeeping — neither grounds a claim.
+    """
+    return [
+        {"kind": chunk.kind, "source": chunk.source, "content": _without_label(chunk.content)}
+        for chunk in window.chunks
+        if chunk.kind == "retrieved" or (chunk.kind == "memory" and _verified_memory(chunk))
+    ]
+
+
+def _verified_memory(chunk: Chunk) -> bool:
+    confirmed = bool(chunk.metadata.get("confirmed"))
+    authoritative = chunk.metadata.get("provenance") == _VERIFIED
+    return chunk.source.startswith(_SEMANTIC_SOURCE) and (confirmed or authoritative)
+
+
+def _without_label(content: str) -> str:
+    return "\n".join(line for line in content.splitlines() if not is_provenance_header(line))
+
+
+def _acted(findings: list[ContextFinding]) -> str:
+    """What mitigation did, in a few words."""
+    dropped = sum(1 for finding in findings if finding.action.startswith("dropped"))
+    return f"{dropped} chunk(s) removed" if dropped else "flagged, nothing removed"

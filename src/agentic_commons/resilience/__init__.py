@@ -21,7 +21,7 @@ from agentic_commons.resilience.pub_sub import (
     Subscription,
 )
 from agentic_commons.resilience.retry import ExponentialBackoffRetry, RetryPolicy
-from agentic_commons.resilience.saga import CompensatingSaga, Saga
+from agentic_commons.resilience.saga import CompensatingSaga, Saga, SagaWorkflow
 from agentic_commons.resilience.timeout import AsyncTimeoutGuard, TimeoutGuard
 from agentic_commons.resilience.types import (
     BulkheadFullError,
@@ -31,6 +31,7 @@ from agentic_commons.resilience.types import (
     NonIdempotentRetryError,
     SagaResult,
     SagaStep,
+    dependency_failure_fields,
     external_api_error_fields,
 )
 
@@ -44,6 +45,7 @@ __all__ = [
     "CircuitState",
     "CompensatingSaga",
     "Event",
+    "dependency_failure_fields",
     "external_api_error_fields",
     "EventHandler",
     "ExponentialBackoffRetry",
@@ -61,6 +63,7 @@ __all__ = [
     "Saga",
     "SagaResult",
     "SagaStep",
+    "SagaWorkflow",
     "SqliteIdempotencyGuard",
     "Subscription",
     "TimeoutGuard",

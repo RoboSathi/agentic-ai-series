@@ -64,6 +64,16 @@ class WorkingMemoryStore:
             self._sessions[key] = memory
         return memory
 
+    def restore(self, session_id: str, memory: WorkingMemory) -> None:
+        """Put back a session's memory recovered from a checkpoint.
+
+        The current turn is dropped: it belonged to a run that already
+        ended, and replaying its half-finished items into the next turn
+        would show the model actions it did not take this time.
+        """
+        restored = memory.model_copy(update={"current_turn": [], "max_history": self._max_history})
+        self._sessions[session_id or "default"] = restored
+
     def clear(self, session_id: str | None = None) -> None:
         """Clear one session or every session."""
         if session_id is None:

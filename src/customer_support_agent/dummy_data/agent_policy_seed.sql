@@ -28,13 +28,14 @@ INSERT INTO platform_agent_permissions (agent_id, permission) VALUES
 -- keyed by action class so an agent with three budgeted actions, or none,
 -- needs no change to the shared schema.
 --
--- per_action 50.00  — above this one refund escalates to a human.
--- window     4000.00 over 24h — the structuring defence (E02): eighty
+-- Amounts are integer cents (never REAL — see agentic_commons.money).
+-- per_action 5000 ($50.00)  — above this one refund escalates to a human.
+-- window     400000 ($4,000.00) over 24h — the structuring defence (E02): eighty
 --            individually-permitted $50 refunds are not eighty permitted
 --            actions, they are one unpermitted $4000 one.
 DELETE FROM platform_agent_budgets WHERE agent_id = '__AGENT_ID__';
 
 INSERT INTO platform_agent_budgets (
-    agent_id, action_class, per_action_limit, window_limit, window_hours
+    agent_id, action_class, per_action_limit_cents, window_limit_cents, window_hours
 ) VALUES
-('__AGENT_ID__', 'refund', 50.00, 4000.00, 24);
+('__AGENT_ID__', 'refund', 5000, 400000, 24);

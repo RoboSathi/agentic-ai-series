@@ -22,6 +22,7 @@ from textual.reactive import reactive
 from textual.widgets import Collapsible, Static
 
 from agentic_commons.config import get_settings
+from agentic_commons.money import money_or_none
 from agentic_commons.observability.types import StatusEvent
 from agentic_commons.tui.labels import StageLabelRegistry
 
@@ -145,6 +146,9 @@ FIELD_PRIORITY = (
     "claims",
     "supported",
     "unsupported",
+    "evidence_searched",
+    "provenance_checks",
+    "claim_checks",
     "unsupported_claims",
     "unsupported_diagnostics",
     "detector_model",
@@ -196,6 +200,32 @@ AMOUNT_FIELDS = {
     "allowed_amount",
     "autonomous_limit",
 }
+
+# How a claim's verdict reads, and how each NLI label is coloured.
+_CLAIM_MARKS = {
+    "supported": ("✓", "green"),
+    "undetermined": ("?", "yellow"),
+    "refuted": ("✗", "red"),
+}
+_NLI_STYLES = {"entailment": "green", "contradiction": "red", "unknown": "yellow"}
+def _claim_tally(checks: list[Any]) -> str:
+    """`1 supported · 1 undetermined of 2 claims` (+ which detector decided)."""
+    counts: dict[str, int] = {}
+    detectors: set[str] = set()
+    for check in checks:
+        if isinstance(check, Mapping):
+            verdict = str(check.get("verdict") or "unknown")
+            counts[verdict] = counts.get(verdict, 0) + 1
+            detectors.add(str(check.get("detector") or ""))
+    parts = " · ".join(f"{count} {verdict}" for verdict, count in counts.items())
+    note = " · lexical fallback (NLI model unavailable)" if any(
+        detector.startswith("lexical") for detector in detectors
+    ) else ""
+    return f"{parts} of {len(checks)} claim{'' if len(checks) == 1 else 's'}{note}"
+
+
+# How much of an evidence excerpt a row shows; the log keeps it whole.
+_EXCERPT_CHARS = 90
 
 # Fields that can be noisy / sensitive for the TUI.  They are intentionally
 # excluded even if an upstream event contains them.
@@ -279,6 +309,9 @@ class StatusLineWidget(Static):
         self._history_pending = 0
         self._run_state = "idle"
         self._show_token_count = get_settings().tui.show_token_count
+        # Durable/memory context for the last turn: thread, checkpoints,
+        # deterministic recall hit-rate, curator backlog.
+        self._run_context = ""
 
     @property
     def elapsed_seconds(self) -> float:
@@ -329,6 +362,10 @@ class StatusLineWidget(Static):
         self._history_pending = max(0, count)
         self.refresh()
 
+    def set_context(self, context: str) -> None:
+        self._run_context = context
+        self.refresh()
+
     def render(self) -> Text:
         if not self.stage_label:
             return Text("")
@@ -360,6 +397,9 @@ class StatusLineWidget(Static):
                 f"  ({_elapsed(self.elapsed_seconds)})",
                 style="dim",
             )
+
+        if self._run_context:
+            line.append(f"  · {self._run_context}", style="dim cyan")
 
         if not self._following:
             line.append("  · HISTORY", style="yellow")
@@ -423,6 +463,18 @@ class StageEventWidget(Collapsible):
                 if rendered_fields:
                     body.append("\n")
                 self._append_checks(body, value)
+                rendered_fields = True
+                continue
+            if name == "claim_checks" and isinstance(value, list) and value:
+                if rendered_fields:
+                    body.append("\n")
+                self._append_claim_checks(body, value)
+                rendered_fields = True
+                continue
+            if name == "provenance_checks" and isinstance(value, list) and value:
+                if rendered_fields:
+                    body.append("\n")
+                self._append_provenance(body, value)
                 rendered_fields = True
                 continue
             if name == "unsupported_diagnostics" and isinstance(value, list):
@@ -685,6 +737,10 @@ class StageEventWidget(Collapsible):
                     return f"BLOCK · COMPLETE HALLUCINATION · 0/{claims} supported"
                 return "BLOCK · COMPLETE HALLUCINATION"
 
+            checks = fields.get("claim_checks")
+            if isinstance(checks, list) and checks:
+                suffix = " · repaired" if fields.get("repaired") else ""
+                return _claim_tally(checks) + suffix
             if supported is not None and claims is not None:
                 suffix = " · repaired" if fields.get("repaired") else ""
                 return f"{supported}/{claims} claims supported{suffix}"
@@ -729,8 +785,58 @@ class StageEventWidget(Collapsible):
                 body.append("\n      evidence = ", style="dim")
                 body.append(_format_mapping(evidence), style="dim")
 
+    def _append_claim_checks(self, body: Text, checks: list[Any]) -> None:
+        """Every claim, pass or fail: its verdict, then retrieval → NLI per evidence item."""
+        body.append(f"  CLAIM CHECKS · {len(checks)} claim(s)", style="bold bright_white")
+        for check in checks:
+            if isinstance(check, Mapping):
+                self._append_claim(body, check)
+
+    def _append_claim(self, body: Text, check: Mapping[str, Any]) -> None:
+        verdict = str(check.get("verdict") or "unknown")
+        mark, style = _CLAIM_MARKS.get(verdict, ("?", "yellow"))
+        body.append(f"\n    {mark} ", style=style)
+        body.append(str(check.get("claim") or ""), style="bright_white")
+        decided_by = str(check.get("decided_by") or "")
+        if decided_by == "deterministic_provenance":
+            how = "decided by the deterministic id/amount check (no retrieval, no NLI)"
+        else:
+            threshold = check.get("threshold")
+            bar = f"needs ≥ {threshold}" if threshold is not None else "uncalibrated: its label decides"
+            how = f"decided by {decided_by} · {check.get('detector')} ({bar}) · {check.get('retrieval')}"
+        body.append(f"\n      {verdict} · {how}", style=style)
+        body.append(f"\n      why = {check.get('rationale') or '—'}", style="dim")
+        for item in check.get("evidence") or []:
+            if isinstance(item, Mapping):
+                self._append_evidence_row(body, item)
+
+    def _append_evidence_row(self, body: Text, item: Mapping[str, Any]) -> None:
+        """`2. cos 0.41 [policy] "…excerpt…" → neutral 0.61`."""
+        excerpt = " ".join(str(item.get("excerpt") or "").split())
+        if len(excerpt) > _EXCERPT_CHARS:
+            excerpt = excerpt[: _EXCERPT_CHARS - 1] + "…"
+        label = str(item.get("nli_label") or "unknown")
+        checked = label in _NLI_STYLES
+        decisive = " ✓ decisive" if item.get("decisive") else ""
+        body.append(
+            f"\n        {item.get('rank')}. cos {item.get('similarity')} [{item.get('tier')}] "
+            f"\"{excerpt}\"",
+            style="dim",
+        )
+        verdict = f"{label} {item.get('nli_score')}{decisive}" if checked else label
+        body.append(f" → {verdict}", style=_NLI_STYLES.get(label, "dim"))
+
+    def _append_provenance(self, body: Text, lines: list[Any]) -> None:
+        """The deterministic stage: every id and amount, and where it was found."""
+        body.append("  PROVENANCE (deterministic, before NLI)", style="bold bright_white")
+        for line in lines:
+            text = str(line)
+            body.append(f"\n    {text}", style="green" if text.startswith("✓") else "red")
+
     def _append_hallucination_diagnostics(self, body: Text, diagnostics: list[Any]) -> None:
         """Render why each unsupported claim failed grounding."""
+        if not diagnostics:
+            return
         body.append("  UNSUPPORTED CLAIM DIAGNOSTICS", style="bold bright_white")
         for item in diagnostics:
             if not isinstance(item, Mapping):
@@ -1044,13 +1150,9 @@ def _format_value(
         return "None"
 
     if name in AMOUNT_FIELDS:
-        if isinstance(value, (int, float)):
-            return f"${value:,.2f}"
-        try:
-            number = float(str(value).replace("$", "").replace(",", ""))
-            return f"${number:,.2f}"
-        except (TypeError, ValueError):
-            pass
+        amount = money_or_none(value)
+        if amount is not None:
+            return str(amount)
 
     if isinstance(value, bool):
         return "true" if value else "false"

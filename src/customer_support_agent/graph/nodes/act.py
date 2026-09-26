@@ -26,6 +26,7 @@ from agentic_commons.observability.types import utc_now
 from agentic_commons.tools.types import ToolResult
 from agentic_commons.verification import VerificationReport
 from customer_support_agent.graph.nodes._support import NodeSupport
+from customer_support_agent.graph.nodes.review_wait import AWAITING_REVIEW
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.reporting import (
     control_loop_fields,
@@ -62,9 +63,28 @@ def _has_terminal_denial(invocations: list[dict[str, Any]]) -> bool:
     )
 
 
+def _queued_review(invocations: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The refund this turn newly queued for a human, if it queued one.
+
+    Only a *new* request: one already waiting belongs to the run that
+    queued it, and that run is the one its decision resumes.
+    """
+    for item in invocations:
+        result = item.get("tool_result")
+        if isinstance(result, dict) and result.get("queued") and result.get("request_id"):
+            return {
+                "request_id": result["request_id"],
+                "order_id": result.get("order_id"),
+                "amount": result.get("amount"),
+            }
+    return None
+
+
 class ToolUseNodes(NodeSupport):
     async def act(self, state: AgentState) -> dict[str, Any]:
         """Execute the requested tool calls, each through the Gatekeeper."""
+        # The same iteration `reason` opened (it has already counted it).
+        self._loop_step = max(state.tool_rounds, 1)
         messages = self._current_messages(state)
         last = messages[-1] if messages else Message()
         requests = last.tool_calls or []
@@ -76,7 +96,9 @@ class ToolUseNodes(NodeSupport):
                 "tool_request",
                 event_kind="tool_request",
                 summary=f"Requested: {requested.name}",
-                fields=tool_request_fields(requested.name, requested.arguments),
+                fields=tool_request_fields(
+                    requested.name, requested.arguments, self._security.redact
+                ),
             )
             text, decision, stage, invocation_fields = await self._invoke(
                 requested.name, requested.arguments, state, offered
@@ -121,6 +143,8 @@ class ToolUseNodes(NodeSupport):
             "escalated": state.escalated or turn_escalated,
             "metadata": {
                 **state.metadata,
+                AWAITING_REVIEW: _queued_review(invocation_fields_history)
+                or state.metadata.get(AWAITING_REVIEW),
                 "last_tool_invocations": invocation_fields_history,
                 # A refusal that cannot become an allow ends the tool loop
                 # the way an escalation does. Sending the model back to

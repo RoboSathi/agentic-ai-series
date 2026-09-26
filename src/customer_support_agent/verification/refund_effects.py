@@ -57,8 +57,8 @@ class RefundEffectSource:
                     "refund_status": "completed",
                     # The money, not the status. An order marked refunded
                     # with nothing in the ledger is the failure this check
-                    # exists to catch.
-                    "settled_amount": float(result.data.get("amount", 0.0)),
+                    # exists to catch. Compared as integer cents: exact.
+                    "settled_cents": int(result.data.get("amount_cents", 0)),
                 },
             )
         if action == QUEUE_FOR_APPROVAL:
@@ -77,7 +77,7 @@ class RefundEffectSource:
             return {}
         return {
             "refund_status": order.refund_status,
-            "settled_amount": self._refunds.settled_for_order(order_id),
+            "settled_cents": self._refunds.settled_for_order(order_id).cents,
             "review_pending": self._hitl.pending_for_order(order_id) is not None,
         }
 

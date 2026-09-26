@@ -13,6 +13,7 @@ Four gaps closed here:
 
 import pytest
 
+from agentic_commons.money import Money
 from agentic_commons.persistence import SqliteConnectionPool
 from customer_support_agent.domain import Customer, set_current_customer
 from customer_support_agent.graph import build_agent
@@ -99,7 +100,7 @@ class TestTheEscalationPathDrains:
         tools.queue_for_approval(10002, 210.0)
         outcome = review.deny(review.pending()[0].id, "supervisor-1", "not eligible")  # type: ignore[arg-type]
         assert outcome.decision == "denied"
-        assert RefundLedgerRepository(seeded_pool).total_for_user(1) == 0.0
+        assert RefundLedgerRepository(seeded_pool).total_for_user(1) == Money.zero()
 
     async def test_eligibility_is_rechecked_at_approval(
         self, tools: SupportTools, review: ReviewQueueService, seeded_pool: SqliteConnectionPool

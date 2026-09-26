@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from agentic_commons.money import Money
 from agentic_commons.persistence.platform import PlatformStore, as_platform_store
 
 _REQUIRED_COLUMNS = {
@@ -23,7 +24,8 @@ _REQUIRED_COLUMNS = {
 
 # What an agent may spend on one class of action. Any agent can have any
 # number of these; the platform does not know what the classes are called.
-UNLIMITED = float("inf")
+# `None` is "no ceiling declared" — never an infinite float.
+UNLIMITED: Money | None = None
 
 
 class ActionLimit(BaseModel):
@@ -38,8 +40,8 @@ class ActionLimit(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     action_class: str
-    per_action: float = Field(ge=0)
-    window: float = Field(ge=0)
+    per_action: Money
+    window: Money
     window_hours: int = Field(default=24, gt=0)
 
 
@@ -62,7 +64,7 @@ class AgentPolicy(BaseModel):
         """The limit declared for one action class, if there is one."""
         return self.limits.get(action_class)
 
-    def per_action_limit(self, action_class: str) -> float:
+    def per_action_limit(self, action_class: str) -> Money | None:
         """The single-proposal ceiling, or unlimited when none is declared.
 
         Unlimited rather than zero on purpose: an undeclared budget means
@@ -128,12 +130,12 @@ class AgentPolicyRepository:
         return {
             str(row["action_class"]): ActionLimit(
                 action_class=str(row["action_class"]),
-                per_action=float(row["per_action_limit"]),
-                window=float(row["window_limit"]),
+                per_action=Money.from_cents(int(row["per_action_limit_cents"])),
+                window=Money.from_cents(int(row["window_limit_cents"])),
                 window_hours=int(row["window_hours"]),
             )
             for row in self._store.iter_rows(
-                "SELECT action_class, per_action_limit, window_limit, window_hours "
+                "SELECT action_class, per_action_limit_cents, window_limit_cents, window_hours "
                 "FROM platform_agent_budgets WHERE agent_id = ? ORDER BY action_class",
                 (agent_id,),
             )
@@ -156,10 +158,10 @@ class AgentPolicyRepository:
         if policy.limits:
             self._store.execute_many(
                 "INSERT INTO platform_agent_budgets (agent_id, action_class, "
-                "per_action_limit, window_limit, window_hours) VALUES (?, ?, ?, ?, ?)",
+                "per_action_limit_cents, window_limit_cents, window_hours) VALUES (?, ?, ?, ?, ?)",
                 [
-                    (policy.agent_id, limit.action_class, limit.per_action,
-                     limit.window, limit.window_hours)
+                    (policy.agent_id, limit.action_class, limit.per_action.cents,
+                     limit.window.cents, limit.window_hours)
                     for limit in sorted(policy.limits.values(), key=lambda item: item.action_class)
                 ],
             )

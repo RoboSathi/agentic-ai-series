@@ -30,6 +30,13 @@ from agentic_commons.context import (
     Task,
     WorkingMemoryContextSource,
 )
+from agentic_commons.context.failure import ContextFailureDetector
+from agentic_commons.durability import (
+    RunRegistry,
+    SqliteCheckpointer,
+    create_checkpointer,
+    model_types,
+)
 from agentic_commons.evals import NollmScoringCascadeImpl, create_scoring_cascade
 from agentic_commons.executor import ToolExecutorImpl
 from agentic_commons.gatekeeper import Gatekeeper, GatekeeperImpl
@@ -37,7 +44,19 @@ from agentic_commons.gatekeeper.ledger import CumulativeLedger
 from agentic_commons.hallucination_protection import DetectionLadder
 from agentic_commons.llm.client import LLMClient, create_llm_client
 from agentic_commons.llm.encoders import create_reranker
-from agentic_commons.memory import DreamInbox, WorkingMemoryStore
+from agentic_commons.memory import (
+    DreamInbox,
+    EpisodicStore,
+    MemoryFacade,
+    SemanticStore,
+    WorkingMemoryStore,
+)
+from agentic_commons.memory.context_source import MemoryRecallContextSource
+from agentic_commons.memory.semantic.rag import (
+    KnowledgeBase,
+    KnowledgeBaseContextSource,
+    create_knowledge_base,
+)
 from agentic_commons.observability import (
     DuckDbObservabilityStore,
     SLORegistry,
@@ -45,7 +64,7 @@ from agentic_commons.observability import (
 )
 from agentic_commons.observability.tracer import LocalTracer
 from agentic_commons.persistence import SqliteConnectionPool, SqlitePlatformStore
-from agentic_commons.resilience import DeadLetterQueue, SqliteIdempotencyGuard
+from agentic_commons.resilience import CompensatingSaga, DeadLetterQueue, SqliteIdempotencyGuard
 from agentic_commons.security import (
     Authorizer,
     PIIFilterImpl,
@@ -53,7 +72,9 @@ from agentic_commons.security import (
     SecuritySuite,
     TermContentModerator,
 )
+from agentic_commons.security.auth.memory_authorizer import PolicyMemoryAuthorizer
 from agentic_commons.security.auth.policy import AgentPolicy, AgentPolicyRepository
+from agentic_commons.security.prompt_injection.detector import InstructionDataSeparator
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from agentic_commons.verification import ReadBackVerifier
 from customer_support_agent.basic_sanity.order_validator import OrderSanityCheck
@@ -62,9 +83,13 @@ from customer_support_agent.domain.identity import current_customer_id
 from customer_support_agent.domain.models import Order
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.domain.refund_policy import RefundPolicy
-from customer_support_agent.gatekeeper.business_rules import CustomerSupportBusinessRules
+from customer_support_agent.gatekeeper.business_rules import (
+    REFUND_ACTION_CLASS,
+    CustomerSupportBusinessRules,
+)
 from customer_support_agent.gatekeeper.mandates import EstablishedOrderScope
 from customer_support_agent.graph.agent import CustomerSupportAgent
+from customer_support_agent.graph.state import AgentState
 from customer_support_agent.intent.router import CustomerSupportIntentRouter
 from customer_support_agent.persistence.repositories import (
     HitlQueueRepository,
@@ -159,7 +184,7 @@ def _order_chunk(order: Order) -> Chunk:
     return Chunk(
         content=(
             f"Order {order.order_id} placed {order.timestamp[:10]}: {order.description}, "
-            f"{order.order_status}, {order.whereabouts}, ${order.amount:,.2f}, "
+            f"{order.order_status}, {order.whereabouts}, {order.amount}, "
             f"refund {order.refund_status}"
         ),
         kind="retrieved",
@@ -208,6 +233,8 @@ def build_agent(
     basic_sanity: BasicSanityChecker | None = None,
     intent_router: CustomerSupportIntentRouter | None = None,
     features: FeatureSet | None = None,
+    knowledge_base: KnowledgeBase | None = None,
+    checkpointer: SqliteCheckpointer | None = None,
 ) -> CustomerSupportAgent:
     """Wire the refund agent from config, honouring any injected parts.
 
@@ -262,7 +289,11 @@ def build_agent(
     orders = OrdersRepository(connection)
     hitl = HitlQueueRepository(connection)
     refunds = RefundLedgerRepository(connection)
-    refund_policy = RefundPolicy(orders)
+    # The review rule needs the agent's direct limit: a refund is queued for
+    # a person only when it is above what the agent may refund itself.
+    refund_policy = RefundPolicy(
+        orders, direct_limit=agent_policy.per_action_limit(REFUND_ACTION_CLASS)
+    )
 
     idempotency = SqliteIdempotencyGuard(platform_store)
     dead_letter_queue = DeadLetterQueue(
@@ -275,6 +306,7 @@ def build_agent(
         refunds,
         idempotency=idempotency,
         refund_policy=refund_policy,
+        saga=CompensatingSaga(),
     )
     tools = SupportTools(orders, hitl, refunds, saga, refund_policy=refund_policy)
 
@@ -308,13 +340,26 @@ def build_agent(
         else (WorkingMemoryStore(max_history=agent_settings.history_turns) if memory_enabled else None)
     )
     memory_event_sink = DreamInbox(platform_store) if live_working_memory is not None else None
+    ledger = audit or create_audit_ledger(store=observability_store, agent_id=agent_id)
+    # Long-term memory: facts about the customer (semantic) and what
+    # happened (episodic), each built only if declared. Every operation is
+    # governed — provenance derived from who is speaking, RBAC against the
+    # agent's persisted policy plus the platform's role grants, audited,
+    # and shown as a card. Redaction happens at the write, when PII is on.
+    long_term = long_term_memory(
+        platform_store,
+        semantic=memory_enabled and features.is_on("memory.semantic"),
+        episodic=memory_enabled and features.is_on("memory.episodic"),
+        redactor=redactor,
+        policy=agent_policy,
+        audit=ledger,
+        relevance=scoring,
+        reporter=reporter,
+    )
 
     # No policy source. The policy reaches the model in the system prompt,
     # which is always present and never trimmed; contributing a second
     # verbatim copy here spent a third of the window restating it.
-    sources: list[object] = [OrderCorpusContextSource(orders, scoring)]
-    if live_working_memory is not None:
-        sources.append(WorkingMemoryContextSource(live_working_memory))
     # Two-pass relevance: the NOLLM cascade scores every candidate with an
     # embedding model, then a cross-encoder rescores the shortlist. The
     # reranker is None when no hosted encoder is reachable, and the
@@ -322,6 +367,20 @@ def build_agent(
     # The second pass is its own capability: with `context.rerank` off the
     # pipeline keeps the cheap ordering, which is the E19 contrast.
     reranker = create_reranker(fallback=scoring) if features.is_on("context.rerank") else None
+    sources: list[object] = [OrderCorpusContextSource(orders, scoring)]
+    if live_working_memory is not None:
+        sources.append(WorkingMemoryContextSource(live_working_memory))
+    # Semantic memory is this agent's knowledge corpus, retrieved into the
+    # window by hybrid search. Withheld, the source is never built and
+    # the agent answers policy questions from its system prompt alone.
+    if memory_enabled and features.is_on("memory.semantic"):
+        sources.append(
+            KnowledgeBaseContextSource(knowledge_base or create_knowledge_base(reranker=reranker))
+        )
+    # What this customer has told the agent before, recalled cheapest tier
+    # first. Scoped to the verified customer by the task, never wider.
+    if long_term is not None:
+        sources.append(MemoryRecallContextSource(long_term))
     # With context assembly off, the agent still gets its policy — the
     # graph falls back to it. An agent reasoning without its own refund
     # policy is not a narrower agent, it is a wrong one.
@@ -335,7 +394,6 @@ def build_agent(
         else None
     )
 
-    ledger = audit or create_audit_ledger(store=observability_store, agent_id=agent_id)
     # Withholding the Gatekeeper is the sharpest demonstration in the set:
     # the same refund that was escalated a moment ago simply happens. The
     # audit entry is still written on that path, so the trail records an
@@ -388,6 +446,15 @@ def build_agent(
         ),
         working_memory=live_working_memory,
         memory_event_sink=memory_event_sink,
+        long_term_memory=long_term,
+        # Measured on what was actually assembled, and mitigated before the
+        # model sees it. Poisoning uses the security layer's own phrase
+        # list, so the two can never disagree about what an injection is.
+        context_health=(
+            ContextFailureDetector(screen=InstructionDataSeparator())
+            if features.is_on("context.failure_detection")
+            else None
+        ),
         context=context,
         # Retrieval-based tool selection narrows within what the intent
         # already permits. Without it the agent is offered every tool the
@@ -432,6 +499,37 @@ def build_agent(
         basic_sanity=sanity_checker,
         agent_policy=agent_policy,
         intent_router=resolved_intent_router,
+        # Durable execution is not a feature: without it a crash loses the
+        # turn and a refund waiting on a person loses the conversation that
+        # asked for it. That is a broken program, not a narrower agent.
+        checkpointer=checkpointer or create_checkpointer(state_types=model_types(AgentState)),
+        runs=RunRegistry(platform_store),
+    )
+
+
+def long_term_memory(
+    platform_store: SqlitePlatformStore,
+    *,
+    semantic: bool,
+    episodic: bool,
+    redactor: PIIFilterImpl | None,
+    policy: AgentPolicy,
+    audit: AuditLedger,
+    relevance: NollmScoringCascadeImpl,
+    reporter: StageReporter | None,
+) -> MemoryFacade | None:
+    """The governed long-term memory this agent was declared to have, or None."""
+    if not (semantic or episodic):
+        return None
+    return MemoryFacade(
+        episodic=EpisodicStore() if episodic else None,
+        semantic=SemanticStore(platform_store) if semantic else None,
+        platform_store=platform_store,
+        redactor=redactor,
+        relevance=relevance,
+        memory_authorizer=PolicyMemoryAuthorizer(policy),
+        audit=audit,
+        reporter=reporter,
     )
 
 
@@ -455,7 +553,12 @@ def build_review_service(
     return ReviewQueueService(
         queue=HitlQueueRepository(connection),
         orders=orders,
-        saga=RefundSaga(orders, refunds, idempotency=SqliteIdempotencyGuard(platform_store)),
+        saga=RefundSaga(
+            orders,
+            refunds,
+            idempotency=SqliteIdempotencyGuard(platform_store),
+            saga=CompensatingSaga(),
+        ),
         audit=audit
         or create_audit_ledger(
             store=observability_store,

@@ -45,8 +45,8 @@ CREATE TABLE IF NOT EXISTS platform_agent_permissions (
 CREATE TABLE IF NOT EXISTS platform_agent_budgets (
     agent_id            TEXT NOT NULL,
     action_class        TEXT NOT NULL,
-    per_action_limit    REAL NOT NULL DEFAULT 0,
-    window_limit        REAL NOT NULL DEFAULT 0,
+    per_action_limit_cents INTEGER NOT NULL DEFAULT 0,
+    window_limit_cents     INTEGER NOT NULL DEFAULT 0,
     window_hours        INTEGER NOT NULL DEFAULT 24,
     PRIMARY KEY (agent_id, action_class),
     FOREIGN KEY (agent_id) REFERENCES platform_agents(agent_id)

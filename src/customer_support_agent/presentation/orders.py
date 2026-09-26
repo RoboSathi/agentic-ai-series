@@ -127,8 +127,8 @@ def render_order_detail(order: Order, include_refund: bool = False) -> str:
         f"  Status : {_STATUS_WORDS.get(order.order_status, order.order_status)}",
     ]
     if order.quantity > 1:
-        lines.append(f"  Each   : ${order.unit_price:,.2f}")
-    lines.append(f"  Total  : ${order.amount:,.2f}")
+        lines.append(f"  Each   : {order.unit_price}")
+    lines.append(f"  Total  : {order.amount}")
     # Only when there is something true to say. A tracking line on an
     # order nobody has shipped reads as a promise the record cannot keep.
     if order.is_trackable or order.estimated_delivery_date:
@@ -190,7 +190,7 @@ def _menu_lines(orders: list[Order]) -> list[str]:
         f"{_shorten(order.description):<34} "
         f"{_STATUS_WORDS.get(order.order_status, order.order_status):<14} "
         f"{('Refund: ' + _REFUND_WORDS.get(order.refund_status, order.refund_status) if _REFUND_WORDS.get(order.refund_status, order.refund_status) else 'Refund: none'): <25} "
-        f"${order.amount:>9,.2f}"
+        f"{str(order.amount):>10}"
         for position, order in enumerate(orders, start=1)
     ]
 

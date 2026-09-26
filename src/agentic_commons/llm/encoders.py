@@ -37,16 +37,11 @@ from agentic_commons.evals.entailment import (
     EntailmentModel,
     EntailmentResult,
     LexicalEntailmentModel,
+    entailment_from_probabilities,
 )
 from agentic_commons.logging import get_logger
 from agentic_commons.memory.store import RelevanceScorer
 from agentic_commons.resilience import ResilientCaller, external_api_error_fields
-
-# The three NLI labels, lower-cased. Hugging Face models spell them
-# ENTAILMENT/NEUTRAL/CONTRADICTION or entailment/neutral/contradiction
-# depending on the checkpoint, so everything is compared case-folded.
-ENTAILMENT = "entailment"
-CONTRADICTION = "contradiction"
 
 
 class LabelScore(BaseModel):
@@ -204,27 +199,8 @@ class HostedNliModel:
         scored = await self._client.score_pairs([(premise, hypothesis)])
         if not scored or not scored[0]:
             return await self._fallback.entails(premise, hypothesis)
-        labels = {item.label.casefold(): item.score for item in scored[0]}
-        entailment = labels.get(ENTAILMENT, 0.0)
-        contradiction = labels.get(CONTRADICTION, 0.0)
-        neutral = labels.get("neutral", 0.0)
-        winning = max(
-            (entailment, "entailment"),
-            (contradiction, "contradiction"),
-            (neutral, "unknown"),
-            key=lambda item: item[0],
-        )
-        return EntailmentResult(
-            label=winning[1],
-            entailed=winning[1] == "entailment",
-            # The winning label's probability is confidence in the
-            # classification, not text similarity.
-            score=winning[0],
-            model=self._client.model,
-            rationale=(
-                f"{self._client.model}: entailment {entailment:.2f}, "
-                f"contradiction {contradiction:.2f}, neutral {neutral:.2f}"
-            ),
+        return entailment_from_probabilities(
+            {item.label: item.score for item in scored[0]}, self._client.model
         )
 
 

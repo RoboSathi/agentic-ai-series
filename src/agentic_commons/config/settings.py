@@ -21,6 +21,7 @@ from agentic_commons.config.yaml_config import load_section
 RedactionMode = Literal["mask", "tokenize", "remove"]
 GuardrailMode = Literal["reject", "auto_repair", "constrained"]
 RetrievalMode = Literal["lexical", "dense", "hybrid", "graph"]
+ProvenanceKindName = Literal["verified_system_of_record", "agent_inference", "self_reported"]
 ProviderName = Literal["nim", "local"]
 SurfaceClassName = Literal["locked", "editable", "append_only", "human_controlled"]
 
@@ -111,23 +112,47 @@ class LLMCascadeSettings(BaseModel):
     escalate_on_error: bool
 
 
+class EmbeddingInputTypes(BaseModel):
+    """What an asymmetric embedding model is told each text is.
+
+    Retrieval models embed a short question and a long passage
+    differently; embedding a passage as if it were a query costs recall.
+    """
+
+    query: str
+    passage: str
+
+
 class EmbeddingSettings(BaseModel):
     """Embedding backend used by the NOLLM cascade, RAG and memory scoring."""
 
     provider: ProviderName
     nim_model: str
     local_dimensions: int
+    input_types: EmbeddingInputTypes
+    truncate: str
 
 
 class EncoderSettings(BaseModel):
-    """Hosted BERT-family encoders for entailment and reranking (LLD §3)."""
+    """BERT-family encoders for entailment and reranking (LLD §3).
+
+    NLI runs locally or hosted (`nli_provider`); the reranker is hosted.
+    """
 
     enabled: bool
     base_url: str
+    nli_provider: Literal["huggingface_local", "huggingface_hosted"]
     nli_model: str
+    nli_local_model_dir: str
+    nli_max_length: int
+    download_if_missing: bool
     reranker_model: str
     timeout_seconds: float
     wait_for_model: bool
+
+    @property
+    def resolved_nli_local_model_dir(self) -> Path:
+        return resolve_path(self.nli_local_model_dir)
 
     @property
     def api_key(self) -> str:
@@ -209,6 +234,52 @@ class PersistenceSettings(YamlBackedSettings):
     @property
     def resolved_db_path(self) -> Path:
         return resolve_path(self.db_path)
+
+
+DurabilityMode = Literal["sync", "async", "exit"]
+
+
+class CheckpointEncryptionSettings(BaseModel):
+    """Encryption at rest for checkpoints, which hold the conversation."""
+
+    # The *name* of the environment variable holding the AES key — the
+    # key itself never appears in configuration.
+    key_env: str
+    # Refuse to start without a key. Off for development, on in any
+    # deployment whose checkpoints hold real customers' words.
+    required: bool
+
+
+class DurabilitySettings(YamlBackedSettings):
+    """Durable execution: checkpoints, resumable runs (LLD §13, E35)."""
+
+    _yaml_section = "durability"
+    db_path: str
+    # LangGraph's durability mode. `sync` writes each checkpoint before
+    # the next node starts, so a crash loses at most the node in flight.
+    mode: DurabilityMode
+    retention_days: int
+    # How much of a run's query the registry keeps for `/threads`.
+    preview_chars: int
+    encryption: CheckpointEncryptionSettings
+
+    model_config = SettingsConfigDict(env_prefix="DURABILITY__")
+
+    @property
+    def resolved_db_path(self) -> Path:
+        return resolve_path(self.db_path)
+
+
+class MoneySettings(YamlBackedSettings):
+    """How amounts are held and shown (see `agentic_commons.money`)."""
+
+    _yaml_section = "money"
+    currency: str
+    # Decimal places of the minor unit: 2 for cents.
+    minor_units: int
+    symbol: str
+
+    model_config = SettingsConfigDict(env_prefix="MONEY__")
 
 
 class AuditSettings(YamlBackedSettings):
@@ -305,10 +376,53 @@ class EpisodicMemorySettings(BaseModel):
         return resolve_path(self.path)
 
 
+class RagChunkingSettings(BaseModel):
+    """Semantic chunking — headings first, then embedding breakpoints."""
+
+    # A sentence boundary becomes a passage boundary when the cosine
+    # distance across it is above this percentile of the section's gaps.
+    breakpoint_percentile: float
+    min_tokens: int
+    max_tokens: int
+
+
+class RagRetrievalSettings(BaseModel):
+    """Hybrid retrieval: sparse + dense legs, RRF fusion, cross-encoder rerank."""
+
+    sparse_k: int
+    dense_k: int
+    # Cormack et al.'s constant: damps how much a first place outweighs a
+    # fifth, so one leg's confident outlier cannot swamp the other.
+    rrf_k: int
+    rerank_shortlist: int
+    top_k: int
+
+
+class RagSettings(BaseModel):
+    """One agent's knowledge index: where it lives and what feeds it."""
+
+    db_path: str
+    corpus_dir: str
+    corpus_glob: str
+    ingest_on_startup: bool
+    embed_batch_size: int
+    chunking: RagChunkingSettings
+    retrieval: RagRetrievalSettings
+
+    @property
+    def resolved_db_path(self) -> Path:
+        return resolve_path(self.db_path)
+
+    @property
+    def resolved_corpus_dir(self) -> Path:
+        return resolve_path(self.corpus_dir)
+
+
 class SemanticMemorySettings(BaseModel):
-    """Semantic store — structured facts with fuzzy key lookup."""
+    """Semantic store — structured facts, plus document RAG over a corpus."""
 
     fuzzy_match_threshold: float
+    rag: RagSettings
 
 
 class MemoryWritePipelineSettings(BaseModel):
@@ -331,6 +445,64 @@ class MemoryRetrievalWeights(BaseModel):
     importance: float
     authority: float
     temporal_validity: float
+    # How often a fact has been recalled — reinforcement, not popularity:
+    # a fact the agent keeps needing is one it should keep finding.
+    frequency: float
+
+
+MemoryPrincipalRole = Literal[
+    "customer", "agent", "system_of_record", "curator", "data_protection"
+]
+
+
+class MemoryGovernanceSettings(BaseModel):
+    """Who may do what to memory, and how much what they say is believed."""
+
+    # Provenance is derived from *who* is speaking, never passed in.
+    provenance_by_role: dict[MemoryPrincipalRole, ProvenanceKindName]
+    # Platform-default grants per role, as `memory:<class>:<op>:<category>`
+    # with `*` wildcards. The agent principal also holds whatever its
+    # persisted AgentPolicy grants.
+    role_permissions: dict[MemoryPrincipalRole, list[str]]
+
+
+class MemoryExtractorSettings(BaseModel):
+    """One deterministic claim pattern: named groups `key` and/or `value`."""
+
+    name: str
+    pattern: str
+    # A fixed key, for patterns that capture only a value ("I prefer …").
+    key: str = ""
+
+
+class TextSearchSettings(BaseModel):
+    """Grep over file-backed memory (episodic logs, skills)."""
+
+    backend: Literal["ripgrep", "python"]
+    binary: str
+    timeout_seconds: float
+
+
+class MemoryDeterministicSettings(BaseModel):
+    """The deterministic tier that runs before any model or embedding."""
+
+    extractors: list[MemoryExtractorSettings]
+    # Shapes of identifiers in a query; any match is looked up exactly (R1).
+    identifier_patterns: list[str]
+    # Text that must never become memory, whoever says it (poisoning).
+    reject_patterns: list[str]
+    text_search: TextSearchSettings
+    # R1 answers on its own once it finds at least this many facts.
+    min_exact_hits: int
+    # The dense tier (R3) runs only when R1 + R2 found fewer than this.
+    dense_below: int
+
+
+class MemoryImportanceSettings(BaseModel):
+    """Importance assigned at write time, by category (deterministic)."""
+
+    default: float
+    by_category: dict[str, float]
 
 
 class MemorySettings(YamlBackedSettings):
@@ -344,6 +516,9 @@ class MemorySettings(YamlBackedSettings):
     retrieval_weights: MemoryRetrievalWeights
     provenance_weights: dict[str, float]
     recency_half_life_days: float
+    governance: MemoryGovernanceSettings
+    deterministic: MemoryDeterministicSettings
+    importance: MemoryImportanceSettings
 
     model_config = SettingsConfigDict(env_prefix="MEMORY__")
 
@@ -377,6 +552,13 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     # This is a retrieval parameter, not a claim count. Keep it small for the
     # support agent; the same primitive can later be reused by larger RAG corpora.
     embedding_top_k: int = Field(default=3, ge=1, le=20)
+    # Retrieved evidence below this similarity is shown but never sent to
+    # NLI: text unrelated to a claim can neither support nor refute it.
+    evidence_min_similarity: float
+    # When two decisive NLI results disagree, the higher-authority evidence
+    # tier wins; only a tie between equal tiers blocks as a conflict.
+    evidence_authority: dict[str, int]
+    support_only_tiers: list[str]
     # Hallucination repair is deliberately bounded. A model that repeats an
     # unsupported claim must not be given an unbounded generative retry loop.
     max_repair_attempts: int = Field(default=1, ge=0, le=3)
@@ -390,7 +572,8 @@ class LedgerSettings(BaseModel):
     enabled: bool
     window_hours: int
     action_classes: dict[str, str]
-    thresholds_usd: dict[str, float]
+    # Cumulative caps per budget class, in minor units (cents).
+    thresholds_cents: dict[str, int]
 
 
 class MandateSettings(BaseModel):
@@ -657,20 +840,6 @@ class CommandSettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="COMMANDS__")
 
 
-class TraceStreamSettings(BaseModel):
-    """Narrating the log stream into the live feed (LLD §20)."""
-
-    enabled: bool
-    level: str
-    subsystem_width: int
-    subsystem_labels: dict[str, str]
-    max_values: int
-    max_value_chars: int
-    show_events: bool
-    steps: dict[str, str]
-    muted_fields: list[str]
-
-
 class CommandOutputSettings(BaseModel):
     """How slash-command output is drawn (LLD §20)."""
 
@@ -694,10 +863,6 @@ class TuiSettings(YamlBackedSettings):
     max_feed_lines: int
     spinner_frames: str
     command_output: CommandOutputSettings
-    # `/session` and `/debug` have always read this. It was never
-    # declared, so both commands raised AttributeError on every
-    # invocation and the registry's catch-all reported "/debug failed".
-    trace: TraceStreamSettings
 
     model_config = SettingsConfigDict(env_prefix="TUI__")
 
@@ -737,6 +902,8 @@ class AppConfig(BaseSettings):
     gatekeeper: GatekeeperSettings = Field(default_factory=lambda: GatekeeperSettings())  # type: ignore[call-arg]
     security: SecuritySettings = Field(default_factory=lambda: SecuritySettings())  # type: ignore[call-arg]
     resilience: ResilienceSettings = Field(default_factory=lambda: ResilienceSettings())  # type: ignore[call-arg]
+    durability: DurabilitySettings = Field(default_factory=lambda: DurabilitySettings())  # type: ignore[call-arg]
+    money: MoneySettings = Field(default_factory=lambda: MoneySettings())  # type: ignore[call-arg]
     evals: EvalsSettings = Field(default_factory=lambda: EvalsSettings())  # type: ignore[call-arg]
     tools: ToolsSettings = Field(default_factory=lambda: ToolsSettings())  # type: ignore[call-arg]
     tui: TuiSettings = Field(default_factory=lambda: TuiSettings())  # type: ignore[call-arg]

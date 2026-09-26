@@ -11,7 +11,7 @@ agent:
 features:
   basic_sanity: true
   prompt_injection: true
-  content_moderation: true
+  content_moderation: false
   pii: true
   intent_classification: true
   # On. An agent that states an order's delivery date and a refund's
@@ -46,6 +46,12 @@ llm:
 memory:
   episodic:
     path: src/customer_support_agent/dummy_data/episodic
+  semantic:
+    # This agent's knowledge index and the corpus that feeds it. The
+    # articles explain policy; the rules themselves stay in code.
+    rag:
+      db_path: src/customer_support_agent/dummy_data/knowledge.db
+      corpus_dir: src/customer_support_agent/knowledge_base/articles
   write_pipeline:
     classification_hints:
       # This agent's domain vocabulary for the deterministic first tier.
@@ -76,6 +82,10 @@ evals:
   # This agent's own golden-task and production-shadow evals.
   additional_manifest_paths:
     - src/customer_support_agent/evals/eval_manifest.yaml
+
+durability:
+  # This agent's checkpoints: every turn it has run, node by node.
+  db_path: src/customer_support_agent/dummy_data/checkpoints.db
 
 customer_support_agent:
   enabled: true
@@ -212,5 +222,5 @@ customer_support_agent:
   user_code_length: 7
   user_code_alphabet: ABCDEFGHJKMNPQRSTUVWXYZ23456789
   demo_user_code: 2HEDZTV
-  checkpoint_path: src/customer_support_agent/dummy_data/checkpoints.db
   policy_path: src/customer_support_agent/prompts/customer_policy.md
+  console_reviewer: console_operator

@@ -7,7 +7,7 @@ asserts as an exit invariant.
 """
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import AsyncIterator, Protocol, runtime_checkable
 
 from agentic_commons.config import get_settings
@@ -19,7 +19,9 @@ from agentic_commons.resilience.types import BulkheadFullError
 class Bulkhead(Protocol):
     """Limits concurrent use of one named resource pool."""
 
-    def acquire(self, pool: str) -> AsyncIterator[None]: ...
+    def acquire(
+        self, pool: str, wait_seconds: float | None = None
+    ) -> AbstractAsyncContextManager[None]: ...
 
 
 class ResourcePoolBulkhead:

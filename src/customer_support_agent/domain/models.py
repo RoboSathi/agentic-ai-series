@@ -15,6 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from agentic_commons.money import Money
 from agentic_commons.observability.types import utc_now
 
 OrderStatus = Literal["pending", "shipped", "delivered", "cancelled"]
@@ -35,13 +36,14 @@ class Order(BaseModel):
     timestamp: str
     order_status: OrderStatus
     refund_status: RefundStatus
-    amount: float
+    # The order total — exact integer cents; shown as dollars.
+    amount: Money
 
     # What was bought.
     product_name: str = ""
     product_sku: str = ""
     quantity: int = 1
-    unit_price: float = 0.0
+    unit_price: Money = Field(default_factory=Money.zero)
     currency: str = "USD"
 
     # Where it is. All optional, because each only exists at some point in
@@ -152,6 +154,6 @@ class HitlRequest(BaseModel):
     id: int | None = None
     order_id: int
     user_id: int
-    requested_amount: float
+    requested_amount: Money
     status: HitlStatus = "pending"
     created_at: str = Field(default_factory=lambda: utc_now().isoformat())

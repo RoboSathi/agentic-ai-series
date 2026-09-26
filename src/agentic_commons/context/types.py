@@ -1,5 +1,6 @@
 """Context value types used by agents and the common context pipeline."""
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -94,3 +95,32 @@ class ContextHealth(BaseModel):
     degraded: bool
     modes: list[ContextFailureMode] = Field(default_factory=list)
     detail: str = ""
+
+
+# The line `format` puts above every chunk: `[kind]` or `[kind: source]`.
+# Written and recognised in one place, so a reader of assembled context
+# (the failure detector) can never mistake the label for content.
+_PROVENANCE_HEADER = re.compile(r"^\[[a-z_]+(?::[^\]]*)?\]$")
+
+
+def provenance_header(chunk: "Chunk") -> str:
+    """The label for one chunk's provenance."""
+    return f"[{chunk.kind}: {chunk.source}]" if chunk.source else f"[{chunk.kind}]"
+
+
+def is_provenance_header(line: str) -> bool:
+    """Whether a line is a provenance label rather than content."""
+    return bool(_PROVENANCE_HEADER.match(line.strip()))
+
+
+class ContextFinding(BaseModel):
+    """One detected failure in an assembled window, and what was done about it."""
+
+    mode: ContextFailureMode
+    source: str
+    rule: str
+    detail: str
+    # Position of the chunk in the window, when the finding is about one.
+    index: int | None = None
+    # What mitigation did: "dropped", "kept (higher authority)", "flagged".
+    action: str = "flagged"

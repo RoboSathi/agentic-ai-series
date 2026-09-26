@@ -27,8 +27,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from agentic_commons.commands import Command
-from agentic_commons.config import get_settings, reload_settings, use_overlay
-from agentic_commons.logging import TraceStream
+from agentic_commons.config import reload_settings, use_overlay
 from agentic_commons.tui.app import AgenticTuiApp
 from customer_support_agent.graph import AgentState, build_agent
 from customer_support_agent.graph.agent import CustomerSupportAgent
@@ -127,13 +126,7 @@ def run_scripted_episode(episode_dir: Path, flow: Flow) -> None:
     console = Console()
     _banner(console, episode_dir.name, episode)
 
-    trace = TraceStream(console.print)
-    if get_settings().tui.trace.enabled:
-        trace.enable()
-    try:
-        asyncio.run(_drive(episode, episode_dir.name, console, flow))
-    finally:
-        trace.disable()
+    asyncio.run(_drive(episode, episode_dir.name, console, flow))
     console.print()
 
 

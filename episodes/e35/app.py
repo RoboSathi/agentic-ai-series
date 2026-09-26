@@ -13,6 +13,7 @@ two refunds. With one it is the same refund, answered twice — and the
 number at the end of the run is the whole argument.
 """
 
+from agentic_commons.money import Money
 from agentic_commons.persistence import SqliteConnectionPool
 from customer_support_agent.domain.identity import current_customer
 from customer_support_agent.persistence.repositories import RefundLedgerRepository
@@ -35,14 +36,14 @@ async def flow(run: EpisodeRun) -> None:
         run.note(f"{turn[:52]:<54} tool calls: {len(state.tool_results)}")
 
     run.note("")
-    run.note(f"Refunded to this customer before: ${before:,.2f}")
-    run.note(f"Refunded to this customer after : ${_refunded():,.2f}")
+    run.note(f"Refunded to this customer before: {before}")
+    run.note(f"Refunded to this customer after : {_refunded()}")
     run.note("A retried request is the same request. That is what idempotency buys.")
 
 
-def _refunded() -> float:
+def _refunded() -> Money:
     """What this customer has actually been refunded, reversals excluded."""
     customer = current_customer()
     if customer is None:
-        return 0.0
+        return Money.zero()
     return RefundLedgerRepository(SqliteConnectionPool()).total_for_user(customer.customer_id)

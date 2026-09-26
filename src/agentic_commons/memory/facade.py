@@ -4,25 +4,75 @@
 storage engines. Which store answers a given question is a decision this
 facade owns, which is what keeps E08's information-hiding discipline
 intact as stores change underneath.
+
+Writes go through the governed pipeline (`submit`). Reads are a cascade,
+cheapest tier first, and each tier runs only if the one before it did
+not find enough:
+
+    R1 exact    key or identifier in the query  → SQL equality, rg over logs
+    R2 lexical  the query's words               → FTS5 BM25, rg over logs
+    R3 dense    only if R1 + R2 came up short   → the injected embedding scorer
+
+Every recall says which tier answered and what it cost, and reinforces
+the facts it returned.
 """
 
+import re
+import uuid
+
+from agentic_commons.audit import AuditLedger
+from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger, instrument
+from agentic_commons.memory.deterministic import DeterministicClaims, normalize_key
 from agentic_commons.memory.episodic.memory import EpisodicStore
+from agentic_commons.memory.governance import MemoryAuthorizer
 from agentic_commons.memory.procedural.memory import ProceduralStore
 from agentic_commons.memory.semantic.memory import SemanticStore
 from agentic_commons.memory.store import CompositeRetrievalScorer, RelevanceScorer
 from agentic_commons.memory.types import (
+    MemoryCommand,
     MemoryFact,
+    MemoryPrincipal,
     MemoryQuery,
     Provenance,
     ProvenanceKind,
+    RecallReport,
+    RecallTier,
     ScoredFact,
     TextRedactor,
     WriteResult,
 )
 from agentic_commons.memory.working.memory import WorkingMemoryStore
-from agentic_commons.memory.write_pipeline import MemoryWritePipelineImpl
+from agentic_commons.memory.write_pipeline import MemoryReporter, MemoryWritePipelineImpl
 from agentic_commons.persistence import PlatformStore
+
+# One cascade candidate: the fact, its relevance, and the tier that found it.
+_Hit = tuple[MemoryFact, float, RecallTier]
+
+_WORD = re.compile(r"[a-z0-9]{3,}")
+_TIER_ORDER: tuple[RecallTier, ...] = ("exact", "lexical", "dense")
+
+
+def id_of(fact: MemoryFact) -> tuple[str, str, str, int]:
+    """What makes two retrieved facts the same fact."""
+    return (fact.memory_type, fact.subject_id, fact.key, fact.version)
+
+
+def _words(text: str) -> list[str]:
+    return list(dict.fromkeys(_WORD.findall(text.casefold())))
+
+
+def _overlap(terms: list[str], text: str) -> float:
+    """Share of the query's words a text contains — grep's relevance."""
+    if not terms:
+        return 0.0
+    folded = text.casefold()
+    return sum(1 for term in terms if term in folded) / len(terms)
+
+
+def _best_tier(found: list[_Hit]) -> RecallTier | None:
+    tiers = {tier for _, _, tier in found}
+    return next((tier for tier in _TIER_ORDER if tier in tiers), None)
 
 
 @instrument("memory")
@@ -39,6 +89,9 @@ class MemoryFacade:
         relevance: RelevanceScorer | None = None,
         platform_store: PlatformStore | None = None,
         redactor: TextRedactor | None = None,
+        memory_authorizer: MemoryAuthorizer | None = None,
+        audit: AuditLedger | None = None,
+        reporter: MemoryReporter | None = None,
     ) -> None:
         """Compose whichever CoALA stores this deployment was given.
 
@@ -64,10 +117,16 @@ class MemoryFacade:
             episodic=episodic,
             procedural=procedural,
             platform_store=platform_store,
+            memory_authorizer=memory_authorizer,
+            audit=audit,
+            reporter=reporter,
         )
         self._relevance = relevance
         self._redactor = redactor
         self._scorer = CompositeRetrievalScorer()
+        self._claims = DeterministicClaims()
+        self._cascade = get_settings().memory.deterministic
+        self.last_recall = RecallReport()
         self._logger = get_logger("memory")
 
     @classmethod
@@ -98,6 +157,13 @@ class MemoryFacade:
         """Strip personal data, when this deployment was given a redactor."""
         return self._redactor.redact(text) if self._redactor is not None else text
 
+    def submit(self, command: MemoryCommand) -> WriteResult:
+        """Any governed operation. Redacted before the pipeline ever sees it."""
+        redacted = command.model_copy(
+            update={"text": self._redact(command.text), "value": self._redact(command.value)}
+        )
+        return self.pipeline.execute(redacted)
+
     def remember(
         self,
         raw_input: str,
@@ -105,7 +171,7 @@ class MemoryFacade:
         provenance_kind: ProvenanceKind = "self_reported",
         session_id: str = "",
     ) -> WriteResult:
-        """Offer something to memory. The pipeline decides whether it lands."""
+        """Legacy: offer text to memory as the role that carries this provenance."""
         return self.pipeline.process(
             self._redact(raw_input), source, provenance_kind, session_id
         )
@@ -166,48 +232,172 @@ class MemoryFacade:
         self.working.clear(session_id)
         self._logger.debug("Working memory cleared", session_id=session_id)
 
-    def record_event(self, description: str, source: str, session_id: str) -> WriteResult:
-        """Append to the episodic log — events are never subject to conflict."""
+    def record_event(
+        self,
+        description: str,
+        source: str,
+        session_id: str,
+        principal: MemoryPrincipal | None = None,
+    ) -> WriteResult:
+        """Append to the episodic log — authorized, but never subject to conflict.
+
+        An event is what happened, not a claim about what is true, so it
+        skips conflict and confidence routing. It does not skip the
+        permission check: appending to a customer's history is still an
+        operation someone must be allowed to perform.
+        """
         if self.episodic is None:
             return WriteResult(route="discard", written=False, reason="no episodic memory")
+        actor = principal or MemoryPrincipal(actor=source, role="agent")
+        refused = self.pipeline.permits(actor, "create", "episodic", "event")
+        if refused is not None:
+            return WriteResult(route="refused", written=False, reason=refused, stage="authorization")
         fact = MemoryFact(
-            key=f"event_{session_id}",
+            # One key per event, not per session: a shared key made every
+            # event in a conversation the same record to recall and forget.
+            key=f"event_{session_id}_{uuid.uuid4().hex}",
             value=self._redact(description),
             memory_type="episodic",
             category="event",
+            importance=self.pipeline.score_importance("event"),
             metadata={"session_id": session_id},
             provenance=Provenance(source=source),
+            subject_id=actor.subject_id,
         )
-        return self.episodic.write(fact, fact.provenance)
+        result = self.episodic.write(fact, fact.provenance)
+        self.pipeline.report(
+            "memory_write",
+            "completed",
+            f"episodic event recorded: {fact.value[:60]}",
+            {
+                "memory": "episodic (append-only log of what happened)",
+                "event": fact.value,
+                "recorded_for": f"customer {actor.subject_id}" if actor.subject_id else "shared",
+                "recorded_by": f"{actor.actor} ({actor.role})",
+                "why": "a turn completed",
+                "importance": round(fact.importance, 2),
+            },
+        )
+        return result
 
     async def recall(self, query: MemoryQuery) -> list[ScoredFact]:
-        """Retrieve across long-term stores, ranked by the composite score."""
-        candidates = (self.semantic.read(query) if self.semantic else []) + (
-            self.episodic.read(query) if self.episodic else []
+        """Retrieve across long-term stores, cheapest tier first (see module docstring)."""
+        report = RecallReport()
+        found = self._exact(query, report)
+        if len(found) >= self._cascade.min_exact_hits:
+            report.skipped = ["lexical", "dense"]
+        else:
+            found += self._lexical(query, report, exclude=found)
+            if len(found) < self._cascade.dense_below:
+                found += await self._dense(query, report, exclude=found)
+            else:
+                report.skipped.append("dense")
+        report.answered_by = _best_tier(found)
+        ranked = self._scorer.rank(
+            [fact for fact, _, _ in found],
+            [relevance for _, relevance, _ in found],
+            query.limit,
+            [tier for _, _, tier in found],
         )
-        if not candidates:
-            return []
-        relevances = await self._relevances(query, candidates)
-        return self._scorer.rank(candidates, relevances, query.limit)
+        self._reinforce(ranked)
+        self._report_recall(query, report, ranked)
+        self.last_recall = report
+        return ranked
 
     def procedure(self, name: str) -> MemoryFact | None:
         """The active version of a how-to artifact."""
         return self.procedural.get(name) if self.procedural else None
 
-    def forget(self, key: str) -> int:
-        """Hard-delete every semantic fact for a key (revocation, E16)."""
-        return self.semantic.revoke(key) if self.semantic else 0
+    def forget(self, key: str, principal: MemoryPrincipal | None = None) -> int:
+        """Erase a fact — governed, audited, reported. Returns versions removed (legacy)."""
+        if self.semantic is None:
+            return 0
+        actor = principal or MemoryPrincipal(actor="forget", role="data_protection")
+        result = self.submit(MemoryCommand(principal=actor, operation="erase", key=key))
+        return 1 if result.written else 0
 
     def curator_queue(self) -> list[WriteResult]:
         """Writes held for human adjudication."""
         return self.pipeline.curator_queue()
 
-    async def _relevances(self, query: MemoryQuery, facts: list[MemoryFact]) -> list[float]:
-        """Relevance per candidate, from the injected scorer or lexical overlap."""
-        text = query.text or query.key
-        if not text:
-            return [1.0] * len(facts)
-        if self._relevance is not None:
-            return await self._relevance.rank(text, [fact.value for fact in facts])
-        needle = text.casefold()
-        return [1.0 if needle in fact.value.casefold() else 0.0 for fact in facts]
+    # ── the read cascade ─────────────────────────────────────────────
+
+    def _exact(self, query: MemoryQuery, report: RecallReport) -> list[_Hit]:
+        """R1: an asked-for key, or an identifier the query names."""
+        keys = [normalize_key(query.key)] if query.key else []
+        identifiers = self._claims.identifiers(query.text)
+        hits: list[_Hit] = []
+        if self.semantic is not None:
+            facts = self.semantic.exact(keys, identifiers, query.subject_id, query.limit)
+            hits += [(fact, 1.0, "exact") for fact in facts]
+        if self.episodic is not None and identifiers:
+            events = self.episodic.search_terms(identifiers, query.subject_id, query.limit)
+            hits += [(fact, 1.0, "exact") for fact in events]
+        report.candidates["exact"] = len(hits)
+        return hits
+
+    def _lexical(self, query: MemoryQuery, report: RecallReport, exclude: list[_Hit]) -> list[_Hit]:
+        """R2: the query's words — FTS5 BM25 over facts, grep over event logs."""
+        seen = {id_of(fact) for fact, _, _ in exclude}
+        hits: list[_Hit] = []
+        if self.semantic is not None and query.text:
+            for fact, score in self.semantic.lexical(query.text, query.subject_id, query.limit):
+                hits.append((fact, score, "lexical"))
+        if self.episodic is not None and query.text:
+            terms = _words(query.text)
+            for fact in self.episodic.search_terms(terms, query.subject_id, query.limit):
+                overlap = _overlap(terms, fact.value)
+                if overlap:
+                    hits.append((fact, overlap, "lexical"))
+        fresh = [hit for hit in hits if id_of(hit[0]) not in seen]
+        report.candidates["lexical"] = len(fresh)
+        return fresh
+
+    async def _dense(self, query: MemoryQuery, report: RecallReport, exclude: list[_Hit]) -> list[_Hit]:
+        """R3: embeddings — reached only when the cheap tiers came up short."""
+        if self._relevance is None or not query.text:
+            report.skipped.append("dense")
+            return []
+        seen = {id_of(fact) for fact, _, _ in exclude}
+        pool = [
+            fact
+            for fact in (self.semantic.read(MemoryQuery(subject_id=query.subject_id, limit=query.limit * 5))
+                         if self.semantic else [])
+            if id_of(fact) not in seen
+        ]
+        if not pool:
+            report.candidates["dense"] = 0
+            return []
+        scores = await self._relevance.rank(query.text, [fact.value for fact in pool])
+        report.embed_calls += 1
+        hits: list[_Hit] = [(fact, score, "dense") for fact, score in zip(pool, scores)]
+        report.candidates["dense"] = len(hits)
+        return hits
+
+    def _reinforce(self, ranked: list[ScoredFact]) -> None:
+        if self.semantic is not None:
+            self.semantic.reinforce([item.fact for item in ranked if item.fact.memory_type == "semantic"])
+
+    def _report_recall(self, query: MemoryQuery, report: RecallReport, ranked: list[ScoredFact]) -> None:
+        answered = report.answered_by or "nothing"
+        self.pipeline.report(
+            "memory_recall",
+            "completed",
+            f"answered at {answered} ({report.embed_calls} embed calls)",
+            {
+                "query": query.text or query.key,
+                "for": f"customer {query.subject_id}" if query.subject_id else "shared",
+                "answered_by": answered,
+                "candidates": report.candidates,
+                "skipped": ", ".join(report.skipped) or "—",
+                "embed_calls": report.embed_calls,
+                "recalled": [
+                    f"{item.fact.key}={item.fact.value[:40]} [{item.tier}] "
+                    f"score={item.score:.2f} rel={item.relevance:.2f} rec={item.recency:.2f} "
+                    f"imp={item.importance:.2f} auth={item.authority:.2f} "
+                    f"freq={item.frequency:.2f} valid={item.temporal_validity:.0f}"
+                    for item in ranked
+                ],
+            },
+        )
+

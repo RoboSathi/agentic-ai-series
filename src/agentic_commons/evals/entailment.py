@@ -113,17 +113,75 @@ class LexicalEntailmentModel:
         return any(marker in lowered for marker in self._negations)
 
 
+# NLI checkpoints spell their labels ENTAILMENT/entailment and so on,
+# depending on who trained them; everything is compared case-folded.
+ENTAILMENT = "entailment"
+CONTRADICTION = "contradiction"
+NEUTRAL = "neutral"
+
+
+def entailment_from_probabilities(probabilities: dict[str, float], model: str) -> EntailmentResult:
+    """The winning NLI label as a result, whichever model produced the scores.
+
+    Hosted and local cross-encoders both answer with three labelled
+    probabilities; turning those into a verdict is one rule, kept here so
+    the two can never disagree about what a score means.
+    """
+    labels = {label.casefold(): score for label, score in probabilities.items()}
+    entailment = labels.get(ENTAILMENT, 0.0)
+    contradiction = labels.get(CONTRADICTION, 0.0)
+    neutral = labels.get(NEUTRAL, 0.0)
+    score, label = max(
+        (entailment, "entailment"),
+        (contradiction, "contradiction"),
+        (neutral, "unknown"),
+        key=lambda item: item[0],
+    )
+    return EntailmentResult(
+        label=label,  # type: ignore[arg-type]
+        entailed=label == "entailment",
+        # The winning label's probability is confidence in the
+        # classification, not text similarity.
+        score=score,
+        model=model,
+        rationale=(
+            f"{model}: entailment {entailment:.2f}, "
+            f"contradiction {contradiction:.2f}, neutral {neutral:.2f}"
+        ),
+    )
+
+
 def create_entailment_model() -> EntailmentModel:
     """The best entailment model this deployment can reach (Factory).
 
-    A hosted cross-encoder when one is configured and credentialed,
-    the lexical model otherwise. Callers never choose: the decision is
-    a deployment fact, and a component that picked its own model would
-    make "which NLI ran?" un-answerable from config.
+    The local cross-encoder when configured, a hosted one when configured
+    and credentialed, the lexical model otherwise. Callers never choose:
+    the decision is a deployment fact, and a component that picked its own
+    model would make "which NLI ran?" un-answerable from config.
     """
     settings = get_settings().llm.encoders
+    if not settings.enabled:
+        return LexicalEntailmentModel()
+    if settings.nli_provider == "huggingface_local":
+        from agentic_commons.llm.local_nli import shared_local_nli_model
+
+        return shared_local_nli_model()
     if not settings.usable:
         return LexicalEntailmentModel()
     from agentic_commons.llm.encoders import HostedNliModel
 
     return HostedNliModel()
+
+
+def preload_entailment_model() -> None:
+    """Load a local NLI model now, in the calling thread, if one is configured.
+
+    For a console that is about to start an event loop: native model
+    loading after that point trips macOS descriptor checks. A model that
+    cannot load is not a reason not to start — the first claim check
+    falls back to the lexical model and says so.
+    """
+    model = create_entailment_model()
+    load = getattr(model, "ensure_loaded_sync", None)
+    if callable(load):
+        load()

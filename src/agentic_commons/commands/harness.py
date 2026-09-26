@@ -10,6 +10,7 @@ from agentic_commons.evals import (
     create_scoring_cascade,
     load_manifest,
 )
+from agentic_commons.money import Money
 from agentic_commons.tools import ToolRegistry
 
 
@@ -173,9 +174,9 @@ class GatekeeperCommand:
             result.line(f"  {action:<24} {surface}")
         result.line("")
         result.line("Cumulative thresholds:")
-        for action_class, threshold in settings.ledger.thresholds_usd.items():
+        for action_class, cents in settings.ledger.thresholds_cents.items():
             result.line(
-                f"  {action_class:<24} ${threshold:,.0f} per {settings.ledger.window_hours}h"
+                f"  {action_class:<24} {Money.from_cents(cents)} per {settings.ledger.window_hours}h"
             )
         return result
 

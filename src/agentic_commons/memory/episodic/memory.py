@@ -7,7 +7,8 @@ no schema migration story because it never updates a row.
 
 Retrieval follows the NOLLM discipline — a literal substring scan and a
 time-range filter come first, and an embedding model is reached for only
-when those cannot answer.
+when those cannot answer. Cross-session search is grep, literally:
+ripgrep when it is installed, the same search in Python when it is not.
 """
 
 import json
@@ -16,6 +17,7 @@ from pathlib import Path
 
 from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger, instrument, logged
+from agentic_commons.memory.deterministic import TextSearchBackend, create_text_search
 from agentic_commons.memory.types import (
     MemoryFact,
     MemoryQuery,
@@ -28,11 +30,33 @@ from agentic_commons.memory.types import (
 class EpisodicStore:
     """Append-only session logs, one file per session."""
 
-    def __init__(self, root: Path | None = None) -> None:
+    _GLOB = "*.jsonl"
+
+    def __init__(
+        self, root: Path | None = None, text_search: TextSearchBackend | None = None
+    ) -> None:
         settings = get_settings().memory.episodic
         self._root = root or settings.resolved_path
         self._root.mkdir(parents=True, exist_ok=True)
+        self._search = text_search or create_text_search()
         self._logger = get_logger("memory")
+
+    @property
+    def search_backend(self) -> str:
+        """Which grep answers cross-session searches (`ripgrep` or `python`)."""
+        return self._search.name
+
+    def search_terms(self, terms: list[str], subject_id: str, limit: int) -> list[MemoryFact]:
+        """Events mentioning any term, across every session log, newest first.
+
+        Scoped to one subject: a customer's recall reaches that customer's
+        events and no one else's, whichever session they were recorded in.
+        """
+        matches = self._search.search(self._root, terms, self._GLOB)
+        facts = [fact for match in matches if (fact := _parse_line(match.text)) is not None]
+        scoped = [fact for fact in facts if fact.subject_id == subject_id]
+        scoped.sort(key=lambda fact: fact.event_time, reverse=True)
+        return scoped[:limit]
 
     def session_path(self, session_id: str) -> Path:
         """The log file for one session."""
@@ -73,13 +97,8 @@ class EpisodicStore:
         The plain-text, one-fact-per-line format is what makes this a
         one-liner rather than a query planner (McIlroy's "do one thing").
         """
-        needle = pattern.casefold()
-        found = [
-            fact
-            for path in sorted(self._root.glob("*.jsonl"))
-            for fact in self._read_file(path)
-            if needle in fact.value.casefold() or needle in fact.key.casefold()
-        ]
+        matches = self._search.search(self._root, [pattern], self._GLOB)
+        found = [fact for match in matches if (fact := _parse_line(match.text)) is not None]
         return found[:limit]
 
     def _files_for(self, session_id: str) -> list[Path]:
@@ -114,6 +133,14 @@ class EpisodicStore:
         if query.category and fact.category != query.category:
             return False
         return _within(fact.event_time, query.since, query.until)
+
+
+def _parse_line(line: str) -> MemoryFact | None:
+    """One log line as an event, or None if the line is not one."""
+    try:
+        return MemoryFact.model_validate(json.loads(line))
+    except (ValueError, TypeError):
+        return None
 
 
 def _within(moment: datetime, since: datetime | None, until: datetime | None) -> bool:

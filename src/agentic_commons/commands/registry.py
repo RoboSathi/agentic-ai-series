@@ -7,6 +7,11 @@ API dispatches identically without reimplementing the grammar.
 """
 
 from agentic_commons.commands.data import MemoryCommand
+from agentic_commons.commands.durability import (
+    CheckpointsCommand,
+    ResumeCommand,
+    ThreadsCommand,
+)
 from agentic_commons.commands.harness import (
     CascadeCommand,
     EvalCommand,
@@ -25,7 +30,6 @@ from agentic_commons.commands.inspection import (
 )
 from agentic_commons.commands.system import (
     ClearCommand,
-    DebugCommand,
     HelpCommand,
     LogsCommand,
     SessionCommand,
@@ -136,7 +140,9 @@ def _default_commands() -> list[Command]:
         HarnessCommand(),
         PatternsCommand(),
         SessionCommand(),
+        ThreadsCommand(),
+        ResumeCommand(),
+        CheckpointsCommand(),
         LogsCommand(),
         ClearCommand(),
-        DebugCommand(),
     ]

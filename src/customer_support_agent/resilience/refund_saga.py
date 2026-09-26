@@ -21,17 +21,27 @@ already been refunded. The money-moving step is the wrong place to
 assume somebody else was careful, so the preconditions are re-checked
 here, against a fresh read, and the state transition is a
 compare-and-swap rather than a blind write.
+
+The skeleton — refuse, replay, run, remember — is the platform's
+`SagaWorkflow`. This class supplies only what is the refund's own: the
+three steps, the key that recognises a retried refund, and the policy
+re-check that refuses to start one.
 """
 
 import uuid
 from typing import Awaitable, Callable
 
-from agentic_commons.logging import get_logger, instrument
+from pydantic import BaseModel, ConfigDict
+
+from agentic_commons.logging import instrument
+from agentic_commons.money import Money
 from agentic_commons.resilience import (
     CompensatingSaga,
+    IdempotencyGuard,
+    Saga,
     SagaResult,
     SagaStep,
-    SqliteIdempotencyGuard,
+    SagaWorkflow,
 )
 from customer_support_agent.domain.models import Order
 from customer_support_agent.domain.refund_policy import RefundPolicy
@@ -44,8 +54,18 @@ from customer_support_agent.persistence.repositories import (
 Notifier = Callable[[int, str], Awaitable[None]]
 
 
+class RefundRequest(BaseModel):
+    """One refund to issue: which order, how much, and why."""
+
+    model_config = ConfigDict(frozen=True)
+
+    order: Order
+    amount: Money
+    reason: str
+
+
 @instrument("customer_support_agent")
-class RefundSaga:
+class RefundSaga(SagaWorkflow[RefundRequest]):
     """Issues a refund as a compensable sequence of steps."""
 
     def __init__(
@@ -53,67 +73,39 @@ class RefundSaga:
         orders: OrdersRepository,
         ledger: RefundLedgerRepository,
         notifier: Notifier | None = None,
-        idempotency: SqliteIdempotencyGuard | None = None,
+        idempotency: IdempotencyGuard | None = None,
         refund_policy: RefundPolicy | None = None,
+        saga: Saga | None = None,
     ) -> None:
+        super().__init__(saga or CompensatingSaga(), idempotency)
         self._orders = orders
         self._refund_policy = refund_policy or RefundPolicy(orders)
         self._ledger = ledger
         self._notifier = notifier
-        self._idempotency = idempotency
-        self._saga = CompensatingSaga()
-        self._logger = get_logger("customer_support_agent")
 
-    async def issue(self, order: Order, amount: float, reason: str) -> SagaResult:
-        """Run the refund, compensating whatever committed if a step fails.
+    async def issue(self, order: Order, amount: Money, reason: str) -> SagaResult:
+        """Run the refund, compensating whatever committed if a step fails."""
+        return await self.execute(RefundRequest(order=order, amount=amount, reason=reason))
 
-        The idempotency key is the order plus the amount: a retried
-        refund request for the same order and amount replays the first
-        outcome instead of paying twice.
-        """
-        refused = self._refuse(order, amount)
-        if refused is not None:
-            return refused
+    def idempotency_key(self, request: RefundRequest) -> str:
+        """The order plus the amount: a retried refund replays, never pays twice."""
+        return f"refund:{request.order.order_id}:{request.amount.cents}"
 
-        refund_id = str(uuid.uuid4())
-        key = f"refund:{order.order_id}:{amount:.2f}"
-
-        async def run() -> SagaResult:
-            return await self._saga.run(self._steps(order, amount, reason, refund_id))
-
-        if self._idempotency is None:
-            return await run()
-        recorded = self._idempotency.recorded_result(key)
-        if recorded is not None:
-            self._logger.info("Replaying prior refund outcome", key=key)
-            return SagaResult.model_validate(recorded)
-        result = await run()
-        if result.succeeded:
-            self._idempotency.remember(key, result.model_dump(mode="json"))
-        return result
-
-    def _refuse(self, order: Order, amount: float) -> SagaResult | None:
+    def precondition(self, request: RefundRequest) -> str | None:
         """Re-check the authoritative refund policy against fresh repository state."""
         validation = self._refund_policy.validate(
-            order_id=order.order_id,
-            customer_id=order.user_id,
-            amount=amount,
+            order_id=request.order.order_id,
+            customer_id=request.order.user_id,
+            amount=request.amount,
             action="process_refund",
         )
-        return None if validation.allowed else self._refused(validation.reason)
+        return None if validation.allowed else validation.reason
 
-    def _refused(self, reason: str) -> SagaResult:
-        """A refund that never started, reported as a failed saga.
-
-        Nothing committed, so there is nothing to compensate — which is
-        the distinction between refusing and rolling back.
-        """
-        self._logger.warning("Refund refused before any step ran", reason=reason)
-        return SagaResult(succeeded=False, failed_step="precondition", error=reason)
-
-    def _steps(self, order: Order, amount: float, reason: str, refund_id: str) -> list[SagaStep]:
+    def steps(self, request: RefundRequest) -> list[SagaStep]:
         """The three steps, each with the action that undoes it."""
+        order, amount, reason = request.order, request.amount, request.reason
         previous_status = order.refund_status
+        refund_id = str(uuid.uuid4())
 
         async def mark_refunded() -> None:
             # Compare-and-swap: the row moves only if it is still in the
@@ -140,7 +132,7 @@ class RefundSaga:
             if self._notifier is not None:
                 await self._notifier(
                     order.user_id,
-                    f"Your refund of ${amount:.2f} for order {order.order_id} is on its way.",
+                    f"Your refund of {amount} for order {order.order_id} is on its way.",
                 )
 
         return [

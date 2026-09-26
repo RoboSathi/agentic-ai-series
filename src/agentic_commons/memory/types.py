@@ -23,6 +23,15 @@ ProvenanceKind = Literal["verified_system_of_record", "agent_inference", "self_r
 # Where the write pipeline sent a candidate.
 WriteRoute = Literal["auto_commit", "curator_queue", "discard", "refused"]
 
+# Every operation on memory is one of these, and each is authorized.
+MemoryOperation = Literal["create", "update", "delete", "erase", "approve"]
+
+# Who is acting on memory. Provenance is derived from this, never passed in.
+PrincipalRole = Literal["customer", "agent", "system_of_record", "curator", "data_protection"]
+
+# Which tier of the read cascade produced a result.
+RecallTier = Literal["exact", "lexical", "dense"]
+
 
 class Provenance(BaseModel):
     """Who said it, how they knew, and whether anyone confirmed it."""
@@ -48,11 +57,22 @@ class MemoryFact(BaseModel):
     valid_until: datetime | None = None
     superseded_by: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Whose fact this is. Reads are scoped to it: a session recalls its own
+    # subject's facts, never another customer's.
+    subject_id: str = ""
+    # Updates never overwrite: each is a new version superseding the last.
+    version: int = 1
+    # Reinforcement: how often, and how recently, recall has used it.
+    access_count: int = 0
+    last_accessed_at: datetime | None = None
+    # A tombstone: deleted facts keep their history but leave recall.
+    deleted_at: datetime | None = None
+    deleted_by: str | None = None
 
     @property
     def is_current(self) -> bool:
         """Whether this fact is still believed to hold."""
-        if self.superseded_by is not None:
+        if self.superseded_by is not None or self.deleted_at is not None:
             return False
         return self.valid_until is None or self.valid_until > utc_now()
 
@@ -72,6 +92,49 @@ class MemoryQuery(BaseModel):
     until: datetime | None = None
     limit: int = 10
     include_superseded: bool = False
+    # The subject whose memory may be read. Empty reads the agent's shared
+    # facts only — never every subject's.
+    subject_id: str = ""
+
+
+class MemoryPrincipal(BaseModel):
+    """Who is acting on memory, as the composition root established it.
+
+    A customer's message arrives as a `customer` principal because the
+    code handling it says so — not because the message claims anything.
+    """
+
+    actor: str
+    role: PrincipalRole
+    subject_id: str = ""
+
+
+class MemoryCommand(BaseModel):
+    """One requested operation on memory, before anything decides it."""
+
+    principal: MemoryPrincipal
+    operation: MemoryOperation
+    memory_type: MemoryType = "semantic"
+    # create: free text to extract a claim from, or an explicit key/value.
+    text: str = ""
+    key: str = ""
+    value: str = ""
+    category: str = ""
+    reason: str = ""
+    session_id: str = ""
+    # Conversational capture: consider only claims a configured pattern
+    # recognises. Without it every sentence becomes a candidate memory and
+    # the curator queue fills with requests nobody asserted as facts.
+    require_pattern: bool = False
+
+
+class RecallReport(BaseModel):
+    """How a recall was answered — which tier, at what cost."""
+
+    answered_by: RecallTier | None = None
+    candidates: dict[str, int] = Field(default_factory=dict)
+    skipped: list[str] = Field(default_factory=list)
+    embed_calls: int = 0
 
 
 class ScoredFact(BaseModel):
@@ -89,6 +152,8 @@ class ScoredFact(BaseModel):
     importance: float = 0.0
     authority: float = 0.0
     temporal_validity: float = 0.0
+    frequency: float = 0.0
+    tier: RecallTier | None = None
 
 
 class WriteResult(BaseModel):
@@ -100,6 +165,11 @@ class WriteResult(BaseModel):
     reason: str = ""
     conflicts_with: list[str] = Field(default_factory=list)
     stage: str = ""
+    operation: MemoryOperation = "create"
+    # Which deterministic tier extracted the claim, e.g. `D1:my_x_is_y`.
+    tier_path: list[str] = Field(default_factory=list)
+    permission: str = ""
+    curator_id: int | None = None
 
 
 class MemoryConflict(BaseModel):

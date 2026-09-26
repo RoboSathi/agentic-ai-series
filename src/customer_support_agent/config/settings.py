@@ -82,15 +82,12 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     user_code_length: int
     user_code_alphabet: str
     demo_user_code: str
-    checkpoint_path: str
     policy_path: str
     db_path: str
+    # Who the console acts as when it approves or denies a queued refund.
+    console_reviewer: str
 
     model_config = SettingsConfigDict(env_prefix="CUSTOMER_SUPPORT_AGENT__")
-
-    @property
-    def resolved_checkpoint_path(self) -> Path:
-        return resolve_path(self.checkpoint_path)
 
     @property
     def resolved_policy_path(self) -> Path:

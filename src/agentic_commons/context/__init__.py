@@ -1,7 +1,6 @@
 """Context assembly, management strategies and retrieval (LLD §7)."""
 
 from agentic_commons.context.failure import ContextFailureDetector
-from agentic_commons.context.working_memory import WorkingMemoryContextSource
 from agentic_commons.context.pipeline import (
     CandidateSource,
     ContextAssembler,
@@ -29,13 +28,14 @@ from agentic_commons.context.strategies import (
 )
 from agentic_commons.context.types import (
     AssembledContext,
-    Context,
     Chunk,
     ChunkKind,
+    Context,
     ContextFailureMode,
     ContextHealth,
     Task,
 )
+from agentic_commons.context.working_memory import WorkingMemoryContextSource
 
 __all__ = [
     "AssembledContext",

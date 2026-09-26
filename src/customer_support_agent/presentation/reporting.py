@@ -12,29 +12,46 @@ customer's data in a second place.
 
 import json
 import re
+from collections.abc import Callable
 from typing import Any
 
 from agentic_commons.control_loop import ControlLoopReport
+from agentic_commons.money import money_or_none
 
 
-def tool_request_fields(name: str, arguments: str) -> dict[str, Any]:
-    """Expose only small, domain-relevant tool arguments to the TUI."""
-    display_name = display_tool_name(name)
+def tool_request_fields(
+    name: str, arguments: str, redact: Callable[[str], str] | None = None
+) -> dict[str, Any]:
+    """Every argument the model sent to a tool — what it is acting on.
+
+    All of them, not a hand-picked few: a reason, a note, a status the
+    model chose are part of the decision being made. Text passes through
+    the redactor first (the card must not become a copy of personal data)
+    and an amount is shown in dollars.
+    """
     fields: dict[str, Any] = {
-        "tool": display_name,
+        "tool": display_tool_name(name),
         "qualified_tool": name.replace("__", "."),
     }
     try:
         raw = json.loads(arguments or "{}")
     except (TypeError, ValueError, json.JSONDecodeError):
+        fields["arguments"] = "unparseable — the call will be refused"
         return fields
     if not isinstance(raw, dict):
         return fields
-    for key in ("order_id", "amount"):
-        value = raw.get(key)
-        if isinstance(value, (str, int, float)):
-            fields[key] = f"${value:,.2f}" if key == "amount" and isinstance(value, (int, float)) else value
+    for key, value in raw.items():
+        fields[f"arg_{key}"] = _shown_argument(key, value, redact)
     return fields
+
+
+def _shown_argument(key: str, value: Any, redact: Callable[[str], str] | None) -> Any:
+    if key == "amount":
+        parsed = money_or_none(value)
+        return str(parsed) if parsed is not None else f"{value} (not a valid amount)"
+    if isinstance(value, str) and redact is not None:
+        return redact(value)
+    return value
 
 
 def llm_request_fields(request: Any, *, model: str = "") -> dict[str, Any]:
@@ -205,15 +222,15 @@ def gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
         "authority_rank": decision.authority_rank,
         "required_authority_rank": decision.required_authority_rank,
         "max_granting_rank": decision.max_granting_rank,
-        "cumulative_total": decision.cumulative_total,
-        "threshold": decision.threshold,
+        "cumulative_total": str(decision.cumulative_total) if decision.cumulative_total else None,
+        "threshold": str(decision.threshold) if decision.threshold else None,
     }
     order_id = call.params.get("order_id")
     if isinstance(order_id, (str, int)) and not isinstance(order_id, bool):
         fields["order_id"] = order_id
-    amount = call.params.get("amount")
-    if isinstance(amount, (int, float)) and not isinstance(amount, bool):
-        fields["amount"] = float(amount)
+    amount = money_or_none(call.params.get("amount"))
+    if amount is not None:
+        fields["amount"] = str(amount)
 
     for check in decision.checks:
         if check.check_id == "gatekeeper.actor_authorization":
@@ -266,8 +283,9 @@ def tool_result_fields(call: Any, result: Any, *, outcome: Any | None = None) ->
         value = result.data.get(key)
         if value is None:
             continue
-        if key == "amount" and isinstance(value, (int, float)):
-            fields[key] = f"${float(value):,.2f}"
+        if key == "amount":
+            parsed = money_or_none(value)
+            fields[key] = str(parsed) if parsed is not None else value
         elif isinstance(value, (str, int, float, bool)):
             fields[key] = value
         elif isinstance(value, list):

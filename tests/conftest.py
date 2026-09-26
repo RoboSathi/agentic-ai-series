@@ -43,6 +43,7 @@ from customer_support_agent.persistence.schema import ensure_schema
 from episodes._shared import CONFIG_FILENAME, EpisodeSettings
 
 _ANALYTICS_PATH_VAR = "OBSERVABILITY__ANALYTICS_DB_PATH"
+_CHECKPOINTS_PATH_VAR = "DURABILITY__DB_PATH"
 
 
 class ScriptedLLM(LLMClient):
@@ -162,6 +163,25 @@ def seeded_pool(pool: SqliteConnectionPool) -> SqliteConnectionPool:
 
 
 @pytest.fixture(scope="session", autouse=True)
+def offline_nli_model() -> Iterator[None]:
+    """Tests never load or download the local NLI checkpoint.
+
+    The configured provider is a local DeBERTa cross-encoder; loading it
+    costs seconds and hundreds of MB, and the first run downloads it. The
+    factory resolves it lazily through `shared_local_nli_model`, so this
+    replaces that one seam with the deterministic, offline lexical model.
+    A test that needs a real cross-encoder injects one.
+    """
+    from agentic_commons.evals.entailment import LexicalEntailmentModel
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            "agentic_commons.llm.local_nli.shared_local_nli_model", LexicalEntailmentModel
+        )
+        yield
+
+
+@pytest.fixture(scope="session", autouse=True)
 def isolated_analytics_store(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     """Keep the analytics database out of the developer's own.
 
@@ -173,15 +193,21 @@ def isolated_analytics_store(tmp_path_factory: pytest.TempPathFactory) -> Iterat
     ninety tests fail on `Could not set lock` — a failure that says
     nothing about the code and moves whenever someone opens a terminal.
     """
-    path = tmp_path_factory.mktemp("analytics") / "observability.duckdb"
-    previous = os.environ.get(_ANALYTICS_PATH_VAR)
-    os.environ[_ANALYTICS_PATH_VAR] = str(path)
+    # Every agent a test builds checkpoints its turns; the same rule keeps
+    # those out of the developer's checkpoint file.
+    isolated = {
+        _ANALYTICS_PATH_VAR: tmp_path_factory.mktemp("analytics") / "observability.duckdb",
+        _CHECKPOINTS_PATH_VAR: tmp_path_factory.mktemp("durability") / "checkpoints.db",
+    }
+    previous = {name: os.environ.get(name) for name in isolated}
+    os.environ.update({name: str(path) for name, path in isolated.items()})
     reload_settings()
     yield
-    if previous is None:
-        os.environ.pop(_ANALYTICS_PATH_VAR, None)
-    else:
-        os.environ[_ANALYTICS_PATH_VAR] = previous
+    for name, value in previous.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
     reload_settings()
 
 

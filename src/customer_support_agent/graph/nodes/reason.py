@@ -25,6 +25,7 @@ from customer_support_agent.prompts.system_prompt import build_system_prompt
 class ReasoningNodes(NodeSupport):
     async def reason(self, state: AgentState) -> dict[str, Any]:
         """One model turn, with the tools this turn is allowed to use."""
+        self._loop_step = state.tool_rounds + 1
         tools = await self._offered_tools(state)
         offered = sorted(tool.qualified_name for tool in tools)
         request = CompletionRequest(

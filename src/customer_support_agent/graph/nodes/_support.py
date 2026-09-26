@@ -8,17 +8,21 @@ inventory of what the graph is composed of, and `mypy --strict` holds
 every node group to it.
 """
 
+import re
+from functools import cache
 from typing import Any
 
 from agentic_commons.audit import AuditLedger
 from agentic_commons.basic_sanity import BasicSanityChecker
-from agentic_commons.config import FeatureSet
+from agentic_commons.config import FeatureSet, get_settings
 from agentic_commons.context import (
     ContextFailureDetector,
     FiveStagePipeline,
     StrategySelector,
 )
+from agentic_commons.context.types import Chunk
 from agentic_commons.control_loop import ToolControlLoop
+from agentic_commons.durability import DurableGraphRunner, RunRegistry, SqliteCheckpointer
 from agentic_commons.evals import NollmScoringCascadeImpl
 from agentic_commons.executor import (
     ToolExecutionHandler,
@@ -27,10 +31,17 @@ from agentic_commons.executor import (
 from agentic_commons.gatekeeper import Gatekeeper
 from agentic_commons.gatekeeper.mandate import MandateIssuer
 from agentic_commons.guardrails import ResponseGuardrail
-from agentic_commons.hallucination_protection import DetectionLadder, GroundingReasoningDiagnoser
+from agentic_commons.guardrails.response import NOT_EXECUTED_MARKER
+from agentic_commons.hallucination_protection import (
+    OBSERVATION_SEQUENCE,
+    DetectionLadder,
+    GroundingReasoningDiagnoser,
+)
 from agentic_commons.llm.client import LLMClient
 from agentic_commons.llm.types import CompletionRequest, CompletionResult, Message
-from agentic_commons.memory import WorkingMemoryStore
+from agentic_commons.memory import MemoryFacade, WorkingMemoryStore
+from agentic_commons.memory.semantic.rag import KNOWLEDGE_SOURCE_PREFIX, markdown_sections
+from agentic_commons.money import money_or_none
 from agentic_commons.observability import (
     SLORegistry,
     StageReporter,
@@ -53,6 +64,7 @@ from customer_support_agent.domain.order_reference import (
     ORDER_UNDER_DISCUSSION,
     OrderReferenceResolver,
 )
+from customer_support_agent.gatekeeper.business_rules import REFUND_ACTION_CLASS
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.intent.router import CustomerSupportIntentRouter, Intent
 from customer_support_agent.observability.accounting import TurnAccountant
@@ -60,9 +72,11 @@ from customer_support_agent.persistence.repositories import OrdersRepository
 from customer_support_agent.presentation.orders import (
     OrderMenu,
 )
+from customer_support_agent.presentation.reporting import llm_request_fields, llm_response_fields
+from customer_support_agent.prompts.policy import policy_text
+from customer_support_agent.prompts.system_prompt import build_system_prompt
 from customer_support_agent.security.authentication import CustomerAuthenticator
 from customer_support_agent.tools.definitions import SupportTools
-from customer_support_agent.presentation.reporting import llm_request_fields, llm_response_fields
 
 
 class NodeSupport:
@@ -79,6 +93,7 @@ class NodeSupport:
     _handler: ToolExecutionHandler | None
     _security: SecuritySuite
     _working_memory: WorkingMemoryStore | None
+    _long_term: MemoryFacade | None
     _context: FiveStagePipeline | None
     _selector: ToolRetrievalSelector | None
     _cascade: NollmScoringCascadeImpl | None
@@ -101,7 +116,10 @@ class NodeSupport:
     _max_rounds: int
     _actor: str
     _strategies: StrategySelector
-    _context_health: ContextFailureDetector
+    # Absent when `context.failure_detection` is withheld.
+    _context_health: ContextFailureDetector | None
+    # Which tool-use loop iteration is running (None outside the loop).
+    _loop_step: int | None
     _diagnoser: GroundingReasoningDiagnoser
     _response_guardrail: ResponseGuardrail
     _sessions: dict[str, Customer]
@@ -110,6 +128,11 @@ class NodeSupport:
     _control_loop: ToolControlLoop
     _deliberation: OutputQualityGate
     _accountant: TurnAccountant
+    # Durable execution. Absent only for an agent constructed by hand
+    # without one — then the graph has no checkpoints and no approval wait.
+    _checkpointer: SqliteCheckpointer | None
+    _runs: RunRegistry | None
+    _runner: DurableGraphRunner | None
     _logger: Any
 
     # The nodes a graph is wired from. Declared here rather than left
@@ -120,6 +143,10 @@ class NodeSupport:
 
     async def authenticate(self, state: AgentState) -> dict[str, Any]:
         """Establish who is asking, deterministically."""
+        raise NotImplementedError
+
+    async def await_approval(self, state: AgentState) -> dict[str, Any]:
+        """Pause the run until a human decides a queued refund."""
         raise NotImplementedError
 
     async def choose_order(self, state: AgentState) -> dict[str, Any]:
@@ -232,13 +259,71 @@ class NodeSupport:
         ]
 
     def _authoritative_observations(self, state: AgentState) -> list[str]:
-        """Return successful tool results recorded in the current turn."""
+        """What this turn's tools established — including what they refused.
+
+        A refusal is evidence too: "your $0.01 refund was rejected" is a
+        true statement the reply must be allowed to make. Refused calls
+        are rendered as *not executed*, with the amount that was asked
+        for, so they ground the refusal and nothing else — a claim that
+        money moved still needs a settled state from a successful call.
+        """
         return [
-            str(item.get("result", ""))
+            str(item.get("result", "")) if item.get("successful") is True else _not_executed(item)
             for item in state.working_memory.current_turn
-            if isinstance(item, dict)
-            and item.get("kind") == "action"
-            and item.get("successful") is True
+            if isinstance(item, dict) and item.get("kind") == "action"
+        ]
+
+    def _grounding_evidence(self, state: AgentState) -> list[Chunk]:
+        """Every tier a reply may be grounded on, each labelled with its tier.
+
+        Tool results (the only tier that can show something happened), the
+        refund policy the model was given, and the knowledge and verified
+        memories the context node let into the window. Which tier may
+        support which kind of claim is the guardrail's rule, not this one's.
+        """
+        # In the order they happened: a read taken before a refund was queued
+        # is superseded by the queueing, and the checker needs to know which
+        # came last to let it.
+        tools = [
+            Chunk(content=text, kind="tool_result", metadata={OBSERVATION_SEQUENCE: index})
+            for index, text in enumerate(self._authoritative_observations(state))
+        ]
+        # What the customer said, as the model saw it. A reply may echo it
+        # ("I can't issue a $1 refund") but it proves nothing, so its tier
+        # is configured support-only.
+        asked = [Chunk(content=state.model_query or state.query, kind="history", source="customer_message")]
+        # Knowledge passages the window retrieved are already covered: the
+        # whole policy corpus is evidence below, one section per chunk.
+        seen = [
+            Chunk(content=item["content"], kind=item["kind"], source=item["source"])
+            for item in state.metadata.get(GROUNDING_EVIDENCE) or []
+            if not str(item.get("source", "")).startswith(KNOWLEDGE_SOURCE_PREFIX)
+        ]
+        return [*tools, *self._policy_evidence(), *_knowledge_evidence(), *asked, *seen]
+
+    def _policy_evidence(self) -> list[Chunk]:
+        """Every rule the model was given, one chunk per rule, in two tiers.
+
+        The refund policy file is `policy`: the business's rules, which may
+        support or refute a claim. The rest of the system prompt is
+        `system`: instructions to the model, which may support a reply that
+        restates them — the politeness it was told to use, the rule it was
+        told to cite — but are never facts a correct refusal can contradict.
+
+        One rule per chunk, not the whole prompt: a claim is judged against
+        the rule it is about, and a paragraph of unrelated rules (with their
+        "do not"s) cannot read as contradicting it.
+        """
+        policy = _prompt_rules(policy_text())
+        limit = self._agent_policy.per_action_limit(REFUND_ACTION_CLASS)
+        if limit:
+            policy.append(f"Direct refund limit: {limit}; refunds above {limit} need human review.")
+        instructions = [rule for rule in _prompt_rules(build_system_prompt()) if rule not in policy]
+        return [
+            *(Chunk(content=rule, kind="policy", source=f"refund_policy#{index}")
+              for index, rule in enumerate(policy, start=1)),
+            *(Chunk(content=rule, kind="system", source=f"system_prompt#{index}")
+              for index, rule in enumerate(instructions, start=1)),
         ]
 
     def _add_action(
@@ -396,6 +481,7 @@ class NodeSupport:
     ) -> None:
         """Emit a stage-started event for the TUI, when one is listening."""
         if self._reporter is not None:
+            summary, fields = self._stepped(stage, summary, fields)
             self._reporter.started(
                 stage,
                 detail=detail,
@@ -416,6 +502,7 @@ class NodeSupport:
     ) -> None:
         """Emit a stage-completed event with safe semantic fields."""
         if self._reporter is not None:
+            summary, fields = self._stepped(stage, summary, fields)
             self._reporter.completed(
                 stage,
                 tokens_delta=tokens,
@@ -436,6 +523,7 @@ class NodeSupport:
     ) -> None:
         """Emit a stage-failed event so the feed shows what broke."""
         if self._reporter is not None:
+            summary, fields = self._stepped(stage, summary, fields)
             self._reporter.failed(
                 stage,
                 detail=detail,
@@ -443,6 +531,24 @@ class NodeSupport:
                 summary=summary,
                 fields=fields,
             )
+
+    def _stepped(
+        self, stage: str, summary: str | None, fields: dict[str, Any] | None
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        """Mark a card as part of tool-use loop step N (reason → act → observe).
+
+        The loop is typed tool use, not ReAct: the model proposes a
+        validated call rather than writing a thought. Numbering the
+        iteration is what makes "the model asked twice" visible.
+        """
+        step = self._loop_step
+        if step is None or stage not in _LOOP_STAGES:
+            return summary, fields
+        prefix = f"Step {step} · "
+        return (prefix + summary if summary else prefix.rstrip(" ·")), {
+            "loop_step": f"{step} of {self._max_rounds} (reason → act → observe)",
+            **(fields or {}),
+        }
 
     def _reporter_blocked(
         self,
@@ -454,6 +560,7 @@ class NodeSupport:
         fields: dict[str, Any] | None = None,
     ) -> None:
         if self._reporter is not None:
+            summary, fields = self._stepped(stage, summary, fields)
             self._reporter.blocked(
                 stage,
                 detail=detail,
@@ -472,6 +579,7 @@ class NodeSupport:
         fields: dict[str, Any] | None = None,
     ) -> None:
         if self._reporter is not None:
+            summary, fields = self._stepped(stage, summary, fields)
             self._reporter.warning(
                 stage,
                 detail=detail,
@@ -490,6 +598,7 @@ class NodeSupport:
         fields: dict[str, Any] | None = None,
     ) -> None:
         if self._reporter is not None:
+            summary, fields = self._stepped(stage, summary, fields)
             self._reporter.waiting(
                 stage,
                 detail=detail,
@@ -497,3 +606,75 @@ class NodeSupport:
                 summary=summary,
                 fields=fields,
             )
+
+
+# Where the context node leaves the window's grounding sources for finalize.
+GROUNDING_EVIDENCE = "grounding_evidence"
+
+# The cards that belong to one iteration of the tool-use loop.
+_LOOP_STAGES = frozenset(
+    {
+        "llm_request",
+        "llm_call",
+        "llm_response_received",
+        "tool_request",
+        "gatekeeper_evaluation",
+        "control_loop",
+        "tool_result",
+        "executor",
+    }
+)
+
+
+# A sentence boundary inside a rule: terminal punctuation, then a capital.
+_RULE_SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
+
+
+def _prompt_rules(markdown: str) -> list[str]:
+    """Each bullet, and each plain paragraph, of a prompt as one rule.
+
+    A bullet's continuation lines belong to it; a blank line ends a
+    paragraph. Headings are structure, not rules.
+    """
+    rules: list[str] = []
+    open_rule = False
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            open_rule = False
+        elif stripped.startswith("- ") or not open_rule:
+            rules.append(stripped.removeprefix("- "))
+            open_rule = True
+        else:
+            rules[-1] = f"{rules[-1]} {stripped}"
+    # One sentence per rule. A bullet that states a threshold, forbids a
+    # tool and scripts the reply is three rules; embedded whole, it is
+    # retrieved for none of the claims that restate just one of them.
+    return [sentence for rule in rules for sentence in _RULE_SENTENCE.split(rule) if sentence]
+
+
+@cache
+def _knowledge_evidence() -> tuple[Chunk, ...]:
+    """The agent's policy articles, one chunk per section, read once.
+
+    The articles are the business's own statement of its policy, so they
+    ground what the reply says about how refunds work — whether or not
+    retrieval happened to put that section in this turn's window.
+    """
+    rag = get_settings().memory.semantic.rag
+    return tuple(
+        Chunk(content=section, kind="policy", source=f"{KNOWLEDGE_SOURCE_PREFIX}{path.name}#{index}")
+        for path in sorted(rag.resolved_corpus_dir.glob(rag.corpus_glob))
+        for index, section in enumerate(markdown_sections(path.read_text(encoding="utf-8")))
+    )
+
+
+def _not_executed(action: dict[str, Any]) -> str:
+    """A refused or failed tool call as evidence of exactly that."""
+    arguments = action.get("arguments")
+    named = dict(arguments) if isinstance(arguments, dict) else {}
+    amount = money_or_none(named.get("amount"))
+    if amount is not None:
+        named["amount"] = str(amount)
+    shown = ", ".join(f"{key}={value}" for key, value in named.items())
+    return f"{NOT_EXECUTED_MARKER} {action.get('name', '')}({shown}): {action.get('result', '')}"

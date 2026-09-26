@@ -8,7 +8,7 @@ download — the fallback that keeps tests fast, offline and reproducible.
 import hashlib
 import math
 import re
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from openai import AsyncOpenAI
 
@@ -19,15 +19,30 @@ from agentic_commons.resilience import external_api_error_fields
 
 _TOKEN_PATTERN = re.compile(r"[a-z0-9']+")
 
+# What a text is, to a model that embeds questions and passages differently.
+EmbeddingPurpose = Literal["query", "passage"]
+
 
 @runtime_checkable
 class EmbeddingClient(Protocol):
     """Turns text into vectors for similarity scoring."""
 
-    async def embed(self, texts: list[str]) -> list[list[float]]: ...
+    async def embed(
+        self, texts: list[str], purpose: EmbeddingPurpose = "query"
+    ) -> list[list[float]]: ...
 
     @property
     def dimensions(self) -> int: ...
+
+    @property
+    def model_id(self) -> str:
+        """The model that produced the most recent vectors.
+
+        Vectors from two models live in different spaces. An index uses
+        this to refuse to mix them — including when a hosted client has
+        quietly fallen back to a local one.
+        """
+        ...
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:
@@ -61,8 +76,17 @@ class HashingEmbeddingClient:
     def dimensions(self) -> int:
         return self._dimensions
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        """Embed each text into a normalized hashed bag-of-words vector."""
+    @property
+    def model_id(self) -> str:
+        return f"{type(self).__name__}:{self._dimensions}"
+
+    async def embed(
+        self, texts: list[str], purpose: EmbeddingPurpose = "query"
+    ) -> list[list[float]]:
+        """Embed each text into a normalized hashed bag-of-words vector.
+
+        Symmetric by construction, so `purpose` changes nothing here.
+        """
         return [self.embed_sync(text) for text in texts]
 
     def embed_sync(self, text: str) -> list[float]:
@@ -92,9 +116,12 @@ class NimEmbeddingClient:
         self._settings = settings or get_settings().llm
         provider = self._settings.provider_settings("nim")
         self._model = self._settings.embedding.nim_model
+        self._input_types = self._settings.embedding.input_types
+        self._truncate = self._settings.embedding.truncate
         self._logger = get_logger("llm")
         self._fallback = fallback or HashingEmbeddingClient()
         self._dimensions = 0
+        self._last_model_id = self._model
         self._client = client or AsyncOpenAI(
             base_url=provider.base_url,
             api_key=self._settings.api_key_for("nim") or "not-needed",
@@ -105,13 +132,20 @@ class NimEmbeddingClient:
     def dimensions(self) -> int:
         return self._dimensions or self._fallback.dimensions
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    @property
+    def model_id(self) -> str:
+        return self._last_model_id
+
+    async def embed(
+        self, texts: list[str], purpose: EmbeddingPurpose = "query"
+    ) -> list[list[float]]:
         """Embed via NIM, falling back locally if the endpoint refuses."""
+        input_type = getattr(self._input_types, purpose)
         try:
             response = await self._client.embeddings.create(
                 model=self._model,
                 input=texts,
-                extra_body={"input_type": "query", "truncate": "END"},
+                extra_body={"input_type": input_type, "truncate": self._truncate},
             )
         except Exception as exc:
             self._logger.warning(
@@ -119,9 +153,11 @@ class NimEmbeddingClient:
                 error=str(exc),
                 **(external_api_error_fields(exc) or {}),
             )
-            return await self._fallback.embed(texts)
+            self._last_model_id = self._fallback.model_id
+            return await self._fallback.embed(texts, purpose)
         vectors = [item.embedding for item in response.data]
         self._dimensions = len(vectors[0]) if vectors else 0
+        self._last_model_id = self._model
         return vectors
 
 

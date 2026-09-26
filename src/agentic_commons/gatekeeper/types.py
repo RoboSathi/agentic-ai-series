@@ -17,6 +17,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from agentic_commons.gatekeeper.mandate import MandateSet
+from agentic_commons.money import Money
 from agentic_commons.observability.types import utc_now
 
 Verdict = Literal["allow", "deny", "escalate"]
@@ -71,8 +72,9 @@ class AuthorityDecision(BaseModel):
     reason: str
     reason_code: str = ""
     question: str = ""
-    cumulative_total: float = 0.0
-    threshold: float = 0.0
+    # Where the actor stood against its rolling budget, when one applied.
+    cumulative_total: Money | None = None
+    threshold: Money | None = None
     authority_source: str = ""
     authority_rank: int | None = None
     required_authority_rank: int | None = None
@@ -93,7 +95,7 @@ class LedgerEntry(BaseModel):
     ledger_key: str
     action_class: str
     actor: str
-    amount: float
+    amount: Money
     trace_id: str = ""
     recorded_at: datetime = Field(default_factory=utc_now)
 
@@ -103,15 +105,18 @@ class LedgerState(BaseModel):
 
     ledger_key: str
     action_class: str
-    window_total: float
-    threshold: float
+    window_total: Money
+    # None: this class has no finite threshold (see `threshold_configured`).
+    threshold: Money | None
     entry_count: int
     exceeded: bool
 
     @property
-    def remaining(self) -> float:
-        """Budget left before the threshold trips."""
-        return max(0.0, self.threshold - self.window_total)
+    def remaining(self) -> Money | None:
+        """Budget left before the threshold trips (None when unbounded)."""
+        if self.threshold is None:
+            return None
+        return self.threshold - self.window_total if self.threshold > self.window_total else Money.zero()
 
 
 class AuthorityContextMeta(BaseModel):

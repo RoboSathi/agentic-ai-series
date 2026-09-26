@@ -18,6 +18,7 @@ from agentic_commons.memory import (
     SemanticStore,
     WorkingMemory,
 )
+from agentic_commons.money import Money
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.security import Authorizer
 from agentic_commons.tools import ToolCall
@@ -163,7 +164,7 @@ class TestEveryRetryIsIdempotent:
         assert order is not None
         for _ in range(3):
             await saga.issue(order, 32.0, "damaged")
-        assert refunds.total_for_user(1) == 32.0
+        assert refunds.total_for_user(1) == Money.parse("32.00")
 
     def test_the_retry_policy_cannot_run_unkeyed(self) -> None:
         """Structural, not advisory."""

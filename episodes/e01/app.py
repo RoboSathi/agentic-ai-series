@@ -18,6 +18,7 @@ unsupervised $500 refund does not frighten anybody.
 
 from agentic_commons.config import YamlBackedSettings
 from agentic_commons.logging import get_logger
+from agentic_commons.money import Money
 from agentic_commons.observability.types import utc_now
 from agentic_commons.persistence import SqliteConnectionPool
 from customer_support_agent.config import get_agent_settings
@@ -62,6 +63,6 @@ def setup() -> None:
             timestamp=utc_now().isoformat(),
             order_status=scenario.order_status,  # type: ignore[arg-type]
             refund_status="none",
-            amount=scenario.amount,
+            amount=Money.parse(scenario.amount),
         )
     )

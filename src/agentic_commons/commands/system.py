@@ -1,10 +1,9 @@
 """Commands about the console itself (LLD §20)."""
 
-import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from agentic_commons.commands.types import CommandError, CommandResult, ConsoleEffect
+from agentic_commons.commands.types import CommandResult, ConsoleEffect
 from agentic_commons.config import REPO_ROOT, get_settings
 from agentic_commons.config.yaml_config import config_sources
 
@@ -75,7 +74,6 @@ class SessionCommand:
     async def run(self, args: list[str]) -> CommandResult:
         settings = get_settings()
         provider = settings.llm.providers[settings.llm.provider]
-        trace = settings.tui.trace
         result = CommandResult(title="Session")
         result.headers = ["field", "value"]
         for field, value in self._agent_rows():
@@ -94,8 +92,8 @@ class SessionCommand:
             ", ".join(_relative(path) for path in config_sources() if path.exists()),
         )
         logging_settings = get_settings().logging
-        result.row("log level", f"file {logging_settings.file_level}, screen {trace.level}")
-        result.row("trace on screen", "yes" if trace.enabled else "no — /debug on")
+        # Levels apply to the .log files only; the console shows one fixed view.
+        result.row("log level", f"file {logging_settings.file_level}")
         return result
 
     def _agent_rows(self) -> list[tuple[str, str]]:
@@ -148,42 +146,6 @@ class ClearCommand:
 
     async def run(self, args: list[str]) -> CommandResult:
         return CommandResult(effect=ConsoleEffect(clear_transcript=True))
-
-
-class DebugCommand:
-    """Turn the on-screen trace stream up, down, or off.
-
-    The files are unaffected: they record at their configured level
-    whatever the screen is doing. This changes only how much of that
-    stream is mirrored into the feed, which is a readability decision,
-    not a logging one.
-    """
-
-    name = "debug"
-    summary = "Show more or less of the live trace (DEBUG|INFO|off)"
-    usage = "/debug [debug|info|warning|error|off|on]"
-
-    _OFF = "off"
-    _ON = "on"
-
-    async def run(self, args: list[str]) -> CommandResult:
-        settings = get_settings().tui.trace
-        if not args:
-            return (
-                CommandResult(title="Trace stream")
-                .line(f"Configured level: {settings.level}.")
-                .line(self.usage)
-            )
-        wanted = args[0].casefold()
-        if wanted == self._ON:
-            wanted = settings.level.casefold()
-        if wanted != self._OFF and wanted.upper() not in logging.getLevelNamesMapping():
-            raise CommandError(f"'{args[0]}' is not a level or '{self._OFF}'")
-        told = "off" if wanted == self._OFF else wanted.upper()
-        return CommandResult(
-            title=f"Trace stream {told}",
-            effect=ConsoleEffect(trace_level=wanted),
-        ).line("The log files are unchanged — they record everything either way.")
 
 
 def _relative(path: Path) -> str:

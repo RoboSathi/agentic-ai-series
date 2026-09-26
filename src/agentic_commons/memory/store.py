@@ -16,6 +16,7 @@ from agentic_commons.memory.types import (
     MemoryFact,
     MemoryQuery,
     Provenance,
+    RecallTier,
     ScoredFact,
     WriteResult,
 )
@@ -57,11 +58,14 @@ class CompositeRetrievalScorer:
         self._provenance_weights = settings.provenance_weights
         self._half_life_days = settings.recency_half_life_days
 
-    def score(self, fact: MemoryFact, relevance: float) -> ScoredFact:
-        """Combine the five signals for one fact."""
+    def score(
+        self, fact: MemoryFact, relevance: float, tier: RecallTier | None = None
+    ) -> ScoredFact:
+        """Combine the six signals for one fact, keeping each one visible."""
         recency = self.recency(fact)
         authority = self.authority(fact)
         validity = self.temporal_validity(fact)
+        frequency = self.frequency(fact)
         weights = self._weights
         total = (
             weights.relevance * relevance
@@ -69,6 +73,7 @@ class CompositeRetrievalScorer:
             + weights.importance * fact.importance
             + weights.authority * authority
             + weights.temporal_validity * validity
+            + weights.frequency * frequency
         )
         return ScoredFact(
             fact=fact,
@@ -78,23 +83,43 @@ class CompositeRetrievalScorer:
             importance=fact.importance,
             authority=authority,
             temporal_validity=validity,
+            frequency=frequency,
+            tier=tier,
         )
 
     def rank(
-        self, facts: list[MemoryFact], relevances: list[float], limit: int
+        self,
+        facts: list[MemoryFact],
+        relevances: list[float],
+        limit: int,
+        tiers: list[RecallTier | None] | None = None,
     ) -> list[ScoredFact]:
         """Score and order a candidate set, best first."""
-        scored = [self.score(fact, relevance) for fact, relevance in zip(facts, relevances)]
+        labels = tiers or [None] * len(facts)
+        scored = [
+            self.score(fact, relevance, tier)
+            for fact, relevance, tier in zip(facts, relevances, labels)
+        ]
         return sorted(scored, key=lambda item: item.score, reverse=True)[:limit]
+
+    @staticmethod
+    def frequency(fact: MemoryFact) -> float:
+        """Saturating use count in [0, 1): the tenth use matters less than the first."""
+        return 1.0 - 1.0 / (1.0 + fact.access_count)
 
     def recency(self, fact: MemoryFact) -> float:
         """Exponential decay on *ingestion* time, with a configured half-life.
 
         Ingestion, not event time: how recently we learned something is
         what should fade, otherwise a fact about last year that we learned
-        this morning is scored as stale.
+        this morning is scored as stale. And *use* refreshes it — the
+        Generative-Agents rule: a fact recalled yesterday is not stale
+        because it was learned last month.
         """
-        age_days = (utc_now() - fact.provenance.ingestion_time).total_seconds() / 86400
+        touched = max(
+            fact.provenance.ingestion_time, fact.last_accessed_at or fact.provenance.ingestion_time
+        )
+        age_days = (utc_now() - touched).total_seconds() / 86400
         return math.pow(0.5, max(0.0, age_days) / self._half_life_days)
 
     def authority(self, fact: MemoryFact) -> float:

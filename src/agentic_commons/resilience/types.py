@@ -97,6 +97,56 @@ def external_api_error_fields(exc: Exception) -> dict[str, Any] | None:
     }
 
 
+# Error codes for a dependency that failed before it could answer at all.
+TIMEOUT_ERROR_CODE = "TIMEOUT"
+CONNECTION_ERROR_CODE = "CONNECTION_ERROR"
+# Transport exceptions from HTTP clients the resilience layer does not import,
+# recognised by class name anywhere in their hierarchy.
+_TIMEOUT_CLASS_MARKERS = ("Timeout",)
+_CONNECTION_CLASS_MARKERS = ("ConnectError", "ConnectionError")
+
+
+def dependency_failure_fields(exc: Exception) -> dict[str, Any]:
+    """Structured fields for any failed call to an external dependency.
+
+    `external_api_error_fields` only answers when the dependency replied.
+    A timeout never gets a reply, and `str(TimeoutError())` is empty — so
+    an outage used to be logged with a blank code, a blank reason and no
+    status, indistinguishable from a bug. This always names the failure.
+    """
+    exception_type = type(exc).__name__
+    replied = external_api_error_fields(exc)
+    if replied is not None:
+        return {**replied, "exception_type": exception_type}
+    code = _transport_error_code(exc)
+    return {
+        "error_code": code,
+        "reason": str(exc) or _TRANSPORT_REASONS.get(code, exception_type),
+        "http_status": None,
+        "exception_type": exception_type,
+    }
+
+
+_TRANSPORT_REASONS = {
+    TIMEOUT_ERROR_CODE: "no response before the per-attempt deadline",
+    CONNECTION_ERROR_CODE: "could not connect to the endpoint",
+}
+
+
+def _transport_error_code(exc: Exception) -> str:
+    """Classify a reply-less failure as a timeout, a connection error, or by type."""
+    names = [cls.__name__ for cls in type(exc).__mro__]
+    if isinstance(exc, TimeoutError) or _any_marker(names, _TIMEOUT_CLASS_MARKERS):
+        return TIMEOUT_ERROR_CODE
+    if isinstance(exc, ConnectionError) or _any_marker(names, _CONNECTION_CLASS_MARKERS):
+        return CONNECTION_ERROR_CODE
+    return type(exc).__name__.upper()
+
+
+def _any_marker(names: list[str], markers: tuple[str, ...]) -> bool:
+    return any(marker in name for name in names for marker in markers)
+
+
 class Event(BaseModel):
     """One published message."""
 

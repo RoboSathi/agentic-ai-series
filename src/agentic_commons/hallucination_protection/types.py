@@ -22,6 +22,24 @@ class AtomicClaim(BaseModel):
     is_verifiable: bool = True
 
 
+class EvidenceCheck(BaseModel):
+    """One retrieved evidence item for a claim: how it was found, and what NLI said.
+
+    Kept for every claim, supported or not, so a passing verdict can be
+    checked as closely as a failing one: which evidence retrieval surfaced
+    (by cosine similarity), and which of it the entailment model agreed with.
+    """
+
+    rank: int
+    similarity: float
+    tier: str
+    excerpt: str
+    nli_label: str
+    nli_score: float
+    # Whether this result was strong enough to settle the claim on its own.
+    decisive: bool
+
+
 class DetectionVerdict(BaseModel):
     """Whether a claim is supported, with the evidence and detector behind it."""
 
@@ -34,6 +52,11 @@ class DetectionVerdict(BaseModel):
     retrieval_top_k: int = 0
     retrieval_method: str = ""
     retrieved_evidence: list[str] = Field(default_factory=list)
+    # The full trail: every retrieved item with its similarity and NLI result.
+    evidence_checks: list[EvidenceCheck] = Field(default_factory=list)
+    # The bar a calibrated NLI score had to clear; None for an uncalibrated
+    # (lexical) detector, whose label is its decision.
+    threshold: float | None = None
     escalated_to_human: bool = False
     # The detector abstained rather than refuting. `supported=False` alone
     # conflates "the evidence says otherwise" with "I could not tell", and

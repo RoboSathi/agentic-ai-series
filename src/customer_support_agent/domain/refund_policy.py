@@ -7,11 +7,11 @@ that result through its own contract (sanity findings, governance checks, or
 tool errors).
 """
 
-import math
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from agentic_commons.money import InvalidAmountError, Money
 from customer_support_agent.domain.models import Order
 from customer_support_agent.persistence.repositories import OrdersRepository
 
@@ -25,20 +25,24 @@ class RefundValidationResult(BaseModel):
     reason_code: str = "REFUND_POLICY_PASSED"
     reason: str = "all applicable refund business rules passed"
     order: Order | None = None
-    amount: float | None = None
+    amount: Money | None = None
 
 
 class RefundPolicy:
     """Authoritative, reusable refund business rules for this agent."""
 
-    def __init__(self, orders: OrdersRepository) -> None:
+    def __init__(self, orders: OrdersRepository, direct_limit: Money | None = None) -> None:
         self._orders = orders
+        # The most this agent may refund without a person — from its
+        # persisted AgentPolicy. None: not known here — the queue is not
+        # blocked on amount alone (review is never the unsafe direction).
+        self._direct_limit = direct_limit
 
     def validate(
         self,
         order_id: int,
         customer_id: int,
-        amount: float | None = None,
+        amount: Any = None,
         *,
         action: RefundAction = "request",
     ) -> RefundValidationResult:
@@ -66,46 +70,51 @@ class RefundPolicy:
 
         if amount is None:
             return RefundValidationResult(allowed=True, order=order)
+        try:
+            requested = Money.parse(amount)
+        except InvalidAmountError as exc:
+            return self._reject("REFUND_AMOUNT_INVALID", f"The refund amount is invalid: {exc}.", order=order)
+        return self._validate_amount(order, requested, action)
 
-        if not isinstance(amount, (int, float)) or isinstance(amount, bool) or not math.isfinite(float(amount)):
+    def _validate_amount(
+        self, order: Order, requested: Money, action: RefundAction
+    ) -> RefundValidationResult:
+        """Amount rules, exact to the cent: full refunds only, and review only above the limit."""
+        if not requested:
             return self._reject(
-                "REFUND_AMOUNT_INVALID",
-                "The refund amount must be a finite numeric value.",
-                order=order,
+                "INVALID_REFUND_AMOUNT", "The refund amount must be greater than zero.",
+                order=order, amount=requested,
             )
-
-        normalized = float(amount)
-        if normalized <= 0:
-            return self._reject(
-                "INVALID_REFUND_AMOUNT",
-                "The refund amount must be greater than zero.",
-                order=order,
-                amount=normalized,
-            )
-
-        if normalized > float(order.amount):
+        if requested > order.amount:
             return self._reject(
                 "REFUND_AMOUNT_EXCEEDS_ORDER_TOTAL",
-                f"Requested refund ${normalized:,.2f} exceeds order {order_id}'s ${order.amount:,.2f} total.",
-                order=order,
-                amount=normalized,
+                f"Requested refund {requested} exceeds order {order.order_id}'s {order.amount} total.",
+                order=order, amount=requested,
             )
-
-        if action == "process_refund" and not math.isclose(
-            normalized, float(order.amount), rel_tol=0.0, abs_tol=0.01
-        ):
+        if action in ("process_refund", "queue_for_approval") and requested != order.amount:
             return self._reject(
                 "PARTIAL_REFUND_NOT_SUPPORTED",
-                f"Direct refund for order {order_id} must equal the authoritative order total of ${order.amount:,.2f}.",
-                order=order,
-                amount=normalized,
+                f"Requested {requested} for order {order.order_id}, but a refund must be for the "
+                f"full order total of {order.amount}; partial refunds are not supported.",
+                order=order, amount=requested,
             )
+        if action == "queue_for_approval" and not self._needs_review(requested):
+            return self._reject(
+                "WITHIN_DIRECT_LIMIT",
+                f"A {requested} refund is within the {self._direct_limit} direct-refund limit, so it "
+                "needs no human review; process it directly.",
+                order=order, amount=requested,
+            )
+        return RefundValidationResult(allowed=True, order=order, amount=requested)
 
-        return RefundValidationResult(
-            allowed=True,
-            order=order,
-            amount=normalized,
-        )
+    def _needs_review(self, requested: Money) -> bool:
+        """Whether an amount is above what this agent may refund on its own.
+
+        With no declared limit the question cannot be decided here, and
+        sending a refund to a person is never the unsafe direction — so an
+        unknown limit does not block the queue; only a known one does.
+        """
+        return self._direct_limit is None or requested > self._direct_limit
 
     @staticmethod
     def _reject(
@@ -113,7 +122,7 @@ class RefundPolicy:
         reason: str,
         *,
         order: Order | None = None,
-        amount: float | None = None,
+        amount: Money | None = None,
     ) -> RefundValidationResult:
         return RefundValidationResult(
             allowed=False,

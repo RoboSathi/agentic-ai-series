@@ -12,6 +12,7 @@ holds no product's vocabulary and can open against an agent it has never
 heard of.
 """
 
+from collections import Counter
 from collections.abc import Sequence
 from typing import Any, Callable
 from uuid import uuid4
@@ -22,9 +23,15 @@ from textual.widgets import Footer, Header, Input
 
 from agentic_commons.commands import Command, CommandRegistry, ConsoleEffect
 from agentic_commons.commands.data import MemoryCommand
+from agentic_commons.commands.durability import (
+    CheckpointsCommand,
+    ResumeCommand,
+    ThreadsCommand,
+)
 from agentic_commons.commands.harness import ToolsCommand
 from agentic_commons.commands.system import SessionCommand
 from agentic_commons.config import get_settings
+from agentic_commons.durability import DurableAgent
 from agentic_commons.host import AgentHost, resolve_host
 from agentic_commons.logging import get_logger
 from agentic_commons.observability import InMemoryLiveStatusFeed, StageReporter
@@ -39,6 +46,10 @@ AgentFactory = Callable[[StageReporter], Any]
 # Used only when the console is opened with no host at all — a test, or a
 # developer poking at the shell. A real run always names one.
 _DEFAULT_TITLE = "Agent Harness"
+
+
+# Recall tiers that answered without an embedding model.
+_DETERMINISTIC_TIERS = ("exact", "lexical")
 
 
 class AgenticTuiApp(App[None]):
@@ -196,6 +207,8 @@ class AgenticTuiApp(App[None]):
         self._session_id = f"tui-{uuid4().hex[:8]}"
         self._follow_latest = True
         self._history_pending = 0
+        # Which recall tier answered, this session — the deterministic hit-rate.
+        self._recall_tiers: Counter[str] = Counter()
         self._journal = get_logger("tui")
 
         # The agent's own commands, then anything this caller added.
@@ -225,6 +238,10 @@ class AgenticTuiApp(App[None]):
         session = self._commands.get("session")
         if isinstance(session, SessionCommand):
             session.bind(self._host, self._agent)
+        for name in ("threads", "resume", "checkpoints"):
+            command = self._commands.get(name)
+            if isinstance(command, (ThreadsCommand, ResumeCommand, CheckpointsCommand)):
+                command.bind(self._host, self._agent)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -258,6 +275,23 @@ class AgenticTuiApp(App[None]):
             "Please share your 7-character user code.",
             style="yellow",
         )
+        self._announce_resumable_runs()
+
+    def _announce_resumable_runs(self) -> None:
+        """Say, on opening, which runs the last process left unfinished.
+
+        A crash is invisible from a fresh console otherwise: the new
+        session starts clean and the half-finished turn sits in the
+        checkpoint file where nobody looks.
+        """
+        if not isinstance(self._agent, DurableAgent):
+            return
+        pending = self._agent.runs.resumable(get_settings().commands.default_limit)
+        if pending:
+            self._panel.note(
+                f"↻ {len(pending)} run(s) can be resumed or are waiting on a reviewer — /threads",
+                style="bold yellow",
+            )
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         query = event.value.strip()
@@ -308,6 +342,9 @@ class AgenticTuiApp(App[None]):
             self.action_clear_feed()
         if effect.rebuild_agent:
             self._rebuild_agent()
+        if effect.session_id and effect.session_id != self._session_id:
+            self._session_id = effect.session_id
+            self._panel.note(f"Session switched to {effect.session_id}", style="cyan")
 
     def _rebuild_agent(self) -> None:
         """Compose the agent again under the configuration as it now stands.
@@ -397,8 +434,26 @@ class AgenticTuiApp(App[None]):
             query_input.disabled = False
             query_input.focus()
 
+    def _track_context(self, event: StatusEvent) -> None:
+        """Keep the status line's one functional statistic current.
+
+        How often recall was answered without an embedding model, this
+        session. Ids and checkpoint counts are operational and live in
+        the log, not on screen.
+        """
+        if event.stage != "memory_recall":
+            return
+        self._recall_tiers[str(event.fields.get("answered_by") or "nothing")] += 1
+        answered = sum(self._recall_tiers[tier] for tier in _DETERMINISTIC_TIERS)
+        total = answered + self._recall_tiers["dense"]
+        if total:
+            self._status.set_context(
+                f"recall without embeddings {round(100 * answered / total)}%"
+            )
+
     def _on_status(self, event: StatusEvent) -> None:
         """Render one semantic event and update the current-stage status."""
+        self._track_context(event)
         if event.status == "started":
             self._status.update_stage(
                 self._labels.title_for(

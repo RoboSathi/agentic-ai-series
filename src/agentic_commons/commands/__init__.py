@@ -28,6 +28,7 @@ from agentic_commons.commands.inspection import (
     ModelCommand,
     SloCommand,
 )
+from agentic_commons.commands.knowledge import KnowledgeBaseCommand
 from agentic_commons.commands.registry import PREFIX, CommandRegistry
 from agentic_commons.commands.system import (
     ClearCommand,
@@ -60,6 +61,7 @@ __all__ = [
     "GatekeeperCommand",
     "HarnessCommand",
     "HelpCommand",
+    "KnowledgeBaseCommand",
     "LogsCommand",
     "MemoryCommand",
     "PatternsCommand",

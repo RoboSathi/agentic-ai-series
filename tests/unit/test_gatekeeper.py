@@ -23,6 +23,7 @@ from agentic_commons.gatekeeper.ledger import CumulativeLedger
 from agentic_commons.gatekeeper.mandate import MandateSet
 from agentic_commons.gatekeeper.tier2 import NullTier2Advisor
 from agentic_commons.gatekeeper.types import LedgerEntry
+from agentic_commons.money import Money
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.security import Authorizer
 from agentic_commons.tools import ToolCall
@@ -97,22 +98,22 @@ class TestCumulativeLedger:
             ledger.record(
                 LedgerEntry(ledger_key="a", action_class="refund", actor="a", amount=100.0)
             )
-        assert ledger.window_total("a", "refund") == 300.0
+        assert ledger.window_total("a", "refund") == Money.parse("300.00")
 
     def test_detects_a_breach_before_it_happens(self, pool: SqliteConnectionPool) -> None:
         """The check asks 'would this exceed?', not 'did it?'."""
         ledger = CumulativeLedger(pool)
         ledger.record(LedgerEntry(ledger_key="a", action_class="refund", actor="a", amount=3990.0))
-        assert ledger.would_exceed("a", "refund", 5.0) is False
-        assert ledger.would_exceed("a", "refund", 50.0) is True
+        assert ledger.would_exceed("a", "refund", Money.parse("5.00")) is False
+        assert ledger.would_exceed("a", "refund", Money.parse("50.00")) is True
 
     def test_budgets_are_per_key(self, pool: SqliteConnectionPool) -> None:
         ledger = CumulativeLedger(pool)
         ledger.record(LedgerEntry(ledger_key="a", action_class="refund", actor="a", amount=4000.0))
-        assert ledger.would_exceed("b", "refund", 100.0) is False
+        assert ledger.would_exceed("b", "refund", Money.parse("100.00")) is False
 
     def test_an_unconfigured_class_is_uncapped(self, pool: SqliteConnectionPool) -> None:
-        assert CumulativeLedger(pool).threshold_for("invented") == float("inf")
+        assert CumulativeLedger(pool).threshold_for("invented") is None
 
 
 class TestGatekeeperDecisions:
@@ -207,9 +208,9 @@ class TestGatekeeperDecisions:
         gatekeeper = GatekeeperImpl(authorizer=Authorizer(), ledger=ledger)
         call = ToolCall(action="process_refund", params={"amount": 25.0})
         await gatekeeper.evaluate(call, agent_authority)
-        assert ledger.window_total("agent-1", "refund") == 0.0
+        assert ledger.window_total("agent-1", "refund") == Money.zero()
         gatekeeper.commit(call, agent_authority)
-        assert ledger.window_total("agent-1", "refund") == 25.0
+        assert ledger.window_total("agent-1", "refund") == Money.parse("25.00")
 
 
 class TestWithholdingTheGatekeeper:
@@ -457,7 +458,12 @@ class TestWritesAreScopedToTheEstablishedOrder:
     ) -> bool:
         context = {} if established is None else {ORDER_UNDER_DISCUSSION: established}
         scope = MandateSet(mandates=self._scope(seeded_pool).mandates_for("1", query, 1, context))
-        return scope.covering(self._proposal(order_id, amount), f"order:{order_id}", amount, 1) is not None
+        return (
+            scope.covering(
+                self._proposal(order_id, amount), f"order:{order_id}", Money.parse(amount), 1
+            )
+            is not None
+        )
 
     @pytest.mark.parametrize(
         "query",

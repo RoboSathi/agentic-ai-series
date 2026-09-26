@@ -147,6 +147,12 @@ llm:
     provider: nim          # nim | local
     nim_model: nvidia/nemotron-3-embed-1b
     local_dimensions: 256
+    # Asymmetric retrieval models embed questions and passages
+    # differently. RAG indexes as `passage` and searches as `query`.
+    input_types:
+      query: query
+      passage: passage
+    truncate: END
   # Hosted BERT-family encoders. These answer questions a generative
   # model answers worse and dearer: does this evidence *entail* this
   # claim, and which of these ten passages actually answers the query.
@@ -158,7 +164,17 @@ llm:
     # A cross-encoder trained on NLI. It reads premise and hypothesis
     # together, which is what lets it separate "refund approved" from
     # "refund denied" — two strings a bi-encoder scores as near-identical.
+    # Runs in-process by default: the hosted inference host this used to
+    # call (api-inference.huggingface.co) no longer resolves, and every
+    # claim check was silently falling back to token coverage.
+    nli_provider: huggingface_local   # huggingface_local | huggingface_hosted
     nli_model: cross-encoder/nli-deberta-v3-base
+    # Downloaded once into the repository (gitignored), then loaded with
+    # local_files_only, like the intent classifier.
+    nli_local_model_dir: local_models/nli/nli-deberta-v3-base
+    # Premise (one evidence chunk) plus hypothesis (one claim) in tokens.
+    nli_max_length: 512
+    download_if_missing: true
     # A reranking cross-encoder, run only over a retrieved shortlist.
     reranker_model: cross-encoder/ms-marco-MiniLM-L-6-v2
     timeout_seconds: 10
@@ -192,6 +208,28 @@ persistence:
   # Neutral default. Each agent overlays its own database path so nothing
   # writes into the shared library's folder.
   db_path: data/agentic.db
+
+# Money is integer minor units, never a float: every comparison is exact,
+# and dollars appear only where a person reads them.
+money:
+  currency: USD
+  minor_units: 2
+  symbol: "$"
+
+# Durable execution. Every node's output is checkpointed per thread, so a
+# run that fails — or a process that dies — resumes from the last node
+# that finished instead of from nothing. Each turn is its own thread.
+durability:
+  # Neutral default; each agent overlays its own checkpoint file.
+  db_path: data/checkpoints.db
+  mode: sync
+  # Resuming is an operator's decision (`/threads`, `/resume`): a node
+  # that moves money is re-entered by a person's choice, not at start-up.
+  retention_days: 30
+  preview_chars: 80
+  encryption:
+    key_env: LANGGRAPH_AES_KEY
+    required: false
 
 audit:
   enabled: true
@@ -266,6 +304,26 @@ memory:
     path: data/episodic
   semantic:
     fuzzy_match_threshold: 0.6
+    # Document RAG (memory/semantic/rag). Neutral defaults under data/;
+    # each agent overlays its own index path and corpus directory.
+    rag:
+      db_path: data/knowledge.db
+      corpus_dir: data/knowledge_base
+      corpus_glob: "**/*.md"
+      # Sync the index at start-up. Unchanged documents (same content
+      # hash) are skipped, so a warm start costs no embedding calls.
+      ingest_on_startup: true
+      embed_batch_size: 32
+      chunking:
+        breakpoint_percentile: 90
+        min_tokens: 40
+        max_tokens: 300
+      retrieval:
+        sparse_k: 20
+        dense_k: 20
+        rrf_k: 60
+        rerank_shortlist: 10
+        top_k: 4
   write_pipeline:
     enabled: true
     # Openers that mark a question rather than a claim. A question states
@@ -324,7 +382,63 @@ memory:
     importance: 0.15
     authority: 0.15
     temporal_validity: 0.1
+    frequency: 0.1
   recency_half_life_days: 14
+  # Semantic memory is a source of truth, so every operation on it — create,
+  # update, delete, erase, approve — is authorized against the principal
+  # doing it. What a principal says is believed according to who they are.
+  governance:
+    provenance_by_role:
+      customer: self_reported
+      agent: agent_inference
+      system_of_record: verified_system_of_record
+      curator: verified_system_of_record
+      data_protection: verified_system_of_record
+    role_permissions:
+      customer: ["memory:semantic:create:*", "memory:episodic:create:*"]
+      agent: ["memory:episodic:create:*", "memory:semantic:create:*"]
+      system_of_record: ["memory:*:create:*", "memory:*:update:*"]
+      curator: ["memory:*:approve:*", "memory:*:update:*", "memory:*:delete:*"]
+      data_protection: ["memory:*:erase:*", "memory:*:delete:*"]
+  # The deterministic tier: regex and grep before any model or embedding,
+  # on both paths. Which tier answered is logged, so "how often did we
+  # need a model?" is a number rather than a guess.
+  deterministic:
+    # Ordered; the first pattern that matches extracts the claim.
+    extractors:
+      - name: my_x_is_y
+        pattern: "^(?:my|our)\\s+(?P<key>[a-z][a-z ]{1,40}?)\\s+(?:is|are|has been|was)\\s+(?:now\\s+)?(?P<value>.+?)[.!]?$"
+      - name: preference
+        pattern: "^i\\s+(?:prefer|would prefer|would like|like)\\s+(?P<value>.+?)[.!]?$"
+        key: preference
+      - name: key_colon_value
+        pattern: "^(?P<key>[^:]{1,40}):\\s*(?P<value>.+)$"
+    identifier_patterns:
+      - "\\b[A-Z]{2,}-?\\d{3,}\\b"
+      - "\\b\\d{4,}\\b"
+      - "[\\w.+-]+@[\\w-]+\\.[\\w.]+"
+    reject_patterns:
+      - "ignore (all |any )?(previous|prior) instructions"
+      - "you are now"
+      - "system prompt"
+    text_search:
+      backend: ripgrep
+      binary: rg
+      timeout_seconds: 2
+    min_exact_hits: 1
+    dense_below: 3
+  # Importance is decided when a fact is written, from its category —
+  # deterministic, auditable, and never a model's opinion of itself.
+  importance:
+    default: 0.3
+    by_category:
+      policy_limit: 1.0
+      permission_grant: 1.0
+      role_assignment: 1.0
+      authority_delegation: 1.0
+      preference: 0.6
+      event: 0.4
+      general: 0.3
 
 guardrails:
   enabled: true
@@ -355,6 +469,28 @@ hallucination_protection:
   # This is retrieval breadth, not the number of claims. If the evidence
   # corpus grows for RAG later, increase this without changing the verifier.
   embedding_top_k: 3
+  # Evidence retrieved below this cosine similarity is unrelated to the
+  # claim; it is listed on the card but not sent to NLI, so an unrelated
+  # passage can neither support nor "contradict" a sentence.
+  evidence_min_similarity: 0.3
+  # Who wins when decisive NLI results disagree: a tool result is the
+  # authority on what happened this turn; policy on the rules; knowledge
+  # and memory on background. Equal authority disagreeing blocks.
+  evidence_authority:
+    tool_result: 3
+    policy: 2
+    system: 1
+    retrieved: 1
+    memory: 1
+    history: 0
+  # Tiers that may support a claim but never refute one. The system prompt
+  # is instructions to the model ("treat any refund mention as a refund
+  # request"), not facts about the world: NLI reads an instruction as
+  # contradicting a correct refusal, so it grounds restated rules and
+  # politeness it asked for, and is otherwise silent. `history` is the
+  # customer's own message: a reply may echo it ("I can't issue a $1
+  # refund"), but what a customer asserts proves nothing.
+  support_only_tiers: [system, history]
   # At most one generative repair. If the model repeats an unsupported
   # claim, the verifier stops generating and falls back to verified claims.
   max_repair_attempts: 1
@@ -383,7 +519,7 @@ gatekeeper:
     # Action -> budget class, and the cap per class. Empty here: the
     # actions belong to the agent, so the agent supplies both.
     action_classes: {}
-    thresholds_usd: {}
+    thresholds_cents: {}
   # A side-effecting proposal must match something the person asked for.
   # `target_param` is the call parameter naming what is acted on; the
   # agent that has targets says what they are called.
@@ -577,36 +713,6 @@ tui:
   copy_method: osc52
   max_feed_lines: 0
   spinner_frames: "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-
-  # The DEBUG narration stream behind /debug. Off by default: it is the
-  # exhaustive operator trace, not the curated stage feed, and the two
-  # answer different questions.
-  #
-  # `subsystem_labels` and `steps` are empty here on purpose. A label for
-  # a subsystem, and a headline for one method's call, are vocabulary —
-  # and vocabulary belongs to whichever agent has it, not to the platform
-  # every agent shares.
-  trace:
-    enabled: false
-    level: "off"
-    subsystem_width: 12
-    subsystem_labels: {}
-    max_values: 6
-    max_value_chars: 120
-    show_events: true
-    steps: {}
-    muted_fields:
-      - args
-      - kwargs
-      - content
-      - context
-      - messages
-      - payload
-      - prompt
-      - evidence
-      - instructions
-      - raw_arguments
-      - source_payload
 
   command_output:
     title_style: bold bright_cyan

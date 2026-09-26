@@ -22,6 +22,7 @@ from agentic_commons.gatekeeper.types import (
 )
 from agentic_commons.logging import get_logger, instrument, logged
 from agentic_commons.logging.trace_context import get_current_trace_id
+from agentic_commons.money import Money, money_or_none
 from agentic_commons.security.auth.policy import AgentPolicy
 from agentic_commons.security.auth.types import AccessDecision, Principal
 from agentic_commons.tools.types import ToolCall
@@ -45,7 +46,7 @@ class Gatekeeper(Protocol):
     async def evaluate(self, call: ToolCall, authority: AuthorityContext) -> AuthorityDecision: ...
 
     def commit(
-        self, call: ToolCall, authority: AuthorityContext, amount: float | None = None
+        self, call: ToolCall, authority: AuthorityContext, amount: Money | None = None
     ) -> None: ...
 
 
@@ -92,8 +93,8 @@ class GatekeeperImpl:
         context = self._hierarchy.resolve(authority)
         amount = _amount_of(call)
         checks: list[CheckReport] = []
-        cumulative_total = 0.0
-        threshold = 0.0
+        cumulative_total: Money | None = None
+        threshold: Money | None = None
         failure: tuple[str, str, str, str] | None = None
 
         for check_name in self._CHECK_ORDER:
@@ -148,10 +149,10 @@ class GatekeeperImpl:
         )
         return decision
 
-    def commit(self, call: ToolCall, authority: AuthorityContext, amount: float | None = None) -> None:
+    def commit(self, call: ToolCall, authority: AuthorityContext, amount: Money | None = None) -> None:
         """Record an allowed action's actual financial consumption after execution."""
         spent = amount if amount is not None else _amount_of(call)
-        if spent <= 0 or not self._ledger.is_budgeted(call.action):
+        if not spent or not self._ledger.is_budgeted(call.action):
             return
         self._ledger.record_and_check(
             LedgerEntry(
@@ -187,7 +188,7 @@ class GatekeeperImpl:
         )
         return [check], None if passed else ("offered", "deny", "ACTION_NOT_OFFERED", check.reason)
 
-    def _eval_mandate(self, call: ToolCall, context: AuthorityContext, amount: float):
+    def _eval_mandate(self, call: ToolCall, context: AuthorityContext, amount: Money | None):
         """Whether this proposal acts on a record the turn established.
 
         Only side-effecting calls are scoped. A read changes nothing, so
@@ -230,14 +231,15 @@ class GatekeeperImpl:
                 if passed
                 else f"'{_bare(call.action)}' names {target}, which is not a record this "
                      f"conversation established"
-                     + (f" for ${amount:,.2f}" if amount else "")
+                     + (f" for {amount}" if amount else "")
                      + "."
             ),
-            observed={"action": call.action, "target": target, "amount": amount,
-                      "turn": context.turn},
+            observed={"action": call.action, "target": target,
+                      "amount": str(amount) if amount else None, "turn": context.turn},
             evidence={
                 "mandates": [
-                    {"action": m.action, "target": m.target, "max_amount": m.max_amount,
+                    {"action": m.action, "target": m.target,
+                     "max_amount": str(m.max_amount) if m.max_amount is not None else "unbounded",
                      "granted_by": m.granted_by, "evidence": m.evidence}
                     for m in context.mandates.mandates
                 ]
@@ -312,20 +314,20 @@ class GatekeeperImpl:
         )]
         return checks, ("business_rules", verdict, result.reason_code, reason)
 
-    def _eval_cumulative(self, call: ToolCall, context: AuthorityContext, amount: float):
+    def _eval_cumulative(self, call: ToolCall, context: AuthorityContext, amount: Money | None):
         if not self._ledger.enabled or not self._ledger.is_budgeted(call.action):
             code = "CUMULATIVE_DISABLED" if not self._ledger.enabled else "CUMULATIVE_NOT_APPLICABLE"
             return [CheckReport(
                 check_id="gatekeeper.cumulative_limit", name="Cumulative budget", status="SKIPPED",
                 reason_code=code, reason=("Cumulative accounting is disabled." if not self._ledger.enabled else "This action is not mapped to a financial budget."),
-            )], None, 0.0, 0.0
+            )], None, None, None
         action_class = self._ledger.class_of(call.action)
         if not self._ledger.threshold_configured(action_class):
             reason = f"Cumulative budget class '{action_class}' has no finite policy threshold."
             return [CheckReport(
                 check_id="gatekeeper.cumulative_limit", name="Cumulative budget", status="FAIL",
                 reason_code="CUMULATIVE_POLICY_MISCONFIGURED", reason=reason, observed={"action_class": action_class},
-            )], ("cumulative", "deny", "CUMULATIVE_POLICY_MISCONFIGURED", reason), 0.0, 0.0
+            )], ("cumulative", "deny", "CUMULATIVE_POLICY_MISCONFIGURED", reason), None, None
         ledger_key = _ledger_key(context)
         previous = self._ledger.window_total(ledger_key, action_class)
         state = self._ledger.state(ledger_key, action_class, pending=amount)
@@ -334,8 +336,8 @@ class GatekeeperImpl:
             check_id="gatekeeper.cumulative_limit", name="Cumulative budget",
             status="PASS" if passed else "FAIL",
             reason_code="CUMULATIVE_WITHIN_LIMIT" if passed else "CUMULATIVE_LIMIT_EXCEEDED",
-            reason=(f"Projected {action_class} spend ${state.window_total:,.2f} is within the ${state.threshold:,.2f} rolling limit." if passed else f"Projected {action_class} spend ${state.window_total:,.2f} exceeds the ${state.threshold:,.2f} rolling limit."),
-            observed={"action_class": action_class, "ledger_key": ledger_key, "previous": previous, "proposed": amount, "projected": state.window_total, "threshold": state.threshold, "remaining_before": max(0.0, state.threshold - previous), "remaining_after": max(0.0, state.threshold - state.window_total), "entry_count": state.entry_count},
+            reason=(f"Projected {action_class} spend {state.window_total} is within the {state.threshold} rolling limit." if passed else f"Projected {action_class} spend {state.window_total} exceeds the {state.threshold} rolling limit."),
+            observed={"action_class": action_class, "ledger_key": ledger_key, "previous": str(previous), "proposed": str(amount or Money.zero()), "projected": str(state.window_total), "threshold": str(state.threshold), "remaining_after": str(state.remaining), "entry_count": state.entry_count},
         )
         return [check], None if passed else ("cumulative", "deny", "CUMULATIVE_LIMIT_EXCEEDED", check.reason), state.window_total, state.threshold
 
@@ -373,12 +375,17 @@ def _bare(action: str) -> str:
     return action.rsplit(".", maxsplit=1)[-1]
 
 
-def _amount_of(call: ToolCall) -> float:
+def _amount_of(call: ToolCall) -> Money | None:
+    """The amount a call proposes, exactly — or None if it names no valid amount.
+
+    An invalid amount (negative, more than two decimals) is None here and
+    refused by the agent's own business rules, which say why.
+    """
     for name in _AMOUNT_PARAMS:
         value = call.params.get(name)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return float(value)
-    return 0.0
+        if value is not None:
+            return money_or_none(value)
+    return None
 
 
 def _ledger_key(context: AuthorityContext) -> str:

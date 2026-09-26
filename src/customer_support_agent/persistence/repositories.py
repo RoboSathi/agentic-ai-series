@@ -9,6 +9,7 @@ rather than the table's.
 from typing import Any
 
 from agentic_commons.logging import get_logger, logged
+from agentic_commons.money import Money
 from agentic_commons.observability.types import utc_now
 from agentic_commons.persistence import SqliteConnectionPool
 from customer_support_agent.domain.models import (
@@ -23,12 +24,39 @@ from customer_support_agent.domain.models import (
 # the schema reaches `get`, `save`, `query`, `for_user` and the
 # customer-scoped read together rather than one at a time.
 _ORDER_COLUMNS = (
-    "order_id, user_id, timestamp, order_status, refund_status, amount, "
-    "product_name, product_sku, quantity, unit_price, currency, "
+    "order_id, user_id, timestamp, order_status, refund_status, amount_cents, "
+    "product_name, product_sku, quantity, unit_price_cents, currency, "
     "carrier, tracking_number, estimated_delivery_date, delivered_at, current_location"
 )
 _ORDER_COLUMN_NAMES = tuple(name.strip() for name in _ORDER_COLUMNS.split(","))
 _ORDER_PLACEHOLDERS = ", ".join("?" for _ in _ORDER_COLUMN_NAMES)
+# Money is stored as integer cents and held as `Money`; these columns are
+# the only place the two meet.
+_MONEY_COLUMNS = {"amount_cents": "amount", "unit_price_cents": "unit_price"}
+
+
+def _order_from(row: dict[str, Any]) -> Order:
+    """An order row, with its cents columns read back as `Money`."""
+    values = {key: value for key, value in row.items() if key not in _MONEY_COLUMNS}
+    for column, field in _MONEY_COLUMNS.items():
+        values[field] = Money.from_cents(int(row[column]))
+    return Order.model_validate(values)
+
+
+def _order_values(order: Order) -> tuple[Any, ...]:
+    """An order's values in column order, money as integer cents."""
+    return tuple(
+        getattr(order, _MONEY_COLUMNS[column]).cents
+        if column in _MONEY_COLUMNS
+        else getattr(order, column)
+        for column in _ORDER_COLUMN_NAMES
+    )
+
+
+def _hitl_from(row: dict[str, Any]) -> HitlRequest:
+    values = {key: value for key, value in row.items() if key != "requested_amount_cents"}
+    values["requested_amount"] = Money.from_cents(int(row["requested_amount_cents"]))
+    return HitlRequest.model_validate(values)
 _USER_COLUMNS = "user_id, user_code, created_at, name, email, phone"
 
 
@@ -42,7 +70,7 @@ class OrdersRepository:
     def get(self, id: int) -> Order | None:
         """One order by id."""
         row = self._pool.query_one(f"SELECT {_ORDER_COLUMNS} FROM orders WHERE order_id = ?", (id,))
-        return Order.model_validate(row) if row else None
+        return _order_from(row) if row else None
 
     def save(self, entity: Order) -> None:
         """Insert or replace an order.
@@ -53,19 +81,19 @@ class OrdersRepository:
         """
         self._pool.execute(
             f"INSERT OR REPLACE INTO orders ({_ORDER_COLUMNS}) VALUES ({_ORDER_PLACEHOLDERS})",
-            tuple(getattr(entity, column) for column in _ORDER_COLUMN_NAMES),
+            _order_values(entity),
         )
 
     def query(self, **filters: Any) -> list[Order]:
         """Orders matching equality filters on any column."""
         if not filters:
             return [
-                Order.model_validate(row)
+                _order_from(row)
                 for row in self._pool.iter_rows(f"SELECT {_ORDER_COLUMNS} FROM orders")
             ]
         clause = " AND ".join(f"{column} = ?" for column in filters)
         return [
-            Order.model_validate(row)
+            _order_from(row)
             for row in self._pool.iter_rows(
                 f"SELECT {_ORDER_COLUMNS} FROM orders WHERE {clause}", tuple(filters.values())
             )
@@ -86,7 +114,7 @@ class OrdersRepository:
             f"SELECT {_ORDER_COLUMNS} FROM orders WHERE order_id = ? AND user_id = ?",
             (order_id, customer_id),
         )
-        return Order.model_validate(row) if row else None
+        return _order_from(row) if row else None
 
     def for_user(self, user_id: int) -> list[Order]:
         """Every order belonging to one customer."""
@@ -192,17 +220,17 @@ class HitlQueueRepository:
     def get(self, id: int) -> HitlRequest | None:
         """One queue entry by id."""
         row = self._pool.query_one("SELECT * FROM hitl_queue WHERE id = ?", (id,))
-        return HitlRequest.model_validate(row) if row else None
+        return _hitl_from(row) if row else None
 
     def save(self, entity: HitlRequest) -> None:
         """Enqueue a request for human review."""
         self._pool.execute(
-            "INSERT INTO hitl_queue (order_id, user_id, requested_amount, status, created_at) "
+            "INSERT INTO hitl_queue (order_id, user_id, requested_amount_cents, status, created_at) "
             "VALUES (?, ?, ?, ?, ?)",
             (
                 entity.order_id,
                 entity.user_id,
-                entity.requested_amount,
+                entity.requested_amount.cents,
                 entity.status,
                 entity.created_at,
             ),
@@ -212,7 +240,7 @@ class HitlQueueRepository:
         """Queue entries matching equality filters."""
         clause = " AND ".join(f"{column} = ?" for column in filters) or "1 = 1"
         return [
-            HitlRequest.model_validate(row)
+            _hitl_from(row)
             for row in self._pool.iter_rows(
                 f"SELECT * FROM hitl_queue WHERE {clause} ORDER BY id", tuple(filters.values())
             )
@@ -263,7 +291,7 @@ class RefundLedgerRepository:
         refund_id  TEXT PRIMARY KEY,
         order_id   INTEGER,
         user_id    INTEGER NOT NULL,
-        amount     REAL NOT NULL,
+        amount_cents INTEGER NOT NULL,
         reason     TEXT NOT NULL,
         reversed   INTEGER NOT NULL DEFAULT 0,
         issued_at  TEXT NOT NULL
@@ -275,13 +303,13 @@ class RefundLedgerRepository:
         self._pool.execute_script(self._SCHEMA)
 
     def record(
-        self, refund_id: str, order_id: int | None, user_id: int, amount: float, reason: str
+        self, refund_id: str, order_id: int | None, user_id: int, amount: Money, reason: str
     ) -> None:
-        """Record an issued refund."""
+        """Record an issued refund, in integer cents."""
         self._pool.execute(
-            "INSERT OR REPLACE INTO refunds (refund_id, order_id, user_id, amount, reason, "
+            "INSERT OR REPLACE INTO refunds (refund_id, order_id, user_id, amount_cents, reason, "
             "reversed, issued_at) VALUES (?, ?, ?, ?, ?, 0, ?)",
-            (refund_id, order_id, user_id, amount, reason, utc_now().isoformat()),
+            (refund_id, order_id, user_id, amount.cents, reason, utc_now().isoformat()),
         )
 
     def reverse(self, refund_id: str) -> bool:
@@ -291,24 +319,24 @@ class RefundLedgerRepository:
         )
         return result.affected > 0
 
-    def settled_for_order(self, order_id: int) -> float:
+    def settled_for_order(self, order_id: int) -> Money:
         """Total actually paid out against one order, reversals excluded.
 
         The read-back half of effect verification: a refund is not what
         the tool said it did, it is what the ledger says was paid.
         """
         row = self._pool.query_one(
-            "SELECT COALESCE(SUM(amount), 0) AS total FROM refunds "
+            "SELECT COALESCE(SUM(amount_cents), 0) AS total FROM refunds "
             "WHERE order_id = ? AND reversed = 0",
             (order_id,),
         )
-        return float(row["total"]) if row else 0.0
+        return Money.from_cents(int(row["total"]) if row else 0)
 
-    def total_for_user(self, user_id: int) -> float:
+    def total_for_user(self, user_id: int) -> Money:
         """Total refunded to one customer, excluding reversals."""
         row = self._pool.query_one(
-            "SELECT COALESCE(SUM(amount), 0) AS total FROM refunds "
+            "SELECT COALESCE(SUM(amount_cents), 0) AS total FROM refunds "
             "WHERE user_id = ? AND reversed = 0",
             (user_id,),
         )
-        return float(row["total"]) if row else 0.0
+        return Money.from_cents(int(row["total"]) if row else 0)

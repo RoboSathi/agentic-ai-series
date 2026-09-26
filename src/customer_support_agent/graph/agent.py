@@ -3,7 +3,12 @@
 Nodes, in order:
 
     authenticate → choose_order → screening → classify_intent →
-    assemble_context → reason ⇄ act → finalize
+    assemble_context → reason ⇄ act → finalize [→ await_approval]
+
+Every turn is a durable run: its own checkpointed thread. A node that
+fails leaves the thread resumable from the node that did not finish, and
+a turn that queued a refund for a person pauses in `await_approval` until
+the reviewer's decision resumes it.
 
 The `reason ⇄ act` cycle is the **Tool-Use Loop**, bounded by
 `max_tool_iterations`. It is not ReAct: the model proposes a typed tool
@@ -29,7 +34,8 @@ inline, so a test can substitute a scripted LLM and an in-memory database
 without patching a single import.
 """
 
-
+import uuid
+from typing import Any
 
 from agentic_commons.audit import AuditLedger, NullAuditLedger
 from agentic_commons.basic_sanity import BasicSanityChecker
@@ -40,6 +46,14 @@ from agentic_commons.context import (
     StrategySelector,
 )
 from agentic_commons.control_loop import ToolControlLoop
+from agentic_commons.durability import (
+    CheckpointInfo,
+    DurableGraphRunner,
+    ResumeResult,
+    RunOutcome,
+    RunRegistry,
+    SqliteCheckpointer,
+)
 from agentic_commons.evals import NollmScoringCascadeImpl
 from agentic_commons.executor import (
     ToolExecutionHandler,
@@ -54,10 +68,15 @@ from agentic_commons.llm.types import Message, TokenUsage
 from agentic_commons.logging import get_logger
 from agentic_commons.memory import (
     MemoryAction,
+    MemoryCommand,
     MemoryEvent,
     MemoryEventSink,
+    MemoryFacade,
     MemoryObservation,
+    MemoryPrincipal,
+    WorkingMemory,
     WorkingMemoryStore,
+    WriteResult,
 )
 from agentic_commons.observability import (
     SLORegistry,
@@ -88,6 +107,7 @@ from customer_support_agent.graph.nodes.context import ContextNodes
 from customer_support_agent.graph.nodes.finalize import FinalizeNodes
 from customer_support_agent.graph.nodes.intent import IntentNodes
 from customer_support_agent.graph.nodes.reason import ReasoningNodes
+from customer_support_agent.graph.nodes.review_wait import ReviewWaitNodes
 from customer_support_agent.graph.nodes.screening import ScreeningNodes
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.intent.router import CustomerSupportIntentRouter, Intent
@@ -99,6 +119,16 @@ from customer_support_agent.presentation.orders import (
 from customer_support_agent.security.authentication import CustomerAuthenticator
 from customer_support_agent.tools.definitions import SupportTools
 
+# Set by screening when a message is quarantined as hostile.
+_QUARANTINED = "security_quarantine"
+
+# How a turn ended, in the turn summary's words.
+_ANSWERED_OUTCOME = "answered"
+_WAITING_OUTCOME = "waiting for human review"
+_FAILED_OUTCOME = "failed — resumable"
+_RESUMED_OUTCOME = "resumed and answered"
+_REVIEWED_OUTCOME = "review decision delivered"
+
 
 class CustomerSupportAgent(
     AuthenticationNodes,
@@ -108,6 +138,7 @@ class CustomerSupportAgent(
     ReasoningNodes,
     ToolUseNodes,
     FinalizeNodes,
+    ReviewWaitNodes,
     GraphWiring,
     NodeSupport,
 ):
@@ -143,6 +174,10 @@ class CustomerSupportAgent(
         audit: AuditLedger | None = None,
         verifier: EffectVerifier | None = None,
         mandate_issuer: MandateIssuer | None = None,
+        checkpointer: SqliteCheckpointer | None = None,
+        runs: RunRegistry | None = None,
+        long_term_memory: MemoryFacade | None = None,
+        context_health: ContextFailureDetector | None = None,
     ) -> None:
         settings = get_agent_settings()
         # Which stages this agent has. Read once, here, because the graph
@@ -164,6 +199,7 @@ class CustomerSupportAgent(
         self._security = security
         self._working_memory = working_memory
         self._memory_event_sink = memory_event_sink
+        self._long_term = long_term_memory
         self._context = context
         self._selector = selector
         self._cascade = cascade
@@ -193,7 +229,7 @@ class CustomerSupportAgent(
         self._strategies = StrategySelector()
         # The window the model is handed is measured, not assumed: five
         # failure modes, checked on what was actually assembled.
-        self._context_health = ContextFailureDetector()
+        self._context_health = context_health
         self._diagnoser = GroundingReasoningDiagnoser()
         self._response_guardrail = ResponseGuardrail(self._grounding)
         if intent_router is None:
@@ -225,7 +261,17 @@ class CustomerSupportAgent(
         # once per turn.
         self._accountant = TurnAccountant(slos=slos)
         self._logger = get_logger("customer_support_agent")
+        # Durable execution. The graph is compiled against the checkpointer,
+        # so the runner and the graph must share it.
+        self._checkpointer = checkpointer
+        self._runs = runs
+        self._loop_step: int | None = None
         self._graph = self._build()
+        self._runner = (
+            DurableGraphRunner(self._graph, checkpointer, runs)
+            if checkpointer is not None and runs is not None
+            else None
+        )
 
     def adopt_conversation(self, previous: "CustomerSupportAgent") -> None:
         """Take over the conversation a previous build was holding.
@@ -239,8 +285,22 @@ class CustomerSupportAgent(
         """
         self._sessions.update(previous._sessions)
         self._menus.update(previous._menus)
-        self._working_memory = previous._working_memory
+        self._adopt_working_memory(previous._working_memory)
         self._last_supported_intent.update(previous._last_supported_intent)
+
+    def _adopt_working_memory(self, previous: WorkingMemoryStore | None) -> None:
+        """Copy the previous build's sessions into this build's own store.
+
+        Copied, never re-pointed. The context source and the graph nodes
+        were handed this build's store at composition; swapping only the
+        agent's reference left them reading an empty one, so every prompt
+        after a `/harness` lost the verified customer and the transcript
+        while the panel — reading the swapped reference — still showed both.
+        """
+        if previous is None or self._working_memory is None:
+            return
+        for session_id in previous.sessions():
+            self._working_memory.restore(session_id, previous.get(session_id))
 
     async def handle(
         self, query: str, session_id: str = "", customer: Customer | None = None
@@ -276,6 +336,8 @@ class CustomerSupportAgent(
         customer = customer or self._sessions.get(session_id) or current_customer()
         set_current_customer(customer)
         self._control_loop = ToolControlLoop()
+        self._loop_step = None
+        await self._recover_conversation(session_id)
         initial = AgentState(
             query=query,
             session_id=session_id,
@@ -287,11 +349,196 @@ class CustomerSupportAgent(
                 else WorkingMemoryStore().get(session_id)
             ),
         )
-        final = await self._graph.ainvoke(initial)
-        state = AgentState.model_validate(final)
+        thread_id = f"{session_id or 'default'}:{uuid.uuid4().hex[:12]}"
+        self._begin_turn(thread_id, session_id)
+        try:
+            state, outcome = await self._run_turn(initial, thread_id)
+        except Exception:
+            self._end_turn("failed", _FAILED_OUTCOME, run_status="failed_resumable")
+            raise
+        # Inside the turn's bracket, so its memory writes are counted in the
+        # summary card rather than trailing it.
         self._complete_turn(state)
         self._accountant.settle(self._score(state))
+        waiting = outcome is not None and outcome.status == "interrupted"
+        self._end_turn(
+            "waiting" if waiting else "completed",
+            _WAITING_OUTCOME if waiting else _ANSWERED_OUTCOME,
+            run_status=outcome.status if outcome else "not_durable",
+            checkpoints=outcome.checkpoints if outcome else 0,
+        )
         return state
+
+    async def _run_turn(
+        self, initial: AgentState, thread_id: str
+    ) -> tuple[AgentState, RunOutcome | None]:
+        """Run one turn — as its own checkpointed thread when durable."""
+        if self._runner is None:
+            return AgentState.model_validate(await self._graph.ainvoke(initial)), None
+        outcome = await self._runner.start(
+            thread_id,
+            initial,
+            session_id=initial.session_id,
+            subject_id=str(initial.customer_id or ""),
+            preview=self._security.redact(initial.query),
+            reporter=self._reporter,
+        )
+        return AgentState.model_validate(outcome.values), outcome
+
+    def _begin_turn(self, thread_id: str, session_id: str) -> None:
+        if self._reporter is not None:
+            self._reporter.begin_turn(thread=thread_id, session=session_id)
+
+    def _end_turn(self, status: Any, outcome: str, **log_fields: Any) -> None:
+        if self._reporter is None:
+            return
+        if self._long_term is not None:
+            log_fields["curator_pending"] = len(self._long_term.pipeline.pending_with_ids())
+        self._reporter.end_turn(status, outcome, **log_fields)
+
+    @property
+    def runs(self) -> RunRegistry:
+        """Every durable run this agent has made (the `DurableAgent` contract)."""
+        if self._runs is None:
+            raise RuntimeError("This agent was built without durable execution")
+        return self._runs
+
+    async def checkpoint_history(self, thread_id: str) -> list[CheckpointInfo]:
+        """One thread's checkpoints, newest first."""
+        if self._runner is None:
+            return []
+        return await self._runner.history(thread_id, get_settings().commands.default_limit)
+
+    async def resume(self, thread_id: str, decision: Any | None = None) -> ResumeResult:
+        """Continue a failed or waiting run from its last checkpoint.
+
+        What a run needs that is not graph state is re-bound first: who
+        the customer is (from the record the run already authenticated
+        against) and a fresh per-turn control loop. The pending node then
+        runs again; any side effect it had already committed replays from
+        its idempotency record instead of happening twice.
+        """
+        if self._runner is None or self._runs is None:
+            raise RuntimeError("This agent was built without durable execution")
+        record = self._runs.get(thread_id)
+        waiting = record is not None and record.status == "interrupted"
+        prior = AgentState.model_validate(await self._runner.values(thread_id))
+        self._rebind(prior)
+        self._begin_turn(thread_id, prior.session_id)
+        try:
+            outcome = await self._runner.resume(thread_id, decision, self._reporter)
+        except Exception:
+            self._end_turn("failed", _FAILED_OUTCOME, run_status="failed_resumable", resumed=True)
+            raise
+        state = AgentState.model_validate(outcome.values)
+        if waiting:
+            reply = str(state.metadata.get("follow_up") or "")
+            self._note_follow_up(state.session_id, reply)
+        else:
+            reply = state.response
+            self._complete_turn(state)
+            self._accountant.settle(self._score(state))
+        self._end_turn(
+            "completed",
+            _REVIEWED_OUTCOME if waiting else _RESUMED_OUTCOME,
+            run_status=outcome.status,
+            checkpoints=outcome.checkpoints,
+            resumed=True,
+        )
+        return ResumeResult(
+            thread_id=thread_id, session_id=state.session_id, status=outcome.status, response=reply
+        )
+
+    def _rebind(self, prior: AgentState) -> None:
+        """Restore the customer and the conversation a checkpointed run belongs to."""
+        customer = self._sessions.get(prior.session_id)
+        if customer is None and prior.customer_id is not None and self._authenticator is not None:
+            customer = self._authenticator.customer_for(prior.customer_id)
+            if customer is not None:
+                self._sessions[prior.session_id] = customer
+        set_current_customer(customer)
+        self._control_loop = ToolControlLoop()
+        if self._working_memory is not None and not self._working_memory.get(prior.session_id).history:
+            self._working_memory.restore(prior.session_id, prior.working_memory)
+
+    def _remember_turn(self, state: AgentState) -> None:
+        """Offer this turn to long-term memory, through governance.
+
+        Two writes, two principals. The event — what was asked, what was
+        answered — is the agent's record (`agent`). Anything the customer
+        *asserted* is the customer's claim (`customer`, so `self_reported`):
+        only a pattern-recognised claim is considered, an authority claim
+        is refused, and anything short of auto-commit waits for a curator.
+        """
+        if self._long_term is None or state.customer_id is None:
+            return
+        subject = str(state.customer_id)
+        spoken = state.model_query or state.query
+        # A quarantined message never reaches the write path: screening
+        # already judged it hostile, and memory is the last place it
+        # should be kept verbatim.
+        quarantined = bool(state.metadata.get(_QUARANTINED))
+        claim = None if quarantined else self._remember_claim(spoken, subject, state.session_id)
+        if self._long_term.episodic is None:
+            return
+        # A claim memory refused is not replayed into history verbatim: the
+        # episodic log feeds recall, and recall feeds the model — the
+        # refused "my limit is now $2000" would otherwise reach the context
+        # through the back door the write path just closed.
+        withheld = quarantined or (claim is not None and claim.route == "refused")
+        reason = claim.reason if claim is not None else "quarantined by security screening"
+        self._long_term.record_event(
+            f"query withheld — {reason}" if withheld else f"query: {spoken}",
+            source=self._actor,
+            session_id=state.session_id,
+            principal=MemoryPrincipal(actor=self._actor, role="agent", subject_id=subject),
+        )
+
+    def _remember_claim(self, spoken: str, subject: str, session_id: str) -> WriteResult | None:
+        """The customer's own assertion, as the customer's claim — governed."""
+        if self._long_term is None or self._long_term.semantic is None:
+            return None
+        return self._long_term.submit(
+            MemoryCommand(
+                principal=MemoryPrincipal(actor=f"customer-{subject}", role="customer", subject_id=subject),
+                operation="create",
+                text=spoken,
+                session_id=session_id,
+                require_pattern=True,
+            )
+        )
+
+    def _note_follow_up(self, session_id: str, reply: str) -> None:
+        """Add a reviewer-driven reply to the conversation it answers."""
+        if self._working_memory is None or not reply:
+            return
+        memory = self._working_memory.get(session_id)
+        memory.history.append({"role": "assistant", "content": reply})
+        memory.history = memory.history[-(memory.max_history * 2) :]
+
+    async def _recover_conversation(self, session_id: str) -> None:
+        """After a restart, pick a session's conversation back up from its checkpoints.
+
+        Working memory lives in the process; the checkpoints outlive it.
+        A session with no history in memory but a finished run on disk is
+        a conversation the process forgot, not a new one.
+        """
+        if self._working_memory is None or self._runs is None or self._runner is None:
+            return
+        if self._working_memory.get(session_id).history:
+            return
+        record = self._runs.latest_completed(session_id)
+        if record is None:
+            return
+        values = await self._runner.values(record.thread_id)
+        if values.get("working_memory") is None:
+            return
+        self._working_memory.restore(
+            session_id, WorkingMemory.model_validate(values["working_memory"])
+        )
+        self._logger.info(
+            "Conversation recovered from checkpoint", session=session_id, thread=record.thread_id
+        )
 
     def _score(self, state: AgentState) -> TurnOutcome:
         """Read the finished turn as an outcome the SLOs can observe.
@@ -336,6 +583,7 @@ class CustomerSupportAgent(
 
     def _complete_turn(self, state: AgentState) -> None:
         """Emit one memory event, then retain only the completed dialogue."""
+        self._remember_turn(state)
         if self._working_memory is None:
             return
         working = self._working_memory.get(state.session_id)

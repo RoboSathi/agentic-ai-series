@@ -1,11 +1,10 @@
 """Customer Support's deterministic business rules for the Gatekeeper."""
 
-import math
 from typing import Any
 
 from agentic_commons.gatekeeper.contracts import BusinessRuleResult, DeterministicBusinessRules
 from agentic_commons.gatekeeper.types import AuthorityContext, CheckReport
-from agentic_commons.security.auth.policy import UNLIMITED, AgentPolicy
+from agentic_commons.security.auth.policy import AgentPolicy
 from agentic_commons.tools.types import ToolCall
 from customer_support_agent.domain.refund_policy import RefundPolicy
 from customer_support_agent.persistence.repositories import HitlQueueRepository, OrdersRepository
@@ -27,12 +26,15 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
     ) -> None:
         self._orders = orders
         self._hitl = hitl
-        self._refund_policy = refund_policy or RefundPolicy(orders)
         # This agent's own action class. The platform stores budgets keyed
         # by class and does not know what "refund" means; naming it is this
         # module's job, because this is the module that has refunds.
+        # None: no ceiling declared for the class.
         self._max_refund_amount = (
-            policy.per_action_limit(REFUND_ACTION_CLASS) if policy is not None else UNLIMITED
+            policy.per_action_limit(REFUND_ACTION_CLASS) if policy is not None else None
+        )
+        self._refund_policy = refund_policy or RefundPolicy(
+            orders, direct_limit=self._max_refund_amount
         )
 
     def evaluate(self, call: ToolCall, authority: AuthorityContext) -> BusinessRuleResult:
@@ -113,12 +115,8 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
         validation = self._refund_policy.validate(
             order_id=order_id,
             customer_id=customer_id,
-            amount=(
-                float(amount)
-                if isinstance(amount, (int, float)) and not isinstance(amount, bool)
-                else amount
-            ),
-            action=action,
+            amount=amount,
+            action=action,  # type: ignore[arg-type]
         )
         order = validation.order
         if order is None:
@@ -145,7 +143,7 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
                 observed={
                     "order_id": order_id,
                     "customer_id": customer_id,
-                    "amount": amount,
+                    "amount": str(validation.amount) if validation.amount else str(amount),
                     "order_status": order.order_status,
                     "refund_status": order.refund_status,
                 },
@@ -176,23 +174,24 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
                     name="Refund amount within order total",
                     status="PASS",
                     reason_code="REFUND_AMOUNT_WITHIN_ORDER",
-                    reason="The requested amount does not exceed the authoritative order total.",
+                    reason="The requested amount is the full authoritative order total.",
                     observed={
-                        "amount": normalized_amount,
-                        "order_total": order.amount,
+                        "amount": str(normalized_amount),
+                        "order_total": str(order.amount),
                         "order_id": order_id,
                     },
                 ),
             ]
         )
 
-        if action == "process_refund" and normalized_amount > self._max_refund_amount:
+        limit = self._max_refund_amount
+        if action == "process_refund" and limit is not None and normalized_amount > limit:
             return BusinessRuleResult(
                 verdict="escalate",
                 reason_code="EXCEEDS_AGENT_REFUND_LIMIT",
                 reason=(
-                    f"Requested refund ${normalized_amount:,.2f} exceeds this agent's direct refund limit "
-                    f"of ${self._max_refund_amount:,.2f}; human review is required."
+                    f"Requested refund {normalized_amount} exceeds this agent's direct refund limit "
+                    f"of {limit}; human review is required."
                 ),
                 checks=checks + [CheckReport(
                     check_id="gatekeeper.business_rules.agent_refund_limit",
@@ -200,13 +199,12 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
                     status="ESCALATE",
                     reason_code="EXCEEDS_AGENT_REFUND_LIMIT",
                     reason=(
-                        f"Requested refund ${normalized_amount:,.2f} exceeds the agent's direct limit "
-                        f"of ${self._max_refund_amount:,.2f}."
+                        f"Requested refund {normalized_amount} exceeds the agent's direct limit "
+                        f"of {limit}."
                     ),
                     observed={
-                        "amount": normalized_amount,
-                        "autonomous_limit": self._max_refund_amount,
-                        "remaining_direct_authority": max(0.0, self._max_refund_amount - normalized_amount),
+                        "amount": str(normalized_amount),
+                        "autonomous_limit": str(limit),
                     },
                 )],
             )

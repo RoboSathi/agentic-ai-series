@@ -65,8 +65,7 @@ class TestDispatch:
 
     def test_completions_narrow_as_you_type(self) -> None:
         registry = CommandRegistry()
-        assert registry.completions("/c") == ["cascade", "clear", "config"]
-        assert registry.completions("/d") == ["debug"]
+        assert registry.completions("/c") == ["cascade", "checkpoints", "clear", "config"]
         assert registry.completions("/m") == ["memory", "model"]
 
     @pytest.mark.asyncio
@@ -196,21 +195,6 @@ class TestSystemCommands:
         result = await ClearCommand().run([])
         assert result.effect.clear_transcript
         assert result.empty
-
-    @pytest.mark.asyncio
-    async def test_debug_asks_the_console_to_change_the_trace_level(self) -> None:
-        result = await CommandRegistry().dispatch("/debug info")
-        assert result.effect.trace_level == "info"
-
-    @pytest.mark.asyncio
-    async def test_debug_off_is_a_level_the_console_understands(self) -> None:
-        result = await CommandRegistry().dispatch("/debug off")
-        assert result.effect.trace_level == "off"
-
-    @pytest.mark.asyncio
-    async def test_debug_rejects_a_level_that_does_not_exist(self) -> None:
-        result = await CommandRegistry().dispatch("/debug loud")
-        assert not result.ok
 
     @pytest.mark.asyncio
     async def test_logs_names_where_the_full_payloads_land(self) -> None:

@@ -1,8 +1,10 @@
 # Refund Policy
 
-- Refunds **under $50** may be approved and processed automatically. Call
+- A refund is always for the **full order total**. Partial refunds are not
+  supported on any path — say so rather than calling a refund tool.
+- Refunds **up to $50** may be approved and processed automatically. Call
   `process_refund` directly.
-- Refunds of **$50 or more** require human approval before any money moves.
+- Refunds **above $50** require human approval before any money moves.
   Do not process these yourself — call `queue_for_approval` instead, which
   places the request in the human-in-the-loop (HITL) queue. Tell the
   customer their refund needs manual review and they'll hear back soon.

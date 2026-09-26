@@ -200,14 +200,14 @@ class AuthenticationNodes(NodeSupport):
                 "order_id": order.order_id,
                 "status": order.order_status,
                 "refund_status": order.refund_status,
-                "amount": f"${order.amount:,.2f}",
+                "amount": str(order.amount),
                 "found": True,
             },
         )
         self._note(
             state,
             ORDER_UNDER_DISCUSSION,
-            f"order {order.order_id}, {order.order_status}, ${order.amount:,.2f}",
+            f"order {order.order_id}, {order.order_status}, {order.amount}",
             category="order",
         )
         return self._halt(state, render_order_detail(order), f"menu: order {order_id}")
