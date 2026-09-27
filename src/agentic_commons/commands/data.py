@@ -3,11 +3,10 @@
 Memory is a platform subsystem — every agent built on this harness has
 the same four CoALA stores — so `/memory` belongs here.
 
-Commands that read a *product's* tables do not. `/users`, `/orders` and
-`/queue` used to live in this module, and required one particular
-product's database to exist before the console could open at all. They
-now belong to the agent that has users and orders, and reach the console
-through its `AgentHost`.
+Commands that read a *product's* tables do not. `/queue` used to live
+in this module, and required one particular product's database to exist
+before the console could open at all. It now belongs to the agent that
+has a review queue, and reaches the console through its `AgentHost`.
 """
 
 from typing import TYPE_CHECKING
@@ -30,6 +29,7 @@ class MemoryCommand(PoolBackedCommand):
     that would read as "nothing was remembered".
     """
 
+    group = "Inspect"
     name = "memory"
     summary = "What memory holds (add 'working' for this conversation)"
     usage = "/memory [working|<search term>]"

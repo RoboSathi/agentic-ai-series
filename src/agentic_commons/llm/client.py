@@ -16,6 +16,7 @@ from openai.types.chat import (
 
 from agentic_commons.config import get_settings
 from agentic_commons.config.settings import LLMProviderSettings, LLMSettings, ProviderName
+from agentic_commons.llm.http import create_sdk_http_client
 from agentic_commons.llm.types import (
     CompletionRequest,
     CompletionResult,
@@ -111,6 +112,7 @@ class OpenAICompatibleClient(LLMClient):
             base_url=self._provider.base_url,
             api_key=self._settings.api_key_for(self.provider_name) or _PLACEHOLDER_API_KEY,
             timeout=self._provider.timeout_seconds,
+            http_client=create_sdk_http_client(self._provider.timeout_seconds),
         )
 
     @property
@@ -303,3 +305,17 @@ def create_llm_client(
         ]
         return CascadingLLMClient(tiers, resolved.cascade)
     return _PROVIDER_CLIENTS[provider or resolved.provider](resolved)
+
+
+def create_pinned_llm_client(
+    provider: ProviderName, model: str, settings: LLMSettings | None = None
+) -> LLMClient:
+    """A single-provider client pinned to one model (Factory).
+
+    For callers whose model is deliberately not the agent's — the eval
+    judge, an endpoint probe — without a second copy of the adapter.
+    """
+    resolved = settings or get_settings().llm
+    pinned = resolved.provider_settings(provider).model_copy(update={"model": model})
+    overridden = resolved.model_copy(update={"providers": {**resolved.providers, provider: pinned}})
+    return _PROVIDER_CLIENTS[provider](overridden)

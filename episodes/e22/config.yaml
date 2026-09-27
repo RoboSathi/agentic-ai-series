@@ -24,14 +24,6 @@ episode:
     # full set at a weak similarity score.
     - "thanks, you've been helpful"
 
-tools:
-  enabled: true
-  selection_k: 5
-  # The relevance floor. Below it a turn is offered no tools rather than
-  # the whole registry — which is what stops a chatty message being
-  # handed something that moves money.
-  selection_min_score: 0.15
-
 # Off: this episode is about the tool surface, not about memory, content
 # screening or grounding.
 features:

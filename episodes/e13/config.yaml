@@ -25,10 +25,6 @@ episode:
     # Reads back what the write pipeline decided to keep.
     - "what do you know about how I like to be contacted?"
 
-memory:
-  write_pipeline:
-    enabled: true
-
 # All four CoALA classes, because the episode is about which store a fact
 # belongs in — and that question is unanswerable with any of them absent.
 # The security suite has its own module (M13) and grounding has its own

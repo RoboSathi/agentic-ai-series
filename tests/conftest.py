@@ -37,6 +37,8 @@ from agentic_commons.llm.types import (
     TokenUsage,
 )
 from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
+from agentic_commons.resilience.rate_limiter import reset_rate_limiter
+from customer_support_agent.config.settings import reload_agent_settings
 from customer_support_agent.domain.identity import Customer, set_current_customer
 from customer_support_agent.domain.models import Order, User
 from customer_support_agent.persistence.schema import ensure_schema
@@ -44,6 +46,7 @@ from episodes._shared import CONFIG_FILENAME, EpisodeSettings
 
 _ANALYTICS_PATH_VAR = "OBSERVABILITY__ANALYTICS_DB_PATH"
 _CHECKPOINTS_PATH_VAR = "DURABILITY__DB_PATH"
+_RATE_LIMIT_PATH_VAR = "RESILIENCE__RATE_LIMIT__STORE_PATH"
 
 
 class ScriptedLLM(LLMClient):
@@ -198,10 +201,17 @@ def isolated_analytics_store(tmp_path_factory: pytest.TempPathFactory) -> Iterat
     isolated = {
         _ANALYTICS_PATH_VAR: tmp_path_factory.mktemp("analytics") / "observability.duckdb",
         _CHECKPOINTS_PATH_VAR: tmp_path_factory.mktemp("durability") / "checkpoints.db",
+        # A test must never spend (or wait on) the developer's real
+        # provider budget, which the TUI may be drawing on right now.
+        _RATE_LIMIT_PATH_VAR: tmp_path_factory.mktemp("rate_limit") / "rate_limits.sqlite",
+        # Eval history, reports and fixtures are developer data too.
+        **_eval_paths(tmp_path_factory.mktemp("evals")),
     }
     previous = {name: os.environ.get(name) for name in isolated}
     os.environ.update({name: str(path) for name, path in isolated.items()})
     reload_settings()
+    reload_agent_settings()
+    reset_rate_limiter()
     yield
     for name, value in previous.items():
         if value is None:
@@ -209,6 +219,16 @@ def isolated_analytics_store(tmp_path_factory: pytest.TempPathFactory) -> Iterat
         else:
             os.environ[name] = value
     reload_settings()
+
+
+def _eval_paths(root: Any) -> dict[str, Any]:
+    return {
+        "EVALS__STORE__DB_PATH": root / "evals.duckdb",
+        "EVALS__REPORTING__OUTPUT_DIR": root / "reports",
+        "EVALS__PROMPTFOO__OUTPUT_DIR": root / "promptfoo",
+        "CUSTOMER_SUPPORT_AGENT__EVALS__FIXTURE_DB_PATH": root / "fixture.db",
+        "CUSTOMER_SUPPORT_AGENT__EVALS__WORKSPACE_DIR": root / "workspace",
+    }
 
 
 @pytest.fixture(autouse=True)

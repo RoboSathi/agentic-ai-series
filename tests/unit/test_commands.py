@@ -20,17 +20,12 @@ from agentic_commons.commands import (
 )
 from agentic_commons.commands.harness import HarnessCommand
 from agentic_commons.commands.inspection import AuditCommand, ConfigCommand
-from agentic_commons.commands.system import ClearCommand, LogsCommand
+from agentic_commons.commands.system import ClearCommand
 from agentic_commons.config import active_features, get_settings, set_active_features
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.tui.command_view import CommandView
 from agentic_commons.tui.suggest import CommandSuggester
-from customer_support_agent.console.commands import (
-    OrdersCommand,
-    QueueCommand,
-    UsersCommand,
-)
-from tests.conftest import CUSTOMER_CODE
+from customer_support_agent.console.commands import QueueCommand
 
 
 class TestDispatch:
@@ -40,13 +35,13 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_an_unknown_command_suggests_near_matches(self) -> None:
-        # `/orders` is the agent's, not the platform's, so it is registered
+        # `/queue` is the agent's, not the platform's, so it is registered
         # the way the console registers it: from the running host.
         registry = CommandRegistry()
-        registry.register(OrdersCommand())
-        result = await registry.dispatch("/ord")
+        registry.register(QueueCommand())
+        result = await registry.dispatch("/que")
         assert not result.ok
-        assert "/orders" in result.lines[0]
+        assert "/queue" in result.lines[0]
 
     @pytest.mark.asyncio
     async def test_a_bare_slash_shows_help(self) -> None:
@@ -54,79 +49,24 @@ class TestDispatch:
         assert result.title == "Commands"
 
     @pytest.mark.asyncio
-    async def test_a_failing_command_reports_its_usage_rather_than_raising(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
+    async def test_a_failing_command_reports_its_usage_rather_than_raising(self) -> None:
         """A `CommandError` is an answer, not a crash — the console stays up."""
-        registry = CommandRegistry(commands=[UsersCommand(seeded_pool)])
-        result = await registry.dispatch("/users NOSUCH")
+        result = await CommandRegistry().dispatch("/eval case")
         assert not result.ok
-        assert "/users" in result.lines[-1]
+        assert "/eval" in result.lines[-1]
 
     def test_completions_narrow_as_you_type(self) -> None:
         registry = CommandRegistry()
-        assert registry.completions("/c") == ["cascade", "checkpoints", "clear", "config"]
-        assert registry.completions("/m") == ["memory", "model"]
+        assert registry.completions("/c") == ["clear", "config"]
+        assert registry.completions("/m") == ["memory"]
 
     @pytest.mark.asyncio
     async def test_the_suggester_completes_only_the_command_word(self) -> None:
         """Arguments are values — guessing one would be guessing intent."""
         suggester = CommandSuggester(CommandRegistry())
         assert await suggester.get_suggestion("/au") == "/audit"
-        assert await suggester.get_suggestion("/orders deli") is None
+        assert await suggester.get_suggestion("/audit den") is None
         assert await suggester.get_suggestion("where is my order") is None
-
-
-class TestDataCommands:
-    @pytest.mark.asyncio
-    async def test_users_lists_customers_with_their_order_counts(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        result = await UsersCommand(seeded_pool).run([])
-        assert [row.cells[2] for row in result.rows] == ["Ada Lovelace", "Grace Hopper"]
-        assert result.rows[0].cells[-1] == "2"
-
-    @pytest.mark.asyncio
-    async def test_users_looks_one_up_by_code(self, seeded_pool: SqliteConnectionPool) -> None:
-        result = await UsersCommand(seeded_pool).run([CUSTOMER_CODE])
-        assert result.title == "Customer #1"
-        assert ["name", "Ada Lovelace"] == result.rows[0].cells
-
-    @pytest.mark.asyncio
-    async def test_orders_filters_by_status_from_the_domain_type(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        result = await OrdersCommand(seeded_pool).run(["delivered"])
-        assert len(result.rows) == 3
-
-    @pytest.mark.asyncio
-    async def test_orders_rejects_a_selector_that_is_neither_code_nor_status(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        registry = CommandRegistry(commands=[OrdersCommand(seeded_pool)])
-        result = await registry.dispatch("/orders nonsense")
-        assert not result.ok
-        assert "delivered" in result.lines[0]
-
-    @pytest.mark.asyncio
-    async def test_orders_are_operator_scoped_not_customer_scoped(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        """The console sees every customer's orders; the agent's tools do not.
-
-        An operator inspecting the database is a different principal from
-        a customer asking about their own account.
-        """
-        result = await OrdersCommand(seeded_pool).run([])
-        customers = {row.cells[1] for row in result.rows}
-        assert customers == {"1", "2"}
-
-    @pytest.mark.asyncio
-    async def test_a_limit_argument_caps_the_listing(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        result = await OrdersCommand(seeded_pool).run(["1"])
-        assert len(result.rows) == 1
 
 
 class TestInspectionCommands:
@@ -184,10 +124,10 @@ class TestSystemCommands:
     @pytest.mark.asyncio
     async def test_help_explains_one_command(self) -> None:
         registry = CommandRegistry()
-        registry.register(OrdersCommand())
-        result = await registry.dispatch("/help orders")
-        assert result.title == "/orders"
-        assert result.lines[-1].startswith("/orders")
+        registry.register(QueueCommand())
+        result = await registry.dispatch("/help queue")
+        assert result.title == "/queue"
+        assert result.lines[-1].startswith("/queue")
 
     @pytest.mark.asyncio
     async def test_clear_asks_the_console_rather_than_touching_a_widget(self) -> None:
@@ -195,11 +135,6 @@ class TestSystemCommands:
         result = await ClearCommand().run([])
         assert result.effect.clear_transcript
         assert result.empty
-
-    @pytest.mark.asyncio
-    async def test_logs_names_where_the_full_payloads_land(self) -> None:
-        result = await LogsCommand().run([])
-        assert result.ok
 
 
 class TestCommandView:
@@ -328,8 +263,6 @@ class TestHarnessCommand:
         assert "auth" not in get_settings().features.paths()
 
 
-
-
 class TestConfigStaysReadOnly:
     """`/config` shows; `/harness` changes. One command per verb.
 
@@ -362,3 +295,24 @@ class TestConfigStaysReadOnly:
         registry = CommandRegistry(commands=[ConfigCommand()])
         result = await registry.dispatch("/config features gatekeeper off")
         assert not result.ok
+
+
+class TestConsoleSurface:
+    """The console offers exactly these commands — a removed one cannot creep back."""
+
+    KEPT = {"audit", "clear", "config", "eval", "harness", "help", "kb", "memory", "queue"}
+
+    def test_the_platform_and_the_agent_together_register_the_kept_set(self) -> None:
+        from customer_support_agent.console import CustomerSupportHost
+
+        registry = CommandRegistry()
+        for command in CustomerSupportHost().commands():
+            registry.register(command)
+        assert {command.name for command in registry.all_commands()} == self.KEPT
+
+    @pytest.mark.asyncio
+    async def test_help_groups_every_command_once(self) -> None:
+        result = await CommandRegistry().dispatch("/help")
+        names = [row.cells[1] for row in result.rows]
+        assert len(names) == len(set(names))
+        assert all(row.cells[0] for row in result.rows)

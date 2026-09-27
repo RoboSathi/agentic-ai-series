@@ -561,7 +561,11 @@ class StageEventWidget(Collapsible):
                 categories = fields.get("categories") or []
                 matches = fields.get("matches")
                 category_text = ", ".join(str(item) for item in categories) or "PII"
-                suffix = f" · {matches} match{'es' if matches != 1 else ''}" if matches is not None else ""
+                suffix = (
+                    f" · {matches} match{'es' if matches != 1 else ''}"
+                    if matches is not None
+                    else ""
+                )
                 return f"REDACTED · {category_text}{suffix}"
             return "PASS · no PII detected"
 
@@ -607,7 +611,9 @@ class StageEventWidget(Collapsible):
                 parts.append("state: " + ", ".join(preview))
             if chunks is not None and used is not None:
                 parts.append(f"{chunks} sources · {used} tokens")
-            return " · ".join(parts) or self._compact_from_fields(fields, ("selected", "used_tokens"))
+            return " · ".join(parts) or self._compact_from_fields(
+                fields, ("selected", "used_tokens")
+            )
 
         if stage in {"llm_request", "llm_call", "llm_response_received"}:
             calls = fields.get("tool_calls")
@@ -654,9 +660,15 @@ class StageEventWidget(Collapsible):
             if reason_code == "DUPLICATE_ACTION":
                 return "SUPPRESS · duplicate action"
             if reason_code == "MAX_TOOL_ITERATIONS":
-                limit = f" · round {round_number}/{max_rounds}" if round_number and max_rounds else ""
+                limit = (
+                    f" · round {round_number}/{max_rounds}" if round_number and max_rounds else ""
+                )
                 return f"ABORT · tool iteration limit{limit}"
-            return f"{decision} · {reason_code}" if decision and reason_code else decision or "control intervention"
+            return (
+                f"{decision} · {reason_code}"
+                if decision and reason_code
+                else decision or "control intervention"
+            )
 
         if stage == "tool_request":
             return self._tool_summary(fields)
@@ -678,11 +690,17 @@ class StageEventWidget(Collapsible):
             checks = fields.get("checks")
             if isinstance(checks, list):
                 failed = next(
-                    (item for item in checks if isinstance(item, Mapping) and item.get("status") in {"FAIL", "ESCALATE"}),
+                    (
+                        item
+                        for item in checks
+                        if isinstance(item, Mapping) and item.get("status") in {"FAIL", "ESCALATE"}
+                    ),
                     None,
                 )
                 if isinstance(failed, Mapping):
-                    parts.append(str(failed.get("reason_code") or failed.get("check_id") or "blocked"))
+                    parts.append(
+                        str(failed.get("reason_code") or failed.get("check_id") or "blocked")
+                    )
             return " · ".join(parts) or "authorization evaluated"
 
         if stage in {"tool_execution", "tool_result"}:
@@ -754,10 +772,7 @@ class StageEventWidget(Collapsible):
         for name in names:
             value = fields.get(name)
             if value is not None:
-                parts.append(
-                    f"{FIELD_LABELS.get(name, name)}="
-                    f"{_format_value(name, value)}"
-                )
+                parts.append(f"{FIELD_LABELS.get(name, name)}={_format_value(name, value)}")
         return " · ".join(parts)
 
     def _tool_summary(self, fields: Mapping[str, Any]) -> str:
@@ -779,11 +794,7 @@ class StageEventWidget(Collapsible):
     def _ordered_fields(
         fields: Mapping[str, Any],
     ) -> list[tuple[str, Any]]:
-        visible = [
-            (name, value)
-            for name, value in fields.items()
-            if name not in MUTED_FIELDS
-        ]
+        visible = [(name, value) for name, value in fields.items() if name not in MUTED_FIELDS]
         rank = {name: index for index, name in enumerate(FIELD_PRIORITY)}
         return sorted(
             visible,
@@ -812,7 +823,9 @@ def _append_grounding(body: Text, fields: Mapping[str, Any]) -> None:
         unverified = any(c.get("verdict") == "undetermined" for c in checks)
         note = " (unverified does not block)" if unverified else ""
         _append_row(body, "claims", str(fields.get("tally") or "") + note, "bright_white")
-    _append_row(body, "checked against", str(fields.get("evidence_searched") or "no evidence"), "dim")
+    _append_row(
+        body, "checked against", str(fields.get("evidence_searched") or "no evidence"), "dim"
+    )
     provenance = [str(line) for line in fields.get("provenance_checks") or []]
     if provenance:
         _append_row(body, "ids & amounts", "  ".join(provenance), "dim")
@@ -833,7 +846,9 @@ def _append_row(body: Text, label: str, value: str, style: str) -> None:
 def _checker_line(check: Mapping[str, Any]) -> str:
     """`cross-encoder/nli-deberta-v3-base · supports at ≥ 0.6 · top-3 by embedding`."""
     threshold = check.get("threshold")
-    bar = f"supports at ≥ {threshold}" if threshold is not None else "uncalibrated: its label decides"
+    bar = (
+        f"supports at ≥ {threshold}" if threshold is not None else "uncalibrated: its label decides"
+    )
     return f"{check.get('detector')} · {bar} · {check.get('retrieval')}"
 
 
@@ -844,7 +859,9 @@ def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
     body.append(f"\n\n  {mark} ", style=style)
     body.append(str(check.get("claim") or ""), style="bright_white")
     if check.get("decided_by") == "deterministic_provenance":
-        body.append(f"\n      {name} by the deterministic check · {check.get('rationale')}", style=style)
+        body.append(
+            f"\n      {name} by the deterministic check · {check.get('rationale')}", style=style
+        )
         return
     item = _deciding_evidence(verdict, check.get("evidence") or [])
     if item is None:
@@ -857,7 +874,7 @@ def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
         f"{float(item.get('nli_score') or 0):.2f}) ",
         style=style,
     )
-    body.append(f"\"{_excerpt(item)}\"", style="dim")
+    body.append(f'"{_excerpt(item)}"', style="dim")
 
 
 def _deciding_evidence(verdict: str, evidence: list[Any]) -> Mapping[str, Any] | None:
@@ -958,9 +975,7 @@ def _merge_control_loop_events(
         "blocked": 3,
     }
     status = (
-        current.status
-        if severity[current.status] >= severity[previous.status]
-        else previous.status
+        current.status if severity[current.status] >= severity[previous.status] else previous.status
     )
 
     tokens_delta = previous.tokens_delta
@@ -1118,10 +1133,7 @@ def _format_value(
         return "[" + ", ".join(str(item) for item in value) + "]"
 
     if isinstance(value, dict):
-        items = ", ".join(
-            f"{key}={_format_value(str(key), item)}"
-            for key, item in value.items()
-        )
+        items = ", ".join(f"{key}={_format_value(str(key), item)}" for key, item in value.items())
         return "{" + items + "}"
 
     return " ".join(str(value).split())

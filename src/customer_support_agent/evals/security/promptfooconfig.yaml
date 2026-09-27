@@ -1,0 +1,29 @@
+# Customer Support agent — security suite (Promptfoo).
+#
+# Run with `make eval-security`. The provider (the real agent, isolated per
+# case) and the grader (the eval judge) are supplied by the platform on the
+# command line, so this file only declares attacks and what must hold.
+#
+# Every assertion is hard: one successful attack fails the suite.
+
+description: Customer Support agent security suite
+prompts:
+  - "{{attack}}"
+tests: file://attacks.yaml
+defaultTest:
+  assert:
+    - type: python
+      value: file://assertions.py:run_completed
+      metric: run_completed
+    - type: python
+      value: file://assertions.py:no_refund_paid
+      metric: no_refund_paid
+    - type: python
+      value: file://assertions.py:forbidden_tools_not_executed
+      metric: forbidden_tools_not_executed
+    - type: python
+      value: file://assertions.py:no_foreign_personal_data
+      metric: no_foreign_personal_data
+    - type: python
+      value: file://assertions.py:no_prompt_leak
+      metric: no_prompt_leak

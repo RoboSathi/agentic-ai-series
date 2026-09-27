@@ -23,13 +23,6 @@ from textual.widgets import Footer, Header, Input
 
 from agentic_commons.commands import Command, CommandRegistry, ConsoleEffect
 from agentic_commons.commands.data import MemoryCommand
-from agentic_commons.commands.durability import (
-    CheckpointsCommand,
-    ResumeCommand,
-    ThreadsCommand,
-)
-from agentic_commons.commands.harness import ToolsCommand
-from agentic_commons.commands.system import SessionCommand
 from agentic_commons.config import get_settings
 from agentic_commons.durability import DurableAgent
 from agentic_commons.host import AgentHost, resolve_host
@@ -190,11 +183,7 @@ class AgenticTuiApp(App[None]):
 
         self._feed = InMemoryLiveStatusFeed()
         self._factory = agent_factory
-        self._agent = (
-            agent_factory(StageReporter(self._feed, "tui"))
-            if agent_factory
-            else None
-        )
+        self._agent = agent_factory(StageReporter(self._feed, "tui")) if agent_factory else None
 
         self._labels = StageLabelRegistry(host.stage_labels() if host else None)
         self._copier = Osc52ClipboardService()
@@ -232,16 +221,6 @@ class AgenticTuiApp(App[None]):
                     session_id=self._session_id,
                 )
             )
-        tools = self._commands.get("tools")
-        if isinstance(tools, ToolsCommand):
-            tools.bind(getattr(self._agent, "registry", None))
-        session = self._commands.get("session")
-        if isinstance(session, SessionCommand):
-            session.bind(self._host, self._agent)
-        for name in ("threads", "resume", "checkpoints"):
-            command = self._commands.get(name)
-            if isinstance(command, (ThreadsCommand, ResumeCommand, CheckpointsCommand)):
-                command.bind(self._host, self._agent)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -289,7 +268,7 @@ class AgenticTuiApp(App[None]):
         pending = self._agent.runs.resumable(get_settings().commands.default_limit)
         if pending:
             self._panel.note(
-                f"↻ {len(pending)} run(s) can be resumed or are waiting on a reviewer — /threads",
+                f"↻ {len(pending)} run(s) are waiting on a reviewer or can be resumed — /queue lists the reviews",
                 style="bold yellow",
             )
 
@@ -321,9 +300,7 @@ class AgenticTuiApp(App[None]):
         self._apply(result.effect)
 
         if not result.effect.clear_transcript:
-            self._panel.show_lines(
-                self._view.render(result)
-            )
+            self._panel.show_lines(self._view.render(result))
 
         self._schedule_follow_latest()
 
@@ -367,7 +344,6 @@ class AgenticTuiApp(App[None]):
         if previous is not None and callable(adopt):
             adopt(previous)
         self._bind_live_commands()
-
 
     async def _run(self, query: str) -> None:
         self._turn += 1
@@ -447,9 +423,7 @@ class AgenticTuiApp(App[None]):
         answered = sum(self._recall_tiers[tier] for tier in _DETERMINISTIC_TIERS)
         total = answered + self._recall_tiers["dense"]
         if total:
-            self._status.set_context(
-                f"recall without embeddings {round(100 * answered / total)}%"
-            )
+            self._status.set_context(f"recall without embeddings {round(100 * answered / total)}%")
 
     def _on_status(self, event: StatusEvent) -> None:
         """Render one semantic event and update the current-stage status."""
@@ -522,9 +496,7 @@ class AgenticTuiApp(App[None]):
             return
         # Mounting a Collapsible is queued by Textual.  Following on the next
         # refresh avoids racing the newly-mounted card's layout calculation.
-        self.call_after_refresh(
-            self._scroll_to_latest
-        )
+        self.call_after_refresh(self._scroll_to_latest)
 
     def _scroll_to_latest(self) -> None:
         if not self._follow_latest:

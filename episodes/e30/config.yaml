@@ -29,9 +29,6 @@ episode:
 # The two controls the episode is about. The injection guard delimits and
 # screens untrusted text; the Gatekeeper then rules on whatever the model
 # actually proposes, which is the layer that makes detection optional.
-security:
-  enabled: true
-
 # The screening features the episode is about, and the Gatekeeper that
 # makes detecting the attack optional. Memory and grounding are each a
 # real subsystem with its own episode — on here, they would narrate over

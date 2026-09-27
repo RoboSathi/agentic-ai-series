@@ -27,6 +27,14 @@ class BulkheadFullError(Exception):
     """Raised when a pool has no capacity and the wait budget is exhausted."""
 
 
+class RateLimitWaitExceededError(Exception):
+    """Raised when a rate-limit slot is further away than the wait budget.
+
+    Failing loudly beats hanging: a run stalled behind a long provider
+    cooldown should say so rather than look like a slow model.
+    """
+
+
 class NonIdempotentRetryError(Exception):
     """Raised when a retry is attempted without an idempotency key.
 

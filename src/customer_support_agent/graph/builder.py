@@ -235,6 +235,7 @@ def build_agent(
     features: FeatureSet | None = None,
     knowledge_base: KnowledgeBase | None = None,
     checkpointer: SqliteCheckpointer | None = None,
+    episodic_store: EpisodicStore | None = None,
 ) -> CustomerSupportAgent:
     """Wire the refund agent from config, honouring any injected parts.
 
@@ -355,6 +356,7 @@ def build_agent(
         audit=ledger,
         relevance=scoring,
         reporter=reporter,
+        episodic_store=episodic_store,
     )
 
     # No policy source. The policy reaches the model in the system prompt,
@@ -517,12 +519,17 @@ def long_term_memory(
     audit: AuditLedger,
     relevance: NollmScoringCascadeImpl,
     reporter: StageReporter | None,
+    episodic_store: EpisodicStore | None = None,
 ) -> MemoryFacade | None:
-    """The governed long-term memory this agent was declared to have, or None."""
+    """The governed long-term memory this agent was declared to have, or None.
+
+    `episodic_store` replaces the configured on-disk log — an eval gives
+    each case its own, so no case recalls another's conversation.
+    """
     if not (semantic or episodic):
         return None
     return MemoryFacade(
-        episodic=EpisodicStore() if episodic else None,
+        episodic=(episodic_store or EpisodicStore()) if episodic else None,
         semantic=SemanticStore(platform_store) if semantic else None,
         platform_store=platform_store,
         redactor=redactor,

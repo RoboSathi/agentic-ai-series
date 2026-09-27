@@ -1,6 +1,6 @@
 """Drawing a `CommandResult` into the feed (LLD §20).
 
-Commands return data, not pixels — the same `/orders` result has to work
+Commands return data, not pixels — the same `/audit` result has to work
 in the TUI, in a test, and eventually over an API. This is the one place
 that knows what it looks like on a terminal.
 

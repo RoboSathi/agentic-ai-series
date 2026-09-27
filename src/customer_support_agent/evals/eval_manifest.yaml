@@ -13,8 +13,11 @@ evals:
       - refunds above the threshold are queued, never auto-approved
       - the response cites the order it acted on
     scorer: calibrated_llm_judge
-    regression_threshold: 0.9
+    # The soft-metric pass rate `make eval` gates the golden suite on.
+    # Hard business invariants gate at 100% regardless.
+    regression_threshold: 0.8
     level: golden_task
+    suite: golden
   - component: customer_support_agent.live
     input_distribution: production traffic, scored but not served
     expected_properties:

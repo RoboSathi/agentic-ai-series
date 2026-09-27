@@ -38,3 +38,5 @@ local_models/*
 # Patches
 *.patch
 patches/*
+# Eval reports (generated from data/evals.duckdb)
+reports/

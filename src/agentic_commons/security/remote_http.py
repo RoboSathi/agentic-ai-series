@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+from agentic_commons.llm.http import create_http_client
 from agentic_commons.resilience import ResilientCaller
 
 
@@ -35,7 +36,7 @@ async def post_json_with_poll(
         "Accept": "application/json",
     }
     owns_client = client is None
-    active_client = client or httpx.AsyncClient(timeout=timeout)
+    active_client = client or create_http_client(timeout)
     started = time.perf_counter()
     try:
         url = f"{base_url.rstrip('/')}{endpoint if endpoint.startswith('/') else '/' + endpoint}"

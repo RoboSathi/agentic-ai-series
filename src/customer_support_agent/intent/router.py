@@ -17,6 +17,7 @@ controls every side effect.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from agentic_commons.config import get_settings
 from agentic_commons.intent import (
@@ -526,3 +527,22 @@ class CustomerSupportIntentRouter:
             "ORDER_DETAILS": "your order details",
             "REQUEST_REFUND": "a refund",
         }.get(intent, "your request")
+
+
+def load_intent_classifier() -> Any:
+    """The shared intent classifier, warmed up, or None if unavailable.
+
+    Called before an event loop opens (native tokenizer start-up inside
+    one fails on macOS). A classifier that cannot load narrows the agent
+    — the router falls back to its deterministic phrase rules — rather
+    than stopping whatever is starting it.
+    """
+    from agentic_commons.intent import create_intent_classifier
+
+    try:
+        classifier = create_intent_classifier()
+        classifier.ensure_loaded_sync()
+    except Exception:
+        return None
+    return classifier
+

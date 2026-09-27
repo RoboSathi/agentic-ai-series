@@ -17,7 +17,7 @@ from agentic_commons.observability.types import utc_now
 
 RunStatus = Literal["running", "completed", "failed_resumable", "interrupted"]
 
-# The statuses an operator can act on with `/resume`.
+# The statuses an operator can resume.
 RESUMABLE_STATUSES: tuple[RunStatus, ...] = ("failed_resumable", "interrupted")
 
 
@@ -42,7 +42,7 @@ class RunRecord(BaseModel):
 
 
 class CheckpointInfo(BaseModel):
-    """One checkpoint in a thread's history, for `/checkpoints`."""
+    """One checkpoint in a thread's history."""
 
     checkpoint_id: str
     step: int
@@ -68,9 +68,7 @@ class ResumableRunError(RuntimeError):
     """A run stopped part-way; its state is checkpointed and it can resume."""
 
     def __init__(self, thread_id: str, node: str, error: str) -> None:
-        super().__init__(
-            f"'{node}' failed: {error} — state is checkpointed; resume with /resume {thread_id}"
-        )
+        super().__init__(f"'{node}' failed: {error} — state is checkpointed as thread {thread_id}")
         self.thread_id = thread_id
         self.node = node
         self.error = error

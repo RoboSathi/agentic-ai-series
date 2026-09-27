@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from agentic_commons.config import get_settings
 from agentic_commons.evals.types import Claim, Verdict
-from agentic_commons.llm.client import LLMClient, create_llm_client
+from agentic_commons.llm.client import LLMClient, create_pinned_llm_client
 from agentic_commons.llm.types import CompletionRequest, Message
 from agentic_commons.logging import get_logger
 
@@ -49,7 +49,7 @@ class LlmJudge:
 
     def __init__(self, client: LLMClient | None = None) -> None:
         settings = get_settings().evals.judge
-        self._client = client or create_llm_client()
+        self._client = client or create_pinned_llm_client(settings.provider, settings.model)
         self._temperature = settings.temperature
         self._max_tokens = settings.max_tokens
         self._template = _PROMPT_FILE.read_text()
@@ -73,7 +73,7 @@ class LlmJudge:
     def _parse(self, content: str, cost_usd: float) -> Verdict:
         """Parse the judge's JSON; an unreadable answer scores zero."""
         try:
-            payload = json.loads(_extract_json(content))
+            payload = json.loads(extract_json(content))
             label = payload["label"]
             confidence = float(payload["confidence"])
         except (ValueError, KeyError, TypeError) as exc:
@@ -102,7 +102,7 @@ class LlmJudge:
         return cls()
 
 
-def _extract_json(content: str) -> str:
+def extract_json(content: str) -> str:
     """Pull the JSON object out of a response that may be fenced or prefaced."""
     start, end = content.find("{"), content.rfind("}")
     return content[start : end + 1] if start != -1 and end > start else content

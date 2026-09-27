@@ -20,7 +20,7 @@ class ConsoleEffect(BaseModel):
 
     A command has no handle on the widget, and giving it one would make
     every command a UI component. It states the effect; the console
-    applies it. `/clear` and `/resume` need this.
+    applies it. `/clear` and `/harness` need this.
     """
 
     clear_transcript: bool = False

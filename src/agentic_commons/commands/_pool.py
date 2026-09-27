@@ -1,7 +1,7 @@
 """The database a command reads from (LLD §20).
 
 Commands default to the configured database, because an operator typing
-`/orders` means "the orders this deployment has". They accept one
+`/audit` means "the audit trail this deployment has". They accept one
 instead when constructed with it, which is what lets a test point the
 same command at a fixture database rather than the developer's.
 

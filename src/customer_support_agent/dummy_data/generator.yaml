@@ -1,0 +1,69 @@
+# What `make dummy-data` generates: a deterministic, synthetic shop.
+# Changing anything here changes the demo database (and seed_data.sql);
+# the eval golden set does not use this data (it has its own fixture).
+
+random_seed: 42
+users: 100
+orders: 1000
+first_user_id: 1
+first_order_id: 10001
+currency: USD
+
+# Every user code carries at least one of these digits, so a plain English
+# word is never a well-formed code (length and alphabet: agent config).
+user_code_digits: "23456789"
+user_created_days_ago: [30, 720]
+order_placed_days_ago: [0, 90]
+email_template: "user{index}@example.com"
+phone_prefix: "555-"
+phone_digits: [1000, 9999]
+
+order_status_weights:
+  pending: 0.10
+  shipped: 0.20
+  delivered: 0.60
+  cancelled: 0.10
+# Refund outcomes for an order that has reached a refundable state.
+refund_status_weights:
+  none: 0.70
+  pending_review: 0.08
+  approved: 0.06
+  denied: 0.06
+  completed: 0.10
+# The only refund status an in-flight order can carry.
+in_flight_refund_status: none
+quantity_weights:
+  1: 0.75
+  2: 0.18
+  3: 0.07
+
+# Days from placement: [min, max].
+pending_eta_days: [3, 10]
+delivered_after_days: [1, 9]
+shipped_eta_days: [2, 8]
+tracking_suffix: GB
+tracking_digits: [1000000000, 9999999999]
+
+first_names: [Ada, Grace, Alan, Katherine, Linus, Barbara, Dennis, Radia, Ken, Margaret,
+              Edsger, Frances, Tony, Jean, Donald, Adele]
+last_names: [Lovelace, Hopper, Turing, Johnson, Torvalds, Liskov, Ritchie, Perlman,
+             Thompson, Hamilton, Dijkstra, Allen, Hoare, Bartik]
+
+# name, sku, price band (major units). The total is always consistent
+# with what was bought: a $7 laptop makes a grounding check look broken.
+catalogue:
+  - {name: "Wireless Noise-Cancelling Headphones", sku: AUD-WH-100, low: 120.00, high: 320.00}
+  - {name: "Mechanical Keyboard, 87-key", sku: PER-KB-087, low: 60.00, high: 180.00}
+  - {name: "USB-C Charging Cable, 2m", sku: ACC-CBL-2M, low: 8.00, high: 22.00}
+  - {name: "Cotton Crew T-Shirt", sku: APP-TS-CRW, low: 12.00, high: 35.00}
+  - {name: "Stainless Water Bottle, 750ml", sku: HOM-WB-750, low: 15.00, high: 40.00}
+  - {name: "Espresso Grinder", sku: KIT-GR-ESP, low: 90.00, high: 260.00}
+  - {name: "Running Shoes", sku: APP-SH-RUN, low: 55.00, high: 160.00}
+  - {name: "Desk Lamp, Adjustable", sku: HOM-LMP-ADJ, low: 25.00, high: 75.00}
+  - {name: "Bluetooth Speaker", sku: AUD-SPK-BT, low: 35.00, high: 130.00}
+  - {name: "Laptop Stand, Aluminium", sku: ACC-STD-ALU, low: 30.00, high: 85.00}
+
+carriers: [Parcelforce, DHL, UPS, Royal Mail, FedEx]
+# Where a parcel in transit has got to — consistent only with "shipped".
+transit_locations: [Birmingham depot, Manchester sorting centre, London Heathrow hub,
+                    Leeds distribution centre, Bristol depot, out for delivery]

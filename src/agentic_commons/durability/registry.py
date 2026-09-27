@@ -3,7 +3,7 @@
 The checkpointer is the source of a thread's *state*; it cannot answer
 "which runs need attention?" without deserializing every checkpoint in
 the file. This table answers exactly that, cheaply and synchronously, so
-start-up recovery and `/threads` never need an event loop at all.
+start-up recovery and the operator console never need an event loop at all.
 """
 
 from datetime import datetime

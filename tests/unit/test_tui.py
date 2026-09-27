@@ -297,3 +297,47 @@ class TestARebuildKeepsTheConversation:
         before = app._agent
         app._apply(ConsoleEffect(rebuild_agent=True))
         assert app._agent is not before
+
+
+class TestEveryKeptCommandIsWired:
+    """Boot the console and run every command it offers, end to end."""
+
+    KEPT = ("/help", "/config", "/audit", "/memory", "/eval", "/kb", "/queue", "/harness", "/clear")
+
+    def _app(self, pool: object) -> AgenticTuiApp:
+        from agentic_commons.commands.knowledge import KnowledgeBaseCommand
+        from agentic_commons.memory import WorkingMemoryStore
+        from customer_support_agent.console.commands import QueueCommand
+
+        agent = SimpleNamespace(working_memory=WorkingMemoryStore(), handle=None)
+        commands = [
+            QueueCommand(pool, agent=lambda: agent),  # type: ignore[arg-type]
+            KnowledgeBaseCommand(lambda: None),
+        ]
+        return AgenticTuiApp(lambda reporter: agent, commands=commands)
+
+    async def test_each_command_answers_without_crashing(self, seeded_pool: object) -> None:
+        app = self._app(seeded_pool)
+        async with app.run_test(size=(100, 40)):
+            for line in self.KEPT:
+                result = await app._commands.dispatch(line)
+                # /kb has no knowledge base in this app: an answer, not a crash.
+                assert result.ok or line == "/kb", (line, result.lines)
+
+    async def test_typing_a_command_renders_it_in_the_feed(self, seeded_pool: object) -> None:
+        from textual.widgets import Input
+
+        app = self._app(seeded_pool)
+        async with app.run_test(size=(100, 40)) as pilot:
+            app.query_one("#query", Input).value = "/help"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert "/queue" in app._panel.as_text()
+
+    async def test_memory_is_rebound_after_a_rebuild(self, seeded_pool: object) -> None:
+        app = self._app(seeded_pool)
+        async with app.run_test(size=(100, 40)):
+            await app._run_command("/harness off")
+            result = await app._commands.dispatch("/memory working")
+            assert result.ok
+            await app._run_command("/harness on")

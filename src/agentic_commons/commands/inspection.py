@@ -12,13 +12,12 @@ from agentic_commons.commands._pool import PoolBackedCommand
 from agentic_commons.commands.types import CommandError, CommandResult
 from agentic_commons.config import get_settings
 from agentic_commons.config.yaml_config import config_sources, load_config
-from agentic_commons.observability import SLORegistry
-from agentic_commons.observability.postmortem import PostmortemRegister
 
 
 class ConfigCommand:
     """Show configuration, whole or by section."""
 
+    group = "Inspect"
     name = "config"
     summary = "Show configuration values"
     usage = "/config [section]   e.g. /config gatekeeper"
@@ -65,6 +64,7 @@ class ConfigCommand:
 class AuditCommand(PoolBackedCommand):
     """Show recent decisions from the audit ledger."""
 
+    group = "Inspect"
     name = "audit"
     summary = "Recent decisions from the audit trail"
     usage = "/audit [allow|deny|escalate] [limit]"
@@ -100,69 +100,6 @@ class AuditCommand(PoolBackedCommand):
         return result
 
 
-class SloCommand:
-    """Show SLO targets and how each is standing."""
-
-    name = "slo"
-    summary = "SLO targets and error budgets"
-    usage = "/slo"
-
-    async def run(self, args: list[str]) -> CommandResult:
-        registry = SLORegistry()
-        targets = get_settings().observability.slo_targets
-        result = CommandResult(title=f"{len(targets)} SLOs")
-        result.headers = ["metric", "target", "observed", "budget", "state"]
-        for status in registry.all_statuses():
-            observed = f"{status.observed:.3f}" if status.sample_count else "—"
-            result.row(
-                status.metric,
-                f"{status.target:.2f}",
-                observed,
-                f"{status.error_budget_remaining:.0%}",
-                "ok" if status.within_target else "BREACH",
-                style="" if status.within_target else "red",
-            )
-        result.line("Targets of 0.00 are zero-tolerance: any occurrence is a breach.")
-        return result
-
-
-class ModelCommand:
-    """Show which model is answering, and what it is allowed to spend.
-
-    Deliberately not a price list. Money is not tracked here: a rate card
-    per provider is a second source of truth about pricing that goes
-    stale the moment a price changes, and the token count is what the
-    harness actually observes.
-    """
-
-    name = "model"
-    summary = "The active model, its limits and its tiers"
-    usage = "/model"
-
-    async def run(self, args: list[str]) -> CommandResult:
-        settings = get_settings().llm
-        result = CommandResult(title="Model")
-        result.headers = ["provider", "model", "timeout", "status"]
-        for name, provider in settings.providers.items():
-            result.row(
-                name,
-                provider.model,
-                f"{provider.timeout_seconds:.0f}s",
-                "active" if name == settings.provider else "configured",
-            )
-        result.line("")
-        result.line(f"Max tokens per completion: {settings.max_tokens:,}.")
-        encoders = settings.encoders
-        result.line(
-            f"Encoders: {encoders.nli_model} (entailment), "
-            f"{encoders.reranker_model} (reranking) — "
-            f"{'reachable' if encoders.usable else 'no key, using fallbacks'}."
-        )
-        if settings.cascade.enabled:
-            result.line(f"Cascade tiers, cheapest first: {', '.join(settings.cascade.tiers)}.")
-        return result
-
-
 def _flatten(value: Any, prefix: str = "") -> list[tuple[str, str]]:
     """Flatten a config subtree into readable key/value pairs."""
     if not isinstance(value, dict):
@@ -195,77 +132,3 @@ def _limit(args: list[str]) -> int:
         if arg.isdigit():
             return int(arg)
     return get_settings().commands.recent_window
-
-
-class VersionsCommand:
-    """What is deployed, component by component (FR-48)."""
-
-    name = "versions"
-    summary = "Independently versioned components, and what may canary"
-    usage = "/versions"
-
-    async def run(self, args: list[str]) -> CommandResult:
-        from agentic_commons.config.versions import VersionManifest
-
-        manifest = VersionManifest()
-        result = CommandResult(title="Deployed versions")
-        result.headers = ["component", "version", "rollout", "source"]
-        for component in manifest.components():
-            result.row(
-                component.component,
-                component.version,
-                "canary ok" if component.canaryable else "full cutover only",
-                component.source,
-                style="" if component.canaryable else "yellow",
-            )
-        result.line("")
-        result.line("The authority path never canaries: two live policies mean the same")
-        result.line("action is allowed and denied at once, which no audit can explain.")
-        return result
-
-
-class PostmortemCommand:
-    """Incident reviews, and whether each produced a regression eval."""
-
-    name = "postmortem"
-    summary = "Incident postmortems and their regression evals"
-    usage = "/postmortem [incident id]"
-
-    def __init__(self, register: PostmortemRegister | None = None) -> None:
-        self._register = register or PostmortemRegister()
-
-    async def run(self, args: list[str]) -> CommandResult:
-        if args:
-            found = self._register.get(args[0])
-            if found is None:
-                raise CommandError(f"No postmortem for incident '{args[0]}'")
-            result = CommandResult(title=f"{found.incident_id} — {found.title}")
-            result.headers = ["field", "detail"]
-            for field in found.required_fields:
-                value = getattr(found, field)
-                result.row(
-                    field.replace("_", " "),
-                    value or "— not filled in",
-                    style="" if value else "red",
-                )
-            return result
-
-        filed = self._register.all()
-        result = CommandResult(title=f"Postmortems — {len(filed)} filed")
-        if not filed:
-            return (
-                result.line("No incidents recorded.")
-                .line("The template: impact → trigger → missing control → detection gap →")
-                .line("containment → root cause → permanent eval.")
-            )
-        result.headers = ["incident", "title", "eval", "status"]
-        for postmortem in filed:
-            result.row(
-                postmortem.incident_id,
-                postmortem.title,
-                postmortem.permanent_eval or "—",
-                "complete" if postmortem.complete else f"missing {len(postmortem.missing)}",
-                style="" if postmortem.complete else "yellow",
-            )
-        result.line("An incident that ends without a regression eval was survived, not fixed.")
-        return result

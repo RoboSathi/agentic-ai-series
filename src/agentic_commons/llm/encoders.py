@@ -39,6 +39,7 @@ from agentic_commons.evals.entailment import (
     LexicalEntailmentModel,
     entailment_from_probabilities,
 )
+from agentic_commons.llm.http import create_http_client
 from agentic_commons.logging import get_logger
 from agentic_commons.memory.store import RelevanceScorer
 from agentic_commons.resilience import ResilientCaller, external_api_error_fields
@@ -127,7 +128,7 @@ class HuggingFaceEncoderClient:
             if self._client is not None:
                 response = await self._client.post(url, json=payload, headers=headers, timeout=timeout)
             else:
-                async with httpx.AsyncClient(timeout=timeout) as client:
+                async with create_http_client(timeout) as client:
                     response = await client.post(url, json=payload, headers=headers)
             response.raise_for_status()
             return response

@@ -14,27 +14,17 @@ console through its `AgentHost`.
 """
 
 from agentic_commons.commands.data import MemoryCommand
-from agentic_commons.commands.harness import (
-    CascadeCommand,
-    EvalCommand,
-    GatekeeperCommand,
-    HarnessCommand,
-    PatternsCommand,
-    ToolsCommand,
-)
+from agentic_commons.commands.evals import EvalCommand
+from agentic_commons.commands.harness import HarnessCommand
 from agentic_commons.commands.inspection import (
     AuditCommand,
     ConfigCommand,
-    ModelCommand,
-    SloCommand,
 )
 from agentic_commons.commands.knowledge import KnowledgeBaseCommand
 from agentic_commons.commands.registry import PREFIX, CommandRegistry
 from agentic_commons.commands.system import (
     ClearCommand,
     HelpCommand,
-    LogsCommand,
-    SessionCommand,
 )
 from agentic_commons.commands.types import (
     Command,
@@ -47,7 +37,6 @@ from agentic_commons.commands.types import (
 __all__ = [
     "PREFIX",
     "AuditCommand",
-    "CascadeCommand",
     "ClearCommand",
     "Command",
     "CommandError",
@@ -56,16 +45,9 @@ __all__ = [
     "ConsoleEffect",
     "CommandRow",
     "ConfigCommand",
-    "ModelCommand",
     "EvalCommand",
-    "GatekeeperCommand",
     "HarnessCommand",
     "HelpCommand",
     "KnowledgeBaseCommand",
-    "LogsCommand",
     "MemoryCommand",
-    "PatternsCommand",
-    "SessionCommand",
-    "SloCommand",
-    "ToolsCommand",
 ]

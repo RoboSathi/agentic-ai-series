@@ -126,7 +126,7 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Merge `override` into `base`, recursing into nested dicts.
 
     Scalars and lists replace wholesale; only mappings merge. A list that
@@ -137,7 +137,7 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     for key, value in override.items():
         existing = merged.get(key)
         if isinstance(existing, dict) and isinstance(value, dict):
-            merged[key] = _deep_merge(existing, value)
+            merged[key] = deep_merge(existing, value)
         else:
             merged[key] = value
     return merged
@@ -165,8 +165,8 @@ def load_config() -> dict[str, Any]:
     """The fully merged configuration: platform, agents, run, then local."""
     merged = _read_yaml(_CONFIG_FILE)
     for overlay in (*_overlay_files(), *_run_overlays):
-        merged = _deep_merge(merged, _read_yaml(overlay))
-    return _deep_merge(merged, _read_yaml(_LOCAL_FILE))
+        merged = deep_merge(merged, _read_yaml(overlay))
+    return deep_merge(merged, _read_yaml(_LOCAL_FILE))
 
 
 def _walk(config: dict[str, Any], path: list[str]) -> dict[str, Any]:

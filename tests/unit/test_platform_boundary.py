@@ -53,6 +53,51 @@ class TestTheePlatformNamesNoAgent:
             "An agent's overlay declares the agent; the platform default does not."
         )
 
+    @pytest.mark.parametrize("name", FORBIDDEN_NAMES)
+    def test_no_document_or_template_names_a_specific_agent(self, name: str) -> None:
+        """READMEs and report templates ship with the platform too."""
+        offenders = [
+            str(path.relative_to(COMMONS))
+            for path in sorted(COMMONS.rglob("*.md"))
+            if name in path.read_text()
+        ]
+        assert offenders == [], f"agentic_commons documents name '{name}' in: {offenders}"
+
+
+# Offline eval tools: optional extras, never on an agent's request path.
+OPTIONAL_EVAL_TOOLS = ("deepeval", "promptfoo")
+EVAL_ADAPTERS = COMMONS / "evals" / "adapters"
+
+
+class TestEvalToolsAreNotRuntimeDependencies:
+    """DeepEval and Promptfoo stay behind the eval adapters, imported lazily."""
+
+    @pytest.mark.parametrize("tool", OPTIONAL_EVAL_TOOLS)
+    def test_only_the_adapters_import_an_eval_tool(self, tool: str) -> None:
+        agents = COMMONS.parent
+        offenders = [
+            str(path)
+            for path in sorted(agents.rglob("*.py"))
+            if "__pycache__" not in path.parts
+            and EVAL_ADAPTERS not in path.parents
+            and any(
+                line.strip().startswith((f"import {tool}", f"from {tool}"))
+                for line in path.read_text().splitlines()
+            )
+        ]
+        assert offenders == [], f"{tool} imported outside the eval adapters: {offenders}"
+
+    def test_the_agent_imports_without_them(self) -> None:
+        import subprocess
+        import sys
+
+        probe = (
+            "import sys; sys.modules['deepeval'] = None; "
+            "import customer_support_agent.graph, agentic_commons.evals, agentic_commons.tui.app"
+        )
+        completed = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
+        assert completed.returncode == 0, completed.stderr
+
 
 class TestParkedPackagesAreRealBoundaries:
     """A parked package still has to import, or it is not a boundary."""

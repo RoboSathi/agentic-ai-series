@@ -95,8 +95,8 @@ class TestFeatureToggles:
     def test_a_sub_feature_is_gated_by_its_parent(self, restore_settings: None) -> None:
         """Turning off a parent must turn off everything beneath it."""
         toggle = ConfigFeatureToggle()
-        get_settings().security.enabled = False
-        assert toggle.is_enabled("security", "auth") is False
+        get_settings().security.guards.enabled = False
+        assert toggle.is_enabled("security.guards", "jailbreak") is False
 
     def test_sub_feature_reads_its_own_flag_when_the_parent_is_on(
         self, restore_settings: None

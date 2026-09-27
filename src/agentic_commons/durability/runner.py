@@ -4,7 +4,7 @@ The runner owns the failure taxonomy so no agent re-derives it:
 
     node raised            → `failed_resumable`: the last checkpoint holds
                              every node that finished; `next` is the one
-                             that did not. `/resume` re-runs only that node.
+                             that did not. resuming re-runs only that node.
     graph called interrupt → `interrupted`: waiting on something outside
                              the process (a human). The interrupt payload's
                              `waiting_on` names it, so the decision can find
@@ -224,7 +224,7 @@ class DurableGraphRunner:
                     "failed_at": node or "—",
                     "error": error,
                     "state": "saved — nothing already done will be repeated",
-                    "resume_with": f"/resume {thread_id}",
+                    "thread": thread_id,
                 },
             )
         return ResumableRunError(thread_id, node, error)

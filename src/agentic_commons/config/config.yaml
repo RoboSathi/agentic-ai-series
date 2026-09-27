@@ -36,9 +36,6 @@ agent:
   # An agent declares its own; the platform never names one.
   host: ""
 
-config:
-  enabled: true
-
 # The harness: the controls you can remove and still get an agent that
 # runs — just a worse or more dangerous one. Everything absent from this
 # list is always on, because removing it does not produce a reckless
@@ -82,7 +79,6 @@ features:
     failure_detection: true
 
 logging:
-  enabled: true
   level: INFO
   console_enabled: true
   console_level: INFO
@@ -201,10 +197,14 @@ llm:
     # Normal classification calls never download or reload from disk.
     download_if_missing: true
     max_length: 64
+  # `make llm-check` sends one real, minimal request to every hosted
+  # endpoint: an account can list a model it is not entitled to invoke.
+  check:
+    prompt: Reply with the single word OK.
+    max_tokens: 4
 
 
 persistence:
-  enabled: true
   # Neutral default. Each agent overlays its own database path so nothing
   # writes into the shared library's folder.
   db_path: data/agentic.db
@@ -223,7 +223,7 @@ durability:
   # Neutral default; each agent overlays its own checkpoint file.
   db_path: data/checkpoints.db
   mode: sync
-  # Resuming is an operator's decision (`/threads`, `/resume`): a node
+  # Resuming is an operator's decision (a reviewer's `/queue approve`): a node
   # that moves money is re-entered by a person's choice, not at start-up.
   retention_days: 30
   preview_chars: 80
@@ -573,10 +573,9 @@ gatekeeper:
     per_action_amount_escalation_usd: {}
 
 security:
-  # A sub-feature is enabled only if its parent is too. RBAC (auth) stays on
-  # because the Gatekeeper's "who is asking?" question depends on it; the
-  # content-level checks are off by default.
-  enabled: true
+  # RBAC (auth) stays on because the Gatekeeper's "who is asking?" question
+  # depends on it. Whether each screening stage exists is a feature
+  # (`features:`), not a flag here.
   auth:
     enabled: true
     # Roles and the action -> permission mapping. Empty here: an agent's
@@ -640,12 +639,12 @@ security:
       provider: nvidia
       base_url: https://integrate.api.nvidia.com/v1
       endpoint: /chat/completions
-      model: nvidia/llama-3.1-nemotron-safety-guard-8b-v3
+      model: nvidia/nemotron-3.5-content-safety
+      # nvidia/llama-3.1-nemotron-safety-guard-8b-v3
       timeout_seconds: 8
       max_tokens: 128
 
 resilience:
-  enabled: true
   circuit_breaker:
     enabled: true
     failure_threshold: 3
@@ -667,6 +666,27 @@ resilience:
     enabled: true
   dead_letter_queue:
     enabled: true
+  # Hosted model endpoints are rate-limited per account, so every process
+  # (TUI, eval runs, Promptfoo's provider workers) draws on one budget kept
+  # in a shared SQLite file. Each HTTP attempt counts, retries included.
+  # Override one bucket from the shell with, e.g.,
+  # RESILIENCE__RATE_LIMIT__BUCKETS__NVIDIA__MAX_REQUESTS=38 (or `RPM=38 make ...`).
+  rate_limit:
+    enabled: true
+    store_path: data/rate_limits.sqlite
+    window_seconds: 60
+    # Waiting longer than this for a slot fails loudly instead of hanging.
+    max_wait_seconds: 300
+    # How long a process waits for another to release the window file.
+    lock_timeout_seconds: 10
+    # Used when a 429 carries no Retry-After header.
+    default_retry_after_seconds: 30
+    buckets:
+      nvidia:
+        # NVIDIA's free tier allows up to 40 requests/minute per account;
+        # 35 leaves headroom for its own window boundaries and clock skew.
+        max_requests: 35
+        hosts: [integrate.api.nvidia.com, ai.api.nvidia.com]
 
 evals:
   enabled: true
@@ -698,8 +718,93 @@ evals:
       - "refused"
       - "unable"
   judge:
+    # A different vendor's model from the agent's, so the judge is not
+    # grading its own habits. Verified invokable by `make llm-check`
+    # (mistral-large and llama-3.1-nemotron-70b are listed for this
+    # account but answer 404).
+    provider: nim
+    model: openai/gpt-oss-20b
     temperature: 0.0
-    max_tokens: 256
+    # A reasoning model: its hidden reasoning spends from this budget
+    # before the JSON verdict, so a tight cap returns an empty answer.
+    max_tokens: 2048
+    # The evidence a rubric judge reads (system prompt, retrieved context,
+    # tool results) is capped here; 0 means all of it.
+    max_evidence_chars: 24000
+  # The running agent's EvalPlugin (`module.path:attribute`). The platform
+  # names no agent; the agent's config names its own plugin.
+  plugin: ""
+  # Suites every agent's plugin is asked for, in pipeline order.
+  suites: [golden, security]
+  store:
+    # Its own file, not observability.duckdb: DuckDB admits one process per
+    # file, and the TUI holds that one open.
+    db_path: data/evals.duckdb
+    lock_retry_attempts: 40
+    lock_retry_delay_seconds: 0.25
+  generation:
+    # Cases in flight at once. The rate limiter, not this, bounds spend.
+    max_concurrency: 2
+  fingerprint:
+    # A transcript is reused only while every byte under these roots is
+    # unchanged — committed or not — so an uncommitted fix is re-evaluated.
+    source_roots: [src/agentic_commons]
+    include_suffixes: [".py", ".md", ".yaml", ".sql", ".json"]
+    exclude_parts: [__pycache__, dummy_data, local_models]
+    exclude_paths:
+      - src/agentic_commons/evals/store
+      - src/agentic_commons/evals/pipeline
+      - src/agentic_commons/evals/reporting
+      - src/agentic_commons/evals/graders
+      - src/agentic_commons/evals/adapters
+      - src/agentic_commons/evals/__main__.py
+      - src/agentic_commons/evals/cli.py
+      - src/agentic_commons/tui
+      - src/agentic_commons/commands
+    exclude_config_sections: [evals, tui, commands, logging]
+  gate:
+    # A broken business invariant makes quality scores moot: stop before
+    # spending quota on them. EVALS__GATE__STOP_ON_INVARIANT_FAILURE=false
+    # (or EVAL_CONTINUE_ON_INVARIANT_FAILURE=1 via make) overrides.
+    stop_on_invariant_failure: true
+    # Soft metrics fail the run below this pass rate.
+    soft_pass_rate: 0.8
+  deepeval:
+    include_reason: false
+    telemetry_opt_out: true
+  promptfoo:
+    # Pinned: a red-team suite whose runner changes underneath it is not a
+    # regression signal.
+    runner: [npx, --yes]
+    package: promptfoo@0.123.1
+    suite: security
+    max_concurrency: 2
+    # Promptfoo's default (300s) is shorter than a multi-turn attack behind
+    # the shared rate limit; a timed-out attack is recorded as a failure.
+    provider_timeout_ms: 900000
+    provider_scheme: "python:"
+    output_dir: data/evals/promptfoo
+    # Our own cache (fingerprint + dataset) decides reuse; Promptfoo's must
+    # not serve an old agent's answers to a new agent.
+    extra_args: [--no-cache, --no-share, --no-write, --no-progress-bar, --no-table]
+    env:
+      PROMPTFOO_DISABLE_TELEMETRY: "1"
+      PROMPTFOO_DISABLE_UPDATE: "1"
+  reporting:
+    output_dir: reports/evals
+    # 1.96 → 95% Wilson intervals on every pass rate.
+    confidence_z: 1.96
+    # Longest failure / lowest-score list a report prints in full.
+    max_cases_listed: 25
+    runtime_guard_key: hallucination_rate
+    files:
+      summary: 00_summary.md
+      generate: 01_generate.md
+      oracle: 02_oracle.md
+      security: 03_security.md
+      judge: 04_judge.md
+      deepeval: 05_deepeval.md
+      diff: diff_{base}_{head}.md
 
 
 tools:
@@ -716,7 +821,7 @@ tools:
   # embedding model changes.
   selection_min_score: 0.15
 
-# Console slash commands (/help, /orders, /audit …). These are operator
+# Console slash commands (/help, /audit, /queue …). These are operator
 # views of the harness, so the limits here are about what fits on a
 # terminal, not about what the agent may do.
 commands:

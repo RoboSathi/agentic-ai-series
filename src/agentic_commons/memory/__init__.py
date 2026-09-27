@@ -1,7 +1,15 @@
 """The four CoALA memory stores and the write pipeline (LLD §8)."""
 
 from agentic_commons.memory.episodic import EpisodicStore
+from agentic_commons.memory.events import (
+    DreamInbox,
+    MemoryAction,
+    MemoryEvent,
+    MemoryEventSink,
+    MemoryObservation,
+)
 from agentic_commons.memory.facade import MemoryFacade
+from agentic_commons.memory.governance import MemoryAuthorizer, MemoryDecision
 from agentic_commons.memory.procedural import ProceduralStore
 from agentic_commons.memory.semantic import SemanticStore
 from agentic_commons.memory.store import (
@@ -9,7 +17,6 @@ from agentic_commons.memory.store import (
     MemoryStore,
     RelevanceScorer,
 )
-from agentic_commons.memory.governance import MemoryAuthorizer, MemoryDecision
 from agentic_commons.memory.types import (
     MemoryCommand,
     MemoryConflict,
@@ -19,14 +26,13 @@ from agentic_commons.memory.types import (
     MemoryQuery,
     MemoryType,
     PrincipalRole,
-    RecallReport,
     Provenance,
     ProvenanceKind,
+    RecallReport,
     ScoredFact,
     WriteResult,
     WriteRoute,
 )
-from agentic_commons.memory.events import DreamInbox, MemoryAction, MemoryEvent, MemoryEventSink, MemoryObservation
 from agentic_commons.memory.working import WorkingMemory, WorkingMemoryStore
 from agentic_commons.memory.write_pipeline import MemoryWritePipelineImpl, WriteAuthorizer
 

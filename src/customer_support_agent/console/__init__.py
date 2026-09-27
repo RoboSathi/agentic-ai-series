@@ -20,11 +20,8 @@ from agentic_commons.config import FeatureSet, get_settings
 from agentic_commons.logging import get_logger
 from agentic_commons.memory.semantic.rag import KnowledgeBase
 from agentic_commons.observability import StageReporter
-from customer_support_agent.console.commands import (
-    OrdersCommand,
-    QueueCommand,
-    UsersCommand,
-)
+from customer_support_agent.console.commands import QueueCommand
+from customer_support_agent.intent.router import load_intent_classifier
 
 # Stage keys only this agent emits. The platform labels its own stages
 # (`llm_call`, `gatekeeper_evaluation`); these are the ones that exist
@@ -59,7 +56,7 @@ class CustomerSupportHost:
         import os
 
         os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-        self._classifier = self._loaded_classifier()
+        self._classifier = load_intent_classifier()
         self._preload_entailment()
         self._knowledge_base = self._synced_knowledge_base()
         self._recover_runs()
@@ -96,22 +93,12 @@ class CustomerSupportHost:
     def commands(self) -> list[Command]:
         """The slash commands that read this agent's own tables and corpus."""
         return [
-            UsersCommand(),
-            OrdersCommand(),
             QueueCommand(agent=lambda: self.agent),
             KnowledgeBaseCommand(lambda: self.knowledge_base),
         ]
 
     def stage_labels(self) -> Mapping[str, str]:
         return _STAGE_LABELS
-
-    def session_rows(self, agent: Any) -> list[tuple[str, str]]:
-        """Who `/session` is talking to, in this agent's vocabulary."""
-        from customer_support_agent.domain.identity import current_customer
-
-        customer = current_customer()
-        shown = f"{customer.name} (#{customer.customer_id})" if customer else "not verified"
-        return [("customer", shown)]
 
     @staticmethod
     def _synced_knowledge_base() -> KnowledgeBase | None:
@@ -177,8 +164,7 @@ class CustomerSupportHost:
             asyncio.run(CustomerSupportHost._opened_knowledge_base().sync())
             return
         get_logger("customer_support_agent").warning(
-            "Knowledge base start-up sync skipped: prepare() ran inside an event loop; "
-            "use /kb sync"
+            "Knowledge base start-up sync skipped: prepare() ran inside an event loop; use /kb sync"
         )
 
     @staticmethod
@@ -188,23 +174,6 @@ class CustomerSupportHost:
         from agentic_commons.memory.semantic.rag import create_knowledge_base
 
         return create_knowledge_base(reranker=create_reranker(fallback=create_scoring_cascade()))
-
-    @staticmethod
-    def _loaded_classifier() -> Any:
-        """The shared intent classifier, warmed up, or None if unavailable.
-
-        A classifier that cannot load is not a reason the console cannot
-        open: the router falls back to its deterministic phrase rules,
-        which is a narrower agent rather than a broken one.
-        """
-        from agentic_commons.intent import create_intent_classifier
-
-        try:
-            classifier = create_intent_classifier()
-            classifier.ensure_loaded_sync()
-        except Exception:
-            return None
-        return classifier
 
     @staticmethod
     def _preload_entailment() -> None:

@@ -21,6 +21,7 @@ _SEARCH = "search"
 class KnowledgeBaseCommand:
     """Status, sync, rebuild and search over the agent's knowledge index."""
 
+    group = "Agent"
     name = "kb"
     summary = "Knowledge index: status, sync, rebuild, search"
     usage = "/kb [sync | rebuild | search <query>]   e.g. /kb search return window"

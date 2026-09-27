@@ -1,5 +1,6 @@
-.PHONY: help install clean test lint type-check format check-all run dummy-data logs llm-check \
-	tui verify episode episodes patterns venv-check test-verbose test-fast
+.PHONY: help install clean lint type-check format test verify tui episode llm-check dummy-data \
+	eval eval-generate eval-oracle eval-security eval-judge eval-deepeval eval-report eval-diff \
+	eval-runs eval-sql
 
 # Which agent this repo runs. The platform deliberately does not name one:
 # `agentic_commons/config.yaml` ships `overlays: []`, so the agent layer is
@@ -7,151 +8,139 @@
 # this line to run a different agent; change nothing in the platform.
 export AGENTIC_OVERLAYS := src/customer_support_agent/config/config.yaml
 
-# Colors for output
+PYTHON := ./venv/bin/python
+EVALS := $(PYTHON) -m agentic_commons.evals
+
+# Provider budget override for this invocation: `RPM=38 make eval`.
+# The configured default lives in resilience.rate_limit (config.yaml).
+ifdef RPM
+export RESILIENCE__RATE_LIMIT__BUCKETS__NVIDIA__MAX_REQUESTS := $(RPM)
+endif
+# Keep going past a broken business invariant: `EVAL_CONTINUE_ON_INVARIANT_FAILURE=1 make eval`.
+ifdef EVAL_CONTINUE_ON_INVARIANT_FAILURE
+export EVALS__GATE__STOP_ON_INVARIANT_FAILURE := false
+endif
+
+# Case selection and cache control for the eval targets.
+EVAL_SELECT := $(if $(FRESH),--fresh) $(if $(LIMIT),--limit $(LIMIT)) \
+	$(foreach c,$(CASE),--case $(c)) $(foreach t,$(TAG),--tag $(t))
+EVAL_RUN := $(if $(RUN),--run $(RUN)) $(if $(FRESH),--fresh)
+
 GREEN := \033[0;32m
 YELLOW := \033[0;33m
 BLUE := \033[0;34m
-NC := \033[0m # No Color
+NC := \033[0m
 
 help:
-	@echo "$(BLUE)Agentic Commons - Phase 0 Walking Skeleton$(NC)"
+	@echo "$(BLUE)Agentic Harness$(NC)"
 	@echo ""
-	@echo "$(GREEN)Setup & Environment:$(NC)"
-	@echo "  make install          Install dependencies (creates venv)"
-	@echo "  make clean            Remove venv, cache, and logs"
+	@echo "$(GREEN)Setup:$(NC)"
+	@echo "  make install          Create the venv and install the package with dev + eval extras"
+	@echo "  make clean            Remove venv, caches and logs"
 	@echo ""
-	@echo "$(GREEN)Code Quality:$(NC)"
-	@echo "  make lint             Run ruff linter"
-	@echo "  make type-check       Run mypy type checker"
-	@echo "  make format           Auto-format code with ruff"
-	@echo "  make check-all        Run lint + type-check + test (full verification)"
+	@echo "$(GREEN)Quality:$(NC)"
+	@echo "  make lint             ruff check"
+	@echo "  make type-check       mypy --strict"
+	@echo "  make format           ruff format + autofix"
+	@echo "  make test             pytest with coverage"
+	@echo "  make verify           All gates: lint, format, types, tests (80% coverage), imports"
 	@echo ""
-	@echo "$(GREEN)Testing:$(NC)"
-	@echo "  make test             Run pytest with coverage"
-	@echo "  make test-verbose     Run pytest with verbose output"
-	@echo "  make test-fast        Run pytest without coverage"
+	@echo "$(GREEN)Run:$(NC)"
+	@echo "  make tui              The operator console"
+	@echo "  make episode E=05     One episode (calls the live model)"
+	@echo "  make llm-check        Probe every hosted model endpoint (one tiny call each)"
 	@echo ""
-	@echo "$(GREEN)Running:$(NC)"
-	@echo "  make dummy-data       Generate dummy_data/*.sql and build dummy_data/agentic.db"
-	@echo "  make run              Run one demo query through the agent"
-	@echo "  make tui              Run the terminal UI (interactive)"
-	@echo "  make episode E=05     Run one episode"
-	@echo "  make episodes         Run every episode"
-	@echo "  make patterns         Test the design-pattern library"
-	@echo "  make llm-check        Verify the configured LLM endpoint is up and responsive"
+	@echo "$(GREEN)Data:$(NC)"
+	@echo "  make dummy-data       Rebuild the agent DB, reset stale memory (KEEP_MEMORY=1 skips), build the eval fixture"
 	@echo ""
-	@echo "$(GREEN)Utilities:$(NC)"
-	@echo "  make logs             Show recent log files"
-	@echo "  make venv-check       Check if venv is active"
+	@echo "$(GREEN)Evals$(NC) (order: generate → oracle → security → judge → deepeval; each writes a report):"
+	@echo "  make eval             The whole pipeline; stops after the oracle on a broken invariant"
+	@echo "  make eval-generate    Run the agent over the golden set (reuses unchanged transcripts)"
+	@echo "  make eval-oracle      Deterministic business invariants (no model calls)"
+	@echo "  make eval-security    Promptfoo attack suite"
+	@echo "  make eval-judge       LLM judge: rubric quality + hallucination"
+	@echo "  make eval-deepeval    DeepEval quality metrics"
+	@echo "  make eval-report      Rebuild the Markdown reports (RUN=<id>, default latest)"
+	@echo "  make eval-diff A=<run> B=<run>   Regression report between two runs"
+	@echo "  make eval-runs        List recent runs"
+	@echo "  make eval-sql         Query the eval store (SQL=\"select ...\" or interactive)"
 	@echo ""
+	@echo "  Options: RPM=<n>  FRESH=1  LIMIT=<n>  CASE=<id>  TAG=<tag>  RUN=<id>"
+	@echo "           EVAL_CONTINUE_ON_INVARIANT_FAILURE=1"
 
 install:
-	@echo "$(BLUE)Creating virtual environment...$(NC)"
 	python3 -m venv venv
-	@echo "$(BLUE)Installing dependencies...$(NC)"
 	./venv/bin/pip install -q --upgrade pip
-	./venv/bin/pip install -q -e .
-	@echo "$(GREEN)✓ Setup complete. Activate with: source venv/bin/activate$(NC)"
+	./venv/bin/pip install -q -e ".[dev,evals]"
+	@echo "$(GREEN)✓ Installed. Activate with: source venv/bin/activate$(NC)"
 
 clean:
-	@echo "$(BLUE)Cleaning up...$(NC)"
-	rm -rf venv
-	rm -rf .pytest_cache
-	rm -rf .coverage
-	rm -rf .mypy_cache
-	rm -rf dist build *.egg-info
+	rm -rf venv .pytest_cache .coverage .mypy_cache dist build *.egg-info
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete
 	rm -rf logs/*.log
-	@echo "$(GREEN)✓ Clean complete$(NC)"
 
 lint:
-	@echo "$(BLUE)Running ruff lint...$(NC)"
 	./venv/bin/ruff check src/ tests/ design_patterns/ episodes/
-	@echo "$(GREEN)✓ Lint passed$(NC)"
 
 type-check:
-	@echo "$(BLUE)Running mypy type check...$(NC)"
 	./venv/bin/mypy --strict src/ design_patterns/ episodes/
-	@echo "$(GREEN)✓ Type check passed$(NC)"
 
 format:
-	@echo "$(BLUE)Formatting code with ruff...$(NC)"
 	./venv/bin/ruff format src/ tests/ design_patterns/ episodes/
 	./venv/bin/ruff check src/ tests/ design_patterns/ episodes/ --fix
-	@echo "$(GREEN)✓ Format complete$(NC)"
 
 test:
-	@echo "$(BLUE)Running pytest with coverage...$(NC)"
 	./venv/bin/pytest tests/ --cov=src --cov-report=term-missing -q
-	@echo "$(GREEN)✓ Tests complete$(NC)"
-
-test-verbose:
-	@echo "$(BLUE)Running pytest (verbose)...$(NC)"
-	./venv/bin/pytest tests/ -v
-
-test-fast:
-	@echo "$(BLUE)Running pytest (no coverage)...$(NC)"
-	./venv/bin/pytest tests/ -q
-
-check-all: lint test
-	@echo "$(GREEN)✓ All checks passed$(NC)"
-
-run:
-	@echo "$(BLUE)Running customer support agent demo query...$(NC)"
-	./venv/bin/python -m customer_support_agent
-
-dummy-data:
-	@echo "$(BLUE)Generating dummy_data/seed_data.sql and building dummy_data/agentic.db...$(NC)"
-	./venv/bin/python -m customer_support_agent.dummy_data.generate_dummy_data
 
 tui:
-	@echo "$(BLUE)Launching terminal UI...$(NC)"
-	./venv/bin/python -m agentic_commons.tui
+	$(PYTHON) -m agentic_commons.tui
 
-llm-check:
-	@echo "$(BLUE)Checking LLM endpoint connectivity...$(NC)"
-	./venv/bin/python -m agentic_commons.llm.cli
-
-logs:
-	@echo "$(BLUE)Recent log files:$(NC)"
-	@ls -lh logs/*.log 2>/dev/null | tail -5 || echo "No logs yet"
-	@echo ""
-	@echo "$(BLUE)Sample log content (last 10 lines of latest):$(NC)"
-	@tail -10 logs/*.log 2>/dev/null | head -20 || echo "No logs to display"
-
-venv-check:
-	@if [ -z "$$VIRTUAL_ENV" ]; then \
-		echo "$(YELLOW)⚠ Virtual environment not active$(NC)"; \
-		echo "$(BLUE)Activate with: source venv/bin/activate$(NC)"; \
-	else \
-		echo "$(GREEN)✓ Virtual environment active: $$VIRTUAL_ENV$(NC)"; \
-		$$VIRTUAL_ENV/bin/python --version; \
-	fi
-
-# Run one episode: make episode E=05  (or E=48a)
+# Run one episode: make episode E=05  (or E=48a). Configured episodes call
+# the live model — this is a recording-session tool, not a check.
 episode:
 	@test -n "$(E)" || (echo "$(YELLOW)Usage: make episode E=05$(NC)" && exit 1)
-	./venv/bin/python -m episodes.e$(E)
+	$(PYTHON) -m episodes.e$(E)
 
-# Run every episode in order — the whole series, end to end.
-#
-# Configured episodes call the live model, so this is one run of the
-# series and not a loop to leave going: on a free-tier account it will
-# rate-limit. It is deliberately not part of `verify`, which is scripted
-# and offline. Use it before a recording session, not as a check.
-episodes:
-	@echo "$(YELLOW)⚠ Configured episodes call the live model — this costs quota.$(NC)"
-	@echo "$(BLUE)Running every episode...$(NC)"
-	@for dir in episodes/e*/; do \
-		name=$$(basename $$dir); \
-		./venv/bin/python -m episodes.$$name || exit 1; \
-	done
-	@echo "$(GREEN)✓ All episodes ran$(NC)"
+llm-check:
+	$(PYTHON) -m agentic_commons.llm.cli
 
-# Run one design pattern's tests.
-patterns:
-	./venv/bin/pytest tests/design_patterns -q
+dummy-data:
+	$(PYTHON) -m customer_support_agent.dummy_data.generate_dummy_data $(if $(KEEP_MEMORY),--keep-memory)
+
+# -- evals ---------------------------------------------------------------------
+# Every target writes its Markdown report under reports/evals/<run_id>/.
+
+eval:
+	$(EVALS) run $(EVAL_SELECT)
+
+eval-generate:
+	$(EVALS) generate $(EVAL_SELECT)
+
+eval-oracle:
+	$(EVALS) oracle $(EVAL_RUN)
+
+eval-security:
+	$(EVALS) security $(if $(FRESH),--fresh)
+
+eval-judge:
+	$(EVALS) judge $(EVAL_RUN)
+
+eval-deepeval:
+	$(EVALS) deepeval $(EVAL_RUN)
+
+eval-report:
+	$(EVALS) report $(if $(RUN),--run $(RUN))
+
+eval-diff:
+	@test -n "$(A)" -a -n "$(B)" || (echo "$(YELLOW)Usage: make eval-diff A=<run> B=<run>$(NC)" && exit 1)
+	$(EVALS) diff $(A) $(B)
+
+eval-runs:
+	$(EVALS) runs
+
+eval-sql:
+	$(EVALS) sql $(SQL)
 
 # Quick verification (for CI/CD).
 #
@@ -160,7 +149,6 @@ patterns:
 # version grepped the report for the string "80", which matched any line
 # containing those digits and therefore passed at any coverage at all.
 verify:
-	@echo "$(BLUE)Running verification...$(NC)"
 	@echo "$(BLUE)1/4 Ruff lint + format...$(NC)"
 	./venv/bin/ruff check src/ tests/ design_patterns/ episodes/ > /dev/null && \
 	./venv/bin/ruff format --check src/ tests/ design_patterns/ episodes/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
@@ -169,7 +157,6 @@ verify:
 	@echo "$(BLUE)3/4 Pytest with coverage gate (80%)...$(NC)"
 	./venv/bin/pytest tests/ --cov=src -q > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
 	@echo "$(BLUE)4/4 Composition root imports...$(NC)"
-	./venv/bin/python -c "from customer_support_agent.graph import build_agent; build_agent" \
+	$(PYTHON) -c "from customer_support_agent.graph import build_agent; build_agent" \
 	  && echo "$(GREEN)✓$(NC)" || exit 1
-	@echo ""
 	@echo "$(GREEN)✓ Verification complete - all gates green$(NC)"

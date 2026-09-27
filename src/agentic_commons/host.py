@@ -80,15 +80,24 @@ class AgentHost(Protocol):
         """Display names for the stage keys only this agent emits."""
         ...
 
-    def session_rows(self, agent: Any) -> list[tuple[str, str]]:
-        """Extra `(field, value)` rows for `/session`.
 
-        The platform knows a session has a model, a database and a set
-        of config layers. Whether it also has a verified customer, a
-        tenant or a case number is the agent's vocabulary, so the agent
-        supplies those rows and the platform simply prints them.
-        """
-        ...
+def load_spec(spec: str) -> Any:
+    """Load the object named by a `module.path:attribute` string.
+
+    Called when the attribute is callable (a class or factory), so a spec
+    can name either an instance or the thing that builds one. Raises
+    rather than falling back: a misspelled path must not quietly load
+    nothing.
+    """
+    module_path, separator, attribute = spec.partition(SPEC_SEPARATOR)
+    if not separator or not attribute:
+        raise ValueError(f"'{spec}' is not a 'module.path{SPEC_SEPARATOR}attribute' spec.")
+    module = importlib.import_module(module_path)
+    try:
+        factory = getattr(module, attribute)
+    except AttributeError as exc:
+        raise ValueError(f"'{module_path}' has no attribute '{attribute}'.") from exc
+    return factory() if callable(factory) else factory
 
 
 def resolve_host(spec: str) -> AgentHost:
@@ -98,20 +107,10 @@ def resolve_host(spec: str) -> AgentHost:
     started with no agent because a path was misspelled would look like
     a working console attached to nothing.
     """
-    module_path, separator, attribute = spec.partition(SPEC_SEPARATOR)
-    if not separator or not attribute:
-        raise ValueError(
-            f"Agent host '{spec}' is not a 'module.path{SPEC_SEPARATOR}attribute' spec."
-        )
-    module = importlib.import_module(module_path)
-    try:
-        factory = getattr(module, attribute)
-    except AttributeError as exc:
-        raise ValueError(f"'{module_path}' has no attribute '{attribute}'.") from exc
-    host = factory() if callable(factory) else factory
+    host = load_spec(spec)
     if not isinstance(host, AgentHost):
         raise TypeError(f"'{spec}' does not satisfy the AgentHost protocol.")
     return host
 
 
-__all__ = ["SPEC_SEPARATOR", "AgentHost", "resolve_host"]
+__all__ = ["SPEC_SEPARATOR", "AgentHost", "load_spec", "resolve_host"]

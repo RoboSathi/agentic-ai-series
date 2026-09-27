@@ -95,10 +95,7 @@ class StageLabelRegistry:
 
     def tool_label(self, tool: str) -> str:
         """Convert wire / qualified tool names to concise display names."""
-        bare = (
-            tool.rsplit(WIRE_SEPARATOR, maxsplit=1)[-1]
-            .rsplit(".", maxsplit=1)[-1]
-        )
+        bare = tool.rsplit(WIRE_SEPARATOR, maxsplit=1)[-1].rsplit(".", maxsplit=1)[-1]
         return bare.replace("_", " ")
 
     def known_stages(self) -> set[str]:

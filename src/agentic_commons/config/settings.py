@@ -16,7 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from agentic_commons.config.features import FeatureSet
 from agentic_commons.config.paths import resolve_path
-from agentic_commons.config.yaml_config import load_section
+from agentic_commons.config.yaml_config import deep_merge, load_section
 
 RedactionMode = Literal["mask", "tokenize", "remove"]
 GuardrailMode = Literal["reject", "auto_repair", "constrained"]
@@ -44,16 +44,11 @@ class YamlBackedSettings(BaseSettings):
     def _fill_from_yaml(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        return {**load_section(cls._yaml_section), **data}
+        # Deep, not shallow: `RESILIENCE__RETRY__MAX_ATTEMPTS=7` arrives as
+        # {"retry": {"max_attempts": "7"}}, and a shallow merge would drop
+        # every sibling of `max_attempts` that YAML supplied.
+        return deep_merge(load_section(cls._yaml_section), data)
 
-
-class ConfigSettings(YamlBackedSettings):
-    """Meta toggle for the config subsystem itself."""
-
-    _yaml_section = "config"
-    enabled: bool
-
-    model_config = SettingsConfigDict(env_prefix="CONFIG__")
 
 class AgentIdentitySettings(YamlBackedSettings):
     """Identity stamped onto shared platform observability records."""
@@ -73,7 +68,6 @@ class LoggingSettings(YamlBackedSettings):
     """File and console logging (LLD §2)."""
 
     _yaml_section = "logging"
-    enabled: bool
     level: str
     console_enabled: bool
     console_level: str
@@ -192,6 +186,13 @@ class IntentClassifierSettings(BaseModel):
         return resolve_path(self.local_model_dir)
 
 
+class LLMCheckSettings(BaseModel):
+    """The smallest real request `make llm-check` sends to each endpoint."""
+
+    prompt: str
+    max_tokens: int
+
+
 class LLMSettings(YamlBackedSettings):
     """LLM adapters — the only place a provider SDK is used (LLD §3)."""
 
@@ -206,6 +207,7 @@ class LLMSettings(YamlBackedSettings):
     embedding: EmbeddingSettings
     encoders: EncoderSettings
     intent_classifier: IntentClassifierSettings
+    check: LLMCheckSettings
 
     model_config = SettingsConfigDict(env_prefix="LLM__")
 
@@ -226,7 +228,6 @@ class PersistenceSettings(YamlBackedSettings):
     """SQLite access (LLD §4)."""
 
     _yaml_section = "persistence"
-    enabled: bool
     db_path: str
 
     model_config = SettingsConfigDict(env_prefix="PERSISTENCE__")
@@ -259,7 +260,7 @@ class DurabilitySettings(YamlBackedSettings):
     # the next node starts, so a crash loses at most the node in flight.
     mode: DurabilityMode
     retention_days: int
-    # How much of a run's query the registry keeps for `/threads`.
+    # How much of a run's query the run registry keeps for display.
     preview_chars: int
     encryption: CheckpointEncryptionSettings
 
@@ -711,7 +712,6 @@ class SecuritySettings(YamlBackedSettings):
     """RBAC, PII, prompt injection, moderation (LLD §12)."""
 
     _yaml_section = "security"
-    enabled: bool
     auth: AuthSettings
     pii: PiiSettings
     prompt_injection: PromptInjectionSettings
@@ -750,11 +750,38 @@ class DeadLetterQueueSettings(BaseModel):
     enabled: bool
 
 
+class RateLimitBucketSettings(BaseModel):
+    """One shared request budget, and the hosts that draw on it."""
+
+    max_requests: int
+    hosts: list[str]
+
+
+class RateLimitSettings(BaseModel):
+    """Sliding-window rate limiting for hosted model endpoints.
+
+    The window is kept in a SQLite file rather than in memory because the
+    budget belongs to the provider account, not to one process: the TUI, an
+    eval run and Promptfoo's provider processes all spend the same quota.
+    """
+
+    enabled: bool
+    store_path: str
+    window_seconds: float
+    max_wait_seconds: float
+    lock_timeout_seconds: float
+    default_retry_after_seconds: float
+    buckets: dict[str, RateLimitBucketSettings]
+
+    @property
+    def resolved_store_path(self) -> Path:
+        return resolve_path(self.store_path)
+
+
 class ResilienceSettings(YamlBackedSettings):
     """Resilience controls, including durable dead-letter quarantine."""
 
     _yaml_section = "resilience"
-    enabled: bool
     circuit_breaker: CircuitBreakerSettings
     retry: RetrySettings
     timeout: TimeoutSettings
@@ -762,6 +789,7 @@ class ResilienceSettings(YamlBackedSettings):
     idempotency: EnabledToggle
     saga: EnabledToggle
     dead_letter_queue: DeadLetterQueueSettings
+    rate_limit: RateLimitSettings
 
     model_config = SettingsConfigDict(env_prefix="RESILIENCE__")
 
@@ -785,10 +813,107 @@ class NliSettings(BaseModel):
 
 
 class JudgeSettings(BaseModel):
-    """Sampling parameters for the calibrated LLM judge tier (E11)."""
+    """The LLM judge: which model grades, and how it samples (E11).
 
+    The judge's model is its own setting, deliberately not the agent's: a
+    model grading its own output is the self-preference bias a judge
+    exists to avoid.
+    """
+
+    provider: ProviderName
+    model: str
     temperature: float
     max_tokens: int
+    # Cap on the evidence text a rubric judge is shown (0 = all of it).
+    max_evidence_chars: int
+
+
+class EvalStoreSettings(BaseModel):
+    """Where eval runs, transcripts and scores are kept (DuckDB)."""
+
+    db_path: str
+    # DuckDB admits one process per file; a reader that meets a running
+    # writer retries instead of failing.
+    lock_retry_attempts: int
+    lock_retry_delay_seconds: float
+
+    @property
+    def resolved_db_path(self) -> Path:
+        return resolve_path(self.db_path)
+
+
+class EvalGenerationSettings(BaseModel):
+    """How the agent is driven over a suite."""
+
+    max_concurrency: int
+
+
+class EvalFingerprintSettings(BaseModel):
+    """What counts as "the agent changed" — hashed from disk, not git."""
+
+    source_roots: list[str]
+    include_suffixes: list[str]
+    # Directory names skipped wherever they appear.
+    exclude_parts: list[str]
+    # Paths (relative to the repo) whose edits cannot change what the agent
+    # does — the eval machinery itself — so editing a report never forces
+    # the agent to be re-run.
+    exclude_paths: list[str]
+    # Config sections that cannot change agent behaviour.
+    exclude_config_sections: list[str]
+
+
+class EvalGateSettings(BaseModel):
+    """When a run fails, and when the pipeline stops."""
+
+    stop_on_invariant_failure: bool
+    soft_pass_rate: float
+
+
+class EvalReportingSettings(BaseModel):
+    """The Markdown reports every stage writes."""
+
+    output_dir: str
+    confidence_z: float
+    max_cases_listed: int
+    # Transcript metadata key holding the runtime hallucination guard's
+    # rate, compared against the judge's verdicts in the judge report.
+    runtime_guard_key: str
+    # Report file per stage (plus `summary` and `diff`), inside a run's folder.
+    files: dict[str, str]
+
+    @property
+    def resolved_output_dir(self) -> Path:
+        return resolve_path(self.output_dir)
+
+
+class EvalDeepEvalSettings(BaseModel):
+    """DeepEval, run as an optional quality stage through the harness's own client."""
+
+    # Reasons cost an extra model call per metric; off keeps the stage cheap.
+    include_reason: bool
+    telemetry_opt_out: bool
+
+
+class EvalPromptfooSettings(BaseModel):
+    """Promptfoo, run as a Node tool through npx — never a Python dependency."""
+
+    runner: list[str]
+    package: str
+    suite: str
+    max_concurrency: int
+    # How long one test may run in a Promptfoo Python worker. A multi-turn
+    # attack is several full agent turns, each behind the shared rate limit.
+    provider_timeout_ms: int
+    provider_scheme: str
+    output_dir: str
+    extra_args: list[str]
+    # Environment the Promptfoo process (and its Python workers) gets.
+    env: dict[str, str]
+
+    @property
+    def resolved_output_dir(self) -> Path:
+        return resolve_path(self.output_dir)
 
 
 class EvalsSettings(YamlBackedSettings):
@@ -810,6 +935,17 @@ class EvalsSettings(YamlBackedSettings):
     kappa_acceptable: float
     nli: NliSettings
     judge: JudgeSettings
+    # `module.path:attribute` of the running agent's EvalPlugin. Empty
+    # here: the platform names no agent.
+    plugin: str
+    suites: list[str]
+    store: EvalStoreSettings
+    generation: EvalGenerationSettings
+    fingerprint: EvalFingerprintSettings
+    gate: EvalGateSettings
+    reporting: EvalReportingSettings
+    deepeval: EvalDeepEvalSettings
+    promptfoo: EvalPromptfooSettings
 
     model_config = SettingsConfigDict(env_prefix="EVALS__")
 
@@ -890,7 +1026,6 @@ class AppConfig(BaseSettings):
 
     # Each nested model fills its required fields from config.yaml via
     # YamlBackedSettings; mypy can't see that, hence the ignores.
-    config: ConfigSettings = Field(default_factory=lambda: ConfigSettings())  # type: ignore[call-arg]
     agent: AgentIdentitySettings = Field(default_factory=lambda: AgentIdentitySettings())   # type: ignore[call-arg]
     logging: LoggingSettings = Field(default_factory=lambda: LoggingSettings())  # type: ignore[call-arg]
     llm: LLMSettings = Field(default_factory=lambda: LLMSettings())  # type: ignore[call-arg]

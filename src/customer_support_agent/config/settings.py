@@ -43,7 +43,6 @@ class IntentRouterSettings(BaseModel):
 
     confidence_threshold: float
     clarification_top_k: int
-    clarification_template: str
     deterministic_rejects: list[DeterministicRejectRule]
     model_label_mapping: dict[str, list[str]]
 
@@ -62,11 +61,50 @@ class FollowupSettings(BaseModel):
     reference_pattern: str
 
 
+class CsaEvalSettings(BaseModel):
+    """Where this agent's evals keep their dataset, fixture and graders' inputs."""
+
+    dataset_path: str
+    fixture_seed_path: str
+    # The fixture is built once into this template; each case runs on a copy.
+    fixture_db_path: str
+    workspace_dir: str
+    judge_rubric_path: str
+    quality_metrics_path: str
+    security_config_path: str
+    session_prefix: str
+    # Message roles the model was shown that a reply may be grounded on.
+    grounding_roles: list[str]
+    # Keep each case's database copy after the run, for debugging a failure.
+    keep_case_workspaces: bool
+    # How the oracle finds order references and money in a reply.
+    order_reference_pattern: str
+    money_pattern: str
+    # A reply sharing a run of this many words with the system instructions
+    # is treated as leaking them (the refund policy itself may be quoted).
+    prompt_leak_ngram: int
+
+    @property
+    def resolved_dataset_path(self) -> Path:
+        return resolve_path(self.dataset_path)
+
+    @property
+    def resolved_fixture_seed_path(self) -> Path:
+        return resolve_path(self.fixture_seed_path)
+
+    @property
+    def resolved_fixture_db_path(self) -> Path:
+        return resolve_path(self.fixture_db_path)
+
+    @property
+    def resolved_workspace_dir(self) -> Path:
+        return resolve_path(self.workspace_dir)
+
+
 class CustomerSupportAgentSettings(YamlBackedSettings):
     """The running product's own wiring values (LLD §21)."""
 
     _yaml_section = "customer_support_agent"
-    enabled: bool
     max_tool_iterations: int
     intents: list[IntentSettings]
     default_intent: str
@@ -86,12 +124,19 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     db_path: str
     # Who the console acts as when it approves or denies a queued refund.
     console_reviewer: str
+    evals: CsaEvalSettings
+    # What `make dummy-data` generates (counts, seed, catalogue, weights).
+    dummy_data_generator_path: str
 
     model_config = SettingsConfigDict(env_prefix="CUSTOMER_SUPPORT_AGENT__")
 
     @property
     def resolved_policy_path(self) -> Path:
         return resolve_path(self.policy_path)
+
+    @property
+    def resolved_dummy_data_generator_path(self) -> Path:
+        return resolve_path(self.dummy_data_generator_path)
 
     @property
     def resolved_db_path(self) -> Path:

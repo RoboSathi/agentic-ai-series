@@ -27,6 +27,9 @@ dependencies = [
     # Hosted encoders (NLI, cross-encoder reranking) speak plain HTTP
     # rather than the OpenAI protocol, so they need their own client.
     "httpx>=0.27",
+    # The OpenAI SDK's own HTTP stack. Declared directly because the rate
+    # limiter wraps its transport (agentic_commons/llm/http.py).
+    "httpx2>=2.0",
     # Vector search for semantic-memory RAG. Declared directly: it was
     # only present transitively, which is one upstream release from gone.
     "sqlite-vec>=0.1.9",
@@ -36,6 +39,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Offline eval tooling. Never imported on the agent's runtime path: the
+# eval pipeline loads it lazily, and only for `make eval-deepeval`.
+# (Promptfoo is a Node tool run through npx — not a Python dependency.)
+evals = [
+    "deepeval>=3.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
@@ -88,6 +97,11 @@ disallow_untyped_defs = true
 # sqlite-vec ships no type information; its surface here is two calls.
 [[tool.mypy.overrides]]
 module = ["sqlite_vec"]
+ignore_missing_imports = true
+
+# DeepEval is an optional extra (`.[evals]`), imported lazily by one adapter.
+[[tool.mypy.overrides]]
+module = ["deepeval", "deepeval.*"]
 ignore_missing_imports = true
 
 [tool.ruff]

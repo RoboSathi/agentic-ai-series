@@ -23,21 +23,6 @@ episode:
     # result. This is the pairing the episode's thesis rests on.
     - "sorry, I'm not sure that went through — please refund order 10461"
 
-resilience:
-  enabled: true
-  circuit_breaker:
-    enabled: true
-  retry:
-    enabled: true
-  timeout:
-    enabled: true
-  bulkhead:
-    enabled: true
-  idempotency:
-    enabled: true
-  saga:
-    enabled: true
-
 # Raised deliberately, and worth saying out loud: at the agent's own
 # $50 threshold every order in the demo data escalates to a human, and
 # the saga never runs. This episode is about what happens when the

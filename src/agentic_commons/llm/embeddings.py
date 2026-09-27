@@ -14,6 +14,7 @@ from openai import AsyncOpenAI
 
 from agentic_commons.config import get_settings
 from agentic_commons.config.settings import LLMSettings
+from agentic_commons.llm.http import create_sdk_http_client
 from agentic_commons.logging import get_logger
 from agentic_commons.resilience import external_api_error_fields
 
@@ -126,6 +127,7 @@ class NimEmbeddingClient:
             base_url=provider.base_url,
             api_key=self._settings.api_key_for("nim") or "not-needed",
             timeout=provider.timeout_seconds,
+            http_client=create_sdk_http_client(provider.timeout_seconds),
         )
 
     @property

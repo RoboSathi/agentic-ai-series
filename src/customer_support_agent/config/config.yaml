@@ -11,7 +11,7 @@ agent:
 features:
   basic_sanity: true
   prompt_injection: true
-  content_moderation: false
+  content_moderation: true
   pii: true
   intent_classification: true
   # On. An agent that states an order's delivery date and a refund's
@@ -82,13 +82,33 @@ evals:
   # This agent's own golden-task and production-shadow evals.
   additional_manifest_paths:
     - src/customer_support_agent/evals/eval_manifest.yaml
+  plugin: customer_support_agent.evals.plugin:CsaEvalPlugin
+  fingerprint:
+    source_roots: [src/agentic_commons, src/customer_support_agent]
+    # Lists replace wholesale, so the platform's exclusions are restated.
+    # The dataset is not here on purpose: it is hashed per case instead.
+    exclude_paths:
+      - src/agentic_commons/evals/store
+      - src/agentic_commons/evals/pipeline
+      - src/agentic_commons/evals/reporting
+      - src/agentic_commons/evals/graders
+      - src/agentic_commons/evals/adapters
+      - src/agentic_commons/evals/__main__.py
+      - src/agentic_commons/evals/cli.py
+      - src/agentic_commons/tui
+      - src/agentic_commons/commands
+      - src/customer_support_agent/console
+      - src/customer_support_agent/evals/dataset
+      - src/customer_support_agent/evals/oracle
+      - src/customer_support_agent/evals/security
+      - src/customer_support_agent/evals/judge_rubric.yaml
+      - src/customer_support_agent/evals/quality_metrics.yaml
 
 durability:
   # This agent's checkpoints: every turn it has run, node by node.
   db_path: src/customer_support_agent/dummy_data/checkpoints.db
 
 customer_support_agent:
-  enabled: true
   db_path: src/customer_support_agent/dummy_data/agentic.db
   max_tool_iterations: 5
   # Tool -> budget class. A tool absent from this map is not financially
@@ -172,7 +192,6 @@ customer_support_agent:
     # agent-level routing policy, not a calibrated probability guarantee.
     confidence_threshold: 0.75
     clarification_top_k: 2
-    clarification_template: Could you clarify whether you need help with {options}?
     deterministic_rejects:
     - rule_id: WEATHER_REQUEST
       pattern: '\b(?:weather|forecast|temperature|rain(?:ing)?|snow(?:ing)?)\b'
@@ -224,3 +243,21 @@ customer_support_agent:
   demo_user_code: 2HEDZTV
   policy_path: src/customer_support_agent/prompts/customer_policy.md
   console_reviewer: console_operator
+  dummy_data_generator_path: src/customer_support_agent/dummy_data/generator.yaml
+  # This agent's evals: the golden set, the fixture it runs against, and
+  # what its graders read. Run with `make eval` (see agentic_commons.evals).
+  evals:
+    dataset_path: src/customer_support_agent/evals/dataset/golden_cases.yaml
+    fixture_seed_path: src/customer_support_agent/evals/dataset/fixtures/eval_seed.sql
+    fixture_db_path: data/evals/csa_fixture.db
+    workspace_dir: data/evals/workspace
+    judge_rubric_path: src/customer_support_agent/evals/judge_rubric.yaml
+    quality_metrics_path: src/customer_support_agent/evals/quality_metrics.yaml
+    security_config_path: src/customer_support_agent/evals/security/promptfooconfig.yaml
+    session_prefix: eval
+    grounding_roles: [system, tool]
+    keep_case_workspaces: false
+    # A reply may only cite order ids and amounts the agent was shown.
+    order_reference_pattern: '\b\d{5}\b'
+    money_pattern: '\$\s?(\d[\d,]*(?:\.\d{1,2})?)'
+    prompt_leak_ngram: 8

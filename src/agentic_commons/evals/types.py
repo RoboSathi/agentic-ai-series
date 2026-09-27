@@ -64,6 +64,8 @@ class EvalManifestEntry(BaseModel):
     scorer: str
     regression_threshold: float
     level: PyramidLevel = "component"
+    # The eval suite that measures this entry, when a suite does.
+    suite: str | None = None
 
 
 class EvalCase(BaseModel):

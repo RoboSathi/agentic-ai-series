@@ -7,32 +7,15 @@ API dispatches identically without reimplementing the grammar.
 """
 
 from agentic_commons.commands.data import MemoryCommand
-from agentic_commons.commands.durability import (
-    CheckpointsCommand,
-    ResumeCommand,
-    ThreadsCommand,
-)
-from agentic_commons.commands.harness import (
-    CascadeCommand,
-    EvalCommand,
-    GatekeeperCommand,
-    HarnessCommand,
-    PatternsCommand,
-    ToolsCommand,
-)
+from agentic_commons.commands.evals import EvalCommand
+from agentic_commons.commands.harness import HarnessCommand
 from agentic_commons.commands.inspection import (
     AuditCommand,
     ConfigCommand,
-    ModelCommand,
-    PostmortemCommand,
-    SloCommand,
-    VersionsCommand,
 )
 from agentic_commons.commands.system import (
     ClearCommand,
     HelpCommand,
-    LogsCommand,
-    SessionCommand,
 )
 from agentic_commons.commands.types import Command, CommandError, CommandResult
 from agentic_commons.logging import get_logger
@@ -128,21 +111,8 @@ def _default_commands() -> list[Command]:
         HelpCommand(),
         ConfigCommand(),
         AuditCommand(),
-        SloCommand(),
-        ModelCommand(),
-        VersionsCommand(),
-        PostmortemCommand(),
         MemoryCommand(),
         EvalCommand(),
-        CascadeCommand(),
-        ToolsCommand(),
-        GatekeeperCommand(),
         HarnessCommand(),
-        PatternsCommand(),
-        SessionCommand(),
-        ThreadsCommand(),
-        ResumeCommand(),
-        CheckpointsCommand(),
-        LogsCommand(),
         ClearCommand(),
     ]

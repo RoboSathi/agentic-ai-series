@@ -62,7 +62,6 @@ agentic-harness-core/
 │       ├── review/        # the human side of escalation
 │       ├── graph/         # state, edges, builder, agent, nodes/
 │       ├── prompts/
-│       └── __main__.py    # `python -m customer_support_agent` — dev entry
 ├── episodes/
 │   └── e01 .. e48/        # each: app.py + episode-scoped README
 ├── design_patterns/

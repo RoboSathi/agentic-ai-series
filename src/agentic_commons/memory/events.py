@@ -1,7 +1,7 @@
 """Minimal event contract for asynchronous long-term-memory processing."""
 
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timezone
 from typing import Any, Protocol, runtime_checkable
 from uuid import uuid4
 
