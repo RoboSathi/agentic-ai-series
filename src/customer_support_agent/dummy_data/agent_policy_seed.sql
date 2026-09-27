@@ -20,7 +20,7 @@ DELETE FROM platform_agent_permissions WHERE agent_id = '__AGENT_ID__';
 INSERT INTO platform_agent_permissions (agent_id, permission) VALUES
 ('__AGENT_ID__', 'read_orders'),
 ('__AGENT_ID__', 'process_refund'),
-('__AGENT_ID__', 'queue_for_approval');
+('__AGENT_ID__', 'cancel_order');
 
 -- What this agent may spend, per class of action.
 --
@@ -29,10 +29,12 @@ INSERT INTO platform_agent_permissions (agent_id, permission) VALUES
 -- needs no change to the shared schema.
 --
 -- Amounts are integer cents (never REAL — see agentic_commons.money).
--- per_action 5000 ($50.00)  — above this one refund escalates to a human.
--- window     400000 ($4,000.00) over 24h — the structuring defence (E02): eighty
---            individually-permitted $50 refunds are not eighty permitted
---            actions, they are one unpermitted $4000 one.
+-- This row is the one place the refund limit lives. Nothing the model
+-- sees states it; `make refund-limit <amount>` changes it.
+-- per_action — above this one refund (or cancellation) escalates to a human.
+-- window     — the running total over window_hours: the structuring defence
+--              (E02). Many individually-permitted refunds are not many
+--              permitted actions; they are one unpermitted large one.
 DELETE FROM platform_agent_budgets WHERE agent_id = '__AGENT_ID__';
 
 INSERT INTO platform_agent_budgets (

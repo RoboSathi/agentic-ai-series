@@ -10,6 +10,7 @@ from typing import Any
 
 from agentic_commons.basic_sanity import BasicSanityRequest
 from agentic_commons.config import get_settings
+from customer_support_agent.basic_sanity import owned_order_id
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
@@ -111,20 +112,19 @@ class ScreeningNodes(NodeSupport):
         )
         fields = basic_sanity_fields(result)
 
+        # The order the customer named is now the one under discussion —
+        # passed or refused. "Refund order 10823" refused because it has
+        # shipped still makes 10823 the subject, and "cancel it" next turn
+        # means 10823, not whichever order last passed. Only an order proved
+        # to be theirs is recorded. Store only the identifier in working
+        # memory; order data itself must still come from an ownership-scoped
+        # repository/tool read on the path that needs it.
+        order_id = owned_order_id(result)
+        if order_id is not None:
+            self._note(state, ORDER_UNDER_DISCUSSION, f"order {order_id}", category="order")
+
         if result.passed:
             deferred = result.reason_code == "ORDER_REFERENCE_NOT_PRESENT"
-            order_id = result.facts.get("order_id") if isinstance(result.facts, dict) else None
-            if isinstance(order_id, int):
-                # This is the authoritative current order reference for the
-                # conversation. Store only the identifier in working memory;
-                # order data itself must still come from an ownership-scoped
-                # repository/tool read on the path that needs it.
-                self._note(
-                    state,
-                    ORDER_UNDER_DISCUSSION,
-                    f"order {order_id}",
-                    category="order",
-                )
             self._done(
                 "basic_sanity",
                 summary=(
@@ -138,7 +138,7 @@ class ScreeningNodes(NodeSupport):
                 **state.metadata,
                 "basic_sanity": result.model_dump(mode="json"),
             }
-            if isinstance(order_id, int):
+            if order_id is not None:
                 metadata[ORDER_UNDER_DISCUSSION] = order_id
             return {
                 "decisions": [
@@ -168,6 +168,7 @@ class ScreeningNodes(NodeSupport):
                 **state.metadata,
                 "basic_sanity": result.model_dump(mode="json"),
                 "halted": "basic_sanity",
+                **({ORDER_UNDER_DISCUSSION: order_id} if order_id is not None else {}),
             },
         }
 
@@ -273,7 +274,7 @@ class ScreeningNodes(NodeSupport):
         }
         if deterministic_injection:
             injection_fields["reason"] = assessment.reason
-            self._reporter_warning(
+            self._reporter_blocked(
                 "prompt_injection_check",
                 summary="Prompt injection blocked · deterministic match",
                 event_kind="security",
@@ -286,7 +287,7 @@ class ScreeningNodes(NodeSupport):
                 "latency_ms": jailbreak_check.get("latency_ms"),
                 "reason": jailbreak_check.get("reason", "Hosted jailbreak guard flagged the input"),
             })
-            self._reporter_warning(
+            self._reporter_blocked(
                 "prompt_injection_check",
                 summary="Prompt injection blocked · model detection",
                 event_kind="security",
@@ -360,7 +361,7 @@ class ScreeningNodes(NodeSupport):
         }
         if deterministic_content:
             moderation_fields["reason"] = moderation.reason
-            self._reporter_warning(
+            self._reporter_blocked(
                 "content_moderation",
                 summary="Content safety blocked · deterministic match",
                 event_kind="security",
@@ -373,7 +374,7 @@ class ScreeningNodes(NodeSupport):
                 "latency_ms": content_guard_check.get("latency_ms"),
                 "reason": content_guard_check.get("reason", "Hosted content-safety guard flagged the input"),
             })
-            self._reporter_warning(
+            self._reporter_blocked(
                 "content_moderation",
                 summary="Content safety blocked · model detection",
                 event_kind="security",

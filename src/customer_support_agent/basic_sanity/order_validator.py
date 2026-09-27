@@ -11,6 +11,7 @@ order that has already been fully refunded.
 
 import re
 from collections.abc import Iterable
+from typing import Any
 
 from agentic_commons.basic_sanity import (
     BasicSanityChecker,
@@ -21,9 +22,27 @@ from agentic_commons.basic_sanity import (
 from agentic_commons.logging import get_logger
 from agentic_commons.money import Money, money_or_none
 from customer_support_agent.config import get_agent_settings
+from customer_support_agent.domain.cancellation_policy import CancellationPolicy
+from customer_support_agent.domain.models import Order
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.domain.refund_policy import RefundPolicy
 from customer_support_agent.persistence.repositories import OrdersRepository
+
+# The finding that proves an order exists and belongs to this customer. A
+# request about that order may still be refused, but the order it names is
+# settled, and the conversation is now about it.
+ORDER_OWNED_CHECK = "order_exists_and_is_owned"
+_REFUND_OPERATION = "REQUEST_REFUND"
+# Asking where a refund stands is a read: ownership is checked, eligibility
+# is not — "when will I get my refund" must not be refused as a second request.
+REFUND_STATUS_OPERATION = "REFUND_STATUS"
+# The cancel operation, named as the intent router names it, and the tool
+# that performs it.
+CANCEL_OPERATION = "CANCEL_ORDER"
+_CANCEL_TOOL = "cancel_order"
+_CANCELLABLE_CHECK = "order_cancellable"
+# "cancel 10022": the compact form no configured phrase covers.
+_CANCEL_BY_ID = re.compile(r"\bcancel\s+(?:order\s*)?#?\s*\d{4,}\b", re.IGNORECASE)
 
 # Deliberately conservative: only treat a number as an order id when the
 # customer explicitly labels it as an order. Bare numbers are left to the
@@ -35,12 +54,13 @@ _ORDER_ID_PATTERNS = (
         r"\border(?:\s+(?:id|number))?\s*[#:]?\s*(?P<order_id>\d+)\b",
         re.IGNORECASE,
     ),
-    # Refund requests in the compact form customers naturally use: "refund 10891"
-    # or "refund order 10891". Treat long numeric tokens as order ids here;
-    # currency/amount wording is deliberately excluded so "refund $50" and
-    # "refund 50 dollars" still require the model to resolve the request.
+    # Refund and cancel requests in the compact form customers naturally use:
+    # "refund 10891", "cancel 10891", "refund order 10891". Treat long numeric
+    # tokens as order ids here; currency/amount wording is deliberately
+    # excluded so "refund $20" and "cancel 50 dollars" still require the
+    # model to resolve the request.
     re.compile(
-        r"\brefund\b(?:\s+(?:for|on))?(?:\s+order)?\s*[#:]?\s*"
+        r"\b(?:refund|cancel)\b(?:\s+(?:for|on))?(?:\s+order)?\s*[#:]?\s*"
         r"(?P<order_id>\d{4,})\b(?!\s*(?:dollars?|usd|\$))",
         re.IGNORECASE,
     ),
@@ -55,18 +75,16 @@ class OrderSanityCheck(BasicSanityChecker):
         orders: OrdersRepository,
         *,
         refund_policy: RefundPolicy | None = None,
+        cancellation_policy: CancellationPolicy | None = None,
         refund_markers: Iterable[str] | None = None,
     ) -> None:
         self._orders = orders
         self._refund_policy = refund_policy or RefundPolicy(orders)
-        self._refund_markers = tuple(
-            marker.casefold()
-            for marker in (
-                refund_markers
-                if refund_markers is not None
-                else _configured_refund_markers()
-            )
-            if marker.strip()
+        self._cancellation_policy = cancellation_policy or CancellationPolicy(orders)
+        self._cancel_markers = _markers(_configured_phrases(CANCEL_OPERATION))
+        self._status_markers = _markers(_configured_phrases(REFUND_STATUS_OPERATION))
+        self._refund_markers = _markers(
+            refund_markers if refund_markers is not None else _configured_phrases(_REFUND_OPERATION)
         )
         self._logger = get_logger("customer_support_agent")
 
@@ -166,7 +184,7 @@ class OrderSanityCheck(BasicSanityChecker):
                     message=f"I couldn't find order {order_id} on your account.",
                     findings=[
                         BasicSanityFinding(
-                            check="order_exists_and_is_owned",
+                            check=ORDER_OWNED_CHECK,
                             passed=False,
                             reason="The order does not exist for the authenticated customer.",
                             evidence={
@@ -196,7 +214,7 @@ class OrderSanityCheck(BasicSanityChecker):
         }
         findings = [
             BasicSanityFinding(
-                check="order_exists_and_is_owned",
+                check=ORDER_OWNED_CHECK,
                 passed=True,
                 reason="Order exists and belongs to the authenticated customer.",
                 evidence={
@@ -207,6 +225,9 @@ class OrderSanityCheck(BasicSanityChecker):
                 },
             )
         ]
+
+        if operation == CANCEL_OPERATION:
+            return self._check_cancellation(order, customer_id, request, findings, facts)
 
         if operation == "REQUEST_REFUND":
             requested_amount = _requested_amount(request.metadata)
@@ -350,18 +371,79 @@ class OrderSanityCheck(BasicSanityChecker):
                 return int(candidate)
         return None
 
+    def _check_cancellation(
+        self,
+        order: Order,
+        customer_id: int,
+        request: BasicSanityRequest,
+        findings: list[BasicSanityFinding],
+        facts: dict[str, Any],
+    ) -> BasicSanityResult:
+        """Whether this order can be cancelled — the same rules the Gatekeeper and the tool apply.
+
+        An order already cancelled, shipped or delivered is answered here,
+        from the record, before a model is asked to describe its state.
+        """
+        validation = self._cancellation_policy.validate(
+            order.order_id, customer_id, _requested_amount(request.metadata)
+        )
+        findings.append(
+            BasicSanityFinding(
+                check=_CANCELLABLE_CHECK,
+                passed=validation.allowed,
+                reason=validation.reason or "The order has not shipped and can be cancelled.",
+                evidence={
+                    "order_id": order.order_id,
+                    "order_status": order.order_status,
+                    "refund_status": order.refund_status,
+                },
+            )
+        )
+        if not validation.allowed:
+            return BasicSanityResult(
+                passed=False,
+                reason_code=validation.reason_code,
+                message=validation.reason,
+                findings=findings,
+                facts=facts,
+            )
+        return BasicSanityResult(
+            passed=True, reason_code="BASIC_SANITY_PASSED", findings=findings, facts=facts
+        )
+
     def _operation(self, query: str, metadata: dict[str, object] | None = None) -> str:
-        """Detect the refund operation from user wording or exact tool identity."""
+        """Detect the operation from user wording or exact tool identity.
+
+        Cancellation is tested first: "cancel my order and refund me" is a
+        cancellation, which refunds by itself, not a refund of a pending order.
+        """
         tool_action = (metadata or {}).get("tool_action", "")
         bare_action = str(tool_action).rsplit(".", maxsplit=1)[-1]
+        if bare_action == _CANCEL_TOOL:
+            return CANCEL_OPERATION
         if bare_action in {"process_refund", "queue_for_approval"}:
             return "REQUEST_REFUND"
         lowered = query.casefold()
+        if any(marker in lowered for marker in self._cancel_markers) or _CANCEL_BY_ID.search(query):
+            return CANCEL_OPERATION
+        if any(marker in lowered for marker in self._status_markers):
+            return REFUND_STATUS_OPERATION
         return (
             "REQUEST_REFUND"
             if any(marker in lowered for marker in self._refund_markers)
             else "unknown"
         )
+
+
+def owned_order_id(result: BasicSanityResult) -> int | None:
+    """The order this result proved is the customer's own, whether or not it passed.
+
+    None when nothing was proved: no reference, no customer, or an order
+    that is not theirs — which must never become the order under discussion.
+    """
+    owned = any(f.check == ORDER_OWNED_CHECK and f.passed for f in result.findings)
+    order_id = result.facts.get("order_id") if isinstance(result.facts, dict) else None
+    return order_id if owned and isinstance(order_id, int) else None
 
 
 def _requested_amount(metadata: dict[str, object] | None) -> Money | None:
@@ -372,9 +454,14 @@ def _requested_amount(metadata: dict[str, object] | None) -> Money | None:
     return money_or_none(params.get("amount"))
 
 
-def _configured_refund_markers() -> list[str]:
-    """Read refund phrases from the Customer Support agent's own config."""
+def _configured_phrases(intent_name: str) -> list[str]:
+    """An intent's phrases, from the Customer Support agent's own config."""
     for intent in get_agent_settings().intents:
-        if intent.name == "REQUEST_REFUND":
+        if intent.name == intent_name:
             return list(intent.phrases)
     return []
+
+
+def _markers(phrases: Iterable[str]) -> tuple[str, ...]:
+    """Phrases as case-folded substrings to look for, blanks dropped."""
+    return tuple(phrase.casefold() for phrase in phrases if phrase.strip())

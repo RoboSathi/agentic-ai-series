@@ -64,7 +64,7 @@ from agentic_commons.persistence import PlatformStore, SqliteConnectionPool, as_
 # Which store a category belongs in is a semantic decision (E13); these
 # are the two the pipeline can infer structurally, and everything else
 # falls through to semantic memory.
-_EVENT_CATEGORIES = frozenset({"event", "interaction", "observation"})
+_EVENT_CATEGORIES = frozenset({"event", "interaction", "observation", "session_summary"})
 _PROCEDURE_CATEGORIES = frozenset({"how_to", "recipe", "compiled_prompt"})
 
 # The role a legacy `process(..., provenance_kind=...)` call acts as.
@@ -581,7 +581,7 @@ class MemoryWritePipelineImpl:
         if self._rbac is None:
             self._checked = "— (no RBAC wired)"
             return None
-        permission = memory_permission(_store_type(fact.category), operation, fact.category)
+        permission = memory_permission(store_type(fact.category), operation, fact.category)
         decision = self._rbac.authorize(principal, permission)
         if decision.allowed:
             self._checked = f"{permission} ✓ via {decision.granted_by or 'grant'}"
@@ -608,7 +608,7 @@ class MemoryWritePipelineImpl:
         )
 
     def _commit(self, candidate: MemoryFact) -> WriteResult:
-        store = self._store_for(_store_type(candidate.category))
+        store = self._store_for(store_type(candidate.category))
         if store is None:
             return WriteResult(
                 route="discard",
@@ -650,7 +650,7 @@ class MemoryWritePipelineImpl:
             )
 
 
-def _store_type(category: str) -> MemoryType:
+def store_type(category: str) -> MemoryType:
     """Which CoALA store a category belongs in."""
     if category in _EVENT_CATEGORIES:
         return "episodic"

@@ -10,6 +10,7 @@ all from the same configured policy.
 """
 
 from agentic_commons.gatekeeper import SHERIDAN_LEVELS, AutomationLevelPolicy
+from customer_support_agent.admin.refund_limit import current_refund_limit
 from episodes._shared import EpisodeOutput, main
 
 AMOUNTS = [10.0, 49.0, 50.0, 51.0, 500.0]
@@ -51,7 +52,7 @@ async def run() -> EpisodeOutput:
             "artifact": {
                 "scale": "Sheridan & Verplank 1978, levels 1-10",
                 "levels by action": levels,
-                "escalation amount": "$50 for process_refund",
+                "escalation amount": f"{current_refund_limit()} for process_refund",
                 "decision": "per action, per amount — not a feature toggle",
             }
         }

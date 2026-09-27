@@ -37,7 +37,7 @@ class ReasoningNodes(NodeSupport):
             result = await self._call_model(request, state, f"{state.session_id}:{state.tool_rounds}")
         except Exception as exc:
             error_fields = external_api_error_fields(exc)
-            self._reporter_warning(
+            self._done_failed(
                 "resilience",
                 summary="LLM unavailable after retries",
                 event_kind="resilience",
@@ -133,7 +133,9 @@ class ReasoningNodes(NodeSupport):
         if succeeded:
             metadata["recoveries_succeeded"] = int(metadata.get("recoveries_succeeded", 0)) + 1
         if self._reporter is not None:
-            self._reporter_warning(
+            # Recovered is the pattern working; exhausted is a failure.
+            report = self._done if succeeded else self._done_failed
+            report(
                 "resilience",
                 summary=("Recovered after retry" if succeeded else "Retry budget was exhausted"),
                 event_kind="resilience",

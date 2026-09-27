@@ -42,8 +42,9 @@ features:
 
 # The Gatekeeper is always invoked (PRD G1), but at E01 it asks one
 # question only: is this amount above what anybody has agreed the agent
-# may move on its own? The agent's config sets that at $50, so a $4,000
-# refund needs a human — and `/harness off` is what takes that away.
+# may move on its own? The agent's database policy sets that limit
+# (`make refund-limit`), so a large refund needs a human — and
+# `/harness off` is what takes that away.
 #
 # Cumulative budgets across a window (E12) and surface classes (E12) are
 # each their own episode and are not switched on yet. The Sheridan levels

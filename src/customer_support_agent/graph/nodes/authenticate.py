@@ -25,6 +25,10 @@ from customer_support_agent.presentation.orders import (
 )
 from customer_support_agent.presentation.reporting import asks_for_the_list
 
+# The turn that verified a customer. It carries their code and nothing they
+# asserted, so long-term memory has no fact to take from it.
+JUST_VERIFIED = "just_verified"
+
 
 class AuthenticationNodes(NodeSupport):
     async def authenticate(self, state: AgentState) -> dict[str, Any]:
@@ -65,6 +69,13 @@ class AuthenticationNodes(NodeSupport):
             )
             return {}
         result = self._authenticator.authenticate(state.query)
+        # Whatever happens next, the code typed this turn is not kept: history,
+        # the episodic record and any later prompt read `model_query`.
+        masked = (
+            {"model_query": self._authenticator.mask_code(state.query)}
+            if result.code_attempted
+            else {}
+        )
         if not result.authenticated:
             if result.code_attempted:
                 self._reporter_blocked(
@@ -87,6 +98,7 @@ class AuthenticationNodes(NodeSupport):
                     },
                 )
             return {
+                **masked,
                 "response": result.message,
                 "decisions": [
                     *state.decisions,
@@ -117,6 +129,7 @@ class AuthenticationNodes(NodeSupport):
             category="identity",
         )
         return {
+            **masked,
             "response": result.message,
             "customer_id": result.customer.customer_id,
             "decisions": [*state.decisions, f"auth: verified #{result.customer.customer_id}"],
@@ -124,7 +137,7 @@ class AuthenticationNodes(NodeSupport):
             # Nothing further is needed this turn.
             "metadata": {
                 **state.metadata,
-                "halted": "just_verified",
+                "halted": JUST_VERIFIED,
                 # The greeting carries the customer's whole order list.
                 # On screen that saves them a round trip; replayed into
                 # every later prompt it is the single largest thing the

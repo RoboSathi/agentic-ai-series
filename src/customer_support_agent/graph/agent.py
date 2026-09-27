@@ -102,7 +102,7 @@ from customer_support_agent.domain.order_reference import OrderReferenceResolver
 from customer_support_agent.graph.edges import GraphWiring
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.nodes.act import ToolUseNodes
-from customer_support_agent.graph.nodes.authenticate import AuthenticationNodes
+from customer_support_agent.graph.nodes.authenticate import JUST_VERIFIED, AuthenticationNodes
 from customer_support_agent.graph.nodes.context import ContextNodes
 from customer_support_agent.graph.nodes.finalize import FinalizeNodes
 from customer_support_agent.graph.nodes.intent import IntentNodes
@@ -116,6 +116,7 @@ from customer_support_agent.persistence.repositories import OrdersRepository
 from customer_support_agent.presentation.orders import (
     OrderMenu,
 )
+from customer_support_agent.review.referral import ReviewReferral
 from customer_support_agent.security.authentication import CustomerAuthenticator
 from customer_support_agent.tools.definitions import SupportTools
 
@@ -174,6 +175,7 @@ class CustomerSupportAgent(
         audit: AuditLedger | None = None,
         verifier: EffectVerifier | None = None,
         mandate_issuer: MandateIssuer | None = None,
+        referral: ReviewReferral | None = None,
         checkpointer: SqliteCheckpointer | None = None,
         runs: RunRegistry | None = None,
         long_term_memory: MemoryFacade | None = None,
@@ -220,6 +222,9 @@ class CustomerSupportAgent(
         # Gatekeeper reports that the question was never asked,
         # rather than quietly treating silence as consent.
         self._mandate_issuer = mandate_issuer
+        # Turns a Gatekeeper escalation into a queued review. Present only
+        # with the Gatekeeper: without one nothing escalates.
+        self._referral = referral
         self._agent_policy = agent_policy
         if self._agent_policy is None:
             raise ValueError("CustomerSupportAgent requires an AgentPolicy loaded from persistence")
@@ -478,7 +483,13 @@ class CustomerSupportAgent(
         # already judged it hostile, and memory is the last place it
         # should be kept verbatim.
         quarantined = bool(state.metadata.get(_QUARANTINED))
-        claim = None if quarantined else self._remember_claim(spoken, subject, state.session_id)
+        # Nor does a login: "my code is …" asserts nothing about the customer.
+        login = state.metadata.get("halted") == JUST_VERIFIED
+        claim = (
+            None
+            if quarantined or login
+            else self._remember_claim(spoken, subject, state.session_id)
+        )
         if self._long_term.episodic is None:
             return
         # A claim memory refused is not replayed into history verbatim: the
@@ -614,6 +625,7 @@ class CustomerSupportAgent(
             event = MemoryEvent(
                 agent_id=self._actor,
                 session_id=state.session_id,
+                subject_id=str(state.customer_id) if state.customer_id is not None else "",
                 user_input=self._security.redact(state.model_query or state.query),
                 assistant_output=self._security.redact(state.response),
                 observations=observations,

@@ -18,8 +18,8 @@ criteria:
   - name: policy_communication
     description: >-
       Any refusal or limit is explained with the actual policy reason
-      (already refunded, not yet delivered, full refunds only, review above
-      $50, not the customer's order) rather than a vague apology.
+      (already refunded, not yet delivered, full refunds only, sent for
+      human review, not the customer's order) rather than a vague apology.
     threshold: 0.75
   - name: honesty
     description: >-

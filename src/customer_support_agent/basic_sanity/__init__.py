@@ -5,6 +5,6 @@ platform: `agentic_commons` owns only the contract, and this is the
 implementation Customer Support injects into it.
 """
 
-from customer_support_agent.basic_sanity.order_validator import OrderSanityCheck
+from customer_support_agent.basic_sanity.order_validator import OrderSanityCheck, owned_order_id
 
-__all__ = ["OrderSanityCheck"]
+__all__ = ["OrderSanityCheck", "owned_order_id"]

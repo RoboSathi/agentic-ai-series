@@ -1,4 +1,4 @@
-"""Repository-local Hugging Face sequence-classification models.
+"""Repository-local Hugging Face models.
 
 Every local encoder the harness runs — the intent classifier, the NLI
 cross-encoder — has the same lifecycle: load from a folder inside the
@@ -32,11 +32,15 @@ _ARTIFACT_PATTERNS = [
     "special_tokens_map.json",
     "spm.model",
     "vocab.txt",
+    "vocab.json",
     "merges.txt",
+    "generation_config.json",
     "added_tokens.json",
 ]
 # Tokenizer files, any one of which is enough to rebuild the tokenizer.
-_TOKENIZER_FILES = ("tokenizer.json", "vocab.txt", "spm.model")
+_TOKENIZER_FILES = ("tokenizer.json", "vocab.txt", "vocab.json", "spm.model")
+# The `transformers` auto-class a checkpoint loads through, by default.
+_CLASSIFIER = "AutoModelForSequenceClassification"
 # Import name → pip package name, for a missing-dependency message.
 _RUNTIME_DEPENDENCIES = (
     ("torch", "torch"),
@@ -65,7 +69,12 @@ class LocalSequenceClassifier:
         local_dir: Path,
         download_if_missing: bool,
         purpose: str,
+        auto_class: str = _CLASSIFIER,
     ) -> None:
+        # Which `transformers` auto-class opens the checkpoint: a classifier
+        # for the intent and NLI encoders, a seq2seq model for a summarizer.
+        # The lifecycle — local folder, one download, resident — is the same.
+        self._auto_class = auto_class
         self._model_name = model_name
         self._local_dir = local_dir
         self._download_if_missing = download_if_missing
@@ -108,7 +117,7 @@ class LocalSequenceClassifier:
     def _load_or_download(self) -> LoadedModel:
         _preflight_dependencies(self._purpose)
         try:
-            loaded = _load_from(self._local_dir)
+            loaded = _load_from(self._local_dir, self._auto_class)
             self._logger.info(f"{self._purpose} loaded from local cache", **self._where())
             return loaded
         except LocalModelArtifactUnavailableError as missing:
@@ -142,13 +151,13 @@ class LocalSequenceClassifier:
                 local_dir=str(staging),
                 allow_patterns=_ARTIFACT_PATTERNS,
             )
-            _load_from(staging)
+            _load_from(staging, self._auto_class)
             if self._local_dir.exists():
                 shutil.rmtree(self._local_dir)
             staging.rename(self._local_dir)
             # Re-open from the final path, so the resident model is backed by
             # exactly the artifact the next start will reuse.
-            return _load_from(self._local_dir)
+            return _load_from(self._local_dir, self._auto_class)
         except Exception:
             shutil.rmtree(staging, ignore_errors=True)
             raise
@@ -172,14 +181,16 @@ def _preflight_dependencies(purpose: str) -> None:
         )
 
 
-def _load_from(model_dir: Path) -> LoadedModel:
+def _load_from(model_dir: Path, auto_class: str = _CLASSIFIER) -> LoadedModel:
     """Tokenizer, model and torch from one folder, local files only."""
     import torch
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    import transformers
+    from transformers import AutoTokenizer
 
     _require_artifact(model_dir)
     tokenizer = AutoTokenizer.from_pretrained(str(model_dir), local_files_only=True)
-    model = AutoModelForSequenceClassification.from_pretrained(str(model_dir), local_files_only=True)
+    model_class = getattr(transformers, auto_class)
+    model = model_class.from_pretrained(str(model_dir), local_files_only=True)
     model.eval()
     return tokenizer, model, torch
 

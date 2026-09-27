@@ -52,6 +52,7 @@ class CustomerAuthenticator:
         self._orders = orders
         self._length = settings.user_code_length
         self._alphabet = settings.user_code_alphabet
+        self._placeholder = settings.user_code_placeholder
         # A code is a run of exactly the configured length drawn from the
         # configured alphabet, containing at least one digit. Anchored on
         # word boundaries so it is found inside a sentence ("my code is
@@ -85,6 +86,15 @@ class CustomerAuthenticator:
         """The candidate code in a message, if one is present."""
         match = self._pattern.search(message.upper())
         return match.group(0) if match else None
+
+    def mask_code(self, message: str) -> str:
+        """The message with any typed code replaced, for everything that keeps it.
+
+        A code is a credential. It is read once, to authenticate; after
+        that the history, the episodic record and the next prompt need
+        only know that one was given.
+        """
+        return self._pattern.sub(self._placeholder, message)
 
     @logged("customer_support_agent")
     def authenticate(self, message: str) -> AuthResult:

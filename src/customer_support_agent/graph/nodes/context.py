@@ -32,6 +32,11 @@ from customer_support_agent.graph.state import AgentState
 # Recalled semantic facts, by the source prefix `MemoryRecallContextSource` gives them.
 _SEMANTIC_SOURCE = f"{MEMORY_SOURCE_PREFIX}semantic:"
 _VERIFIED = "verified_system_of_record"
+# Retrieval noise the health check removes as a matter of course. Filtering
+# it is the pipeline working, so it reports green rather than as a warning.
+_ROUTINE_MODES = frozenset({"distraction"})
+# `ContextFinding.action` for a finding nothing was done about.
+_NOT_ACTED_ON = "flagged"
 
 class ContextNodes(NodeSupport):
     def _working_memory_fields(self, state: AgentState) -> dict[str, Any]:
@@ -132,7 +137,7 @@ class ContextNodes(NodeSupport):
                 f"{f.mode} · {f.source} · {f.rule}: {f.detail} → {f.action}" for f in findings
             ] or None,
         }
-        if modes:
+        if modes and not _routine(findings):
             self._reporter_warning(
                 "context_assembly",
                 summary=f"Context health: {', '.join(modes)} — {_acted(findings)}",
@@ -142,7 +147,11 @@ class ContextNodes(NodeSupport):
         else:
             self._done(
                 "context_assembly",
-                summary="Context window assembled",
+                summary=(
+                    f"Context window assembled · {len(findings)} off-task chunk(s) filtered"
+                    if findings
+                    else "Context window assembled"
+                ),
                 event_kind="context",
                 fields=context_fields,
             )
@@ -190,6 +199,19 @@ def _verified_memory(chunk: Chunk) -> bool:
 
 def _without_label(content: str) -> str:
     return "\n".join(line for line in content.splitlines() if not is_provenance_header(line))
+
+
+def _routine(findings: list[ContextFinding]) -> bool:
+    """Whether every finding is ordinary retrieval noise that was already removed.
+
+    Retrieval over-fetches on purpose and the health check trims what is off
+    the task — that is the pipeline working, not a fault. Poisoning, a clash
+    between sources, rot, or anything left in the window still warrants a
+    warning.
+    """
+    return all(
+        finding.mode in _ROUTINE_MODES and finding.action != _NOT_ACTED_ON for finding in findings
+    )
 
 
 def _acted(findings: list[ContextFinding]) -> str:

@@ -63,6 +63,9 @@ CREATE TABLE IF NOT EXISTS hitl_queue (
     order_id INTEGER NOT NULL REFERENCES orders(order_id),
     user_id INTEGER NOT NULL REFERENCES users(user_id),
     requested_amount_cents INTEGER NOT NULL,
+    -- What approval does: 'refund', or 'cancel_and_refund' for an order
+    -- that has not shipped (see domain.models.ReviewAction).
+    action TEXT NOT NULL DEFAULT 'refund',
     status TEXT NOT NULL,
     created_at TEXT NOT NULL
 );

@@ -38,12 +38,14 @@ from agentic_commons.durability import (
     model_types,
 )
 from agentic_commons.evals import NollmScoringCascadeImpl, create_scoring_cascade
+from agentic_commons.evals.entailment import create_entailment_model
 from agentic_commons.executor import ToolExecutorImpl
 from agentic_commons.gatekeeper import Gatekeeper, GatekeeperImpl
 from agentic_commons.gatekeeper.ledger import CumulativeLedger
 from agentic_commons.hallucination_protection import DetectionLadder
 from agentic_commons.llm.client import LLMClient, create_llm_client
 from agentic_commons.llm.encoders import create_reranker
+from agentic_commons.llm.local_summarizer import LocalDialogueSummarizer
 from agentic_commons.memory import (
     DreamInbox,
     EpisodicStore,
@@ -51,6 +53,7 @@ from agentic_commons.memory import (
     SemanticStore,
     WorkingMemoryStore,
 )
+from agentic_commons.memory.consolidation import ConsolidationService, SessionSummarizer
 from agentic_commons.memory.context_source import MemoryRecallContextSource
 from agentic_commons.memory.semantic.rag import (
     KnowledgeBase,
@@ -97,8 +100,10 @@ from customer_support_agent.persistence.repositories import (
     RefundLedgerRepository,
     UsersRepository,
 )
+from customer_support_agent.resilience.cancellation_saga import CancellationSaga
 from customer_support_agent.resilience.refund_saga import RefundSaga
 from customer_support_agent.review.queue import ReviewQueueService
+from customer_support_agent.review.referral import ReviewReferral
 from customer_support_agent.security.authentication import CustomerAuthenticator
 from customer_support_agent.tools.definitions import CustomerSupportToolHandler, SupportTools
 from customer_support_agent.verification import RefundEffectSource
@@ -309,7 +314,18 @@ def build_agent(
         refund_policy=refund_policy,
         saga=CompensatingSaga(),
     )
-    tools = SupportTools(orders, hitl, refunds, saga, refund_policy=refund_policy)
+    cancellation = CancellationSaga(
+        orders, saga, idempotency=idempotency, saga=CompensatingSaga()
+    )
+    tools = SupportTools(
+        orders,
+        hitl,
+        refunds,
+        saga,
+        refund_policy=refund_policy,
+        cancellation=cancellation,
+        list_limit=agent_settings.list_orders_max_rows,
+    )
 
     registry = NamespacedToolRegistry()
     registry.register_all(tools.definitions())
@@ -420,6 +436,8 @@ def build_agent(
     return CustomerSupportAgent(
         llm=llm or create_llm_client(),
         gatekeeper=governed,
+        # Only a Gatekeeper escalates, so only a governed agent refers.
+        referral=ReviewReferral(tools) if governed is not None else None,
         audit=ledger,
         features=features,
         registry=registry,
@@ -557,20 +575,65 @@ def build_review_service(
     observability_store = (
         DuckDbObservabilityStore() if get_settings().audit.enabled else None
     )
+    idempotency = SqliteIdempotencyGuard(platform_store)
+    saga = RefundSaga(orders, refunds, idempotency=idempotency, saga=CompensatingSaga())
     return ReviewQueueService(
         queue=HitlQueueRepository(connection),
         orders=orders,
-        saga=RefundSaga(
-            orders,
-            refunds,
-            idempotency=SqliteIdempotencyGuard(platform_store),
-            saga=CompensatingSaga(),
+        saga=saga,
+        cancellation=CancellationSaga(
+            orders, saga, idempotency=idempotency, saga=CompensatingSaga()
         ),
         audit=audit
         or create_audit_ledger(
             store=observability_store,
             agent_id=get_settings().agent.id,
         ),
+    )
+
+
+def build_dream_service(
+    pool: SqliteConnectionPool | None = None, audit: AuditLedger | None = None
+) -> ConsolidationService:
+    """The memory dream (`make dream`, `/dream`), wired to this agent's stores.
+
+    Writes go through the same governed facade the agent uses — redacted,
+    authorized by the agent's persisted policy, audited. Audited to the
+    agent's own database by default: the DuckDB store is held open by a
+    running console, and a dream must not fail because the TUI is up.
+    """
+    settings = get_settings()
+    connection = pool or SqliteConnectionPool(get_agent_settings().resolved_db_path)
+    platform_store = SqlitePlatformStore(connection, agent_id=settings.agent.id)
+    episodic = EpisodicStore()
+    memory = long_term_memory(
+        platform_store,
+        semantic=True,
+        episodic=True,
+        redactor=PIIFilterImpl(),
+        policy=AgentPolicyRepository(platform_store).get(),
+        audit=audit or create_audit_ledger(platform_store, agent_id=settings.agent.id),
+        relevance=create_scoring_cascade(),
+        reporter=None,
+        episodic_store=episodic,
+    )
+    assert memory is not None
+    dream = settings.memory.dream
+    summarizer = SessionSummarizer(
+        entailment=create_entailment_model(),
+        threshold=settings.hallucination_protection.nli_entailment_threshold,
+        outcome_chars=dream.outcome_chars,
+        summarizer=LocalDialogueSummarizer() if dream.summarize_intent else None,
+        lookup_tools=dream.lookup_tools,
+        forbidden_words=dream.forbidden_words,
+        min_word_ratio=dream.min_word_ratio,
+    )
+    return ConsolidationService(
+        inbox=DreamInbox(platform_store),
+        memory=memory,
+        episodic=episodic,
+        summarizer=summarizer,
+        settings=dream,
     )
 
 

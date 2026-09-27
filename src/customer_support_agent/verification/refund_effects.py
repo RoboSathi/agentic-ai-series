@@ -22,6 +22,7 @@ from customer_support_agent.persistence import (
 # The two actions that change something, and what each leaves behind.
 PROCESS_REFUND = "process_refund"
 QUEUE_FOR_APPROVAL = "queue_for_approval"
+CANCEL_ORDER = "cancel_order"
 
 
 class RefundEffectSource:
@@ -61,6 +62,18 @@ class RefundEffectSource:
                     "settled_cents": int(result.data.get("amount_cents", 0)),
                 },
             )
+        if action == CANCEL_ORDER:
+            # Stopped *and* paid back: a cancelled order with nothing in the
+            # ledger is a customer who lost both the goods and the money.
+            return IntendedEffect(
+                action=action,
+                target=f"order:{order_id}",
+                expected={
+                    "order_status": "cancelled",
+                    "refund_status": "completed",
+                    "settled_cents": int(result.data.get("amount_cents", 0)),
+                },
+            )
         if action == QUEUE_FOR_APPROVAL:
             return IntendedEffect(
                 action=action,
@@ -76,6 +89,7 @@ class RefundEffectSource:
         if order is None:
             return {}
         return {
+            "order_status": order.order_status,
             "refund_status": order.refund_status,
             "settled_cents": self._refunds.settled_for_order(order_id).cents,
             "review_pending": self._hitl.pending_for_order(order_id) is not None,

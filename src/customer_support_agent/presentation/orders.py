@@ -91,6 +91,22 @@ def render_order_list(orders: list[Order]) -> str:
     return "\n".join([f"Your {len(orders)} orders:", "", *_menu_lines(orders)])
 
 
+def describe_orders(orders: list[Order]) -> str:
+    """One plain sentence per order, as a tool states what it read.
+
+    The menu table is for eyes; this is for a reply to be checked against.
+    A column-padded row is a poor premise for the grounding check, which
+    reads one line at a time and needs each to say what it means.
+    """
+    if not orders:
+        return render_order_list(orders)
+    return "\n".join(
+        f"Order {order.order_id}, placed {order.timestamp[:10]}: {order.description}, "
+        f"{order.order_status}, refund {order.refund_status}, total {order.amount}"
+        for order in orders
+    )
+
+
 def summarise_verification(name: str, order_count: int) -> str:
     """The verification greeting as working memory should keep it."""
     return f"Verified {name} and listed their {order_count} orders."

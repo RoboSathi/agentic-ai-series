@@ -36,6 +36,7 @@ from agentic_commons.hallucination_protection import (
     OBSERVATION_SEQUENCE,
     DetectionLadder,
     GroundingReasoningDiagnoser,
+    split_sentences,
 )
 from agentic_commons.llm.client import LLMClient
 from agentic_commons.llm.types import CompletionRequest, CompletionResult, Message
@@ -75,8 +76,19 @@ from customer_support_agent.presentation.orders import (
 from customer_support_agent.presentation.reporting import llm_request_fields, llm_response_fields
 from customer_support_agent.prompts.policy import policy_text
 from customer_support_agent.prompts.system_prompt import build_system_prompt
+from customer_support_agent.review.referral import ReviewReferral
 from customer_support_agent.security.authentication import CustomerAuthenticator
 from customer_support_agent.tools.definitions import SupportTools
+
+# How a tool call ended, as working memory records it and grounding reads
+# it. Only a completed call shows its effect happened; a referred call
+# shows a person will decide, which the referral really did make true;
+# anything else shows only that the call was refused.
+TOOL_COMPLETED = "completed"
+TOOL_REFERRED = "referred"
+TOOL_BLOCKED = "blocked"
+# The outcomes whose recorded result is itself the evidence.
+_GROUNDED_AS_STATED = frozenset({TOOL_COMPLETED, TOOL_REFERRED})
 
 
 class NodeSupport:
@@ -105,6 +117,7 @@ class NodeSupport:
     _grounding: DetectionLadder | None
     _verifier: EffectVerifier | None
     _mandate_issuer: MandateIssuer | None
+    _referral: ReviewReferral | None
     _agent_policy: AgentPolicy
     _features: FeatureSet
     _intents: CustomerSupportIntentRouter
@@ -266,9 +279,15 @@ class NodeSupport:
         are rendered as *not executed*, with the amount that was asked
         for, so they ground the refusal and nothing else — a claim that
         money moved still needs a settled state from a successful call.
+
+        A call the harness referred for review is grounded on what the
+        referral did — queued it, and left the refund pending — not as a
+        refusal, which NLI reads as contradicting "your request is in".
         """
         return [
-            str(item.get("result", "")) if item.get("successful") is True else _not_executed(item)
+            str(item.get("result", ""))
+            if item.get("outcome") in _GROUNDED_AS_STATED
+            else _not_executed(item)
             for item in state.working_memory.current_turn
             if isinstance(item, dict) and item.get("kind") == "action"
         ]
@@ -283,10 +302,21 @@ class NodeSupport:
         """
         # In the order they happened: a read taken before a refund was queued
         # is superseded by the queueing, and the checker needs to know which
-        # came last to let it.
+        # came last to let it. A multi-line result (a list of orders) is one
+        # chunk per line: the checker compares a claim against one premise at
+        # a time, and a whole table is a premise NLI cannot read.
+        #
+        # And one chunk per sentence, for the same reason: "Order 10693 has
+        # been cancelled. Order 10693 is already awaiting human review. …"
+        # read as *neutral* on "your order has been cancelled", and an earlier
+        # read of the still-pending order was left to contradict it. A refusal
+        # stays whole, so its marker is never parted from what was refused.
         tools = [
-            Chunk(content=text, kind="tool_result", metadata={OBSERVATION_SEQUENCE: index})
+            Chunk(content=fact, kind="tool_result", metadata={OBSERVATION_SEQUENCE: index})
             for index, text in enumerate(self._authoritative_observations(state))
+            for line in text.splitlines()
+            if line.strip()
+            for fact in _facts(line.strip())
         ]
         # What the customer said, as the model saw it. A reply may echo it
         # ("I can't issue a $1 refund") but it proves nothing, so its tier
@@ -333,9 +363,9 @@ class NodeSupport:
         arguments: Any,
         result: str,
         *,
-        successful: bool,
+        outcome: str,
     ) -> None:
-        """Record one tool action in current-turn working memory."""
+        """Record one tool action, and how it ended, in current-turn working memory."""
         if isinstance(arguments, str):
             try:
                 import json
@@ -350,7 +380,7 @@ class NodeSupport:
                 "arguments": arguments,
                 "result": result,
                 "source": name,
-                "successful": successful,
+                "outcome": outcome,
             }
         )
 
@@ -667,6 +697,13 @@ def _knowledge_evidence() -> tuple[Chunk, ...]:
         for path in sorted(rag.resolved_corpus_dir.glob(rag.corpus_glob))
         for index, section in enumerate(markdown_sections(path.read_text(encoding="utf-8")))
     )
+
+
+def _facts(line: str) -> list[str]:
+    """One observation line as the single facts NLI can read, one premise each."""
+    if line.startswith(NOT_EXECUTED_MARKER):
+        return [line]
+    return [sentence for sentence in split_sentences(line) if sentence.strip()]
 
 
 def _not_executed(action: dict[str, Any]) -> str:

@@ -106,6 +106,8 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
 
     _yaml_section = "customer_support_agent"
     max_tool_iterations: int
+    # The most orders one `list_orders` call returns, newest first.
+    list_orders_max_rows: int
     intents: list[IntentSettings]
     default_intent: str
     # Which tool is charged against which budget class. The platform stores
@@ -119,6 +121,7 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     deliberation_markers: list[str]
     user_code_length: int
     user_code_alphabet: str
+    user_code_placeholder: str
     demo_user_code: str
     policy_path: str
     db_path: str

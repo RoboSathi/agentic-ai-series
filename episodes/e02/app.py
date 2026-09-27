@@ -4,8 +4,8 @@ An agent can *attempt* anything its tools allow — that is agency. What it
 is *permitted* to do is authority, and the two are set by different
 people at different times.
 
-The demonstration is the structuring attack. Eighty refunds of $50 are
-eighty individually-permitted actions and one $4,000 loss. Every
+The demonstration is the structuring attack. Eighty small refunds are
+eighty individually-permitted actions and one large loss. Every
 per-call check passes; the sequence is the problem, and a checker that
 sees one call at a time cannot see it by construction.
 """

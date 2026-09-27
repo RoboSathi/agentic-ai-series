@@ -10,6 +10,8 @@ attempt is the bonus, and the person is told the path either way.
 """
 
 import base64
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -28,6 +30,8 @@ class ClipboardService(Protocol):
 
     def copy(self, text: str) -> str: ...
 
+    def copy_text(self, text: str) -> bool: ...
+
 
 class Osc52ClipboardService:
     """Writes an export file, and additionally tries the terminal clipboard."""
@@ -35,6 +39,7 @@ class Osc52ClipboardService:
     def __init__(self, export_dir: Path | None = None) -> None:
         settings = get_settings()
         self._method = settings.tui.copy_method
+        self._commands = settings.tui.system_clipboard_commands
         self._export_dir = export_dir or settings.logging.resolved_dir
         self._logger = get_logger("tui")
 
@@ -44,6 +49,31 @@ class Osc52ClipboardService:
         if self._method == "osc52":
             self._to_terminal(text)
         return str(path)
+
+    def copy_text(self, text: str) -> bool:
+        """Put a selection on the system clipboard; no export file.
+
+        A mouse selection is small and deliberate, so a file per drag would
+        only litter the logs. The system command is what makes ⌘V work in
+        terminals that ignore OSC 52; OSC 52 is still sent for the ones
+        (and the SSH sessions) where only the terminal can reach a clipboard.
+        """
+        if self._method == "osc52":
+            self._to_terminal(text)
+        return self._to_system(text)
+
+    def _to_system(self, text: str) -> bool:
+        """The first installed clipboard command, fed the text on stdin."""
+        for command in self._commands:
+            if not command or shutil.which(command[0]) is None:
+                continue
+            try:
+                subprocess.run(command, input=text.encode("utf-8"), check=True)
+            except (OSError, subprocess.CalledProcessError) as exc:
+                self._logger.debug("Clipboard command failed", command=command[0], error=str(exc))
+                continue
+            return True
+        return False
 
     def _export(self, text: str) -> Path:
         """Always write a file — the copy that cannot silently fail."""

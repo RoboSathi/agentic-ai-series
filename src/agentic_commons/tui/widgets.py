@@ -211,6 +211,7 @@ _CLAIM_MARKS = {
 }
 # The NLI result each verdict is decided by, and its display name.
 _DECIDING_LABEL = {"supported": "entailment", "refuted": "contradiction"}
+_REFUTED = "refuted"
 _NLI_NAMES = {"unknown": "neutral"}
 # Policy passages are markdown; emphasis markers are noise in a one-line excerpt.
 _MARKDOWN_BOLD = "**"
@@ -415,14 +416,10 @@ class StageEventWidget(Collapsible):
         title = self._build_title()
         body = self._build_body()
 
-        partial_hallucination = (
-            event.stage in {"hallucination_check", "hallucination_repair"}
-            and str(event.fields.get("hallucination_scope") or "").lower() == "partial"
-            and event.status == "blocked"
-        )
+        # One colour per outcome: a blocked reply is red whether one claim
+        # failed or all of them did. Painting a partial block yellow made
+        # a refused answer look like a warning.
         classes = f"stage-event stage-{self._status}"
-        if partial_hallucination:
-            classes += " stage-hallucination-partial"
 
         super().__init__(
             Static(body, classes="stage-details"),
@@ -867,6 +864,12 @@ def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
     if item is None:
         body.append(f"\n      {name} · no evidence retrieved", style=style)
         return
+    if verdict == _REFUTED and not _decided(verdict, check.get("evidence") or []):
+        # Refuted by a rule, not by a passage — an amount or id no evidence
+        # states. Naming the nearest passage as the contradiction ("system
+        # prompt (neutral 1.00)") sent readers after the wrong cause.
+        body.append(f"\n      {name} · {check.get('rationale')}", style=style)
+        return
     label = str(item.get("nli_label") or "unknown")
     lead = f"{name} by" if verdict in _DECIDING_LABEL else f"{name} · closest is"
     body.append(
@@ -875,6 +878,15 @@ def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
         style=style,
     )
     body.append(f'"{_excerpt(item)}"', style="dim")
+
+
+def _decided(verdict: str, evidence: list[Any]) -> bool:
+    """Whether some passage decisively carried the claim's verdict."""
+    wanted = _DECIDING_LABEL.get(verdict)
+    return any(
+        isinstance(item, Mapping) and item.get("decisive") and item.get("nli_label") == wanted
+        for item in evidence
+    )
 
 
 def _deciding_evidence(verdict: str, evidence: list[Any]) -> Mapping[str, Any] | None:

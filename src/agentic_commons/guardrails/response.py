@@ -21,6 +21,7 @@ from agentic_commons.hallucination_protection.checker import (
     DetectionLadder,
     GroundingReasoningDiagnoser,
     Resampler,
+    split_sentences,
 )
 from agentic_commons.hallucination_protection.types import DetectionVerdict
 from agentic_commons.logging import get_logger
@@ -364,15 +365,8 @@ class ResponseGuardrail:
             failure_kinds=failures,
             attempts=self._max_repairs,
         )
-        safe_claims = [
-            verdict.claim.strip().rstrip(".")
-            for verdict in last.verdicts
-            if verdict.supported and verdict.claim.strip()
-        ]
-        safe_response = (
-            ". ".join(safe_claims) + "."
-            if safe_claims
-            else "I couldn't verify all of the details in that response. Please try again."
+        safe_response = _surviving_sentences(candidate, last.verdicts) or (
+            "I couldn't verify all of the details in that response. Please try again."
         )
         return ResponseGuardrailResult(
             response=safe_response,
@@ -423,11 +417,18 @@ _MONEY = re.compile(r"(?<!\w)(?:\$\d+(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:,\d{3})*\.\
 # statement that the call was refused, never one that its effect happened.
 NOT_EXECUTED_MARKER = "NOT EXECUTED"
 
+# Within one clause: any character but a clause break, and a decimal point
+# is not a clause break — "$146.07" must not split "refund of $146.07 has
+# been processed" into two halves that each look innocent.
+_IN_CLAUSE = r"(?:[^.;]|\.(?=\d))"
+
 _REFUND_SETTLED_CLAIM = re.compile(
-    r"\brefund(?:ed)?\b[^.;]{0,60}?\b(?:has\s+been\s+)?"
+    r"\brefund(?:ed)?\b" + _IN_CLAUSE + r"{0,60}?\b(?:has\s+been\s+)?"
     r"(?:completed|complete|processed|issued|approved|sent|paid|done|"
     r"(?:gone|went)\s+through|on\s+(?:its|the)\s+way)\b"
-    r"|\b(?:completed|processed|issued|approved|sent|paid)\b[^.;]{0,40}?\brefund",
+    # "Sent for review" hands the refund to a person; it has not settled.
+    r"(?!\s+(?:for|to)\s+(?:\w+\s+)?(?:review|approval))"
+    r"|\b(?:completed|processed|issued|approved|sent|paid)\b" + _IN_CLAUSE + r"{0,40}?\brefund",
     re.IGNORECASE,
 )
 _REFUND_STATE = re.compile(r"refund(?:_|\s+)status\s*[:=]\s*(\w+)", re.IGNORECASE)
@@ -436,9 +437,17 @@ _REFUND_STATE = re.compile(r"refund(?:_|\s+)status\s*[:=]\s*(\w+)", re.IGNORECAS
 # word while asserting the opposite, so polarity is checked per clause
 # rather than over the whole reply — one negated clause must not excuse a
 # settled claim elsewhere in the same sentence, and vice versa.
-_CLAUSE = re.compile(r"[.;]|\bbut\b|\band\b", re.IGNORECASE)
+_CLAUSE = re.compile(r"\.(?!\d)|;|\bbut\b|\band\b", re.IGNORECASE)
 _CLAIM_NEGATIONS = re.compile(
     r"\b(?:no|not|never|n't|cannot|nothing|neither|nor|unable)\b", re.IGNORECASE
+)
+# A clause saying what will *not* happen states the agent's intent, not an
+# outcome: "your order will not be cancelled" needs no tool to have run.
+# Negated past and present stay outcome claims — "your refund has not been
+# processed" describes the record, and can be wrong about it.
+_NEGATED_FUTURE = re.compile(
+    r"\b(?:will\s+not|will\s+no\s+longer|won['’]t|shall\s+not|not\s+going\s+to)\b",
+    re.IGNORECASE,
 )
 # The refund_status values that mean money has actually moved, or been
 # authorised to. Anything else ("none", "denied") refutes the claim.
@@ -446,11 +455,15 @@ _SETTLED_REFUND_STATES = frozenset({"completed", "approved", "processed"})
 
 
 def _requires_authoritative_evidence(response: str) -> bool:
-    """Detect customer-facing operational outcomes that require tool proof."""
-    text = response.strip()
-    if not text:
-        return False
-    return bool(_OPERATIONAL_TERMS.search(text))
+    """Whether any clause states an operational outcome, which only a tool result can prove.
+
+    Per clause, like `_asserts_settled_refund`: one clause declining an
+    action must not excuse an outcome claimed in the next.
+    """
+    return any(
+        _OPERATIONAL_TERMS.search(clause) and not _NEGATED_FUTURE.search(clause)
+        for clause in _CLAUSE.split(response.strip())
+    )
 
 
 def _deterministic_evidence_failure(
@@ -603,7 +616,7 @@ def _provenance_report(response: str, evidence: list[Chunk]) -> list[str]:
 
 
 def _found(label: str, holders: list[Chunk]) -> str:
-    """`✓ $50.00 — policy`, or `✗ $75.00 — not in any evidence`."""
+    """`✓ $12.00 — tool result`, or `✗ $75.00 — not in any evidence`."""
     tiers = list(dict.fromkeys(_TIER_NAMES.get(chunk.kind, chunk.kind) for chunk in holders))
     return f"✓ {label} — {', '.join(tiers)}" if tiers else f"✗ {label} — not in any evidence"
 
@@ -688,3 +701,24 @@ def _tier_counts(assessment: Any) -> dict[str, int]:
     for verdict in assessment.verdicts:
         counts[verdict.tier] = counts.get(verdict.tier, 0) + 1
     return counts
+
+
+def _surviving_sentences(response: str, verdicts: list[DetectionVerdict]) -> str:
+    """The reply's own sentences that carry no unsupported claim, verbatim.
+
+    Claims are finer than sentences, so gluing the supported *claims*
+    back together returned fragments: "10854), both currently on their
+    way." reached a customer as the whole answer. A sentence either
+    stands as the model wrote it or goes; nothing is reassembled.
+    """
+    rejected = [
+        verdict.claim.strip().rstrip(".").casefold()
+        for verdict in verdicts
+        if not verdict.supported and verdict.claim.strip()
+    ]
+    kept = [
+        sentence.strip()
+        for sentence in split_sentences(response)
+        if sentence.strip() and not any(claim in sentence.casefold() for claim in rejected)
+    ]
+    return " ".join(kept)

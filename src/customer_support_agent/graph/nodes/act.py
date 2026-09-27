@@ -25,7 +25,12 @@ from agentic_commons.logging.trace_context import get_current_trace_id
 from agentic_commons.observability.types import utc_now
 from agentic_commons.tools.types import ToolResult
 from agentic_commons.verification import VerificationReport
-from customer_support_agent.graph.nodes._support import NodeSupport
+from customer_support_agent.graph.nodes._support import (
+    TOOL_BLOCKED,
+    TOOL_COMPLETED,
+    TOOL_REFERRED,
+    NodeSupport,
+)
 from customer_support_agent.graph.nodes.review_wait import AWAITING_REVIEW
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.reporting import (
@@ -42,6 +47,8 @@ _FINAL = (
     "This decision is deterministic and will not change if you call it again — "
     "do not retry it. Tell the customer what happened instead."
 )
+
+_ESCALATE = "escalate"
 
 # Verdicts that cannot become an allow by re-proposing with different
 # arguments. `escalate` is already terminal for the turn; these are the
@@ -109,8 +116,9 @@ class ToolUseNodes(NodeSupport):
                 role="tool", content=text, tool_call_id=requested.id or requested.name
             )
             self._add_action(
-                state, requested.name, requested.arguments, text,
-                successful=invocation_fields.get("tool_status") == "completed",
+                state, requested.name, requested.arguments,
+                str(invocation_fields.get("evidence", text)),
+                outcome=str(invocation_fields.get("tool_status", TOOL_BLOCKED)),
             )
             state.working_memory.add_current_turn(tool_message)
 
@@ -118,15 +126,15 @@ class ToolUseNodes(NodeSupport):
             # remainder of this assistant turn. Do not execute later batched
             # side effects from the same model message.
             gatekeeper = invocation_fields.get("gatekeeper")
-            if isinstance(gatekeeper, dict) and gatekeeper.get("decision") == "escalate":
+            if isinstance(gatekeeper, dict) and gatekeeper.get("decision") == _ESCALATE:
                 remaining = len(requests) - len(invocation_fields_history)
                 if remaining:
-                    self._reporter_blocked(
+                    self._reporter_warning(
                         "gatekeeper_evaluation",
                         summary=f"Skipped {remaining} tool proposal(s) after escalation",
                         event_kind="gatekeeper",
                         fields={
-                            "decision": "escalate",
+                            "decision": _ESCALATE,
                             "reason_code": "AUTONOMY_STOPPED_AFTER_ESCALATION",
                             "skipped_requests": remaining,
                         },
@@ -134,7 +142,7 @@ class ToolUseNodes(NodeSupport):
                 break
 
         turn_escalated = any(
-            item.get("gatekeeper", {}).get("decision") == "escalate"
+            item.get("gatekeeper", {}).get("decision") == _ESCALATE
             for item in invocation_fields_history
             if isinstance(item.get("gatekeeper"), dict)
         )
@@ -236,7 +244,7 @@ class ToolUseNodes(NodeSupport):
                 f"Tool '{name}' is unavailable or its arguments were invalid.",
                 f"{name}: invalid",
                 "tool_refused",
-                {"tool_result": blocked_fields, "tool_status": "blocked"},
+                {"tool_result": blocked_fields, "tool_status": TOOL_BLOCKED},
             )
 
         call = call.model_copy(update={"params": self._security.minimize(call.params)})
@@ -304,7 +312,7 @@ class ToolUseNodes(NodeSupport):
                     "control_loop": control_fields,
                     "control_loop_status": "blocked",
                     "tool_result": result_fields,
-                    "tool_status": "blocked",
+                    "tool_status": TOOL_BLOCKED,
                 },
             )
 
@@ -320,7 +328,14 @@ class ToolUseNodes(NodeSupport):
         decision = await self._gatekeeper.evaluate(call, authority)
         decision_fields = gatekeeper_fields(decision, call)
         if not decision.allowed:
-            self._reporter_blocked(
+            # An escalation is the harness working as designed — a person
+            # takes over — so it reads as a caution, not as a refusal.
+            report = (
+                self._reporter_warning
+                if decision.verdict == _ESCALATE
+                else self._reporter_blocked
+            )
+            report(
                 "gatekeeper_evaluation",
                 summary=f"Gatekeeper: {decision.verdict.upper()}",
                 event_kind="gatekeeper",
@@ -328,40 +343,43 @@ class ToolUseNodes(NodeSupport):
             )
             if decision.question == "offered":
                 self._logger.warning("Model called a tool it was not offered", tool=call.action)
-                text = f"'{call.action}' is not available for this request. {_FINAL}"
+                evidence = f"'{call.action}' is not available for this request."
                 result_fields = {
                     "tool": call.action,
                     "result": "not_offered",
                     "execution_status": "not_executed",
                 }
-            elif decision.verdict == "escalate":
-                text = f"That action requires human review: {decision.reason}"
-                result_fields = {
-                    "tool": call.action,
-                    "result": "human_review_required",
-                    "execution_status": "not_executed",
-                }
+                tool_status = TOOL_BLOCKED
+            elif decision.verdict == _ESCALATE:
+                evidence, result_fields, tool_status = self._refer_for_review(
+                    call, decision.reason
+                )
             else:
                 # Say that it is final. The previous wording read like a
                 # transient failure, and the model answered it the way it
                 # answers those — by trying again, three times, until the
                 # iteration cap. A deterministic verdict does not move.
-                text = f"That action was not permitted: {decision.reason} {_FINAL}"
+                evidence = f"That action was not permitted: {decision.reason}"
                 result_fields = {
                     "tool": call.action,
                     "result": "not_executed",
                     "execution_status": "not_executed",
                 }
+                tool_status = TOOL_BLOCKED
+            # `_FINAL` steers the model; it is not a fact, so the evidence
+            # the reply is grounded on stops before it.
+            text = f"{evidence} {_FINAL}"
             # Remember the refusal so an identical retry is caught by the
             # duplicate detector, which otherwise only knows about calls
             # that succeeded.
             self._control_loop.record_refusal(call, text)
-            self._reporter_blocked(
-                "tool_result",
-                summary=f"Tool not executed: {call.action}",
-                event_kind="tool_result",
-                fields=result_fields,
-            )
+            if tool_status != TOOL_REFERRED:
+                self._reporter_blocked(
+                    "tool_result",
+                    summary=f"Tool not executed: {call.action}",
+                    event_kind="tool_result",
+                    fields=result_fields,
+                )
             return (
                 text,
                 f"{call.action}: {decision.verdict} ({decision.question}) — {decision.reason}",
@@ -370,9 +388,10 @@ class ToolUseNodes(NodeSupport):
                     "control_loop": control_fields,
                     "control_loop_status": "completed",
                     "gatekeeper": decision_fields,
-                    "gatekeeper_status": "blocked",
+                    "gatekeeper_status": "escalated" if decision.verdict == _ESCALATE else "blocked",
                     "tool_result": result_fields,
-                    "tool_status": "blocked",
+                    "tool_status": tool_status,
+                    "evidence": evidence,
                 },
             )
 
@@ -388,6 +407,47 @@ class ToolUseNodes(NodeSupport):
             # Budget is charged only for a real completion, not a replay.
             self._gatekeeper.commit(call, authority)
         return await self._after_execution(call, outcome, control_fields, decision_fields)
+
+    def _refer_for_review(self, call: Any, reason: str) -> tuple[str, dict[str, Any], str]:
+        """Turn an escalation into a queued review, and say so without the reason.
+
+        The Gatekeeper's reason names the limit; the model — and through it
+        the customer — is told only that a person will decide. A limit an
+        attacker can read is a limit they can structure around.
+
+        A queued review is an outcome, not a refusal: the call did not run,
+        but the referral did, and it changed the record. It is reported and
+        grounded as *referred*, so "your request is with our team" is not
+        read against a premise that says nothing happened.
+        """
+        referred = self._referral.refer(call) if self._referral is not None else None
+        if referred is None or not referred.success:
+            text = f"That action requires human review: {reason}"
+            if referred is not None:
+                text = f"That action requires human review, but queuing it failed: {referred.error}"
+            return text, {
+                "tool": call.action,
+                "result": "human_review_required",
+                "execution_status": "not_executed",
+            }, TOOL_BLOCKED
+        self._done(
+            "escalation",
+            event_kind="escalation",
+            summary="Escalated action queued for human review",
+            fields=tool_result_fields(call, referred),
+        )
+        fields = {
+            **tool_result_fields(call, referred),
+            "result": "human_review_required",
+            "execution_status": TOOL_REFERRED,
+        }
+        self._done(
+            "tool_result",
+            event_kind="tool_result",
+            summary=f"Referred for human review: {call.action}",
+            fields=fields,
+        )
+        return f"{referred.output}.", fields, TOOL_REFERRED
 
     async def _after_execution(
         self,
@@ -413,7 +473,7 @@ class ToolUseNodes(NodeSupport):
                 summary=f"Tool completed: {call.action}",
                 fields=result_fields,
             )
-            tool_status = "completed"
+            tool_status = TOOL_COMPLETED
             verification = await self._verify(call, result)
             if verification is not None:
                 result_fields = {**result_fields, "verification": verification.summary}
@@ -478,7 +538,7 @@ class ToolUseNodes(NodeSupport):
         report = await self._verifier.verify(call, result)
         if report is None or report.verified:
             return report
-        self._reporter_warning(
+        self._done_failed(
             "effect_verification",
             summary=f"Effect not verified: {call.action}",
             event_kind="executor",

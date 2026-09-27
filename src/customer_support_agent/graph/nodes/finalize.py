@@ -157,7 +157,7 @@ class FinalizeNodes(NodeSupport):
             )
         except Exception as exc:
             error_fields = external_api_error_fields(exc)
-            self._reporter_warning(
+            self._done_failed(
                 "resilience",
                 summary="LLM unavailable after retries",
                 event_kind="resilience",

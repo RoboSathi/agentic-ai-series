@@ -35,7 +35,7 @@ from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.persistence import OrdersRepository
 
 # The write actions that act on one order and are bounded by its total.
-_WRITE_ACTIONS = ("process_refund", "queue_for_approval")
+_WRITE_ACTIONS = ("process_refund", "queue_for_approval", "cancel_order")
 
 
 @instrument("customer_support_agent")

@@ -46,6 +46,13 @@ llm:
 memory:
   episodic:
     path: src/customer_support_agent/dummy_data/episodic
+  dream:
+    # How this agent words a refused tool call (graph/nodes/act.py);
+    # refusals repeated across sessions become procedure candidates.
+    refusal_markers: ["That action was not permitted:"]
+    # This agent's read-only tools: a dream summary says "looked up
+    # orders …" for these and quotes only the calls that changed something.
+    lookup_tools: [get_order_status, get_refund_status, list_orders]
   semantic:
     # This agent's knowledge index and the corpus that feeds it. The
     # articles explain policy; the rules themselves stay in code.
@@ -72,6 +79,11 @@ security:
       - override your
       # This agent moves money, so a claimed limit change is an attack on it.
       - my refund limit is now
+
+hallucination_protection:
+  # This agent's ids are five-digit order numbers (the same shape the
+  # evals use). A record about another order cannot refute a claim.
+  refute_identifier_pattern: '\b\d{5}\b'
 
 gatekeeper:
   mandate:
@@ -111,11 +123,14 @@ durability:
 customer_support_agent:
   db_path: src/customer_support_agent/dummy_data/agentic.db
   max_tool_iterations: 5
+  list_orders_max_rows: 20
   # Tool -> budget class. A tool absent from this map is not financially
   # budgeted; whether it is allowed at all is the permission check's
   # question, not the budget's.
   action_classes:
     process_refund: refund
+    # A cancellation refunds the order, so it spends the same budget.
+    cancel_order: refund
   intents:
   - name: ORDER_STATUS
     mode: read
@@ -138,10 +153,23 @@ customer_support_agent:
     - details of my order
     - details of the order
     - show me my order
-    - what did i order
     tools:
     - get_order_status
     description: asking for details about a specific order
+  - name: LIST_ORDERS
+    mode: read
+    phrases:
+    - what did i order
+    - what have i ordered
+    - order history
+    - my purchases
+    - delivered orders
+    - cancelled orders
+    - pending orders
+    - shipped orders
+    tools:
+    - list_orders
+    description: asking which orders they have, or for their orders in one state
   - name: REQUEST_REFUND
     mode: write
     phrases:
@@ -161,11 +189,51 @@ customer_support_agent:
     - reimburse
     - chargeback
     tools:
+    - list_orders
     - get_order_status
     - get_refund_status
     - process_refund
-    - queue_for_approval
     description: asking to receive a refund for an order
+  # Where a refund stands — a read, answered from the record with no model
+  # call. Its phrases are multi-word so they outrank REQUEST_REFUND's bare
+  # "refund": "when will I get my refund" asks about one, not for one.
+  - name: REFUND_STATUS
+    mode: read
+    phrases:
+    - refund status
+    - status of my refund
+    - status of the refund
+    - where is my refund
+    - track my refund
+    - track refund
+    - when will i get my refund
+    - when will i get the refund
+    - when do i get my refund
+    - what about refund
+    - what about my refund
+    - what about the refund
+    - has my refund
+    - did my refund
+    - is my refund
+    tools:
+    - get_refund_status
+    description: asking where a refund stands or when it will arrive
+  - name: CANCEL_ORDER
+    mode: write
+    phrases:
+    - cancel my order
+    - cancel the order
+    - cancel order
+    - cancel this order
+    - cancel it
+    - stop my order
+    - i no longer want
+    - don't send
+    tools:
+    - list_orders
+    - get_order_status
+    - cancel_order
+    description: asking to cancel an order that has not shipped yet
   - name: UNKNOWN
     phrases: []
     tools: []
@@ -184,8 +252,19 @@ customer_support_agent:
       tool: get_order_status
     - description: check whether the order is eligible for a refund
       tool: get_refund_status
-    - description: issue the refund, or queue it for a human
+    - description: request the refund; the result says if a person must decide
       tool: process_refund
+    REFUND_STATUS:
+    - description: read where the refund stands
+      tool: get_refund_status
+    CANCEL_ORDER:
+    - description: confirm the order has not shipped and its total
+      tool: get_order_status
+    - description: cancel the order and refund it; the result says if a person must decide
+      tool: cancel_order
+    LIST_ORDERS:
+    - description: list the customer's orders, filtered if they named a state
+      tool: list_orders
     UNKNOWN: []
   intent_router:
     # Routing threshold applied to the mapped model-softmax score. This is an
@@ -209,8 +288,13 @@ customer_support_agent:
       - delivery_period
       - delivery_options
       ORDER_DETAILS: []
+      LIST_ORDERS: []
+      CANCEL_ORDER:
+      - cancel_order
       REQUEST_REFUND:
       - get_refund
+      # Tracking a refund is asking where it stands, not asking for one.
+      REFUND_STATUS:
       - track_refund
       UNKNOWN:
       - fallback
@@ -240,6 +324,9 @@ customer_support_agent:
   - so the answer
   user_code_length: 7
   user_code_alphabet: ABCDEFGHJKMNPQRSTUVWXYZ23456789
+  # What history, memory and logs keep in place of a typed login code. The
+  # code is a credential: it is checked once and never replayed to the model.
+  user_code_placeholder: "[customer code]"
   demo_user_code: 2HEDZTV
   policy_path: src/customer_support_agent/prompts/customer_policy.md
   console_reviewer: console_operator

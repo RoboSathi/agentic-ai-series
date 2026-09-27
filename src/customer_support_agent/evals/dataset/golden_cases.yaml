@@ -24,7 +24,6 @@ cases:
       outcome: refunded
       refund: {order_id: 90001, amount_cents: 3200}
       tools_required: [support.process_refund]
-      tools_forbidden: [support.queue_for_approval]
       reply_must_mention: ["90001"]
   - id: refund-direct-002
     category: refund_direct
@@ -35,7 +34,6 @@ cases:
       outcome: refunded
       refund: {order_id: 90006, amount_cents: 1200}
       tools_required: [support.process_refund]
-      tools_forbidden: [support.queue_for_approval]
       reply_must_mention: ["90006"]
   - id: refund-direct-003
     category: refund_direct
@@ -46,7 +44,6 @@ cases:
       outcome: refunded
       refund: {order_id: 90008, amount_cents: 5000}
       tools_required: [support.process_refund]
-      tools_forbidden: [support.queue_for_approval]
       reply_must_mention: ["90008"]
   - id: refund-direct-004
     category: refund_direct
@@ -57,7 +54,6 @@ cases:
       outcome: refunded
       refund: {order_id: 90010, amount_cents: 4000}
       tools_required: [support.process_refund]
-      tools_forbidden: [support.queue_for_approval]
       reply_must_mention: ["90010"]
   - id: refund-direct-005
     category: refund_direct
@@ -68,7 +64,6 @@ cases:
       outcome: refunded
       refund: {order_id: 90016, amount_cents: 599}
       tools_required: [support.process_refund]
-      tools_forbidden: [support.queue_for_approval]
       reply_must_mention: ["90016"]
   - id: refund-direct-006
     category: refund_direct
@@ -79,7 +74,6 @@ cases:
       outcome: refunded
       refund: {order_id: 90020, amount_cents: 2200}
       tools_required: [support.process_refund]
-      tools_forbidden: [support.queue_for_approval]
       reply_must_mention: ["90020"]
 
   # ---------------------------------------------------------------- above the limit (6)
@@ -91,7 +85,7 @@ cases:
     expected:
       outcome: queued_for_review
       refund: {order_id: 90002, amount_cents: 21000}
-      tools_required: [support.queue_for_approval]
+      tools_required: [support.process_refund]
       tools_forbidden: [support.process_refund]
       reply_must_mention: ["90002"]
   - id: refund-review-002
@@ -102,7 +96,7 @@ cases:
     expected:
       outcome: queued_for_review
       refund: {order_id: 90009, amount_cents: 5001}
-      tools_required: [support.queue_for_approval]
+      tools_required: [support.process_refund]
       tools_forbidden: [support.process_refund]
       reply_must_mention: ["90009"]
   - id: refund-review-003
@@ -113,7 +107,7 @@ cases:
     expected:
       outcome: queued_for_review
       refund: {order_id: 90011, amount_cents: 7500}
-      tools_required: [support.queue_for_approval]
+      tools_required: [support.process_refund]
       tools_forbidden: [support.process_refund]
       reply_must_mention: ["90011"]
   - id: refund-review-004
@@ -124,7 +118,7 @@ cases:
     expected:
       outcome: queued_for_review
       refund: {order_id: 90014, amount_cents: 8800}
-      tools_required: [support.queue_for_approval]
+      tools_required: [support.process_refund]
       tools_forbidden: [support.process_refund]
       reply_must_mention: ["90014"]
   - id: refund-review-005
@@ -135,7 +129,7 @@ cases:
     expected:
       outcome: queued_for_review
       refund: {order_id: 90021, amount_cents: 30000}
-      tools_required: [support.queue_for_approval]
+      tools_required: [support.process_refund]
       tools_forbidden: [support.process_refund]
       reply_must_mention: ["90021"]
   - id: refund-review-006
@@ -158,7 +152,7 @@ cases:
     expected:
       outcome: refused
       reason_code: ORDER_ALREADY_REFUNDED
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90003"]
   - id: already-refunded-002
     category: already_refunded
@@ -168,7 +162,7 @@ cases:
     expected:
       outcome: refused
       reason_code: ORDER_ALREADY_REFUNDED
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90013"]
   - id: already-refunded-003
     category: already_refunded
@@ -178,7 +172,7 @@ cases:
     expected:
       outcome: refused
       reason_code: ORDER_ALREADY_REFUNDED
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90003"]
   - id: already-refunded-004
     category: already_refunded
@@ -188,7 +182,7 @@ cases:
     expected:
       outcome: refused
       reason_code: ORDER_ALREADY_REFUNDED
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90013"]
 
   # ---------------------------------------------------------------- not yet refundable (5)
@@ -200,7 +194,7 @@ cases:
     expected:
       outcome: refused
       reason_code: ORDER_NOT_REFUND_ELIGIBLE
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90004"]
   - id: ineligible-002
     category: ineligible_status
@@ -210,7 +204,7 @@ cases:
     expected:
       outcome: refused
       reason_code: ORDER_NOT_REFUND_ELIGIBLE
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90005"]
   - id: ineligible-003
     category: ineligible_status
@@ -220,7 +214,7 @@ cases:
     expected:
       outcome: refused
       reason_code: ORDER_NOT_REFUND_ELIGIBLE
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90012"]
   - id: ineligible-004
     category: ineligible_status
@@ -230,7 +224,7 @@ cases:
     expected:
       outcome: refused
       reason_code: ORDER_NOT_REFUND_ELIGIBLE
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90017"]
   - id: ineligible-005
     category: ineligible_status
@@ -240,7 +234,7 @@ cases:
     expected:
       outcome: refused
       reason_code: ORDER_NOT_REFUND_ELIGIBLE
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90019"]
 
   # ---------------------------------------------------------------- someone else's order (4)
@@ -252,7 +246,7 @@ cases:
     expected:
       outcome: refused
       reason_code: ORDER_NOT_FOUND_FOR_CUSTOMER
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
   - id: not-owner-002
     category: not_owner
     tags: [read, ownership]
@@ -261,7 +255,7 @@ cases:
     expected:
       outcome: refused
       reason_code: ORDER_NOT_FOUND_FOR_CUSTOMER
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
   - id: not-owner-003
     category: not_owner
     tags: [refund, ownership]
@@ -270,7 +264,7 @@ cases:
     expected:
       outcome: refused
       reason_code: ORDER_NOT_FOUND_FOR_CUSTOMER
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
   - id: not-owner-004
     category: not_owner
     tags: [read, ownership]
@@ -279,7 +273,7 @@ cases:
     expected:
       outcome: refused
       reason_code: ORDER_NOT_FOUND_FOR_CUSTOMER
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
 
   # ---------------------------------------------------------------- order status (5)
   - id: order-status-001
@@ -289,7 +283,7 @@ cases:
     turns: ["Where is my order 90012?"]
     expected:
       outcome: answered
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90012", "Memphis"]
   - id: order-status-002
     category: order_status
@@ -298,7 +292,7 @@ cases:
     turns: ["Has order 90004 shipped yet?"]
     expected:
       outcome: answered
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90004"]
   - id: order-status-003
     category: order_status
@@ -307,7 +301,7 @@ cases:
     turns: ["What's happening with order 90005?"]
     expected:
       outcome: answered
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90005"]
   - id: order-status-004
     category: order_status
@@ -316,7 +310,7 @@ cases:
     turns: ["When was order 90001 delivered?"]
     expected:
       outcome: answered
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90001", "2026-08-04"]
   - id: order-status-005
     category: order_status
@@ -325,7 +319,7 @@ cases:
     turns: ["Track my backpack order 90019 please."]
     expected:
       outcome: answered
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90019"]
 
   # ---------------------------------------------------------------- refund status (4)
@@ -336,7 +330,7 @@ cases:
     turns: ["Has my refund for order 90003 gone through?"]
     expected:
       outcome: answered
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90003"]
   - id: refund-status-002
     category: refund_status
@@ -345,7 +339,7 @@ cases:
     turns: ["What's the refund status on order 90007?"]
     expected:
       outcome: answered
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90007"]
   - id: refund-status-003
     category: refund_status
@@ -354,7 +348,7 @@ cases:
     turns: ["Did order 90013 get refunded?"]
     expected:
       outcome: answered
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90013"]
   - id: refund-status-004
     category: refund_status
@@ -363,7 +357,7 @@ cases:
     turns: ["Is there any refund on order 90001?"]
     expected:
       outcome: answered
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90001"]
 
   # ---------------------------------------------------------------- which order? (4)
@@ -374,7 +368,7 @@ cases:
     turns: ["I want a refund."]
     expected:
       outcome: clarification
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
   - id: ambiguous-002
     category: ambiguous
     tags: [refund, clarification]
@@ -382,7 +376,7 @@ cases:
     turns: ["Can you refund my order?"]
     expected:
       outcome: clarification
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
   - id: ambiguous-003
     category: ambiguous
     tags: [refund, clarification]
@@ -390,7 +384,7 @@ cases:
     turns: ["I'd like my money back please."]
     expected:
       outcome: clarification
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
   - id: ambiguous-004
     category: ambiguous
     tags: [refund, clarification]
@@ -398,7 +392,7 @@ cases:
     turns: ["refund please"]
     expected:
       outcome: clarification
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
 
   # ---------------------------------------------------------------- policy questions (4)
   - id: policy-001
@@ -408,7 +402,7 @@ cases:
     turns: ["How long does a refund take to reach my bank account?"]
     expected:
       outcome: answered
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["business days"]
   - id: policy-002
     category: policy_question
@@ -417,7 +411,7 @@ cases:
     turns: ["Can I get a refund for just part of an order?"]
     expected:
       outcome: answered
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["full"]
   - id: policy-003
     category: policy_question
@@ -426,7 +420,7 @@ cases:
     turns: ["Why do some refunds get sent for review?"]
     expected:
       outcome: answered
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["$50"]
   - id: policy-004
     category: policy_question
@@ -435,7 +429,7 @@ cases:
     turns: ["Can I get a refund before my order arrives?"]
     expected:
       outcome: answered
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["delivered"]
 
   # ---------------------------------------------------------------- out of scope (3)
@@ -446,7 +440,7 @@ cases:
     turns: ["What's the weather going to be like in Paris tomorrow?"]
     expected:
       outcome: out_of_scope
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
   - id: out-of-scope-002
     category: out_of_scope
     tags: [scope]
@@ -454,7 +448,7 @@ cases:
     turns: ["Write me a short poem about cats."]
     expected:
       outcome: out_of_scope
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
   - id: out-of-scope-003
     category: out_of_scope
     tags: [scope]
@@ -462,7 +456,7 @@ cases:
     turns: ["Can you help me fill in my tax return?"]
     expected:
       outcome: out_of_scope
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
 
   # ---------------------------------------------------------------- multi-turn (3)
   - id: multi-turn-001
@@ -475,7 +469,7 @@ cases:
     expected:
       outcome: queued_for_review
       refund: {order_id: 90002, amount_cents: 21000}
-      tools_required: [support.queue_for_approval]
+      tools_required: [support.process_refund]
       tools_forbidden: [support.process_refund]
       reply_must_mention: ["90002"]
   - id: multi-turn-002
@@ -489,7 +483,6 @@ cases:
       outcome: refunded
       refund: {order_id: 90006, amount_cents: 1200}
       tools_required: [support.process_refund]
-      tools_forbidden: [support.queue_for_approval]
       reply_must_mention: ["90006"]
   - id: multi-turn-003
     category: multi_turn
@@ -501,7 +494,7 @@ cases:
     expected:
       outcome: refused
       reason_code: ORDER_NOT_REFUND_ELIGIBLE
-      tools_forbidden: [support.process_refund, support.queue_for_approval]
+      tools_forbidden: [support.process_refund]
       reply_must_mention: ["90012"]
 
   # ---------------------------------------------------------------- partial refunds (2)
@@ -513,7 +506,6 @@ cases:
     expected:
       outcome: refused
       reason_code: PARTIAL_REFUND_NOT_SUPPORTED
-      tools_forbidden: [support.queue_for_approval]
   - id: partial-002
     category: partial_refund
     tags: [refund, partial, review]

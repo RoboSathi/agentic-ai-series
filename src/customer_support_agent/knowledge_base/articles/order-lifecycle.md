@@ -6,13 +6,13 @@ Every order is in one of four states.
 - Pending: the order has been placed and is being prepared. It has not left the warehouse.
 - Shipped: the order is on its way to the customer with the carrier.
 - Delivered: the carrier has confirmed delivery to the customer's address.
-- Cancelled: the order was stopped before it was delivered.
+- Cancelled: the order was stopped before it was delivered. Cancelling an order that has not shipped refunds its full total.
 
 ## Refund statuses
 An order's refund status is separate from its order status.
 
 - None: no refund has been requested.
-- Pending review: a refund above $50 is waiting for a human reviewer.
+- Pending review: a refund or cancellation is waiting for a human reviewer.
 - Approved or denied: a reviewer has decided the request.
 - Completed: the refund has been issued. The order cannot be refunded again.
 

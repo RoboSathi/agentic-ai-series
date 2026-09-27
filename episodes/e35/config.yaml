@@ -24,7 +24,7 @@ episode:
     - "sorry, I'm not sure that went through — please refund order 10461"
 
 # Raised deliberately, and worth saying out loud: at the agent's own
-# $50 threshold every order in the demo data escalates to a human, and
+# refund limit most orders in the demo data escalate to a human, and
 # the saga never runs. This episode is about what happens when the
 # refund *does* execute, so it lifts the ceiling for its own run only.
 # The authority machinery is unchanged and still rules on the action —

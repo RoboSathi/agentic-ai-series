@@ -6,12 +6,23 @@ from agentic_commons.gatekeeper.contracts import BusinessRuleResult, Determinist
 from agentic_commons.gatekeeper.types import AuthorityContext, CheckReport
 from agentic_commons.security.auth.policy import AgentPolicy
 from agentic_commons.tools.types import ToolCall
-from customer_support_agent.domain.refund_policy import RefundPolicy
+from customer_support_agent.config import get_agent_settings
+from customer_support_agent.domain.cancellation_policy import CancellationPolicy
+from customer_support_agent.domain.refund_policy import RefundPolicy, RefundValidationResult
 from customer_support_agent.persistence.repositories import HitlQueueRepository, OrdersRepository
 
 # The budget class this agent's money-moving action belongs to. One name,
 # used by the seed data, the Gatekeeper ledger and the rule below.
 REFUND_ACTION_CLASS = "refund"
+# Cancelling an unshipped order refunds it, so it is a write on an order too.
+_CANCEL_ACTION = "cancel_order"
+# Why a money-moving action above the automatic limit goes to a person. The
+# limit is read from the persisted agent policy; this text reaches the
+# trace and the audit trail, never the model.
+_OVER_LIMIT = (
+    "Order value {amount} exceeds the automatic refund limit of {limit}; "
+    "the refund is escalated for human review."
+)
 
 
 class CustomerSupportBusinessRules(DeterministicBusinessRules):
@@ -23,8 +34,16 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
         hitl: HitlQueueRepository | None = None,
         policy: AgentPolicy | None = None,
         refund_policy: RefundPolicy | None = None,
+        money_actions: frozenset[str] | None = None,
     ) -> None:
         self._orders = orders
+        # Every action that pays money out of the refund budget. Each is
+        # held to the same per-action limit, so a cancellation is not a
+        # way around the ceiling a refund is held to.
+        self._money_actions = (
+            money_actions if money_actions is not None else _refund_budget_actions()
+        )
+        self._cancellation_policy = CancellationPolicy(orders)
         self._hitl = hitl
         # This agent's own action class. The platform stores budgets keyed
         # by class and does not know what "refund" means; naming it is this
@@ -50,7 +69,7 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
         and that becomes a disclosure. Here it is a denial with a reason.
         """
         action = call.action.rsplit(".", maxsplit=1)[-1]
-        is_write = action in {"process_refund", "queue_for_approval"}
+        is_write = action in {"process_refund", "queue_for_approval", _CANCEL_ACTION}
         customer_id = authority.request_context.get("customer_id")
         order_id = call.params.get("order_id")
         amount = call.params.get("amount")
@@ -112,12 +131,7 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
             ))
             return BusinessRuleResult(checks=checks)
 
-        validation = self._refund_policy.validate(
-            order_id=order_id,
-            customer_id=customer_id,
-            amount=amount,
-            action=action,  # type: ignore[arg-type]
-        )
+        validation = self._validate_write(action, order_id, customer_id, amount)
         order = validation.order
         if order is None:
             return self._deny(
@@ -185,23 +199,17 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
         )
 
         limit = self._max_refund_amount
-        if action == "process_refund" and limit is not None and normalized_amount > limit:
+        if action in self._money_actions and limit is not None and normalized_amount > limit:
             return BusinessRuleResult(
                 verdict="escalate",
                 reason_code="EXCEEDS_AGENT_REFUND_LIMIT",
-                reason=(
-                    f"Requested refund {normalized_amount} exceeds this agent's direct refund limit "
-                    f"of {limit}; human review is required."
-                ),
+                reason=_OVER_LIMIT.format(amount=normalized_amount, limit=limit),
                 checks=checks + [CheckReport(
                     check_id="gatekeeper.business_rules.agent_refund_limit",
                     name="Agent refund limit",
                     status="ESCALATE",
                     reason_code="EXCEEDS_AGENT_REFUND_LIMIT",
-                    reason=(
-                        f"Requested refund {normalized_amount} exceeds the agent's direct limit "
-                        f"of {limit}."
-                    ),
+                    reason=_OVER_LIMIT.format(amount=normalized_amount, limit=limit),
                     observed={
                         "amount": str(normalized_amount),
                         "autonomous_limit": str(limit),
@@ -223,6 +231,19 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
 
         return BusinessRuleResult(checks=checks)
 
+    def _validate_write(
+        self, action: str, order_id: int, customer_id: int, amount: Any
+    ) -> RefundValidationResult:
+        """The domain rules for this write: a cancellation's, or a refund's."""
+        if action == _CANCEL_ACTION:
+            return self._cancellation_policy.validate(order_id, customer_id, amount)
+        return self._refund_policy.validate(
+            order_id=order_id,
+            customer_id=customer_id,
+            amount=amount,
+            action=action,  # type: ignore[arg-type]
+        )
+
     @staticmethod
     def _deny(
         checks: list[CheckReport],
@@ -242,3 +263,12 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
         return BusinessRuleResult(
             verdict="deny", reason_code=code, reason=reason, checks=checks
         )
+
+
+def _refund_budget_actions() -> frozenset[str]:
+    """The tools this agent's config charges to the refund budget."""
+    return frozenset(
+        tool
+        for tool, action_class in get_agent_settings().action_classes.items()
+        if action_class == REFUND_ACTION_CLASS
+    )

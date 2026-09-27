@@ -25,6 +25,7 @@ from agentic_commons.llm.types import (
     ModelToolCall,
     TokenUsage,
 )
+from agentic_commons.llm.typography import TypographyNormaliser
 from agentic_commons.logging import get_logger
 
 _PLACEHOLDER_API_KEY = "not-needed"
@@ -108,6 +109,7 @@ class OpenAICompatibleClient(LLMClient):
         self._settings = settings or get_settings().llm
         self._provider: LLMProviderSettings = self._settings.provider_settings(self.provider_name)
         self._logger = get_logger("llm")
+        self._typography = TypographyNormaliser(self._settings.output_normalisation)
         self._client = client or AsyncOpenAI(
             base_url=self._provider.base_url,
             api_key=self._settings.api_key_for(self.provider_name) or _PLACEHOLDER_API_KEY,
@@ -139,9 +141,12 @@ class OpenAICompatibleClient(LLMClient):
         )
         choice = completion.choices[0]
         usage = self._usage_from(completion.usage)
+        content, tool_calls, normalised = self._plain_text(
+            choice.message.content or "", _tool_calls_from(choice.message.tool_calls)
+        )
         result = CompletionResult(
-            content=choice.message.content or "",
-            tool_calls=_tool_calls_from(choice.message.tool_calls),
+            content=content,
+            tool_calls=tool_calls,
             model=completion.model,
             finish_reason=choice.finish_reason,
             usage=usage,
@@ -149,8 +154,22 @@ class OpenAICompatibleClient(LLMClient):
             tier=self.tier,
             latency_ms=(time.perf_counter() - started) * 1000,
         )
-        self._log_response(result)
+        self._log_response(result, normalised)
         return result
+
+    def _plain_text(
+        self, content: str, tool_calls: list[ModelToolCall] | None
+    ) -> tuple[str, list[ModelToolCall] | None, int]:
+        """Content and tool arguments with the model's typography undone, and the count."""
+        plain, changed = self._typography.normalise(content)
+        if tool_calls is None:
+            return plain, None, changed
+        calls = []
+        for call in tool_calls:
+            arguments, count = self._typography.normalise(call.arguments)
+            changed += count
+            calls.append(call.model_copy(update={"arguments": arguments}))
+        return plain, calls, changed
 
     def _clip(self, text: str) -> str:
         """Apply the configured payload limit; 0 means keep everything."""
@@ -182,8 +201,12 @@ class OpenAICompatibleClient(LLMClient):
             json_schema=request.json_schema,
         )
 
-    def _log_response(self, result: CompletionResult) -> None:
-        """Record what came back, including tool calls and their arguments."""
+    def _log_response(self, result: CompletionResult, normalised: int = 0) -> None:
+        """Record what came back, including tool calls and their arguments.
+
+        `normalised` is how many of the model's characters were rewritten to
+        plain text; the logged text is the rewritten text everything reads.
+        """
         if not self._settings.log_payloads:
             return
         self._logger.debug(
@@ -196,6 +219,7 @@ class OpenAICompatibleClient(LLMClient):
             total_tokens=result.usage.total_tokens,
             latency_ms=round(result.latency_ms, 2),
             cost_usd=result.cost_usd,
+            normalised_chars=normalised,
             content=self._clip(result.content),
             tool_calls=[
                 {

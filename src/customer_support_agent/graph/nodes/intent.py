@@ -7,11 +7,17 @@ at all, which is why `read_intent` sits beside `classify_intent`.
 """
 
 import json
-from typing import Any
+import re
+from typing import Any, get_args
 
-from customer_support_agent.graph.nodes._support import NodeSupport
+from customer_support_agent.domain.models import OrderStatus
+from customer_support_agent.graph.nodes._support import TOOL_BLOCKED, TOOL_COMPLETED, NodeSupport
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.intent.router import Intent
+
+# The tool parameters a deterministic read knows how to fill.
+_ORDER_ID = "order_id"
+_ORDER_STATUS = "order_status"
 
 
 class IntentNodes(NodeSupport):
@@ -139,6 +145,11 @@ class IntentNodes(NodeSupport):
         tool = self._read_tool_for_state(state)
         if tool is None:
             return {}
+        if _ORDER_ID not in tool.args_schema.model_fields:
+            # An account-wide read (the customer's own orders). The tool is
+            # scoped to the authenticated customer itself, so there is no
+            # order to authorize — only the security scope still applies.
+            return await self._read_account(state, tool)
 
         order_id = self._resolve_read_order_id(state)
         if order_id is None:
@@ -196,40 +207,60 @@ class IntentNodes(NodeSupport):
         # narrowed the surface. An empty *list* is a real narrowing to
         # nothing and still blocks — the two must not be conflated, or
         # switching the guard off would block every read instead.
-        allowed_actions = state.metadata.get("allowed_actions")
-        if isinstance(allowed_actions, list) and tool.qualified_name not in set(allowed_actions):
-            self._reporter_blocked(
-                "read_authorization",
-                summary="Read capability blocked by security tool scope",
-                event_kind="authorization",
-                fields={
-                    "order_id": order_id,
-                    "tool": tool.qualified_name,
-                    "reason_code": "READ_TOOL_NOT_ALLOWED",
-                },
-            )
-            return self._halt(
-                state,
-                "I couldn't safely access that order with the permissions available for this request.",
-                f"read: security scope denied {tool.name}",
-            )
+        denied = self._scope_denied(state, tool, {"order_id": order_id})
+        if denied is not None:
+            return denied
+        return await self._run_read(state, tool, {"order_id": order_id}, f"for order {order_id}")
 
-        payload = json.dumps({"order_id": order_id})
+    async def _read_account(self, state: AgentState, tool: Any) -> dict[str, Any]:
+        """Run an account-wide read, narrowed to an order state the customer named."""
+        params: dict[str, Any] = {}
+        status = _status_named(state.query)
+        if status is not None and _ORDER_STATUS in tool.args_schema.model_fields:
+            params[_ORDER_STATUS] = status
+        denied = self._scope_denied(state, tool, params)
+        if denied is not None:
+            return denied
+        return await self._run_read(state, tool, params, "for the customer's account")
+
+    def _scope_denied(
+        self, state: AgentState, tool: Any, fields: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """A halt when the injection guard narrowed this tool away, else None."""
+        allowed_actions = state.metadata.get("allowed_actions")
+        if not isinstance(allowed_actions, list) or tool.qualified_name in set(allowed_actions):
+            return None
+        self._reporter_blocked(
+            "read_authorization",
+            summary="Read capability blocked by security tool scope",
+            event_kind="authorization",
+            fields={**fields, "tool": tool.qualified_name, "reason_code": "READ_TOOL_NOT_ALLOWED"},
+        )
+        return self._halt(
+            state,
+            "I couldn't safely access that order with the permissions available for this request.",
+            f"read: security scope denied {tool.name}",
+        )
+
+    async def _run_read(
+        self, state: AgentState, tool: Any, params: dict[str, Any], subject: str
+    ) -> dict[str, Any]:
+        """Invoke one read tool through the governed path and end the turn on its answer."""
         text, decision, _stage, invocation = await self._invoke(
             tool.qualified_name,
-            payload,
+            json.dumps(params),
             state,
             {tool.qualified_name},
         )
         self._add_action(
-            state, tool.name, {"order_id": order_id}, text,
-            successful=invocation.get("tool_status") == "completed",
+            state, tool.name, params, str(invocation.get("evidence", text)),
+            outcome=str(invocation.get("tool_status", TOOL_BLOCKED)),
         )
         base = self._halt(
             state,
             text,
-            f"read: {tool.name} for order {order_id}"
-            if invocation.get("tool_status") == "completed"
+            f"read: {tool.name} {subject}"
+            if invocation.get("tool_status") == TOOL_COMPLETED
             else decision,
         )
         return {
@@ -318,3 +349,12 @@ class IntentNodes(NodeSupport):
         if intent.model:
             return f"{intent.name} [BERT {intent.confidence:.2f}]"
         return intent.name
+
+
+def _status_named(query: str) -> str | None:
+    """The order state the customer named ("my delivered orders"), if exactly one."""
+    named = [
+        status for status in get_args(OrderStatus)
+        if re.search(rf"\b{status}\b", query, re.IGNORECASE)
+    ]
+    return named[0] if len(named) == 1 else None

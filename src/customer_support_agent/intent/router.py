@@ -526,6 +526,7 @@ class CustomerSupportIntentRouter:
             "ORDER_STATUS": "your order status",
             "ORDER_DETAILS": "your order details",
             "REQUEST_REFUND": "a refund",
+            "REFUND_STATUS": "where your refund stands",
         }.get(intent, "your request")
 
 

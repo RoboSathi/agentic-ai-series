@@ -186,11 +186,42 @@ class IntentClassifierSettings(BaseModel):
         return resolve_path(self.local_model_dir)
 
 
+class DialogueSummarizerSettings(BaseModel):
+    """A local seq2seq model that summarises a conversation (memory dreams).
+
+    Local on purpose: a dream summarises every session it reads, and a
+    remote LLM call per session is exactly the rate-limited cost this
+    avoids. Its output is never trusted as stated — the dream keeps a
+    sentence only when the NLI checker confirms it against the events.
+    """
+
+    enabled: bool
+    model: str
+    local_model_dir: str
+    download_if_missing: bool
+    max_input_tokens: int
+    max_summary_tokens: int
+    num_beams: int
+
+    @property
+    def resolved_local_model_dir(self) -> Path:
+        return resolve_path(self.local_model_dir)
+
+
 class LLMCheckSettings(BaseModel):
     """The smallest real request `make llm-check` sends to each endpoint."""
 
     prompt: str
     max_tokens: int
+
+
+class OutputNormalisationSettings(BaseModel):
+    """Typography undone in model output before anything reads it."""
+
+    enabled: bool
+    space_categories: list[str]
+    replacements: dict[str, str]
+    remove: list[str]
 
 
 class LLMSettings(YamlBackedSettings):
@@ -207,7 +238,9 @@ class LLMSettings(YamlBackedSettings):
     embedding: EmbeddingSettings
     encoders: EncoderSettings
     intent_classifier: IntentClassifierSettings
+    dialogue_summarizer: DialogueSummarizerSettings
     check: LLMCheckSettings
+    output_normalisation: OutputNormalisationSettings
 
     model_config = SettingsConfigDict(env_prefix="LLM__")
 
@@ -506,6 +539,34 @@ class MemoryImportanceSettings(BaseModel):
     by_category: dict[str, float]
 
 
+class DreamSettings(BaseModel):
+    """Offline consolidation of the dream inbox (`make dream`)."""
+
+    # Consolidated turn events older than this are pruned by each dream.
+    retention_days: int = Field(gt=0)
+    # How many identical refusals across sessions make a procedure candidate.
+    procedure_threshold: int = Field(gt=0)
+    # Add a locally generated intent sentence to each session summary.
+    summarize_intent: bool
+    # The principal a dream acts as. An agent role, so a proposed procedure
+    # is refused by governance and lands with a curator.
+    actor: str
+    # How much of a tool result one outcome line quotes.
+    outcome_chars: int = Field(gt=0)
+    # Prefixes that mark a tool result as a refusal.
+    refusal_markers: list[str]
+    # A procedure key is a name, not a sentence: longer keys are cut here.
+    procedure_key_chars: int = Field(gt=0)
+    # Words a generated summary sentence may not contain (gendered pronouns:
+    # the summarizer cannot know them). Such a sentence is dropped.
+    forbidden_words: list[str]
+    # Share of real words below which a generated sentence is decoding noise.
+    min_word_ratio: float = Field(ge=0.0, le=1.0)
+    # Read-only tools, named by the agent. A summary condenses their calls
+    # to "looked up …" and quotes only what changed something.
+    lookup_tools: list[str] = Field(default_factory=list)
+
+
 class MemorySettings(YamlBackedSettings):
     """All four CoALA stores plus the write pipeline (LLD §8)."""
 
@@ -520,6 +581,7 @@ class MemorySettings(YamlBackedSettings):
     governance: MemoryGovernanceSettings
     deterministic: MemoryDeterministicSettings
     importance: MemoryImportanceSettings
+    dream: DreamSettings
 
     model_config = SettingsConfigDict(env_prefix="MEMORY__")
 
@@ -562,6 +624,11 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     support_only_tiers: list[str]
     record_claim_pattern: str
     record_claim_tiers: list[str]
+    # What an identifier looks like to this agent. When set, evidence may
+    # refute a claim that names identifiers only if it names one of them:
+    # NLI reads a record about order B as contradicting a claim about
+    # order A. Unset: every retrieved item may refute, as before.
+    refute_identifier_pattern: str | None = None
     # A claim whose facts sit in two evidence items ("order 10892 (Keyboard)
     # has been queued") is neutral against each alone. When no single item
     # decides it, the items allowed to support it are joined into one
@@ -979,6 +1046,10 @@ class CommandSettings(YamlBackedSettings):
     _yaml_section = "commands"
     default_limit: int
     value_preview_chars: int
+    # Memory trees (`make show-memory`, `/memory`, `make dream`): how much of
+    # a value one line shows, and how many events each session lists.
+    tree_preview_chars: int
+    memory_tree_events_per_session: int
     recent_window: int
 
     model_config = SettingsConfigDict(env_prefix="COMMANDS__")
@@ -1004,6 +1075,12 @@ class TuiSettings(YamlBackedSettings):
     refresh_interval_ms: int
     show_token_count: bool
     copy_method: Literal["osc52", "file"]
+    # Commands that put text on the system clipboard, tried in order; the
+    # first one installed wins. OSC 52 alone is not enough: Apple Terminal
+    # ignores it, so a selection copied that way silently goes nowhere.
+    system_clipboard_commands: list[list[str]]
+    # How long the "Copied N characters" toast stays up.
+    copy_toast_seconds: float
     max_feed_lines: int
     spinner_frames: str
     command_output: CommandOutputSettings

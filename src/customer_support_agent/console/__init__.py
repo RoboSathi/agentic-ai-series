@@ -92,9 +92,13 @@ class CustomerSupportHost:
 
     def commands(self) -> list[Command]:
         """The slash commands that read this agent's own tables and corpus."""
+        from agentic_commons.commands.data import DreamCommand
+        from customer_support_agent.graph.builder import build_dream_service
+
         return [
             QueueCommand(agent=lambda: self.agent),
             KnowledgeBaseCommand(lambda: self.knowledge_base),
+            DreamCommand(build_dream_service),
         ]
 
     def stage_labels(self) -> Mapping[str, str]:

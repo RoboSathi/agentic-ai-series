@@ -16,6 +16,7 @@ from customer_support_agent.domain.models import (
     HitlRequest,
     HitlStatus,
     Order,
+    OrderStatus,
     RefundStatus,
     User,
 )
@@ -148,6 +149,26 @@ class OrdersRepository:
             )
         return result.affected > 0
 
+    @logged("customer_support_agent")
+    def set_order_status(
+        self, order_id: int, status: OrderStatus, expected: OrderStatus | None = None
+    ) -> bool:
+        """Move an order to a new lifecycle state; compare-and-swap with `expected`.
+
+        Same contract as `set_refund_status`: a cancellation racing a
+        shipment must lose cleanly, not overwrite "shipped" blindly.
+        """
+        if expected is None:
+            result = self._pool.execute(
+                "UPDATE orders SET order_status = ? WHERE order_id = ?", (status, order_id)
+            )
+        else:
+            result = self._pool.execute(
+                "UPDATE orders SET order_status = ? WHERE order_id = ? AND order_status = ?",
+                (status, order_id, expected),
+            )
+        return result.affected > 0
+
 
 class UsersRepository:
     """Customers."""
@@ -225,12 +246,14 @@ class HitlQueueRepository:
     def save(self, entity: HitlRequest) -> None:
         """Enqueue a request for human review."""
         self._pool.execute(
-            "INSERT INTO hitl_queue (order_id, user_id, requested_amount_cents, status, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO hitl_queue "
+            "(order_id, user_id, requested_amount_cents, action, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (
                 entity.order_id,
                 entity.user_id,
                 entity.requested_amount.cents,
+                entity.action,
                 entity.status,
                 entity.created_at,
             ),

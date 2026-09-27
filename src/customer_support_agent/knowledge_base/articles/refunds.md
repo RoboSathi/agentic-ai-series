@@ -11,10 +11,13 @@ Each order can be refunded once. When an order already shows a completed refund,
 ## Full refunds only
 A refund is always for the full order total. Partial refunds are not supported, whether the agent issues the refund or a human reviewer approves it.
 
-## Small refunds and human review
-Refunds of up to $50 are processed automatically as soon as the order is confirmed as eligible. Refunds above $50 need a human to approve them before any money moves; smaller refunds are never sent for review. These are placed in the review queue, and the customer is told their refund needs a manual review and that they will hear back soon.
+## Human review
+Most refunds are issued as soon as the order is confirmed as eligible. Some are checked by a person before any money moves. Those are placed in the review queue, and the customer is told their refund needs a manual review and that they will hear back soon.
 
 A reviewer can approve or deny a queued refund. An approved refund is then issued exactly like an automatic one.
+
+## Cancelling an order
+An order that has not shipped yet can be cancelled. Cancelling refunds the full order total in the same step, and like a refund it may be checked by a person first. Once an order has shipped it can no longer be cancelled; it can be refunded after it is delivered.
 
 ## When the money arrives
 Once a refund is issued, it goes back to the original payment method. Card refunds usually show on the statement within 5 to 10 business days, depending on the customer's bank. The customer also receives a confirmation message when the refund is issued.

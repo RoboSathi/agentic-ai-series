@@ -21,12 +21,18 @@ from agentic_commons.observability.types import utc_now
 OrderStatus = Literal["pending", "shipped", "delivered", "cancelled"]
 RefundStatus = Literal["none", "pending_review", "approved", "denied", "completed"]
 HitlStatus = Literal["pending", "approved", "denied"]
+# What a reviewer's approval will do. A cancellation that moves money is
+# reviewed as one decision, so approving it cancels *and* refunds.
+ReviewAction = Literal["refund", "cancel_and_refund"]
 
 # An order is refundable only once it is settled. Domain invariant, not a
 # tunable: it is what "refund" means for this business, and the dummy
 # data generator applies the same rule so the fixtures cannot contradict
 # the policy the agent is asked to enforce.
 REFUNDABLE_ORDER_STATUSES: frozenset[str] = frozenset({"delivered", "cancelled"})
+# An order can be cancelled only before it leaves the warehouse. Once it
+# has shipped, stopping it is a carrier recall this business does not do.
+CANCELLABLE_ORDER_STATUSES: frozenset[str] = frozenset({"pending"})
 
 class Order(BaseModel):
     """One customer order: what was bought, and where it has got to."""
@@ -121,6 +127,21 @@ class Order(BaseModel):
             )
         return ""
 
+    @property
+    def is_cancellable(self) -> bool:
+        """Whether this order has not yet left, and so can still be stopped."""
+        return self.order_status in CANCELLABLE_ORDER_STATUSES
+
+    @property
+    def cancellation_ineligibility_reason(self) -> str:
+        """Why this order cannot be cancelled, in words a customer can read."""
+        if self.is_cancellable:
+            return ""
+        return (
+            f"Order {self.order_id} is already {self.order_status}, so it can no longer "
+            "be cancelled — only an order that has not shipped yet can be"
+        )
+
 
 class User(BaseModel):
     """One customer.
@@ -155,5 +176,6 @@ class HitlRequest(BaseModel):
     order_id: int
     user_id: int
     requested_amount: Money
+    action: ReviewAction = "refund"
     status: HitlStatus = "pending"
     created_at: str = Field(default_factory=lambda: utc_now().isoformat())

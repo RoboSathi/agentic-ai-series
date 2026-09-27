@@ -1,13 +1,13 @@
 # Frequently asked questions
 
 ## How do I get a refund?
-Tell the agent which order you want refunded. The agent checks that the order belongs to you and is eligible, then either issues the full refund straight away or, above $50, sends it for a quick human review.
+Tell the agent which order you want refunded. The agent checks that the order belongs to you and is eligible, then either issues the full refund straight away or sends it for a quick human review.
 
 ## Why was my refund sent for review?
-Refunds above $50 are always checked by a person before any money moves. It is a standard safeguard, not a sign that anything is wrong with your request.
+Some refunds are checked by a person before any money moves. It is a standard safeguard, not a sign that anything is wrong with your request.
 
 ## Can I get a refund for an order that has not arrived yet?
-Not while it is still pending or on its way. A refund applies once the order is delivered, or if it is cancelled before delivery.
+Not while it is still on its way. A refund applies once the order is delivered. An order that has not shipped yet can be cancelled instead, which refunds it in full.
 
 ## Can I get a refund for part of an order?
 No. Refunds are always for the full order total; partial refunds are not supported.

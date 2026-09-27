@@ -11,6 +11,7 @@ from agentic_commons.hallucination_protection.checker import (
     GroundingResolver,
     HallucinationDetector,
     TrustCalibrationTracker,
+    split_sentences,
 )
 from agentic_commons.hallucination_protection.types import (
     AtomicClaim,
@@ -40,4 +41,5 @@ __all__ = [
     "TrustCalibrationTracker",
     "TrustMeasurement",
     "TrustReport",
+    "split_sentences",
 ]

@@ -7,8 +7,9 @@ them — but never the tools themselves.
 
 from customer_support_agent.tools.definitions import (
     NAMESPACE,
-    ApprovalArgs,
+    CancelArgs,
     CustomerSupportToolHandler,
+    ListOrdersArgs,
     OrderLookupArgs,
     RefundArgs,
     SupportTools,
@@ -16,8 +17,9 @@ from customer_support_agent.tools.definitions import (
 
 __all__ = [
     "NAMESPACE",
-    "ApprovalArgs",
+    "CancelArgs",
     "CustomerSupportToolHandler",
+    "ListOrdersArgs",
     "OrderLookupArgs",
     "RefundArgs",
     "SupportTools",

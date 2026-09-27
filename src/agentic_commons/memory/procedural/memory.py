@@ -143,6 +143,18 @@ class ProceduralStore:
         )
         return int(row["v"]) if row and row["v"] is not None else 0
 
+    def purge(self) -> int:
+        """Remove every one of this agent's rows. Operator reset only.
+
+        Deliberately outside the write pipeline: this is `make clean-memory`
+        wiping a demo back to empty, not a memory operation with a
+        principal — the same standing as rebuilding the database.
+        """
+        result = self._store.execute(
+            "DELETE FROM platform_procedures WHERE agent_id = ?", (self._agent_id,)
+        )
+        return result.affected
+
     def names(self) -> list[str]:
         """Every procedure with at least one version."""
         return [

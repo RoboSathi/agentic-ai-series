@@ -116,6 +116,21 @@ class SemanticStore:
     def agent_id(self) -> str:
         return self._agent_id
 
+    def purge(self) -> int:
+        """Remove every one of this agent's rows. Operator reset only.
+
+        Deliberately outside the write pipeline: this is `make clean-memory`
+        wiping a demo back to empty, not a memory operation with a
+        principal — the same standing as rebuilding the database.
+        """
+        result = self._store.execute(
+            "DELETE FROM platform_semantic_facts WHERE agent_id = ?", (self._agent_id,)
+        )
+        # The delete trigger keeps the index in step row by row; a rebuild
+        # makes sure nothing is left behind whatever state it was in.
+        self._store.execute(f"INSERT INTO {_FTS_TABLE}({_FTS_TABLE}) VALUES ('rebuild')")
+        return result.affected
+
     @logged("memory")
     def write(self, fact: MemoryFact, provenance: Provenance) -> WriteResult:
         """Store a fact. Conflicts are the write pipeline's business, not ours."""

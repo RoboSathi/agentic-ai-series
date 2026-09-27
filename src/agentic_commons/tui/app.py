@@ -17,6 +17,8 @@ from collections.abc import Sequence
 from typing import Any, Callable
 from uuid import uuid4
 
+from textual import events
+from textual.actions import SkipAction
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header, Input
@@ -117,16 +119,6 @@ class AgenticTuiApp(App[None]):
         background: transparent;
     }
 
-    /* A partial hallucination is still blocked, but the response contained
-       some grounded claims. Keep the block semantics while distinguishing it
-       from a completely unsupported response. */
-    .stage-blocked.stage-hallucination-partial > CollapsibleTitle,
-    .stage-blocked.stage-hallucination-partial > CollapsibleTitle:hover,
-    .stage-blocked.stage-hallucination-partial > CollapsibleTitle:focus {
-        color: yellow;
-        background: transparent;
-    }
-
     .stage-details {
         padding: 0 1 1 3;
         color: $text-muted;
@@ -156,6 +148,9 @@ class AgenticTuiApp(App[None]):
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit"),
         Binding("ctrl+o", "copy_feed", "Copy"),
+        # ⌘C, where the terminal forwards it (Ghostty, Kitty, WezTerm, iTerm2
+        # with CSI u). Priority, or the focused Input takes it for its own copy.
+        Binding("super+c", "copy_selection", "Copy selection", priority=True, show=False),
         Binding("ctrl+l", "clear_feed", "Clear"),
         Binding("pageup", "page_up", "Page up", priority=True),
         Binding("pagedown", "page_down", "Page down", priority=True),
@@ -461,6 +456,31 @@ class AgenticTuiApp(App[None]):
             style="cyan",
         )
         self._schedule_follow_latest()
+
+    def on_text_selected(self, _event: events.TextSelected) -> None:
+        """Copy a mouse selection the moment it is made.
+
+        Apple Terminal keeps ⌘C for itself and never sends it here, so
+        waiting for a key would mean the copy never happens. Copying on
+        select makes "select, ⌘C, ⌘V" work anyway: the clipboard already
+        holds the text by the time ⌘V is pressed.
+        """
+        self._copy_selection()
+
+    def action_copy_selection(self) -> None:
+        """⌘C: copy the screen's selection, or leave the key to the Input."""
+        if not self._copy_selection():
+            raise SkipAction()
+
+    def _copy_selection(self) -> bool:
+        text = self.screen.get_selected_text()
+        if not text:
+            return False
+        if self._copier.copy_text(text):
+            self.notify(f"Copied {len(text)} characters", timeout=get_settings().tui.copy_toast_seconds)
+        else:
+            self.notify("Copy failed — no clipboard command found", severity="warning")
+        return True
 
     def action_clear_feed(self) -> None:
         self._panel.clear_feed()

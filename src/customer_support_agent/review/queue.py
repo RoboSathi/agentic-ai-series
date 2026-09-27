@@ -23,8 +23,10 @@ from agentic_commons.hallucination_protection import TrustCalibrationTracker, Tr
 from agentic_commons.logging import get_logger, logged
 from agentic_commons.money import Money
 from agentic_commons.observability.types import utc_now
-from customer_support_agent.domain.models import HitlRequest
+from agentic_commons.resilience import SagaResult
+from customer_support_agent.domain.models import HitlRequest, Order
 from customer_support_agent.persistence.repositories import HitlQueueRepository, OrdersRepository
+from customer_support_agent.resilience.cancellation_saga import CancellationSaga
 from customer_support_agent.resilience.refund_saga import RefundSaga
 
 
@@ -49,6 +51,7 @@ class ReviewQueueService:
         saga: RefundSaga,
         audit: AuditLedger | None = None,
         trust: TrustCalibrationTracker | None = None,
+        cancellation: CancellationSaga | None = None,
     ) -> None:
         self._queue = queue
         self._orders = orders
@@ -59,6 +62,8 @@ class ReviewQueueService:
         # agreement rate is counted.
         self._trust = trust or TrustCalibrationTracker()
         self._saga = saga
+        # An approved cancellation cancels and refunds as one decision.
+        self._cancellation = cancellation or CancellationSaga(orders, saga)
         self._audit = audit or NullAuditLedger()
         self._logger = get_logger("customer_support_agent")
 
@@ -88,7 +93,8 @@ class ReviewQueueService:
         # The eligibility rule is re-checked at approval, not trusted from
         # when it was queued: an order can change state while it waits,
         # and a refund approved against a stale fact is still wrong.
-        if not order.is_refund_eligible or order.already_refunded:
+        ineligible = _ineligibility(request, order)
+        if ineligible:
             self._queue.decide(request_id, "denied")
             # The agent was wrong to queue this one, and the human caught
             # it: appropriate reliance, which is what the tracker is
@@ -98,9 +104,9 @@ class ReviewQueueService:
                 request_id=request_id,
                 decision="denied",
                 order_id=order.order_id,
-                reason=order.refund_ineligibility_reason,
+                reason=ineligible,
             )
-        result = await self._saga.issue(order, request.requested_amount, f"approved by {reviewer}")
+        result = await self._issue(request, order, f"approved by {reviewer}")
         if not result.succeeded:
             return ReviewOutcome(
                 request_id=request_id,
@@ -120,6 +126,12 @@ class ReviewQueueService:
             amount=request.requested_amount,
             refund_issued=True,
         )
+
+    async def _issue(self, request: HitlRequest, order: Order, reason: str) -> SagaResult:
+        """Run whatever the reviewer approved, through its own saga."""
+        if request.action == "cancel_and_refund":
+            return await self._cancellation.cancel(order, request.requested_amount, reason)
+        return await self._saga.issue(order, request.requested_amount, reason)
 
     @logged("customer_support_agent")
     def deny(self, request_id: int, reviewer: str, reason: str = "") -> ReviewOutcome:
@@ -184,3 +196,12 @@ class ReviewQueueMetrics(BaseModel):
     pending: int = 0
     oldest_wait_hours: float = 0.0
     measured_at: str = Field(default_factory=lambda: utc_now().isoformat())
+
+
+def _ineligibility(request: HitlRequest, order: Order) -> str:
+    """Why the approved action can no longer be carried out, or "" if it still can."""
+    if order.already_refunded:
+        return order.refund_ineligibility_reason
+    if request.action == "cancel_and_refund":
+        return order.cancellation_ineligibility_reason
+    return order.refund_ineligibility_reason

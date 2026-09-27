@@ -1,6 +1,6 @@
 """Waiting on a human, inside the run rather than outside it.
 
-A refund of $50 or more is queued for review. Before durable execution
+A refund or cancellation above the agent's limit is queued for review. Before durable execution
 the turn simply ended there, and the reviewer's decision happened in a
 different code path with no connection back to the conversation that
 asked. Now the run *pauses*: the customer still gets the "under review"

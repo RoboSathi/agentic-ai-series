@@ -44,11 +44,9 @@ async def run() -> EpisodeOutput:
     detector = DuplicateActionDetector()
     first = ToolCall(action="support.get_order_status", params={"order_id": 55})
     again = ToolCall(action="support.get_order_status", params={"order_id": 55})
-    reordered = ToolCall(
-        action="support.queue_for_approval", params={"amount": 80.0, "order_id": 55}
-    )
+    reordered = ToolCall(action="support.process_refund", params={"amount": 80.0, "order_id": 55})
     same_reordered = ToolCall(
-        action="support.queue_for_approval", params={"order_id": 55, "amount": 80.0}
+        action="support.process_refund", params={"order_id": 55, "amount": 80.0}
     )
 
     output.say("")

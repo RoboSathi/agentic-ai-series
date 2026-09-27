@@ -1,4 +1,5 @@
-.PHONY: help install clean lint type-check format test verify tui episode llm-check dummy-data \
+.PHONY: help install clean lint type-check format test verify tui episode llm-check dummy-data refund-limit \
+	clean-memory show-memory dream \
 	eval eval-generate eval-oracle eval-security eval-judge eval-deepeval eval-report eval-diff \
 	eval-runs eval-sql
 
@@ -52,6 +53,12 @@ help:
 	@echo ""
 	@echo "$(GREEN)Data:$(NC)"
 	@echo "  make dummy-data       Rebuild the agent DB, reset stale memory (KEEP_MEMORY=1 skips), build the eval fixture"
+	@echo "  make refund-limit 100 Set the per-refund limit the Gatekeeper enforces (agent DB)"
+	@echo ""
+	@echo "$(GREEN)Memory:$(NC)"
+	@echo "  make show-memory      Everything long-term memory holds, as a tree (CUSTOMER=<id> EVENTS=<n>)"
+	@echo "  make dream            Consolidate recent conversations into memory; prints what changed (SHOW=1 for the full tree)"
+	@echo "  make clean-memory     Empty long-term memory (keeps checkpoints, orders, reviews, audit)"
 	@echo ""
 	@echo "$(GREEN)Evals$(NC) (order: generate → oracle → security → judge → deepeval; each writes a report):"
 	@echo "  make eval             The whole pipeline; stops after the oracle on a broken invariant"
@@ -107,6 +114,26 @@ llm-check:
 
 dummy-data:
 	$(PYTHON) -m customer_support_agent.dummy_data.generate_dummy_data $(if $(KEEP_MEMORY),--keep-memory)
+
+# `make refund-limit 100`: the amount is the second goal, so it is given a
+# no-op rule here rather than being run as a target of its own.
+ifeq (refund-limit,$(firstword $(MAKECMDGOALS)))
+REFUND_LIMIT := $(word 2,$(MAKECMDGOALS))
+$(eval $(REFUND_LIMIT):;@:)
+endif
+
+show-memory:
+	@$(PYTHON) -m customer_support_agent.admin.show_memory $(if $(CUSTOMER),--customer $(CUSTOMER)) $(if $(EVENTS),--events $(EVENTS))
+
+dream:
+	@$(PYTHON) -m customer_support_agent.admin.dream $(if $(SHOW),--show-memory)
+
+clean-memory:
+	@$(PYTHON) -m customer_support_agent.admin.clean_memory
+
+refund-limit:
+	@test -n "$(REFUND_LIMIT)" || (echo "$(YELLOW)Usage: make refund-limit 100$(NC)" && exit 1)
+	$(PYTHON) -m customer_support_agent.admin.refund_limit $(REFUND_LIMIT)
 
 # -- evals ---------------------------------------------------------------------
 # Every target writes its Markdown report under reports/evals/<run_id>/.

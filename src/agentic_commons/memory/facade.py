@@ -238,8 +238,14 @@ class MemoryFacade:
         source: str,
         session_id: str,
         principal: MemoryPrincipal | None = None,
+        category: str = "event",
+        key: str = "",
     ) -> WriteResult:
         """Append to the episodic log — authorized, but never subject to conflict.
+
+        `category` and `key` let a dream record a session summary the same
+        way: it too is what happened (built from recorded tool results),
+        not a claim, so it takes this path rather than confidence routing.
 
         An event is what happened, not a claim about what is true, so it
         skips conflict and confidence routing. It does not skip the
@@ -249,17 +255,17 @@ class MemoryFacade:
         if self.episodic is None:
             return WriteResult(route="discard", written=False, reason="no episodic memory")
         actor = principal or MemoryPrincipal(actor=source, role="agent")
-        refused = self.pipeline.permits(actor, "create", "episodic", "event")
+        refused = self.pipeline.permits(actor, "create", "episodic", category)
         if refused is not None:
             return WriteResult(route="refused", written=False, reason=refused, stage="authorization")
         fact = MemoryFact(
             # One key per event, not per session: a shared key made every
             # event in a conversation the same record to recall and forget.
-            key=f"event_{session_id}_{uuid.uuid4().hex}",
+            key=key or f"event_{session_id}_{uuid.uuid4().hex}",
             value=self._redact(description),
             memory_type="episodic",
-            category="event",
-            importance=self.pipeline.score_importance("event"),
+            category=category,
+            importance=self.pipeline.score_importance(category),
             metadata={"session_id": session_id},
             provenance=Provenance(source=source),
             subject_id=actor.subject_id,

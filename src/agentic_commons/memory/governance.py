@@ -111,6 +111,18 @@ class CuratorQueue:
             for row in rows
         ]
 
+    def purge(self) -> int:
+        """Remove every one of this agent's rows. Operator reset only.
+
+        Deliberately outside the write pipeline: this is `make clean-memory`
+        wiping a demo back to empty, not a memory operation with a
+        principal — the same standing as rebuilding the database.
+        """
+        result = self._store.execute(
+            f"DELETE FROM {self._TABLE} WHERE agent_id = ?", (self._agent_id,)
+        )
+        return result.affected
+
     def decide(self, queue_id: int, status: str, curator: str) -> None:
         self._store.execute(
             f"UPDATE {self._TABLE} SET status = ?, decided_by = ?, decided_at = ? "
