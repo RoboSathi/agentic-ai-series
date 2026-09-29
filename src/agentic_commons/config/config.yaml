@@ -595,8 +595,6 @@ hallucination_protection:
       - reaches: denied
         exact: true
         pattern: '\b(?:denied|declined|rejected)\b'
-  # How many other evidence lines a card lists under a claim, beside the one that decided it.
-  card_evidence_lines: 3
   # Where a refund goes is a rule stated once in the knowledge article; the
   # outcome around it is a fact about this case. Split, each is checked by
   # what can ground it.

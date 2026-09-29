@@ -156,7 +156,7 @@ class TestFormatting:
 
 
 class TestLayout:
-    """The prompt sits under the transcript, with its status below it.
+    """The prompt sits under the transcript, with the live status just above it.
 
     Reported as "the chat window is too low": `dock: bottom` pins a
     widget to the screen edge and removes it from the flow, which left
@@ -175,8 +175,8 @@ class TestLayout:
             prompt = app.query_one("#query", Input)
             assert prompt.region.y > feed.region.y
 
-    async def test_the_status_line_sits_under_the_prompt(self) -> None:
-        """Where it reads as a status on the work, as in Claude Code."""
+    async def test_the_status_line_sits_above_the_prompt(self) -> None:
+        """Between the transcript and the chat bar, as in Claude Code."""
         from textual.widgets import Input
 
         from agentic_commons.tui.app import AgenticTuiApp
@@ -184,7 +184,9 @@ class TestLayout:
         app = AgenticTuiApp()
         async with app.run_test(size=(78, 26)):
             prompt = app.query_one("#query", Input)
-            assert app._status.region.y >= prompt.region.y + prompt.region.height
+            feed = app.query_one("#feed")
+            assert feed.region.y + feed.region.height <= app._status.region.y
+            assert app._status.region.y + app._status.region.height <= prompt.region.y
 
     async def test_nothing_is_docked(self) -> None:
         """Three docked widgets once landed in the same place."""

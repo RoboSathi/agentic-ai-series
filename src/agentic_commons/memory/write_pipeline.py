@@ -559,10 +559,20 @@ class MemoryWritePipelineImpl:
         )
         return None if decision.allowed else decision.reason
 
-    def report(self, stage: str, status: StatusKind, summary: str, fields: dict[str, Any]) -> None:
-        """Show one memory card, for operations the facade performs itself."""
+    def report(
+        self,
+        stage: str,
+        status: StatusKind,
+        summary: str,
+        fields: dict[str, Any],
+        *,
+        quiet: bool = False,
+    ) -> None:
+        """Report one memory operation the facade performs itself: a card, or quietly (log and tally only)."""
         if self._reporter is not None:
-            self._reporter.emit(stage, status, event_kind="memory", summary=summary, fields=fields)
+            self._reporter.emit(
+                stage, status, event_kind="memory", summary=summary, fields=fields, quiet=quiet
+            )
 
     def recent(self, limit: int = 10) -> list[MemoryFact]:
         """Most recently committed semantic facts — an inspection helper."""

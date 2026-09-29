@@ -12,7 +12,6 @@ prompt, which is always present and never trimmed; contributing a second
 verbatim copy from here meant the model read the same eight lines twice.
 """
 
-from collections import Counter
 from typing import Any
 
 from agentic_commons.context import Context, Task
@@ -38,30 +37,8 @@ _ROUTINE_MODES = frozenset({"distraction"})
 # `ContextFinding.action` for a finding nothing was done about.
 _NOT_ACTED_ON = "flagged"
 
-class ContextNodes(NodeSupport):
-    def _working_memory_fields(self, state: AgentState) -> dict[str, Any]:
-        """Return the bounded working-memory content actually available to context."""
-        memory = state.working_memory
-        history = []
-        for item in memory.history:
-            if isinstance(item, dict):
-                history.append({
-                    "role": item.get("role", ""),
-                    "content": self._security.redact(str(item.get("content", ""))),
-                })
-            else:
-                history.append(self._security.redact(str(item)))
-        working_state = {
-            str(key): self._security.redact(str(value))
-            for key, value in memory.state.items()
-        }
-        return {
-            "working_memory_history_turns": len(memory.history) // 2,
-            "working_memory_history": history,
-            "working_memory_state_items": len(working_state),
-            "working_memory_state": working_state,
-        }
 
+class ContextNodes(NodeSupport):
     def _task_metadata(self, state: AgentState) -> dict[str, Any]:
         """What this turn has settled that assembly should know about."""
         metadata: dict[str, Any] = {}
@@ -89,13 +66,10 @@ class ContextNodes(NodeSupport):
             # not one that reasons without its own policy.
             self._done(
                 "context_assembly",
-                summary="Context assembly withheld · working memory read",
+                summary="Context assembly withheld",
                 event_kind="context",
-                fields={
-                    "source": "none",
-                    "used_tokens": 0,
-                    **self._working_memory_fields(state),
-                },
+                fields={"source": "none"},
+                quiet=True,
             )
             return {"context": Context()}
         assembled = await self._context.assemble(
@@ -117,43 +91,34 @@ class ContextNodes(NodeSupport):
         if modes:
             decisions.append(f"context health: {', '.join(modes)}")
 
-        by_kind = Counter(chunk.kind for chunk in fitted.chunks)
-        context_fields = {
+        # What assembly cost, for the log and the tally. The model's input is
+        # on the LLM Request card, so nothing here repeats it.
+        cost = {
             "chunks": len(fitted.chunks),
             "dropped": len(fitted.dropped),
-            **self._working_memory_fields(state),
-            "budget_tokens": fitted.budget_tokens,
             "used_tokens": fitted.used_tokens,
-            "utilization": (
-                round(fitted.used_tokens / fitted.budget_tokens, 2)
-                if fitted.budget_tokens
-                else 0.0
-            ),
-            "kinds": dict(by_kind),
-            "strategies": fitted.applied_strategies,
-            "health": modes or ["healthy"],
-            # One line per finding: what, where, which rule, what was done.
-            "context_findings": [
-                f"{f.mode} · {f.source} · {f.rule}: {f.detail} → {f.action}" for f in findings
-            ] or None,
+            "budget_tokens": fitted.budget_tokens,
         }
         if modes and not _routine(findings):
             self._reporter_warning(
                 "context_assembly",
                 summary=f"Context health: {', '.join(modes)} — {_acted(findings)}",
                 event_kind="context",
-                fields=context_fields,
+                fields={
+                    "findings": [
+                        f"{f.mode} · {f.source} · {f.rule}: {f.detail} → {f.action}"
+                        for f in findings
+                    ],
+                    **cost,
+                },
             )
         else:
             self._done(
                 "context_assembly",
-                summary=(
-                    f"Context window assembled · {len(findings)} off-task chunk(s) filtered"
-                    if findings
-                    else "Context window assembled"
-                ),
+                summary="Context window assembled",
                 event_kind="context",
-                fields=context_fields,
+                fields=cost,
+                quiet=True,
             )
         return {
             "context": Context(items=[fitted.text]),

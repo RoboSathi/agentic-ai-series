@@ -83,8 +83,6 @@ FIELD_PRIORITY = (
     "requested_amount",
     "allowed_amount",
     "autonomous_limit",
-    "cumulative_total",
-    "threshold",
     "remaining_before",
     "remaining_after",
     "policy_version",
@@ -95,9 +93,6 @@ FIELD_PRIORITY = (
     "roles",
     "permission",
     "granted_by",
-    "authority_rank",
-    "required_authority_rank",
-    "max_granting_rank",
     "checks",
     "reason",
     "confidence",
@@ -216,7 +211,7 @@ _UNDETERMINED = "undetermined"
 _NLI_NAMES = {"unknown": "neutral"}
 # A line of the record read directly, not scored by a model.
 _RECORD_LABEL = "record"
-_RECORD_BASIS = "Record"
+_NOT_CHECKED = "not checked"
 # Policy passages are markdown; emphasis markers are noise in a one-line excerpt.
 _MARKDOWN_BOLD = "**"
 
@@ -306,9 +301,6 @@ class StatusLineWidget(Static):
         self._history_pending = 0
         self._run_state = "idle"
         self._show_token_count = get_settings().tui.show_token_count
-        # Durable/memory context for the last turn: thread, checkpoints,
-        # deterministic recall hit-rate, curator backlog.
-        self._run_context = ""
 
     @property
     def elapsed_seconds(self) -> float:
@@ -359,10 +351,6 @@ class StatusLineWidget(Static):
         self._history_pending = max(0, count)
         self.refresh()
 
-    def set_context(self, context: str) -> None:
-        self._run_context = context
-        self.refresh()
-
     def render(self) -> Text:
         if not self.stage_label:
             return Text("")
@@ -394,9 +382,6 @@ class StatusLineWidget(Static):
                 f"  ({_elapsed(self.elapsed_seconds)})",
                 style="dim",
             )
-
-        if self._run_context:
-            line.append(f"  · {self._run_context}", style="dim cyan")
 
         if not self._following:
             line.append("  · HISTORY", style="yellow")
@@ -854,53 +839,61 @@ def _checker_line(check: Mapping[str, Any]) -> str:
 
 
 def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
-    """`✓ claim`, then what decided it, then the other lines that were read.
+    """`✓ claim`, then the one line that decided it.
 
-        Supported By [Tool Result] (Entailment 0.99): "Order 10665 refund status: pending_review."
-        Contradicted By [Tool Result] (Record): "…" · refund status is completed, so …
-        Unverified: tool result: neutral 0.98 · policy: nothing related (best 0.21 < 0.3)
-        Also Read: [Policy] Neutral 0.12 "…"
+        Supported By [Tool Result]: "Order 10665 refund status: pending_review."
+        Supported By [Policy] (Entailment 0.99): "…"
+        Contradicted By [Tool Result] (Contradiction 0.98): "…"
+        Contradicted: Amount(s) ['$99.00'] appear in the reply but in no tool result.
+        Unverified: no evidence states or contradicts this
+
+    A probability appears only where a model gave one. Everything else about
+    how the claim was checked is in `guardrails.log`.
     """
     verdict = str(check.get("verdict") or _UNDETERMINED)
     mark, style, _ = _CLAIM_MARKS.get(verdict, ("?", "yellow", verdict))
     body.append(f"\n\n  {mark} ", style=style)
     body.append(str(check.get("claim") or ""), style="bright_white")
     evidence = [item for item in check.get("evidence") or [] if isinstance(item, Mapping)]
-    rationale = str(check.get("rationale") or "")
     if verdict == _UNDETERMINED:
-        body.append(f"\n      Unverified: {rationale or 'no evidence decided it'}", style=style)
-        _append_also_read(body, evidence, None)
+        _append_unverified(body, evidence, style)
         return
     item = _deciding_evidence(verdict, evidence)
     lead = "Supported By" if verdict == "supported" else "Contradicted By"
     if item is None or not _decided(verdict, evidence):
-        # Refuted by a rule, not by a passage — an amount or id no evidence
-        # states. Naming the nearest passage as the contradiction sent
-        # readers after the wrong cause.
-        body.append(f"\n      {lead.split()[0]}: {rationale}", style=style)
-        _append_also_read(body, evidence, None)
+        # Decided by a rule that found no line to quote — an amount or id no
+        # evidence states. Naming the nearest passage as the contradiction
+        # sent readers after the wrong cause.
+        body.append(f"\n      {lead.split()[0]}: {check.get('rationale')}", style=style)
         return
     basis = str(check.get("basis") or "")
-    body.append(f"\n      {lead} [{_title(item.get('tier'))}] ({basis}): ", style=style)
+    body.append(
+        f"\n      {lead} [{_title(item.get('tier'))}]{f' ({basis})' if basis else ''}: ",
+        style=style,
+    )
     body.append(f'"{_excerpt(item)}"', style="dim")
-    if basis == _RECORD_BASIS and rationale:
-        body.append(f" · {rationale}", style=style)
-    _append_also_read(body, evidence, item)
 
 
-def _append_also_read(
-    body: Text, evidence: list[Mapping[str, Any]], decided: Mapping[str, Any] | None
-) -> None:
-    """The other lines that were read for this claim, so a wrong verdict can be traced."""
-    limit = get_settings().hallucination_protection.card_evidence_lines
-    for item in [i for i in evidence if i is not decided][:limit]:
-        label = str(item.get("nli_label") or "unknown")
-        name = _NLI_NAMES.get(label, label).title()
-        score = float(item.get("nli_score") or 0)
-        body.append(
-            f"\n      Also Read: [{_title(item.get('tier'))}] {name} {score:.2f} ", style="dim"
-        )
-        body.append(f'"{_excerpt(item)}"', style="dim")
+def _append_unverified(body: Text, evidence: list[Mapping[str, Any]], style: str) -> None:
+    """Why nothing decided the claim: a line the model read and found neutral, or nothing near it."""
+    scored = [item for item in evidence if _was_scored(item)]
+    best = max(scored, key=lambda item: float(item.get("nli_score") or 0), default=None)
+    if best is None:
+        body.append("\n      Unverified: no evidence states or contradicts this", style=style)
+        return
+    label = str(best.get("nli_label"))
+    body.append(
+        f"\n      Unverified: [{_title(best.get('tier'))}] read as "
+        f"{_NLI_NAMES.get(label, label)} ({float(best.get('nli_score') or 0):.2f}): ",
+        style=style,
+    )
+    body.append(f'"{_excerpt(best)}"', style="dim")
+
+
+def _was_scored(item: Mapping[str, Any]) -> bool:
+    """Whether a model read this line, as opposed to it being too far from the claim to be sent."""
+    label = str(item.get("nli_label") or "")
+    return bool(label) and not label.startswith(_NOT_CHECKED) and label != _RECORD_LABEL
 
 
 def _title(value: Any) -> str:

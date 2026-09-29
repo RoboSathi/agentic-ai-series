@@ -69,7 +69,7 @@ Section `hallucination_protection:` — thresholds (`nli_entailment_threshold`,
 `evidence_min_similarity`, `embedding_top_k`, `rule_restatement_coverage`), the
 `tiers` list (order, kinds, claim classes, `may_refute`), the classifier vocabulary (`conversational_openers`,
 `record_identifier_pattern`, `outcome_pattern`, `promissory_pattern`), the
-the refund state machine (`refund_states`: `ladder`, `branches`, `observed_as`, `phrases`; plus `refund_state_pattern`, `refusal_pattern`), `card_evidence_lines`, `rule_phrases`, self-consistency
+the refund state machine (`refund_states`: `ladder`, `branches`, `observed_as`, `phrases`; plus `refund_state_pattern`, `refusal_pattern`), `rule_phrases`, self-consistency
 settings, `max_repair_attempts`. Built only when `features.hallucination_guard`
 is on.
 

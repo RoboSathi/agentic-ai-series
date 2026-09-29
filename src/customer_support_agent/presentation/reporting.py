@@ -15,6 +15,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from agentic_commons.config import get_settings
 from agentic_commons.control_loop import ControlLoopReport
 from agentic_commons.money import money_or_none
 
@@ -66,11 +67,7 @@ def llm_request_fields(request: Any, *, model: str = "") -> dict[str, Any]:
         (message.content for message in request.messages if message.role == "system"),
         "",
     )
-    user_messages = [
-        message.content
-        for message in request.messages
-        if message.role == "user"
-    ]
+    user_messages = [message.content for message in request.messages if message.role == "user"]
     tools = request.tools or []
     tool_names: list[str] = []
     for tool in tools:
@@ -85,10 +82,17 @@ def llm_request_fields(request: Any, *, model: str = "") -> dict[str, Any]:
 
     return {
         "model": model or "unknown",
+        "context_tokens": _tokens(request.messages),
         "system_prompt": system_prompt,
         "user_query": user_messages[-1] if user_messages else "",
         "tools_offered": tool_names,
     }
+
+
+def _tokens(messages: list[Any]) -> int:
+    """How big what is sent is, in tokens (the context pipeline's own estimate)."""
+    characters = sum(len(str(getattr(message, "content", "") or "")) for message in messages)
+    return max(1, characters // get_settings().context.chars_per_token)
 
 
 def memory_fact_fields(fact: Any, *, score: float | None = None) -> dict[str, Any]:
@@ -107,29 +111,29 @@ def memory_fact_fields(fact: Any, *, score: float | None = None) -> dict[str, An
         fields["score"] = round(float(score), 4)
     return fields
 
+
 # Backward-compatible spelling for callers from the first Phase 1 integration.
 # The canonical helper name is `memory_fact_fields` (singular `fact`).
 memory_facts_field = memory_fact_fields
 
-def llm_response_fields(
-    result: Any,
-    *,
-    tools_offered: list[str] | None = None,
-) -> dict[str, Any]:
-    """Render only the operator-useful parts of an LLM response."""
+
+def llm_response_fields(result: Any) -> dict[str, Any]:
+    """Render only the operator-useful parts of an LLM response.
+
+    Not the model or the tools offered: the request card, directly above,
+    already says both.
+    """
     fields: dict[str, Any] = {
-        "model": result.model,
-        "finish_reason": result.finish_reason or "unknown",
-        "tools_offered": tools_offered or [],
         "input_tokens": result.usage.prompt_tokens,
         "output_tokens": result.usage.completion_tokens,
         "total_tokens": result.usage.total_tokens,
         "latency_ms": round(float(result.latency_ms), 2),
     }
+    if result.finish_reason:
+        fields["finish_reason"] = result.finish_reason
     if result.tool_calls:
         fields["tool_calls"] = [
-            {"tool": call.name, "arguments": call.arguments}
-            for call in result.tool_calls
+            {"tool": call.name, "arguments": call.arguments} for call in result.tool_calls
         ]
     elif result.content:
         fields["response"] = result.content
@@ -161,13 +165,7 @@ def basic_sanity_fields(result: Any) -> dict[str, Any]:
             fields[key] = facts[key]
     for finding in result.findings:
         evidence = finding.evidence if isinstance(finding.evidence, dict) else {}
-        status = (
-            "SKIPPED"
-            if not finding.applicable
-            else "PASS"
-            if finding.passed
-            else "FAIL"
-        )
+        status = "SKIPPED" if not finding.applicable else "PASS" if finding.passed else "FAIL"
         fields["checks"].append(
             {
                 "name": finding.check.replace("_", " ").title(),
@@ -195,6 +193,7 @@ def basic_sanity_fields(result: Any) -> dict[str, Any]:
         )
     return fields
 
+
 def control_loop_fields(report: ControlLoopReport) -> dict[str, Any]:
     """Render a control-loop intervention with its evidence and limits."""
     fields: dict[str, Any] = {
@@ -210,6 +209,7 @@ def control_loop_fields(report: ControlLoopReport) -> dict[str, Any]:
         fields["fingerprint"] = report.fingerprint
     return fields
 
+
 def gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
     """Expose the exact proposal and deterministic checks behind the ruling."""
     fields: dict[str, Any] = {
@@ -219,11 +219,6 @@ def gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
         "reason_code": decision.reason_code,
         "question": decision.question,
         "checks": [check.model_dump(mode="json") for check in decision.checks],
-        "authority_rank": decision.authority_rank,
-        "required_authority_rank": decision.required_authority_rank,
-        "max_granting_rank": decision.max_granting_rank,
-        "cumulative_total": str(decision.cumulative_total) if decision.cumulative_total else None,
-        "threshold": str(decision.threshold) if decision.threshold else None,
     }
     order_id = call.params.get("order_id")
     if isinstance(order_id, (str, int)) and not isinstance(order_id, bool):
@@ -244,10 +239,12 @@ def gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
 
     return fields
 
+
 def display_tool_name(name: str) -> str:
     """Return the concise tool name used in the operator-facing dashboard."""
     normalized = name.replace("__", ".")
     return normalized.rsplit(".", maxsplit=1)[-1]
+
 
 def tool_result_fields(call: Any, result: Any, *, outcome: Any | None = None) -> dict[str, Any]:
     """Expose domain outcome plus generic Executor lifecycle metadata."""
@@ -259,11 +256,9 @@ def tool_result_fields(call: Any, result: Any, *, outcome: Any | None = None) ->
     if outcome is not None:
         fields.update(
             {
+                # One field says how it ended: completed, failed, timed_out or replayed.
                 "execution_status": outcome.status,
-                "replayed": outcome.replayed,
-                "timed_out": outcome.timed_out,
                 "duration_ms": round(outcome.duration_ms, 2),
-                "idempotency_key": outcome.idempotency_key,
             }
         )
     for key in (
@@ -294,6 +289,7 @@ def tool_result_fields(call: Any, result: Any, *, outcome: Any | None = None) ->
         fields["error"] = result.error
     return fields
 
+
 # Shown when the model produces nothing a customer could read.
 # Deliberately free of operational promises nothing will keep.
 FALLBACK_REPLY = "Sorry — I wasn't able to complete that. Please try again."
@@ -311,6 +307,7 @@ _LIST_REQUEST = re.compile(
 def asks_for_the_list(message: str) -> bool:
     """Whether the customer is asking to see their order list again."""
     return bool(_LIST_REQUEST.search(message))
+
 
 def is_customer_ready(content: str) -> bool:
     """Whether this text can be shown to a customer as an answer.
@@ -336,6 +333,7 @@ def is_customer_ready(content: str) -> bool:
     # key names only catches the spellings you thought of, and the live
     # failures used three different ones.
     return False
+
 
 def parse_arguments(raw: str) -> dict[str, Any]:
     """Parse a model's tool arguments, tolerating an empty string."""

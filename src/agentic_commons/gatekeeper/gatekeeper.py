@@ -93,8 +93,6 @@ class GatekeeperImpl:
         context = self._hierarchy.resolve(authority)
         amount = _amount_of(call)
         checks: list[CheckReport] = []
-        cumulative_total: Money | None = None
-        threshold: Money | None = None
         failure: tuple[str, str, str, str] | None = None
 
         for check_name in self._CHECK_ORDER:
@@ -114,7 +112,7 @@ class GatekeeperImpl:
             elif check_name == "business_rules":
                 check, fail = self._eval_business_rules(call, context)
             else:
-                check, fail, cumulative_total, threshold = self._eval_cumulative(call, context, amount)
+                check, fail = self._eval_cumulative(call, context, amount)
             checks.extend(check)
             if fail is not None:
                 failure = fail
@@ -124,20 +122,14 @@ class GatekeeperImpl:
                 verdict="allow", action=call.action, actor=context.actor,
                 reason="all deterministic Gatekeeper checks passed",
                 reason_code="GATEKEEPER_ALLOW", question="complete",
-                cumulative_total=cumulative_total, threshold=threshold,
-                authority_source=context.granted_by, authority_rank=self._policy.authority_rank,
-                required_authority_rank=call.requires_authority_rank,
-                max_granting_rank=self._hierarchy.max_granting_rank, checks=checks,
+                checks=checks,
             )
         else:
             question, verdict, reason_code, reason = failure
             decision = AuthorityDecision(
                 verdict=verdict, action=call.action, actor=context.actor,
                 reason=reason, reason_code=reason_code, question=question,
-                cumulative_total=cumulative_total, threshold=threshold,
-                authority_source=context.granted_by, authority_rank=self._policy.authority_rank,
-                required_authority_rank=call.requires_authority_rank,
-                max_granting_rank=self._hierarchy.max_granting_rank, checks=checks,
+                checks=checks,
             )
 
         self._record(call, context, decision)
@@ -320,14 +312,14 @@ class GatekeeperImpl:
             return [CheckReport(
                 check_id="gatekeeper.cumulative_limit", name="Cumulative budget", status="SKIPPED",
                 reason_code=code, reason=("Cumulative accounting is disabled." if not self._ledger.enabled else "This action is not mapped to a financial budget."),
-            )], None, None, None
+            )], None
         action_class = self._ledger.class_of(call.action)
         if not self._ledger.threshold_configured(action_class):
             reason = f"Cumulative budget class '{action_class}' has no finite policy threshold."
             return [CheckReport(
                 check_id="gatekeeper.cumulative_limit", name="Cumulative budget", status="FAIL",
                 reason_code="CUMULATIVE_POLICY_MISCONFIGURED", reason=reason, observed={"action_class": action_class},
-            )], ("cumulative", "deny", "CUMULATIVE_POLICY_MISCONFIGURED", reason), None, None
+            )], ("cumulative", "deny", "CUMULATIVE_POLICY_MISCONFIGURED", reason), None
         ledger_key = _ledger_key(context)
         previous = self._ledger.window_total(ledger_key, action_class)
         state = self._ledger.state(ledger_key, action_class, pending=amount)
@@ -339,7 +331,7 @@ class GatekeeperImpl:
             reason=(f"Projected {action_class} spend {state.window_total} is within the {state.threshold} rolling limit." if passed else f"Projected {action_class} spend {state.window_total} exceeds the {state.threshold} rolling limit."),
             observed={"action_class": action_class, "ledger_key": ledger_key, "previous": str(previous), "proposed": str(amount or Money.zero()), "projected": str(state.window_total), "threshold": str(state.threshold), "remaining_after": str(state.remaining), "entry_count": state.entry_count},
         )
-        return [check], None if passed else ("cumulative", "deny", "CUMULATIVE_LIMIT_EXCEEDED", check.reason), state.window_total, state.threshold
+        return [check], None if passed else ("cumulative", "deny", "CUMULATIVE_LIMIT_EXCEEDED", check.reason)
 
     @staticmethod
     def _skipped(check_name: str) -> CheckReport:

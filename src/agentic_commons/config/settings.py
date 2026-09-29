@@ -680,7 +680,6 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     refusal_pattern: str
     refund_state_pattern: str
     refund_states: RefundStatesSettings
-    card_evidence_lines: int = Field(default=3, ge=0, le=20)
     # A phrase carved out of an outcome and checked as the rule it states.
     rule_phrases: list[RulePhraseSettings]
     # A rule claim whose content is this fraction restated by one rule of

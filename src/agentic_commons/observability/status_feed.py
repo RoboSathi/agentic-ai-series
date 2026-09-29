@@ -106,21 +106,35 @@ class StageReporter:
         self._turn_started = time.monotonic()
 
     def end_turn(
-        self, status: StatusKind = "completed", outcome: str = "answered", **log_fields: Any
+        self,
+        status: StatusKind = "completed",
+        outcome: str = "answered",
+        working_memory: Mapping[str, Any] | None = None,
+        **log_fields: Any,
     ) -> None:
-        """Emit the turn summary card; operational details go to the log only."""
+        """Emit the turn summary card; operational details go to the log only.
+
+        `working_memory` is what the session's working memory holds now,
+        already redacted: the summary shows it beside what this turn added.
+        """
         tally = self._tally
         if tally is None:
             return
         self._tally = None
         seconds = time.monotonic() - self._turn_started
-        self._logger.info("Turn finished", outcome=outcome, **self._context, **log_fields)
+        self._logger.info(
+            "Turn finished",
+            outcome=outcome,
+            **self._context,
+            **log_fields,
+            **({"working_memory": dict(working_memory)} if working_memory else {}),
+        )
         self.emit(
             "turn_summary",
             status,
             event_kind="system",
             summary=tally.headline(outcome, seconds),
-            fields=tally.fields(outcome, seconds),
+            fields=tally.fields(outcome, seconds, working_memory),
         )
         self._context = {}
 
@@ -134,12 +148,17 @@ class StageReporter:
         event_kind: EventKind = "stage",
         summary: str | None = None,
         fields: Mapping[str, Any] | None = None,
+        quiet: bool = False,
     ) -> None:
         """Emit one semantic runtime event for this run.
 
         The reporter is deliberately UI-agnostic. It carries structured
         facts; the TUI decides whether to render them compactly or in
         expanded DEBUG form.
+
+        A `quiet` event is bookkeeping: it is logged and counted in the
+        turn's summary but draws no card of its own, so a per-write or
+        per-lookup record cannot crowd out what a person acts on.
         """
         event = StatusEvent(
             run_id=self._run_id,
@@ -154,16 +173,21 @@ class StageReporter:
         if self._tally is not None:
             self._tally.observe(event)
         self._logger.debug(
-            "Stage event", stage=stage, status=status, summary=summary,
-            fields=event.fields, **self._context,
+            "Stage event",
+            stage=stage,
+            status=status,
+            summary=summary,
+            fields=event.fields,
+            **self._context,
         )
-        self._feed.emit(event)
+        if not quiet:
+            self._feed.emit(event)
 
     def _stamped(
         self, stage: str, status: StatusKind, fields: Mapping[str, Any] | None
     ) -> dict[str, Any]:
         """The event's own fields plus measured latency (ids stay in the log)."""
-        stamped = dict(fields or {})
+        stamped = {key: value for key, value in (fields or {}).items() if not _empty(value)}
         if status == "started":
             self._started[stage] = time.monotonic()
             return stamped
@@ -199,6 +223,7 @@ class StageReporter:
         event_kind: EventKind = "stage",
         summary: str | None = None,
         fields: Mapping[str, Any] | None = None,
+        quiet: bool = False,
     ) -> None:
         self.emit(
             stage,
@@ -208,6 +233,7 @@ class StageReporter:
             event_kind=event_kind,
             summary=summary,
             fields=fields,
+            quiet=quiet,
         )
 
     def failed(
@@ -281,3 +307,11 @@ class StageReporter:
             summary=summary,
             fields=fields,
         )
+
+
+def _empty(value: Any) -> bool:
+    """Whether a field prints nothing a reader can use: `None`, or an empty string or container.
+
+    `False` and `0` are answers ("written = false", "dropped = 0") and stay.
+    """
+    return value is None or (isinstance(value, (str, list, tuple, dict, set)) and not value)

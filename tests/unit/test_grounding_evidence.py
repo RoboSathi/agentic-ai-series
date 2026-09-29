@@ -175,25 +175,118 @@ class TestTheReportedRepliesAgainstTheRealCorpus:
         assert result.response == reply
 
 
-class TestTheCardExplainsAnUnverifiedClaim:
-    def test_it_prints_the_reason_not_only_the_closest_passage(self) -> None:
-        from rich.text import Text
+def _card(check: dict[str, Any]) -> str:
+    from rich.text import Text
 
-        from agentic_commons.tui.widgets import _append_claim
+    from agentic_commons.tui.widgets import _append_claim
 
-        body = Text()
-        _append_claim(
-            body,
+    body = Text()
+    _append_claim(body, check)
+    return body.plain.strip()
+
+
+def _line(
+    tier: str, label: str, score: float, excerpt: str, *, decisive: bool = False
+) -> dict[str, Any]:
+    return {
+        "tier": tier,
+        "nli_label": label,
+        "nli_score": score,
+        "excerpt": excerpt,
+        "decisive": decisive,
+    }
+
+
+class TestTheCardShowsOnlyWhatDecidedIt:
+    def test_a_model_verdict_keeps_its_probability(self) -> None:
+        card = _card(
             {
-                "claim": "Refunds take a while to arrive.",
-                "verdict": "undetermined",
-                "rationale": "policy: nothing related (best 0.21 < 0.3) · system: no evidence",
-                "evidence": [
-                    {"tier": "policy", "nli_label": "neutral", "nli_score": 0.98, "excerpt": "x"}
-                ],
-            },
+                "claim": "You will hear back soon",
+                "verdict": "supported",
+                "basis": "Entailment 0.99",
+                "evidence": [_line("policy", "entailment", 0.99, "hear back soon", decisive=True)],
+            }
         )
-        assert "nothing related (best 0.21 < 0.3)" in body.plain
+        assert 'Supported By [Policy] (Entailment 0.99): "hear back soon"' in card
+
+    def test_a_verdict_the_record_decided_has_no_parenthetical_and_no_tail(self) -> None:
+        card = _card(
+            {
+                "claim": "has been submitted",
+                "verdict": "supported",
+                "basis": "",
+                "rationale": "refund status is pending_review, so a claim of pending_review holds",
+                "evidence": [
+                    _line(
+                        "tool result",
+                        "record",
+                        1.0,
+                        "Order 10665 refund status: pending_review.",
+                        decisive=True,
+                    )
+                ],
+            }
+        )
+        assert 'Supported By [Tool Result]: "Order 10665 refund status: pending_review."' in card
+        assert "Record" not in card and "so a claim" not in card
+
+    def test_a_contradiction_by_a_model_says_how_sure(self) -> None:
+        card = _card(
+            {
+                "claim": "x",
+                "verdict": "refuted",
+                "basis": "Contradiction 0.98",
+                "evidence": [
+                    _line(
+                        "tool result", "contradiction", 0.98, "refund status: none", decisive=True
+                    )
+                ],
+            }
+        )
+        assert 'Contradicted By [Tool Result] (Contradiction 0.98): "refund status: none"' in card
+
+    def test_a_rule_that_found_no_line_says_what_it_found(self) -> None:
+        card = _card(
+            {
+                "claim": "$99.00 has been refunded",
+                "verdict": "refuted",
+                "rationale": "Amount(s) ['$99.00'] appear in the reply but in no tool result.",
+                "evidence": [],
+            }
+        )
+        assert "Contradicted: Amount(s)" in card and "By [" not in card
+
+
+class TestAnUnverifiedClaimIsOneLine:
+    def test_evidence_too_far_to_be_scored_is_not_printed(self) -> None:
+        card = _card(
+            {
+                "claim": "No further action is required",
+                "verdict": "undetermined",
+                "rationale": "no tier decided: policy: nothing related (best 0.16 < 0.3)",
+                "evidence": [
+                    _line("policy", "not checked (below 0.3)", 0.0, "You do not decide which"),
+                    _line("policy", "not checked (below 0.3)", 0.0, "Some requests are sent"),
+                ],
+            }
+        )
+        assert card.splitlines()[-1].strip() == "Unverified: no evidence states or contradicts this"
+        assert "Also Read" not in card and "0.00" not in card and "not checked" not in card.lower()
+
+    def test_a_line_the_model_did_score_is_named(self) -> None:
+        card = _card(
+            {
+                "claim": "Your refund was sent to your card",
+                "verdict": "undetermined",
+                "evidence": [
+                    _line("tool result", "unknown", 0.98, "Refunded $21.35 for order 10001")
+                ],
+            }
+        )
+        assert (
+            'Unverified: [Tool Result] read as neutral (0.98): "Refunded $21.35 for order 10001"'
+            in card
+        )
 
 
 class TestTheRefusalFromTheLiveRun:
@@ -345,6 +438,5 @@ class TestAStateRecordIsNotSentToNli:
         body = Text()
         _append_claim(body, result.claim_checks[0])
         assert (
-            'Supported By [Tool Result] (Record): "Order 10665 refund status: pending_review."'
-            in body.plain
+            'Supported By [Tool Result]: "Order 10665 refund status: pending_review."' in body.plain
         )

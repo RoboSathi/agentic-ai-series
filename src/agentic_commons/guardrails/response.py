@@ -330,13 +330,13 @@ def _decided_directly(assessment: GenerationAssessment) -> bool:
 
 
 def _basis(verdict: DetectionVerdict) -> str:
-    """How a claim was decided, in the words a card shows: `Entailment 0.99`, `Record`."""
-    if verdict.tier == DIRECT_TIER:
-        return "Record"
-    if verdict.undetermined:
+    """The one number a card shows: a model's probability. Nothing else is a score."""
+    if (
+        verdict.undetermined
+        or verdict.tier == DIRECT_TIER
+        or verdict.detector_model == RESTATEMENT_MODEL
+    ):
         return ""
-    if verdict.detector_model == RESTATEMENT_MODEL:
-        return f"Restated {verdict.confidence:.2f}"
     return f"{'Entailment' if verdict.supported else 'Contradiction'} {verdict.confidence:.2f}"
 
 

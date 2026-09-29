@@ -468,13 +468,8 @@ class NodeSupport:
             "working_memory_write",
             event_kind="memory",
             summary=f"SET · {key} = {safe_value}",
-            fields={
-                "operation": "set",
-                "key": key,
-                "memory_value": safe_value,
-                "category": category or "unspecified",
-                "written": True,
-            },
+            fields={"key": key, "memory_value": safe_value},
+            quiet=True,
         )
 
     def _halt(
@@ -531,15 +526,9 @@ class NodeSupport:
         result: CompletionResult,
         *,
         purpose: str,
-        tools_offered: list[str] | None = None,
-        requested_tool_calls: list[dict[str, Any]] | None = None,
-        extra_fields: dict[str, Any] | None = None,
     ) -> None:
         """Expose the exact provider-neutral response and its accounting."""
-        fields = {
-            **llm_response_fields(result, tools_offered=tools_offered),
-            "purpose": purpose,
-        }
+        fields = {**llm_response_fields(result), "purpose": purpose}
         self._done(
             "llm_response_received",
             event_kind="model",
@@ -580,8 +569,13 @@ class NodeSupport:
         event_kind: EventKind = "stage",
         summary: str | None = None,
         fields: dict[str, Any] | None = None,
+        quiet: bool = False,
     ) -> None:
-        """Emit a stage-completed event with safe semantic fields."""
+        """Emit a stage-completed event with safe semantic fields.
+
+        `quiet` events are logged and counted in the turn summary without
+        drawing a card of their own.
+        """
         if self._reporter is not None:
             summary, fields = self._stepped(stage, summary, fields)
             self._reporter.completed(
@@ -591,6 +585,7 @@ class NodeSupport:
                 event_kind=event_kind,
                 summary=summary,
                 fields=fields,
+                quiet=quiet,
             )
 
     def _done_failed(
