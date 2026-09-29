@@ -1,20 +1,33 @@
 """Hallucination detection, diagnosis and trust calibration (LLD §10)."""
 
 from agentic_commons.hallucination_protection.checker import (
-    COMBINED_TIER,
-    COMBINED_TIER_JOINER,
-    OBSERVATION_SEQUENCE,
-    ClaimDecomposer,
     ClaimResolver,
     DetectionLadder,
     GroundingReasoningDiagnoser,
-    GroundingResolver,
     HallucinationDetector,
     TrustCalibrationTracker,
+)
+from agentic_commons.hallucination_protection.claims import (
+    ClaimClassifier,
+    ClaimDecomposer,
     split_sentences,
+)
+from agentic_commons.hallucination_protection.direct import (
+    AMOUNT_MISMATCH,
+    NO_RECORD,
+    NOT_EXECUTED,
+    NOT_EXECUTED_MARKER,
+    ORDER_MISMATCH,
+    REFUND_STATE_MISMATCH,
+)
+from agentic_commons.hallucination_protection.resolver import (
+    OBSERVATION_SEQUENCE,
+    STATE_CHANGING,
+    GroundingResolver,
 )
 from agentic_commons.hallucination_protection.types import (
     AtomicClaim,
+    ClaimClass,
     DetectionVerdict,
     EvidenceCheck,
     FailureKind,
@@ -24,10 +37,17 @@ from agentic_commons.hallucination_protection.types import (
 )
 
 __all__ = [
-    "COMBINED_TIER",
-    "COMBINED_TIER_JOINER",
+    "AMOUNT_MISMATCH",
+    "NOT_EXECUTED",
+    "NOT_EXECUTED_MARKER",
+    "NO_RECORD",
     "OBSERVATION_SEQUENCE",
+    "STATE_CHANGING",
+    "ORDER_MISMATCH",
+    "REFUND_STATE_MISMATCH",
     "AtomicClaim",
+    "ClaimClass",
+    "ClaimClassifier",
     "ClaimDecomposer",
     "ClaimResolver",
     "DetectionLadder",

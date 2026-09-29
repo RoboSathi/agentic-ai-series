@@ -6,7 +6,6 @@ claims.  A failed factual check is repaired once and then fails closed into
 HITL rather than sending an unsupported customer-facing assertion.
 """
 
-import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -16,16 +15,33 @@ from agentic_commons.config import get_settings
 from agentic_commons.context.types import Chunk
 from agentic_commons.guardrails.guards import PydanticValidator
 from agentic_commons.hallucination_protection.checker import (
-    COMBINED_TIER,
-    COMBINED_TIER_JOINER,
     DetectionLadder,
     GroundingReasoningDiagnoser,
     Resampler,
-    split_sentences,
 )
-from agentic_commons.hallucination_protection.types import DetectionVerdict
+from agentic_commons.hallucination_protection.claims import split_sentences
+from agentic_commons.hallucination_protection.direct import (
+    AMOUNT_MISMATCH,
+    DETAIL_UNSOURCED,
+    NO_RECORD,
+    NOT_EXECUTED,
+    NOT_EXECUTED_MARKER,
+    ORDER_MISMATCH,
+    REFUND_STATE_MISMATCH,
+    amounts,
+    numbers,
+    order_ids,
+)
+from agentic_commons.hallucination_protection.resolver import DIRECT_TIER, RESTATEMENT_MODEL
+from agentic_commons.hallucination_protection.types import DetectionVerdict, GenerationAssessment
 from agentic_commons.logging import get_logger
-from agentic_commons.money import Money, money_or_none
+
+__all__ = [
+    "NOT_EXECUTED_MARKER",
+    "CustomerResponse",
+    "ResponseGuardrail",
+    "ResponseGuardrailResult",
+]
 
 
 class CustomerResponse(BaseModel):
@@ -193,192 +209,73 @@ class ResponseGuardrail:
         if self._grounding is None:
             return ResponseGuardrailResult(response=response)
 
-        # No successful tool result is not the same thing as "nothing to
-        # verify". For operational/business claims, absence of authoritative
-        # evidence is itself a grounding failure. This closes the 0/0 PASS
-        # loophole where an unsupported refund/write claim bypassed the
-        # detector simply because the evidence list was empty.
-        # Only a tool result can show that something *happened*; policy,
-        # knowledge and memory can support a statement, never an outcome.
-        if not _tool_chunks(evidence) and _requires_authoritative_evidence(response):
-            claim = response.strip()
-            reason = "BUSINESS_CLAIM_WITHOUT_TOOL_EVIDENCE"
-            self._logger.warning(
-                "Response guardrail blocked business claim without tool evidence",
-                reason_code=reason,
-                claim=claim,
-            )
-            return ResponseGuardrailResult(
-                response="I couldn't verify that action from the available system records. Please try again.",
-                grounded=False,
-                escalated=True,
-                claims=1,
-                supported=0,
-                unsupported=1,
-                hallucination_rate=1.0,
-                nollm_resolved_ratio=1.0,
-                failure_kinds=[reason],
-                unsupported_claims=[claim],
-                unsupported_diagnostics=[
-                    {
-                        "claim": claim,
-                        "failure_kind": reason,
-                        "tier": "deterministic_provenance",
-                        "confidence": 1.0,
-                        "best_evidence_overlap": 0.0,
-                        "best_evidence": "",
-                        "rationale": "The response contains an operational business outcome but no successful tool result exists for this turn.",
-                        "detector_model": "deterministic",
-                        "retrieval_top_k": 0,
-                        "retrieval_method": _tiers_searched(evidence),
-                        "retrieved_evidence": [],
-                    }
-                ],
-                reason_code=reason,
-                hallucination_scope="complete",
-                claim_checks=[_deterministic_check(claim, reason, "no tool result for this turn")],
-            )
-
         candidate = response
-        deterministic_failure = _deterministic_evidence_failure(candidate, evidence)
-        if deterministic_failure is not None:
-            claim, reason, rationale = deterministic_failure
-            self._logger.warning(
-                "Response guardrail blocked deterministic evidence mismatch",
-                reason_code=reason,
-                claim=claim,
-            )
-            return ResponseGuardrailResult(
-                response="I couldn't verify all of the details in that response. Please try again.",
-                grounded=False,
-                escalated=True,
-                claims=1,
-                supported=0,
-                unsupported=1,
-                hallucination_rate=1.0,
-                nollm_resolved_ratio=1.0,
-                failure_kinds=[reason],
-                unsupported_claims=[claim],
-                unsupported_diagnostics=[
-                    {
-                        "claim": claim,
-                        "failure_kind": reason,
-                        "tier": "deterministic_provenance",
-                        "confidence": 1.0,
-                        "best_evidence_overlap": 0.0,
-                        "best_evidence": _closest_excerpt(claim, evidence),
-                        "rationale": rationale,
-                        "detector_model": "deterministic",
-                        "retrieval_top_k": 0,
-                        "retrieval_method": _tiers_searched(evidence),
-                        "retrieved_evidence": [chunk.content for chunk in evidence],
-                    }
-                ],
-                reason_code=reason,
-                hallucination_scope="complete",
-                claim_checks=[_deterministic_check(claim, reason, rationale)],
-            )
-
-        if not evidence:
-            return ResponseGuardrailResult(response=response)
-
         repaired = False
-        last = None
         attempts_made = 0
+        last = await self._grounding.assess(candidate, evidence, resample=resample)
         for attempt in range(self._max_repairs + 1):
             attempts_made = attempt
-            last = await self._grounding.assess(candidate, evidence, resample=resample)
+            if attempt:
+                last = await self._grounding.assess(candidate, evidence, resample=resample)
             if last.clean:
-                return ResponseGuardrailResult(
-                    response=candidate,
-                    repaired=repaired,
-                    repair_attempts=attempt,
-                    claims=len(last.verdicts),
-                    supported=sum(verdict.supported for verdict in last.verdicts),
-                    undetermined=len(last.undetermined),
-                    hallucination_rate=last.hallucination_rate,
-                    nollm_resolved_ratio=last.nollm_resolved_ratio,
-                    tier_counts=_tier_counts(last),
-                    reason_code="GUARDRAIL_PASS_REPAIRED" if repaired else "GUARDRAIL_PASS",
-                    claim_checks=[_claim_check(verdict) for verdict in last.verdicts],
-                )
-            if attempt >= self._max_repairs or revise is None:
+                return self._passed(candidate, last, repaired, attempt)
+            if attempt >= self._max_repairs or revise is None or _decided_directly(last):
                 break
             revision = await revise(candidate, last.unsupported)
             if revision.strip() == candidate.strip():
                 # The reviser had nothing to remove and said so by
                 # returning the draft. Re-scoring identical text produces
                 # an identical verdict, so the second assessment is pure
-                # cost — one completion and a full retrieval pass to
-                # reach a conclusion already in hand.
+                # cost.
                 break
             repaired = True
             candidate = revision
+        return self._blocked(candidate, last, repaired, attempts_made)
 
-        assert last is not None
-        unsupported_verdicts = [verdict for verdict in last.verdicts if not verdict.supported]
-        diagnostics = []
-        for verdict in unsupported_verdicts:
-            retrieved = [
-                Chunk(content=text, kind="tool_result") for text in verdict.retrieved_evidence
-            ]
-            ranked_evidence = sorted(
-                (
-                    (self._diagnoser.overlap(verdict.claim, chunk.content), chunk.content)
-                    for chunk in retrieved
-                ),
-                key=lambda item: item[0],
-                reverse=True,
-            )
-            best_overlap, best_evidence = ranked_evidence[0] if ranked_evidence else (0.0, "")
-            failure_kind = self._diagnoser.diagnose(verdict.claim, retrieved)
-            diagnostics.append(
-                {
-                    "claim": verdict.claim,
-                    "failure_kind": failure_kind,
-                    "tier": verdict.tier,
-                    "confidence": round(verdict.confidence, 3),
-                    "best_evidence_overlap": round(best_overlap, 3),
-                    "best_evidence": best_evidence[:240],
-                    "rationale": verdict.rationale,
-                    "detector_model": verdict.detector_model,
-                    "retrieval_top_k": verdict.retrieval_top_k,
-                    "retrieval_method": verdict.retrieval_method,
-                    "retrieved_evidence": verdict.retrieved_evidence,
-                }
-            )
+    def _passed(
+        self, candidate: str, last: GenerationAssessment, repaired: bool, attempt: int
+    ) -> ResponseGuardrailResult:
+        return ResponseGuardrailResult(
+            response=candidate,
+            repaired=repaired,
+            repair_attempts=attempt,
+            claims=len(last.verdicts),
+            supported=sum(verdict.supported for verdict in last.verdicts),
+            undetermined=len(last.undetermined),
+            hallucination_rate=last.hallucination_rate,
+            nollm_resolved_ratio=last.nollm_resolved_ratio,
+            tier_counts=_tier_counts(last),
+            reason_code="GUARDRAIL_PASS_REPAIRED" if repaired else "GUARDRAIL_PASS",
+            claim_checks=[_claim_check(verdict) for verdict in last.verdicts],
+        )
+
+    def _blocked(
+        self, candidate: str, last: GenerationAssessment, repaired: bool, attempts: int
+    ) -> ResponseGuardrailResult:
+        """Fail closed: keep every sentence no claim refuted, say why, escalate."""
+        refuted = [verdict for verdict in last.verdicts if _refuted(verdict)]
+        diagnostics = [self._diagnostic(verdict) for verdict in refuted]
         failures = sorted({str(item["failure_kind"]) for item in diagnostics})
         supported_count = sum(verdict.supported for verdict in last.verdicts)
-        hallucination_scope = (
-            "complete"
-            if supported_count == 0 and last.unsupported
-            else "partial"
-            if last.unsupported
-            else "none"
-        )
+        scope = "complete" if supported_count == 0 else "partial"
         self._logger.warning(
             "Response guardrail failed closed",
             unsupported=last.unsupported,
             supported=supported_count,
             claims=len(last.verdicts),
-            hallucination_scope=hallucination_scope,
+            hallucination_scope=scope,
             failure_kinds=failures,
-            attempts=self._max_repairs,
-        )
-        safe_response = _surviving_sentences(candidate, last.verdicts) or (
-            "I couldn't verify all of the details in that response. Please try again."
+            attempts=attempts,
         )
         return ResponseGuardrailResult(
-            response=safe_response,
-            # The customer-facing response is not fully grounded when any
-            # claim was rejected, even if we retained one or more safe claims.
+            response=_surviving_sentences(candidate, last.verdicts) or _WITHHELD,
+            # Not fully grounded when any claim was rejected, even if
+            # sentences no claim refuted were kept.
             grounded=False,
             repaired=repaired,
             escalated=True,
-            # What was actually attempted, not what was configured. The
-            # two differ whenever the loop stopped early, and reporting
-            # the ceiling made a trace look like work that never happened.
-            repair_attempts=attempts_made,
+            # What was actually attempted, not what was configured.
+            repair_attempts=attempts,
             claims=len(last.verdicts),
             supported=supported_count,
             unsupported=len(last.unsupported),
@@ -389,129 +286,62 @@ class ResponseGuardrail:
             unsupported_claims=last.unsupported,
             unsupported_diagnostics=diagnostics,
             tier_counts=_tier_counts(last),
-            reason_code="HALLUCINATION_GUARD_BLOCK",
-            hallucination_scope=hallucination_scope,
+            reason_code=next((v.reason_code for v in refuted if v.reason_code), BLOCK_CODE),
+            hallucination_scope=scope,
             claim_checks=[_claim_check(verdict) for verdict in last.verdicts],
         )
 
-
-_OPERATIONAL_TERMS = re.compile(
-    r"\b(?:refunded|queued|queue(?:d|ing)?|approved|"
-    r"processed|issued|completed|submitted|denied|rejected|"
-    r"cancelled|canceled|delivered|shipped|pending|"
-    r"on\s+its\s+way|human\s+review|request\s+created)\b",
-    re.IGNORECASE,
-)
-_ORDER_REFERENCE = re.compile(r"\border\s*#?\s*(\d{3,})\b", re.IGNORECASE)
-# An amount in prose: "$210", "$1,234.56", or a bare "210.00". Compared as
-# integer cents, so "$210" and "$210.00" are the same amount.
-_MONEY = re.compile(r"(?<!\w)(?:\$\d+(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:,\d{3})*\.\d{2})(?!\w)")
-
-# A reply claiming money has moved, and the field in the record that
-# would have to agree with it. Checked deterministically because it is a
-# deterministic question: the tool result either states a settled refund
-# or it does not, and no amount of entailment scoring improves on
-# reading the field. An NLI tier asked to catch this instead was the
-# thing that also blocked true sentences for want of token overlap.
-# How a refused or failed tool call is written into evidence. It grounds a
-# statement that the call was refused, never one that its effect happened.
-NOT_EXECUTED_MARKER = "NOT EXECUTED"
-
-# Within one clause: any character but a clause break, and a decimal point
-# is not a clause break — "$146.07" must not split "refund of $146.07 has
-# been processed" into two halves that each look innocent.
-_IN_CLAUSE = r"(?:[^.;]|\.(?=\d))"
-
-_REFUND_SETTLED_CLAIM = re.compile(
-    r"\brefund(?:ed)?\b" + _IN_CLAUSE + r"{0,60}?\b(?:has\s+been\s+)?"
-    r"(?:completed|complete|processed|issued|approved|sent|paid|done|"
-    r"(?:gone|went)\s+through|on\s+(?:its|the)\s+way)\b"
-    # "Sent for review" hands the refund to a person; it has not settled.
-    r"(?!\s+(?:for|to)\s+(?:\w+\s+)?(?:review|approval))"
-    r"|\b(?:completed|processed|issued|approved|sent|paid)\b" + _IN_CLAUSE + r"{0,40}?\brefund",
-    re.IGNORECASE,
-)
-_REFUND_STATE = re.compile(r"refund(?:_|\s+)status\s*[:=]\s*(\w+)", re.IGNORECASE)
-# Clause boundaries, and the markers that flip a clause's polarity.
-# "No refund has been processed" matches the settled-claim shape word for
-# word while asserting the opposite, so polarity is checked per clause
-# rather than over the whole reply — one negated clause must not excuse a
-# settled claim elsewhere in the same sentence, and vice versa.
-_CLAUSE = re.compile(r"\.(?!\d)|;|\bbut\b|\band\b", re.IGNORECASE)
-_CLAIM_NEGATIONS = re.compile(
-    r"\b(?:no|not|never|n't|cannot|nothing|neither|nor|unable)\b", re.IGNORECASE
-)
-# A clause saying what will *not* happen states the agent's intent, not an
-# outcome: "your order will not be cancelled" needs no tool to have run.
-# Negated past and present stay outcome claims — "your refund has not been
-# processed" describes the record, and can be wrong about it.
-_NEGATED_FUTURE = re.compile(
-    r"\b(?:will\s+not|will\s+no\s+longer|won['’]t|shall\s+not|not\s+going\s+to)\b",
-    re.IGNORECASE,
-)
-# The refund_status values that mean money has actually moved, or been
-# authorised to. Anything else ("none", "denied") refutes the claim.
-_SETTLED_REFUND_STATES = frozenset({"completed", "approved", "processed"})
-
-
-def _requires_authoritative_evidence(response: str) -> bool:
-    """Whether any clause states an operational outcome, which only a tool result can prove.
-
-    Per clause, like `_asserts_settled_refund`: one clause declining an
-    action must not excuse an outcome claimed in the next.
-    """
-    return any(
-        _OPERATIONAL_TERMS.search(clause) and not _NEGATED_FUTURE.search(clause)
-        for clause in _CLAUSE.split(response.strip())
-    )
-
-
-def _deterministic_evidence_failure(
-    response: str,
-    evidence: list[Chunk],
-) -> tuple[str, str, str] | None:
-    """Check identifier/value provenance before spending an NLI call.
-
-    Ids and amounts may come from any tier the model was given — a tool
-    result, the policy, a knowledge passage, a verified memory. Whether a
-    refund *happened* may come from tool results alone.
-
-    A settled-refund claim opens the check on its own: "your refund is
-    done" names no operational term, and was the one false outcome the
-    gate let through.
-    """
-    if not (_requires_authoritative_evidence(response) or _asserts_settled_refund(response)):
-        return None
-
-    evidence_text = "\n".join(chunk.content for chunk in evidence)
-    response_ids = set(_ORDER_REFERENCE.findall(response))
-    evidence_ids = set(_ORDER_REFERENCE.findall(evidence_text))
-    missing_ids = sorted(response_ids - evidence_ids)
-    if missing_ids:
-        return (
-            response,
-            "TOOL_EVIDENCE_ORDER_MISMATCH",
-            f"Order reference(s) {missing_ids} appear in the response but in no evidence "
-            f"({_tiers_searched(evidence)}).",
+    def _diagnostic(self, verdict: DetectionVerdict) -> dict[str, Any]:
+        """Why one refuted claim failed: a rule the record broke, or evidence ignored."""
+        retrieved = [Chunk(content=text, kind="tool_result") for text in verdict.retrieved_evidence]
+        best_overlap, best_evidence = max(
+            ((self._diagnoser.overlap(verdict.claim, c.content), c.content) for c in retrieved),
+            key=lambda item: item[0],
+            default=(0.0, ""),
         )
+        return {
+            "claim": verdict.claim,
+            "failure_kind": verdict.reason_code
+            or self._diagnoser.diagnose(verdict.claim, retrieved),
+            "tier": _decided_by(verdict),
+            "confidence": round(verdict.confidence, 3),
+            "best_evidence_overlap": round(best_overlap, 3),
+            "best_evidence": best_evidence[:240],
+            "rationale": verdict.rationale,
+            "detector_model": verdict.detector_model,
+            "retrieval_top_k": verdict.retrieval_top_k,
+            "retrieval_method": verdict.retrieval_method,
+            "retrieved_evidence": verdict.retrieved_evidence,
+        }
 
-    response_amounts = _amounts(response)
-    evidence_amounts = _amounts(evidence_text)
-    missing_amounts = [str(amount) for amount in sorted(response_amounts - evidence_amounts)]
-    if missing_amounts:
-        return (
-            response,
-            "TOOL_EVIDENCE_AMOUNT_MISMATCH",
-            f"Amount(s) {missing_amounts} appear in the response but in no evidence "
-            f"({_tiers_searched(evidence)}).",
-        )
 
-    tool_text = "\n".join(chunk.content for chunk in _tool_chunks(evidence))
-    refund_conflict = _refund_state_conflict(response, tool_text)
-    if refund_conflict is not None:
-        return refund_conflict
+BLOCK_CODE = "HALLUCINATION_GUARD_BLOCK"
+_WITHHELD = "I couldn't verify all of the details in that response. Please try again."
 
-    return None
+
+def _refuted(verdict: DetectionVerdict) -> bool:
+    """A claim the evidence, or its absence, counted against — not one nothing spoke to."""
+    return not verdict.supported and not verdict.undetermined
+
+
+def _decided_directly(assessment: GenerationAssessment) -> bool:
+    """Whether a rule, not a model, refuted a claim — which a rewrite cannot talk its way past."""
+    return any(verdict.reason_code for verdict in assessment.verdicts)
+
+
+def _basis(verdict: DetectionVerdict) -> str:
+    """The one number a card shows: a model's probability. Nothing else is a score."""
+    if (
+        verdict.undetermined
+        or verdict.tier == DIRECT_TIER
+        or verdict.detector_model == RESTATEMENT_MODEL
+    ):
+        return ""
+    return f"{'Entailment' if verdict.supported else 'Contradiction'} {verdict.confidence:.2f}"
+
+
+def _decided_by(verdict: DetectionVerdict) -> str:
+    return "deterministic_provenance" if verdict.tier == DIRECT_TIER else verdict.tier
 
 
 # A claim's verdict in the words a card shows. "undetermined" reads as
@@ -526,12 +356,13 @@ _LEXICAL = "lexical"
 
 # Why a reply was blocked, in the words a card shows.
 _BLOCK_REASONS = {
-    "BUSINESS_CLAIM_WITHOUT_TOOL_EVIDENCE": "states an outcome no tool result shows",
-    "TOOL_EVIDENCE_ORDER_MISMATCH": "names an order number found in no evidence",
-    "TOOL_EVIDENCE_AMOUNT_MISMATCH": "states an amount found in no evidence",
-    "TOOL_EVIDENCE_REFUND_STATE_MISMATCH": "says the refund is settled; the record disagrees",
-    "TOOL_EVIDENCE_NOT_EXECUTED": "claims a refund the tool call never executed",
-    "HALLUCINATION_GUARD_BLOCK": "a claim is contradicted by the evidence",
+    NO_RECORD: "states an outcome no tool result shows",
+    ORDER_MISMATCH: "names an order number found in no evidence",
+    AMOUNT_MISMATCH: "states an amount found in no evidence",
+    REFUND_STATE_MISMATCH: "says the refund is settled; the record disagrees",
+    NOT_EXECUTED: "claims a refund the tool call never executed",
+    DETAIL_UNSOURCED: "states a date or number found in no evidence",
+    BLOCK_CODE: "a claim is contradicted by the evidence",
 }
 
 # Evidence tiers, in the words a card shows.
@@ -552,18 +383,21 @@ def _claim_check(verdict: DetectionVerdict) -> dict[str, Any]:
     )
     return {
         "claim": verdict.claim,
+        "claim_class": verdict.claim_class,
         "verdict": status,
-        "decided_by": verdict.tier or "nli_entailment",
+        "decided_by": _decided_by(verdict),
+        "basis": _basis(verdict),
         "detector": verdict.detector_model,
         "threshold": verdict.threshold,
         "confidence": round(verdict.confidence, 3),
         "rationale": verdict.rationale,
+        **({"reason_code": verdict.reason_code} if verdict.reason_code else {}),
         "retrieval": f"top-{verdict.retrieval_top_k} by {verdict.retrieval_method or 'similarity'}",
         "evidence": [
             {
                 "rank": check.rank,
                 "similarity": check.similarity,
-                "tier": _tier_name(check.tier),
+                "tier": _TIER_NAMES.get(check.tier, check.tier),
                 "excerpt": check.excerpt,
                 "nli_label": check.nli_label,
                 "nli_score": check.nli_score,
@@ -574,56 +408,23 @@ def _claim_check(verdict: DetectionVerdict) -> dict[str, Any]:
     }
 
 
-def _tier_name(tier: str) -> str:
-    """`tool result`, or `combined tool result + tool result` for a joined premise."""
-    kind, _, parts = tier.partition(":")
-    if kind != COMBINED_TIER or not parts:
-        return _TIER_NAMES.get(tier, tier)
-    names = [_TIER_NAMES.get(part, part) for part in parts.split(COMBINED_TIER_JOINER)]
-    return f"{COMBINED_TIER} {' + '.join(names)}"
-
-
-def _deterministic_check(claim: str, reason: str, rationale: str) -> dict[str, Any]:
-    """A claim settled by the deterministic stage — no retrieval, no NLI."""
-    return {
-        "claim": claim,
-        "verdict": "refuted",
-        "decided_by": "deterministic_provenance",
-        "detector": "deterministic",
-        "threshold": None,
-        "confidence": 1.0,
-        "rationale": rationale,
-        "reason_code": reason,
-        "retrieval": "not needed",
-        "evidence": [],
-    }
-
-
 def _provenance_report(response: str, evidence: list[Chunk]) -> list[str]:
     """Each order number and amount the reply states, and which tier (if any) has it."""
     orders = [
-        _found(
-            f"order {order_id}",
-            [c for c in evidence if order_id in _ORDER_REFERENCE.findall(c.content)],
-        )
-        for order_id in dict.fromkeys(_ORDER_REFERENCE.findall(response))
+        _found(f"order {order_id}", [c for c in evidence if order_id in numbers(c.content)])
+        for order_id in sorted(order_ids(response))
     ]
-    amounts = [
-        _found(str(amount), [c for c in evidence if amount in _amounts(c.content)])
-        for amount in sorted(_amounts(response))
+    stated = [
+        _found(str(amount), [c for c in evidence if amount in amounts(c.content)])
+        for amount in sorted(amounts(response))
     ]
-    return orders + amounts
+    return orders + stated
 
 
 def _found(label: str, holders: list[Chunk]) -> str:
     """`✓ $12.00 — tool result`, or `✗ $75.00 — not in any evidence`."""
     tiers = list(dict.fromkeys(_TIER_NAMES.get(chunk.kind, chunk.kind) for chunk in holders))
     return f"✓ {label} — {', '.join(tiers)}" if tiers else f"✗ {label} — not in any evidence"
-
-
-def _tool_chunks(evidence: list[Chunk]) -> list[Chunk]:
-    """The only tier that can show an outcome happened: this turn's tool results."""
-    return [chunk for chunk in evidence if chunk.kind == "tool_result"]
 
 
 def _tiers_searched(evidence: list[Chunk]) -> str:
@@ -635,68 +436,7 @@ def _tiers_searched(evidence: list[Chunk]) -> str:
     return " · ".join(f"{count} {name}" for name, count in counts.items()) or "no evidence"
 
 
-def _closest_excerpt(claim: str, evidence: list[Chunk]) -> str:
-    """The evidence line sharing most words with the claim — what nearly supported it."""
-    words = set(claim.casefold().split())
-    lines = [line for chunk in evidence for line in chunk.content.splitlines() if line.strip()]
-    if not lines:
-        return ""
-    best = max(lines, key=lambda line: len(words & set(line.casefold().split())))
-    return best[:240]
-
-
-def _amounts(text: str) -> set[Money]:
-    """Every amount a text states, exactly."""
-    return {amount for value in _MONEY.findall(text) if (amount := money_or_none(value))}
-
-
-def _asserts_settled_refund(response: str) -> bool:
-    """Whether any clause positively claims the refund is settled.
-
-    Per clause, because polarity is a property of the clause and not of
-    the reply: "No refund has been processed for order 10979 yet" carries
-    the settled-claim wording exactly while denying it, and blocking that
-    would silence the truthful answer this guard exists to protect.
-    """
-    return any(
-        _REFUND_SETTLED_CLAIM.search(clause) and not _CLAIM_NEGATIONS.search(clause)
-        for clause in _CLAUSE.split(response)
-    )
-
-
-def _refund_state_conflict(response: str, evidence_text: str) -> tuple[str, str, str] | None:
-    """Catch a claim that a refund is settled when the record says otherwise.
-
-    Telling a customer their money is on the way when it is not is the
-    single most expensive thing this agent can say, and it is decidable
-    by reading one field. Anything the evidence does not state a refund
-    status for is left alone — silence is not a refutation.
-    """
-    if not _asserts_settled_refund(response):
-        return None
-    states = {state.casefold() for state in _REFUND_STATE.findall(evidence_text)}
-    if states & _SETTLED_REFUND_STATES:
-        return None
-    if not states and NOT_EXECUTED_MARKER in evidence_text:
-        return (
-            response,
-            "TOOL_EVIDENCE_NOT_EXECUTED",
-            "The response says a refund happened, but the only refund evidence is a call "
-            "that was not executed.",
-        )
-    if not states:
-        return None
-    return (
-        response,
-        "TOOL_EVIDENCE_REFUND_STATE_MISMATCH",
-        (
-            f"The response says the refund is settled, but the authoritative refund "
-            f"status is {sorted(states)}."
-        ),
-    )
-
-
-def _tier_counts(assessment: Any) -> dict[str, int]:
+def _tier_counts(assessment: GenerationAssessment) -> dict[str, int]:
     counts: dict[str, int] = {}
     for verdict in assessment.verdicts:
         counts[verdict.tier] = counts.get(verdict.tier, 0) + 1
@@ -704,21 +444,20 @@ def _tier_counts(assessment: Any) -> dict[str, int]:
 
 
 def _surviving_sentences(response: str, verdicts: list[DetectionVerdict]) -> str:
-    """The reply's own sentences that carry no unsupported claim, verbatim.
+    """The reply's own sentences that carry no refuted claim, verbatim.
 
     Claims are finer than sentences, so gluing the supported *claims*
-    back together returned fragments: "10854), both currently on their
-    way." reached a customer as the whole answer. A sentence either
-    stands as the model wrote it or goes; nothing is reassembled.
+    back together returned fragments. A sentence either stands as the
+    model wrote it or goes; nothing is reassembled. Only a *refuted*
+    claim removes its sentence — found by the index the claim came from,
+    because a carved rule is restated and its words are not in the reply.
+    One nothing could verify is an abstention, and a courteous closing is
+    no reason to lose the answer beside it. A bare list marker ("1.") is
+    not a sentence.
     """
-    rejected = [
-        verdict.claim.strip().rstrip(".").casefold()
-        for verdict in verdicts
-        if not verdict.supported and verdict.claim.strip()
-    ]
-    kept = [
+    rejected = {verdict.sentence for verdict in verdicts if _refuted(verdict)}
+    return " ".join(
         sentence.strip()
-        for sentence in split_sentences(response)
-        if sentence.strip() and not any(claim in sentence.casefold() for claim in rejected)
-    ]
-    return " ".join(kept)
+        for index, sentence in enumerate(split_sentences(response))
+        if index not in rejected and any(char.isalpha() for char in sentence)
+    )

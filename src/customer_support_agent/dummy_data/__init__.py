@@ -2,7 +2,7 @@
 
 Schema (schema.sql), generated seed data (seed_data.sql), and the built
 SQLite database are owned by this agent. The actual database path is the
-resolved `customer_support_agent.db_path` from the agent configuration, so dummy-data
+resolved `persistence.db_path` (the agent overlays it) from the agent configuration, so dummy-data
 and runtime always open the same file.
 """
 

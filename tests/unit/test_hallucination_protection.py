@@ -17,7 +17,11 @@ from agentic_commons.hallucination_protection import (
 )
 
 _EVIDENCE = [
-    Chunk(content="Order 10001 was delivered on March 3 and refunded $42.00.", source="db")
+    Chunk(
+        content="Order 10001 was delivered on March 3 and refunded $42.00.",
+        kind="tool_result",
+        source="db",
+    )
 ]
 
 
@@ -211,9 +215,17 @@ class TestAThresholdIsJudgedOnItsOwnScale:
         assert assessment.clean
         assert assessment.verdicts[0].supported
 
+    async def test_a_status_the_record_states_is_decided_by_the_record(self) -> None:
+        """Saying "NLI" when the record decided sends a reader after the wrong bug."""
+        assessment = await self._assess("A refund has already been approved for order 10864.")
+        assert assessment.verdicts[0].detector_model == "deterministic"
+
     async def test_the_verdict_names_the_detector_that_decided(self) -> None:
         """Saying "NLI" when the fallback ran sends a reader after the wrong bug."""
-        assessment = await self._assess("A refund has already been approved for order 10864.")
+        prose = [Chunk(content="Refunded $4.20 for order 10864", kind="tool_result")]
+        assessment = await DetectionLadder(create_scoring_cascade()).assess(
+            "A refund of $4.20 was issued for order 10864.", prose
+        )
         assert assessment.verdicts[0].detector_model == "lexical-entailment-fallback"
 
     @pytest.mark.parametrize(

@@ -19,6 +19,7 @@ the facts it returned.
 
 import re
 import uuid
+from typing import Any
 
 from agentic_commons.audit import AuditLedger
 from agentic_commons.config import get_settings
@@ -172,9 +173,7 @@ class MemoryFacade:
         session_id: str = "",
     ) -> WriteResult:
         """Legacy: offer text to memory as the role that carries this provenance."""
-        return self.pipeline.process(
-            self._redact(raw_input), source, provenance_kind, session_id
-        )
+        return self.pipeline.process(self._redact(raw_input), source, provenance_kind, session_id)
 
     def note(
         self,
@@ -198,9 +197,7 @@ class MemoryFacade:
             provenance=Provenance(source=source, kind=provenance_kind),
             metadata={"session_id": session_id},
         )
-        return WriteResult(
-            route="auto_commit", written=True, fact=fact, reason="in active window"
-        )
+        return WriteResult(route="auto_commit", written=True, fact=fact, reason="in active window")
 
     def active_window(self, session_id: str, limit: int = 0) -> list[MemoryFact]:
         """Expose compact working-memory state for legacy callers."""
@@ -257,7 +254,9 @@ class MemoryFacade:
         actor = principal or MemoryPrincipal(actor=source, role="agent")
         refused = self.pipeline.permits(actor, "create", "episodic", category)
         if refused is not None:
-            return WriteResult(route="refused", written=False, reason=refused, stage="authorization")
+            return WriteResult(
+                route="refused", written=False, reason=refused, stage="authorization"
+            )
         fact = MemoryFact(
             # One key per event, not per session: a shared key made every
             # event in a conversation the same record to recall and forget.
@@ -275,14 +274,8 @@ class MemoryFacade:
             "memory_write",
             "completed",
             f"episodic event recorded: {fact.value[:60]}",
-            {
-                "memory": "episodic (append-only log of what happened)",
-                "event": fact.value,
-                "recorded_for": f"customer {actor.subject_id}" if actor.subject_id else "shared",
-                "recorded_by": f"{actor.actor} ({actor.role})",
-                "why": "a turn completed",
-                "importance": round(fact.importance, 2),
-            },
+            _event_fields(fact),
+            quiet=True,
         )
         return result
 
@@ -359,7 +352,9 @@ class MemoryFacade:
         report.candidates["lexical"] = len(fresh)
         return fresh
 
-    async def _dense(self, query: MemoryQuery, report: RecallReport, exclude: list[_Hit]) -> list[_Hit]:
+    async def _dense(
+        self, query: MemoryQuery, report: RecallReport, exclude: list[_Hit]
+    ) -> list[_Hit]:
         """R3: embeddings — reached only when the cheap tiers came up short."""
         if self._relevance is None or not query.text:
             report.skipped.append("dense")
@@ -367,8 +362,11 @@ class MemoryFacade:
         seen = {id_of(fact) for fact, _, _ in exclude}
         pool = [
             fact
-            for fact in (self.semantic.read(MemoryQuery(subject_id=query.subject_id, limit=query.limit * 5))
-                         if self.semantic else [])
+            for fact in (
+                self.semantic.read(MemoryQuery(subject_id=query.subject_id, limit=query.limit * 5))
+                if self.semantic
+                else []
+            )
             if id_of(fact) not in seen
         ]
         if not pool:
@@ -382,28 +380,53 @@ class MemoryFacade:
 
     def _reinforce(self, ranked: list[ScoredFact]) -> None:
         if self.semantic is not None:
-            self.semantic.reinforce([item.fact for item in ranked if item.fact.memory_type == "semantic"])
+            self.semantic.reinforce(
+                [item.fact for item in ranked if item.fact.memory_type == "semantic"]
+            )
 
-    def _report_recall(self, query: MemoryQuery, report: RecallReport, ranked: list[ScoredFact]) -> None:
+    def _report_recall(
+        self, query: MemoryQuery, report: RecallReport, ranked: list[ScoredFact]
+    ) -> None:
         answered = report.answered_by or "nothing"
         self.pipeline.report(
             "memory_recall",
             "completed",
             f"answered at {answered} ({report.embed_calls} embed calls)",
-            {
-                "query": query.text or query.key,
-                "for": f"customer {query.subject_id}" if query.subject_id else "shared",
-                "answered_by": answered,
-                "candidates": report.candidates,
-                "skipped": ", ".join(report.skipped) or "—",
-                "embed_calls": report.embed_calls,
-                "recalled": [
-                    f"{item.fact.key}={item.fact.value[:40]} [{item.tier}] "
-                    f"score={item.score:.2f} rel={item.relevance:.2f} rec={item.recency:.2f} "
-                    f"imp={item.importance:.2f} auth={item.authority:.2f} "
-                    f"freq={item.frequency:.2f} valid={item.temporal_validity:.0f}"
-                    for item in ranked
-                ],
-            },
+            _recall_fields(query, report, ranked),
+            quiet=True,
         )
 
+
+def _event_fields(fact: MemoryFact) -> dict[str, Any]:
+    """An episodic event, as the log shows it: what was recorded, and under which id."""
+    return {"event": fact.value, "event_id": fact.key}
+
+
+def _recall_fields(
+    query: MemoryQuery, report: RecallReport, ranked: list[ScoredFact]
+) -> dict[str, Any]:
+    """What a recall found and how, for the log; the turn summary carries the count.
+
+    An event is named by its text, not the id it is stored under. The
+    scoring breakdown stays, one row per fact, because "why was this
+    recalled?" is the question that makes a false recall diagnosable.
+    """
+    return {
+        "query": query.text or query.key,
+        "answered_by": report.answered_by or "nothing",
+        "candidates": report.candidates,
+        "skipped": ", ".join(report.skipped),
+        "embed_calls": report.embed_calls,
+        "recalled": [
+            f"{_named(item.fact)} [{item.tier}] score={item.score:.2f} "
+            f"rel={item.relevance:.2f} rec={item.recency:.2f} imp={item.importance:.2f} "
+            f"auth={item.authority:.2f} freq={item.frequency:.2f} "
+            f"valid={item.temporal_validity:.0f}"
+            for item in ranked
+        ],
+    }
+
+
+def _named(fact: MemoryFact) -> str:
+    """A recalled fact as a reader names it: the text of an event, `key=value` for a fact."""
+    return fact.value[:60] if fact.memory_type == "episodic" else f"{fact.key}={fact.value[:40]}"

@@ -56,11 +56,7 @@ class ReasoningNodes(NodeSupport):
             }
         message = Message(role="assistant", content=result.content, tool_calls=result.tool_calls)
         state.working_memory.add_current_turn(message)
-        self._report_llm_response(
-            result,
-            purpose="tool_selection",
-            tools_offered=offered,
-        )
+        self._report_llm_response(result, purpose="tool_selection")
         return {
             "tool_rounds": state.tool_rounds + 1,
             # The offered set is carried, not recomputed. Selection can

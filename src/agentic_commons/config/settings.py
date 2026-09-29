@@ -346,6 +346,10 @@ class ObservabilitySettings(YamlBackedSettings):
     persist_traces: bool
     slo_targets: dict[str, float]
     review_queue: ReviewQueueSettings
+    # How a card in the tool-use loop names its iteration. `{step}` is the
+    # model call being made, `{max}` the cap on tool iterations.
+    loop_step_prefix: str
+    loop_step_detail: str
 
     model_config = SettingsConfigDict(env_prefix="OBSERVABILITY__")
 
@@ -598,6 +602,43 @@ class GuardrailsSettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="GUARDRAILS__")
 
 
+class GroundingTierSettings(BaseModel):
+    """One stage of the grounding cascade."""
+
+    name: str
+    kinds: list[str]
+    claims: list[str]
+    may_refute: bool
+
+
+class RulePhraseSettings(BaseModel):
+    """A surface phrase in an outcome, and the rule it restates."""
+
+    pattern: str
+    statement: str
+
+
+class StatePhraseSettings(BaseModel):
+    """A way of saying where a refund stands, and the status it takes to be true."""
+
+    pattern: str
+    reaches: str
+    # True only while the refund is exactly there ("pending review"), rather
+    # than once it has got there ("submitted").
+    exact: bool = False
+
+
+class RefundStatesSettings(BaseModel):
+    """The refund state machine a state claim is judged against."""
+
+    ladder: list[str]
+    branches: dict[str, str]
+    settled_from: str
+    observed_as: dict[str, list[str]]
+    context_pattern: str
+    phrases: list[StatePhraseSettings]
+
+
 class HallucinationProtectionSettings(YamlBackedSettings):
     """Detection ladder thresholds (LLD)."""
 
@@ -618,23 +659,32 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     # Retrieved evidence below this similarity is shown but never sent to
     # NLI: text unrelated to a claim can neither support nor refute it.
     evidence_min_similarity: float
-    # When two decisive NLI results disagree, the higher-authority evidence
-    # tier wins; only a tie between equal tiers blocks as a conflict.
-    evidence_authority: dict[str, int]
-    support_only_tiers: list[str]
-    record_claim_pattern: str
-    record_claim_tiers: list[str]
     # What an identifier looks like to this agent. When set, evidence may
     # refute a claim that names identifiers only if it names one of them:
     # NLI reads a record about order B as contradicting a claim about
-    # order A. Unset: every retrieved item may refute, as before.
+    # order A. Unset: every retrieved item may refute.
     refute_identifier_pattern: str | None = None
-    # A claim whose facts sit in two evidence items ("order 10892 (Keyboard)
-    # has been queued") is neutral against each alone. When no single item
-    # decides it, the items allowed to support it are joined into one
-    # premise and asked once more — to support only, never to refute.
-    combined_premise_enabled: bool
-    combined_premise_separator: str
+    # The grounding cascade, strongest first. Each tier names the evidence
+    # kinds it reads, the claim classes it may ground, and whether it may
+    # refute as well as support. Order is the order credit is given in.
+    tiers: list[GroundingTierSettings]
+    # How a claim is told apart from conversation and from a promise.
+    # Business vocabulary, so an agent overrides it; the platform ships the
+    # shape and one worked default.
+    conversational_openers: list[str]
+    record_identifier_pattern: str
+    outcome_pattern: str
+    promissory_pattern: str
+    # Settled-refund wording, the record field that settles it, and the
+    # record wording that says it is still waiting on a person.
+    refusal_pattern: str
+    refund_state_pattern: str
+    refund_states: RefundStatesSettings
+    # A phrase carved out of an outcome and checked as the rule it states.
+    rule_phrases: list[RulePhraseSettings]
+    # A rule claim whose content is this fraction restated by one rule of
+    # the tier is supported, whatever the NLI model made of an instruction.
+    rule_restatement_coverage: float = Field(default=0.7, ge=0.0, le=1.0)
     # Hallucination repair is deliberately bounded. A model that repeats an
     # unsupported claim must not be given an unbounded generative retry loop.
     max_repair_attempts: int = Field(default=1, ge=0, le=3)

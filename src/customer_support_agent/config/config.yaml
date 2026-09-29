@@ -80,6 +80,10 @@ security:
       # This agent moves money, so a claimed limit change is an attack on it.
       - my refund limit is now
 
+# This agent's database; every default connection pool opens it.
+persistence:
+  db_path: src/customer_support_agent/dummy_data/agentic.db
+
 hallucination_protection:
   # This agent's ids are five-digit order numbers (the same shape the
   # evals use). A record about another order cannot refute a claim.
@@ -121,7 +125,22 @@ durability:
   db_path: src/customer_support_agent/dummy_data/checkpoints.db
 
 customer_support_agent:
-  db_path: src/customer_support_agent/dummy_data/agentic.db
+  # How the customer's own words name an order. One reader, used by the
+  # graph, BasicSanity and the mandate that scopes a write, so the path that
+  # answers and the path that acts cannot read one message two ways.
+  order_reference:
+    anchored_patterns:
+      # "order 10786", "order: 10786", "this order -> 10786", "the order is 10786"
+      - '\border\b(?:\W|\b(?:id|no|num|number|is|for|the|this|that)\b){0,8}?(?P<id>\d{4,})\b'
+      - '\b(?P<id>\d{4,})\s+order\b'
+    compact_patterns:
+      # "refund 10786", "cancel order #10786"; "refund $20" is not an order.
+      - '\b(?:refund|cancel)\b(?:\s+(?:for|on))?(?:\s+order)?\s*[#:]?\s*(?P<id>\d{4,})\b(?!\s*(?:dollars?|usd|\$))'
+    id_shape: '\b\d{5}\b'
+  # Facts the harness (never the customer) writes to working memory, and the
+  # sentence each is restated as when a reply is checked against the evidence.
+  grounding_facts:
+    verified_customer: "You are {value}."
   max_tool_iterations: 5
   list_orders_max_rows: 20
   # Tool -> budget class. A tool absent from this map is not financially

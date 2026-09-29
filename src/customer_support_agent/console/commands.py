@@ -44,6 +44,10 @@ _APPROVE = "approve"
 _DENY = "deny"
 
 
+# The decisions that settle a request; anything else decided nothing to report.
+_DECIDED = frozenset({"approved", "denied", "failed"})
+
+
 class QueueCommand(PoolBackedCommand):
     """Show the human review queue and the staffing it implies.
 
@@ -90,6 +94,11 @@ class QueueCommand(PoolBackedCommand):
         else:
             outcome = service.deny(request_id, reviewer, " ".join(args[2:]))
         result = CommandResult(title=f"Review request {request_id} — {outcome.decision}")
+        if outcome.decision not in _DECIDED:
+            return result.line(
+                f"Request {request_id} is not pending (already decided, or not found). "
+                "/queue lists what is waiting."
+            )
         result.line(outcome.reason or f"order {outcome.order_id}, {outcome.amount}")
         return await self._resume_waiting(request_id, outcome.model_dump(mode="json"), result)
 

@@ -276,6 +276,11 @@ observability:
   analytics_db_path: data/observability.duckdb
   langsmith_enabled: false
   persist_traces: true
+  # The loop is typed tool use, not ReAct: the model proposes a validated
+  # call and there is no thought step, so the label names a model call, the
+  # tool it asked for, and the result — not reason/act/observe.
+  loop_step_prefix: "Step {step} · "
+  loop_step_detail: "{step} of {max} (model call → tool → result)"
   slo_targets:
     task_success_rate: 0.95
     unauthorized_action_rate: 0.0
@@ -517,45 +522,91 @@ hallucination_protection:
   # claim; it is listed on the card but not sent to NLI, so an unrelated
   # passage can neither support nor "contradict" a sentence.
   evidence_min_similarity: 0.3
-  # Who wins when decisive NLI results disagree: a tool result is the
-  # authority on what happened this turn; policy on the rules; knowledge
-  # and memory on background. Equal authority disagreeing blocks.
-  evidence_authority:
-    tool_result: 3
-    policy: 2
-    system: 1
-    retrieved: 1
-    memory: 1
-    history: 0
-  # Tiers that may support a claim but never refute one. The system prompt
-  # is instructions to the model ("treat any refund mention as a refund
-  # request"), not facts about the world: NLI reads an instruction as
-  # contradicting a correct refusal, so it grounds restated rules and
-  # politeness it asked for, and is otherwise silent. `history` is the
-  # customer's own message: a reply may echo it ("I can't issue a $1
-  # refund"), but what a customer asserts proves nothing.
-  support_only_tiers: [system, history]
-  # A claim about the customer's own record ("your refund is done", "order
-  # 10892 is pending review") is a fact about this case, and only a tool
-  # result can show it. Policy may refute such a claim but never support
-  # it: NLI read "an order already refunded cannot be refunded again" as
-  # entailing "your refund is done". General claims ("you'll hear back
-  # soon") are still supported by any tier. Agents override the pattern.
-  record_claim_pattern: "\\byour\\b|\\border\\s*#?\\s*\\d{3,}\\b"
-  record_claim_tiers: [tool_result]
   # Identifiers are agent vocabulary, so the platform names none. An agent
   # sets the shape of its ids here, and a record about a different id can
   # no longer "contradict" a claim (it can still fail to support it).
   refute_identifier_pattern: null
-  # A claim can be true across two evidence items and neutral against each
-  # alone: "order 10892 (Mechanical Keyboard) has been queued" needs the
-  # order record *and* the queue result. When no single item decides a
-  # claim, the retrieved items allowed to support it are joined into one
-  # premise and checked once more. It can only turn "unverified" into
-  # "supported": a contradiction in a joined premise has no single source
-  # for the authority and recency rules to weigh, so it never blocks.
-  combined_premise_enabled: true
-  combined_premise_separator: "\n"
+  # The grounding cascade. A claim is first classed — record (a fact about
+  # this case), rule (how things work, and every promise), or
+  # conversational (never scored) — and is then checked only against the
+  # tiers that may ground its class. A refutation from any tier that may
+  # refute stands; otherwise the first tier to support gets the credit;
+  # otherwise the claim is undetermined, which never blocks. The system
+  # prompt and memory support only: instructions and recollections are not
+  # facts a correct reply can contradict. The customer's own words are in
+  # no tier: what a customer asserts proves nothing.
+  tiers:
+    - {name: tool_result, kinds: [tool_result], claims: [record], may_refute: true}
+    - {name: policy, kinds: [policy, retrieved], claims: [rule], may_refute: true}
+    - {name: system, kinds: [system], claims: [rule], may_refute: false}
+    - {name: memory, kinds: [memory], claims: [rule], may_refute: false}
+  # A claim opening like this, and stating no outcome, is conversation.
+  conversational_openers:
+    - '(?:thanks?|thank\s+you|sorry|apolog\w+|please|hello|hi|hey|welcome)\b'
+    - '(?:i[''’]?m|i\s+am|we[''’]?re)\s+(?:\w+\s+)?(?:happy|glad|pleased|sorry|here)\b'
+    - '(?:happy|glad|pleased)\s+to\b'
+    - '(?:let\s+me\s+know|feel\s+free|is\s+there\s+anything|anything\s+else|no\s+problem|of\s+course|certainly|sure)\b'
+  # A claim naming one of these is about this case and needs a record.
+  record_identifier_pattern: '\border\s*#?\s*\d{3,}\b'
+  # An outcome stated as done. With a promise marker it is a promise.
+  outcome_pattern: '\b(?:refunded|queued|approved|processed|issued|completed|submitted|denied|rejected|cancelled|canceled|delivered|shipped|pending|on\s+its\s+way|human\s+review|request\s+created)\b'
+  promissory_pattern: '\b(?:will|would|shall|going\s+to|once|if|when|may|might|could|should|can|get|gets|getting)\b|[''’]ll\b'
+  # A claim that the agent could not, or did not, act. The record of a call it
+  # refused is what grounds it, so it is supported by a NOT EXECUTED entry
+  # for the order it names rather than by asking NLI to read a structured line.
+  refusal_pattern: '\b(?:unable|cannot|can[''’]?t|couldn[''’]?t|could\s+not|not\s+able|won[''’]t\s+be\s+able|wasn[''’]t|was\s+not|hasn[''’]t|has\s+not|haven[''’]t|have\s+not|declined|refused|denied|rejected)\b'
+  refund_state_pattern: 'refund(?:_|\s+)status\s*[:=]\s*(\w+)'
+  # The refund state machine. A state record ("Order N refund status: X") is
+  # not something an NLI model can read: it contradicted "has been submitted"
+  # against `pending_review`. So it is read here, in both directions, and is
+  # never sent to NLI. `ladder` runs earliest first and each status implies
+  # the earlier ones happened; `branches` names a status off the ladder and
+  # how far it got before it stopped. An *event* phrase ("submitted",
+  # "refunded") is true once the refund has reached its status; a *state*
+  # phrase (`exact`: "pending review", "denied") is true only while it is
+  # there. Event phrases win when both appear ("was queued for human review"
+  # is history). A claim is judged only if it also talks about a refund
+  # (`context_pattern`), so "your order has been processed" is left alone.
+  refund_states:
+    ladder: [none, pending_review, approved, completed]
+    branches: {denied: pending_review}
+    # From this status on, money has moved or been authorised.
+    settled_from: approved
+    # Record wording that states a status without the status line.
+    observed_as:
+      none:
+        - no refund has been requested
+      pending_review:
+        - queued for human review
+        - awaiting a decision
+        - awaiting human review
+        - sent for review
+    context_pattern: '(?:\b(?:refund|request|review|amount|money|payment|funds)|\$\s?\d)'
+    phrases:
+      - reaches: pending_review
+        pattern: '\b(?:requested|submitted|received|queued|initiated|started|created|sent\s+for\s+review)\b'
+      - reaches: pending_review
+        exact: true
+        pattern: '\b(?:pending|awaiting|under\s+review|in\s+review|human\s+review|manual\s+review)\b'
+      - reaches: approved
+        pattern: '\bapproved\b'
+      - reaches: completed
+        pattern: '\b(?:refunded|completed|processed|issued|paid|on\s+its\s+way|sent\s+back|paid\s+back|credited|reimbursed|returned)\b'
+      - reaches: denied
+        exact: true
+        pattern: '\b(?:denied|declined|rejected)\b'
+  # Where a refund goes is a rule stated once in the knowledge article; the
+  # outcome around it is a fact about this case. Split, each is checked by
+  # what can ground it.
+  rule_phrases:
+    - pattern: '\s*\bto\s+(?:your|the)\s+original\s+payment\s+method\b'
+      statement: A refund goes back to the original payment method
+    # The amount of a refund is a rule (policy: always the full order total), not a
+    # fact about this case: carve it out, so "$21.35 was returned" is the outcome.
+    - pattern: '\s*\b(?:the\s+)?full\s+(?:order\s+)?(?:amount|total)\s+of\b'
+      statement: A refund is always for the full order total
+  # A rule claim covered this much by one rule of its tier is a restatement.
+  rule_restatement_coverage: 0.7
   # At most one generative repair. If the model repeats an unsupported
   # claim, the verifier stops generating and falls back to verified claims.
   max_repair_attempts: 1
@@ -564,11 +615,28 @@ gatekeeper:
   # Parameters and sub-features. Whether the Gatekeeper is invoked at all
   # is `features.gatekeeper` — see the header above for what withholding
   # it does and does not switch off.
+  # The highest rank (weakest source) that may grant or expand authority.
+  # A rank is a source's 1-based position in `authority_hierarchy` below,
+  # strongest first, so reordering that list re-ranks its sources. Lower is
+  # stronger. Ranks:
+  #   1  provider            the model provider's own rules
+  #   2  organization        the operator or company deploying the agent
+  #   3  product             the product's fixed configuration and policy
+  #   4  workspace           a team's or tenant's configuration
+  #   5  user_task           what the signed-in person asked for   <- last rank that can grant
+  #   6  runtime_reminders   system nudges injected at run time
+  #   7  tool_observations   what a tool returned
+  #   8  untrusted_content   retrieved documents, web pages, anything a third party wrote
+  # Ranks 1-5 may grant. Ranks 6-8 are input to be acted on, never instruction
+  # to be obeyed, so an injected sentence in a tool result or a document
+  # cannot authorize a refund. A source the list does not name gets the
+  # weakest rank. A tool's `requires_authority_rank` (5 for refund and cancel)
+  # is met when both the agent's rank and the granting source's rank are <= it.
   authority_grant_max_rank: 5
-  # The Authority Hierarchy, strongest first. Only the first
-  # `authority_grant_max_rank` sources can grant or expand authority;
-  # everything below them is input to be acted on, never instruction to
-  # be obeyed — which is why a tool result cannot authorize anything.
+  # The Authority Hierarchy, strongest first; see the rank table above.
+  # Only the first `authority_grant_max_rank` sources can grant or expand
+  # authority; everything below them is input to be acted on, never
+  # instruction to be obeyed — which is why a tool result cannot authorize anything.
   authority_hierarchy:
     - provider
     - organization

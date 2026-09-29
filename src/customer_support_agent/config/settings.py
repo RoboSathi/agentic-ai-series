@@ -16,6 +16,7 @@ from typing import Literal
 from pydantic import BaseModel
 from pydantic_settings import SettingsConfigDict
 
+from agentic_commons.config import get_settings
 from agentic_commons.config.paths import resolve_path
 from agentic_commons.config.settings import YamlBackedSettings
 
@@ -101,6 +102,19 @@ class CsaEvalSettings(BaseModel):
         return resolve_path(self.workspace_dir)
 
 
+class OrderReferenceSettings(BaseModel):
+    """How a customer's words are read as naming an order."""
+
+    # A number tied to the word "order", however loosely the customer wrote
+    # it ("order: N", "this order -> N", "the order is N"). Group `id`.
+    anchored_patterns: list[str]
+    # The compact request form ("refund N"). Group `id`.
+    compact_patterns: list[str]
+    # What an id looks like when nothing anchors it. Such a number counts only
+    # if it is one of the customer's own orders: shape alone proves nothing.
+    id_shape: str
+
+
 class CustomerSupportAgentSettings(YamlBackedSettings):
     """The running product's own wiring values (LLD §21)."""
 
@@ -116,6 +130,7 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     action_classes: dict[str, str]
     plans: dict[str, list[PlanStepSettings]]
     intent_router: IntentRouterSettings
+    order_reference: OrderReferenceSettings
     followup: FollowupSettings
     history_turns: int
     deliberation_markers: list[str]
@@ -124,7 +139,7 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     user_code_placeholder: str
     demo_user_code: str
     policy_path: str
-    db_path: str
+    grounding_facts: dict[str, str]
     # Who the console acts as when it approves or denies a queued refund.
     console_reviewer: str
     evals: CsaEvalSettings
@@ -143,8 +158,8 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
 
     @property
     def resolved_db_path(self) -> Path:
-        """SQLite database owned by this agent deployment."""
-        return resolve_path(self.db_path)
+        """SQLite database owned by this agent deployment (`persistence.db_path`)."""
+        return get_settings().persistence.resolved_db_path
 
 
 _SETTINGS: CustomerSupportAgentSettings | None = None

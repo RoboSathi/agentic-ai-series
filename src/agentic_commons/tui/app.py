@@ -12,7 +12,6 @@ holds no product's vocabulary and can open against an agent it has never
 heard of.
 """
 
-from collections import Counter
 from collections.abc import Sequence
 from typing import Any, Callable
 from uuid import uuid4
@@ -44,7 +43,6 @@ _DEFAULT_TITLE = "Agent Harness"
 
 
 # Recall tiers that answered without an embedding model.
-_DETERMINISTIC_TIERS = ("exact", "lexical")
 
 
 class AgenticTuiApp(App[None]):
@@ -191,8 +189,6 @@ class AgenticTuiApp(App[None]):
         self._session_id = f"tui-{uuid4().hex[:8]}"
         self._follow_latest = True
         self._history_pending = 0
-        # Which recall tier answered, this session — the deterministic hit-rate.
-        self._recall_tiers: Counter[str] = Counter()
         self._journal = get_logger("tui")
 
         # The agent's own commands, then anything this caller added.
@@ -220,6 +216,7 @@ class AgenticTuiApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header()
         yield self._panel
+        yield self._status
         yield Input(
             placeholder=(
                 self._host.placeholder() if self._host else "Ask the agent…  (/help for commands)"
@@ -227,7 +224,6 @@ class AgenticTuiApp(App[None]):
             id="query",
             suggester=CommandSuggester(self._commands),
         )
-        yield self._status
         yield self._tokens
         yield Footer()
 
@@ -405,24 +401,8 @@ class AgenticTuiApp(App[None]):
             query_input.disabled = False
             query_input.focus()
 
-    def _track_context(self, event: StatusEvent) -> None:
-        """Keep the status line's one functional statistic current.
-
-        How often recall was answered without an embedding model, this
-        session. Ids and checkpoint counts are operational and live in
-        the log, not on screen.
-        """
-        if event.stage != "memory_recall":
-            return
-        self._recall_tiers[str(event.fields.get("answered_by") or "nothing")] += 1
-        answered = sum(self._recall_tiers[tier] for tier in _DETERMINISTIC_TIERS)
-        total = answered + self._recall_tiers["dense"]
-        if total:
-            self._status.set_context(f"recall without embeddings {round(100 * answered / total)}%")
-
     def _on_status(self, event: StatusEvent) -> None:
         """Render one semantic event and update the current-stage status."""
-        self._track_context(event)
         if event.status == "started":
             self._status.update_stage(
                 self._labels.title_for(
@@ -477,7 +457,9 @@ class AgenticTuiApp(App[None]):
         if not text:
             return False
         if self._copier.copy_text(text):
-            self.notify(f"Copied {len(text)} characters", timeout=get_settings().tui.copy_toast_seconds)
+            self.notify(
+                f"Copied {len(text)} characters", timeout=get_settings().tui.copy_toast_seconds
+            )
         else:
             self.notify("Copy failed — no clipboard command found", severity="warning")
         return True

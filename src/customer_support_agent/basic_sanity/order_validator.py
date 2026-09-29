@@ -24,7 +24,9 @@ from agentic_commons.money import Money, money_or_none
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.cancellation_policy import CancellationPolicy
 from customer_support_agent.domain.models import Order
-from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
+from customer_support_agent.domain.order_reference import (
+    OrderReferenceResolver,
+)
 from customer_support_agent.domain.refund_policy import RefundPolicy
 from customer_support_agent.persistence.repositories import OrdersRepository
 
@@ -44,28 +46,6 @@ _CANCELLABLE_CHECK = "order_cancellable"
 # "cancel 10022": the compact form no configured phrase covers.
 _CANCEL_BY_ID = re.compile(r"\bcancel\s+(?:order\s*)?#?\s*\d{4,}\b", re.IGNORECASE)
 
-# Deliberately conservative: only treat a number as an order id when the
-# customer explicitly labels it as an order. Bare numbers are left to the
-# existing menu-selection path so BasicSanity never guesses.
-_ORDER_ID_PATTERNS = (
-    # Explicit order references: "order 10891", "order #10891",
-    # "order id 10891", "order number: 10891".
-    re.compile(
-        r"\border(?:\s+(?:id|number))?\s*[#:]?\s*(?P<order_id>\d+)\b",
-        re.IGNORECASE,
-    ),
-    # Refund and cancel requests in the compact form customers naturally use:
-    # "refund 10891", "cancel 10891", "refund order 10891". Treat long numeric
-    # tokens as order ids here; currency/amount wording is deliberately
-    # excluded so "refund $20" and "cancel 50 dollars" still require the
-    # model to resolve the request.
-    re.compile(
-        r"\b(?:refund|cancel)\b(?:\s+(?:for|on))?(?:\s+order)?\s*[#:]?\s*"
-        r"(?P<order_id>\d{4,})\b(?!\s*(?:dollars?|usd|\$))",
-        re.IGNORECASE,
-    ),
-)
-
 
 class OrderSanityCheck(BasicSanityChecker):
     """Deterministic Customer Support preflight for explicit order requests."""
@@ -77,8 +57,13 @@ class OrderSanityCheck(BasicSanityChecker):
         refund_policy: RefundPolicy | None = None,
         cancellation_policy: CancellationPolicy | None = None,
         refund_markers: Iterable[str] | None = None,
+        references: OrderReferenceResolver | None = None,
     ) -> None:
         self._orders = orders
+        # The one reader of which order a message names. BasicSanity used to
+        # carry its own, and two readers that disagree are how an agent
+        # validates one order and acts on another.
+        self._references = references or OrderReferenceResolver.from_orders(orders)
         self._refund_policy = refund_policy or RefundPolicy(orders)
         self._cancellation_policy = cancellation_policy or CancellationPolicy(orders)
         self._cancel_markers = _markers(_configured_phrases(CANCEL_OPERATION))
@@ -90,11 +75,11 @@ class OrderSanityCheck(BasicSanityChecker):
 
     def check(self, request: BasicSanityRequest) -> BasicSanityResult:
         """Run only deterministic checks that are safe before the model."""
-        order_id = self.extract_order_id(request.query, request.metadata)
-        operation = self._operation(request.query, request.metadata)
         # The platform hands over an opaque subject id; reading it back as
         # a customer number is this agent's business, not the platform's.
         customer_id = int(request.subject_id) if request.subject_id.isdigit() else None
+        order_id = self.order_id(request.query, request.metadata, customer_id)
+        operation = self._operation(request.query, request.metadata)
         if order_id is None:
             return BasicSanityResult(
                 passed=True,
@@ -172,7 +157,11 @@ class OrderSanityCheck(BasicSanityChecker):
                     facts={
                         "order_id": order_id,
                         "operation": operation,
-                        **({"requested_amount": str(requested_amount)} if requested_amount is not None else {}),
+                        **(
+                            {"requested_amount": str(requested_amount)}
+                            if requested_amount is not None
+                            else {}
+                        ),
                     },
                 )
         else:
@@ -339,37 +328,31 @@ class OrderSanityCheck(BasicSanityChecker):
             facts=facts,
         )
 
-    @staticmethod
-    def extract_order_id(query: str, metadata: dict[str, object] | None = None) -> int | None:
-        """Extract an order id from the user query, the turn, or an exact call.
+    def order_id(
+        self, query: str, metadata: dict[str, object] | None, customer_id: int | None
+    ) -> int | None:
+        """The order this request names, the turn settled, or an exact call re-checked.
 
-        Still no guessing. Both fallbacks are references somebody else
-        already established: ``order_under_discussion`` is the order this
-        turn resolved from what the customer said, and the tool-call
+        Still no guessing. The message is read by the shared resolver; the
         fallback — used only by the Gatekeeper's final re-check — is an
-        ``order_id`` the agent has already validated. Neither is a number
-        inferred from arbitrary text.
+        ``order_id`` the agent has already validated, not a number inferred
+        from text.
 
-        Without the first of these, "I want a refund" one turn after
+        Without the carried reference, "I want a refund" one turn after
         "what about order 10301?" reads as a refund request naming no
         order, and the deterministic eligibility checks are skipped on
         exactly the turn that moves money.
         """
-        for pattern in _ORDER_ID_PATTERNS:
-            match = pattern.search(query)
-            if match is not None:
-                return int(match.group("order_id"))
-        carried = (metadata or {}).get(ORDER_UNDER_DISCUSSION)
-        if isinstance(carried, int) and not isinstance(carried, bool) and carried > 0:
-            return carried
+        resolved = self._references.resolve(query, metadata, None, customer_id=customer_id)
+        if resolved is not None:
+            return resolved
         tool_params = (metadata or {}).get("tool_params")
-        if isinstance(tool_params, dict):
-            candidate = tool_params.get("order_id")
-            if isinstance(candidate, int) and candidate > 0:
-                return candidate
-            if isinstance(candidate, str) and candidate.isdigit():
-                return int(candidate)
-        return None
+        if not isinstance(tool_params, dict):
+            return None
+        candidate = tool_params.get("order_id")
+        if isinstance(candidate, int) and candidate > 0:
+            return candidate
+        return int(candidate) if isinstance(candidate, str) and candidate.isdigit() else None
 
     def _check_cancellation(
         self,

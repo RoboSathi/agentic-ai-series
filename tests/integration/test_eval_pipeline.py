@@ -124,9 +124,7 @@ class TestDummyData:
     def test_the_database_holds_the_policy_it_reports(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from customer_support_agent.config.settings import get_agent_settings
-
-        monkeypatch.setattr(get_agent_settings(), "db_path", str(tmp_path / "agentic.db"))
+        monkeypatch.setattr(get_settings().persistence, "db_path", str(tmp_path / "agentic.db"))
         path = dummy.build_agent_database(dummy.generate_seed_sql())
         import sqlite3
 

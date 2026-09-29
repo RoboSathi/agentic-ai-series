@@ -34,6 +34,7 @@ from agentic_commons.guardrails import ResponseGuardrail
 from agentic_commons.guardrails.response import NOT_EXECUTED_MARKER
 from agentic_commons.hallucination_protection import (
     OBSERVATION_SEQUENCE,
+    STATE_CHANGING,
     DetectionLadder,
     GroundingReasoningDiagnoser,
     split_sentences,
@@ -57,6 +58,7 @@ from agentic_commons.security import SecuritySuite
 from agentic_commons.security.auth.policy import AgentPolicy
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from agentic_commons.verification import EffectVerifier
+from customer_support_agent.config.settings import get_agent_settings
 from customer_support_agent.control_loop import OutputQualityGate
 from customer_support_agent.domain.identity import (
     Customer,
@@ -75,7 +77,11 @@ from customer_support_agent.presentation.orders import (
 )
 from customer_support_agent.presentation.reporting import llm_request_fields, llm_response_fields
 from customer_support_agent.prompts.policy import policy_text
-from customer_support_agent.prompts.system_prompt import build_system_prompt
+from customer_support_agent.prompts.system_prompt import (
+    build_reply_instruction,
+    build_reply_system_prompt,
+    build_system_prompt,
+)
 from customer_support_agent.review.referral import ReviewReferral
 from customer_support_agent.security.authentication import CustomerAuthenticator
 from customer_support_agent.tools.definitions import SupportTools
@@ -238,7 +244,7 @@ class NodeSupport:
         answers about one order and acts on another.
         """
         return self._order_reference.resolve(
-            state.query, state.metadata, state.working_memory
+            state.query, state.metadata, state.working_memory, customer_id=state.customer_id
         )
 
     def _carry_order_reference(self, state: AgentState) -> dict[str, Any]:
@@ -266,9 +272,7 @@ class NodeSupport:
     def _current_messages(self, state: AgentState) -> list[Message]:
         """Return message-shaped entries from the current working-memory turn."""
         return [
-            item
-            for item in state.working_memory.current_messages()
-            if isinstance(item, Message)
+            item for item in state.working_memory.current_messages() if isinstance(item, Message)
         ]
 
     def _authoritative_observations(self, state: AgentState) -> list[str]:
@@ -284,13 +288,35 @@ class NodeSupport:
         referral did — queued it, and left the refund pending — not as a
         refusal, which NLI reads as contradicting "your request is in".
         """
-        return [
-            str(item.get("result", ""))
-            if item.get("outcome") in _GROUNDED_AS_STATED
-            else _not_executed(item)
+        return [text for text, _ in self._observations(state)]
+
+    def _observations(self, state: AgentState) -> list[tuple[str, bool]]:
+        """Each of this turn's tool observations, and whether it changed anything.
+
+        A call changed something when its tool is declared side-effecting
+        *and* it ran (or was referred): a refused write left the world as
+        it was, so the reads before it stay true. The grounding guard needs
+        the distinction to tell a read that a later write has overtaken.
+        """
+        actions = [
+            item
             for item in state.working_memory.current_turn
             if isinstance(item, dict) and item.get("kind") == "action"
         ]
+        return [
+            (
+                str(item.get("result", ""))
+                if item.get("outcome") in _GROUNDED_AS_STATED
+                else _not_executed(item),
+                item.get("outcome") in _GROUNDED_AS_STATED and self._changes_state(item),
+            )
+            for item in actions
+        ]
+
+    def _changes_state(self, action: dict[str, Any]) -> bool:
+        """Whether the tool this action called is declared to have side effects."""
+        tool = self._registry.get(str(action.get("name", "")))
+        return tool is not None and tool.side_effecting
 
     def _grounding_evidence(self, state: AgentState) -> list[Chunk]:
         """Every tier a reply may be grounded on, each labelled with its tier.
@@ -312,8 +338,12 @@ class NodeSupport:
         # read of the still-pending order was left to contradict it. A refusal
         # stays whole, so its marker is never parted from what was refused.
         tools = [
-            Chunk(content=fact, kind="tool_result", metadata={OBSERVATION_SEQUENCE: index})
-            for index, text in enumerate(self._authoritative_observations(state))
+            Chunk(
+                content=fact,
+                kind="tool_result",
+                metadata={OBSERVATION_SEQUENCE: index, STATE_CHANGING: changed},
+            )
+            for index, (text, changed) in enumerate(self._observations(state))
             for line in text.splitlines()
             if line.strip()
             for fact in _facts(line.strip())
@@ -321,7 +351,11 @@ class NodeSupport:
         # What the customer said, as the model saw it. A reply may echo it
         # ("I can't issue a $1 refund") but it proves nothing, so its tier
         # is configured support-only.
-        asked = [Chunk(content=state.model_query or state.query, kind="history", source="customer_message")]
+        asked = [
+            Chunk(
+                content=state.model_query or state.query, kind="history", source="customer_message"
+            )
+        ]
         # Knowledge passages the window retrieved are already covered: the
         # whole policy corpus is evidence below, one section per chunk.
         seen = [
@@ -329,7 +363,35 @@ class NodeSupport:
             for item in state.metadata.get(GROUNDING_EVIDENCE) or []
             if not str(item.get("source", "")).startswith(KNOWLEDGE_SOURCE_PREFIX)
         ]
-        return [*tools, *self._policy_evidence(), *_knowledge_evidence(), *asked, *seen]
+        return [
+            *tools,
+            *self._policy_evidence(),
+            *_knowledge_evidence(),
+            *self._session_facts(state),
+            *asked,
+            *seen,
+        ]
+
+    @staticmethod
+    def _session_facts(state: AgentState) -> list[Chunk]:
+        """Facts the harness established for this session, restated as sentences.
+
+        Only keys the agent configures, and only those the harness set (the
+        customer cannot write working memory), so "You are Margaret Bartik"
+        is grounded by authentication, not by the customer's say-so.
+        """
+        facts = []
+        for key, template in get_agent_settings().grounding_facts.items():
+            value = state.working_memory.get(key)
+            if value:
+                facts.append(
+                    Chunk(
+                        content=template.format(value=value),
+                        kind="memory",
+                        source=f"working_memory:{key}",
+                    )
+                )
+        return facts
 
     def _policy_evidence(self) -> list[Chunk]:
         """Every rule the model was given, one chunk per rule, in two tiers.
@@ -348,12 +410,24 @@ class NodeSupport:
         limit = self._agent_policy.per_action_limit(REFUND_ACTION_CLASS)
         if limit:
             policy.append(f"Direct refund limit: {limit}; refunds above {limit} need human review.")
-        instructions = [rule for rule in _prompt_rules(build_system_prompt()) if rule not in policy]
+        # Every prompt a reply is written under, not only the one that chose
+        # the tools: the final call is made under the reply prompt, and the
+        # manner it asks for is what a courteous sentence restates.
+        given = _prompt_rules(
+            "\n\n".join(
+                (build_system_prompt(), build_reply_system_prompt(), build_reply_instruction())
+            )
+        )
+        instructions = list(dict.fromkeys(rule for rule in given if rule not in policy))
         return [
-            *(Chunk(content=rule, kind="policy", source=f"refund_policy#{index}")
-              for index, rule in enumerate(policy, start=1)),
-            *(Chunk(content=rule, kind="system", source=f"system_prompt#{index}")
-              for index, rule in enumerate(instructions, start=1)),
+            *(
+                Chunk(content=rule, kind="policy", source=f"refund_policy#{index}")
+                for index, rule in enumerate(policy, start=1)
+            ),
+            *(
+                Chunk(content=rule, kind="system", source=f"system_prompt#{index}")
+                for index, rule in enumerate(instructions, start=1)
+            ),
         ]
 
     def _add_action(
@@ -417,13 +491,8 @@ class NodeSupport:
             "working_memory_write",
             event_kind="memory",
             summary=f"SET · {key} = {safe_value}",
-            fields={
-                "operation": "set",
-                "key": key,
-                "memory_value": safe_value,
-                "category": category or "unspecified",
-                "written": True,
-            },
+            fields={"key": key, "memory_value": safe_value},
+            quiet=True,
         )
 
     def _halt(
@@ -480,15 +549,9 @@ class NodeSupport:
         result: CompletionResult,
         *,
         purpose: str,
-        tools_offered: list[str] | None = None,
-        requested_tool_calls: list[dict[str, Any]] | None = None,
-        extra_fields: dict[str, Any] | None = None,
     ) -> None:
         """Expose the exact provider-neutral response and its accounting."""
-        fields = {
-            **llm_response_fields(result, tools_offered=tools_offered),
-            "purpose": purpose,
-        }
+        fields = {**llm_response_fields(result), "purpose": purpose}
         self._done(
             "llm_response_received",
             event_kind="model",
@@ -529,8 +592,13 @@ class NodeSupport:
         event_kind: EventKind = "stage",
         summary: str | None = None,
         fields: dict[str, Any] | None = None,
+        quiet: bool = False,
     ) -> None:
-        """Emit a stage-completed event with safe semantic fields."""
+        """Emit a stage-completed event with safe semantic fields.
+
+        `quiet` events are logged and counted in the turn summary without
+        drawing a card of their own.
+        """
         if self._reporter is not None:
             summary, fields = self._stepped(stage, summary, fields)
             self._reporter.completed(
@@ -540,6 +608,7 @@ class NodeSupport:
                 event_kind=event_kind,
                 summary=summary,
                 fields=fields,
+                quiet=quiet,
             )
 
     def _done_failed(
@@ -565,18 +634,22 @@ class NodeSupport:
     def _stepped(
         self, stage: str, summary: str | None, fields: dict[str, Any] | None
     ) -> tuple[str | None, dict[str, Any] | None]:
-        """Mark a card as part of tool-use loop step N (reason → act → observe).
+        """Mark a card as part of tool-use loop step N (model call → tool → result).
 
         The loop is typed tool use, not ReAct: the model proposes a
-        validated call rather than writing a thought. Numbering the
-        iteration is what makes "the model asked twice" visible.
+        validated call rather than writing a thought, so the label says
+        what happens — a model call, the tool it asked for, its result —
+        and nothing that implies a thought step. Numbering the iteration
+        is what makes "the model asked twice" visible. The wording is
+        configuration, so it cannot drift from what the loop does.
         """
         step = self._loop_step
         if step is None or stage not in _LOOP_STAGES:
             return summary, fields
-        prefix = f"Step {step} · "
+        settings = get_settings().observability
+        prefix = settings.loop_step_prefix.format(step=step)
         return (prefix + summary if summary else prefix.rstrip(" ·")), {
-            "loop_step": f"{step} of {self._max_rounds} (reason → act → observe)",
+            "loop_step": settings.loop_step_detail.format(step=step, max=self._max_rounds),
             **(fields or {}),
         }
 
@@ -693,7 +766,9 @@ def _knowledge_evidence() -> tuple[Chunk, ...]:
     """
     rag = get_settings().memory.semantic.rag
     return tuple(
-        Chunk(content=section, kind="policy", source=f"{KNOWLEDGE_SOURCE_PREFIX}{path.name}#{index}")
+        Chunk(
+            content=section, kind="policy", source=f"{KNOWLEDGE_SOURCE_PREFIX}{path.name}#{index}"
+        )
         for path in sorted(rag.resolved_corpus_dir.glob(rag.corpus_glob))
         for index, section in enumerate(markdown_sections(path.read_text(encoding="utf-8")))
     )

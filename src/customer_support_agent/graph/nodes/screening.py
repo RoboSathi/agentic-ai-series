@@ -9,7 +9,6 @@ quarantined, and the audit trail says why.
 from typing import Any
 
 from agentic_commons.basic_sanity import BasicSanityRequest
-from agentic_commons.config import get_settings
 from customer_support_agent.basic_sanity import owned_order_id
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.graph.nodes._support import NodeSupport
@@ -68,13 +67,7 @@ class ScreeningNodes(NodeSupport):
                 if detected
                 else "PASS · no PII detected"
             ),
-            fields={
-                "detected": detected,
-                "matches": len(spans),
-                "categories": categories,
-                "redacted": detected,
-                "mode": get_settings().security.pii.mode,
-            },
+            fields={"matches": len(spans), "categories": categories},
         )
         return {
             "model_query": redacted,

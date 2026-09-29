@@ -19,7 +19,7 @@ def test_pydantic_validator_rejects_wrong_shape():
 @pytest.mark.asyncio
 async def test_response_guardrail_passes_grounded_response():
     class FakeDetection:
-        async def assess(self, text, evidence):
+        async def assess(self, text, evidence, resample=None):
             from agentic_commons.hallucination_protection.types import (
                 DetectionVerdict,
                 GenerationAssessment,

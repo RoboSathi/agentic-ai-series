@@ -238,14 +238,20 @@ class CustomerSupportAgent(
         self._diagnoser = GroundingReasoningDiagnoser()
         self._response_guardrail = ResponseGuardrail(self._grounding)
         if intent_router is None:
-            raise ValueError("CustomerSupportAgent requires an intent_router from the composition root")
+            raise ValueError(
+                "CustomerSupportAgent requires an intent_router from the composition root"
+            )
         self._intents = intent_router
         self._authenticator = authenticator
         self._orders = orders
         # Which order the customer is talking about, resolved once a turn
         # from what they said and what the record holds. One resolver, so
         # the path that answers and the path that acts cannot drift.
-        self._order_reference = OrderReferenceResolver()
+        self._order_reference = (
+            OrderReferenceResolver.from_orders(orders)
+            if orders is not None
+            else OrderReferenceResolver()
+        )
         self._basic_sanity = basic_sanity
         # Who each session has proved itself to be. Authentication is per
         # conversation: a customer verifies once and stays verified for
@@ -359,7 +365,7 @@ class CustomerSupportAgent(
         try:
             state, outcome = await self._run_turn(initial, thread_id)
         except Exception:
-            self._end_turn("failed", _FAILED_OUTCOME, run_status="failed_resumable")
+            self._end_turn("failed", _FAILED_OUTCOME, session_id, run_status="failed_resumable")
             raise
         # Inside the turn's bracket, so its memory writes are counted in the
         # summary card rather than trailing it.
@@ -369,6 +375,7 @@ class CustomerSupportAgent(
         self._end_turn(
             "waiting" if waiting else "completed",
             _WAITING_OUTCOME if waiting else _ANSWERED_OUTCOME,
+            session_id,
             run_status=outcome.status if outcome else "not_durable",
             checkpoints=outcome.checkpoints if outcome else 0,
         )
@@ -394,12 +401,31 @@ class CustomerSupportAgent(
         if self._reporter is not None:
             self._reporter.begin_turn(thread=thread_id, session=session_id)
 
-    def _end_turn(self, status: Any, outcome: str, **log_fields: Any) -> None:
+    def _end_turn(self, status: Any, outcome: str, session_id: str = "", **log_fields: Any) -> None:
         if self._reporter is None:
             return
         if self._long_term is not None:
             log_fields["curator_pending"] = len(self._long_term.pipeline.pending_with_ids())
-        self._reporter.end_turn(status, outcome, **log_fields)
+        self._reporter.end_turn(
+            status, outcome, working_memory=self._held(session_id), **log_fields
+        )
+
+    def _held(self, session_id: str) -> dict[str, str]:
+        """What working memory holds for this session, redacted once, for the turn summary.
+
+        The facts it keeps (who is verified, what is being asked, which order
+        is under discussion) and how many turns of conversation it carries.
+        The conversation itself is on the LLM Request card, not repeated here.
+        """
+        if self._working_memory is None or not session_id:
+            return {}
+        memory = self._working_memory.get(session_id)
+        held = {str(key): self._security.redact(str(value)) for key, value in memory.state.items()}
+        turns = len(memory.history) // 2
+        return {
+            **held,
+            **({"history": f"{turns} turn{'' if turns == 1 else 's'}"} if turns else {}),
+        }
 
     @property
     def runs(self) -> RunRegistry:
@@ -433,7 +459,13 @@ class CustomerSupportAgent(
         try:
             outcome = await self._runner.resume(thread_id, decision, self._reporter)
         except Exception:
-            self._end_turn("failed", _FAILED_OUTCOME, run_status="failed_resumable", resumed=True)
+            self._end_turn(
+                "failed",
+                _FAILED_OUTCOME,
+                prior.session_id,
+                run_status="failed_resumable",
+                resumed=True,
+            )
             raise
         state = AgentState.model_validate(outcome.values)
         if waiting:
@@ -446,6 +478,7 @@ class CustomerSupportAgent(
         self._end_turn(
             "completed",
             _REVIEWED_OUTCOME if waiting else _RESUMED_OUTCOME,
+            state.session_id,
             run_status=outcome.status,
             checkpoints=outcome.checkpoints,
             resumed=True,
@@ -463,7 +496,10 @@ class CustomerSupportAgent(
                 self._sessions[prior.session_id] = customer
         set_current_customer(customer)
         self._control_loop = ToolControlLoop()
-        if self._working_memory is not None and not self._working_memory.get(prior.session_id).history:
+        if (
+            self._working_memory is not None
+            and not self._working_memory.get(prior.session_id).history
+        ):
             self._working_memory.restore(prior.session_id, prior.working_memory)
 
     def _remember_turn(self, state: AgentState) -> None:
@@ -511,7 +547,9 @@ class CustomerSupportAgent(
             return None
         return self._long_term.submit(
             MemoryCommand(
-                principal=MemoryPrincipal(actor=f"customer-{subject}", role="customer", subject_id=subject),
+                principal=MemoryPrincipal(
+                    actor=f"customer-{subject}", role="customer", subject_id=subject
+                ),
                 operation="create",
                 text=spoken,
                 session_id=session_id,
@@ -568,7 +606,11 @@ class CustomerSupportAgent(
             policy_refusals=sum(
                 1 for line in decisions if "refused" in line and "not offered" not in line
             ),
-            tool_calls=sum(1 for item in state.working_memory.current_turn if isinstance(item, dict) and item.get("kind") == "action"),
+            tool_calls=sum(
+                1
+                for item in state.working_memory.current_turn
+                if isinstance(item, dict) and item.get("kind") == "action"
+            ),
             tool_failures=sum(1 for line in decisions if ": failed" in line),
             retrievals=sum(1 for line in decisions if line.startswith("context:")),
             evaluator_calls=sum(1 for line in decisions if line.startswith("grounding:")),
@@ -591,6 +633,17 @@ class CustomerSupportAgent(
             return []
         history = self._working_memory.get(session_id).history
         return [Message(**item) if isinstance(item, dict) else item for item in history]
+
+    def _report_inbox(self, event: MemoryEvent) -> None:
+        """Note, for the turn summary, that this turn is waiting for the next dream."""
+        if self._reporter is not None:
+            self._reporter.emit(
+                "dream_inbox",
+                "completed",
+                event_kind="memory",
+                fields={"event_id": event.event_id},
+                quiet=True,
+            )
 
     def _complete_turn(self, state: AgentState) -> None:
         """Emit one memory event, then retain only the completed dialogue."""
@@ -617,7 +670,9 @@ class CustomerSupportAgent(
                     actions.append(
                         MemoryAction(
                             name=str(item.get("name", "")),
-                            arguments=arguments if isinstance(arguments, dict) else {"raw": str(arguments)},
+                            arguments=arguments
+                            if isinstance(arguments, dict)
+                            else {"raw": str(arguments)},
                             result=self._security.redact(str(item.get("result", ""))),
                             source=str(item.get("source", "")),
                         )
@@ -632,6 +687,7 @@ class CustomerSupportAgent(
                 actions=actions,
             )
             self._memory_event_sink.emit(event)
+            self._report_inbox(event)
         if state.response:
             # What the customer read, unless the turn left a compact form
             # of it. The two differ only where the reply is much larger on
