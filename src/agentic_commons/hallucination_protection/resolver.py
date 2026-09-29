@@ -25,7 +25,7 @@ from agentic_commons.evals.entailment import (
     create_entailment_model,
 )
 from agentic_commons.hallucination_protection.claims import ClaimClassifier
-from agentic_commons.hallucination_protection.direct import DirectChecker, DirectFinding
+from agentic_commons.hallucination_protection.direct import DirectChecker, DirectFinding, numbers
 from agentic_commons.hallucination_protection.types import (
     ClaimClass,
     DetectionVerdict,
@@ -37,11 +37,17 @@ from agentic_commons.logging import instrument
 # `Chunk.metadata` key for the order in which an observation was made this
 # turn. Same-tier evidence that disagrees is settled by the later one.
 OBSERVATION_SEQUENCE = "observation_sequence"
+# `Chunk.metadata` key marking an observation that changed something (a
+# write). A read taken before a write of the same thing describes a world
+# that no longer exists.
+STATE_CHANGING = "state_changing"
 # What decided a claim with no evidence tier: the direct check, or nothing.
 DIRECT_TIER = "deterministic"
 NO_TIER = "none"
 
 _DECIDING_LABELS = frozenset({"entailment", "contradiction"})
+# The NLI model's third label, as a reader should meet it: not a failure.
+_LABEL_NAMES = {"unknown": "neutral"}
 
 
 class _TierOutcome:
@@ -110,6 +116,7 @@ class GroundingResolver:
                 undetermined=True,
                 rationale="conversation, not a claim",
             )
+        evidence = self._current(evidence)
         finding = self._direct_finding(claim, kind, evidence)
         if finding is not None:
             return self._verdict(
@@ -131,7 +138,60 @@ class GroundingResolver:
             for tier in self._tiers
             if kind in tier.claims
         ]
-        return self._settle(claim, kind, outcomes)
+        verdict = self._settle(claim, kind, outcomes)
+        return self._upgraded(claim, kind, verdict, evidence) if verdict.undetermined else verdict
+
+    def _upgraded(
+        self, claim: str, kind: ClaimClass, verdict: DetectionVerdict, evidence: list[Chunk]
+    ) -> DetectionVerdict:
+        """An undecided claim that the record settles, supported by the record.
+
+        The model runs first, so a contradiction still wins; this only
+        turns "the model would not say" into what the record says.
+        """
+        if kind != "record":
+            return verdict
+        record = [chunk for chunk in evidence if chunk.kind in self._record_kinds]
+        support = self._direct.settled_support(claim, record)
+        if support is None:
+            return verdict
+        return verdict.model_copy(
+            update={
+                "supported": True,
+                "undetermined": False,
+                "tier": DIRECT_TIER,
+                "rationale": support,
+                "confidence": 1.0,
+            }
+        )
+
+    def _current(self, evidence: list[Chunk]) -> list[Chunk]:
+        """The evidence with every read the turn has since overtaken taken out.
+
+        "No refund has been requested for order 10169" was true when it was
+        read and false once the refund was referred, and nothing the later
+        observation says needs to contradict it for that to be so. A read
+        is overtaken when a *later* write names the same order; a read
+        about another order, or in a turn that wrote nothing, stands.
+        """
+        writes = [
+            (sequence, numbers(chunk.content))
+            for chunk in evidence
+            if chunk.metadata.get(STATE_CHANGING)
+            and isinstance(sequence := chunk.metadata.get(OBSERVATION_SEQUENCE), int)
+        ]
+
+        def overtaken(chunk: Chunk) -> bool:
+            sequence = chunk.metadata.get(OBSERVATION_SEQUENCE)
+            return (
+                not chunk.metadata.get(STATE_CHANGING)
+                and isinstance(sequence, int)
+                and any(
+                    later > sequence and named & numbers(chunk.content) for later, named in writes
+                )
+            )
+
+        return [chunk for chunk in evidence if not overtaken(chunk)]
 
     def _refusal_support(self, claim: str, kind: ClaimClass, evidence: list[Chunk]) -> str | None:
         """Why the record of a refused call grounds a claim that the agent did not act."""
@@ -221,11 +281,11 @@ class GroundingResolver:
             return f"nothing related (best {best:.2f} < {self._floor})"
         result = max((item[0] for item in judged), key=lambda item: item.score)
         refutation = result.label == "contradiction" and not tier.may_refute
-        return (
-            f"contradiction ignored, this tier cannot refute ({result.score:.2f})"
-            if refutation
-            else f"{result.label} {result.score:.2f}"
-        )
+        if refutation:
+            return f"contradiction ignored, this tier cannot refute ({result.score:.2f})"
+        label = _LABEL_NAMES.get(result.label, result.label)
+        gloss = " (it neither states nor contradicts this)" if label == "neutral" else ""
+        return f"{label} {result.score:.2f}{gloss}"
 
     def _deciding(
         self,

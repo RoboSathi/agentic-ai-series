@@ -35,6 +35,15 @@ BasicSanity is a pre-flight gate on the state *before* the action; it halts a
 bad turn and is not evidence, because it grounds no outcome and is stale by
 reply time.
 
+A read the turn has since overtaken is taken out first: an observation whose tool is
+side-effecting (`state_changing`) makes every *earlier* read that names the same order stale, so
+"No refund has been requested" cannot contradict a reply written after the refund was referred.
+A read about another order, or in a turn that wrote nothing, stands.
+
+When the model cannot decide a claim that the refund went through ("returned", "processed",
+"completed"), and the record shows a settled `refund_status`, the record supports it and the
+card says what was read; the other words in the sentence are not checked.
+
 A refutation from any tier that may refute stands; otherwise the first tier
 to support gets the credit; otherwise the claim is undetermined, and its rationale says, tier by tier, why. The system
 prompt and memory support only. The customer's own words are in no tier. A

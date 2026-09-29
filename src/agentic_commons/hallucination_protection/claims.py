@@ -199,7 +199,7 @@ class ClaimDecomposer:
         pieces: list[tuple[str, ClaimClass | None]] = []
         for pattern, phrase in self._rule_phrases:
             if pattern.search(text) and pattern.sub("", text).strip():
-                text = pattern.sub("", text).strip(" ,")
+                text = re.sub(r"\s+", " ", pattern.sub("", text)).strip(" ,")
                 pieces.append((phrase.statement, "rule"))
         return [(text, None), *pieces]
 

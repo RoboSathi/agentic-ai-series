@@ -11,6 +11,7 @@ from typing import Any
 
 from agentic_commons.config import get_settings
 from agentic_commons.evals import create_scoring_cascade
+from agentic_commons.evals.entailment import EntailmentResult
 from agentic_commons.guardrails.response import ResponseGuardrail
 from agentic_commons.hallucination_protection import NOT_EXECUTED_MARKER, DetectionLadder
 from customer_support_agent.graph.nodes._support import NodeSupport
@@ -22,6 +23,9 @@ _ORDER = 10864
 class _Support(NodeSupport):
     def __init__(self) -> None:
         self._agent_policy: Any = SimpleNamespace(per_action_limit=lambda _action: None)
+        self._registry: Any = SimpleNamespace(
+            get=lambda name: SimpleNamespace(side_effecting=name.endswith("process_refund"))
+        )
 
 
 def _state(*actions: tuple[str, ...], **metadata: Any) -> AgentState:
@@ -214,3 +218,71 @@ class TestTheRefusalFromTheLiveRun:
         assert not result.escalated
         assert result.supported == 1
         assert result.response == reply
+
+
+class TestTheTurnWhereARefundWasReferredAfterAStatusRead:
+    def _state(self) -> AgentState:
+        return _state(
+            (
+                "support__get_refund_status",
+                "No refund has been requested for order 10169. Order 10169 refund status: none",
+            ),
+            (
+                "support__process_refund",
+                "Refund of $73.63 for order 10169 has been queued for human review",
+                "referred",
+            ),
+        )
+
+    def test_only_the_write_is_marked_state_changing(self) -> None:
+        tools = [
+            c for c in _Support()._grounding_evidence(self._state()) if c.kind == "tool_result"
+        ]
+        flags = {c.content: c.metadata["state_changing"] for c in tools}
+        assert flags["No refund has been requested for order 10169."] is False
+        assert flags["Refund of $73.63 for order 10169 has been queued for human review"] is True
+
+    async def test_the_reply_is_not_blocked_by_the_read_that_came_first(self) -> None:
+        reply = (
+            "Your refund request for order 10169 has been received and is currently pending review."
+        )
+        result = await _guard().enforce(reply, _Support()._grounding_evidence(self._state()))
+        assert not result.escalated, result.claim_checks
+        assert result.response == reply
+
+
+class _Scripted:
+    """The hosted model on order 10169: sure the stale read contradicts, neutral on the rest."""
+
+    model_name = "stub-nli"
+
+    async def entails(self, premise: str, hypothesis: str) -> EntailmentResult:
+        stale = premise.startswith("No refund has been requested")
+        return EntailmentResult(
+            label="contradiction" if stale else "unknown",
+            entailed=False,
+            score=1.0 if stale else 0.99,
+            calibrated=True,
+            model="stub-nli",
+        )
+
+
+class TestTheHostedModelOnThatTurn:
+    async def test_the_reply_survives_when_the_later_observation_is_only_neutral(self) -> None:
+        state = _state(
+            (
+                "support__get_refund_status",
+                "No refund has been requested for order 10169. Order 10169 refund status: none",
+            ),
+            (
+                "support__process_refund",
+                "Refund of $73.63 for order 10169 has been queued for human review",
+                "referred",
+            ),
+        )
+        guard = ResponseGuardrail(DetectionLadder(create_scoring_cascade(), entailment=_Scripted()))
+        reply = (
+            "Your refund request for order 10169 has been received and is currently pending review."
+        )
+        result = await guard.enforce(reply, _Support()._grounding_evidence(state))
+        assert not result.escalated, result.claim_checks

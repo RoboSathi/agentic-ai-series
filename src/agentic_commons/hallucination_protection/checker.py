@@ -18,6 +18,7 @@ from typing import Protocol, runtime_checkable
 from agentic_commons.config import get_settings
 from agentic_commons.context.retrieval import RelevanceRanker
 from agentic_commons.context.types import Chunk
+from agentic_commons.evals.entailment import EntailmentModel
 from agentic_commons.evals.types import Claim, Verdict
 from agentic_commons.hallucination_protection.claims import ClaimDecomposer
 from agentic_commons.hallucination_protection.resolver import GroundingResolver
@@ -63,8 +64,13 @@ class HallucinationDetector(Protocol):
 class DetectionLadder:
     """Compatibility facade over the retrieval → NLI grounding verifier."""
 
-    def __init__(self, cascade: RelevanceRanker, decomposer: ClaimDecomposer | None = None) -> None:
-        self._resolver = GroundingResolver(cascade)
+    def __init__(
+        self,
+        cascade: RelevanceRanker,
+        decomposer: ClaimDecomposer | None = None,
+        entailment: EntailmentModel | None = None,
+    ) -> None:
+        self._resolver = GroundingResolver(cascade, entailment)
         self._decomposer = decomposer or ClaimDecomposer()
         self._logger = get_logger("hallucination_protection")
 

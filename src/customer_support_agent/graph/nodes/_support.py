@@ -34,6 +34,7 @@ from agentic_commons.guardrails import ResponseGuardrail
 from agentic_commons.guardrails.response import NOT_EXECUTED_MARKER
 from agentic_commons.hallucination_protection import (
     OBSERVATION_SEQUENCE,
+    STATE_CHANGING,
     DetectionLadder,
     GroundingReasoningDiagnoser,
     split_sentences,
@@ -270,9 +271,7 @@ class NodeSupport:
     def _current_messages(self, state: AgentState) -> list[Message]:
         """Return message-shaped entries from the current working-memory turn."""
         return [
-            item
-            for item in state.working_memory.current_messages()
-            if isinstance(item, Message)
+            item for item in state.working_memory.current_messages() if isinstance(item, Message)
         ]
 
     def _authoritative_observations(self, state: AgentState) -> list[str]:
@@ -288,13 +287,35 @@ class NodeSupport:
         referral did — queued it, and left the refund pending — not as a
         refusal, which NLI reads as contradicting "your request is in".
         """
-        return [
-            str(item.get("result", ""))
-            if item.get("outcome") in _GROUNDED_AS_STATED
-            else _not_executed(item)
+        return [text for text, _ in self._observations(state)]
+
+    def _observations(self, state: AgentState) -> list[tuple[str, bool]]:
+        """Each of this turn's tool observations, and whether it changed anything.
+
+        A call changed something when its tool is declared side-effecting
+        *and* it ran (or was referred): a refused write left the world as
+        it was, so the reads before it stay true. The grounding guard needs
+        the distinction to tell a read that a later write has overtaken.
+        """
+        actions = [
+            item
             for item in state.working_memory.current_turn
             if isinstance(item, dict) and item.get("kind") == "action"
         ]
+        return [
+            (
+                str(item.get("result", ""))
+                if item.get("outcome") in _GROUNDED_AS_STATED
+                else _not_executed(item),
+                item.get("outcome") in _GROUNDED_AS_STATED and self._changes_state(item),
+            )
+            for item in actions
+        ]
+
+    def _changes_state(self, action: dict[str, Any]) -> bool:
+        """Whether the tool this action called is declared to have side effects."""
+        tool = self._registry.get(str(action.get("name", "")))
+        return tool is not None and tool.side_effecting
 
     def _grounding_evidence(self, state: AgentState) -> list[Chunk]:
         """Every tier a reply may be grounded on, each labelled with its tier.
@@ -316,8 +337,12 @@ class NodeSupport:
         # read of the still-pending order was left to contradict it. A refusal
         # stays whole, so its marker is never parted from what was refused.
         tools = [
-            Chunk(content=fact, kind="tool_result", metadata={OBSERVATION_SEQUENCE: index})
-            for index, text in enumerate(self._authoritative_observations(state))
+            Chunk(
+                content=fact,
+                kind="tool_result",
+                metadata={OBSERVATION_SEQUENCE: index, STATE_CHANGING: changed},
+            )
+            for index, (text, changed) in enumerate(self._observations(state))
             for line in text.splitlines()
             if line.strip()
             for fact in _facts(line.strip())
@@ -325,7 +350,11 @@ class NodeSupport:
         # What the customer said, as the model saw it. A reply may echo it
         # ("I can't issue a $1 refund") but it proves nothing, so its tier
         # is configured support-only.
-        asked = [Chunk(content=state.model_query or state.query, kind="history", source="customer_message")]
+        asked = [
+            Chunk(
+                content=state.model_query or state.query, kind="history", source="customer_message"
+            )
+        ]
         # Knowledge passages the window retrieved are already covered: the
         # whole policy corpus is evidence below, one section per chunk.
         seen = [
@@ -368,10 +397,14 @@ class NodeSupport:
         )
         instructions = list(dict.fromkeys(rule for rule in given if rule not in policy))
         return [
-            *(Chunk(content=rule, kind="policy", source=f"refund_policy#{index}")
-              for index, rule in enumerate(policy, start=1)),
-            *(Chunk(content=rule, kind="system", source=f"system_prompt#{index}")
-              for index, rule in enumerate(instructions, start=1)),
+            *(
+                Chunk(content=rule, kind="policy", source=f"refund_policy#{index}")
+                for index, rule in enumerate(policy, start=1)
+            ),
+            *(
+                Chunk(content=rule, kind="system", source=f"system_prompt#{index}")
+                for index, rule in enumerate(instructions, start=1)
+            ),
         ]
 
     def _add_action(
@@ -715,7 +748,9 @@ def _knowledge_evidence() -> tuple[Chunk, ...]:
     """
     rag = get_settings().memory.semantic.rag
     return tuple(
-        Chunk(content=section, kind="policy", source=f"{KNOWLEDGE_SOURCE_PREFIX}{path.name}#{index}")
+        Chunk(
+            content=section, kind="policy", source=f"{KNOWLEDGE_SOURCE_PREFIX}{path.name}#{index}"
+        )
         for path in sorted(rag.resolved_corpus_dir.glob(rag.corpus_glob))
         for index, section in enumerate(markdown_sections(path.read_text(encoding="utf-8")))
     )

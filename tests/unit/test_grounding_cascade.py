@@ -11,6 +11,7 @@ import pytest
 
 from agentic_commons.context.types import Chunk
 from agentic_commons.evals import create_scoring_cascade
+from agentic_commons.evals.entailment import EntailmentResult
 from agentic_commons.guardrails.response import ResponseGuardrail
 from agentic_commons.hallucination_protection import (
     ClaimClassifier,
@@ -270,3 +271,130 @@ class TestTierOrder:
         )
         result = await _guard().enforce(f"Order {_ORDER} has been refunded.", [*_REFERRED, said])
         assert result.escalated
+
+
+class _Neutral:
+    """The hosted model's answer to "returned" against "Refunded": neutral, and sure of it."""
+
+    model_name = "stub-nli"
+
+    async def entails(self, premise: str, hypothesis: str) -> EntailmentResult:
+        return EntailmentResult(
+            label="unknown", entailed=False, score=0.99, calibrated=True, model="stub-nli"
+        )
+
+
+def _hosted_guard() -> ResponseGuardrail:
+    return ResponseGuardrail(DetectionLadder(create_scoring_cascade(), entailment=_Neutral()))
+
+
+class _Scripted:
+    """The hosted model on order 10169: sure the stale read contradicts, neutral on the rest."""
+
+    model_name = "stub-nli"
+
+    async def entails(self, premise: str, hypothesis: str) -> EntailmentResult:
+        stale = premise.startswith("No refund has been requested")
+        return EntailmentResult(
+            label="contradiction" if stale else "unknown",
+            entailed=False,
+            score=1.0 if stale else 0.99,
+            calibrated=True,
+            model="stub-nli",
+        )
+
+
+def _scripted_guard() -> ResponseGuardrail:
+    return ResponseGuardrail(DetectionLadder(create_scoring_cascade(), entailment=_Scripted()))
+
+
+def _seen(text: str, sequence: int, *, wrote: bool = False) -> Chunk:
+    return Chunk(
+        content=text,
+        kind="tool_result",
+        metadata={"observation_sequence": sequence, "state_changing": wrote},
+    )
+
+
+class TestAReadBeforeAWriteIsStale:
+    """Order 10169: the status was read (none), then the refund was referred (pending review)."""
+
+    _REPLY = (
+        "Your refund request for order 10169 has been received and is currently pending review."
+    )
+    _READ = _seen("No refund has been requested for order 10169.", 0)
+    _WRITE = [
+        _seen("Refund of $73.63 for order 10169 has been queued for human review", 1, wrote=True),
+        _seen("Order 10169 refund status: pending_review.", 1, wrote=True),
+    ]
+
+    async def test_the_world_after_the_write_is_the_world(self) -> None:
+        result = await _scripted_guard().enforce(self._REPLY, [self._READ, *self._WRITE])
+        assert not result.escalated, result.claim_checks
+        assert result.response == self._REPLY
+
+    async def test_a_turn_that_only_read_keeps_every_read(self) -> None:
+        result = await _scripted_guard().enforce(self._REPLY, [self._READ])
+        assert result.escalated
+
+    async def test_a_write_on_another_order_does_not_make_this_read_stale(self) -> None:
+        read = _seen("No refund has been requested for order 10001.", 0)
+        result = await _scripted_guard().enforce(
+            "Your refund request for order 10001 has been received.", [read, *self._WRITE]
+        )
+        assert result.escalated
+
+
+class TestASettledRefundIsSupportedByTheRecord:
+    """The amount was in the record and the sentence was still "unverified"."""
+
+    _SETTLED = [
+        _seen("Refunded $21.35 for order 10001.", 0, wrote=True),
+        _seen("Order 10001 refund status: completed", 0, wrote=True),
+    ]
+    _FULL = Chunk(
+        content="A refund is always for the **full order total**.",
+        kind="policy",
+        source="refund_policy#1",
+    )
+    _REPLY = (
+        "Your refund for order 10001 has been processed. The full amount of $21.35 was "
+        "returned and the refund status is now completed."
+    )
+
+    async def test_the_live_reply_has_nothing_unverified(self) -> None:
+        result = await _hosted_guard().enforce(self._REPLY, [*self._SETTLED, self._FULL])
+        assert not result.escalated, result.claim_checks
+        assert result.undetermined == 0
+        assert result.supported == result.claims
+
+    async def test_the_card_says_what_the_record_showed(self) -> None:
+        result = await _hosted_guard().enforce(
+            "The full amount of $21.35 was returned.", [*self._SETTLED, self._FULL]
+        )
+        why = next(c["rationale"] for c in result.claim_checks if "21.35" in c["claim"])
+        assert "completed" in why and "21.35" in why
+
+    async def test_a_wrong_amount_is_still_contradicted(self) -> None:
+        result = await _hosted_guard().enforce(
+            "The full amount of $99.00 was returned.", [*self._SETTLED, self._FULL]
+        )
+        assert result.escalated
+
+    async def test_a_referral_is_not_a_returned_amount(self) -> None:
+        queued = [_seen("Refund of $21.35 for order 10001 has been queued for human review", 0)]
+        result = await _hosted_guard().enforce(
+            "The full amount of $21.35 was returned.", [*queued, self._FULL]
+        )
+        assert result.escalated
+
+    async def test_a_returned_item_is_not_a_refund_claim(self) -> None:
+        result = await _hosted_guard().enforce("Your item was returned to the warehouse.", [])
+        assert not result.escalated
+
+    async def test_a_neutral_verdict_is_named_neutral(self) -> None:
+        result = await _hosted_guard().enforce(
+            "Once a refund is issued it takes seven weeks to arrive.", [_ARTICLE]
+        )
+        why = result.claim_checks[0]["rationale"]
+        assert "neutral" in why and "unknown" not in why

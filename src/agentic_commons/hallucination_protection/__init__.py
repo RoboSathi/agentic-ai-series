@@ -22,6 +22,7 @@ from agentic_commons.hallucination_protection.direct import (
 )
 from agentic_commons.hallucination_protection.resolver import (
     OBSERVATION_SEQUENCE,
+    STATE_CHANGING,
     GroundingResolver,
 )
 from agentic_commons.hallucination_protection.types import (
@@ -41,6 +42,7 @@ __all__ = [
     "NOT_EXECUTED_MARKER",
     "NO_RECORD",
     "OBSERVATION_SEQUENCE",
+    "STATE_CHANGING",
     "ORDER_MISMATCH",
     "REFUND_STATE_MISMATCH",
     "AtomicClaim",

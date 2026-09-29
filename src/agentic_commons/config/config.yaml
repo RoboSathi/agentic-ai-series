@@ -552,7 +552,7 @@ hallucination_protection:
   outcome_pattern: '\b(?:refunded|queued|approved|processed|issued|completed|submitted|denied|rejected|cancelled|canceled|delivered|shipped|pending|on\s+its\s+way|human\s+review|request\s+created)\b'
   promissory_pattern: '\b(?:will|would|shall|going\s+to|once|if|when|may|might|could|should|can|get|gets|getting)\b|[''’]ll\b'
   # Money moved, or is on its way; and the refund_status values that say so.
-  settled_claim_pattern: '\brefund(?:ed)?\b(?:[^.;]|\.(?=\d)){0,60}?\b(?:has\s+been\s+)?(?:completed|complete|processed|issued|approved|sent|paid|done|(?:gone|went)\s+through|on\s+(?:its|the)\s+way)\b(?!\s+(?:for|to)\s+(?:\w+\s+)?(?:review|approval))|\brefunded\b|\b(?:completed|processed|issued|approved|sent|paid)\b(?:[^.;]|\.(?=\d)){0,40}?\brefund'
+  settled_claim_pattern: '\brefund(?:ed)?\b(?:[^.;]|\.(?=\d)){0,60}?\b(?:has\s+been\s+)?(?:completed|complete|processed|issued|approved|sent|paid|done|(?:gone|went)\s+through|on\s+(?:its|the)\s+way)\b(?!\s+(?:for|to)\s+(?:\w+\s+)?(?:review|approval))|\brefunded\b|\b(?:completed|processed|issued|approved|sent|paid)\b(?:[^.;]|\.(?=\d)){0,40}?\brefund|(?:\bamount|\bmoney|\bpayment|\bfunds|\$\s?\d[\d,.]*)(?:[^.;]|\.(?=\d)){0,40}?\b(?:returned|credited|reimbursed|paid\s+back|sent\s+back)\b'
   # A claim that the agent could not, or did not, act. The record of a call it
   # refused is what grounds it, so it is supported by a NOT EXECUTED entry
   # for the order it names rather than by asking NLI to read a structured line.
@@ -572,6 +572,10 @@ hallucination_protection:
   rule_phrases:
     - pattern: '\s*\bto\s+(?:your|the)\s+original\s+payment\s+method\b'
       statement: A refund goes back to the original payment method
+    # The amount of a refund is a rule (policy: always the full order total), not a
+    # fact about this case: carve it out, so "$21.35 was returned" is the outcome.
+    - pattern: '\s*\b(?:the\s+)?full\s+(?:order\s+)?(?:amount|total)\s+of\b'
+      statement: A refund is always for the full order total
   # A rule claim covered this much by one rule of its tier is a restatement.
   rule_restatement_coverage: 0.7
   # At most one generative repair. If the model repeats an unsupported
@@ -582,11 +586,28 @@ gatekeeper:
   # Parameters and sub-features. Whether the Gatekeeper is invoked at all
   # is `features.gatekeeper` — see the header above for what withholding
   # it does and does not switch off.
+  # The highest rank (weakest source) that may grant or expand authority.
+  # A rank is a source's 1-based position in `authority_hierarchy` below,
+  # strongest first, so reordering that list re-ranks its sources. Lower is
+  # stronger. Ranks:
+  #   1  provider            the model provider's own rules
+  #   2  organization        the operator or company deploying the agent
+  #   3  product             the product's fixed configuration and policy
+  #   4  workspace           a team's or tenant's configuration
+  #   5  user_task           what the signed-in person asked for   <- last rank that can grant
+  #   6  runtime_reminders   system nudges injected at run time
+  #   7  tool_observations   what a tool returned
+  #   8  untrusted_content   retrieved documents, web pages, anything a third party wrote
+  # Ranks 1-5 may grant. Ranks 6-8 are input to be acted on, never instruction
+  # to be obeyed, so an injected sentence in a tool result or a document
+  # cannot authorize a refund. A source the list does not name gets the
+  # weakest rank. A tool's `requires_authority_rank` (5 for refund and cancel)
+  # is met when both the agent's rank and the granting source's rank are <= it.
   authority_grant_max_rank: 5
-  # The Authority Hierarchy, strongest first. Only the first
-  # `authority_grant_max_rank` sources can grant or expand authority;
-  # everything below them is input to be acted on, never instruction to
-  # be obeyed — which is why a tool result cannot authorize anything.
+  # The Authority Hierarchy, strongest first; see the rank table above.
+  # Only the first `authority_grant_max_rank` sources can grant or expand
+  # authority; everything below them is input to be acted on, never
+  # instruction to be obeyed — which is why a tool result cannot authorize anything.
   authority_hierarchy:
     - provider
     - organization

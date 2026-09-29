@@ -90,6 +90,31 @@ class DirectChecker:
         text = "\n".join(chunk.content for chunk in record)
         return self._unsourced(claim, text) or self._refund_conflict(claim, text)
 
+    def settled_support(self, claim: str, record: list[Chunk]) -> str | None:
+        """What the record shows when it settles a claim that the refund went through.
+
+        Called only for a claim the model could not decide and nothing
+        refuted, so every order and amount it names is already known to be
+        in the record. What remains is whether the record says the money
+        moved: a settled `refund_status`. "Returned", "processed" and
+        "completed" are one fact in three words, and an NLI model that
+        will not equate them is not evidence that the refund did not
+        happen. The rationale says what was read, because the other words
+        in the sentence were not checked.
+        """
+        if not self._settled_claim.search(claim) or _NEGATION.search(claim):
+            return None
+        text = "\n".join(chunk.content for chunk in record)
+        states = sorted(
+            {state.casefold() for state in self._refund_state.findall(text)} & self._settled_states
+        )
+        if not states:
+            return None
+        shown = ", ".join(str(amount) for amount in sorted(amounts(claim)))
+        return f"the record shows refund status {states[0]}" + (
+            f" and {shown} as a recorded amount" if shown else ""
+        )
+
     def refusal_support(self, claim: str, record: list[Chunk]) -> str | None:
         """Why the record shows the agent did not act, when the claim says it did not.
 
