@@ -54,7 +54,9 @@ class _TierOutcome:
         result: EntailmentResult | None,
         checks: list[EvidenceCheck],
         retrieved: list[Chunk],
+        note: str = "",
     ) -> None:
+        self.note = note
         self.tier = tier
         self.label = label
         self.result = result
@@ -119,12 +121,25 @@ class GroundingResolver:
                 rationale=finding.rationale,
                 reason_code=finding.reason_code,
             )
+        refusal = self._refusal_support(claim, kind, evidence)
+        if refusal is not None:
+            return self._verdict(
+                claim, kind, DIRECT_TIER, None, [], supported=True, rationale=refusal
+            )
         outcomes = [
             await self._judge(claim, tier, [c for c in evidence if c.kind in tier.kinds])
             for tier in self._tiers
             if kind in tier.claims
         ]
         return self._settle(claim, kind, outcomes)
+
+    def _refusal_support(self, claim: str, kind: ClaimClass, evidence: list[Chunk]) -> str | None:
+        """Why the record of a refused call grounds a claim that the agent did not act."""
+        if kind != "record":
+            return None
+        return self._direct.refusal_support(
+            claim, [chunk for chunk in evidence if chunk.kind in self._record_kinds]
+        )
 
     def _direct_finding(
         self, claim: str, kind: ClaimClass, evidence: list[Chunk]
@@ -164,7 +179,8 @@ class GroundingResolver:
             retrieved,
             undetermined=True,
             checks=checks,
-            rationale="no evidence in any tier that may ground this claim decides it",
+            rationale="no tier decided: "
+            + " · ".join(f"{outcome.tier.name}: {outcome.note}" for outcome in outcomes),
         )
 
     async def _judge(
@@ -172,7 +188,7 @@ class GroundingResolver:
     ) -> _TierOutcome:
         """One tier's answer: top-k within the tier, then NLI, latest observation first."""
         if not chunks:
-            return _TierOutcome(tier, "abstain", None, [], [])
+            return _TierOutcome(tier, "abstain", None, [], [], note="no evidence")
         self._retriever.index(chunks)
         retrieved = await self._retriever.retrieve(claim, self._top_k)
         relevant = [chunk for chunk in retrieved if chunk.score >= self._floor]
@@ -190,7 +206,26 @@ class GroundingResolver:
         chosen = self._deciding(claim, tier, judged)
         checks = self._checks(retrieved, judged)
         label = chosen[0].label if chosen else "abstain"
-        return _TierOutcome(tier, label, chosen[0] if chosen else None, checks, retrieved)
+        note = "" if chosen else self._why_undecided(tier, retrieved, judged)
+        return _TierOutcome(tier, label, chosen[0] if chosen else None, checks, retrieved, note)
+
+    def _why_undecided(
+        self,
+        tier: GroundingTierSettings,
+        retrieved: list[Chunk],
+        judged: list[tuple[EntailmentResult, Chunk]],
+    ) -> str:
+        """In a few words, why this tier could not decide the claim."""
+        if not judged:
+            best = max((chunk.score for chunk in retrieved), default=0.0)
+            return f"nothing related (best {best:.2f} < {self._floor})"
+        result = max((item[0] for item in judged), key=lambda item: item.score)
+        refutation = result.label == "contradiction" and not tier.may_refute
+        return (
+            f"contradiction ignored, this tier cannot refute ({result.score:.2f})"
+            if refutation
+            else f"{result.label} {result.score:.2f}"
+        )
 
     def _deciding(
         self,

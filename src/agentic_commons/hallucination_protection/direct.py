@@ -48,6 +48,17 @@ def order_ids(text: str) -> set[str]:
     return {digits for found in pattern.findall(text) for digits in re.findall(r"\d+", found)}
 
 
+def numbers(text: str) -> set[str]:
+    """Every number of three or more digits a text carries, however it is written.
+
+    The record states an order as `order 10786`, `order_id=10786` or
+    `order:10786` depending on which tool wrote it. A claim's order is
+    anchored to the word "order"; the record it is checked against is
+    read for the number alone, or a refusal line would name no order.
+    """
+    return set(re.findall(r"\d{3,}", text))
+
+
 def amounts(text: str) -> set[Money]:
     """Every amount a text states, exactly."""
     return {amount for value in MONEY.findall(text) if (amount := money_or_none(value))}
@@ -59,6 +70,7 @@ class DirectChecker:
     def __init__(self) -> None:
         settings = get_settings().hallucination_protection
         self._settled_claim = re.compile(settings.settled_claim_pattern, re.IGNORECASE)
+        self._refusal = re.compile(settings.refusal_pattern, re.IGNORECASE)
         self._refund_state = re.compile(settings.refund_state_pattern, re.IGNORECASE)
         self._settled_states = frozenset(state.casefold() for state in settings.settled_states)
         self._pending = [marker.casefold() for marker in settings.pending_markers]
@@ -78,6 +90,26 @@ class DirectChecker:
         text = "\n".join(chunk.content for chunk in record)
         return self._unsourced(claim, text) or self._refund_conflict(claim, text)
 
+    def refusal_support(self, claim: str, record: list[Chunk]) -> str | None:
+        """Why the record shows the agent did not act, when the claim says it did not.
+
+        "I'm unable to process a refund for order 10786" is true exactly
+        when the call for that order was refused, and the record of a
+        refused call is a NOT EXECUTED entry carrying the order's number.
+        NLI reading a natural sentence against that structured line calls
+        it neutral, so the record is read directly. A claim naming an
+        order the refusal is not about gets nothing from it.
+        """
+        if not self._refusal.search(claim):
+            return None
+        named = order_ids(claim)
+        for chunk in record:
+            if NOT_EXECUTED_MARKER in chunk.content and (
+                not named or named & numbers(chunk.content)
+            ):
+                return "the tool call for this order was not executed"
+        return None
+
     def unsourced_detail(self, claim: str, evidence: list[Chunk]) -> DirectFinding | None:
         """A date, weekday or number a rule claim brings that no evidence contains.
 
@@ -96,7 +128,7 @@ class DirectChecker:
 
     def _unsourced(self, claim: str, text: str) -> DirectFinding | None:
         """An order number or an amount the record never mentions."""
-        missing_orders = sorted(order_ids(claim) - order_ids(text))
+        missing_orders = sorted(order_ids(claim) - numbers(text))
         if missing_orders:
             return DirectFinding(
                 ORDER_MISMATCH,

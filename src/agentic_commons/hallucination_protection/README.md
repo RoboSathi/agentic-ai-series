@@ -13,6 +13,7 @@ well confidence predicts correctness.
 - **claim class** — `record` (a fact about this case: an order, an amount, an outcome stated as done), `rule` (how things work, and every promise: "you'll hear back soon"), `conversational` ("Thanks for reaching out" — not a claim, never scored)
 - **tier** — one stage of the cascade: which evidence kinds it reads, which claim classes it may ground, whether it may refute
 - **direct check** — the model-free step for a claim about the case: an id or amount the record lacks, or "refunded" against a record that says otherwise. It can only refute
+- **refusal** — a record claim that the agent did not act ("I'm unable to process a refund for order N"); supported by the `NOT EXECUTED` entry for that order, not by NLI
 - **rule phrase** — a phrase carved out of an outcome and checked as the rule it states ("… to your original payment method")
 - **undetermined** — nothing decided it; counted and shown, never blocking
 
@@ -35,7 +36,7 @@ bad turn and is not evidence, because it grounds no outcome and is stale by
 reply time.
 
 A refutation from any tier that may refute stands; otherwise the first tier
-to support gets the credit; otherwise the claim is undetermined. The system
+to support gets the credit; otherwise the claim is undetermined, and its rationale says, tier by tier, why. The system
 prompt and memory support only. The customer's own words are in no tier. A
 fact about the case with no record at all is refuted as unsourced.
 
@@ -58,7 +59,7 @@ Section `hallucination_protection:` — thresholds (`nli_entailment_threshold`,
 `tiers` list (order, kinds, claim classes, `may_refute`), the classifier vocabulary (`conversational_openers`,
 `record_identifier_pattern`, `outcome_pattern`, `promissory_pattern`), the
 settled-refund vocabulary (`settled_claim_pattern`, `refund_state_pattern`,
-`settled_states`, `pending_markers`), `rule_phrases`, self-consistency
+`settled_states`, `pending_markers`, `refusal_pattern`), `rule_phrases`, self-consistency
 settings, `max_repair_attempts`. Built only when `features.hallucination_guard`
 is on.
 

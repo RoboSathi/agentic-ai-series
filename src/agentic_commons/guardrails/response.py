@@ -29,6 +29,7 @@ from agentic_commons.hallucination_protection.direct import (
     ORDER_MISMATCH,
     REFUND_STATE_MISMATCH,
     amounts,
+    numbers,
     order_ids,
 )
 from agentic_commons.hallucination_protection.resolver import DIRECT_TIER
@@ -398,7 +399,7 @@ def _claim_check(verdict: DetectionVerdict) -> dict[str, Any]:
 def _provenance_report(response: str, evidence: list[Chunk]) -> list[str]:
     """Each order number and amount the reply states, and which tier (if any) has it."""
     orders = [
-        _found(f"order {order_id}", [c for c in evidence if order_id in order_ids(c.content)])
+        _found(f"order {order_id}", [c for c in evidence if order_id in numbers(c.content)])
         for order_id in sorted(order_ids(response))
     ]
     stated = [

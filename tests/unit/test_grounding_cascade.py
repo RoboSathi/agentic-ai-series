@@ -208,6 +208,41 @@ class TestASentenceGoesWhenAnyClaimInItIsRefuted:
         assert result.response == "Thanks for your patience."
 
 
+_REFUSED = _tool(
+    f"NOT EXECUTED support__process_refund(reason=Customer requested refund, order_id={_ORDER}, "
+    f"amount=90.93): 'process_refund' names order:{_ORDER}, which is not a record this "
+    "conversation established"
+)
+
+
+class TestARefusalIsGroundedByTheCallThatWasRefused:
+    """NLI cannot relate "I'm unable to…" to a structured NOT EXECUTED line; the record can."""
+
+    async def test_an_inability_the_record_shows_is_supported(self) -> None:
+        reply = f"I'm unable to process a refund for order {_ORDER} at this time."
+        result = await _guard().enforce(reply, _REFUSED)
+        assert not result.escalated
+        assert result.supported == 1
+        assert result.claim_checks[0]["decided_by"] == "deterministic_provenance"
+
+    async def test_the_same_words_are_not_supported_when_the_refund_went_through(self) -> None:
+        reply = f"I'm unable to process a refund for order {_ORDER} at this time."
+        result = await _guard().enforce(reply, _COMPLETED)
+        assert result.supported == 0
+
+    async def test_a_refusal_about_another_order_is_not_supported_by_this_one(self) -> None:
+        result = await _guard().enforce("I'm unable to process a refund for order 99999.", _REFUSED)
+        assert result.escalated
+
+
+class TestAnUnverifiedClaimSaysWhy:
+    async def test_each_tier_gives_its_reason(self) -> None:
+        result = await _guard().enforce("Refunds take a while to arrive.", [_ARTICLE, _POLITE])
+        why = result.claim_checks[0]["rationale"]
+        assert result.undetermined == 1
+        assert "policy:" in why and "system:" in why and "memory: no evidence" in why
+
+
 class TestTierOrder:
     async def test_the_system_prompt_never_refutes(self) -> None:
         instruction = Chunk(

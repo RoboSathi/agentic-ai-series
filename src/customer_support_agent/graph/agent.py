@@ -245,7 +245,9 @@ class CustomerSupportAgent(
         # Which order the customer is talking about, resolved once a turn
         # from what they said and what the record holds. One resolver, so
         # the path that answers and the path that acts cannot drift.
-        self._order_reference = OrderReferenceResolver()
+        self._order_reference = (
+            OrderReferenceResolver.from_orders(orders) if orders is not None else OrderReferenceResolver()
+        )
         self._basic_sanity = basic_sanity
         # Who each session has proved itself to be. Authentication is per
         # conversation: a customer verifies once and stays verified for

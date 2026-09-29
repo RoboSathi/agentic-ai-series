@@ -242,7 +242,7 @@ class NodeSupport:
         answers about one order and acts on another.
         """
         return self._order_reference.resolve(
-            state.query, state.metadata, state.working_memory
+            state.query, state.metadata, state.working_memory, customer_id=state.customer_id
         )
 
     def _carry_order_reference(self, state: AgentState) -> dict[str, Any]:

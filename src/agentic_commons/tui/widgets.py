@@ -212,6 +212,7 @@ _CLAIM_MARKS = {
 # The NLI result each verdict is decided by, and its display name.
 _DECIDING_LABEL = {"supported": "entailment", "refuted": "contradiction"}
 _REFUTED = "refuted"
+_UNDETERMINED = "undetermined"
 _NLI_NAMES = {"unknown": "neutral"}
 # Policy passages are markdown; emphasis markers are noise in a one-line excerpt.
 _MARKDOWN_BOLD = "**"
@@ -859,6 +860,11 @@ def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
         body.append(
             f"\n      {name} by the deterministic check · {check.get('rationale')}", style=style
         )
+        return
+    if verdict == _UNDETERMINED and check.get("rationale"):
+        # Say why nothing decided it, tier by tier, rather than pointing at
+        # the nearest passage as though it had.
+        body.append(f"\n      {name} · {check.get('rationale')}", style=style)
         return
     item = _deciding_evidence(verdict, check.get("evidence") or [])
     if item is None:

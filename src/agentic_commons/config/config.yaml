@@ -553,6 +553,10 @@ hallucination_protection:
   promissory_pattern: '\b(?:will|would|shall|going\s+to|once|if|when|may|might|could|should|can|get|gets|getting)\b|[''’]ll\b'
   # Money moved, or is on its way; and the refund_status values that say so.
   settled_claim_pattern: '\brefund(?:ed)?\b(?:[^.;]|\.(?=\d)){0,60}?\b(?:has\s+been\s+)?(?:completed|complete|processed|issued|approved|sent|paid|done|(?:gone|went)\s+through|on\s+(?:its|the)\s+way)\b(?!\s+(?:for|to)\s+(?:\w+\s+)?(?:review|approval))|\brefunded\b|\b(?:completed|processed|issued|approved|sent|paid)\b(?:[^.;]|\.(?=\d)){0,40}?\brefund'
+  # A claim that the agent could not, or did not, act. The record of a call it
+  # refused is what grounds it, so it is supported by a NOT EXECUTED entry
+  # for the order it names rather than by asking NLI to read a structured line.
+  refusal_pattern: '\b(?:unable|cannot|can[''’]?t|couldn[''’]?t|could\s+not|not\s+able|won[''’]t\s+be\s+able|wasn[''’]t|was\s+not|hasn[''’]t|has\s+not|haven[''’]t|have\s+not|declined|refused|denied|rejected)\b'
   refund_state_pattern: 'refund(?:_|\s+)status\s*[:=]\s*(\w+)'
   settled_states: [completed, approved, processed]
   # Record wording that says a person has yet to decide. A claim that the

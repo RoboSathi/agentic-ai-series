@@ -169,3 +169,48 @@ class TestTheReportedRepliesAgainstTheRealCorpus:
         result = await _guard().enforce(reply, support._grounding_evidence(state))
         assert not result.escalated, result.claim_checks
         assert result.response == reply
+
+
+class TestTheCardExplainsAnUnverifiedClaim:
+    def test_it_prints_the_reason_not_only_the_closest_passage(self) -> None:
+        from rich.text import Text
+
+        from agentic_commons.tui.widgets import _append_claim
+
+        body = Text()
+        _append_claim(
+            body,
+            {
+                "claim": "Refunds take a while to arrive.",
+                "verdict": "undetermined",
+                "rationale": "policy: nothing related (best 0.21 < 0.3) · system: no evidence",
+                "evidence": [
+                    {"tier": "policy", "nli_label": "neutral", "nli_score": 0.98, "excerpt": "x"}
+                ],
+            },
+        )
+        assert "nothing related (best 0.21 < 0.3)" in body.plain
+
+
+class TestTheRefusalFromTheLiveRun:
+    async def test_the_reply_is_supported_by_the_call_that_was_refused(self) -> None:
+        state = AgentState(query="want refund for this order -> 10786")
+        state.working_memory.add_current_turn(
+            {
+                "kind": "action",
+                "name": "support__process_refund",
+                "arguments": {
+                    "reason": "Customer requested refund",
+                    "order_id": 10786,
+                    "amount": "90.93",
+                },
+                "result": "'process_refund' names order:10786, which is not a record this "
+                "conversation established for $90.93.",
+                "outcome": "blocked",
+            }
+        )
+        reply = "I’m unable to process a refund for order 10786 at this time."
+        result = await _guard().enforce(reply, _Support()._grounding_evidence(state))
+        assert not result.escalated
+        assert result.supported == 1
+        assert result.response == reply

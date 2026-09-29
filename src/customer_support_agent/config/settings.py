@@ -101,6 +101,19 @@ class CsaEvalSettings(BaseModel):
         return resolve_path(self.workspace_dir)
 
 
+class OrderReferenceSettings(BaseModel):
+    """How a customer's words are read as naming an order."""
+
+    # A number tied to the word "order", however loosely the customer wrote
+    # it ("order: N", "this order -> N", "the order is N"). Group `id`.
+    anchored_patterns: list[str]
+    # The compact request form ("refund N"). Group `id`.
+    compact_patterns: list[str]
+    # What an id looks like when nothing anchors it. Such a number counts only
+    # if it is one of the customer's own orders: shape alone proves nothing.
+    id_shape: str
+
+
 class CustomerSupportAgentSettings(YamlBackedSettings):
     """The running product's own wiring values (LLD §21)."""
 
@@ -116,6 +129,7 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     action_classes: dict[str, str]
     plans: dict[str, list[PlanStepSettings]]
     intent_router: IntentRouterSettings
+    order_reference: OrderReferenceSettings
     followup: FollowupSettings
     history_turns: int
     deliberation_markers: list[str]

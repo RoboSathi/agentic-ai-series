@@ -657,6 +657,7 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     # Settled-refund wording, the record field that settles it, and the
     # record wording that says it is still waiting on a person.
     settled_claim_pattern: str
+    refusal_pattern: str
     refund_state_pattern: str
     settled_states: list[str]
     pending_markers: list[str]
