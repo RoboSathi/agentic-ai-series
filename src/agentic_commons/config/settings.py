@@ -346,6 +346,10 @@ class ObservabilitySettings(YamlBackedSettings):
     persist_traces: bool
     slo_targets: dict[str, float]
     review_queue: ReviewQueueSettings
+    # How a card in the tool-use loop names its iteration. `{step}` is the
+    # model call being made, `{max}` the cap on tool iterations.
+    loop_step_prefix: str
+    loop_step_detail: str
 
     model_config = SettingsConfigDict(env_prefix="OBSERVABILITY__")
 
@@ -605,10 +609,6 @@ class GroundingTierSettings(BaseModel):
     kinds: list[str]
     claims: list[str]
     may_refute: bool
-    # Overrides `evidence_min_similarity` for this tier. A read-back of this
-    # turn's own actions is a handful of lines about exactly what was done;
-    # ranking them against a cosine floor could only hide one.
-    min_similarity: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class RulePhraseSettings(BaseModel):

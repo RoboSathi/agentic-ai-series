@@ -19,12 +19,20 @@ well confidence predicts correctness.
 ## How a claim is grounded
 
 ```
-record claim  →  direct check  →  tool_result → verification
+record claim  →  direct check  →  tool_result
 rule claim    →  direct check* →  policy → system prompt → memory
 conversation  →  not checked
 ```
 
 \* a date, weekday or number the claim brings that no evidence contains.
+
+The deterministic system-of-record tier is one of **admission**, not of
+prose: `EffectVerifier` re-reads the record after a write, and a call whose
+effect did not take reaches grounding as `NOT EXECUTED` rather than as a
+result to believe, so the direct check refutes any claim that it happened.
+BasicSanity is a pre-flight gate on the state *before* the action; it halts a
+bad turn and is not evidence, because it grounds no outcome and is stale by
+reply time.
 
 A refutation from any tier that may refute stands; otherwise the first tier
 to support gets the credit; otherwise the claim is undetermined. The system
@@ -47,8 +55,7 @@ own words (`rule_restatement_coverage`) supports it directly: NLI on an
 
 Section `hallucination_protection:` — thresholds (`nli_entailment_threshold`,
 `evidence_min_similarity`, `embedding_top_k`, `rule_restatement_coverage`), the
-`tiers` list (order, kinds, claim classes, `may_refute`, optional
-`min_similarity`), the classifier vocabulary (`conversational_openers`,
+`tiers` list (order, kinds, claim classes, `may_refute`), the classifier vocabulary (`conversational_openers`,
 `record_identifier_pattern`, `outcome_pattern`, `promissory_pattern`), the
 settled-refund vocabulary (`settled_claim_pattern`, `refund_state_pattern`,
 `settled_states`, `pending_markers`), `rule_phrases`, self-consistency
@@ -58,7 +65,8 @@ is on.
 ## Seams
 
 - The ranker and entailment model are injected; NLI runs locally (`llm.local_nli`).
-- Evidence arrives as `Chunk`s whose `kind` names the tier; the agent decides what it puts in (tool results, read-backs and BasicSanity facts as `verification`, policy, the prompts a reply was written under as `system`, verified memory).
+- Evidence arrives as `Chunk`s whose `kind` names the tier; the agent decides what it puts in (verified tool results, policy, the prompts a reply was written under as `system`, verified memory).
+- What a removed sentence is: claims carry the index of the sentence they came from, and a refuted claim removes that sentence, never a text match.
 
 ## Collaborators
 

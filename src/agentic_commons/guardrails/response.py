@@ -356,7 +356,6 @@ _BLOCK_REASONS = {
 # Evidence tiers, in the words a card shows.
 _TIER_NAMES = {
     "tool_result": "tool result",
-    "verification": "verification",
     "policy": "policy",
     "system": "system prompt",
     "history": "customer message",
@@ -437,19 +436,15 @@ def _surviving_sentences(response: str, verdicts: list[DetectionVerdict]) -> str
     Claims are finer than sentences, so gluing the supported *claims*
     back together returned fragments. A sentence either stands as the
     model wrote it or goes; nothing is reassembled. Only a *refuted*
-    claim removes its sentence: one nothing could verify is an
-    abstention, and a courteous closing is no reason to lose the
-    answer beside it. A bare list marker ("1.") is not a sentence.
+    claim removes its sentence — found by the index the claim came from,
+    because a carved rule is restated and its words are not in the reply.
+    One nothing could verify is an abstention, and a courteous closing is
+    no reason to lose the answer beside it. A bare list marker ("1.") is
+    not a sentence.
     """
-    rejected = [
-        verdict.claim.strip().rstrip(".").casefold()
-        for verdict in verdicts
-        if _refuted(verdict) and verdict.claim.strip()
-    ]
-    kept = [
+    rejected = {verdict.sentence for verdict in verdicts if _refuted(verdict)}
+    return " ".join(
         sentence.strip()
-        for sentence in split_sentences(response)
-        if any(char.isalpha() for char in sentence)
-        and not any(claim in sentence.casefold() for claim in rejected)
-    ]
-    return " ".join(kept)
+        for index, sentence in enumerate(split_sentences(response))
+        if index not in rejected and any(char.isalpha() for char in sentence)
+    )

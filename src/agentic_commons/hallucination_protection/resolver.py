@@ -175,8 +175,7 @@ class GroundingResolver:
             return _TierOutcome(tier, "abstain", None, [], [])
         self._retriever.index(chunks)
         retrieved = await self._retriever.retrieve(claim, self._top_k)
-        floor = self._floor if tier.min_similarity is None else tier.min_similarity
-        relevant = [chunk for chunk in retrieved if chunk.score >= floor]
+        relevant = [chunk for chunk in retrieved if chunk.score >= self._floor]
         restated = self._restated(claim, relevant) if "rule" in tier.claims else None
         results = (
             []

@@ -9,9 +9,10 @@ of them that makes a correct reply unverifiable fails here.
 from types import SimpleNamespace
 from typing import Any
 
+from agentic_commons.config import get_settings
 from agentic_commons.evals import create_scoring_cascade
 from agentic_commons.guardrails.response import ResponseGuardrail
-from agentic_commons.hallucination_protection import DetectionLadder
+from agentic_commons.hallucination_protection import NOT_EXECUTED_MARKER, DetectionLadder
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 
@@ -23,16 +24,16 @@ class _Support(NodeSupport):
         self._agent_policy: Any = SimpleNamespace(per_action_limit=lambda _action: None)
 
 
-def _state(*actions: tuple[str, str], **metadata: Any) -> AgentState:
+def _state(*actions: tuple[str, ...], **metadata: Any) -> AgentState:
     state = AgentState(query="Refund my order", metadata=metadata)
-    for name, result in actions:
+    for name, result, *outcome in actions:
         state.working_memory.add_current_turn(
             {
                 "kind": "action",
                 "name": name,
                 "arguments": {},
                 "result": result,
-                "outcome": "completed",
+                "outcome": outcome[0] if outcome else "completed",
             }
         )
     return state
@@ -48,47 +49,67 @@ class TestTheReplyPromptIsEvidence:
         assert any("Address them directly" in rule for rule in rules)
 
 
-class TestTheSecondTier:
-    def test_a_read_back_is_evidence_and_says_whether_the_effect_took(self) -> None:
-        support, state = _Support(), _state()
-        support._add_verification(
-            state,
-            {
-                "verification": f"process_refund on order {_ORDER}: refund_status is none",
-                "verified": False,
-            },
+class TestAnEffectIsEvidenceOnlyOnceItIsReadBack:
+    """The deterministic tier: the system of record decides what a tool result is worth.
+
+    `EffectVerifier` re-reads the record after a write. A call whose
+    effect did not take is recorded as *unverified*, and grounding then
+    sees it as a call that did not execute rather than as a result to
+    believe. Nothing about it needs to be phrased as evidence.
+    """
+
+    def test_an_unverified_call_is_admitted_as_not_executed(self) -> None:
+        state = _state(
+            ("process_refund", f"Refund of $18.70 for order {_ORDER} completed", "unverified")
         )
-        [chunk] = support._verification_evidence(state)
-        assert chunk.kind == "verification"
-        assert "NOT verified" in chunk.content
+        [chunk] = _Support()._grounding_evidence(state)[:1]
+        assert chunk.kind == "tool_result"
+        assert NOT_EXECUTED_MARKER in chunk.content
 
-    def test_a_call_with_nothing_to_read_back_adds_nothing(self) -> None:
-        support, state = _Support(), _state()
-        support._add_verification(state, {"tool_status": "completed"})
-        assert support._verification_evidence(state) == []
+    async def test_a_refund_claim_against_an_unverified_call_is_refuted(self) -> None:
+        state = _state(
+            (
+                "process_refund",
+                f"The refund of $18.70 for order {_ORDER} has been completed",
+                "unverified",
+            )
+        )
+        result = await _guard().enforce(
+            f"Order {_ORDER} has been refunded.", _Support()._grounding_evidence(state)
+        )
+        assert result.escalated
 
-    def test_what_basic_sanity_established_is_evidence(self) -> None:
+    def test_basic_sanity_is_a_gate_not_evidence(self) -> None:
+        """Pre-flight prose about the state *before* the action grounds no outcome."""
         sanity = {
             "findings": [
                 {
                     "check": "ownership",
                     "passed": True,
-                    "reason": f"Order {_ORDER} belongs to this customer",
-                },
-                {
-                    "check": "shipped",
-                    "passed": True,
-                    "applicable": False,
-                    "reason": "not evaluated",
-                },
+                    "reason": "Order exists and belongs to the authenticated customer.",
+                }
             ]
         }
-        [chunk] = _Support()._verification_evidence(_state(basic_sanity=sanity))
-        assert chunk.content == f"Order {_ORDER} belongs to this customer"
+        evidence = _Support()._grounding_evidence(_state(basic_sanity=sanity))
+        assert not any("authenticated customer" in chunk.content for chunk in evidence)
+
+
+class TestALoopStepIsNamedForWhatItIs:
+    def test_the_step_label_does_not_claim_react(self) -> None:
+        support = _Support()
+        support._loop_step, support._max_rounds = 3, 5
+        _, fields = support._stepped("llm_request", "x", None)
+        assert fields is not None
+        assert fields["loop_step"] == "3 of 5 (model call → tool → result)"
+
+    def test_the_wording_is_configuration(self) -> None:
+        settings = get_settings().observability
+        assert "observe" not in settings.loop_step_detail
+        assert "{step}" in settings.loop_step_prefix
 
 
 class TestTheReportedRepliesAgainstTheRealCorpus:
-    async def _enforce(self, reply: str, *actions: tuple[str, str]) -> Any:
+    async def _enforce(self, reply: str, *actions: tuple[str, ...]) -> Any:
         support, state = _Support(), _state(*actions)
         return await _guard().enforce(reply, support._grounding_evidence(state))
 
@@ -124,3 +145,27 @@ class TestTheReportedRepliesAgainstTheRealCorpus:
         )
         assert result.escalated
         assert "hear back soon" in result.response
+
+    async def test_the_reply_from_the_live_run_keeps_both_sentences(self) -> None:
+        """A BasicSanity line once "contradicted" the second sentence at 0.99."""
+        sanity = {
+            "findings": [
+                {
+                    "check": "ownership",
+                    "passed": True,
+                    "reason": "Order exists and belongs to the authenticated customer.",
+                }
+            ]
+        }
+        support = _Support()
+        state = _state(
+            (
+                "process_refund",
+                "The refund of $32.94 for order 10829 has been completed. Order 10829 refund status: completed",
+            ),
+            basic_sanity=sanity,
+        )
+        reply = "Your refund for order 10829 has been completed. $32.94 has been refunded."
+        result = await _guard().enforce(reply, support._grounding_evidence(state))
+        assert not result.escalated, result.claim_checks
+        assert result.response == reply

@@ -24,6 +24,10 @@ class AtomicClaim(BaseModel):
 
     text: str
     position: int = 0
+    # Which sentence of the reply this claim came from. A claim is finer
+    # than a sentence and may be restated (a carved rule), so what a claim
+    # removes is found by this index, never by matching its text.
+    sentence: int = 0
     is_verifiable: bool = True
     claim_class: ClaimClass = "record"
 
@@ -65,6 +69,7 @@ class DetectionVerdict(BaseModel):
     threshold: float | None = None
     escalated_to_human: bool = False
     claim_class: str = ""
+    sentence: int = -1
     # Set when a deterministic check refuted the claim: what it found, in
     # the code the card and the audit trail carry.
     reason_code: str = ""

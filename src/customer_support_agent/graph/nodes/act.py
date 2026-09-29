@@ -120,7 +120,6 @@ class ToolUseNodes(NodeSupport):
                 str(invocation_fields.get("evidence", text)),
                 outcome=str(invocation_fields.get("tool_status", TOOL_BLOCKED)),
             )
-            self._add_verification(state, invocation_fields)
             state.working_memory.add_current_turn(tool_message)
 
             # Once a proposal escalates, autonomous execution stops for the
@@ -477,11 +476,7 @@ class ToolUseNodes(NodeSupport):
             tool_status = TOOL_COMPLETED
             verification = await self._verify(call, result)
             if verification is not None:
-                result_fields = {
-                    **result_fields,
-                    "verification": verification.summary,
-                    "verified": verification.verified,
-                }
+                result_fields = {**result_fields, "verification": verification.summary}
                 if not verification.verified:
                     # Not "failed": the call did run, and may well have
                     # done something. It is *unverified*, which means no

@@ -296,40 +296,6 @@ class NodeSupport:
             if isinstance(item, dict) and item.get("kind") == "action"
         ]
 
-    def _add_verification(self, state: AgentState, fields: dict[str, Any]) -> None:
-        """Record what reading an effect back found, as evidence a reply may rest on.
-
-        A tool that reported success and a record that shows the change are
-        different facts; only the second may ground "your refund is done".
-        Nothing is recorded for a call with nothing to read back.
-        """
-        summary = fields.get("verification")
-        if not summary:
-            return
-        verdict = "verified" if fields.get("verified") else "NOT verified"
-        state.working_memory.add_current_turn(
-            {
-                "kind": "verification",
-                "content": f"Read-back: {summary}. The effect was {verdict}.",
-                "source": "effect_verification",
-            }
-        )
-
-    def _verification_evidence(self, state: AgentState) -> list[Chunk]:
-        """The second tier: this turn's read-backs, and the facts BasicSanity established."""
-        read_backs = [
-            Chunk(content=str(item["content"]), kind="verification", source=str(item["source"]))
-            for item in state.working_memory.current_turn
-            if isinstance(item, dict) and item.get("kind") == "verification"
-        ]
-        findings = (state.metadata.get("basic_sanity") or {}).get("findings") or []
-        established = [
-            Chunk(content=str(item["reason"]), kind="verification", source="basic_sanity")
-            for item in findings
-            if item.get("applicable", True) and item.get("passed") and item.get("reason")
-        ]
-        return [*read_backs, *established]
-
     def _grounding_evidence(self, state: AgentState) -> list[Chunk]:
         """Every tier a reply may be grounded on, each labelled with its tier.
 
@@ -369,7 +335,6 @@ class NodeSupport:
         ]
         return [
             *tools,
-            *self._verification_evidence(state),
             *self._policy_evidence(),
             *_knowledge_evidence(),
             *asked,
@@ -618,18 +583,22 @@ class NodeSupport:
     def _stepped(
         self, stage: str, summary: str | None, fields: dict[str, Any] | None
     ) -> tuple[str | None, dict[str, Any] | None]:
-        """Mark a card as part of tool-use loop step N (reason → act → observe).
+        """Mark a card as part of tool-use loop step N (model call → tool → result).
 
         The loop is typed tool use, not ReAct: the model proposes a
-        validated call rather than writing a thought. Numbering the
-        iteration is what makes "the model asked twice" visible.
+        validated call rather than writing a thought, so the label says
+        what happens — a model call, the tool it asked for, its result —
+        and nothing that implies a thought step. Numbering the iteration
+        is what makes "the model asked twice" visible. The wording is
+        configuration, so it cannot drift from what the loop does.
         """
         step = self._loop_step
         if step is None or stage not in _LOOP_STAGES:
             return summary, fields
-        prefix = f"Step {step} · "
+        settings = get_settings().observability
+        prefix = settings.loop_step_prefix.format(step=step)
         return (prefix + summary if summary else prefix.rstrip(" ·")), {
-            "loop_step": f"{step} of {self._max_rounds} (reason → act → observe)",
+            "loop_step": settings.loop_step_detail.format(step=step, max=self._max_rounds),
             **(fields or {}),
         }
 

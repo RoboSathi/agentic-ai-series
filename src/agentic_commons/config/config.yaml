@@ -276,6 +276,11 @@ observability:
   analytics_db_path: data/observability.duckdb
   langsmith_enabled: false
   persist_traces: true
+  # The loop is typed tool use, not ReAct: the model proposes a validated
+  # call and there is no thought step, so the label names a model call, the
+  # tool it asked for, and the result — not reason/act/observe.
+  loop_step_prefix: "Step {step} · "
+  loop_step_detail: "{step} of {max} (model call → tool → result)"
   slo_targets:
     task_success_rate: 0.95
     unauthorized_action_rate: 0.0
@@ -532,7 +537,6 @@ hallucination_protection:
   # no tier: what a customer asserts proves nothing.
   tiers:
     - {name: tool_result, kinds: [tool_result], claims: [record], may_refute: true}
-    - {name: verification, kinds: [verification], claims: [record], may_refute: true, min_similarity: 0.0}
     - {name: policy, kinds: [policy, retrieved], claims: [rule], may_refute: true}
     - {name: system, kinds: [system], claims: [rule], may_refute: false}
     - {name: memory, kinds: [memory], claims: [rule], may_refute: false}

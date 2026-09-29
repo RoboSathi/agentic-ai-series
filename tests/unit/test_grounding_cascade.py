@@ -192,21 +192,23 @@ class TestFailClosedKeepsWhatWasNotRefuted:
         assert result.unsupported == 1
 
 
-class TestTierOrder:
-    async def test_a_verification_can_refute_what_a_tool_result_said(self) -> None:
-        """The refund ran, but reading it back showed it did not take."""
-        evidence = [
-            *_COMPLETED,
-            Chunk(
-                content=f"Effect of process_refund on order {_ORDER} was NOT verified: "
-                "refund_status is none",
-                kind="verification",
-                source="effect_verification",
-            ),
-        ]
-        result = await _guard().enforce(f"Order {_ORDER} has been refunded.", evidence)
+class TestASentenceGoesWhenAnyClaimInItIsRefuted:
+    async def test_a_refuted_carved_rule_takes_its_whole_sentence_with_it(self) -> None:
+        """The carved rule is restated in the config's words, which are not in the reply."""
+        contrary = Chunk(
+            content="Refunds are never returned to the original payment method.",
+            kind="policy",
+            source="refund_policy#9",
+        )
+        reply = (
+            "$18.70 has been refunded to your original payment method. Thanks for your patience."
+        )
+        result = await _guard().enforce(reply, [*_COMPLETED, contrary])
         assert result.escalated
+        assert result.response == "Thanks for your patience."
 
+
+class TestTierOrder:
     async def test_the_system_prompt_never_refutes(self) -> None:
         instruction = Chunk(
             content="Do not mention refunds unless the customer raised the subject.",

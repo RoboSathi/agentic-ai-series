@@ -95,7 +95,9 @@ class DetectionLadder:
         """
         claims = [claim for claim in self._decomposer.decompose(generation) if claim.is_verifiable]
         verdicts = [
-            await self._resolver.resolve(claim.text, evidence, claim.claim_class)
+            (await self._resolver.resolve(claim.text, evidence, claim.claim_class)).model_copy(
+                update={"sentence": claim.sentence}
+            )
             for claim in claims
         ]
         agreement = await self._agreement(verdicts, generation, resample)

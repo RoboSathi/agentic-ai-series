@@ -163,22 +163,26 @@ class ClaimDecomposer:
 
     def decompose(self, generation: str) -> list[AtomicClaim]:
         """Split on sentence boundaries, then on joining conjunctions, then by class."""
-        texts = [
-            piece
-            for sentence in split_sentences(generation)
+        pieces = [
+            (index, text, forced)
+            for index, sentence in enumerate(split_sentences(generation))
             for part in _with_subjects(_clauses(sentence))
-            for piece in self._carve(part.strip().rstrip(".;"))
-            if piece[0]
+            for text, forced in self._carve(part.strip().rstrip(".;"))
+            if text
         ]
         return [
-            self._claim(text, position, forced) for position, (text, forced) in enumerate(texts)
+            self._claim(text, position, forced, index)
+            for position, (index, text, forced) in enumerate(pieces)
         ]
 
-    def _claim(self, text: str, position: int, forced: ClaimClass | None) -> AtomicClaim:
+    def _claim(
+        self, text: str, position: int, forced: ClaimClass | None, sentence: int
+    ) -> AtomicClaim:
         claim_class = forced or self._classifier.classify(text)
         return AtomicClaim(
             text=text,
             position=position,
+            sentence=sentence,
             claim_class=claim_class,
             is_verifiable=claim_class != "conversational"
             and len(tokenize(text)) >= _MIN_CONTENT_TOKENS,
