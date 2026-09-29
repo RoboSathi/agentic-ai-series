@@ -551,21 +551,52 @@ hallucination_protection:
   # An outcome stated as done. With a promise marker it is a promise.
   outcome_pattern: '\b(?:refunded|queued|approved|processed|issued|completed|submitted|denied|rejected|cancelled|canceled|delivered|shipped|pending|on\s+its\s+way|human\s+review|request\s+created)\b'
   promissory_pattern: '\b(?:will|would|shall|going\s+to|once|if|when|may|might|could|should|can|get|gets|getting)\b|[''’]ll\b'
-  # Money moved, or is on its way; and the refund_status values that say so.
-  settled_claim_pattern: '\brefund(?:ed)?\b(?:[^.;]|\.(?=\d)){0,60}?\b(?:has\s+been\s+)?(?:completed|complete|processed|issued|approved|sent|paid|done|(?:gone|went)\s+through|on\s+(?:its|the)\s+way)\b(?!\s+(?:for|to)\s+(?:\w+\s+)?(?:review|approval))|\brefunded\b|\b(?:completed|processed|issued|approved|sent|paid)\b(?:[^.;]|\.(?=\d)){0,40}?\brefund|(?:\bamount|\bmoney|\bpayment|\bfunds|\$\s?\d[\d,.]*)(?:[^.;]|\.(?=\d)){0,40}?\b(?:returned|credited|reimbursed|paid\s+back|sent\s+back)\b'
   # A claim that the agent could not, or did not, act. The record of a call it
   # refused is what grounds it, so it is supported by a NOT EXECUTED entry
   # for the order it names rather than by asking NLI to read a structured line.
   refusal_pattern: '\b(?:unable|cannot|can[''’]?t|couldn[''’]?t|could\s+not|not\s+able|won[''’]t\s+be\s+able|wasn[''’]t|was\s+not|hasn[''’]t|has\s+not|haven[''’]t|have\s+not|declined|refused|denied|rejected)\b'
   refund_state_pattern: 'refund(?:_|\s+)status\s*[:=]\s*(\w+)'
-  settled_states: [completed, approved, processed]
-  # Record wording that says a person has yet to decide. A claim that the
-  # money moved contradicts it, whatever token overlap NLI finds.
-  pending_markers:
-    - queued for human review
-    - awaiting a decision
-    - awaiting human review
-    - sent for review
+  # The refund state machine. A state record ("Order N refund status: X") is
+  # not something an NLI model can read: it contradicted "has been submitted"
+  # against `pending_review`. So it is read here, in both directions, and is
+  # never sent to NLI. `ladder` runs earliest first and each status implies
+  # the earlier ones happened; `branches` names a status off the ladder and
+  # how far it got before it stopped. An *event* phrase ("submitted",
+  # "refunded") is true once the refund has reached its status; a *state*
+  # phrase (`exact`: "pending review", "denied") is true only while it is
+  # there. Event phrases win when both appear ("was queued for human review"
+  # is history). A claim is judged only if it also talks about a refund
+  # (`context_pattern`), so "your order has been processed" is left alone.
+  refund_states:
+    ladder: [none, pending_review, approved, completed]
+    branches: {denied: pending_review}
+    # From this status on, money has moved or been authorised.
+    settled_from: approved
+    # Record wording that states a status without the status line.
+    observed_as:
+      none:
+        - no refund has been requested
+      pending_review:
+        - queued for human review
+        - awaiting a decision
+        - awaiting human review
+        - sent for review
+    context_pattern: '(?:\b(?:refund|request|review|amount|money|payment|funds)|\$\s?\d)'
+    phrases:
+      - reaches: pending_review
+        pattern: '\b(?:requested|submitted|received|queued|initiated|started|created|sent\s+for\s+review)\b'
+      - reaches: pending_review
+        exact: true
+        pattern: '\b(?:pending|awaiting|under\s+review|in\s+review|human\s+review|manual\s+review)\b'
+      - reaches: approved
+        pattern: '\bapproved\b'
+      - reaches: completed
+        pattern: '\b(?:refunded|completed|processed|issued|paid|on\s+its\s+way|sent\s+back|paid\s+back|credited|reimbursed|returned)\b'
+      - reaches: denied
+        exact: true
+        pattern: '\b(?:denied|declined|rejected)\b'
+  # How many other evidence lines a card lists under a claim, beside the one that decided it.
+  card_evidence_lines: 3
   # Where a refund goes is a rule stated once in the knowledge article; the
   # outcome around it is a fact about this case. Split, each is checked by
   # what can ground it.

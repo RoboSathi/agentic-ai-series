@@ -398,3 +398,38 @@ class TestASettledRefundIsSupportedByTheRecord:
         )
         why = result.claim_checks[0]["rationale"]
         assert "neutral" in why and "unknown" not in why
+
+
+class _SiblingsDisagree:
+    """One observation, two sentences, and a model that contradicts the closer one."""
+
+    model_name = "stub-nli"
+
+    async def entails(self, premise: str, hypothesis: str) -> EntailmentResult:
+        contradicts = premise.endswith(": pending")
+        return EntailmentResult(
+            label="contradiction" if contradicts else "entailment",
+            entailed=not contradicts,
+            score=0.99,
+            calibrated=True,
+            model="stub-nli",
+        )
+
+
+class TestAnObservationIsOneConsistentRecord:
+    _CLAIM = "Order 10665 was dispatched by courier."
+    _ENTAILS = "Courier dispatched order 10665 yesterday."
+    _CONTRADICTS = "Order 10665 was dispatched by courier: pending"
+
+    def _guard(self) -> ResponseGuardrail:
+        ladder = DetectionLadder(create_scoring_cascade(), entailment=_SiblingsDisagree())
+        return ResponseGuardrail(ladder)
+
+    async def test_a_sentence_that_entails_beats_a_sibling_that_contradicts(self) -> None:
+        evidence = [_seen(self._ENTAILS, 0), _seen(self._CONTRADICTS, 0)]
+        result = await self._guard().enforce(self._CLAIM, evidence)
+        assert not result.escalated, result.claim_checks
+
+    async def test_a_contradiction_with_no_entailing_sibling_still_refutes(self) -> None:
+        result = await self._guard().enforce(self._CLAIM, [_seen(self._CONTRADICTS, 0)])
+        assert result.escalated

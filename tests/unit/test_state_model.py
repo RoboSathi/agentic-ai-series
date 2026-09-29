@@ -1,0 +1,108 @@
+"""The refund state machine, read the way NLI cannot.
+
+`Order 10665 refund status: pending_review.` is a state record. A
+cross-encoder read it as contradicting "has been submitted" (0.99), and a
+true reply was blocked. The record has an explicit state machine, so it is
+read by a small deterministic model of that machine, in both directions.
+"""
+
+import pytest
+
+from agentic_commons.context.types import Chunk
+from agentic_commons.hallucination_protection.states import StateModel
+
+
+def _record(*lines: str) -> list[Chunk]:
+    return [
+        Chunk(content=line, kind="tool_result", metadata={"observation_sequence": index})
+        for index, line in enumerate(lines)
+    ]
+
+
+def _status(name: str) -> list[Chunk]:
+    return _record(f"Order 10665 refund status: {name}.")
+
+
+def _holds(status: str, claim: str) -> bool | None:
+    finding = StateModel().judge(claim, _status(status))
+    return None if finding is None else finding.holds
+
+
+class TestAnEventIsTrueOnceTheRefundHasReachedIt:
+    @pytest.mark.parametrize(
+        "status, claim, expected",
+        [
+            ("pending_review", "Your refund request for order 10665 has been submitted", True),
+            ("pending_review", "Your refund request for order 10665 has been received", True),
+            ("pending_review", "The refund request was queued for human review", True),
+            ("pending_review", "Your refund for order 10665 has been approved", False),
+            ("pending_review", "Your refund for order 10665 has been refunded", False),
+            ("pending_review", "The refund for order 10665 has been completed", False),
+            ("none", "Your refund request for order 10665 has been submitted", False),
+            ("none", "Your refund request for order 10665 has not been initiated", True),
+            ("none", "No refund has been requested for order 10665", True),
+            ("approved", "Your refund for order 10665 has been approved", True),
+            ("approved", "Your refund request for order 10665 has been submitted", True),
+            ("approved", "The refund for order 10665 has been completed", False),
+            ("completed", "Your refund for order 10665 has been processed", True),
+            ("completed", "$21.35 was returned", True),
+            ("completed", "Your refund request for order 10665 has been submitted", True),
+            ("completed", "The refund for order 10665 has not been refunded", False),
+            ("denied", "Your refund request for order 10665 has been denied", True),
+            ("denied", "Your refund request for order 10665 has been submitted", True),
+            ("denied", "Your refund for order 10665 has been approved", False),
+        ],
+    )
+    def test_the_ladder(self, status: str, claim: str, expected: bool) -> None:
+        assert _holds(status, claim) is expected
+
+
+class TestAStateIsTrueOnlyWhileTheRefundIsThere:
+    @pytest.mark.parametrize(
+        "status, claim, expected",
+        [
+            ("pending_review", "Your refund request for order 10665 is now pending review", True),
+            ("pending_review", "Your refund request is awaiting a decision", True),
+            ("completed", "Your refund request for order 10665 is pending review", False),
+            ("approved", "Your refund request for order 10665 is under review", False),
+            ("none", "Your refund request for order 10665 is pending review", False),
+            ("denied", "Your refund request for order 10665 was denied", True),
+            ("pending_review", "Your refund request for order 10665 was denied", False),
+        ],
+    )
+    def test_exact(self, status: str, claim: str, expected: bool) -> None:
+        assert _holds(status, claim) is expected
+
+    def test_an_event_word_outranks_a_state_word_in_the_same_claim(self) -> None:
+        """ "Was queued for human review" is history, and history stays true."""
+        assert _holds("completed", "The refund was queued for human review") is True
+
+
+class TestWhatItWillNotJudge:
+    def test_no_status_in_the_record_defers(self) -> None:
+        finding = StateModel().judge("Your refund has been submitted", _record("Order 10665: Lamp"))
+        assert finding is None
+
+    def test_a_claim_that_names_no_refund_state_defers(self) -> None:
+        assert _holds("completed", "Your order shipped on Tuesday") is None
+
+
+class TestTheCurrentStatusIsTheLatestOne:
+    def test_a_later_observation_overrides_an_earlier_one(self) -> None:
+        record = _record(
+            "Order 10665 refund status: none.",
+            "Order 10665 refund status: pending_review.",
+        )
+        finding = StateModel().judge("Your refund request has been submitted", record)
+        assert finding is not None and finding.holds
+
+    def test_the_status_a_referral_states_in_prose_counts(self) -> None:
+        record = _record("Refund of $18.70 for order 10001 has been queued for human review")
+        finding = StateModel().judge("The refund has been completed", record)
+        assert finding is not None and not finding.holds
+
+    def test_it_names_the_line_it_read(self) -> None:
+        finding = StateModel().judge("Your refund has been submitted", _status("pending_review"))
+        assert finding is not None
+        assert finding.chunk.content == "Order 10665 refund status: pending_review."
+        assert "pending_review" in finding.rationale

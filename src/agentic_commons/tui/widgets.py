@@ -214,6 +214,9 @@ _DECIDING_LABEL = {"supported": "entailment", "refuted": "contradiction"}
 _REFUTED = "refuted"
 _UNDETERMINED = "undetermined"
 _NLI_NAMES = {"unknown": "neutral"}
+# A line of the record read directly, not scored by a model.
+_RECORD_LABEL = "record"
+_RECORD_BASIS = "Record"
 # Policy passages are markdown; emphasis markers are noise in a one-line excerpt.
 _MARKDOWN_BOLD = "**"
 
@@ -851,55 +854,74 @@ def _checker_line(check: Mapping[str, Any]) -> str:
 
 
 def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
-    """`✓ claim` then `  ← tool result · entailment 0.99 · "excerpt"`."""
-    verdict = str(check.get("verdict") or "undetermined")
-    mark, style, name = _CLAIM_MARKS.get(verdict, ("?", "yellow", verdict))
+    """`✓ claim`, then what decided it, then the other lines that were read.
+
+        Supported By [Tool Result] (Entailment 0.99): "Order 10665 refund status: pending_review."
+        Contradicted By [Tool Result] (Record): "…" · refund status is completed, so …
+        Unverified: tool result: neutral 0.98 · policy: nothing related (best 0.21 < 0.3)
+        Also Read: [Policy] Neutral 0.12 "…"
+    """
+    verdict = str(check.get("verdict") or _UNDETERMINED)
+    mark, style, _ = _CLAIM_MARKS.get(verdict, ("?", "yellow", verdict))
     body.append(f"\n\n  {mark} ", style=style)
     body.append(str(check.get("claim") or ""), style="bright_white")
-    if check.get("decided_by") == "deterministic_provenance":
-        body.append(
-            f"\n      {name} by the deterministic check · {check.get('rationale')}", style=style
-        )
+    evidence = [item for item in check.get("evidence") or [] if isinstance(item, Mapping)]
+    rationale = str(check.get("rationale") or "")
+    if verdict == _UNDETERMINED:
+        body.append(f"\n      Unverified: {rationale or 'no evidence decided it'}", style=style)
+        _append_also_read(body, evidence, None)
         return
-    if verdict == _UNDETERMINED and check.get("rationale"):
-        # Say why nothing decided it, tier by tier, rather than pointing at
-        # the nearest passage as though it had.
-        body.append(f"\n      {name} · {check.get('rationale')}", style=style)
-        return
-    item = _deciding_evidence(verdict, check.get("evidence") or [])
-    if item is None:
-        body.append(f"\n      {name} · no evidence retrieved", style=style)
-        return
-    if verdict == _REFUTED and not _decided(verdict, check.get("evidence") or []):
+    item = _deciding_evidence(verdict, evidence)
+    lead = "Supported By" if verdict == "supported" else "Contradicted By"
+    if item is None or not _decided(verdict, evidence):
         # Refuted by a rule, not by a passage — an amount or id no evidence
-        # states. Naming the nearest passage as the contradiction ("system
-        # prompt (neutral 1.00)") sent readers after the wrong cause.
-        body.append(f"\n      {name} · {check.get('rationale')}", style=style)
+        # states. Naming the nearest passage as the contradiction sent
+        # readers after the wrong cause.
+        body.append(f"\n      {lead.split()[0]}: {rationale}", style=style)
+        _append_also_read(body, evidence, None)
         return
-    label = str(item.get("nli_label") or "unknown")
-    lead = f"{name} by" if verdict in _DECIDING_LABEL else f"{name} · closest is"
-    body.append(
-        f"\n      {lead} {item.get('tier')} ({_NLI_NAMES.get(label, label)} "
-        f"{float(item.get('nli_score') or 0):.2f}) ",
-        style=style,
-    )
+    basis = str(check.get("basis") or "")
+    body.append(f"\n      {lead} [{_title(item.get('tier'))}] ({basis}): ", style=style)
     body.append(f'"{_excerpt(item)}"', style="dim")
+    if basis == _RECORD_BASIS and rationale:
+        body.append(f" · {rationale}", style=style)
+    _append_also_read(body, evidence, item)
+
+
+def _append_also_read(
+    body: Text, evidence: list[Mapping[str, Any]], decided: Mapping[str, Any] | None
+) -> None:
+    """The other lines that were read for this claim, so a wrong verdict can be traced."""
+    limit = get_settings().hallucination_protection.card_evidence_lines
+    for item in [i for i in evidence if i is not decided][:limit]:
+        label = str(item.get("nli_label") or "unknown")
+        name = _NLI_NAMES.get(label, label).title()
+        score = float(item.get("nli_score") or 0)
+        body.append(
+            f"\n      Also Read: [{_title(item.get('tier'))}] {name} {score:.2f} ", style="dim"
+        )
+        body.append(f'"{_excerpt(item)}"', style="dim")
+
+
+def _title(value: Any) -> str:
+    """`tool result` as `Tool Result`."""
+    return str(value or "").title()
 
 
 def _decided(verdict: str, evidence: list[Any]) -> bool:
-    """Whether some passage decisively carried the claim's verdict."""
-    wanted = _DECIDING_LABEL.get(verdict)
+    """Whether some line decisively carried the claim's verdict."""
+    wanted = {_DECIDING_LABEL.get(verdict), _RECORD_LABEL}
     return any(
-        isinstance(item, Mapping) and item.get("decisive") and item.get("nli_label") == wanted
+        isinstance(item, Mapping) and item.get("decisive") and item.get("nli_label") in wanted
         for item in evidence
     )
 
 
 def _deciding_evidence(verdict: str, evidence: list[Any]) -> Mapping[str, Any] | None:
-    """The passage that settled the claim, or the nearest one when none did."""
+    """The line that settled the claim, or the nearest one when none did."""
     items = [item for item in evidence if isinstance(item, Mapping)]
-    wanted = _DECIDING_LABEL.get(verdict)
-    decisive = [i for i in items if i.get("decisive") and i.get("nli_label") == wanted]
+    wanted = {_DECIDING_LABEL.get(verdict), _RECORD_LABEL}
+    decisive = [i for i in items if i.get("decisive") and i.get("nli_label") in wanted]
     ranked = decisive or items
     return ranked[0] if ranked else None
 

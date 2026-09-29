@@ -32,7 +32,7 @@ from agentic_commons.hallucination_protection.direct import (
     numbers,
     order_ids,
 )
-from agentic_commons.hallucination_protection.resolver import DIRECT_TIER
+from agentic_commons.hallucination_protection.resolver import DIRECT_TIER, RESTATEMENT_MODEL
 from agentic_commons.hallucination_protection.types import DetectionVerdict, GenerationAssessment
 from agentic_commons.logging import get_logger
 
@@ -329,6 +329,17 @@ def _decided_directly(assessment: GenerationAssessment) -> bool:
     return any(verdict.reason_code for verdict in assessment.verdicts)
 
 
+def _basis(verdict: DetectionVerdict) -> str:
+    """How a claim was decided, in the words a card shows: `Entailment 0.99`, `Record`."""
+    if verdict.tier == DIRECT_TIER:
+        return "Record"
+    if verdict.undetermined:
+        return ""
+    if verdict.detector_model == RESTATEMENT_MODEL:
+        return f"Restated {verdict.confidence:.2f}"
+    return f"{'Entailment' if verdict.supported else 'Contradiction'} {verdict.confidence:.2f}"
+
+
 def _decided_by(verdict: DetectionVerdict) -> str:
     return "deterministic_provenance" if verdict.tier == DIRECT_TIER else verdict.tier
 
@@ -375,6 +386,7 @@ def _claim_check(verdict: DetectionVerdict) -> dict[str, Any]:
         "claim_class": verdict.claim_class,
         "verdict": status,
         "decided_by": _decided_by(verdict),
+        "basis": _basis(verdict),
         "detector": verdict.detector_model,
         "threshold": verdict.threshold,
         "confidence": round(verdict.confidence, 3),

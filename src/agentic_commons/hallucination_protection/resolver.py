@@ -41,6 +41,11 @@ OBSERVATION_SEQUENCE = "observation_sequence"
 # write). A read taken before a write of the same thing describes a world
 # that no longer exists.
 STATE_CHANGING = "state_changing"
+# The detector name of a rule that restates the claim in nearly its own words.
+RESTATEMENT_MODEL = "rule-restatement"
+# The label a line of the record carries when it was read directly and not
+# scored by a model.
+RECORD_LABEL = "record"
 # What decided a claim with no evidence tier: the direct check, or nothing.
 DIRECT_TIER = "deterministic"
 NO_TIER = "none"
@@ -48,6 +53,13 @@ NO_TIER = "none"
 _DECIDING_LABELS = frozenset({"entailment", "contradiction"})
 # The NLI model's third label, as a reader should meet it: not a failure.
 _LABEL_NAMES = {"unknown": "neutral"}
+
+
+def _outvotes(item: tuple[EntailmentResult, Chunk], held: tuple[EntailmentResult, Chunk]) -> bool:
+    """Whether a decisive result should speak for its observation instead of the one held."""
+    if item[0].label != held[0].label:
+        return item[0].label == "entailment"
+    return item[0].score > held[0].score
 
 
 class _TierOutcome:
@@ -96,6 +108,9 @@ class GroundingResolver:
         self._entailment = entailment or create_entailment_model()
         self._classifier = classifier or ClaimClassifier()
         self._direct = DirectChecker()
+        # A state record ("Order N refund status: X") is read by the state
+        # model. NLI cannot: it took `pending_review` to contradict "submitted".
+        self._state_line = re.compile(settings.refund_state_pattern, re.IGNORECASE)
         self._graded_kinds = frozenset(kind for tier in self._tiers for kind in tier.kinds)
         self._record_kinds = frozenset(
             kind for tier in self._tiers if "record" in tier.claims for kind in tier.kinds
@@ -119,86 +134,69 @@ class GroundingResolver:
         evidence = self._current(evidence)
         finding = self._direct_finding(claim, kind, evidence)
         if finding is not None:
-            return self._verdict(
+            return self._read(
                 claim,
                 kind,
-                DIRECT_TIER,
-                None,
-                [],
+                finding.chunk,
+                supported=False,
                 rationale=finding.rationale,
                 reason_code=finding.reason_code,
             )
-        refusal = self._refusal_support(claim, kind, evidence)
-        if refusal is not None:
-            return self._verdict(
-                claim, kind, DIRECT_TIER, None, [], supported=True, rationale=refusal
-            )
+        record = [chunk for chunk in evidence if chunk.kind in self._record_kinds]
+        settled = self._settled_by_record(claim, kind, record)
+        if settled is not None:
+            return self._read(claim, kind, settled[1], supported=True, rationale=settled[0])
         outcomes = [
             await self._judge(claim, tier, [c for c in evidence if c.kind in tier.kinds])
             for tier in self._tiers
             if kind in tier.claims
         ]
-        verdict = self._settle(claim, kind, outcomes)
-        return self._upgraded(claim, kind, verdict, evidence) if verdict.undetermined else verdict
+        return self._settle(claim, kind, outcomes)
 
-    def _upgraded(
-        self, claim: str, kind: ClaimClass, verdict: DetectionVerdict, evidence: list[Chunk]
-    ) -> DetectionVerdict:
-        """An undecided claim that the record settles, supported by the record.
-
-        The model runs first, so a contradiction still wins; this only
-        turns "the model would not say" into what the record says.
-        """
-        if kind != "record":
-            return verdict
-        record = [chunk for chunk in evidence if chunk.kind in self._record_kinds]
-        support = self._direct.settled_support(claim, record)
-        if support is None:
-            return verdict
-        return verdict.model_copy(
-            update={
-                "supported": True,
-                "undetermined": False,
-                "tier": DIRECT_TIER,
-                "rationale": support,
-                "confidence": 1.0,
-            }
-        )
-
-    def _current(self, evidence: list[Chunk]) -> list[Chunk]:
-        """The evidence with every read the turn has since overtaken taken out.
-
-        "No refund has been requested for order 10169" was true when it was
-        read and false once the refund was referred, and nothing the later
-        observation says needs to contradict it for that to be so. A read
-        is overtaken when a *later* write names the same order; a read
-        about another order, or in a turn that wrote nothing, stands.
-        """
-        writes = [
-            (sequence, numbers(chunk.content))
-            for chunk in evidence
-            if chunk.metadata.get(STATE_CHANGING)
-            and isinstance(sequence := chunk.metadata.get(OBSERVATION_SEQUENCE), int)
-        ]
-
-        def overtaken(chunk: Chunk) -> bool:
-            sequence = chunk.metadata.get(OBSERVATION_SEQUENCE)
-            return (
-                not chunk.metadata.get(STATE_CHANGING)
-                and isinstance(sequence, int)
-                and any(
-                    later > sequence and named & numbers(chunk.content) for later, named in writes
-                )
-            )
-
-        return [chunk for chunk in evidence if not overtaken(chunk)]
-
-    def _refusal_support(self, claim: str, kind: ClaimClass, evidence: list[Chunk]) -> str | None:
-        """Why the record of a refused call grounds a claim that the agent did not act."""
+    def _settled_by_record(
+        self, claim: str, kind: ClaimClass, record: list[Chunk]
+    ) -> tuple[str, Chunk] | None:
+        """A record claim the record decides by itself: a refusal it shows, or a status it holds."""
         if kind != "record":
             return None
-        return self._direct.refusal_support(
-            claim, [chunk for chunk in evidence if chunk.kind in self._record_kinds]
+        return self._direct.refusal_support(claim, record) or self._direct.state_support(
+            claim, record
+        )
+
+    def _read(
+        self,
+        claim: str,
+        kind: ClaimClass,
+        chunk: Chunk | None,
+        *,
+        supported: bool,
+        rationale: str,
+        reason_code: str = "",
+    ) -> DetectionVerdict:
+        """A verdict settled by reading the record, quoting the line it read."""
+        checks = [] if chunk is None else [self._record_check(chunk)]
+        return self._verdict(
+            claim,
+            kind,
+            DIRECT_TIER,
+            None,
+            [] if chunk is None else [chunk],
+            supported=supported,
+            rationale=rationale,
+            reason_code=reason_code,
+            checks=checks,
+        )
+
+    @staticmethod
+    def _record_check(chunk: Chunk) -> EvidenceCheck:
+        return EvidenceCheck(
+            rank=1,
+            similarity=1.0,
+            tier=chunk.kind,
+            excerpt=chunk.content,
+            nli_label=RECORD_LABEL,
+            nli_score=1.0,
+            decisive=True,
         )
 
     def _direct_finding(
@@ -243,10 +241,43 @@ class GroundingResolver:
             + " · ".join(f"{outcome.tier.name}: {outcome.note}" for outcome in outcomes),
         )
 
+    def _current(self, evidence: list[Chunk]) -> list[Chunk]:
+        """The evidence with every read the turn has since overtaken taken out.
+
+        "No refund has been requested for order 10169" was true when it was
+        read and false once the refund was referred, and nothing the later
+        observation says needs to contradict it for that to be so. A read
+        is overtaken when a *later* write names the same order; a read
+        about another order, or in a turn that wrote nothing, stands.
+        """
+        writes = [
+            (sequence, numbers(chunk.content))
+            for chunk in evidence
+            if chunk.metadata.get(STATE_CHANGING)
+            and isinstance(sequence := chunk.metadata.get(OBSERVATION_SEQUENCE), int)
+        ]
+
+        def overtaken(chunk: Chunk) -> bool:
+            sequence = chunk.metadata.get(OBSERVATION_SEQUENCE)
+            return (
+                not chunk.metadata.get(STATE_CHANGING)
+                and isinstance(sequence, int)
+                and any(
+                    later > sequence and named & numbers(chunk.content) for later, named in writes
+                )
+            )
+
+        return [chunk for chunk in evidence if not overtaken(chunk)]
+
+    def _is_state_record(self, chunk: Chunk) -> bool:
+        """Whether this is a line of the record's state, which only the state model reads."""
+        return chunk.kind in self._record_kinds and bool(self._state_line.search(chunk.content))
+
     async def _judge(
         self, claim: str, tier: GroundingTierSettings, chunks: list[Chunk]
     ) -> _TierOutcome:
         """One tier's answer: top-k within the tier, then NLI, latest observation first."""
+        chunks = [chunk for chunk in chunks if not self._is_state_record(chunk)]
         if not chunks:
             return _TierOutcome(tier, "abstain", None, [], [], note="no evidence")
         self._retriever.index(chunks)
@@ -311,7 +342,30 @@ class GroundingResolver:
                 or (tier.may_refute and self._may_refute(claim, item[1]))
             )
         ]
-        return max(decisive, key=self._recency, default=None)
+        return max(self._one_voice_per_observation(decisive), key=self._recency, default=None)
+
+    @staticmethod
+    def _one_voice_per_observation(
+        decisive: list[tuple[EntailmentResult, Chunk]],
+    ) -> list[tuple[EntailmentResult, Chunk]]:
+        """An observation is one consistent record, so any sentence that entails it supports it.
+
+        Its sentences cannot really disagree; when a model says they do, the
+        contradiction is the model's, about a sentence that is not about
+        what the claim is about. So within one observation an entailing
+        sentence outvotes a contradicting sibling, whichever sentence is
+        closer to the claim. A contradiction stands only when nothing in its
+        observation entails the claim. Evidence with no observation (a rule,
+        a passage) is its own voice.
+        """
+        voices: dict[object, tuple[EntailmentResult, Chunk]] = {}
+        for index, item in enumerate(decisive):
+            sequence = item[1].metadata.get(OBSERVATION_SEQUENCE)
+            key: object = sequence if isinstance(sequence, int) else ("alone", index)
+            held = voices.get(key)
+            if held is None or _outvotes(item, held):
+                voices[key] = item
+        return list(voices.values())
 
     @staticmethod
     def _recency(item: tuple[EntailmentResult, Chunk]) -> tuple[int, float]:
@@ -340,7 +394,7 @@ class GroundingResolver:
                         entailed=True,
                         score=coverage,
                         calibrated=False,
-                        model="rule-restatement",
+                        model=RESTATEMENT_MODEL,
                         rationale=f"a rule restates {coverage:.0%} of the claim",
                     ),
                     chunk,
@@ -426,7 +480,8 @@ class GroundingResolver:
             tier=tier,
             rationale=rationale or (result.rationale if result else ""),
             reason_code=reason_code,
-            detector_model=(result.model if result else "") or self._detector_model,
+            detector_model=(result.model if result else "")
+            or (DIRECT_TIER if tier == DIRECT_TIER else self._detector_model),
             retrieval_top_k=self._top_k,
             retrieval_method=self._retrieval_method,
             retrieved_evidence=[chunk.content for chunk in retrieved],

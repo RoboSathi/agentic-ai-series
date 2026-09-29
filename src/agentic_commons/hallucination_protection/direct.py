@@ -1,12 +1,14 @@
 """The direct check: what a record claim can be settled on without a model.
 
-Some questions are decided by reading a field. The tool result either
-states a settled refund or it does not; an amount is either in the record
-or it is not. Entailment scoring adds nothing there, and where it was
-asked instead it is also what blocked true sentences for want of token
-overlap. So a claim about this case is checked here first, and it can only
-be *refuted* here: support comes from the tiers, which can say what a
-record means, not merely whether it contains a number.
+Some questions are decided by reading a field. The record either states a
+settled refund or it does not; an amount is either in it or it is not; a
+call was refused or it ran. Entailment scoring adds nothing there, and
+where it was asked instead it is what blocked true sentences: a state
+record contradicted "has been submitted", and a refusal line read as
+neutral. So a claim about this case is checked here first — against the
+ids and amounts the record holds, the refund state machine
+(`states.StateModel`), and the record of a refused call — and only what
+this cannot place goes on to the tiers.
 """
 
 import re
@@ -15,6 +17,7 @@ from typing import NamedTuple
 from agentic_commons.config import get_settings
 from agentic_commons.context.types import Chunk
 from agentic_commons.hallucination_protection.claims import MONEY, specifics
+from agentic_commons.hallucination_protection.states import StateModel
 from agentic_commons.money import Money, money_or_none
 
 # How a refused or failed tool call is written into evidence. It grounds a
@@ -28,16 +31,13 @@ REFUND_STATE_MISMATCH = "TOOL_EVIDENCE_REFUND_STATE_MISMATCH"
 NOT_EXECUTED = "TOOL_EVIDENCE_NOT_EXECUTED"
 DETAIL_UNSOURCED = "CLAIM_DETAIL_UNSOURCED"
 
-# Polarity is a property of the clause: "No refund has been processed"
-# carries the settled-claim wording exactly while denying it.
-_NEGATION = re.compile(r"\b(?:no|not|never|n't|cannot|nothing|neither|nor|unable)\b", re.IGNORECASE)
-
 
 class DirectFinding(NamedTuple):
-    """Why a claim was refuted without asking a model."""
+    """Why a claim was refuted without asking a model, and the line of the record it read."""
 
     reason_code: str
     rationale: str
+    chunk: Chunk | None = None
 
 
 def order_ids(text: str) -> set[str]:
@@ -69,11 +69,8 @@ class DirectChecker:
 
     def __init__(self) -> None:
         settings = get_settings().hallucination_protection
-        self._settled_claim = re.compile(settings.settled_claim_pattern, re.IGNORECASE)
         self._refusal = re.compile(settings.refusal_pattern, re.IGNORECASE)
-        self._refund_state = re.compile(settings.refund_state_pattern, re.IGNORECASE)
-        self._settled_states = frozenset(state.casefold() for state in settings.settled_states)
-        self._pending = [marker.casefold() for marker in settings.pending_markers]
+        self._states = StateModel()
 
     def refutation(self, claim: str, record: list[Chunk]) -> DirectFinding | None:
         """The first way the record fails to ground this claim, if it does.
@@ -88,34 +85,27 @@ class DirectChecker:
                 "The reply states a fact about this case but no tool result exists for this turn.",
             )
         text = "\n".join(chunk.content for chunk in record)
-        return self._unsourced(claim, text) or self._refund_conflict(claim, text)
+        return self._unsourced(claim, text) or self._state_conflict(claim, record, text)
 
-    def settled_support(self, claim: str, record: list[Chunk]) -> str | None:
-        """What the record shows when it settles a claim that the refund went through.
+    def state_support(self, claim: str, record: list[Chunk]) -> tuple[str, Chunk] | None:
+        """What the record shows when its refund status makes the claim true.
 
-        Called only for a claim the model could not decide and nothing
-        refuted, so every order and amount it names is already known to be
-        in the record. What remains is whether the record says the money
-        moved: a settled `refund_status`. "Returned", "processed" and
-        "completed" are one fact in three words, and an NLI model that
-        will not equate them is not evidence that the refund did not
-        happen. The rationale says what was read, because the other words
-        in the sentence were not checked.
+        "Submitted", "returned" and "refunded" are facts about a status, not
+        sentences to be entailed, and a model that will not equate them is
+        not evidence that the refund did not happen. Every id and amount the
+        claim names was already found in the record by `refutation`; what
+        remains is whether the status agrees. The rationale says what was
+        read, because the other words in the sentence were not checked.
         """
-        if not self._settled_claim.search(claim) or _NEGATION.search(claim):
-            return None
-        text = "\n".join(chunk.content for chunk in record)
-        states = sorted(
-            {state.casefold() for state in self._refund_state.findall(text)} & self._settled_states
-        )
-        if not states:
+        finding = self._states.judge(claim, record)
+        if finding is None or not finding.holds:
             return None
         shown = ", ".join(str(amount) for amount in sorted(amounts(claim)))
-        return f"the record shows refund status {states[0]}" + (
-            f" and {shown} as a recorded amount" if shown else ""
-        )
+        return finding.rationale + (
+            f" and {shown} is a recorded amount" if shown else ""
+        ), finding.chunk
 
-    def refusal_support(self, claim: str, record: list[Chunk]) -> str | None:
+    def refusal_support(self, claim: str, record: list[Chunk]) -> tuple[str, Chunk] | None:
         """Why the record shows the agent did not act, when the claim says it did not.
 
         "I'm unable to process a refund for order 10786" is true exactly
@@ -132,7 +122,7 @@ class DirectChecker:
             if NOT_EXECUTED_MARKER in chunk.content and (
                 not named or named & numbers(chunk.content)
             ):
-                return "the tool call for this order was not executed"
+                return "the tool call for this order was not executed", chunk
         return None
 
     def unsourced_detail(self, claim: str, evidence: list[Chunk]) -> DirectFinding | None:
@@ -167,35 +157,26 @@ class DirectChecker:
             )
         return None
 
-    def _refund_conflict(self, claim: str, text: str) -> DirectFinding | None:
-        """A claim that money moved, when the record says it did not.
+    def _state_conflict(self, claim: str, record: list[Chunk], text: str) -> DirectFinding | None:
+        """A claim about where the refund stands, when the record says otherwise.
 
         Telling a customer their money is on the way when it is not is the
         most expensive thing this agent can say, and it is decidable by
-        reading one field. What the record states no status for, and does
-        not say is waiting on a person, is left alone: silence is not a
-        refutation.
+        reading one field. A record that states no status is left alone
+        unless the only refund evidence is a call that was refused:
+        silence is not a refutation, but a refusal is a denial.
         """
-        if not self._settled_claim.search(claim) or _NEGATION.search(claim):
-            return None
-        states = {state.casefold() for state in self._refund_state.findall(text)}
-        if states & self._settled_states:
-            return None
-        if states:
-            return DirectFinding(
-                REFUND_STATE_MISMATCH,
-                f"The reply says the refund is settled, but the recorded refund status is "
-                f"{sorted(states)}.",
+        finding = self._states.judge(claim, record)
+        if finding is not None:
+            return (
+                None
+                if finding.holds
+                else DirectFinding(REFUND_STATE_MISMATCH, finding.rationale, finding.chunk)
             )
-        if NOT_EXECUTED_MARKER in text:
+        if NOT_EXECUTED_MARKER in text and self._states.asserts_settled(claim):
             return DirectFinding(
                 NOT_EXECUTED,
                 "The reply says a refund happened, but the only refund evidence is a call that "
                 "was not executed.",
-            )
-        if any(marker in text.casefold() for marker in self._pending):
-            return DirectFinding(
-                REFUND_STATE_MISMATCH,
-                "The reply says the refund is settled, but the record says it is waiting on a person.",
             )
         return None

@@ -12,7 +12,8 @@ well confidence predicts correctness.
 - **atomic claim** — one checkable assertion split out of a reply
 - **claim class** — `record` (a fact about this case: an order, an amount, an outcome stated as done), `rule` (how things work, and every promise: "you'll hear back soon"), `conversational` ("Thanks for reaching out" — not a claim, never scored)
 - **tier** — one stage of the cascade: which evidence kinds it reads, which claim classes it may ground, whether it may refute
-- **direct check** — the model-free step for a claim about the case: an id or amount the record lacks, or "refunded" against a record that says otherwise. It can only refute
+- **direct check** — the model-free step for a claim about the case: an id or amount the record lacks, the refund state machine, and the record of a refused call. It refutes, and it supports what it can place
+- **state model** (`states.py`) — the refund state machine (`none → pending_review → approved → completed`, or `denied`). A claim about where the refund stands is judged against the *latest* recorded status for the order it names; "submitted" is true once the refund has got there, "pending review" only while it is there. A state record is read here and never sent to NLI, which took `pending_review` to contradict "submitted"
 - **refusal** — a record claim that the agent did not act ("I'm unable to process a refund for order N"); supported by the `NOT EXECUTED` entry for that order, not by NLI
 - **rule phrase** — a phrase carved out of an outcome and checked as the rule it states ("… to your original payment method")
 - **undetermined** — nothing decided it; counted and shown, never blocking
@@ -40,9 +41,10 @@ side-effecting (`state_changing`) makes every *earlier* read that names the same
 "No refund has been requested" cannot contradict a reply written after the refund was referred.
 A read about another order, or in a turn that wrote nothing, stands.
 
-When the model cannot decide a claim that the refund went through ("returned", "processed",
-"completed"), and the record shows a settled `refund_status`, the record supports it and the
-card says what was read; the other words in the sentence are not checked.
+Within one observation an entailing sentence outvotes a contradicting sibling: an observation is one
+consistent record, so a "contradiction" inside it is the model's, not the record's. Across
+observations the latest wins. When the state model or the record of a refused call decides a claim,
+the card says what was read; the other words in the sentence are not checked.
 
 A refutation from any tier that may refute stands; otherwise the first tier
 to support gets the credit; otherwise the claim is undetermined, and its rationale says, tier by tier, why. The system
@@ -56,7 +58,7 @@ own words (`rule_restatement_coverage`) supports it directly: NLI on an
 
 ## Public interface
 
-- `ClaimClassifier`, `ClaimDecomposer` (`claims.py`)
+- `ClaimClassifier`, `ClaimDecomposer` (`claims.py`), `StateModel` (`states.py`)
 - `GroundingResolver` (`resolver.py`), `DirectChecker` (`direct.py`)
 - `DetectionLadder`, `GroundingReasoningDiagnoser`, `TrustCalibrationTracker` (`checker.py`)
 - `AtomicClaim`, `ClaimClass`, `EvidenceCheck`, `DetectionVerdict`, `GenerationAssessment`, `TrustReport` (`types.py`)
@@ -67,8 +69,7 @@ Section `hallucination_protection:` — thresholds (`nli_entailment_threshold`,
 `evidence_min_similarity`, `embedding_top_k`, `rule_restatement_coverage`), the
 `tiers` list (order, kinds, claim classes, `may_refute`), the classifier vocabulary (`conversational_openers`,
 `record_identifier_pattern`, `outcome_pattern`, `promissory_pattern`), the
-settled-refund vocabulary (`settled_claim_pattern`, `refund_state_pattern`,
-`settled_states`, `pending_markers`, `refusal_pattern`), `rule_phrases`, self-consistency
+the refund state machine (`refund_states`: `ladder`, `branches`, `observed_as`, `phrases`; plus `refund_state_pattern`, `refusal_pattern`), `card_evidence_lines`, `rule_phrases`, self-consistency
 settings, `max_repair_attempts`. Built only when `features.hallucination_guard`
 is on.
 

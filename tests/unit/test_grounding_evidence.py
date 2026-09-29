@@ -286,3 +286,65 @@ class TestTheHostedModelOnThatTurn:
         )
         result = await guard.enforce(reply, _Support()._grounding_evidence(state))
         assert not result.escalated, result.claim_checks
+
+
+class _NeverReadsARecord:
+    """The hosted model on order 10665: it contradicts any state record, and must never see one."""
+
+    model_name = "stub-nli"
+
+    def __init__(self) -> None:
+        self.premises: list[str] = []
+
+    async def entails(self, premise: str, hypothesis: str) -> EntailmentResult:
+        self.premises.append(premise)
+        stale = "refund status:" in premise
+        return EntailmentResult(
+            label="contradiction" if stale else "unknown",
+            entailed=False,
+            score=0.99,
+            calibrated=True,
+            model="stub-nli",
+        )
+
+
+class TestAStateRecordIsNotSentToNli:
+    """`Order 10665 refund status: pending_review.` "contradicted" `has been submitted` at 0.99."""
+
+    def _turn(self) -> AgentState:
+        return _state(
+            (
+                "support__process_refund",
+                "Refund of $73.63 for order 10665 has been queued for human review. "
+                "Order 10665 refund status: pending_review.",
+                "referred",
+            )
+        )
+
+    async def test_both_replies_from_the_live_run_are_supported(self) -> None:
+        nli = _NeverReadsARecord()
+        guard = ResponseGuardrail(DetectionLadder(create_scoring_cascade(), entailment=nli))
+        reply = "Your refund request for order 10665 has been submitted and is now pending review."
+        result = await guard.enforce(reply, _Support()._grounding_evidence(self._turn()))
+        assert not result.escalated, result.claim_checks
+        assert result.supported == result.claims
+        assert not any("refund status:" in premise for premise in nli.premises)
+
+    async def test_the_card_quotes_the_line_that_decided_it(self) -> None:
+        from rich.text import Text
+
+        from agentic_commons.tui.widgets import _append_claim
+
+        guard = ResponseGuardrail(
+            DetectionLadder(create_scoring_cascade(), entailment=_NeverReadsARecord())
+        )
+        result = await guard.enforce(
+            "Your refund request for order 10665 is now pending review.",
+            _Support()._grounding_evidence(self._turn()),
+        )
+        body = Text()
+        _append_claim(body, result.claim_checks[0])
+        assert (
+            'Supported By [Tool Result] (Record): "Order 10665 refund status: pending_review."'
+            in body.plain
+        )

@@ -618,6 +618,27 @@ class RulePhraseSettings(BaseModel):
     statement: str
 
 
+class StatePhraseSettings(BaseModel):
+    """A way of saying where a refund stands, and the status it takes to be true."""
+
+    pattern: str
+    reaches: str
+    # True only while the refund is exactly there ("pending review"), rather
+    # than once it has got there ("submitted").
+    exact: bool = False
+
+
+class RefundStatesSettings(BaseModel):
+    """The refund state machine a state claim is judged against."""
+
+    ladder: list[str]
+    branches: dict[str, str]
+    settled_from: str
+    observed_as: dict[str, list[str]]
+    context_pattern: str
+    phrases: list[StatePhraseSettings]
+
+
 class HallucinationProtectionSettings(YamlBackedSettings):
     """Detection ladder thresholds (LLD)."""
 
@@ -656,11 +677,10 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     promissory_pattern: str
     # Settled-refund wording, the record field that settles it, and the
     # record wording that says it is still waiting on a person.
-    settled_claim_pattern: str
     refusal_pattern: str
     refund_state_pattern: str
-    settled_states: list[str]
-    pending_markers: list[str]
+    refund_states: RefundStatesSettings
+    card_evidence_lines: int = Field(default=3, ge=0, le=20)
     # A phrase carved out of an outcome and checked as the rule it states.
     rule_phrases: list[RulePhraseSettings]
     # A rule claim whose content is this fraction restated by one rule of
