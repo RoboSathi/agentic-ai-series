@@ -17,7 +17,11 @@ from agentic_commons.hallucination_protection import (
 )
 
 _EVIDENCE = [
-    Chunk(content="Order 10001 was delivered on March 3 and refunded $42.00.", source="db")
+    Chunk(
+        content="Order 10001 was delivered on March 3 and refunded $42.00.",
+        kind="tool_result",
+        source="db",
+    )
 ]
 
 

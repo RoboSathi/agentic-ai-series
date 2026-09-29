@@ -1,34 +1,64 @@
 # hallucination_protection — claim-level grounding
 
-Checks a draft reply claim by claim against the evidence the agent
-actually had: tool results, policy text, retrieved knowledge. Each claim is
-retrieved against, checked with a local NLI model, and resolved by evidence
-authority when evidence conflicts. Also diagnoses whether a failure was
-grounding or reasoning, and tracks how well confidence predicts correctness.
+Checks a draft reply claim by claim against the evidence the agent actually
+had. Each claim is first **classed**, and the class decides which tiers may
+ground it — so a courtesy is never scored, a promise is grounded by the rule
+that scripts it, and a fact about the case is grounded only by a record.
+Also diagnoses whether a failure was grounding or reasoning, and tracks how
+well confidence predicts correctness.
 
 ## Vocabulary
 
 - **atomic claim** — one checkable assertion split out of a reply
-- **evidence tier** — how authoritative a source is (tool result > policy > system/history); support-only tiers can support but never refute
-- **record claim** — a claim about the customer's own record — only tool results may support it
-- **undetermined** — neither supported nor refuted — counted, not guessed
+- **claim class** — `record` (a fact about this case: an order, an amount, an outcome stated as done), `rule` (how things work, and every promise: "you'll hear back soon"), `conversational` ("Thanks for reaching out" — not a claim, never scored)
+- **tier** — one stage of the cascade: which evidence kinds it reads, which claim classes it may ground, whether it may refute
+- **direct check** — the model-free step for a claim about the case: an id or amount the record lacks, or "refunded" against a record that says otherwise. It can only refute
+- **rule phrase** — a phrase carved out of an outcome and checked as the rule it states ("… to your original payment method")
+- **undetermined** — nothing decided it; counted and shown, never blocking
+
+## How a claim is grounded
+
+```
+record claim  →  direct check  →  tool_result → verification
+rule claim    →  direct check* →  policy → system prompt → memory
+conversation  →  not checked
+```
+
+\* a date, weekday or number the claim brings that no evidence contains.
+
+A refutation from any tier that may refute stands; otherwise the first tier
+to support gets the credit; otherwise the claim is undetermined. The system
+prompt and memory support only. The customer's own words are in no tier. A
+fact about the case with no record at all is refuted as unsourced.
+
+Within a tier the latest observation decides, and within one observation the
+sentence closest to the claim. A rule that restates the claim in nearly its
+own words (`rule_restatement_coverage`) supports it directly: NLI on an
+*instruction* against the statement it dictates is not reliable.
 
 ## Public interface
 
-- `ClaimDecomposer`, `GroundingResolver`, `DetectionLadder` (`checker.py`)
-- `GroundingReasoningDiagnoser`, `TrustCalibrationTracker`
-- `AtomicClaim`, `EvidenceCheck`, `DetectionVerdict`, `GenerationAssessment`, `TrustReport` (`types.py`)
+- `ClaimClassifier`, `ClaimDecomposer` (`claims.py`)
+- `GroundingResolver` (`resolver.py`), `DirectChecker` (`direct.py`)
+- `DetectionLadder`, `GroundingReasoningDiagnoser`, `TrustCalibrationTracker` (`checker.py`)
+- `AtomicClaim`, `ClaimClass`, `EvidenceCheck`, `DetectionVerdict`, `GenerationAssessment`, `TrustReport` (`types.py`)
 
 ## Configuration
 
-Section `hallucination_protection:` — thresholds (`nli_entailment_threshold`, `confidence_threshold`,
-`evidence_min_similarity`, `embedding_top_k`), `evidence_authority`, `support_only_tiers`,
-`record_claim_pattern` / `record_claim_tiers`, `combined_premise_enabled`, self-consistency settings,
-`max_repair_attempts`. Built only when `features.hallucination_guard` is on.
+Section `hallucination_protection:` — thresholds (`nli_entailment_threshold`,
+`evidence_min_similarity`, `embedding_top_k`, `rule_restatement_coverage`), the
+`tiers` list (order, kinds, claim classes, `may_refute`, optional
+`min_similarity`), the classifier vocabulary (`conversational_openers`,
+`record_identifier_pattern`, `outcome_pattern`, `promissory_pattern`), the
+settled-refund vocabulary (`settled_claim_pattern`, `refund_state_pattern`,
+`settled_states`, `pending_markers`), `rule_phrases`, self-consistency
+settings, `max_repair_attempts`. Built only when `features.hallucination_guard`
+is on.
 
 ## Seams
 
 - The ranker and entailment model are injected; NLI runs locally (`llm.local_nli`).
+- Evidence arrives as `Chunk`s whose `kind` names the tier; the agent decides what it puts in (tool results, read-backs and BasicSanity facts as `verification`, policy, the prompts a reply was written under as `system`, verified memory).
 
 ## Collaborators
 
@@ -40,4 +70,4 @@ E25, E26, E27.
 
 ## Tests
 
-Run with `./venv/bin/pytest tests/unit/test_hallucination_protection.py tests/test_hallucination_guardrails.py -q` (or `make test` for everything).
+Run with `pytest tests/unit/test_grounding_cascade.py tests/unit/test_grounding_evidence.py tests/unit/test_hallucination_protection.py tests/test_hallucination_guardrails.py -q` (or `make test` for everything).

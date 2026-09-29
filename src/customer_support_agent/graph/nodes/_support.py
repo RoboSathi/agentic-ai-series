@@ -75,7 +75,11 @@ from customer_support_agent.presentation.orders import (
 )
 from customer_support_agent.presentation.reporting import llm_request_fields, llm_response_fields
 from customer_support_agent.prompts.policy import policy_text
-from customer_support_agent.prompts.system_prompt import build_system_prompt
+from customer_support_agent.prompts.system_prompt import (
+    build_reply_instruction,
+    build_reply_system_prompt,
+    build_system_prompt,
+)
 from customer_support_agent.review.referral import ReviewReferral
 from customer_support_agent.security.authentication import CustomerAuthenticator
 from customer_support_agent.tools.definitions import SupportTools
@@ -292,6 +296,40 @@ class NodeSupport:
             if isinstance(item, dict) and item.get("kind") == "action"
         ]
 
+    def _add_verification(self, state: AgentState, fields: dict[str, Any]) -> None:
+        """Record what reading an effect back found, as evidence a reply may rest on.
+
+        A tool that reported success and a record that shows the change are
+        different facts; only the second may ground "your refund is done".
+        Nothing is recorded for a call with nothing to read back.
+        """
+        summary = fields.get("verification")
+        if not summary:
+            return
+        verdict = "verified" if fields.get("verified") else "NOT verified"
+        state.working_memory.add_current_turn(
+            {
+                "kind": "verification",
+                "content": f"Read-back: {summary}. The effect was {verdict}.",
+                "source": "effect_verification",
+            }
+        )
+
+    def _verification_evidence(self, state: AgentState) -> list[Chunk]:
+        """The second tier: this turn's read-backs, and the facts BasicSanity established."""
+        read_backs = [
+            Chunk(content=str(item["content"]), kind="verification", source=str(item["source"]))
+            for item in state.working_memory.current_turn
+            if isinstance(item, dict) and item.get("kind") == "verification"
+        ]
+        findings = (state.metadata.get("basic_sanity") or {}).get("findings") or []
+        established = [
+            Chunk(content=str(item["reason"]), kind="verification", source="basic_sanity")
+            for item in findings
+            if item.get("applicable", True) and item.get("passed") and item.get("reason")
+        ]
+        return [*read_backs, *established]
+
     def _grounding_evidence(self, state: AgentState) -> list[Chunk]:
         """Every tier a reply may be grounded on, each labelled with its tier.
 
@@ -329,7 +367,14 @@ class NodeSupport:
             for item in state.metadata.get(GROUNDING_EVIDENCE) or []
             if not str(item.get("source", "")).startswith(KNOWLEDGE_SOURCE_PREFIX)
         ]
-        return [*tools, *self._policy_evidence(), *_knowledge_evidence(), *asked, *seen]
+        return [
+            *tools,
+            *self._verification_evidence(state),
+            *self._policy_evidence(),
+            *_knowledge_evidence(),
+            *asked,
+            *seen,
+        ]
 
     def _policy_evidence(self) -> list[Chunk]:
         """Every rule the model was given, one chunk per rule, in two tiers.
@@ -348,7 +393,15 @@ class NodeSupport:
         limit = self._agent_policy.per_action_limit(REFUND_ACTION_CLASS)
         if limit:
             policy.append(f"Direct refund limit: {limit}; refunds above {limit} need human review.")
-        instructions = [rule for rule in _prompt_rules(build_system_prompt()) if rule not in policy]
+        # Every prompt a reply is written under, not only the one that chose
+        # the tools: the final call is made under the reply prompt, and the
+        # manner it asks for is what a courteous sentence restates.
+        given = _prompt_rules(
+            "\n\n".join(
+                (build_system_prompt(), build_reply_system_prompt(), build_reply_instruction())
+            )
+        )
+        instructions = list(dict.fromkeys(rule for rule in given if rule not in policy))
         return [
             *(Chunk(content=rule, kind="policy", source=f"refund_policy#{index}")
               for index, rule in enumerate(policy, start=1)),

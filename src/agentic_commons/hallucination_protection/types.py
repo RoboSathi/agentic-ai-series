@@ -8,6 +8,11 @@ from pydantic import BaseModel, Field
 # grounding failure is fixed by retrieval, a reasoning failure is not.
 FailureKind = Literal["grounding", "reasoning", "none"]
 
+# What a claim is, which decides what may ground it: a fact about this case
+# (only a record can), a rule or a promise (the business's own statements),
+# or manner of speaking ("Thanks for reaching out"), which is not checked.
+ClaimClass = Literal["record", "rule", "conversational"]
+
 
 class AtomicClaim(BaseModel):
     """One checkable assertion extracted from a generation.
@@ -20,6 +25,7 @@ class AtomicClaim(BaseModel):
     text: str
     position: int = 0
     is_verifiable: bool = True
+    claim_class: ClaimClass = "record"
 
 
 class EvidenceCheck(BaseModel):
@@ -58,6 +64,10 @@ class DetectionVerdict(BaseModel):
     # (lexical) detector, whose label is its decision.
     threshold: float | None = None
     escalated_to_human: bool = False
+    claim_class: str = ""
+    # Set when a deterministic check refuted the claim: what it found, in
+    # the code the card and the audit trail carry.
+    reason_code: str = ""
     # The detector abstained rather than refuting. `supported=False` alone
     # conflates "the evidence says otherwise" with "I could not tell", and
     # only the first is a hallucination.

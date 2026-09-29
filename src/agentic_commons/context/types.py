@@ -6,7 +6,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 # What a chunk is for, which determines how it may be trimmed.
-ChunkKind = Literal["system", "policy", "history", "retrieved", "memory", "tool_result"]
+ChunkKind = Literal[
+    "system", "policy", "history", "retrieved", "memory", "tool_result", "verification"
+]
 
 # E17's five context failure modes.
 ContextFailureMode = Literal["rot", "distraction", "confusion", "clash", "poisoning"]
