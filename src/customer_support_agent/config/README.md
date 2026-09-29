@@ -17,7 +17,7 @@ section read by `CustomerSupportAgentSettings`.
 
 ## Configuration
 
-Section `customer_support_agent:` — `db_path`, `max_tool_iterations`, `action_classes`, `intents`,
+Section `customer_support_agent:` — `grounding_facts`, `max_tool_iterations`, `action_classes`, `intents`,
 `plans`, `intent_router`, `followup`, `history_turns`, `deliberation_markers`, user-code format,
 `demo_user_code`, `policy_path`, `console_reviewer`, `dummy_data_generator_path`, and `evals`
 (dataset, fixture seed and template, workspace, rubric, quality metrics, Promptfoo config,

@@ -35,6 +35,7 @@ _FAILED = (
     "Your refund for order {order_id} was approved but could not be completed: {reason}. "
     "Nothing was charged or refunded; our team has been notified."
 )
+_PENDING = "Your refund request for order {order_id} is still under review; we will update you."
 
 
 def review_wait_key(request_id: object) -> str:
@@ -90,4 +91,6 @@ def _reply(pending: dict[str, Any], verdict: dict[str, Any]) -> str:
         return _APPROVED.format(**values)
     if outcome == "denied":
         return _DENIED.format(**values)
-    return _FAILED.format(**values)
+    if outcome in ("approved", "failed"):
+        return _FAILED.format(**values)
+    return _PENDING.format(**values)

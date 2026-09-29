@@ -17,7 +17,7 @@ authenticated customer.
 
 ## Configuration
 
-`customer_support_agent.db_path`.
+`persistence.db_path` (the agent overlays it).
 
 ## Seams
 

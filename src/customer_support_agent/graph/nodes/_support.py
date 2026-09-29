@@ -58,6 +58,7 @@ from agentic_commons.security import SecuritySuite
 from agentic_commons.security.auth.policy import AgentPolicy
 from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from agentic_commons.verification import EffectVerifier
+from customer_support_agent.config.settings import get_agent_settings
 from customer_support_agent.control_loop import OutputQualityGate
 from customer_support_agent.domain.identity import (
     Customer,
@@ -366,9 +367,31 @@ class NodeSupport:
             *tools,
             *self._policy_evidence(),
             *_knowledge_evidence(),
+            *self._session_facts(state),
             *asked,
             *seen,
         ]
+
+    @staticmethod
+    def _session_facts(state: AgentState) -> list[Chunk]:
+        """Facts the harness established for this session, restated as sentences.
+
+        Only keys the agent configures, and only those the harness set (the
+        customer cannot write working memory), so "You are Margaret Bartik"
+        is grounded by authentication, not by the customer's say-so.
+        """
+        facts = []
+        for key, template in get_agent_settings().grounding_facts.items():
+            value = state.working_memory.get(key)
+            if value:
+                facts.append(
+                    Chunk(
+                        content=template.format(value=value),
+                        kind="memory",
+                        source=f"working_memory:{key}",
+                    )
+                )
+        return facts
 
     def _policy_evidence(self) -> list[Chunk]:
         """Every rule the model was given, one chunk per rule, in two tiers.

@@ -16,6 +16,7 @@ from typing import Literal
 from pydantic import BaseModel
 from pydantic_settings import SettingsConfigDict
 
+from agentic_commons.config import get_settings
 from agentic_commons.config.paths import resolve_path
 from agentic_commons.config.settings import YamlBackedSettings
 
@@ -138,7 +139,7 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     user_code_placeholder: str
     demo_user_code: str
     policy_path: str
-    db_path: str
+    grounding_facts: dict[str, str]
     # Who the console acts as when it approves or denies a queued refund.
     console_reviewer: str
     evals: CsaEvalSettings
@@ -157,8 +158,8 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
 
     @property
     def resolved_db_path(self) -> Path:
-        """SQLite database owned by this agent deployment."""
-        return resolve_path(self.db_path)
+        """SQLite database owned by this agent deployment (`persistence.db_path`)."""
+        return get_settings().persistence.resolved_db_path
 
 
 _SETTINGS: CustomerSupportAgentSettings | None = None

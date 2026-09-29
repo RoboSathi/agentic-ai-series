@@ -80,6 +80,10 @@ security:
       # This agent moves money, so a claimed limit change is an attack on it.
       - my refund limit is now
 
+# This agent's database; every default connection pool opens it.
+persistence:
+  db_path: src/customer_support_agent/dummy_data/agentic.db
+
 hallucination_protection:
   # This agent's ids are five-digit order numbers (the same shape the
   # evals use). A record about another order cannot refute a claim.
@@ -133,7 +137,10 @@ customer_support_agent:
       # "refund 10786", "cancel order #10786"; "refund $20" is not an order.
       - '\b(?:refund|cancel)\b(?:\s+(?:for|on))?(?:\s+order)?\s*[#:]?\s*(?P<id>\d{4,})\b(?!\s*(?:dollars?|usd|\$))'
     id_shape: '\b\d{5}\b'
-  db_path: src/customer_support_agent/dummy_data/agentic.db
+  # Facts the harness (never the customer) writes to working memory, and the
+  # sentence each is restated as when a reply is checked against the evidence.
+  grounding_facts:
+    verified_customer: "You are {value}."
   max_tool_iterations: 5
   list_orders_max_rows: 20
   # Tool -> budget class. A tool absent from this map is not financially

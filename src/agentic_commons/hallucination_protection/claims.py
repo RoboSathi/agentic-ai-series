@@ -96,10 +96,20 @@ _MIN_CONTENT_TOKENS = 3
 # says exactly that, versus "your package will arrive on Tuesday" against
 # a line that mentions no day at all. The first is an abstention worth
 # tolerating; the second is a fabrication wearing the same score.
+# A month is a date only as one: a full name, or a name beside a day number
+# ("Mar 3", "3 Nov", "May 3"). A word that merely *starts* like one is not:
+# Margaret, Augustine, Decker, and the verb "may".
+_MONTH = (
+    r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|"
+    r"aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?"
+)
+_FULL_MONTH = r"january|february|march|april|june|july|august|september|october|november|december"
 _SPECIFIC = re.compile(
-    r"\d[\d,.:/-]*"
+    rf"\b(?:{_MONTH})\.?\s+\d{{1,2}}\b"
+    rf"|\b\d{{1,2}}\s+(?:{_MONTH})\b"
+    r"|\d[\d,.:/-]*"
     r"|\b(?:mon|tues|wednes|thurs|fri|satur|sun)day\b"
-    r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b",
+    rf"|\b(?:{_FULL_MONTH})\b",
     re.IGNORECASE,
 )
 
