@@ -133,3 +133,59 @@ lives in `research_agent` (pattern composition, research vocabulary).
 - **Budgets reserve before every await**: `BudgetGuard.reserve()` is
   synchronous check-and-decrement, so parallel workers on one event loop
   cannot overshoot.
+
+## 5. As built: deviations and deferrals
+
+Recorded at the end of the build; the ADRs hold the reasoning.
+
+### Deviations from the build brief
+
+1. **Branch**: `claude/research-agent-monolith-vy9ct7`, not `feat/research-agent` (§2.1).
+2. **Baseline repair before any phase** (ADR 0005): formatting, typing,
+   stale imports. On instruction, `episodes/` was excluded from lint, types
+   and tests (they will be rewritten), and 152 stale test functions that
+   exercised removed APIs were deleted. This touched csa beyond the
+   registry/docs/patterns scope: typing-only edits, plus one crash fix in
+   `graph/nodes/act.py` (an audit entry pydantic rejected on the
+   unverified-side-effect path). Each is listed in ADR 0005.
+3. **Commit granularity**: phases 0, baseline, 2 (registry + stub), 3
+   (commons mechanisms), 4–7 (scoping, rubric, research core, reflection /
+   synthesis / audit / archive / cancel), 8 (evals) and 9 (docs) are
+   separate commits, each verified green in a clean worktree. Phases 4–7
+   are **one** commit: they were built as one vertical slice against the
+   walking skeleton, which was replaced in place rather than committed on
+   its own.
+4. **Vocabulary guard** is narrower than asked: `report` and `rubric`
+   predate ra in commons (ADR 0003).
+5. **Model backend** `fixture | routed` (ra-0015); **platform features
+   declared false** (ra-0016).
+6. **Security stage** is a native golden-style suite graded by the oracle,
+   not Promptfoo; **DeepEval** runs no metrics (hosted models only); the
+   **judge** stage uses an offline `ReferenceJudge` under the fixture
+   backend, and the run record still names the platform's configured judge
+   model (the platform records config, not the injected client).
+7. **Eval store and reports** are ra's own (`data/research_evals/`,
+   `reports/research_evals/`), because suite names are per agent.
+8. **Evidence ledger identity** (commons): one span of one page is one
+   entry regardless of the sub-question that found it.
+9. **Defects the evals found and fixed in the agent** (phase 8): a scope
+   closed before any criterion was delivered as an empty `COMPLETE`
+   (fixed by a findings rule on every rubric); stale sources were read
+   despite a recency window (now out of scope for the worker); an empty
+   gap-fill plan was recorded as run; the explainer's user criteria mapped
+   to no rubric item; numbers with thousands separators were split as
+   separate answers; the ledger admitted the same span twice.
+
+### Deferred
+
+- **`/recall`** (optional in the brief): not built. The archive's episodic
+  index and semantic fact are the substrate it would read.
+- **Resuming an interrupted autonomous run after a process restart** from
+  the console: checkpoints are written at every wave boundary and the run
+  registry records the thread, but no console command resumes a run.
+- **Live Tavily and real-model runs** are wired (`web.mode: live`,
+  `model_backend: routed`) but not exercised here: no credentials in this
+  environment. The adapter is exercised through record mode against the
+  mock web.
+- **`fixed_loop`** is the one catalogue pattern neither agent uses
+  (`design_docs/patterns_coverage.md`).
