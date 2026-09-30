@@ -36,6 +36,8 @@ dependencies = [
     # AES for encrypted checkpoints (LangGraph's EncryptedSerializer):
     # checkpoints hold the whole conversation.
     "pycryptodome>=3.20",
+    # DuckDuckGo search for the web gateway's free first-try provider (no key).
+    "ddgs>=9.0",
 ]
 
 [project.optional-dependencies]

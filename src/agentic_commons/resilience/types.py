@@ -35,6 +35,14 @@ class RateLimitWaitExceededError(Exception):
     """
 
 
+class QuotaExhaustedError(Exception):
+    """Raised when a bucket's quota for the current period is spent.
+
+    Fails fast and is never retried: waiting cannot help before the period
+    rolls over, and a free-tier account that is overdrawn stops working.
+    """
+
+
 class NonIdempotentRetryError(Exception):
     """Raised when a retry is attempted without an idempotency key.
 

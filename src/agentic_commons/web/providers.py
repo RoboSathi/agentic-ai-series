@@ -1,6 +1,10 @@
 """Search providers (Strategy): who answers "which pages mention this?".
 
-`TavilyProvider` is the v1 default. Its wire shape was taken from Tavily's
+Two implementations: `DuckDuckGoProvider` (free, no key, no official API —
+best effort) and `TavilyProvider` (keyed, metered, supports time ranges and
+a news vertical). `SearchRouter` (router.py) decides which is asked.
+
+`TavilyProvider` Its wire shape was taken from Tavily's
 published API reference (`POST https://api.tavily.com/search`, bearer
 auth; response `{query, answer, results[{title, url, content, score,
 raw_content, published_date}], response_time, request_id}`); every field
@@ -11,14 +15,25 @@ crashes on a missing teaser has made the teaser load-bearing.
 model wrote about pages nobody here has read, so it never becomes a page.
 """
 
+import asyncio
+from collections.abc import Callable, Mapping
 from typing import Any, Protocol, runtime_checkable
 
 import httpx
 
-from agentic_commons.config.settings import TavilySettings
+from agentic_commons.config.settings import DuckDuckGoSettings, TavilySettings
+from agentic_commons.resilience.rate_limiter.limiter import RateLimiter
 from agentic_commons.web.types import SearchHit, SearchRequest, SearchResponse
 
 _PROVIDER = "tavily"
+_DUCKDUCKGO = "duckduckgo"
+_NEWS = "news"
+
+
+def window_name(days: int, table: Mapping[int, str]) -> str:
+    """The narrowest named window that still covers `days` (the widest if none does)."""
+    covering = [limit for limit in table if limit >= days]
+    return table[min(covering)] if covering else table[max(table)]
 
 
 @runtime_checkable
@@ -75,7 +90,82 @@ class TavilyProvider:
             body["include_domains"] = list(request.include_domains)
         if request.exclude_domains:
             body["exclude_domains"] = list(request.exclude_domains)
+        if request.recent_days is not None:
+            body["time_range"] = window_name(request.recent_days, self._settings.time_ranges)
+        if request.topic:
+            body["topic"] = request.topic
         return body
+
+
+SearchBackend = Callable[[str, SearchRequest], list[dict[str, Any]]]
+
+
+class DuckDuckGoProvider:
+    """DuckDuckGo via the `ddgs` package, run off the event loop.
+
+    There is no official API and no key, so this is the cheap first try, not
+    a guarantee: the router falls back to Tavily when it errors or finds
+    nothing. `ddgs` does its own HTTP, so the rate-limit bucket is spent
+    here explicitly rather than by the shared transport.
+    """
+
+    def __init__(
+        self,
+        settings: DuckDuckGoSettings,
+        limiter: RateLimiter | None = None,
+        backend: SearchBackend | None = None,
+    ) -> None:
+        self._settings = settings
+        self._limiter = limiter
+        self._backend = backend or self._ddgs
+
+    @property
+    def name(self) -> str:
+        return _DUCKDUCKGO
+
+    async def search(self, request: SearchRequest) -> SearchResponse:
+        if self._limiter is not None:
+            await self._limiter.acquire(self._settings.rate_bucket)
+        vertical = _NEWS if request.topic == _NEWS else "text"
+        rows = await asyncio.to_thread(self._backend, vertical, request)
+        return SearchResponse(request=request, hits=_ddg_hits(rows), provider=_DUCKDUCKGO)
+
+    def _ddgs(self, vertical: str, request: SearchRequest) -> list[dict[str, Any]]:
+        from ddgs import DDGS
+
+        client = DDGS(timeout=int(self._settings.timeout_seconds))
+        search = client.news if vertical == _NEWS else client.text
+        rows: list[dict[str, Any]] = search(
+            request.query,
+            region=self._settings.region,
+            safesearch=self._settings.safesearch,
+            timelimit=self._timelimit(request),
+            max_results=request.max_results,
+            backend=self._settings.backend,
+        )
+        return rows
+
+    def _timelimit(self, request: SearchRequest) -> str | None:
+        if request.recent_days is None:
+            return None
+        return window_name(request.recent_days, self._settings.time_limits)
+
+
+def _ddg_hits(rows: list[dict[str, Any]]) -> list[SearchHit]:
+    """`text` rows carry href/body; `news` rows carry url/body/date."""
+    hits = []
+    for row in rows:
+        url = row.get("href") or row.get("url")
+        if url:
+            hits.append(
+                SearchHit(
+                    url=str(url),
+                    title=str(row.get("title") or ""),
+                    snippet=str(row.get("body") or ""),
+                    published_date=str(row.get("date") or ""),
+                )
+            )
+    return hits
 
 
 def parse_tavily_response(request: SearchRequest, payload: dict[str, Any]) -> SearchResponse:

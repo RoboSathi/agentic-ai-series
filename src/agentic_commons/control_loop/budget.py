@@ -70,7 +70,8 @@ class CounterState(BaseModel):
 
     @property
     def exhausted(self) -> bool:
-        return self.remaining <= 0
+        """Used up. A zero cap means "not allowed" — nothing was spent, nothing ran out."""
+        return self.cap > 0 and self.remaining <= 0
 
 
 class BudgetGuard:

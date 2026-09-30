@@ -16,6 +16,9 @@ from agentic_commons.hashing import canonical_hash
 from agentic_commons.observability.types import utc_now
 
 FetchVia = Literal["http", "reader"]
+# Optional request fields that only enter the replay key when set, so
+# fixtures recorded before they existed still replay.
+_OPTIONAL_KEY_FIELDS = ("recent_days", "topic")
 
 
 class SearchRequest(BaseModel):
@@ -27,19 +30,37 @@ class SearchRequest(BaseModel):
     max_results: int
     include_domains: tuple[str, ...] = ()
     exclude_domains: tuple[str, ...] = ()
+    # Only results published within this many days (None: any time).
+    recent_days: int | None = None
+    # A provider vertical, e.g. "news"; empty means general web search.
+    topic: str = ""
+
+    @property
+    def time_bounded(self) -> bool:
+        return self.recent_days is not None or bool(self.topic)
+
+    def unbounded(self) -> "SearchRequest":
+        """The same search without a time bound or topic."""
+        return self.model_copy(update={"recent_days": None, "topic": ""})
 
     def normalized(self) -> "SearchRequest":
         """Whitespace and case folded, domain lists sorted — the replay key's input."""
-        return SearchRequest(
-            query=" ".join(self.query.casefold().split()),
-            max_results=self.max_results,
-            include_domains=tuple(sorted(domain.casefold() for domain in self.include_domains)),
-            exclude_domains=tuple(sorted(domain.casefold() for domain in self.exclude_domains)),
+        return self.model_copy(
+            update={
+                "query": " ".join(self.query.casefold().split()),
+                "include_domains": tuple(sorted(d.casefold() for d in self.include_domains)),
+                "exclude_domains": tuple(sorted(d.casefold() for d in self.exclude_domains)),
+                "topic": self.topic.casefold(),
+            }
         )
 
     @property
     def key(self) -> str:
-        return canonical_hash(self.normalized().model_dump(mode="json"))
+        fields = self.normalized().model_dump(mode="json")
+        for name in _OPTIONAL_KEY_FIELDS:
+            if not fields[name]:
+                del fields[name]
+        return canonical_hash(fields)
 
 
 class SearchHit(BaseModel):

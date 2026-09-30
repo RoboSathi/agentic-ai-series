@@ -12,18 +12,28 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from research_agent.domain.budget import Budget
 
-Archetype = Literal["decision_support", "landscape_brief", "fact_verification", "explainer"]
+Archetype = Literal[
+    "decision_support", "landscape_brief", "fact_verification", "explainer", "general", "qa"
+]
+# What the user chooses between: a quick cited answer, or a scoped research run.
+Mode = Literal["qa", "research"]
 ItemStatus = Literal["open", "covered", "waived"]
 Depth = Literal["overview", "standard", "deep"]
 GateDecision = Literal["scopable", "needs_reframe", "refuse"]
 UnknownReason = Literal["waived", "closed_early", "turn_cap"]
 
-ARCHETYPES: tuple[Archetype, ...] = (
+# The kinds a Research run can take; `general` when no specialised one fits.
+RESEARCH_ARCHETYPES: tuple[Archetype, ...] = (
     "decision_support",
     "landscape_brief",
     "fact_verification",
     "explainer",
+    "general",
 )
+# Every kind, including `qa` — the Q&A mode's fast path (no interview).
+ARCHETYPES: tuple[Archetype, ...] = (*RESEARCH_ARCHETYPES, "qa")
+QA: Archetype = "qa"
+GENERAL: Archetype = "general"
 
 
 class CoverageItem(BaseModel):
@@ -46,9 +56,12 @@ class GateVerdict(BaseModel):
     """The scopability gate's decision on a first message."""
 
     decision: GateDecision
+    mode: Mode = "research"
     archetype: Archetype | None = None
     topic: str = ""
     reason: str = ""
+    # A time window stated in the message ("in the last 1 month" -> 30).
+    recent_days: int | None = None
 
 
 class SourcePolicy(BaseModel):

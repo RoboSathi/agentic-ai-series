@@ -26,7 +26,14 @@ from research_agent.fixture_world.world import load_world
 from tests.research_agent.conftest import BuildHarness, converse, decision_script
 
 ABLATIONS = Path(__file__).resolve().parents[2] / "src/research_agent/evals/ablations"
-ARCHETYPES = ("decision_support", "landscape_brief", "fact_verification", "explainer")
+ARCHETYPES = (
+    "decision_support",
+    "landscape_brief",
+    "fact_verification",
+    "explainer",
+    "general",
+    "qa",
+)
 URL = "https://a.example/p"
 
 

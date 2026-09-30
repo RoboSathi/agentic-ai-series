@@ -811,6 +811,14 @@ resilience:
       tavily:
         max_requests: 20
         hosts: [api.tavily.com]
+        # Tavily's free tier is 1,000 calls a month; stop at 900 to keep a
+        # margin for other tools on the same key. A spent quota fails fast.
+        monthly_quota: 900
+      # DuckDuckGo (via `ddgs`) has no official API and throttles bursts;
+      # its provider spends this bucket explicitly (no HTTP host to match).
+      duckduckgo:
+        max_requests: 10
+        hosts: []
 
 evals:
   enabled: true
@@ -989,8 +997,15 @@ web:
   fixtures_dir: data/web_fixtures
   fixture_set: default
   search:
-    provider: tavily
+    # General searches: DuckDuckGo first (free, no key), Tavily when it
+    # fails or finds nothing. Time-bounded / news searches: Tavily first.
+    providers: [duckduckgo, tavily]
+    time_bounded_providers: [tavily, duckduckgo]
     max_results: 5
+    # Live answers are reused from disk for this long: repeating a question
+    # costs no provider call.
+    cache_ttl_hours: 24
+    cache_dir: data/web_cache
   fetch:
     timeout_seconds: 20
     user_agent: "agentic-harness/0.1 (+https://robosathi.com)"
@@ -1007,6 +1022,14 @@ web:
     # Provider summaries are never evidence; do not pay for them.
     include_answer: false
     timeout_seconds: 20
+    time_ranges: {1: day, 7: week, 31: month, 366: year}
+  duckduckgo:
+    backend: duckduckgo
+    region: wt-wt
+    safesearch: moderate
+    timeout_seconds: 20
+    time_limits: {1: d, 7: w, 31: m, 366: y}
+    rate_bucket: duckduckgo
 
 # Frozen artifacts (agentic_commons/artifacts), one directory per run.
 artifacts:

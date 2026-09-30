@@ -5,7 +5,7 @@ agent: research_agent
 patterns:
   - pattern: router
     where: scoping/gate.py · scope_gate node
-    notes: the scopability gate routes the first message to one of four archetypes, a reframe, or a refusal
+    notes: the gate routes the first message to Q&A (auto_freeze, no interview) or a Research kind, a reframe menu, or a refusal
   - pattern: human_in_the_loop
     where: graph/scoping_graph.py · await_user (durability/hitl.await_decision)
     notes: the interview and rubric review pause the durable graph until the user answers; /approve freezes the contract
@@ -40,7 +40,9 @@ other:
   - pattern: strategy
     where: research/stop_rules/ (one stop rule per archetype)
   - pattern: adapter
-    where: agentic_commons/web/providers.py · TavilyProvider behind SearchProvider
+    where: agentic_commons/web/providers.py · TavilyProvider and DuckDuckGoProvider behind SearchProvider
+  - pattern: chain of responsibility
+    where: agentic_commons/web/router.py · SearchRouter (free provider first, metered fallback)
   - pattern: factory
     where: graph/builder.py (composition root) · fixture_world/model.py fixture_client_factory
   - pattern: builder

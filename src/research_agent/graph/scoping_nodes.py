@@ -6,13 +6,15 @@ the frozen contract. What the model proposes is filtered through code —
 the termination policy and the challenge guard — before it becomes state.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from research_agent.config.settings import CommandNames, MessageSettings, ScopingSettings
-from research_agent.domain.rubric import Rubric
-from research_agent.domain.scope import UnknownReason
+from research_agent.domain.rubric import Contract, Rubric
+from research_agent.domain.scope import GENERAL, GateVerdict, Mode, ScopeBrief, UnknownReason
 from research_agent.graph.state import ScopingState
 from research_agent.prompts import interviewer as interviewer_prompt
 from research_agent.research.telemetry import RunTelemetry
@@ -22,7 +24,12 @@ from research_agent.rubric.generator import RubricGenerator
 from research_agent.scoping import checklist
 from research_agent.scoping.brief import BriefBuilder
 from research_agent.scoping.challenge_check import ChallengeGuard
-from research_agent.scoping.gate import ArchetypeClassifier
+from research_agent.scoping.gate import (
+    ArchetypeClassifier,
+    render_options,
+    resolve_reframe_choice,
+    with_mode,
+)
 from research_agent.scoping.termination import TerminationPolicy
 from research_agent.structured import StructuredCaller
 
@@ -33,6 +40,8 @@ Update = dict[str, Any]
 class ScopingParts:
     """The collaborators scoping is composed of; optional ones are features."""
 
+    # "Now" for the contract (real time live; the fixture world's date in the demo).
+    clock: Callable[[], datetime]
     classifier: ArchetypeClassifier
     caller: StructuredCaller
     checklists: Path
@@ -57,15 +66,48 @@ class ScopingNodes:
     # -- gate ------------------------------------------------------------------------
 
     async def gate(self, state: ScopingState) -> Update:
+        """Q&A, a Research kind, a reframe menu, or a refusal — for the first message."""
+        choice = self._reframe_choice(state)
+        forced = choice or state.forced_mode
         message = (
             state.first_message
-            if state.phase == "GATE"
+            if state.phase == "GATE" or choice is not None
             else f"{state.first_message} {state.user_input}"
         )
         verdict = await self._p.classifier.classify(message)
+        if forced is not None and verdict.decision != "refuse":
+            verdict = with_mode(verdict, forced)
+        self._report_gate(verdict)
+        if verdict.decision == "refuse":
+            return {"phase": "REFUSED", "reply": self._p.messages.refuse}
+        if verdict.decision == "needs_reframe" or verdict.archetype is None:
+            return {"phase": "REFRAME", "reply": self._menu(), "user_input": ""}
+        found = {"topic": verdict.topic or message, "recent_days": verdict.recent_days}
+        if verdict.mode == "qa":
+            return {"phase": "QA", "mode": "qa", "archetype": verdict.archetype, **found}
+        items = checklist.load_checklist(self._p.checklists, verdict.archetype)
+        return {
+            "phase": "INTERVIEW",
+            "mode": "research",
+            "archetype": verdict.archetype,
+            "items": checklist.prefill_window(items, verdict.recent_days),
+            **found,
+        }
+
+    def _reframe_choice(self, state: ScopingState) -> Mode | None:
+        if state.phase != "REFRAME":
+            return None
+        return resolve_reframe_choice(state.user_input, self._p.settings.reframe_options)
+
+    def _menu(self) -> str:
+        options = render_options(self._p.settings.reframe_options, self._p.messages.reframe_option)
+        return self._p.messages.reframe.format(options=options)
+
+    def _report_gate(self, verdict: GateVerdict) -> None:
+        kind = verdict.archetype if verdict.decision == "scopable" else None
         self._p.telemetry.stage(
             "scope_gate",
-            f"{verdict.decision}" + (f" · {verdict.archetype}" if verdict.archetype else ""),
+            f"{verdict.decision}" + (f" · {verdict.mode} · {kind}" if kind else ""),
             verdict.model_dump(),
             status="blocked" if verdict.decision == "refuse" else "completed",
         )
@@ -75,24 +117,29 @@ class ScopingNodes:
             verdict.reason or verdict.decision,
             archetype=verdict.archetype,
             gate_decision=verdict.decision,
+            mode=verdict.mode,
         )
-        if verdict.decision == "refuse":
-            return {"phase": "REFUSED", "reply": self._p.messages.refuse}
-        if verdict.decision == "needs_reframe" or verdict.archetype is None:
-            return {"phase": "REFRAME", "reply": self._p.messages.reframe}
-        items = checklist.load_checklist(self._p.checklists, verdict.archetype)
-        return {
-            "phase": "INTERVIEW",
-            "archetype": verdict.archetype,
-            "topic": verdict.topic or message,
-            "items": items,
-        }
 
     @staticmethod
     def after_gate(state: ScopingState) -> str:
         if state.phase == "REFUSED":
             return "__end__"
+        if state.phase == "QA":
+            return "auto_freeze"
         return "await_user" if state.phase == "REFRAME" else "interview_turn"
+
+    async def auto_freeze(self, state: ScopingState) -> Update:
+        """Q&A: the question becomes a Brief, the Brief a contract — no interview, no review."""
+        brief = self._p.briefs.question(state.topic, state.recent_days)
+        rubric = self._p.generator.generate(brief) if self._p.generator is not None else Rubric()
+        contract = self._freeze(brief, rubric, "the Q&A question was asked")
+        return {
+            "brief": brief,
+            "rubric": rubric,
+            "contract": contract,
+            "phase": "APPROVED",
+            "reply": self._p.messages.qa_started,
+        }
 
     # -- interview -------------------------------------------------------------------
 
@@ -216,9 +263,7 @@ class ScopingNodes:
             "turn_cap" if state.turn >= self._p.settings.max_turns else "closed_early"
         )
         unknowns = checklist.known_unknowns(state.items, reason)
-        brief = self._p.briefs.build(
-            state.archetype or "explainer", state.topic, state.items, unknowns
-        )
+        brief = self._p.briefs.build(state.archetype or GENERAL, state.topic, state.items, unknowns)
         self._p.telemetry.stage(
             "close_scoping",
             f"Scope Brief · {len(unknowns)} known unknown(s)",
@@ -277,11 +322,19 @@ class ScopingNodes:
 
     async def freeze(self, state: ScopingState) -> Update:
         assert state.brief is not None and state.rubric is not None
-        contract = freeze_contract(state.brief, state.rubric, self._p.contract_prefix)
+        contract = self._freeze(state.brief, state.rubric, "user approved the research contract")
+        reply = self._p.messages.approved.format(
+            contract_id=contract.contract_id, hash=contract.contract_hash[:12]
+        )
+        return {"contract": contract, "phase": "APPROVED", "reply": reply}
+
+    def _freeze(self, brief: ScopeBrief, rubric: Rubric, why: str) -> Contract:
+        """Freeze, hash, and record the hash where the end-of-run check will find it."""
+        contract = freeze_contract(brief, rubric, self._p.contract_prefix, self._p.clock())
         self._p.telemetry.audit(
             "contract.frozen",
             "allow",
-            "user approved the research contract",
+            why,
             contract_id=contract.contract_id,
             contract_hash=contract.contract_hash,
         )
@@ -290,10 +343,7 @@ class ScopingNodes:
             f"Contract {contract.contract_id} · {contract.contract_hash[:12]}",
             {"contract_id": contract.contract_id, "hash": contract.contract_hash},
         )
-        reply = self._p.messages.approved.format(
-            contract_id=contract.contract_id, hash=contract.contract_hash[:12]
-        )
-        return {"contract": contract, "phase": "APPROVED", "reply": reply}
+        return contract
 
     async def say(self, state: ScopingState) -> Update:
         hint = (

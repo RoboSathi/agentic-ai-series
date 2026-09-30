@@ -1,5 +1,6 @@
 """The fixture world as types: authored pages and the search index over them."""
 
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -25,10 +26,23 @@ class WorldQuery(BaseModel):
     answer: str = ""
 
 
+class WorldTopic(BaseModel):
+    """What the demo world can answer, as the greeting lists it."""
+
+    title: str
+    example: str
+
+
 class World(BaseModel):
     set_name: str
     version: str
     description: str
+    # "Now" in this world: publication dates are fixed, so recency windows
+    # are measured from here, not from the wall clock.
+    as_of: datetime
+    topics: list[WorldTopic] = Field(default_factory=list)
+    # One question per mode that the demo world answers well.
+    examples: dict[str, str] = Field(default_factory=dict)
     reader_url_template: str
     persona: "ModelPersona"
     pages: list[WorldPage]

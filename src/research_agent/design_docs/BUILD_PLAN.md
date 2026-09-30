@@ -183,9 +183,9 @@ Recorded at the end of the build; the ADRs hold the reasoning.
 - **Resuming an interrupted autonomous run after a process restart** from
   the console: checkpoints are written at every wave boundary and the run
   registry records the thread, but no console command resumes a run.
-- **Live Tavily and real-model runs** are wired (`web.mode: live`,
-  `model_backend: routed`) but not exercised here: no credentials in this
-  environment. The adapter is exercised through record mode against the
-  mock web.
+- **Live Tavily, DuckDuckGo and real-model runs** are the default since
+  ADR ra-0018 but are not exercised in this environment (no credentials, no
+  outbound search): the adapters, router, quota and cache are tested with
+  mock transports and a scripted DuckDuckGo backend.
 - **`fixed_loop`** is the one catalogue pattern neither agent uses
   (`design_docs/patterns_coverage.md`).

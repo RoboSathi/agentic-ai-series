@@ -13,6 +13,7 @@ get the real wiring of everything else.
 
 import re
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 import yaml
@@ -39,6 +40,7 @@ from agentic_commons.llm.roles import RoleModelRouter
 from agentic_commons.memory import EpisodicStore, MemoryFacade, SemanticStore, WorkingMemoryStore
 from agentic_commons.observability import StageReporter
 from agentic_commons.observability.store import DuckDbObservabilityStore
+from agentic_commons.observability.types import utc_now
 from agentic_commons.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agentic_commons.security.pii import PIIFilterImpl
 from agentic_commons.security.prompt_injection.detector import InstructionDataSeparator
@@ -161,6 +163,16 @@ def _require_independent_judge(
 # -- scoping ---------------------------------------------------------------------------------
 
 
+def contract_clock(agent: ResearchAgentSettings) -> Callable[[], datetime]:
+    """Real time, except over the fixture world, whose dates are fixed at its `as_of`."""
+    if agent.model_backend != "fixture":
+        return utc_now
+    from research_agent.fixture_world.world import load_world
+
+    as_of = load_world(agent.resolved_fixture_world_path).as_of
+    return lambda: as_of
+
+
 def _scoping_parts(
     agent: ResearchAgentSettings,
     posture: FeatureSet,
@@ -170,11 +182,12 @@ def _scoping_parts(
     rubric_on = posture.is_on("rubric")
     generator = RubricGenerator(agent.rubric.resolved_templates_path) if rubric_on else None
     return ScopingParts(
+        clock=contract_clock(agent),
         classifier=LlmArchetypeClassifier(caller, agent.scoping),
         caller=caller,
         checklists=agent.scoping.resolved_checklists_path,
         termination=TerminationPolicy(agent.scoping.max_turns),
-        briefs=BriefBuilder(agent.scoping, agent.budget),
+        briefs=BriefBuilder(agent.scoping, agent.budget, agent.qa.budget),
         telemetry=telemetry,
         settings=agent.scoping,
         messages=agent.messages,

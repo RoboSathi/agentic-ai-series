@@ -16,20 +16,38 @@ It is deliberately **not an open-ended search engine**:
 - every run ends `COMPLETE`, `PARTIAL`, `CANCELLED` or `FAILED` — and a
   `PARTIAL` report says, item by item, what it could not establish and why.
 
+## Two modes
+
+- **Q&A** — ask a question, get a short answer in one turn where every
+  sentence cites a page the agent fetched and quoted. No interview.
+  e.g. *Important AI news in the last 1 month*.
+- **Research** — the full flow: a short interview, acceptance criteria you
+  can edit and `/approve`, an autonomous run, an independent audit, a
+  report that ends COMPLETE or PARTIAL. The kind (decision, landscape,
+  fact-check, explainer, or general) is picked for you.
+
+The gate routes automatically; `/qa <question>` and `/research [question]`
+override it (ADR ra-0017).
+
 ## Running it
 
 ```
-make data ra        # record + validate the fixture world (idempotent)
-make tui ra         # interview → rubric → autonomous run → audited report
-make runs ra        # archived runs (re-verifies every artifact's hash)
-make eval ra        # generate → oracle → security → judge → deepeval
+make tui ra                 # LIVE: real web + NVIDIA models (needs nvidia_api_key;
+                            #   tavily_api_key optional — DuckDuckGo is used first)
+make tui ra PROFILE=demo    # offline demo over the synthetic Kelvari world
+make runs ra                # archived runs (re-verifies every artifact's hash)
+make eval ra                # evals: always offline (demo profile), deterministic
+make data ra                # record + validate the fixture world (offline)
 ```
 
-By default the web is **replayed** from the recorded fixture world and
-every model role is the fixture world's **reference model**
-(`research_agent.model_backend: fixture`), so the whole flow runs offline
-and reproducibly. `model_backend: routed` sends each role to the model in
-`llm.roles`; `web.mode: live` (with `tavily_api_key`) uses the real web.
+**Live** (default): searches go through a router — DuckDuckGo first for
+general questions, Tavily first for news/time-bounded ones and as the
+fallback — and every role is an NVIDIA NIM model. It stays inside free
+tiers: Tavily is capped at 900 calls a month (shared by every process),
+searches are cached for 24h, Q&A spends ≤3 searches and Research ≤8
+(ADR ra-0018). **Demo**: the web is replayed from the recorded fixture
+world and every role is the fixture world's reference model — offline and
+reproducible, but it can only research the Kelvari topics the greeting lists.
 
 ## Where things are
 
@@ -44,7 +62,7 @@ and reproducibly. `model_backend: routed` sends each role to the model in
 | `archive/` | the three-artifact archive, the run index, `make runs ra` |
 | `graph/` | both LangGraph graphs, their nodes, the agent, the composition root |
 | `console/` | `ResearchHost` — the agent as the shared TUI sees it |
-| `fixture_world/` | the synthetic domain, its mock web, recorder, reference model and scripted user |
+| `fixture_world/` | the synthetic domain (tests, evals, `PROFILE=demo`), its mock web, recorder, reference model and scripted user |
 | `evals/` | the eval plugin, oracle, reference judge, datasets, planted flaws, ablations |
 
 ## Further reading

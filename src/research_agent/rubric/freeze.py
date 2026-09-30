@@ -7,6 +7,7 @@ do" is a detectable event rather than a matter of reading two transcripts.
 """
 
 import uuid
+from datetime import datetime
 
 from agentic_commons.artifacts import FrozenArtifact
 from research_agent.domain.rubric import Contract, Rubric
@@ -16,9 +17,16 @@ BRIEF_ARTIFACT = "brief"
 RUBRIC_ARTIFACT = "rubric"
 
 
-def freeze_contract(brief: ScopeBrief, rubric: Rubric, prefix: str) -> Contract:
-    """The approved contract, identified by a fresh id and its content hash."""
-    return Contract.freeze(f"{prefix}-{uuid.uuid4().hex[:10]}", brief, rubric, brief.budget)
+def freeze_contract(
+    brief: ScopeBrief, rubric: Rubric, prefix: str, frozen_at: datetime
+) -> Contract:
+    """The approved contract, identified by a fresh id and its content hash.
+
+    `frozen_at` is "now" for every recency window of the run — injected, so
+    a replayed world with fixed publication dates stays reproducible.
+    """
+    contract = Contract.freeze(f"{prefix}-{uuid.uuid4().hex[:10]}", brief, rubric, brief.budget)
+    return contract.model_copy(update={"frozen_at": frozen_at})
 
 
 def contract_artifacts(contract: Contract) -> list[FrozenArtifact]:

@@ -24,6 +24,8 @@ from research_agent.console.commands import (
     HistoryCommand,
     ShowCommand,
 )
+from research_agent.console.greeting import build_greeting
+from research_agent.console.setup import missing_model_key, search_usage, search_warning
 
 _STATUS_STYLE = {"covered": "green", "waived": "yellow", "open": "white"}
 
@@ -38,11 +40,20 @@ class ResearchHost:
         return get_agent_settings().placeholder
 
     def greeting(self) -> str:
-        return get_agent_settings().greeting
+        settings, agent = get_settings(), get_agent_settings()
+        notes = [
+            note
+            for note in (search_usage(settings, agent), search_warning(settings, agent))
+            if note is not None
+        ]
+        return build_greeting(settings, agent, notes)
 
     def prepare(self) -> None:
-        """Record the fixture world before the event loop opens, if replay needs it."""
+        """Stop on a missing live credential; record the fixture world if replay needs it."""
         settings, agent = get_settings(), get_agent_settings()
+        problem = missing_model_key(settings, agent)
+        if problem is not None:
+            raise SystemExit(problem)
         if settings.web.mode == "replay" and agent.model_backend == "fixture":
             from research_agent.fixture_world.generate import ensure_recorded
 
@@ -64,6 +75,10 @@ class ResearchHost:
         agent = get_agent_settings()
         names, help_text, messages = agent.command_names, agent.tui.command_help, agent.messages
         forwarded = [
+            ForwardedCommand(names.qa, help_text["qa"], f"/{names.qa} <question>", needs_args=True),
+            ForwardedCommand(
+                names.research, help_text["research"], f"/{names.research} [question]"
+            ),
             ForwardedCommand(names.done, help_text["done"], f"/{names.done}"),
             ForwardedCommand(
                 names.waive, help_text["waive"], f"/{names.waive} <id|all>", needs_args=True
@@ -116,6 +131,9 @@ class ResearchHost:
             panels.append(_checklist(state["items"], labels["checklist"]))
         if state.get("budget"):
             panels.append(_meters(state, labels))
+        usage = search_usage(get_settings(), get_agent_settings())
+        if usage is not None:
+            panels.append(usage)
         return panels
 
 

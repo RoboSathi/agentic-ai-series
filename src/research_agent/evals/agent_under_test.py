@@ -35,6 +35,7 @@ from agentic_commons.observability import InMemoryLiveStatusFeed, StageReporter
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.web import FixtureStore, ReplayMissError, SearchRequest, WebGateway
 from research_agent.config.settings import ResearchAgentSettings
+from research_agent.domain.budget import Budget
 from research_agent.domain.report import Report
 from research_agent.evals.dataset.schema import ResearchCasePayload
 from research_agent.evals.planted import plant
@@ -109,7 +110,7 @@ class ResearchAgentUnderTest:
                 shutil.rmtree(workspace, ignore_errors=True)
 
     def settings_for(self, payload: ResearchCasePayload) -> ResearchAgentSettings:
-        budget = self._settings.budget.model_copy(update=payload.budget)
+        budget = Budget.model_validate({**self._settings.budget.model_dump(), **payload.budget})
         return self._settings.model_copy(update={"budget": budget})
 
     def gateway(self) -> WebGateway:

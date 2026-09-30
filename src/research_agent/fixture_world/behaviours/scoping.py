@@ -11,24 +11,28 @@ _PLAN_ITEMS = ("options", "criteria", "claims", "concepts", "known_players", "sc
 
 
 def gate(model: "FixtureWorldModel", payload: dict[str, Any], instructions: str) -> dict[str, Any]:
-    """Classify by archetype cues; no cue means the request needs reframing."""
+    """Research when a kind's cue (or a research cue) appears; otherwise a quick answer."""
     message = str(payload["message"])
     folded = f" {message.casefold()} "
     scores = {
         name: sum(cue in folded for cue in cues) for name, cues in payload["archetype_cues"].items()
     }
     best = max(scores, key=lambda name: scores[name])
-    if scores[best] == 0:
-        return {
-            "decision": "needs_reframe",
-            "topic": message.strip(),
-            "reason": "no purpose stated",
-        }
+    topic = message.strip().rstrip("?.")
+    if scores[best] > 0:
+        return _scopable("research", best, topic, "a research kind was named")
+    if any(cue in folded for cue in payload["research_cues"]):
+        return _scopable("research", "general", topic, "a research run was asked for")
+    return _scopable("qa", "qa", topic, "a direct question")
+
+
+def _scopable(mode: str, archetype: str, topic: str, reason: str) -> dict[str, Any]:
     return {
         "decision": "scopable",
-        "archetype": best,
-        "topic": message.strip().rstrip("?."),
-        "reason": "purpose stated",
+        "mode": mode,
+        "archetype": archetype,
+        "topic": topic,
+        "reason": reason,
     }
 
 

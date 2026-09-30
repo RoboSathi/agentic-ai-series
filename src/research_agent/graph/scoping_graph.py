@@ -31,9 +31,14 @@ def build_scoping_graph(nodes: ScopingNodes, checkpointer: Any, with_rubric: boo
     builder.add_node("close_scoping", nodes.close)
     builder.add_node("rubric_frozen", nodes.freeze)
     builder.add_node("say", nodes.say)
+    builder.add_node("auto_freeze", nodes.auto_freeze)
     builder.add_node(WAIT, _await_user)
     builder.add_edge(START, "scope_gate")
-    builder.add_conditional_edges("scope_gate", nodes.after_gate, ["interview_turn", WAIT, END])
+    builder.add_conditional_edges(
+        "scope_gate", nodes.after_gate, ["interview_turn", "auto_freeze", WAIT, END]
+    )
+    # Q&A: no interview and no review — the question is frozen as asked.
+    builder.add_edge("auto_freeze", END)
     builder.add_edge("interview_turn", WAIT)
     # After a waiver the interviewer moves on to the next open item.
     builder.add_edge("coverage_update", "interview_turn")

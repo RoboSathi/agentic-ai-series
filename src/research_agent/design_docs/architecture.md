@@ -40,7 +40,8 @@ With the `rubric` feature withheld there is no `RUBRIC_REVIEW` stage:
 ```mermaid
 flowchart LR
     START([start]) --> scope_gate
-    scope_gate -->|scopable| interview_turn
+    scope_gate -->|Q&A| auto_freeze --> END
+    scope_gate -->|Research| interview_turn
     scope_gate -->|needs reframe| await_user
     scope_gate -->|refuse| END([end])
     interview_turn --> await_user
@@ -53,6 +54,9 @@ flowchart LR
     await_user -->|other command| say --> await_user
 ```
 
+- **Q&A** skips the interview: `auto_freeze` builds the Brief from the
+  question (and its time window), generates the `qa` rubric, freezes and
+  hashes the contract, and the run graph runs it on the Q&A budget.
 - **Termination is enforced in code** (`scoping/termination.py`): the
   interviewer may only *propose* done when no required item is open; the
   user confirms. `/done` closes at any time — open items become known
@@ -97,7 +101,7 @@ flowchart TD
 flowchart LR
     q[query] --> ob{outbound guard}
     ob -->|blocked| trace[(trace)]
-    ob --> reserve[reserve search] --> search[WebGateway.search]
+    ob --> reserve[reserve search] --> search[WebGateway.search<br/>cache → router: DuckDuckGo / Tavily]
     search --> policy[recency window · source policy]
     policy --> fetch[reserve fetch → WebGateway.fetch]
     fetch --> screen{injection screen}

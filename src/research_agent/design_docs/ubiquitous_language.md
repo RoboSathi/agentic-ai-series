@@ -4,8 +4,12 @@ These names are used as written in code, logs, stage labels and docs.
 
 | term | meaning | in code |
 |---|---|---|
-| **Archetype** | the kind of research asked for: `decision_support`, `landscape_brief`, `fact_verification`, `explainer` | `domain/scope.py::Archetype` |
-| **Scopability gate** | the first-message classifier: `scopable(archetype)`, `needs_reframe` or `refuse` | `scoping/gate.py` (`ArchetypeClassifier` Protocol) |
+| **Mode** | what the user chooses between: **Q&A** (a quick cited answer, no interview) or **Research** (the full, audited flow) | `domain/scope.py::Mode` |
+| **Archetype** | the kind of run: Research kinds `decision_support`, `landscape_brief`, `fact_verification`, `explainer`, `general`; plus `qa` for Q&A | `domain/scope.py::Archetype` |
+| **Gate** | the first-message classifier: `scopable(mode, archetype)`, `needs_reframe` (no question at all → a numbered menu of the modes) or `refuse`; reads any time window | `scoping/gate.py` (`ArchetypeClassifier` Protocol) |
+| **Time window** | "in the last 1 month" → 30 days: the Brief's `recency_days`, sent to the search providers and enforced by the worker | `scoping/window.py` |
+| **Profile** | a named posture of the agent's config: live (default) or `demo` (offline Kelvari) | `config/profiles/` |
+| **Search quota** | a provider's monthly request allowance, counted across processes (Tavily: 900) | `agentic_commons` rate limiter |
 | **Coverage checklist** | per-archetype interview items, each `open`, `covered` or `waived` | `scoping/checklists.yaml`, `scoping/checklist.py` |
 | **Known unknown** | a scope item the user waived or left open at `/done`; must be acknowledged by the rubric and the report | `domain/scope.py::KnownUnknown` |
 | **Scope Brief** | the typed, frozen output of scoping: archetype, purpose/decision, criteria, constraints, source policy, recency/geography, depth, deliverable, budget, known unknowns | `domain/scope.py::ScopeBrief` |

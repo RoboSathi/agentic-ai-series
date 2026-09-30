@@ -8,8 +8,8 @@ named in the overlay's `evals.plugin`). The oracle gates at 100%.
 ## The fixture world
 
 `fixture_world/world.yaml` is a small invented domain (grid storage and
-river turbines in "Kelvari") so ground truth is known: 27 authored pages,
-30 indexed queries. It contains every hazard the evals rely on:
+river turbines, AI news in "Kelvari") so ground truth is known: 34 authored
+pages, 33 indexed queries, and an `as_of` date recency windows are measured from. It contains every hazard the evals rely on:
 
 - **conflicting sources** (a vendor's 10,000-cycle rating vs an
   independent bench's 6,200);
@@ -35,7 +35,12 @@ something measurable to do.
 
 ## Cases
 
-`evals/dataset/golden_cases.yaml` (18 cases, ≥3 per archetype) and
+Evals always run on the demo profile (`make eval* ra` pins it; the plugin
+refuses a live posture), so they never touch the network or a quota.
+
+`evals/dataset/golden_cases.yaml` (25 cases: ≥3 per kind, including
+Q&A — e.g. "Important Kelvari AI news in the last 1 month", whose
+out-of-window pages must stay out — and `general`) and
 `evals/dataset/security_cases.yaml` (4). A case's payload carries the
 `ScriptedUser`'s answers keyed by checklist item, waivers, when to `/done`,
 per-case budget overrides, an optional planted flaw and the expected
@@ -97,7 +102,7 @@ agent's own verdicts:
 
 Each is one extra overlay (`evals/ablations/<name>.yaml`) appended by
 `ABLATION=<name>`; the eval fingerprint covers the effective config, so
-each gets its own run. Measured on the 18 golden cases:
+each gets its own run. Measured on the first release's 18 golden cases:
 
 | ablation | oracle result vs baseline (100%) |
 |---|---|

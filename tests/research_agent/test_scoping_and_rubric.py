@@ -1,5 +1,7 @@
 """Scoping rules and rubric generation, unit by unit (no graph)."""
 
+from datetime import UTC, datetime
+
 import pytest
 
 from research_agent.config import get_agent_settings
@@ -121,7 +123,9 @@ class TestBriefBuilder:
                 multi=True,
             ),
         ]
-        brief = BriefBuilder(settings, _budget()).build("decision_support", "t", items, [])
+        brief = BriefBuilder(settings, _budget(), _budget()).build(
+            "decision_support", "t", items, []
+        )
         assert brief.options == ("X", "Y", "Z") and brief.recency_days == 365
         assert brief.source_policy.preferred_domains == ("lab.example",)
         assert brief.source_policy.blocked_domains == ("spam.example",)
@@ -136,7 +140,7 @@ class TestBriefBuilder:
             value="no limit",
             brief_field="recency_days",
         )
-        brief = BriefBuilder(get_agent_settings().scoping, _budget()).build(
+        brief = BriefBuilder(get_agent_settings().scoping, _budget(), _budget()).build(
             "explainer", "t", [item], []
         )
         assert brief.recency_days is None
@@ -252,8 +256,9 @@ class TestFreezing:
         rubric = RubricGenerator(get_agent_settings().rubric.resolved_templates_path).generate(
             _brief()
         )
-        contract = freeze_contract(_brief(), rubric, "run")
-        assert contract.verify()
+        frozen_at = datetime(2026, 9, 30, tzinfo=UTC)
+        contract = freeze_contract(_brief(), rubric, "run", frozen_at)
+        assert contract.verify() and contract.frozen_at == frozen_at
         tampered = Contract.model_construct(
             **{**contract.__dict__, "rubric": Rubric(items=rubric.items[:1])}
         )

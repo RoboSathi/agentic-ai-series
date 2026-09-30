@@ -6,12 +6,15 @@ from research_agent.research.stop_rules.decision_support import EverySubjectScor
 from research_agent.research.stop_rules.explainer import EveryConceptCovered
 from research_agent.research.stop_rules.fact_verification import EveryClaimDecided
 from research_agent.research.stop_rules.landscape_brief import NoNewEntities
+from research_agent.research.stop_rules.question_answered import QuestionAnswered
 
 _RULES: dict[Archetype, type[StopRule]] = {
     "decision_support": EverySubjectScored,
     "landscape_brief": NoNewEntities,
     "fact_verification": EveryClaimDecided,
     "explainer": EveryConceptCovered,
+    "general": QuestionAnswered,
+    "qa": QuestionAnswered,
 }
 
 
@@ -24,6 +27,7 @@ __all__ = [
     "EveryConceptCovered",
     "EverySubjectScored",
     "NoNewEntities",
+    "QuestionAnswered",
     "StopDecision",
     "StopInput",
     "StopRule",

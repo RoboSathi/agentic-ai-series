@@ -19,6 +19,8 @@ _TRADE_OFF, _HOWEVER = "Trade-off:", "However,"
 _SELF_SCORE, _LOW, _HIGH = 1.0, 0.2, 0.9
 # Independent sources a verdict cites beyond its lead.
 _CORROBORATIONS = 2
+# Sentences a Q&A answer (or a general report's findings) leads with.
+_ANSWER_LINES = 4
 
 
 def synthesize(
@@ -126,8 +128,12 @@ def _closest(
         key=lambda e: -len(wanted & model.matcher.terms(e["claim"])),
     )
     per_source: dict[str, dict[str, Any]] = {}
+    said: set[str] = set()
     for entry in ranked:
-        per_source.setdefault(entry["source"], entry)
+        # A syndicated copy repeats a claim word for word: say it once.
+        if entry["source"] not in per_source and entry["claim"] not in said:
+            per_source[entry["source"]] = entry
+            said.add(entry["claim"])
     return list(per_source.values())
 
 
@@ -166,10 +172,28 @@ def _landscape(
     }
 
 
+def _answer(
+    model: "FixtureWorldModel", brief: dict[str, Any], entries: list[dict[str, Any]]
+) -> dict[str, list[str]]:
+    """Q&A: the closest finding from each source, best first."""
+    return {"Answer": [_cite(e) for e in _closest(model, entries, brief["topic"])[:_ANSWER_LINES]]}
+
+
+def _general(
+    model: "FixtureWorldModel", brief: dict[str, Any], entries: list[dict[str, Any]]
+) -> dict[str, list[str]]:
+    """General research: the best finding per source, then the rest on each criterion."""
+    lead = _closest(model, entries, brief["topic"])[:_ANSWER_LINES]
+    rest = [e for c in brief["criteria"] for e in _about(model, entries, c)[:2] if e not in lead]
+    return {"Findings": [_cite(e) for e in lead], "Details": [_cite(e) for e in rest]}
+
+
 _SECTION_WRITERS = {
     "decision_support": _decision,
     "fact_verification": _verification,
     "explainer": _explainer,
+    "general": _general,
+    "qa": _answer,
     "landscape_brief": _landscape,
 }
 

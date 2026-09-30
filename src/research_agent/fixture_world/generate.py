@@ -19,6 +19,7 @@ import httpx
 from rich.console import Console
 
 from agentic_commons.config import get_settings
+from agentic_commons.hashing import canonical_hash
 from agentic_commons.web import (
     FallbackFetcher,
     FixtureStore,
@@ -59,8 +60,13 @@ async def record(world: World, root: Path, max_results: int) -> FixtureStore:
             await gateway.search(SearchRequest(query=query.query, max_results=max_results))
         for page in world.pages:
             await gateway.fetch(page.url)
-    fixtures.write_manifest(world.version, world.description)
+    fixtures.write_manifest(world_version(world), world.description)
     return fixtures
+
+
+def world_version(world: World) -> str:
+    """The declared version plus a content hash: any edit to the world re-records it."""
+    return f"{world.version}-{canonical_hash(world.model_dump(mode='json'))[:12]}"
 
 
 async def validate(world: World, fixtures: FixtureStore, max_results: int) -> list[str]:
@@ -113,11 +119,12 @@ async def _miss_is_loud(gateway: WebGateway, max_results: int) -> list[str]:
 
 
 def ensure_recorded() -> FixtureStore:
-    """The configured fixture set, recorded first if it has never been (idempotent)."""
+    """The configured fixture set, (re)recorded when missing or older than the world."""
     web = get_settings().web
     fixtures = FixtureStore(web.resolved_fixtures_dir, web.fixture_set)
-    if fixtures.manifest() is None:
-        world = load_world(get_agent_settings().resolved_fixture_world_path)
+    world = load_world(get_agent_settings().resolved_fixture_world_path)
+    manifest = fixtures.manifest()
+    if manifest is None or manifest.version != world_version(world):
         max_results = get_agent_settings().research.max_results_per_search
         fixtures = asyncio.run(record(world, web.resolved_fixtures_dir, max_results))
     return fixtures

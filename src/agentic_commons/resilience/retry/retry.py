@@ -15,6 +15,7 @@ from agentic_commons.logging import get_logger
 from agentic_commons.resilience.types import (
     CircuitBreakerOpenError,
     NonIdempotentRetryError,
+    QuotaExhaustedError,
     external_api_error_fields,
 )
 
@@ -107,7 +108,7 @@ class ExponentialBackoffRetry:
         dependency is down, and retrying behind it only burns the budget.
         A subclass narrows this further — say, to never retry a 4xx.
         """
-        return not isinstance(error, CircuitBreakerOpenError)
+        return not isinstance(error, (CircuitBreakerOpenError, QuotaExhaustedError))
 
     def _delay_for(self, attempt: int) -> float:
         """Full-jitter backoff: a random point in [0, capped exponential]."""

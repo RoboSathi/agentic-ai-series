@@ -1,0 +1,23 @@
+# Demo profile: offline and deterministic.
+#
+# The web is the synthetic "Kelvari" fixture world, recorded through the
+# real adapters and replayed (a miss raises); every model role is the
+# fixture world's reference model. No key, no network, no quota spent.
+# Tests and every `make eval* ra` / `make data ra` use this profile;
+# `make tui ra PROFILE=demo` runs the console on it.
+web:
+  mode: replay
+  fixture_set: kelvari-v1
+
+research_agent:
+  model_backend: fixture
+  budget:
+    max_searches: 24
+    max_fetches: 40
+    max_seconds: 600
+    max_dag_nodes: 16
+    concurrency: 4
+  planning:
+    max_queries_per_node: 2
+  research:
+    max_results_per_search: 3

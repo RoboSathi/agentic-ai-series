@@ -20,11 +20,11 @@ from research_agent.audit.goldfish import AuditResult
 from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.report import Report, RunStatus
 from research_agent.domain.rubric import Contract, Rubric
-from research_agent.domain.scope import Archetype, CoverageItem, ScopeBrief
+from research_agent.domain.scope import Archetype, CoverageItem, Mode, ScopeBrief
 from research_agent.research.resources import RunTrace
 from research_agent.research.worker import NodeResult
 
-ScopePhase = Literal["GATE", "REFRAME", "INTERVIEW", "RUBRIC_REVIEW", "APPROVED", "REFUSED"]
+ScopePhase = Literal["GATE", "REFRAME", "QA", "INTERVIEW", "RUBRIC_REVIEW", "APPROVED", "REFUSED"]
 
 
 class ScopingState(BaseModel):
@@ -33,8 +33,13 @@ class ScopingState(BaseModel):
     session_id: str = ""
     first_message: str = ""
     phase: ScopePhase = "GATE"
+    # Q&A or Research; `forced_mode` is set by /qa or /research and wins.
+    mode: Mode = "research"
+    forced_mode: Mode | None = None
     archetype: Archetype | None = None
     topic: str = ""
+    # A time window read from the first message, in days.
+    recent_days: int | None = None
     items: list[CoverageItem] = Field(default_factory=list)
     turn: int = 0
     asked_item_id: str = ""

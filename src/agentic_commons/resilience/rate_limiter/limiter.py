@@ -9,15 +9,17 @@ budget is shared across processes through the configured store.
 import asyncio
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Awaitable, Callable, Protocol, runtime_checkable
 
 from agentic_commons.config.settings import RateLimitSettings
 from agentic_commons.logging import get_logger
 from agentic_commons.resilience.rate_limiter.store import RateWindowStore
-from agentic_commons.resilience.types import RateLimitWaitExceededError
+from agentic_commons.resilience.types import QuotaExhaustedError, RateLimitWaitExceededError
 
 Clock = Callable[[], float]
 Sleep = Callable[[float], Awaitable[None]]
+_PERIOD_FORMAT = "%Y-%m"
 
 
 @dataclass
@@ -86,8 +88,35 @@ class SlidingWindowRateLimiter:
         """The configured request ceiling for one bucket."""
         return self._settings.buckets[bucket].max_requests
 
+    def quota_for(self, bucket: str) -> int | None:
+        """The bucket's monthly quota, or None when it has none."""
+        return self._settings.buckets[bucket].monthly_quota
+
+    def quota_used(self, bucket: str) -> int:
+        """Requests spent against the current month's quota, across every process."""
+        return self._store.quota_used(bucket, self._period())
+
     async def acquire(self, bucket: str) -> float:
-        """Wait for a slot in `bucket`; return how long that took."""
+        """Spend the month's quota (or fail fast), then wait for a slot in `bucket`."""
+        await self._spend_quota(bucket)
+        return await self._wait_for_slot(bucket)
+
+    async def _spend_quota(self, bucket: str) -> None:
+        quota = self.quota_for(bucket)
+        if quota is None:
+            return
+        period = self._period()
+        if not await asyncio.to_thread(self._store.try_spend_quota, bucket, period, quota):
+            self._logger.warning("Monthly quota spent", bucket=bucket, quota=quota, period=period)
+            raise QuotaExhaustedError(
+                f"'{bucket}' has used its {quota} requests for {period}; "
+                "it resets on the 1st of next month (UTC)"
+            )
+
+    def _period(self) -> str:
+        return datetime.fromtimestamp(self._clock(), tz=UTC).strftime(_PERIOD_FORMAT)
+
+    async def _wait_for_slot(self, bucket: str) -> float:
         waited = 0.0
         stats = self.stats.bucket(bucket)
         while True:

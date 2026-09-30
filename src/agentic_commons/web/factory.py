@@ -1,18 +1,24 @@
 """Build the configured web gateway (Factory).
 
 The one place concrete network classes are chosen: the rate-limited HTTP
-client (`llm.http`, which draws on the `tavily` bucket by host), one
-resilience stack per dependency, and the fixture set named in config.
+client (`llm.http`, which draws on the `tavily` bucket by host), the search
+router over the configured providers (each with its own resilience stack),
+the on-disk search cache, and the fixture set named in config.
 """
+
+import httpx
 
 from agentic_commons.config import get_settings
 from agentic_commons.config.settings import WebMode, WebSettings
 from agentic_commons.llm.http import create_http_client
 from agentic_commons.resilience import ResilientCaller
+from agentic_commons.resilience.rate_limiter import get_rate_limiter
+from agentic_commons.web.cache import SearchCache
 from agentic_commons.web.fetcher import FallbackFetcher, HttpFetcher, ReaderFetcher
 from agentic_commons.web.fixtures import FixtureStore
 from agentic_commons.web.gateway import WebCallObserver, WebGateway
-from agentic_commons.web.providers import TavilyProvider
+from agentic_commons.web.providers import DuckDuckGoProvider, SearchProvider, TavilyProvider
+from agentic_commons.web.router import RoutedProvider, SearchRouter
 
 _SEARCH_DEPENDENCY = "web_search"
 _FETCH_DEPENDENCY = "web_fetch"
@@ -35,10 +41,26 @@ def create_web_gateway(
     reader = ReaderFetcher(resolved.fetch, client) if resolved.fetch.reader_enabled else None
     return WebGateway(
         chosen,
-        provider=TavilyProvider(resolved.tavily, client),
+        provider=create_search_router(resolved, client),
         fetcher=FallbackFetcher(HttpFetcher(resolved.fetch, client), reader, resolved.fetch),
         fixtures=fixtures if chosen == "record" else None,
-        search_caller=ResilientCaller(_SEARCH_DEPENDENCY),
         fetch_caller=ResilientCaller(_FETCH_DEPENDENCY),
         observer=observer,
+        cache=SearchCache(resolved.search.resolved_cache_dir, resolved.search.cache_ttl_hours),
+    )
+
+
+def create_search_router(settings: WebSettings, client: httpx.AsyncClient) -> SearchRouter:
+    """Every configured provider behind one router, each with its own breaker."""
+    built: dict[str, SearchProvider] = {
+        "tavily": TavilyProvider(settings.tavily, client),
+        "duckduckgo": DuckDuckGoProvider(settings.duckduckgo, get_rate_limiter()),
+    }
+    return SearchRouter(
+        {
+            name: RoutedProvider(provider, ResilientCaller(f"{_SEARCH_DEPENDENCY}_{name}"))
+            for name, provider in built.items()
+        },
+        settings.search.providers,
+        settings.search.time_bounded_providers,
     )

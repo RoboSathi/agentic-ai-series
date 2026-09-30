@@ -36,7 +36,8 @@ agent's `design_docs/patterns.yaml`. Do not edit by hand.
 | factory | csa | graph/builder.py (composition root) |
 | facade | csa | agentic_commons MemoryFacade |
 | strategy | ra | research/stop_rules/ (one stop rule per archetype) |
-| adapter | ra | agentic_commons/web/providers.py · TavilyProvider behind SearchProvider |
+| adapter | ra | agentic_commons/web/providers.py · TavilyProvider and DuckDuckGoProvider behind SearchProvider |
+| chain of responsibility | ra | agentic_commons/web/router.py · SearchRouter (free provider first, metered fallback) |
 | factory | ra | graph/builder.py (composition root) · fixture_world/model.py fixture_client_factory |
 | builder | ra | scoping/brief.py · BriefBuilder |
 | observer | ra | research/telemetry.py (StageReporter + AuditLedger) · WebGateway observer |

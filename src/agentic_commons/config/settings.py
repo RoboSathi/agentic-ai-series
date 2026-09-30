@@ -879,6 +879,9 @@ class RateLimitBucketSettings(BaseModel):
 
     max_requests: int
     hosts: list[str]
+    # Requests allowed per calendar month (UTC), across every process; None
+    # means no monthly cap. A free tier is a monthly quota, not a rate.
+    monthly_quota: int | None = None
 
 
 class RateLimitSettings(BaseModel):
@@ -1161,6 +1164,8 @@ class TavilySettings(BaseModel):
     # spends tokens on text the gateway will discard.
     include_answer: bool
     timeout_seconds: float
+    # Smallest `time_range` covering a request's `recent_days` (days → name).
+    time_ranges: dict[int, str]
 
     @property
     def api_key(self) -> str:
@@ -1168,11 +1173,37 @@ class TavilySettings(BaseModel):
         return os.environ.get("tavily_api_key", "")
 
 
-class WebSearchSettings(BaseModel):
-    """Search defaults the gateway applies when a caller does not say."""
+class DuckDuckGoSettings(BaseModel):
+    """DuckDuckGo through the `ddgs` package: no key, no official API, best effort."""
 
-    provider: Literal["tavily"]
+    backend: str
+    region: str
+    safesearch: str
+    timeout_seconds: float
+    # Smallest `timelimit` covering a request's `recent_days` (days → d/w/m/y).
+    time_limits: dict[int, str]
+    # The rate-limit bucket it spends (it does not go through the HTTP transport).
+    rate_bucket: str
+
+
+SearchProviderName = Literal["tavily", "duckduckgo"]
+
+
+class WebSearchSettings(BaseModel):
+    """Which providers answer a search, in order, and how long answers are reused."""
+
+    # General searches: the first provider that answers with hits wins.
+    providers: list[SearchProviderName]
+    # Searches bounded in time or by topic (news) prefer these, in order.
+    time_bounded_providers: list[SearchProviderName]
     max_results: int = Field(ge=1)
+    # Live answers are kept on disk and reused for this long (0: no cache).
+    cache_ttl_hours: float = Field(ge=0)
+    cache_dir: str
+
+    @property
+    def resolved_cache_dir(self) -> Path:
+        return resolve_path(self.cache_dir)
 
 
 class WebFetchSettings(BaseModel):
@@ -1200,6 +1231,7 @@ class WebSettings(YamlBackedSettings):
     search: WebSearchSettings
     fetch: WebFetchSettings
     tavily: TavilySettings
+    duckduckgo: DuckDuckGoSettings
 
     model_config = SettingsConfigDict(env_prefix="WEB__")
 

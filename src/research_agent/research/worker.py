@@ -19,6 +19,7 @@ by the node's queries (plus any follow-ups) and by the per-node fetch cap.
 from pydantic import BaseModel, Field
 
 from agentic_commons.evidence import EvidenceCandidate, EvidenceEntry, SpanRejection
+from agentic_commons.resilience import QuotaExhaustedError
 from agentic_commons.web import FetchedPage, SearchHit, SearchRequest, SearchResponse
 from research_agent.domain.budget import FETCHES, SEARCHES
 from research_agent.domain.evidence import ClaimCandidate
@@ -77,17 +78,31 @@ class ResearcherWorker:
             result.stopped = "budget"
             self._r.trace.budget_stops.append(f"{node.node_id}: searches exhausted")
             return None
-        request = SearchRequest(query=query, max_results=self._r.settings.max_results_per_search)
+        request = self._request(query)
         self._r.trace.attempted_outbound.append(query)
         try:
             response = await self._r.gateway.search(request)
         except Exception as exc:
             self._r.budget.release(held)
             self._failed("worker_search", query, exc)
+            if _quota_spent(exc):
+                result.stopped = "budget"
+                self._r.trace.budget_stops.append(self._r.settings.quota_stop)
             return None
         self._r.budget.commit(held)
         self._searched(node, query, response, result)
         return response
+
+    def _request(self, query: str) -> SearchRequest:
+        """The approved time window goes to the provider; a short one searches news."""
+        days = self._r.contract.brief.recency_days
+        news = days is not None and days <= self._r.settings.news_window_days
+        return SearchRequest(
+            query=query,
+            max_results=self._r.settings.max_results_per_search,
+            recent_days=days,
+            topic=self._r.settings.news_topic if news else "",
+        )
 
     def _searched(
         self, node: SubQuestion, query: str, response: SearchResponse, result: NodeResult
@@ -310,3 +325,12 @@ class ResearcherWorker:
             {"target": target, "error": detail},
             status="failed",
         )
+
+
+def _quota_spent(exc: BaseException | None) -> bool:
+    """Whether a search failed because every provider is out of monthly quota."""
+    while exc is not None:
+        if isinstance(exc, QuotaExhaustedError):
+            return True
+        exc = exc.__cause__
+    return False

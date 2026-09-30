@@ -104,3 +104,9 @@ class TestExhaustion:
 
     def test_report_continues_while_capacity_remains(self) -> None:
         assert BudgetGuard({"searches": 5}).report("searches").decision == "continue"
+
+
+def test_a_zero_cap_is_not_an_exhausted_counter() -> None:
+    guard = BudgetGuard({"gap_fill_rounds": 0, "searches": 1})
+    assert guard.try_reserve("gap_fill_rounds") is None
+    assert guard.exhausted_counters() == []

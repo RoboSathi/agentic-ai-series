@@ -17,6 +17,7 @@ pytestmark = pytest.mark.skipif(shutil.which("make") is None, reason="make is no
 
 CSA_OVERLAY = "src/customer_support_agent/config/config.yaml"
 RA_OVERLAY = "src/research_agent/config/config.yaml"
+RA_DEMO = f"{RA_OVERLAY}:src/research_agent/config/profiles/demo.yaml"
 
 
 def _env() -> dict[str, str]:
@@ -71,6 +72,24 @@ class TestTheAgentIsNamed:
 
     def test_nothing_is_exported_without_a_name(self) -> None:
         assert _exported("lint") == ""
+
+
+class TestProfiles:
+    def test_the_console_is_live_unless_a_profile_is_named(self) -> None:
+        assert _exported("tui", "ra") == RA_OVERLAY
+        assert _exported("tui", "ra", "PROFILE=demo") == RA_DEMO
+
+    @pytest.mark.parametrize("target", ["eval", "eval-oracle", "data"])
+    def test_evals_and_data_are_always_offline(self, target: str) -> None:
+        assert _exported(target, "ra") == RA_DEMO
+        assert _exported(target, "ra", "PROFILE=anything") == RA_DEMO
+
+    def test_csa_has_no_offline_profile(self) -> None:
+        assert _exported("eval-oracle", "csa") == CSA_OVERLAY
+
+    def test_an_unknown_profile_is_an_error(self) -> None:
+        result = _make("tui", "ra", "PROFILE=nope", dry=False)
+        assert result.returncode != 0 and "No profile" in result.stdout
 
 
 class TestTargetsKeepTheirBehaviour:

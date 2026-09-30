@@ -19,7 +19,8 @@ as **domain-free mechanisms**, each with unit tests:
 | `control_loop/budget.py` | `BudgetGuard`: synchronous reserve → commit/release on named counters + wall clock |
 | `artifacts/` | `FrozenArtifact` (canonical hash, verify) + `DirectoryArtifactStore` |
 | `evidence/` | append-only `EvidenceLedger`, `VerbatimSpanValidator` / `NonEmptySpanValidator` |
-| `web/` | `WebGateway` (live / record / replay), `TavilyProvider`, HTTP fetcher with reader fallback, `FixtureStore` |
+| `web/` | `WebGateway` (live / record / replay), `SearchRouter` over `DuckDuckGoProvider` + `TavilyProvider` (time ranges, news vertical), on-disk `SearchCache`, HTTP fetcher with reader fallback, `FixtureStore` |
+| `resilience/rate_limiter` (extended) | per-bucket **monthly quota** in the shared SQLite store; `QuotaExhaustedError` fails fast and is never retried |
 | `llm/roles.py` | `RoleModelRouter` + distinct-model check |
 | `durability/isolated.py`, `durability/hitl.py` | `IsolatedGraphRunner` (declared inputs only), `await_decision` |
 | `verification/acceptance.py` | `AcceptanceCheckRegistry` of named checks by kind |

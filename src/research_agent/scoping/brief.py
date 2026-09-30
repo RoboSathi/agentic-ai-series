@@ -15,15 +15,16 @@ from typing import Any
 from research_agent.config.settings import ScopingSettings
 from research_agent.domain.budget import Budget
 from research_agent.domain.scope import (
+    QA,
     Archetype,
     CoverageItem,
     KnownUnknown,
     ScopeBrief,
     SourcePolicy,
 )
+from research_agent.scoping.window import TimeWindowParser
 
 _DOMAIN = re.compile(r"\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b", re.IGNORECASE)
-_NUMBER = re.compile(r"\d+")
 _AVOID = re.compile(r"\b(?:avoid|block|exclude|not|never|except)\b", re.IGNORECASE)
 _CLAUSE = re.compile(r";|\.\s")
 
@@ -31,10 +32,21 @@ _CLAUSE = re.compile(r";|\.\s")
 class BriefBuilder:
     """Assembles the Scope Brief from the interview's covered items."""
 
-    def __init__(self, settings: ScopingSettings, budget: Budget) -> None:
+    def __init__(self, settings: ScopingSettings, budget: Budget, qa_budget: Budget) -> None:
         self._settings = settings
         self._split = re.compile(settings.answer_split_pattern, re.IGNORECASE)
         self._budget = budget
+        self._qa_budget = qa_budget
+        self._window = TimeWindowParser(settings.time_window)
+
+    def question(self, topic: str, recent_days: int | None) -> ScopeBrief:
+        """The Q&A Brief: the question and its time window, nothing to interview for."""
+        return ScopeBrief(
+            archetype=QA,
+            topic=topic,
+            recency_days=recent_days,
+            budget=self._qa_budget.capped_by(self._budget),
+        )
 
     def build(
         self,
@@ -77,8 +89,7 @@ class BriefBuilder:
     def _recency(self, answer: str) -> int | None:
         if any(word in answer.casefold() for word in self._settings.any_recency_words):
             return None
-        number = _NUMBER.search(answer)
-        return int(number.group()) if number else None
+        return self._window.days(answer)
 
     def _source_policy(self, answer: str) -> SourcePolicy:
         preferred: list[str] = []

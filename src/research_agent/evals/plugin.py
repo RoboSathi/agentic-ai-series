@@ -33,6 +33,10 @@ class UnknownSuiteError(ValueError):
     """A suite this agent does not declare cases for."""
 
 
+class LiveEvalError(RuntimeError):
+    """Evals were started against the live web or real models (ADR ra-0009)."""
+
+
 class ResearchEvalPlugin:
     """The Research Agent's evals."""
 
@@ -52,9 +56,14 @@ class ResearchEvalPlugin:
         return load_cases(self._settings.evals.resolved_dataset_dir / files[suite], suite)
 
     def prepare(self) -> None:
-        """Record the fixture world if it never was — before any event loop opens."""
+        """Refuse a live posture, then record the fixture world if it never was."""
         from research_agent.fixture_world.generate import ensure_recorded
 
+        if get_settings().web.mode != "replay" or self._settings.model_backend != "fixture":
+            raise LiveEvalError(
+                "research evals are fixtures-only: run them with `make eval ra` "
+                "(which applies config/profiles/demo.yaml)"
+            )
         self._fixtures = ensure_recorded()
 
     def agent_under_test(self) -> AgentUnderTest:

@@ -14,11 +14,14 @@ csa_PKG := customer_support_agent
 csa_OVERLAY := src/customer_support_agent/config/config.yaml
 csa_DATA := $(csa_PKG).dummy_data.generate_dummy_data $(if $(KEEP_MEMORY),--keep-memory)
 csa_RUNS :=
+csa_OFFLINE_PROFILE :=
 
 ra_PKG := research_agent
 ra_OVERLAY := src/research_agent/config/config.yaml
 ra_DATA := $(ra_PKG).fixture_world.generate
 ra_RUNS := $(ra_PKG).archive.cli
+# Evals and fixture data never touch the network: they pin this profile.
+ra_OFFLINE_PROFILE := demo
 
 # Targets whose second goal names the agent they act on.
 AGENT_SCOPED := tui data runs eval eval-generate eval-oracle eval-security eval-judge \
@@ -35,6 +38,15 @@ endif
 # agent is named sets it, so the overlay cannot silently default to one.
 ifeq ($(words $(AGENT_ARGS)) $(words $(AGENT)),1 1)
 export AGENTIC_OVERLAYS := $($(AGENT)_OVERLAY)
+# A profile is a named posture of the agent's own config:
+# `make tui ra PROFILE=demo` (src/<pkg>/config/profiles/). Evals and
+# `make data` always use the agent's offline profile, whatever was typed.
+ifneq ($(filter data eval eval-%,$(firstword $(MAKECMDGOALS))),)
+override PROFILE := $($(AGENT)_OFFLINE_PROFILE)
+endif
+ifneq ($(PROFILE),)
+export AGENTIC_OVERLAYS := $(AGENTIC_OVERLAYS):src/$($(AGENT)_PKG)/config/profiles/$(PROFILE).yaml
+endif
 # An ablation is one more config layer over the agent's own:
 # `make eval-generate ra ABLATION=no_rubric_audit` (src/<pkg>/evals/ablations/).
 ifdef ABLATION
@@ -81,7 +93,7 @@ help:
 	@echo "  make verify               All gates: lint, format, types, tests (80% coverage), both composition roots"
 	@echo ""
 	@echo "$(GREEN)Run$(NC) (agent name required):"
-	@echo "  make tui <agent>          The operator console for one agent (make tui csa, make tui ra)"
+	@echo "  make tui <agent>          The operator console (make tui csa; make tui ra = live web, PROFILE=demo = offline)"
 	@echo "  make data <agent>         csa: rebuild the agent DB (KEEP_MEMORY=1); ra: build + validate the fixture world"
 	@echo "  make runs ra              List archived research runs"
 	@echo "  make episode E=05         One episode (calls the live model)"
@@ -106,7 +118,7 @@ help:
 	@echo "  make eval-runs <agent>       List recent runs"
 	@echo "  make eval-sql <agent>        Query the eval store (SQL=\"select ...\" or interactive)"
 	@echo ""
-	@echo "  Options: RPM=<n>  FRESH=1  LIMIT=<n>  CASE=<id>  TAG=<tag>  RUN=<id>  ABLATION=<name>"
+	@echo "  Options: RPM=<n>  FRESH=1  LIMIT=<n>  CASE=<id>  TAG=<tag>  RUN=<id>  ABLATION=<name>  PROFILE=<name>"
 	@echo "           EVAL_CONTINUE_ON_INVARIANT_FAILURE=1"
 
 # Fails the run unless exactly one known agent was named after the target.
@@ -117,6 +129,8 @@ _agent:
 	  echo "$(YELLOW)Name exactly one agent, got: $(AGENT_ARGS)   (agents: $(AGENTS))$(NC)"; exit 2; fi
 	@if [ -z "$(AGENT)" ]; then \
 	  echo "$(YELLOW)Unknown agent '$(AGENT_ARGS)'   (agents: $(AGENTS))$(NC)"; exit 2; fi
+	@if [ -n "$(PROFILE)" ] && [ ! -f "src/$($(AGENT)_PKG)/config/profiles/$(PROFILE).yaml" ]; then \
+	  echo "$(YELLOW)No profile '$(PROFILE)' for $(AGENT) (src/$($(AGENT)_PKG)/config/profiles/)$(NC)"; exit 2; fi
 	@if [ -n "$(ABLATION)" ] && [ ! -f "src/$($(AGENT)_PKG)/evals/ablations/$(ABLATION).yaml" ]; then \
 	  echo "$(YELLOW)No ablation '$(ABLATION)' for $(AGENT) (src/$($(AGENT)_PKG)/evals/ablations/)$(NC)"; exit 2; fi
 

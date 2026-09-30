@@ -78,6 +78,11 @@ def _drafts(brief: dict[str, Any]) -> list[Draft]:
                 (f"C{i}b", f"{claim} independent confirmation", claim, [claim], [f"C{i}"])
             )
         return claims
+    if archetype in ("qa", "general"):
+        question: list[Draft] = [("Q1", topic, "", [], [])]
+        return question + [
+            (f"Q{i}", f"{topic} {c}", "", [c], []) for i, c in enumerate(criteria, 2)
+        ]
     return [
         (f"K{i}", f"{c} iron-air", c, [c], []) for i, c in enumerate(brief.get("concepts") or [], 1)
     ]

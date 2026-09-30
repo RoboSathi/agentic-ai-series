@@ -42,6 +42,8 @@ from research_agent.graph.agent import ResearchAgent, TurnResult
 from research_agent.graph.state import StateTypes
 
 RA_OVERLAY = REPO_ROOT / "src" / "research_agent" / "config" / "config.yaml"
+# The agent's defaults are live; every test runs the offline demo posture.
+DEMO_PROFILE = REPO_ROOT / "src" / "research_agent" / "config" / "profiles" / "demo.yaml"
 _RECORDED: dict[str, FixtureStore] = {}
 
 DECISION_ANSWERS = {
@@ -60,8 +62,9 @@ DECISION_REQUEST = "Help me choose a grid storage option for the Tamsin Valley m
 
 @pytest.fixture
 def ra_config() -> Iterator[None]:
-    """The research agent's overlay, applied for one test."""
+    """The research agent's overlay (demo profile), applied for one test."""
     use_overlay(RA_OVERLAY)
+    use_overlay(DEMO_PROFILE)
     reload_settings()
     reload_agent_settings()
     set_active_features(None)

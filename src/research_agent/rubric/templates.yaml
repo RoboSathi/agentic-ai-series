@@ -118,6 +118,49 @@ explainer:
       must_pass: false
   stop_rule: every_concept_covered
 
+# Research on a question no specialised kind fits.
+general:
+  template:
+    - text: Every factual sentence in the report cites the ledger.
+      check: {kind: deterministic, name: citations_per_claim, params: {min_citations: 1}}
+      threshold: 1.0
+      must_pass: true
+    - text: Cited claims are supported by their quoted spans.
+      check: {kind: nli, name: claims_entailed}
+      threshold: 1.0
+      must_pass: true
+    - text: Findings come from at least two independent domains.
+      check: {kind: deterministic, name: distinct_domains, params: {min_domains: 2}}
+      threshold: 1.0
+      must_pass: false
+    - text: The findings answer the question as asked.
+      check: {kind: judge, name: user_item}
+      threshold: 0.7
+      must_pass: false
+  per_criterion:
+    - text: "The report covers '{criterion}' with a citation."
+      check: {kind: deterministic, name: criterion_evidence, params: {min_citations: 1}}
+      threshold: 1.0
+      must_pass: true
+  stop_rule: question_answered
+
+# Q&A: a quick, cited answer to one question (no interview).
+qa:
+  template:
+    - text: Every factual sentence in the answer cites the ledger.
+      check: {kind: deterministic, name: citations_per_claim, params: {min_citations: 1}}
+      threshold: 1.0
+      must_pass: true
+    - text: Cited claims are supported by their quoted spans.
+      check: {kind: nli, name: claims_entailed}
+      threshold: 1.0
+      must_pass: true
+    - text: The answer draws on at least two independent domains.
+      check: {kind: deterministic, name: distinct_domains, params: {min_domains: 2}}
+      threshold: 1.0
+      must_pass: false
+  stop_rule: question_answered
+
 rules:
   known_unknown:
     text: "The known unknown '{subject}' is acknowledged and bounded in the report."

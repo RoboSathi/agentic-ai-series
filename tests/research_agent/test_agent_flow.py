@@ -122,7 +122,7 @@ class TestScopingRules:
     async def test_an_open_ended_request_is_reframed(self, harness: BuildHarness) -> None:
         h = harness()
         reply = await h.agent.handle("tell me about batteries", "s")
-        assert reply.phase == "SCOPING" and "open-ended" in reply.response
+        assert reply.phase == "SCOPING" and "1." in reply.response and "2." in reply.response
 
     async def test_a_harmful_request_is_refused(self, harness: BuildHarness) -> None:
         h = harness()

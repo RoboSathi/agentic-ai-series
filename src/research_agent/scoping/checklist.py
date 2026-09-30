@@ -19,6 +19,8 @@ from research_agent.domain.scope import (
     UnknownReason,
 )
 
+RECENCY_FIELD = "recency_days"
+
 
 def load_checklist(path: Path, archetype: Archetype) -> list[CoverageItem]:
     """The archetype's items (its own, then the common ones), all open."""
@@ -41,6 +43,18 @@ def with_status(
     return [
         item.model_copy(update={"status": status, "value": item.value if value is None else value})
         if item.item_id == item_id
+        else item
+        for item in items
+    ]
+
+
+def prefill_window(items: Sequence[CoverageItem], days: int | None) -> list[CoverageItem]:
+    """A time window the first message stated is not asked about again."""
+    if days is None:
+        return list(items)
+    return [
+        item.model_copy(update={"status": "covered", "value": str(days)})
+        if item.brief_field == RECENCY_FIELD and item.status == "open"
         else item
         for item in items
     ]

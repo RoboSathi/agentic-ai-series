@@ -103,3 +103,35 @@ explainer:
     brief_field: criteria
     multi: true
   - *common
+
+# A Research run on a question no specialised kind fits: the question is
+# the topic (from the first message); the interview settles why, how
+# recent, from where, and in what shape.
+general:
+  - item_id: purpose
+    prompt: What will you do with the answer — what decision or action does it feed?
+    required: true
+    brief_field: purpose
+  - item_id: recency
+    prompt: How recent must sources be? Give a window (e.g. "last 3 months", 365 days), or say "any".
+    required: false
+    brief_field: recency_days
+  - item_id: criteria
+    prompt: What must the answer cover to be useful to you? List each point.
+    required: false
+    brief_field: criteria
+    multi: true
+  - item_id: sources
+    prompt: Any sources to prefer or avoid? Name domains, or say "primary sources preferred".
+    required: false
+    brief_field: source_policy
+  - item_id: context
+    prompt: Anything about your own situation I should know (budget, organisation)? This stays private and is never searched for.
+    required: false
+    brief_field: private_terms
+    multi: true
+    private: true
+  - item_id: deliverable
+    prompt: What should the deliverable look like — a short memo, a table, a detailed report?
+    required: false
+    brief_field: deliverable_format

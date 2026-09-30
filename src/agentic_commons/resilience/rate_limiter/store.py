@@ -21,6 +21,12 @@ CREATE TABLE IF NOT EXISTS rate_cooldown (
     bucket TEXT PRIMARY KEY,
     until  REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS rate_quota (
+    bucket TEXT NOT NULL,
+    period TEXT NOT NULL,
+    used   INTEGER NOT NULL,
+    PRIMARY KEY (bucket, period)
+);
 """
 
 
@@ -36,6 +42,14 @@ class RateWindowStore(Protocol):
         """Block the bucket until `until`, whatever the window says."""
         ...
 
+    def try_spend_quota(self, bucket: str, period: str, quota: int) -> bool:
+        """Count one request against `period`'s quota; False (and no count) when spent."""
+        ...
+
+    def quota_used(self, bucket: str, period: str) -> int:
+        """Requests counted against `period` so far."""
+        ...
+
 
 class InMemoryRateWindowStore:
     """A window visible only to this process — for tests and single scripts."""
@@ -43,6 +57,7 @@ class InMemoryRateWindowStore:
     def __init__(self) -> None:
         self._spent: dict[str, deque[float]] = {}
         self._cooldown: dict[str, float] = {}
+        self._used: dict[tuple[str, str], int] = {}
         self._lock = threading.Lock()
 
     def try_acquire(self, bucket: str, limit: int, window_seconds: float, now: float) -> float:
@@ -61,6 +76,18 @@ class InMemoryRateWindowStore:
     def penalize(self, bucket: str, until: float) -> None:
         with self._lock:
             self._cooldown[bucket] = max(self._cooldown.get(bucket, 0.0), until)
+
+    def try_spend_quota(self, bucket: str, period: str, quota: int) -> bool:
+        with self._lock:
+            used = self._used.get((bucket, period), 0)
+            if used >= quota:
+                return False
+            self._used[(bucket, period)] = used + 1
+            return True
+
+    def quota_used(self, bucket: str, period: str) -> int:
+        with self._lock:
+            return self._used.get((bucket, period), 0)
 
 
 class SqliteRateWindowStore:
@@ -100,6 +127,39 @@ class SqliteRateWindowStore:
             )
         finally:
             connection.close()
+
+    def try_spend_quota(self, bucket: str, period: str, quota: int) -> bool:
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            used = self._used(connection, bucket, period)
+            if used < quota:
+                connection.execute(
+                    "INSERT INTO rate_quota (bucket, period, used) VALUES (?, ?, 1) "
+                    "ON CONFLICT(bucket, period) DO UPDATE SET used = used + 1",
+                    (bucket, period),
+                )
+            connection.execute("COMMIT")
+            return used < quota
+        except BaseException:
+            connection.execute("ROLLBACK")
+            raise
+        finally:
+            connection.close()
+
+    def quota_used(self, bucket: str, period: str) -> int:
+        connection = self._connect()
+        try:
+            return self._used(connection, bucket, period)
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _used(connection: sqlite3.Connection, bucket: str, period: str) -> int:
+        row = connection.execute(
+            "SELECT used FROM rate_quota WHERE bucket = ? AND period = ?", (bucket, period)
+        ).fetchone()
+        return int(row[0]) if row is not None else 0
 
     def _wait_in_transaction(
         self,

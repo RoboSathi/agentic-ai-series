@@ -29,6 +29,7 @@ from research_agent.archive.store import ResearchArchive
 from research_agent.config.settings import ResearchAgentSettings
 from research_agent.domain.report import Report, SessionPhase
 from research_agent.domain.rubric import Contract
+from research_agent.domain.scope import QA, Mode
 from research_agent.graph.run_nodes import RunNodes
 from research_agent.graph.state import ScopingState
 from research_agent.research.resources import RunResources
@@ -56,6 +57,8 @@ class SessionRecord(BaseModel):
     scope_thread: str = ""
     run_thread: str = ""
     scope: ScopingState | None = None
+    # The last question asked, so a bare /research can go deeper on it.
+    last_question: str = ""
     last_report: Report | None = None
     run_values: dict[str, Any] = Field(default_factory=dict)
 
@@ -102,9 +105,30 @@ class ResearchAgent:
             return self._control(verb, query, record)
         if record.phase == "RUNNING":
             return TurnResult(response=self._settings.messages.run_busy, phase="RUNNING")
+        mode = self._forced_mode(verb)
+        if mode is not None:
+            return await self._forced_scope(mode, query, session_id, record)
         if record.phase in _TERMINAL:
             return await self._new_scope(query, session_id, record)
         return await self._continue_scope(query, session_id, record)
+
+    def _forced_mode(self, verb: str | None) -> Mode | None:
+        names = self._settings.command_names
+        return "qa" if verb == names.qa else "research" if verb == names.research else None
+
+    async def _forced_scope(
+        self, mode: Mode, query: str, session_id: str, record: SessionRecord
+    ) -> TurnResult:
+        """`/qa <question>` or `/research [question]` starts a new scope in that mode.
+
+        A bare `/research` goes deeper on the last question asked; an
+        interview in progress is abandoned for the new one.
+        """
+        parts = query.strip().split(maxsplit=1)
+        question = parts[1].strip() if len(parts) > 1 else record.last_question
+        if not question:
+            return TurnResult(response=self._settings.messages.new_scope, phase=record.phase)
+        return await self._new_scope(question, session_id, record, forced=mode)
 
     def cancel(self) -> bool:
         """Cancel the run in progress, if any (it stops at the next safe point)."""
@@ -136,11 +160,14 @@ class ResearchAgent:
 
     # -- scoping --------------------------------------------------------------------------
 
-    async def _new_scope(self, query: str, session_id: str, record: SessionRecord) -> TurnResult:
+    async def _new_scope(
+        self, query: str, session_id: str, record: SessionRecord, forced: Mode | None = None
+    ) -> TurnResult:
         record.scopes += 1
         record.scope_thread = f"{session_id}-scope-{record.scopes}-{uuid.uuid4().hex[:6]}"
         record.phase = "SCOPING"
-        payload = {"session_id": session_id, "first_message": query}
+        record.last_question = query
+        payload = {"session_id": session_id, "first_message": query, "forced_mode": forced}
         outcome = await self._scoping.start(
             record.scope_thread,
             payload,
@@ -215,12 +242,20 @@ class ResearchAgent:
         head = self._settings.messages.delivered.format(
             run_id=record.run_thread, status=status, summary=""
         )
+        contract = values.get("contract")
+        quick = isinstance(contract, Contract) and contract.brief.archetype == QA
+        tail = self._settings.messages.qa_followup if quick else self._failed_note(status)
         return TurnResult(
-            response=f"{approved}\n\n{head}\n\n{summary}".strip(),
+            response=f"{approved}\n\n{head}\n\n{summary}\n\n{tail}".strip(),
             phase=record.phase,
             run_id=record.run_thread,
             report=record.last_report,
         )
+
+    def _failed_note(self, status: str) -> str:
+        """In demo mode a failed run almost always means an off-world question."""
+        offline = self._settings.model_backend == "fixture"
+        return self._settings.messages.demo_off_world if offline and status == "FAILED" else ""
 
     # -- control commands -----------------------------------------------------------------
 

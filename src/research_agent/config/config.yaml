@@ -1,6 +1,12 @@
 # The research agent's overlay on the platform defaults (agentic_commons).
 # Loaded when AGENTIC_OVERLAYS names this file (`make tui ra`), or by
 # default when this package is imported and nothing else was named.
+#
+# These defaults are LIVE: real web search (DuckDuckGo, then Tavily) and
+# real NVIDIA models, sized to stay inside the providers' free tiers.
+# `profiles/demo.yaml` is the offline posture (the synthetic Kelvari world,
+# replayed, with the reference model) that tests and evals always use:
+# `make tui ra PROFILE=demo`.
 
 agent:
   id: research_agent
@@ -59,13 +65,13 @@ llm:
     interviewer: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
     planner: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
     researcher: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
-    extractor: {provider: local, model: mistral-nemo-12b}
+    extractor: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
     reflector: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
     synthesizer: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
     judge: {provider: nim, model: openai/gpt-oss-20b}
 
 web:
-  mode: replay
+  mode: live
   fixtures_dir: data/web_fixtures
   fixture_set: kelvari-v1
 
@@ -131,16 +137,33 @@ evals:
 research_agent:
   title: Research Agent
   placeholder: "What should I research?  (/help for commands)"
-  greeting: >-
-    Tell me what you need to decide or understand. I will ask a few
-    questions to bound the scope before any research starts; /done ends
-    the interview early, /approve starts the run once you have seen the
-    acceptance criteria.
-  # fixture: the deterministic reference model over the fixture world (no
-  # credentials, evals and the demo); routed: llm.roles via RoleModelRouter.
-  model_backend: fixture
+  # The greeting is assembled in code (console/greeting.py) from these
+  # lines and the current mode, so it always says what this run can do.
+  greeting:
+    live_mode: "Live: I search the web (DuckDuckGo first; Tavily for news, time-bounded questions, or when DuckDuckGo finds nothing) and read the pages with NVIDIA models."
+    demo_mode: "Demo (offline): a synthetic world called Kelvari, recorded and replayed. I can only research these topics:"
+    topic_line: "  - {title} — e.g. \"{example}\""
+    modes_title: "Two ways to ask:"
+    qa_line: "  1. Q&A — ask a question; I search, read and answer with every sentence citing a page. e.g. \"{example}\""
+    research_line: "  2. Research — I ask a few questions, show acceptance criteria (/approve), research on my own, and audit the report. e.g. \"{example}\""
+    limits: "Limits: Q&A up to {qa_searches} searches; Research up to {searches} searches and {fetches} pages in {minutes} minutes. Every run ends COMPLETE or PARTIAL, with what I could not establish."
+    wont: "I won't: browse with no question, help with harmful requests, read paywalled or login pages, or answer from memory — no page, no claim."
+    commands: "/qa <question> · /research [question] · /done · /approve · ctrl+x cancels a run · /help"
+  # routed: llm.roles via RoleModelRouter (real models); fixture: the
+  # deterministic reference model over the fixture world (profiles/demo.yaml).
+  model_backend: routed
   # Where the fixture world lives and where its recorded web fixtures go.
   fixture_world_path: src/research_agent/fixture_world/world.yaml
+
+  # What start-up says when the live posture lacks a credential.
+  setup:
+    missing_model_key: >-
+      The research agent runs on NVIDIA models ({roles}) but `nvidia_api_key`
+      is not set. Export it, or run offline with `make tui ra PROFILE=demo`.
+    no_search_key: >-
+      `tavily_api_key` is not set: web search uses DuckDuckGo only (free,
+      best effort; no fallback when it finds nothing).
+    search_usage: "Tavily this month: {used} / {quota} searches (free tier; cached repeats are free)."
 
   # The conversational slash commands (typed as /<name>).
   command_names:
@@ -154,14 +177,17 @@ research_agent:
     rubric_add: add
     rubric_drop: drop
     rubric_set: set
+    qa: qa
+    research: research
 
   # Everything the agent says that is not written by a model.
   messages:
     refuse: I can't research that request.
-    reframe: >-
-      That is open-ended. What is the research for — choosing between
-      options, mapping a field, checking specific claims, or explaining how
-      something works?
+    reframe: "What would you like?\n{options}\nReply with a number, or rephrase your question."
+    reframe_option: '  {number}. {label} — e.g. "{example}"'
+    qa_started: "Quick answer: searching the web now (no interview). /research gives a full, audited research run instead."
+    qa_followup: "Want more depth? /research runs a full, audited research scope on this question."
+    demo_off_world: "Demo mode only knows the synthetic Kelvari topics listed at start-up; for the real web run `make tui ra` (no PROFILE)."
     challenge_prefix: "Before we go on: "
     propose_done: "I have enough to plan. Draft plan:\n{plan}\nReply /done to confirm, or keep refining."
     turn_cap: "We have reached the interview limit. Still open: {open}. Use /waive <id|all> or /done."
@@ -190,13 +216,38 @@ research_agent:
       - '\b(?:make|build|synthesi[sz]e)\s+(?:a\s+)?(?:bomb|weapon|explosive|nerve agent)\b'
       - '\b(?:dox|home address of)\b'
     # Open-ended requests that need a reframe before they are scopable.
+    # Messages with no question in them at all ("tell me about X"): the
+    # agent offers the two modes instead of guessing.
     reframe_patterns:
-      - '^\s*(?:tell me (?:about|everything)|what about|research)\b'
+      - '^\s*(?:tell me (?:about|everything)|what about)\b'
+    # A message that asks for a research *run* rather than an answer, even
+    # when it names no specialised kind: it becomes a `general` Research scope.
+    research_cues: [research, investigate, deep dive, in-depth, report on, study of, analyse, analyze]
+    # The reframe menu: one line per mode, each with a question that works.
+    reframe_options:
+      - mode: qa
+        label: "Quick answer (Q&A)"
+        example: Important AI news in the last 1 month
+        aliases: [qa, q&a, quick, answer, question, news]
+      - mode: research
+        label: "Research (interview, acceptance criteria, audited report)"
+        example: Help me choose a vector database for 10 million documents
+        aliases: [research, deep, full, report, choose, compare, map, mapping, verify, check, explain]
+    time_window:
+      amount_pattern: '(\d+)\s*(day|week|month|year)s?\b'
+      relative_pattern: '\b(?:last|past|previous|recent)\s+(day|week|month|year)\b'
+      current_pattern: '\b(?:this|current)\s+(day|week|month|year)\b'
+      # Only news phrasing: "the market today" means "currently", not one day.
+      today_pattern: '\b(?:today|yesterday)(?:''s)?\s+(?:news|headlines|announcements|updates)\b|\b(?:last|past)\s+24\s+hours\b'
+      unit_days: {day: 1, week: 7, month: 30, year: 365}
+    # Cues for the Research kinds. A question with none of them (and no
+    # research cue) is answered directly as Q&A. The live gate is a model;
+    # these are its hints, and the demo reference model's whole rule.
     archetype_keywords:
-      decision_support: [choose, choosing, decide, which should, compare, versus, " vs ", option, pick, recommend]
-      landscape_brief: [landscape, players, market map, who are the, competitors, ecosystem, market]
-      fact_verification: [verify, is it true, fact-check, fact check, claim, confirm whether, check whether]
-      explainer: [explain, how does, how do, what is, primer, understand how]
+      decision_support: [choose, choosing, decide, which should, compare, versus, " vs ", option, pick, recommend, should we, should i, which is better, better than, alternatives to, trade-off]
+      landscape_brief: [landscape, players, market map, who are the, competitors, ecosystem, market, who makes, vendors, startups, map the, overview of the]
+      fact_verification: [verify, is it true, fact-check, fact check, claim, confirm whether, check whether, is it accurate, true that, debunk]
+      explainer: [explain, primer, understand how, walk me through, teach me]
     # A comma inside a number ("10,000 cycles") does not split an answer.
     answer_split_pattern: '\s*(?:,(?!\d)|;|\band\b)\s*'
     vague_answer_max_words: 3
@@ -212,17 +263,34 @@ research_agent:
 
   budget:
     # Defaults and the ceiling: a Brief may lower these, never raise them.
-    max_searches: 24
-    max_fetches: 40
+    # Sized for free tiers: at most 8 searches a run (Tavily is only asked
+    # when DuckDuckGo cannot answer or the search is time-bounded), and two
+    # workers at once against NVIDIA's 35 requests/minute.
+    max_searches: 8
+    max_fetches: 24
     max_tokens: 200000
-    max_seconds: 600
+    max_seconds: 900
     max_rounds: 3
-    max_dag_nodes: 16
+    max_dag_nodes: 8
     max_gap_fill_rounds: 1
-    concurrency: 4
+    concurrency: 2
+
+  # Q&A: a quick cited answer, no interview. Three searches at most (the
+  # router asks DuckDuckGo first, Tavily only for news/time-bounded
+  # questions or when DuckDuckGo finds nothing), one follow-up round.
+  qa:
+    budget:
+      max_searches: 3
+      max_fetches: 8
+      max_tokens: 80000
+      max_seconds: 300
+      max_rounds: 2
+      max_dag_nodes: 3
+      max_gap_fill_rounds: 0
+      concurrency: 2
 
   planning:
-    max_queries_per_node: 2
+    max_queries_per_node: 1
 
   # Deterministic coverage matching: stop rules, gap analysis, audit checks.
   matching:
@@ -244,9 +312,11 @@ research_agent:
       recharging: [charg, reverses, backwards]
       efficiency: [efficiency]
       duration: [duration, hours, days]
+      news: [announced, launched, released, approved, registry, raised]
+      important: [announced, launched, released, approved]
 
   research:
-    max_results_per_search: 3
+    max_results_per_search: 5
     max_fetches_per_node: 4
     max_claims_per_page: 4
     # Sources whose host contains one of these count as primary.
@@ -256,6 +326,9 @@ research_agent:
     outbound_deny_patterns: ['(?i)\bcollect\.', '(?i)[?&](?:q|d|data|log)=']
     authority_rank: untrusted_content
     recency_rejection: "outside the approved {days}-day recency window (published {date})"
+    news_window_days: 31
+    news_topic: news
+    quota_stop: "search quota for this month is used up (it resets on the 1st)"
 
   reflection:
     max_followups_per_round: 4
@@ -336,6 +409,8 @@ research_agent:
       finalize: FINAL STATUS
       archive: ARCHIVE
     command_help:
+      qa: "Quick cited answer from a few web searches, no interview (/qa <question>)"
+      research: "Full research run on a question — interview, criteria, audit (/research [question]; bare = the last question)"
       done: "End the interview now; open required items become known unknowns"
       waive: "Waive an open checklist item (/waive <id> or /waive all)"
       rubric: "Edit acceptance criteria: add <text> | drop <id> | set <id> threshold=<x> must_pass=<bool>"

@@ -25,6 +25,10 @@ Plan the research as a small DAG of sub-questions.
 - Name the brief subject (an option, claim or concept) a node is about in
   `subject` when it is about one.
 - Stay within the node limit. Do not plan work the rubric does not need.
+- For a `qa` or `general` brief the topic is the question itself: plan the
+  fewest nodes (often one) whose queries would find pages that answer it.
+- When the brief has `recency_days`, write queries for recent coverage
+  (the search is already limited to that window; do not add dates).
 """
 
 REPAIR_INSTRUCTION = "Your previous plan was rejected for these reasons; fix every one:\n{problems}"

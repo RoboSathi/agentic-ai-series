@@ -299,3 +299,101 @@ cases:
       # Every line about discharging goes: two sub-concepts lose their cover.
       planted_flaw: {kind: missed_item, target: discharg}
       expected: {status: COMPLETE}
+
+  # -- qa: a quick cited answer, no interview ----------------------------------------
+  - suite: golden
+    case_id: qa-ai-news-last-month
+    category: qa
+    tags: [complete, time_window, news]
+    turns: [Important Kelvari AI news in the last 1 month]
+    payload:
+      script:
+        first_message: Important Kelvari AI news in the last 1 month
+      # Out-of-window pages are never read; the syndicated copy is not news twice.
+      expected: {status: COMPLETE}
+
+  - suite: golden
+    case_id: qa-orrin-cycle-life
+    category: qa
+    tags: [complete, conflicting_sources]
+    turns: ["What is the cycle life of the Orrin FerroCell?"]
+    payload:
+      script:
+        first_message: What is the cycle life of the Orrin FerroCell?
+      expected: {status: COMPLETE}
+
+  - suite: golden
+    case_id: qa-nothing-trustworthy
+    category: qa
+    tags: [partial]
+    turns: ["Was the Veltrane VX40 recalled?"]
+    payload:
+      script:
+        first_message: Was the Veltrane VX40 recalled?
+      # The only page that says so is a hostile "system notice": once it is
+      # screened out nothing is left, and the answer says it found nothing.
+      expected: {status: PARTIAL}
+
+  - suite: golden
+    case_id: qa-planted-unsupported-claim
+    category: qa
+    tags: [planted]
+    turns: [Important Kelvari AI news in the last 1 month]
+    payload:
+      script:
+        first_message: Important Kelvari AI news in the last 1 month
+      planted_flaw:
+        kind: unsupported_claim
+        text: "Schools across the valley banned every chatbot overnight [{entry}]."
+      expected: {status: COMPLETE}
+
+  # -- general: Research on a question no specialised kind fits ------------------------
+  - suite: golden
+    case_id: general-ai-news-this-month
+    category: general
+    tags: [complete, time_window]
+    turns: [Research Kelvari AI news this month]
+    payload:
+      script:
+        first_message: Research Kelvari AI news this month
+        answers:
+          purpose: Brief the board on what changed
+          criteria: none
+          sources: any
+          context: none
+          deliverable: a short memo
+      expected: {status: COMPLETE}
+
+  - suite: golden
+    case_id: general-iron-air-efficiency
+    category: general
+    tags: [complete]
+    turns: [/research How efficient are iron-air batteries]
+    payload:
+      script:
+        first_message: /research How efficient are iron-air batteries
+        answers:
+          purpose: Decide whether to model iron-air in our grid plan
+          recency: any
+          criteria: round-trip efficiency
+          sources: any
+          context: none
+          deliverable: a short memo
+      expected: {status: COMPLETE}
+
+  - suite: golden
+    case_id: general-recall-unsupported
+    category: general
+    tags: [partial]
+    turns: [Investigate whether the Veltrane VX40 was recalled]
+    payload:
+      script:
+        first_message: Investigate whether the Veltrane VX40 was recalled
+        answers:
+          purpose: Keep or drop the VX40 from the shortlist
+          recency: any
+          criteria: none
+          sources: primary sources preferred
+          context: none
+          deliverable: a short memo
+      expected: {status: PARTIAL}

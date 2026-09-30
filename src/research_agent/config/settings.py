@@ -15,6 +15,7 @@ from pydantic_settings import SettingsConfigDict
 from agentic_commons.config.paths import resolve_path
 from agentic_commons.config.settings import YamlBackedSettings
 from research_agent.domain.budget import Budget
+from research_agent.domain.scope import Mode
 
 ModelBackend = Literal["fixture", "routed"]
 
@@ -32,13 +33,22 @@ class CommandNames(BaseModel):
     rubric_add: str
     rubric_drop: str
     rubric_set: str
+    qa: str
+    research: str
 
 
 class MessageSettings(BaseModel):
     """Every agent-authored sentence the user sees (none are model-written)."""
 
     refuse: str
+    # `{options}` becomes the numbered menu, one `reframe_option` line each.
     reframe: str
+    reframe_option: str
+    # Said when a question goes straight to a quick answer, and after it.
+    qa_started: str
+    qa_followup: str
+    # Added to a FAILED run in demo mode: the question is outside Kelvari.
+    demo_off_world: str
     challenge_prefix: str
     propose_done: str
     turn_cap: str
@@ -58,6 +68,55 @@ class MessageSettings(BaseModel):
     brief_ready: str
 
 
+class GreetingSettings(BaseModel):
+    """The lines the greeting is assembled from (console/greeting.py)."""
+
+    live_mode: str
+    demo_mode: str
+    topic_line: str
+    modes_title: str
+    qa_line: str
+    research_line: str
+    limits: str
+    wont: str
+    commands: str
+
+
+class SetupMessages(BaseModel):
+    """What start-up says when the live posture is missing a credential."""
+
+    # Fatal: a routed role needs a model key that is not set.
+    missing_model_key: str
+    # Not fatal: without a Tavily key, search is DuckDuckGo only.
+    no_search_key: str
+    # The month's metered searches, for the greeting and the side panel.
+    search_usage: str
+
+
+class ReframeOption(BaseModel):
+    """One choice in the reframe menu: a mode, how it is named, an example."""
+
+    mode: Mode
+    label: str
+    example: str
+    # Words a reply may use instead of the number or the label.
+    aliases: list[str] = Field(default_factory=list)
+
+
+class TimeWindowSettings(BaseModel):
+    """How "in the last 1 month" becomes a day count (all patterns case-insensitive)."""
+
+    # "3 weeks", "30 days": group 1 the amount, group 2 the unit.
+    amount_pattern: str
+    # "last month", "past week" (one unit): group 1 the unit.
+    relative_pattern: str
+    # "this week", "this month": group 1 the unit.
+    current_pattern: str
+    # "today", "yesterday": one day.
+    today_pattern: str
+    unit_days: dict[str, int]
+
+
 class ScopingSettings(BaseModel):
     """The interview: its turn cap, its guard, and how answers are read."""
 
@@ -67,6 +126,10 @@ class ScopingSettings(BaseModel):
     refuse_patterns: list[str]
     reframe_patterns: list[str]
     archetype_keywords: dict[str, list[str]]
+    # A message naming no specialised kind but asking for a *research run*.
+    research_cues: list[str]
+    reframe_options: list[ReframeOption]
+    time_window: TimeWindowSettings
     answer_split_pattern: str
     vague_answer_max_words: int = Field(ge=0)
     absolute_words: list[str]
@@ -114,6 +177,18 @@ class ResearchSettings(BaseModel):
     authority_rank: str
     # Why a search hit outside the approved recency window was not read.
     recency_rejection: str
+    # A Q&A or general question bounded to this many days or fewer is news:
+    # search the providers' news vertical (`news_topic`).
+    news_window_days: int = Field(ge=1)
+    news_topic: str
+    # The budget stop recorded when every search provider is out of quota.
+    quota_stop: str
+
+
+class QaSettings(BaseModel):
+    """The Q&A fast path: no interview, a small budget, one follow-up round."""
+
+    budget: Budget
 
 
 class ReflectionSettings(BaseModel):
@@ -221,14 +296,16 @@ class ResearchAgentSettings(YamlBackedSettings):
 
     title: str
     placeholder: str
-    greeting: str
+    greeting: GreetingSettings
     model_backend: ModelBackend
     fixture_world_path: str
     command_names: CommandNames
     messages: MessageSettings
+    setup: SetupMessages
     scoping: ScopingSettings
     rubric: RubricSettings
     budget: Budget
+    qa: QaSettings
     planning: PlanningSettings
     matching: MatchingSettings
     research: ResearchSettings

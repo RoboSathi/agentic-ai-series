@@ -4,6 +4,11 @@
     record  the same, and write every exchange to the fixture set
     replay  answer only from the fixture set; a miss raises, never falls through
 
+Searches are memoised by request for the gateway's lifetime, and in live
+mode an optional on-disk `SearchCache` reuses answers across runs, so a
+repeated query spends no metered provider call. Only calls that actually
+leave the machine are logged at INFO; replayed and cached ones at DEBUG.
+
 Fetches are cached by URL for the gateway's lifetime, so fetching the
 same page twice is free and returns identical text — which is what lets
 the verbatim-span rule compare a span against *the* text of a page rather
@@ -20,6 +25,7 @@ from pydantic import BaseModel
 from agentic_commons.config.settings import WebMode
 from agentic_commons.logging import get_logger
 from agentic_commons.resilience import ResilientCaller
+from agentic_commons.web.cache import SearchCache
 from agentic_commons.web.fetcher import Fetcher
 from agentic_commons.web.fixtures import FixtureStore
 from agentic_commons.web.providers import SearchProvider
@@ -46,6 +52,11 @@ class WebCall(BaseModel):
     cached: bool = False
     ok: bool = True
     error: str = ""
+    provider: str = ""
+
+    @property
+    def left_the_machine(self) -> bool:
+        return self.mode != "replay" and not self.cached
 
 
 WebCallObserver = Callable[[WebCall], None]
@@ -64,6 +75,7 @@ class WebGateway:
         search_caller: ResilientCaller | None = None,
         fetch_caller: ResilientCaller | None = None,
         observer: WebCallObserver | None = None,
+        cache: SearchCache | None = None,
     ) -> None:
         if mode != "live" and fixtures is None:
             raise ValueError(f"web mode '{mode}' needs a fixture store")
@@ -76,6 +88,8 @@ class WebGateway:
         self._search_caller = search_caller
         self._fetch_caller = fetch_caller
         self._observer = observer
+        self._cache = cache
+        self._searches: dict[str, SearchResponse] = {}
         self._pages: dict[str, FetchedPage] = {}
         self._logger = get_logger("web")
 
@@ -85,6 +99,10 @@ class WebGateway:
 
     async def search(self, request: SearchRequest) -> SearchResponse:
         """Hits for one query; the provider's own summary is carried, flagged, never promoted."""
+        remembered = self._remembered(request)
+        if remembered is not None:
+            self._notify(self._search_call(request, remembered, cached=True))
+            return remembered
         try:
             response = await self._search(request)
         except Exception as exc:
@@ -94,8 +112,31 @@ class WebGateway:
                 )
             )
             raise
-        self._notify(WebCall(kind="search", target=request.query, mode=self._mode))
+        self._remember_search(response)
+        self._notify(self._search_call(request, response, cached=False))
         return response
+
+    def _remembered(self, request: SearchRequest) -> SearchResponse | None:
+        memo = self._searches.get(request.key)
+        if memo is None and self._mode == "live" and self._cache is not None:
+            memo = self._cache.get(request)
+        return memo
+
+    def _remember_search(self, response: SearchResponse) -> None:
+        self._searches[response.request.key] = response
+        if self._mode == "live" and self._cache is not None:
+            self._cache.put(response)
+
+    def _search_call(
+        self, request: SearchRequest, response: SearchResponse, cached: bool
+    ) -> WebCall:
+        return WebCall(
+            kind="search",
+            target=request.query,
+            mode=self._mode,
+            cached=cached,
+            provider=response.provider,
+        )
 
     async def fetch(self, url: str) -> FetchedPage:
         """A page's text, from the cache when this gateway already has it."""
@@ -145,7 +186,11 @@ class WebGateway:
 
     def _replayed_search(self, request: SearchRequest) -> SearchResponse:
         assert self._fixtures is not None
-        response = self._fixtures.search(request.key)
+        # A fixture recorded without a time bound answers a bounded request:
+        # the recorded web has no clock, and callers filter by date themselves.
+        response = self._fixtures.search(request.key) or self._fixtures.search(
+            request.unbounded().key
+        )
         if response is None:
             raise ReplayMissError(
                 f"no recorded search for '{request.normalized().query}' ({request.key[:12]})"
@@ -183,8 +228,10 @@ class WebGateway:
             raise WebUnavailableError(f"{key.split(':')[0]} failed: {exc}") from exc
 
     def _notify(self, call: WebCall) -> None:
-        self._logger.info(
+        log = self._logger.info if call.left_the_machine or not call.ok else self._logger.debug
+        log(
             "Web call",
+            provider=call.provider,
             kind=call.kind,
             target=call.target,
             mode=call.mode,
