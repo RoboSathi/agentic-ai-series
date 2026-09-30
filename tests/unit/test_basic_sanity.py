@@ -71,9 +71,7 @@ class TestCustomerSupportRules:
         result = self._check(seeded_pool, "refund order 10001", subject="")
         assert not result.passed and result.reason_code == "CUSTOMER_NOT_AUTHENTICATED"
 
-    def test_another_customers_order_is_not_found(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
+    def test_another_customers_order_is_not_found(self, seeded_pool: SqliteConnectionPool) -> None:
         result = self._check(seeded_pool, "refund order 10001", subject="2")
         assert not result.passed and result.reason_code == "ORDER_NOT_FOUND_FOR_CUSTOMER"
 

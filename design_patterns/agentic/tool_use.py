@@ -18,6 +18,7 @@ from agentic_commons.llm.client import LLMClient
 from agentic_commons.llm.types import CompletionRequest, Message
 from agentic_commons.logging import get_logger
 from agentic_commons.tools import NamespacedToolRegistry
+from design_patterns.agentic._invoke import invoke_tool
 from design_patterns.types import PatternFamily, PatternRun, Step
 
 
@@ -59,7 +60,7 @@ class ToolUsePattern:
                 # harness's to crash on.
                 observation = f"'{requested.name}' is unavailable or its arguments were invalid."
             else:
-                result = await self._registry.invoke(call)
+                result = await invoke_tool(self._registry, call)
                 observation = result.output if result.success else f"failed: {result.error}"
             steps.append(Step(kind="tool", detail=requested.name, output=observation))
             messages.append(

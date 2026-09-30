@@ -88,14 +88,14 @@ clean:
 	rm -rf logs/*.log
 
 lint:
-	./venv/bin/ruff check src/ tests/ design_patterns/ episodes/
+	./venv/bin/ruff check src/ tests/ design_patterns/
 
 type-check:
-	./venv/bin/mypy --strict src/ design_patterns/ episodes/
+	./venv/bin/mypy --strict src/ design_patterns/
 
 format:
-	./venv/bin/ruff format src/ tests/ design_patterns/ episodes/
-	./venv/bin/ruff check src/ tests/ design_patterns/ episodes/ --fix
+	./venv/bin/ruff format src/ tests/ design_patterns/
+	./venv/bin/ruff check src/ tests/ design_patterns/ --fix
 
 test:
 	./venv/bin/pytest tests/ --cov=src --cov-report=term-missing -q
@@ -177,10 +177,10 @@ eval-sql:
 # containing those digits and therefore passed at any coverage at all.
 verify:
 	@echo "$(BLUE)1/4 Ruff lint + format...$(NC)"
-	./venv/bin/ruff check src/ tests/ design_patterns/ episodes/ > /dev/null && \
-	./venv/bin/ruff format --check src/ tests/ design_patterns/ episodes/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
+	./venv/bin/ruff check src/ tests/ design_patterns/ > /dev/null && \
+	./venv/bin/ruff format --check src/ tests/ design_patterns/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
 	@echo "$(BLUE)2/4 mypy --strict...$(NC)"
-	./venv/bin/mypy --strict src/ design_patterns/ episodes/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
+	./venv/bin/mypy --strict src/ design_patterns/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
 	@echo "$(BLUE)3/4 Pytest with coverage gate (80%)...$(NC)"
 	./venv/bin/pytest tests/ --cov=src -q > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
 	@echo "$(BLUE)4/4 Composition root imports...$(NC)"

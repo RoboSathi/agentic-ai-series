@@ -34,7 +34,9 @@ class ReasoningNodes(NodeSupport):
         )
         self._report_llm_request(request, purpose="tool_selection")
         try:
-            result = await self._call_model(request, state, f"{state.session_id}:{state.tool_rounds}")
+            result = await self._call_model(
+                request, state, f"{state.session_id}:{state.tool_rounds}"
+            )
         except Exception as exc:
             error_fields = external_api_error_fields(exc)
             self._done_failed(
@@ -210,23 +212,14 @@ class ReasoningNodes(NodeSupport):
             if isinstance(step, dict) and step.get("tool")
         }
 
-        mandatory = [
-            tool
-            for tool in tools
-            if tool.name in plan_tools
-        ]
+        mandatory = [tool for tool in tools if tool.name in plan_tools]
 
         selected = await self._selector.select(state.query)
         narrowed = [tool for tool in selected if tool in tools]
 
         mandatory_names = {tool.qualified_name for tool in mandatory}
         return (
-            mandatory
-            + [
-                tool
-                for tool in narrowed
-                if tool.qualified_name not in mandatory_names
-            ]
+            mandatory + [tool for tool in narrowed if tool.qualified_name not in mandatory_names]
             or mandatory
             or tools
         )

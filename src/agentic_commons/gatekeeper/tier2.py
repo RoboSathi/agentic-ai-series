@@ -61,9 +61,7 @@ class SemanticTier2Advisor:
                     messages=[
                         Message(
                             role="user",
-                            content=self._prompt.format(
-                                action=call.action, params=call.params
-                            ),
+                            content=self._prompt.format(action=call.action, params=call.params),
                         )
                     ]
                 )

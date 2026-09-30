@@ -225,9 +225,9 @@ class CustomerSupportAgent(
         # Turns a Gatekeeper escalation into a queued review. Present only
         # with the Gatekeeper: without one nothing escalates.
         self._referral = referral
-        self._agent_policy = agent_policy
-        if self._agent_policy is None:
+        if agent_policy is None:
             raise ValueError("CustomerSupportAgent requires an AgentPolicy loaded from persistence")
+        self._agent_policy = agent_policy
         self._deliberation_markers = [m.casefold() for m in settings.deliberation_markers]
         self._max_rounds = settings.max_tool_iterations
         self._actor = self._agent_policy.agent_id

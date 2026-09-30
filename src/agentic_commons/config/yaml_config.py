@@ -109,9 +109,7 @@ def _no_duplicate_keys(
     return mapping
 
 
-_StrictLoader.add_constructor(
-    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicate_keys
-)
+_StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicate_keys)
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:

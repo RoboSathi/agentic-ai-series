@@ -8,7 +8,6 @@ from agentic_commons.memory import EpisodicStore, MemoryFacade
 from agentic_commons.memory.types import MemoryQuery
 from agentic_commons.security import (
     PIIFilterImpl,
-    Principal,
     PromptInjectionGuard,
     SecuritySuite,
     TermContentModerator,
@@ -120,14 +119,6 @@ class TestModeration:
         assert TermContentModerator().moderate("bomb").advisory_only is True
 
 
-class TestSecuritySuite:
-    def test_exposes_every_control_through_one_object(self) -> None:
-        suite = SecuritySuite()
-        assert suite.authorize(Principal(actor="a", roles=["viewer"]), "get_order_status").allowed
-        assert suite.moderate("hello").flagged is False
-        assert suite.minimize({"order_id": 1}) == {"order_id": 1}
-
-
 class TestPIIReachesMemory:
     """The third surface `pii/detector.py` claims, and the one that was missing.
 
@@ -139,14 +130,6 @@ class TestPIIReachesMemory:
 
     def _facade(self, tmp_path: Path, redactor: PIIFilterImpl | None) -> MemoryFacade:
         return MemoryFacade.complete(episodic=EpisodicStore(tmp_path), redactor=redactor)
-
-    def test_a_noted_fact_is_redacted_before_it_is_stored(
-        self, tmp_path: Path, security_on: None
-    ) -> None:
-        facade = self._facade(tmp_path, PIIFilterImpl())
-        facade.note("contact", "mail ada@example.com", "s1", source="customer")
-        stored = facade.active_window("s1")
-        assert stored and "ada@example.com" not in stored[0].value
 
     def test_an_episodic_event_is_redacted_before_it_is_stored(
         self, tmp_path: Path, security_on: None

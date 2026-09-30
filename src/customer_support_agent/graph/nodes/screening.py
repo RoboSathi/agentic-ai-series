@@ -9,6 +9,7 @@ quarantined, and the audit trail says why.
 from typing import Any
 
 from agentic_commons.basic_sanity import BasicSanityRequest
+from agentic_commons.resilience.dead_letter_queue import DeadLetterReason
 from customer_support_agent.basic_sanity import owned_order_id
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.graph.nodes._support import NodeSupport
@@ -151,8 +152,7 @@ class ScreeningNodes(NodeSupport):
             fields=fields,
         )
         return {
-            "response": result.message
-            or "I couldn't safely continue with that request.",
+            "response": result.message or "I couldn't safely continue with that request.",
             "decisions": [
                 *state.decisions,
                 f"basic_sanity: blocked ({result.reason_code})",
@@ -169,7 +169,7 @@ class ScreeningNodes(NodeSupport):
         self,
         state: AgentState,
         *,
-        reason: str,
+        reason: DeadLetterReason,
         injection_detected: bool = False,
         injection_reason: str = "",
         moderation_flagged: bool = False,
@@ -254,7 +254,11 @@ class ScreeningNodes(NodeSupport):
         )
         injection_checks = list(getattr(assessment, "checks", []))
         jailbreak_check = next(
-            (check for check in injection_checks if check.get("name") == "NVIDIA NemoGuard JailbreakDetect"),
+            (
+                check
+                for check in injection_checks
+                if check.get("name") == "NVIDIA NemoGuard JailbreakDetect"
+            ),
             None,
         )
         deterministic_injection = any(
@@ -274,12 +278,16 @@ class ScreeningNodes(NodeSupport):
                 fields=injection_fields,
             )
         elif jailbreak_check and jailbreak_check.get("status") == "FAIL":
-            injection_fields.update({
-                "model": jailbreak_check.get("model", "unknown"),
-                "score": jailbreak_check.get("score"),
-                "latency_ms": jailbreak_check.get("latency_ms"),
-                "reason": jailbreak_check.get("reason", "Hosted jailbreak guard flagged the input"),
-            })
+            injection_fields.update(
+                {
+                    "model": jailbreak_check.get("model", "unknown"),
+                    "score": jailbreak_check.get("score"),
+                    "latency_ms": jailbreak_check.get("latency_ms"),
+                    "reason": jailbreak_check.get(
+                        "reason", "Hosted jailbreak guard flagged the input"
+                    ),
+                }
+            )
             self._reporter_blocked(
                 "prompt_injection_check",
                 summary="Prompt injection blocked · model detection",
@@ -287,13 +295,15 @@ class ScreeningNodes(NodeSupport):
                 fields=injection_fields,
             )
         elif jailbreak_check and jailbreak_check.get("status") == "SKIPPED":
-            injection_fields.update({
-                "model": jailbreak_check.get("model", "unknown"),
-                "latency_ms": jailbreak_check.get("latency_ms"),
-                "error_code": jailbreak_check.get("error_code"),
-                "http_status": jailbreak_check.get("http_status"),
-                "reason": jailbreak_check.get("reason", "Hosted jailbreak guard unavailable"),
-            })
+            injection_fields.update(
+                {
+                    "model": jailbreak_check.get("model", "unknown"),
+                    "latency_ms": jailbreak_check.get("latency_ms"),
+                    "error_code": jailbreak_check.get("error_code"),
+                    "http_status": jailbreak_check.get("http_status"),
+                    "reason": jailbreak_check.get("reason", "Hosted jailbreak guard unavailable"),
+                }
+            )
             self._reporter_warning(
                 "prompt_injection_check",
                 summary="Prompt injection model check unavailable",
@@ -301,11 +311,13 @@ class ScreeningNodes(NodeSupport):
                 fields=injection_fields,
             )
         elif jailbreak_check:
-            injection_fields.update({
-                "model": jailbreak_check.get("model", "unknown"),
-                "score": jailbreak_check.get("score"),
-                "latency_ms": jailbreak_check.get("latency_ms"),
-            })
+            injection_fields.update(
+                {
+                    "model": jailbreak_check.get("model", "unknown"),
+                    "score": jailbreak_check.get("score"),
+                    "latency_ms": jailbreak_check.get("latency_ms"),
+                }
+            )
             self._done(
                 "prompt_injection_check",
                 summary="Prompt injection check passed · model verified",
@@ -345,7 +357,11 @@ class ScreeningNodes(NodeSupport):
         moderation = await self._security.moderate_async(_outbound(state))
         moderation_checks = list(getattr(moderation, "checks", []))
         content_guard_check = next(
-            (check for check in moderation_checks if check.get("name") == "NVIDIA Nemotron Safety Guard 8B v3"),
+            (
+                check
+                for check in moderation_checks
+                if check.get("name") == "NVIDIA Nemotron Safety Guard 8B v3"
+            ),
             None,
         )
         deterministic_content = bool(moderation.matched_terms)
@@ -361,12 +377,16 @@ class ScreeningNodes(NodeSupport):
                 fields=moderation_fields,
             )
         elif content_guard_check and content_guard_check.get("status") == "FAIL":
-            moderation_fields.update({
-                "model": content_guard_check.get("model", "unknown"),
-                "categories": list(content_guard_check.get("categories", [])),
-                "latency_ms": content_guard_check.get("latency_ms"),
-                "reason": content_guard_check.get("reason", "Hosted content-safety guard flagged the input"),
-            })
+            moderation_fields.update(
+                {
+                    "model": content_guard_check.get("model", "unknown"),
+                    "categories": list(content_guard_check.get("categories", [])),
+                    "latency_ms": content_guard_check.get("latency_ms"),
+                    "reason": content_guard_check.get(
+                        "reason", "Hosted content-safety guard flagged the input"
+                    ),
+                }
+            )
             self._reporter_blocked(
                 "content_moderation",
                 summary="Content safety blocked · model detection",
@@ -374,13 +394,17 @@ class ScreeningNodes(NodeSupport):
                 fields=moderation_fields,
             )
         elif content_guard_check and content_guard_check.get("status") == "SKIPPED":
-            moderation_fields.update({
-                "model": content_guard_check.get("model", "unknown"),
-                "latency_ms": content_guard_check.get("latency_ms"),
-                "error_code": content_guard_check.get("error_code"),
-                "http_status": content_guard_check.get("http_status"),
-                "reason": content_guard_check.get("reason", "Hosted content-safety guard unavailable"),
-            })
+            moderation_fields.update(
+                {
+                    "model": content_guard_check.get("model", "unknown"),
+                    "latency_ms": content_guard_check.get("latency_ms"),
+                    "error_code": content_guard_check.get("error_code"),
+                    "http_status": content_guard_check.get("http_status"),
+                    "reason": content_guard_check.get(
+                        "reason", "Hosted content-safety guard unavailable"
+                    ),
+                }
+            )
             self._reporter_warning(
                 "content_moderation",
                 summary="Content safety model check unavailable",
@@ -388,10 +412,12 @@ class ScreeningNodes(NodeSupport):
                 fields=moderation_fields,
             )
         elif content_guard_check:
-            moderation_fields.update({
-                "model": content_guard_check.get("model", "unknown"),
-                "latency_ms": content_guard_check.get("latency_ms"),
-            })
+            moderation_fields.update(
+                {
+                    "model": content_guard_check.get("model", "unknown"),
+                    "latency_ms": content_guard_check.get("latency_ms"),
+                }
+            )
             self._done(
                 "content_moderation",
                 summary="Content safety check passed · model verified",

@@ -182,7 +182,7 @@ class ReviewQueueService:
                 actor=reviewer,
                 action="approve_hitl_request",
                 authority_context=AuthorityContext(
-                    actor=reviewer, granted_by="workspace", roles=["support_supervisor"]
+                    actor=reviewer, granted_by="workspace"
                 ).model_dump(mode="json"),
                 decision=decision,  # type: ignore[arg-type]
                 rationale=rationale,

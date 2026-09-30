@@ -120,7 +120,9 @@ class DreamCommand:
         from agentic_commons.memory.consolidation import change_tree_lines
 
         report = await self._service().dream()
-        result = CommandResult(title=f"Dream — {report.events} turn events from {report.sessions} sessions")
+        result = CommandResult(
+            title=f"Dream — {report.events} turn events from {report.sessions} sessions"
+        )
         result.lines = change_tree_lines(report)
         result.line("Use /memory to see everything memory now holds.")
         return result

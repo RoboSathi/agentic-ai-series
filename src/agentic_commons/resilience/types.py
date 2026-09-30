@@ -68,7 +68,8 @@ def external_api_error_fields(exc: Exception) -> dict[str, Any] | None:
         return None
 
     payload = body if isinstance(body, dict) else {}
-    nested = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+    error = payload.get("error")
+    nested: dict[str, Any] = error if isinstance(error, dict) else {}
 
     error_code = (
         nested.get("code")

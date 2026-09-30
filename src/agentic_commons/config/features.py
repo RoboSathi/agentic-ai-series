@@ -126,7 +126,9 @@ def _with_every_value(node: Mapping[str, Any], value: bool) -> dict[str, Any]:
 
 def _copy(value: Any) -> Any:
     """A structural copy, so an override cannot reach back into the original."""
-    return {key: _copy(item) for key, item in value.items()} if isinstance(value, Mapping) else value
+    return (
+        {key: _copy(item) for key, item in value.items()} if isinstance(value, Mapping) else value
+    )
 
 
 # The posture in force right now. `None` means nothing has overridden the

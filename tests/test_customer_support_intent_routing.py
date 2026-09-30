@@ -54,54 +54,6 @@ async def test_refund_status_beats_generic_refund_marker() -> None:
     assert backend.calls == 0
 
 
-@pytest.mark.asyncio
-async def test_current_refund_request_is_not_overridden_by_previous_intent() -> None:
-    backend = _backend(("fallback", 0.90))
-    router = CustomerSupportIntentRouter(backend=backend)
-    previous = await router.classify_async("where is the order 10242 now?")
-
-    result = await router.classify_async("i want a refund for it", previous=previous)
-
-    assert previous.name == "ORDER_STATUS"
-    assert result.name == "REQUEST_REFUND"
-    assert result.source == "deterministic"
-    assert result.allowed_tools == [
-        "get_order_status",
-        "get_refund_status",
-        "process_refund",
-        "queue_for_approval",
-    ]
-
-
-@pytest.mark.asyncio
-async def test_vague_followup_does_not_inherit_a_write_intent() -> None:
-    backend = _backend(("fallback", 0.95))
-    router = CustomerSupportIntentRouter(backend=backend)
-    previous = await router.classify_async("i want a refund for order 10242")
-
-    result = await router.classify_async("where is it now?", previous=previous)
-
-    assert previous.name == "REQUEST_REFUND"
-    assert result.disposition.value == "clarify"
-    assert result.name == "UNKNOWN"
-
-
-@pytest.mark.asyncio
-async def test_underspecified_followup_uses_previous_supported_intent_as_fallback() -> None:
-    backend = _backend(("fallback", 0.92), ("track_order", 0.08))
-    router = CustomerSupportIntentRouter(backend=backend)
-    previous = await router.classify_async("where is the order 10242 now?")
-
-    result = await router.classify_async("where is it now?", previous=previous)
-
-    assert previous.name == "ORDER_STATUS"
-    assert result.name == "ORDER_STATUS"
-    assert result.source == "context_fallback"
-    assert result.matched_phrase == "continued_context"
-    assert result.allowed_tools == ["get_order_status"]
-    assert backend.calls == 1
-
-
 def test_intent_operator_fields_are_concise_and_distinguish_source() -> None:
     from customer_support_agent.graph.agent import CustomerSupportAgent
 

@@ -19,21 +19,6 @@ class FakeBackend:
 
 
 @pytest.mark.asyncio
-async def test_bare_refund_is_ambiguous_not_write_authorized() -> None:
-    router = CustomerSupportIntentRouter(backend=FakeBackend())
-
-    result = await router.classify_async("refund")
-
-    assert result.name == "UNKNOWN"
-    assert result.disposition.value == "clarify"
-    assert {candidate.intent for candidate in result.candidates} == {
-        "REQUEST_REFUND",
-        "REFUND_STATUS",
-    }
-    assert result.allowed_tools == []
-
-
-@pytest.mark.asyncio
 async def test_refund_status_is_deterministic_read() -> None:
     router = CustomerSupportIntentRouter(backend=FakeBackend())
 

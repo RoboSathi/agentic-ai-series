@@ -103,8 +103,11 @@ class DurableGraphRunner:
             )
         self._registry.attempt(thread_id)
         self._logger.info(
-            "Resuming run", thread=thread_id, checkpoint=record.checkpoint_id,
-            node=record.next_node, attempt=record.attempts + 1,
+            "Resuming run",
+            thread=thread_id,
+            checkpoint=record.checkpoint_id,
+            node=record.next_node,
+            attempt=record.attempts + 1,
         )
         if reporter is not None:
             waited = record.status == "interrupted"

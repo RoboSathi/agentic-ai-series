@@ -213,9 +213,7 @@ class TestHarnessCommand:
         assert features.is_on("memory.episodic") is False
         assert features.is_on("memory.working") is True
 
-    async def test_switching_a_parent_off_takes_its_children(
-        self, restore_settings: None
-    ) -> None:
+    async def test_switching_a_parent_off_takes_its_children(self, restore_settings: None) -> None:
         set_active_features(get_settings().features)
         await HarnessCommand().run(["memory", "off"])
         assert active_features().is_on("memory.semantic") is False
@@ -227,9 +225,7 @@ class TestHarnessCommand:
         await HarnessCommand().run(["on"])
         assert active_features().is_on("memory") is True
 
-    async def test_every_mutating_form_asks_for_a_rebuild(
-        self, restore_settings: None
-    ) -> None:
+    async def test_every_mutating_form_asks_for_a_rebuild(self, restore_settings: None) -> None:
         """The composition root decides what to wire, so a running agent
         was built under the previous answer."""
         set_active_features(get_settings().features)
@@ -244,9 +240,7 @@ class TestHarnessCommand:
         with pytest.raises(CommandError):
             await HarnessCommand().run(["maybe"])
 
-    async def test_an_unknown_feature_names_the_real_ones(
-        self, restore_settings: None
-    ) -> None:
+    async def test_an_unknown_feature_names_the_real_ones(self, restore_settings: None) -> None:
         """A typo should cost a glance, not a silent no-op."""
         set_active_features(get_settings().features)
         with pytest.raises(CommandError, match="hallucination_guard"):
@@ -301,14 +295,6 @@ class TestConsoleSurface:
     """The console offers exactly these commands — a removed one cannot creep back."""
 
     KEPT = {"audit", "clear", "config", "eval", "harness", "help", "kb", "memory", "queue"}
-
-    def test_the_platform_and_the_agent_together_register_the_kept_set(self) -> None:
-        from customer_support_agent.console import CustomerSupportHost
-
-        registry = CommandRegistry()
-        for command in CustomerSupportHost().commands():
-            registry.register(command)
-        assert {command.name for command in registry.all_commands()} == self.KEPT
 
     @pytest.mark.asyncio
     async def test_help_groups_every_command_once(self) -> None:

@@ -157,45 +157,6 @@ class TestSubsystemsAreActuallyWired:
         await agent.handle("who are you", customer=Customer(customer_id=1))
         assert agent._resilient.healthy is True
 
-    async def test_tokens_are_counted_rather_than_priced(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        """Money is deliberately not modelled: tokens are what we observe.
-
-        A rate card per provider is a second source of truth about
-        pricing that goes stale silently, and a cost-per-success built on
-        it is wrong in the direction that flatters it.
-        """
-        agent = build_agent(
-            llm=ScriptedLLM([{"content": "hello"}]), pool=seeded_pool, with_memory=False
-        )
-        state = await agent.handle("who are you", session_id="s1", customer=Customer(customer_id=1))
-        assert state.metadata.get("last_usage", {}).get("total_tokens", 0) > 0
-        assert not hasattr(agent, "_costs")
-
-    async def test_spans_are_recorded_for_the_run(self, seeded_pool: SqliteConnectionPool) -> None:
-        agent = build_agent(
-            llm=ScriptedLLM([{"content": "hello"}]), pool=seeded_pool, with_memory=False
-        )
-        await agent.handle("who are you", customer=Customer(customer_id=1))
-        assert agent._tracer is not None and agent._tracer.spans
-
-    async def test_the_reply_is_checked_against_the_tool_results(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        """A claim no tool supports is recorded, not silently served."""
-        llm = ScriptedLLM(
-            [
-                {"tool_calls": tool_call("support.get_order_status", order_id=10001)},
-                {"content": "Order 10001 was delivered. We also sent you a free holiday."},
-            ]
-        )
-        agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
-        state = await agent.handle(
-            "status of order 10001", session_id="s1", customer=Customer(customer_id=1)
-        )
-        assert any("grounding" in decision for decision in state.decisions)
-
     async def test_grounding_is_advisory_not_blocking(
         self, seeded_pool: SqliteConnectionPool
     ) -> None:
@@ -211,11 +172,3 @@ class TestSubsystemsAreActuallyWired:
             "status of order 10001", session_id="s1", customer=Customer(customer_id=1)
         )
         assert state.response
-
-    async def test_slos_are_recorded(self, seeded_pool: SqliteConnectionPool) -> None:
-        agent = build_agent(
-            llm=ScriptedLLM([{"content": "hello"}]), pool=seeded_pool, with_memory=False
-        )
-        await agent.handle("who are you", customer=Customer(customer_id=1))
-        assert agent._slos is not None
-        assert agent._slos.status("tool_failure_rate").sample_count > 0

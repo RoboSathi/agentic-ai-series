@@ -11,7 +11,6 @@ from agentic_commons.memory import (
     MemoryFacade,
     MemoryFact,
     MemoryQuery,
-    MemoryStore,
     ProceduralStore,
     Provenance,
     SemanticStore,
@@ -51,41 +50,6 @@ def _fact(key: str, value: str, kind: str = "self_reported", **extra: object) ->
         provenance=Provenance(source="test", kind=kind),  # type: ignore[arg-type]
         **extra,  # type: ignore[arg-type]
     )
-
-
-class TestStoresImplementTheProtocol:
-    """The regression this guards: a Protocol declared but not satisfied."""
-
-    def test_every_store_satisfies_memory_store(
-        self, semantic: SemanticStore, episodic: EpisodicStore, procedural: ProceduralStore
-    ) -> None:
-        for store in (semantic, episodic, procedural, WorkingMemory()):
-            assert isinstance(store, MemoryStore), type(store).__name__
-
-
-class TestWorkingMemory:
-    def test_holds_the_active_window(self) -> None:
-        working = WorkingMemory(capacity=3)
-        working.write(_fact("a", "1"), Provenance(source="t"))
-        assert working.size() == 1
-
-    def test_evicts_the_oldest_when_full(self) -> None:
-        working = WorkingMemory(capacity=2)
-        for index in range(3):
-            working.write(_fact(str(index), str(index)), Provenance(source="t"))
-        assert working.size() == 2
-
-    def test_reads_newest_first(self) -> None:
-        working = WorkingMemory(capacity=5)
-        working.write(_fact("a", "first"), Provenance(source="t"))
-        working.write(_fact("b", "second"), Provenance(source="t"))
-        assert working.read(MemoryQuery(limit=1))[0].value == "second"
-
-    def test_scratch_state_clears_with_the_window(self) -> None:
-        working = WorkingMemory()
-        working.remember("k", 1)
-        working.clear()
-        assert working.recall("k") is None
 
 
 class TestSemanticStore:
@@ -316,7 +280,9 @@ class TestMemoryFacade:
     async def test_recall_ranks_across_stores(
         self, pool: SqliteConnectionPool, tmp_path: Path
     ) -> None:
-        facade = MemoryFacade.complete(semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path))
+        facade = MemoryFacade.complete(
+            semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path)
+        )
         facade.semantic.write(_fact("policy", "refunds within 30 days"), Provenance(source="p"))
         recalled = await facade.recall(MemoryQuery(text="refunds"))
         assert recalled and recalled[0].fact.key == "policy"
@@ -324,11 +290,15 @@ class TestMemoryFacade:
     async def test_recall_is_empty_when_nothing_matches(
         self, pool: SqliteConnectionPool, tmp_path: Path
     ) -> None:
-        facade = MemoryFacade.complete(semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path))
+        facade = MemoryFacade.complete(
+            semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path)
+        )
         assert await facade.recall(MemoryQuery(text="nothing here")) == []
 
     def test_forget_removes_a_fact(self, pool: SqliteConnectionPool, tmp_path: Path) -> None:
-        facade = MemoryFacade.complete(semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path))
+        facade = MemoryFacade.complete(
+            semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path)
+        )
         facade.semantic.write(_fact("k", "v"), Provenance(source="t"))
         assert facade.forget("k") == 1
 

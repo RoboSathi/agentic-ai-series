@@ -169,9 +169,7 @@ class EpisodicStore:
         """One session's events: supersession records never, retired events on request."""
         facts = self._read_all(path)
         retired = set() if include_superseded else _retired(facts)
-        return [
-            fact for fact in facts if fact.category != SUPERSESSION and fact.key not in retired
-        ]
+        return [fact for fact in facts if fact.category != SUPERSESSION and fact.key not in retired]
 
     def _read_all(self, path: Path) -> list[MemoryFact]:
         """Parse one log file, skipping any line that cannot be read.

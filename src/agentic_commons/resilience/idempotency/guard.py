@@ -77,8 +77,7 @@ class SqliteIdempotencyGuard:
     def recorded_result(self, key: str) -> Any | None:
         """The stored outcome for a key, if this request was already handled."""
         row = self._store.query_one(
-            "SELECT result_json FROM platform_idempotency_records "
-            "WHERE agent_id = ? AND key = ?",
+            "SELECT result_json FROM platform_idempotency_records WHERE agent_id = ? AND key = ?",
             (self._agent_id, key),
         )
         return json.loads(row["result_json"]) if row else None
@@ -87,8 +86,7 @@ class SqliteIdempotencyGuard:
         """Whether a key has already been handled."""
         return (
             self._store.query_one(
-                "SELECT 1 AS hit FROM platform_idempotency_records "
-                "WHERE agent_id = ? AND key = ?",
+                "SELECT 1 AS hit FROM platform_idempotency_records WHERE agent_id = ? AND key = ?",
                 (self._agent_id, key),
             )
             is not None

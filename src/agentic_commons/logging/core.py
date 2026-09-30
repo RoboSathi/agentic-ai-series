@@ -45,7 +45,6 @@ _IDENTIFYING_FIELDS = (
     "label",
     "topic",
     "route",
-
     # Decision / model detail that explains the step.
     "reason",
     "question",
@@ -97,16 +96,14 @@ SUBSYSTEM_COLORS: dict[str, str] = {
 class StructuredLogger(Protocol):
     """Emits structured events, optionally rebound to another subsystem."""
 
-    def bind(self, subsystem: str) -> "StructuredLogger":
-        ...
+    def bind(self, subsystem: str) -> "StructuredLogger": ...
 
     def event(
         self,
         level: Level,
         message: str,
         **fields: Any,
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 # Drawing characters for the field tree. A record's structure is the
@@ -138,7 +135,11 @@ class PlainFormatter(logging.Formatter):
     """
 
     def format(self, record: logging.LogRecord) -> str:
-        timestamp = datetime.fromtimestamp(record.created).astimezone().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        timestamp = (
+            datetime.fromtimestamp(record.created)
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        )
         module = record.name.removeprefix("agentic.")
         level = record.levelname
         message = Text.from_markup(record.getMessage()).plain
@@ -347,16 +348,10 @@ class RichLogger:
     ) -> None:
         """Trace a call at DEBUG — the file receives the full payload."""
 
-        all_args = ", ".join(
-            f"{name}={_payload(value)}"
-            for name, value in arguments.items()
-        )
+        all_args = ", ".join(f"{name}={_payload(value)}" for name, value in arguments.items())
 
         self._traced(
-            (
-                f"[bold {color}]CALLED[/bold {color}] "
-                f"[cyan]{func_name}[/cyan]({all_args})"
-            ),
+            (f"[bold {color}]CALLED[/bold {color}] [cyan]{func_name}[/cyan]({all_args})"),
             structured_fields={
                 "function": func_name,
                 "arguments": arguments,
@@ -430,9 +425,7 @@ class LoggerFactory:
         """Get or build the logger for one subsystem."""
 
         if subsystem not in cls._loggers:
-            cls._loggers[subsystem] = cls._build(
-                subsystem
-            )
+            cls._loggers[subsystem] = cls._build(subsystem)
 
         return RichLogger(
             cls._loggers[subsystem],
@@ -472,9 +465,7 @@ class LoggerFactory:
         """Drop cached loggers so config changes take effect."""
 
         for logger in cls._loggers.values():
-            for handler in list(
-                logger.handlers
-            ):
+            for handler in list(logger.handlers):
                 if handler in cls._subscribers:
                     logger.removeHandler(handler)
                     continue
@@ -491,9 +482,7 @@ class LoggerFactory:
     ) -> logging.Logger:
         settings = get_settings().logging
 
-        logger = logging.getLogger(
-            f"agentic.{subsystem}"
-        )
+        logger = logging.getLogger(f"agentic.{subsystem}")
 
         # Let DEBUG through the logger gate.
         # Each handler decides what it wants.
@@ -502,18 +491,10 @@ class LoggerFactory:
         logger.handlers.clear()
 
         if settings.console_enabled:
-            logger.addHandler(
-                cls._console_handler(
-                    settings.console_level
-                )
-            )
+            logger.addHandler(cls._console_handler(settings.console_level))
 
         if settings.file_enabled:
-            logger.addHandler(
-                cls._file_handler(
-                    subsystem
-                )
-            )
+            logger.addHandler(cls._file_handler(subsystem))
 
         # IMPORTANT:
         # A TUI trace subscriber may have been attached before a subsystem's
@@ -566,15 +547,9 @@ class LoggerFactory:
             backupCount=settings.backup_count,
         )
 
-        handler.setLevel(
-            settings.file_level
-        )
+        handler.setLevel(settings.file_level)
 
-        handler.setFormatter(
-            PlainFormatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            )
-        )
+        handler.setFormatter(PlainFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
 
         return handler
 
@@ -583,9 +558,7 @@ def get_logger(
     subsystem: str,
 ) -> RichLogger:
     """The logger for one subsystem — standard entry point."""
-    return LoggerFactory.for_subsystem(
-        subsystem
-    )
+    return LoggerFactory.for_subsystem(subsystem)
 
 
 def _json_safe(value: Any) -> Any:
@@ -603,7 +576,9 @@ def _json_safe(value: Any) -> Any:
             pass
     if hasattr(value, "__dict__"):
         try:
-            return {str(k): _json_safe(v) for k, v in vars(value).items() if not str(k).startswith("_")}
+            return {
+                str(k): _json_safe(v) for k, v in vars(value).items() if not str(k).startswith("_")
+            }
         except Exception:
             pass
     return str(value)
@@ -622,13 +597,7 @@ def _payload(
 
     limit = get_settings().logging.payload_max_chars
 
-    if (
-        limit <= 0
-        or len(rendered) <= limit
-    ):
+    if limit <= 0 or len(rendered) <= limit:
         return rendered
 
-    return (
-        f"{rendered[:limit]}… "
-        f"[{len(rendered)} chars]"
-    )
+    return f"{rendered[:limit]}… [{len(rendered)} chars]"

@@ -56,9 +56,7 @@ class SecuritySuite:
                 model=guard_settings.jailbreak.model,
                 resilient=jailbreak_resilient or ResilientCaller("nvidia-jailbreak"),
             )
-            if injection is not None
-            and guard_settings.enabled
-            and guard_settings.jailbreak.enabled
+            if injection is not None and guard_settings.enabled and guard_settings.jailbreak.enabled
             else None
         )
         self.content_safety_guard = content_safety_guard or (
@@ -147,7 +145,11 @@ class SecuritySuite:
         assessment.checks.append(
             {
                 "name": "NVIDIA NemoGuard JailbreakDetect",
-                "status": "FAIL" if verdict.flagged else "SKIPPED" if not verdict.available else "PASS",
+                "status": "FAIL"
+                if verdict.flagged
+                else "SKIPPED"
+                if not verdict.available
+                else "PASS",
                 "reason_code": (
                     "HOSTED_JAILBREAK_DETECTED"
                     if verdict.flagged
@@ -207,7 +209,11 @@ class SecuritySuite:
         verdict.checks.append(
             {
                 "name": "NVIDIA Nemotron Safety Guard 8B v3",
-                "status": "FAIL" if model_verdict.flagged else "SKIPPED" if not model_verdict.available else "PASS",
+                "status": "FAIL"
+                if model_verdict.flagged
+                else "SKIPPED"
+                if not model_verdict.available
+                else "PASS",
                 "reason_code": (
                     "HOSTED_CONTENT_SAFETY_DETECTED"
                     if model_verdict.flagged

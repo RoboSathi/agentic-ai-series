@@ -330,7 +330,7 @@ class TestAnAbstentionIsNotAHallucination:
         assert result.reason_code == "TOOL_EVIDENCE_REFUND_STATE_MISMATCH"
 
     def test_a_negated_claim_is_not_read_as_an_assertion(self) -> None:
-        """"No refund has been processed" carries the settled wording and denies it."""
+        """ "No refund has been processed" carries the settled wording and denies it."""
         guard = ResponseGuardrail(DetectionLadder(create_scoring_cascade()))
         result = asyncio.run(
             guard.enforce("No refund has been processed for order 10979 yet.", self.EVIDENCE)
@@ -377,9 +377,7 @@ class TestRepairDoesNotRunTwiceForNothing:
         guard = ResponseGuardrail(DetectionLadder(create_scoring_cascade()))
         evidence = [Chunk(content="Order 10001 refund status: none", kind="tool_result")]
         asyncio.run(
-            guard.enforce(
-                "The refund for order 10001 has been completed.", evidence, revise=revise
-            )
+            guard.enforce("The refund for order 10001 has been completed.", evidence, revise=revise)
         )
         # The deterministic refund-state check settles this before any
         # repair is attempted, so the model is never asked.

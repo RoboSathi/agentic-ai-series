@@ -150,7 +150,9 @@ class DeadLetterQueue:
         )
         return result.affected > 0
 
-    def resolve(self, entry_id: int, reviewer: str, resolution: str, *, discarded: bool = False) -> bool:
+    def resolve(
+        self, entry_id: int, reviewer: str, resolution: str, *, discarded: bool = False
+    ) -> bool:
         """Close a reviewed queue item without executing its original payload."""
         status = "discarded" if discarded else "resolved"
         result = self._store.execute(
@@ -183,9 +185,7 @@ def _entry(row: dict[str, Any]) -> DeadLetterEntry:
         agent_id=str(row["agent_id"]),
         trace_id=str(row.get("trace_id") or ""),
         session_id=str(row.get("session_id") or ""),
-        principal_id=(
-            str(row["principal_id"]) if row.get("principal_id") is not None else None
-        ),
+        principal_id=(str(row["principal_id"]) if row.get("principal_id") is not None else None),
         reason=row["reason"],
         status=row["status"],
         payload=str(row["payload"]),

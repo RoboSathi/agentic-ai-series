@@ -149,7 +149,7 @@ class ResponseGuardrail:
     def validate_schema(self, raw: str) -> tuple[str | None, dict[str, Any]]:
         """Validate a structured response envelope."""
         result = self._validator.validate(raw, CustomerResponse)
-        fields = {
+        fields: dict[str, Any] = {
             "schema_valid": result.valid,
             "validation_mode": result.mode,
             "validation_attempts": result.attempts,

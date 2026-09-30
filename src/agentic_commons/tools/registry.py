@@ -146,7 +146,6 @@ class NamespacedToolRegistry:
         )
 
 
-
 def _as_json(raw_arguments: str | dict[str, Any]) -> str:
     """The arguments as a JSON string, whichever way the caller had them.
 

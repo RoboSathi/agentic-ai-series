@@ -27,7 +27,13 @@ class FakeResponse:
 
 
 class FakeAsyncClient:
-    def __init__(self, payload: dict[str, object], status_code: int = 200, poll_payload: dict[str, object] | None = None, statuses: list[int] | None = None) -> None:
+    def __init__(
+        self,
+        payload: dict[str, object],
+        status_code: int = 200,
+        poll_payload: dict[str, object] | None = None,
+        statuses: list[int] | None = None,
+    ) -> None:
         self.payload = payload
         self.status_code = status_code
         self.statuses = list(statuses or [])
@@ -120,7 +126,10 @@ async def test_content_guard_polls_nvidia_202_result(monkeypatch: pytest.MonkeyP
     verdict = await guard.classify("where is order 10242?")
     assert verdict.decision == "allow"
     assert verdict.api_called is True
-    assert any(str(call["url"]).endswith("/v1/status/123e4567-e89b-12d3-a456-426614174000") for call in client.calls)
+    assert any(
+        str(call["url"]).endswith("/v1/status/123e4567-e89b-12d3-a456-426614174000")
+        for call in client.calls
+    )
 
 
 @pytest.mark.asyncio

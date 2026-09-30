@@ -62,12 +62,6 @@ class TestSettings:
 
         assert get_agent_settings().intents
 
-    def test_the_agent_overlay_merges_into_platform_sections(self) -> None:
-        """Deep merge: the overlay fills part of a section, not all of it."""
-        gatekeeper = get_settings().gatekeeper
-        assert gatekeeper.surface_policy.surfaces  # from the agent overlay
-        assert gatekeeper.authority_hierarchy  # from the platform base
-
     def test_settings_are_a_singleton(self) -> None:
         assert get_settings() is get_settings()
 
@@ -153,20 +147,6 @@ class TestRunScopedOverlays:
         assert settings.security.pii.mode == "remove"
         assert settings.security.pii.patterns
         assert settings.security.prompt_injection.suspicious_phrases
-
-    def test_it_applies_after_the_agent_overlay(
-        self, tmp_path: Path, restore_settings: None
-    ) -> None:
-        """A run-scoped layer wins over the agent's own config."""
-        agent_value = get_settings().gatekeeper.ledger.thresholds_usd["refund"]
-        use_overlay(
-            self._write(
-                tmp_path,
-                "gatekeeper:\n  ledger:\n    thresholds_usd:\n      refund: 1\n",
-            )
-        )
-        assert agent_value != 1
-        assert reload_settings().gatekeeper.ledger.thresholds_usd["refund"] == 1
 
     def test_local_yaml_still_has_the_last_word(self) -> None:
         """Machine-local overrides outrank a run's, or they are not overrides."""

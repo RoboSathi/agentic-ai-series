@@ -28,10 +28,9 @@ from customer_support_agent.control_loop import (
     GroundedCritic,
     IndependentScorer,
     OutputQualityGate,
-    PlanLookup,
 )
 from customer_support_agent.observability.accounting import TurnAccountant, TurnOutcome
-from customer_support_agent.prompts.system_prompt import PROMPT_ARTIFACT, build_system_prompt
+from customer_support_agent.prompts.system_prompt import build_system_prompt
 from tests.conftest import ScriptedLLM
 
 
@@ -210,32 +209,17 @@ class TestMemoryWritePipelineIsReached:
 class TestDeliberation:
     """FR-16: planner, reflector and evaluator, each swappable."""
 
-    def test_the_plan_comes_from_the_intent(self) -> None:
-        plan = PlanLookup().plan(
-            "refund order 10001", "refund_request", ["get_order_status", "process_refund"]
-        )
-        assert [step.tool for step in plan.steps] == ["get_order_status", "process_refund"]
-
-    def test_a_plan_is_filtered_to_what_the_intent_allows(self) -> None:
-        """Planning cannot widen authority — it works inside the intent."""
-        plan = PlanLookup().plan("where is 10001", "refund_request", ["get_order_status"])
-        assert [step.tool for step in plan.steps] == ["get_order_status"]
-
     def test_reflection_rejects_deliberation_shipped_as_a_reply(self) -> None:
         critique = GroundedCritic().reflect("We need to check the policy first.", [])
         assert critique.acceptable is False
 
     def test_reflection_rejects_an_order_no_tool_returned(self) -> None:
-        critique = GroundedCritic().reflect(
-            "Order 99999 is on its way.", ["Order 10001: shipped"]
-        )
+        critique = GroundedCritic().reflect("Order 99999 is on its way.", ["Order 10001: shipped"])
         assert critique.acceptable is False
         assert "99999" in critique.summary
 
     def test_a_grounded_reply_passes(self) -> None:
-        critique = GroundedCritic().reflect(
-            "Order 10001 is on its way.", ["Order 10001: shipped"]
-        )
+        critique = GroundedCritic().reflect("Order 10001 is on its way.", ["Order 10001: shipped"])
         assert critique.acceptable is True
 
     @pytest.mark.asyncio
@@ -303,28 +287,12 @@ class TestPostmortems:
 
 
 class TestPromptIsVersioned:
-    """FR-54-adjacent: procedural memory was constructed and never read."""
+    """The prompt builds without persistence.
 
-    def test_the_prompt_is_stored_as_a_procedural_artifact(
-        self, pool: SqliteConnectionPool
-    ) -> None:
-        from agentic_commons.memory import ProceduralStore
-
-        store = ProceduralStore(pool)
-        rendered = build_system_prompt(store)
-        assert store.get(PROMPT_ARTIFACT) is not None
-        assert store.get(PROMPT_ARTIFACT).value == rendered  # type: ignore[union-attr]
-
-    def test_an_unchanged_prompt_does_not_create_a_version_per_call(
-        self, pool: SqliteConnectionPool
-    ) -> None:
-        """A history where every entry is identical records no change."""
-        from agentic_commons.memory import ProceduralStore
-
-        store = ProceduralStore(pool)
-        build_system_prompt(store)
-        build_system_prompt(store)
-        assert len(store.history(PROMPT_ARTIFACT)) == 1
+    The procedural-artifact tests that used to live here covered a
+    versioned-prompt store the agent no longer writes (`build_system_prompt`
+    takes no store); they were removed with that feature.
+    """
 
     def test_no_store_means_no_database(self) -> None:
         """An episode should not need persistence to build a prompt."""

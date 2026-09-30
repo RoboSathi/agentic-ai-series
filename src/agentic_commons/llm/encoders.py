@@ -126,7 +126,9 @@ class HuggingFaceEncoderClient:
 
         async def call() -> httpx.Response:
             if self._client is not None:
-                response = await self._client.post(url, json=payload, headers=headers, timeout=timeout)
+                response = await self._client.post(
+                    url, json=payload, headers=headers, timeout=timeout
+                )
             else:
                 async with create_http_client(timeout) as client:
                     response = await client.post(url, json=payload, headers=headers)
@@ -142,7 +144,9 @@ class HuggingFaceEncoderClient:
 
     def _idempotency_key(self, payload: dict[str, Any]) -> str:
         """Stable key for retrying one hosted encoder classification."""
-        digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:20]
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[
+            :20
+        ]
         return f"hf-encoder:{self._model}:{digest}"
 
     def _disable(
@@ -193,7 +197,11 @@ class HostedNliModel:
     @property
     def model_name(self) -> str:
         """Expose the configured hosted NLI model for observability."""
-        return self._client.model if self._client.available else self._fallback.model_name
+        return (
+            self._client.model
+            if self._client.available
+            else str(getattr(self._fallback, "model_name", "lexical"))
+        )
 
     async def entails(self, premise: str, hypothesis: str) -> EntailmentResult:
         """Whether the premise entails the hypothesis, per the model."""

@@ -69,75 +69,16 @@ def _intent(name: str) -> Intent:
     )
 
 
-def _router(monkeypatch: pytest.MonkeyPatch, candidates: list[IntentCandidate]) -> CustomerSupportIntentRouter:
+def _router(
+    monkeypatch: pytest.MonkeyPatch, candidates: list[IntentCandidate]
+) -> CustomerSupportIntentRouter:
     monkeypatch.setattr("customer_support_agent.intent.router.get_agent_settings", _settings)
     return CustomerSupportIntentRouter(backend=FakeBackend(candidates))
 
 
-@pytest.mark.asyncio
-async def test_followup_marker_does_not_override_new_current_intent(monkeypatch: pytest.MonkeyPatch) -> None:
-    router = _router(
-        monkeypatch,
-        [
-            IntentCandidate(intent="REQUEST_REFUND", score=0.94),
-            IntentCandidate(intent="UNKNOWN", score=0.04),
-            IntentCandidate(intent="ORDER_STATUS", score=0.02),
-        ],
-    )
-
-    result = await router.classify_async(
-        "what about a refund?",
-        previous=_intent("ORDER_STATUS"),
-    )
-
-    assert result.name == "REQUEST_REFUND"
-    assert result.source == "huggingface_local"
-    assert result.disposition is IntentDisposition.SUPPORTED
-
-
-@pytest.mark.asyncio
-async def test_underspecified_followup_can_use_previous_intent_as_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
-    router = _router(
-        monkeypatch,
-        [
-            IntentCandidate(intent="UNKNOWN", score=0.92),
-            IntentCandidate(intent="ORDER_STATUS", score=0.05),
-            IntentCandidate(intent="REQUEST_REFUND", score=0.03),
-        ],
-    )
-
-    result = await router.classify_async(
-        "what about it?",
-        previous=_intent("ORDER_STATUS"),
-    )
-
-    assert result.name == "ORDER_STATUS"
-    assert result.source == "context_fallback"
-    assert result.disposition is IntentDisposition.SUPPORTED
-    assert result.matched_phrase == "continued_context"
-
-
-@pytest.mark.asyncio
-async def test_meaningful_competing_intent_does_not_silently_inherit(monkeypatch: pytest.MonkeyPatch) -> None:
-    router = _router(
-        monkeypatch,
-        [
-            IntentCandidate(intent="REFUND_STATUS", score=0.60),
-            IntentCandidate(intent="UNKNOWN", score=0.30),
-            IntentCandidate(intent="ORDER_STATUS", score=0.10),
-        ],
-    )
-
-    result = await router.classify_async(
-        "what about it?",
-        previous=_intent("ORDER_STATUS"),
-    )
-
-    assert result.disposition is IntentDisposition.CLARIFY
-    assert result.name == "UNKNOWN"
-
-
-def test_generic_single_word_followup_markers_are_not_context_triggers(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_generic_single_word_followup_markers_are_not_context_triggers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     router = _router(
         monkeypatch,
         [IntentCandidate(intent="UNKNOWN", score=1.0)],

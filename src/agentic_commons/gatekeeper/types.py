@@ -109,7 +109,11 @@ class LedgerState(BaseModel):
         """Budget left before the threshold trips (None when unbounded)."""
         if self.threshold is None:
             return None
-        return self.threshold - self.window_total if self.threshold > self.window_total else Money.zero()
+        return (
+            self.threshold - self.window_total
+            if self.threshold > self.window_total
+            else Money.zero()
+        )
 
 
 class AuthorityContextMeta(BaseModel):

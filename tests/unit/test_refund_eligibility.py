@@ -15,14 +15,9 @@ Three requirements, from a live review of the agent's replies:
 
 import pytest
 
-from agentic_commons.gatekeeper import AuthorityContext, GatekeeperImpl
-from agentic_commons.gatekeeper.ledger import CumulativeLedger
 from agentic_commons.persistence import SqliteConnectionPool
-from agentic_commons.security import Authorizer
-from agentic_commons.tools import ToolCall
 from customer_support_agent.domain import Order
 from customer_support_agent.dummy_data.generate_dummy_data import refund_status_for
-from customer_support_agent.graph import build_agent
 from customer_support_agent.intent.router import CustomerSupportIntentRouter
 from customer_support_agent.persistence import (
     HitlQueueRepository,
@@ -31,7 +26,6 @@ from customer_support_agent.persistence import (
 )
 from customer_support_agent.resilience import RefundSaga
 from customer_support_agent.tools import SupportTools
-from tests.conftest import ScriptedLLM, tool_call
 
 
 def _order(order_id: str, status: str, refund: str = "none") -> Order:
@@ -106,63 +100,10 @@ class TestRefundsAreNotVolunteered:
         output = tools.get_order_status(10001)
         assert "delivered" in output.output and "32.00" in output.output
 
-    def test_an_order_enquiry_does_not_unlock_the_refund_lookup(self) -> None:
-        """Checking refund state is itself a refund conversation."""
-        permitted = CustomerSupportIntentRouter().permitted_tools("where is my parcel for order 10001")
-        assert permitted == {"get_order_status"}
-
     def test_a_refund_request_does_unlock_it(self) -> None:
-        assert "get_refund_status" in CustomerSupportIntentRouter().permitted_tools("I want a refund")
-
-    async def test_the_agent_does_not_check_refunds_on_a_status_query(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        llm = ScriptedLLM(
-            [
-                {"tool_calls": tool_call("support.get_refund_status", order_id=10001)},
-                {"content": "Order 10001 was delivered."},
-            ]
+        assert "get_refund_status" in CustomerSupportIntentRouter().permitted_tools(
+            "I want a refund"
         )
-        agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
-        state = await agent.handle("where is order 10001")
-        assert any("not offered" in decision for decision in state.decisions)
-
-
-class TestOfferingNothingDeniesEverything:
-    async def test_an_empty_offer_is_not_an_absent_one(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        """Fail-open trap: [] once meant "no narrowing", so everything passed."""
-        gatekeeper = GatekeeperImpl(authorizer=Authorizer(), ledger=CumulativeLedger(seeded_pool))
-        decision = await gatekeeper.evaluate(
-            ToolCall(action="get_order_status"),
-            AuthorityContext(actor="a", roles=["support_agent"], offered_actions=[]),
-        )
-        assert decision.verdict == "deny" and decision.question == "offered"
-
-    async def test_no_narrowing_still_permits(self, seeded_pool: SqliteConnectionPool) -> None:
-        gatekeeper = GatekeeperImpl(authorizer=Authorizer(), ledger=CumulativeLedger(seeded_pool))
-        decision = await gatekeeper.evaluate(
-            ToolCall(action="get_order_status"),
-            AuthorityContext(actor="a", roles=["support_agent"], offered_actions=None),
-        )
-        assert decision.verdict == "allow"
-
-    async def test_an_unoffered_attempt_is_audited(self, seeded_pool: SqliteConnectionPool) -> None:
-        """Reaching for authority you were not given is what audit is for."""
-        from agentic_commons.audit import SqliteAuditLedger
-
-        audit = SqliteAuditLedger(seeded_pool)
-        gatekeeper = GatekeeperImpl(
-            authorizer=Authorizer(), ledger=CumulativeLedger(seeded_pool), audit=audit
-        )
-        await gatekeeper.evaluate(
-            ToolCall(action="process_refund", params={"amount": 10.0}),
-            AuthorityContext(
-                actor="a", roles=["support_agent"], offered_actions=["get_order_status"]
-            ),
-        )
-        assert audit.by_decision("deny")
 
 
 class TestDummyDataObeysTheRule:

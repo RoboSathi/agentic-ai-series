@@ -73,7 +73,9 @@ class RefundPolicy:
         try:
             requested = Money.parse(amount)
         except InvalidAmountError as exc:
-            return self._reject("REFUND_AMOUNT_INVALID", f"The refund amount is invalid: {exc}.", order=order)
+            return self._reject(
+                "REFUND_AMOUNT_INVALID", f"The refund amount is invalid: {exc}.", order=order
+            )
         return self._validate_amount(order, requested, action)
 
     def _validate_amount(
@@ -82,28 +84,33 @@ class RefundPolicy:
         """Amount rules, exact to the cent: full refunds only, and review only above the limit."""
         if not requested:
             return self._reject(
-                "INVALID_REFUND_AMOUNT", "The refund amount must be greater than zero.",
-                order=order, amount=requested,
+                "INVALID_REFUND_AMOUNT",
+                "The refund amount must be greater than zero.",
+                order=order,
+                amount=requested,
             )
         if requested > order.amount:
             return self._reject(
                 "REFUND_AMOUNT_EXCEEDS_ORDER_TOTAL",
                 f"Requested refund {requested} exceeds order {order.order_id}'s {order.amount} total.",
-                order=order, amount=requested,
+                order=order,
+                amount=requested,
             )
         if action in ("process_refund", "queue_for_approval") and requested != order.amount:
             return self._reject(
                 "PARTIAL_REFUND_NOT_SUPPORTED",
                 f"Requested {requested} for order {order.order_id}, but a refund must be for the "
                 f"full order total of {order.amount}; partial refunds are not supported.",
-                order=order, amount=requested,
+                order=order,
+                amount=requested,
             )
         if action == "queue_for_approval" and not self._needs_review(requested):
             return self._reject(
                 "WITHIN_DIRECT_LIMIT",
                 f"A {requested} refund is within the {self._direct_limit} direct-refund limit, so it "
                 "needs no human review; process it directly.",
-                order=order, amount=requested,
+                order=order,
+                amount=requested,
             )
         return RefundValidationResult(allowed=True, order=order, amount=requested)
 

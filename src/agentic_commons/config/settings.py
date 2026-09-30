@@ -64,6 +64,7 @@ class AgentIdentitySettings(YamlBackedSettings):
 
     model_config = SettingsConfigDict(env_prefix="AGENT__")
 
+
 class LoggingSettings(YamlBackedSettings):
     """File and console logging (LLD §2)."""
 
@@ -162,8 +163,6 @@ class EncoderSettings(BaseModel):
     def usable(self) -> bool:
         """Whether a hosted encoder can be called at all."""
         return self.enabled and bool(self.api_key)
-
-
 
 
 class IntentClassifierSettings(BaseModel):
@@ -488,9 +487,7 @@ class MemoryRetrievalWeights(BaseModel):
     frequency: float
 
 
-MemoryPrincipalRole = Literal[
-    "customer", "agent", "system_of_record", "curator", "data_protection"
-]
+MemoryPrincipalRole = Literal["customer", "agent", "system_of_record", "curator", "data_protection"]
 
 
 class MemoryGovernanceSettings(BaseModel):
@@ -1153,7 +1150,7 @@ class AppConfig(BaseSettings):
 
     # Each nested model fills its required fields from config.yaml via
     # YamlBackedSettings; mypy can't see that, hence the ignores.
-    agent: AgentIdentitySettings = Field(default_factory=lambda: AgentIdentitySettings())   # type: ignore[call-arg]
+    agent: AgentIdentitySettings = Field(default_factory=lambda: AgentIdentitySettings())  # type: ignore[call-arg]
     logging: LoggingSettings = Field(default_factory=lambda: LoggingSettings())  # type: ignore[call-arg]
     llm: LLMSettings = Field(default_factory=lambda: LLMSettings())  # type: ignore[call-arg]
     persistence: PersistenceSettings = Field(

@@ -95,9 +95,7 @@ class CustomerSupportIntentRouter:
                 cache_path=str(cache_path) if cache_path is not None else "provider-managed",
             )
         except Exception as exc:
-            self._backend_error = (
-                f"{type(exc).__name__}: {exc}"
-            )
+            self._backend_error = f"{type(exc).__name__}: {exc}"
             self._logger.error(
                 "Customer Support intent classifier failed to load",
                 model=self._backend.model_name,
@@ -345,8 +343,7 @@ class CustomerSupportIntentRouter:
             return []
 
         mapped = [
-            IntentCandidate(intent=intent, score=score / total)
-            for intent, score in scores.items()
+            IntentCandidate(intent=intent, score=score / total) for intent, score in scores.items()
         ]
         mapped.sort(key=lambda candidate: candidate.score, reverse=True)
         return mapped
@@ -372,9 +369,7 @@ class CustomerSupportIntentRouter:
         # Multi-word configured phrases are strong discourse markers. A
         # one-word phrase is too generic to justify inheriting intent.
         strong_phrases = tuple(
-            phrase
-            for phrase in self._followup_phrases
-            if len(phrase.split()) >= 2
+            phrase for phrase in self._followup_phrases if len(phrase.split()) >= 2
         )
         has_strong_phrase = any(phrase in lowered for phrase in strong_phrases)
         has_reference = bool(self._reference.search(message))
@@ -408,9 +403,7 @@ class CustomerSupportIntentRouter:
 
         # The classifier has meaningful evidence for another supported intent.
         # Preserve that evidence and let the normal clarification path run.
-        meaningful_competitor = (
-            current_is_uncertain and top.score >= (threshold * 0.5)
-        )
+        meaningful_competitor = current_is_uncertain and top.score >= (threshold * 0.5)
         if meaningful_competitor:
             return None
 
@@ -486,11 +479,9 @@ class CustomerSupportIntentRouter:
 
     def _clarify(self, candidates: list[IntentCandidate], reason: str) -> Intent:
         """Compatibility helper for callers that explicitly request a clarification."""
-        top = [
-            candidate
-            for candidate in candidates
-            if candidate.intent != self._default
-        ][: self._settings.intent_router.clarification_top_k]
+        top = [candidate for candidate in candidates if candidate.intent != self._default][
+            : self._settings.intent_router.clarification_top_k
+        ]
         clarification = self._clarification_for([candidate.intent for candidate in top])
         return Intent(
             IntentAssessment(
@@ -510,7 +501,9 @@ class CustomerSupportIntentRouter:
     def _clarification_for(intents: list[str]) -> str:
         key = frozenset(intents)
         templates = {
-            frozenset({"ORDER_STATUS", "ORDER_DETAILS"}): "Are you asking about your order status or order details?",
+            frozenset(
+                {"ORDER_STATUS", "ORDER_DETAILS"}
+            ): "Are you asking about your order status or order details?",
         }
         if key in templates:
             return templates[key]
@@ -546,4 +539,3 @@ def load_intent_classifier() -> Any:
     except Exception:
         return None
     return classifier
-

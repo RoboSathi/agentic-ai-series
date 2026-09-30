@@ -95,14 +95,16 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
                 "An authenticated customer id is required before an order action can execute.",
                 observed={"customer_id_present": False},
             )
-        checks.append(CheckReport(
-            check_id="gatekeeper.business_rules.customer",
-            name="Authenticated customer",
-            status="PASS",
-            reason_code="CUSTOMER_AUTHENTICATED",
-            reason="The action is scoped to an authenticated customer.",
-            observed={"customer_id": customer_id},
-        ))
+        checks.append(
+            CheckReport(
+                check_id="gatekeeper.business_rules.customer",
+                name="Authenticated customer",
+                status="PASS",
+                reason_code="CUSTOMER_AUTHENTICATED",
+                reason="The action is scoped to an authenticated customer.",
+                observed={"customer_id": customer_id},
+            )
+        )
 
         if not isinstance(order_id, int):
             return self._deny(
@@ -121,14 +123,16 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
                     f"Order {order_id} was not found on the authenticated customer's account.",
                     observed={"order_id": order_id, "customer_id": customer_id},
                 )
-            checks.append(CheckReport(
-                check_id="gatekeeper.business_rules.order_ownership",
-                name="Order ownership",
-                status="PASS",
-                reason_code="ORDER_OWNED_BY_CUSTOMER",
-                reason="The order exists and belongs to the authenticated customer.",
-                observed={"order_id": order_id, "customer_id": customer_id},
-            ))
+            checks.append(
+                CheckReport(
+                    check_id="gatekeeper.business_rules.order_ownership",
+                    name="Order ownership",
+                    status="PASS",
+                    reason_code="ORDER_OWNED_BY_CUSTOMER",
+                    reason="The order exists and belongs to the authenticated customer.",
+                    observed={"order_id": order_id, "customer_id": customer_id},
+                )
+            )
             return BusinessRuleResult(checks=checks)
 
         validation = self._validate_write(action, order_id, customer_id, amount)
@@ -140,14 +144,16 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
                 validation.reason,
                 observed={"order_id": order_id, "customer_id": customer_id},
             )
-        checks.append(CheckReport(
-            check_id="gatekeeper.business_rules.order_ownership",
-            name="Order ownership",
-            status="PASS",
-            reason_code="ORDER_OWNED_BY_CUSTOMER",
-            reason="The order exists and belongs to the authenticated customer.",
-            observed={"order_id": order_id, "customer_id": customer_id},
-        ))
+        checks.append(
+            CheckReport(
+                check_id="gatekeeper.business_rules.order_ownership",
+                name="Order ownership",
+                status="PASS",
+                reason_code="ORDER_OWNED_BY_CUSTOMER",
+                reason="The order exists and belongs to the authenticated customer.",
+                observed={"order_id": order_id, "customer_id": customer_id},
+            )
+        )
 
         if not validation.allowed:
             return self._deny(
@@ -204,30 +210,35 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
                 verdict="escalate",
                 reason_code="EXCEEDS_AGENT_REFUND_LIMIT",
                 reason=_OVER_LIMIT.format(amount=normalized_amount, limit=limit),
-                checks=checks + [CheckReport(
-                    check_id="gatekeeper.business_rules.agent_refund_limit",
-                    name="Agent refund limit",
-                    status="ESCALATE",
-                    reason_code="EXCEEDS_AGENT_REFUND_LIMIT",
-                    reason=_OVER_LIMIT.format(amount=normalized_amount, limit=limit),
-                    observed={
-                        "amount": str(normalized_amount),
-                        "autonomous_limit": str(limit),
-                    },
-                )],
+                checks=checks
+                + [
+                    CheckReport(
+                        check_id="gatekeeper.business_rules.agent_refund_limit",
+                        name="Agent refund limit",
+                        status="ESCALATE",
+                        reason_code="EXCEEDS_AGENT_REFUND_LIMIT",
+                        reason=_OVER_LIMIT.format(amount=normalized_amount, limit=limit),
+                        observed={
+                            "amount": str(normalized_amount),
+                            "autonomous_limit": str(limit),
+                        },
+                    )
+                ],
             )
 
         if action == "queue_for_approval" and self._hitl is not None:
             pending = self._hitl.pending_for_order(order_id)
             if pending:
-                checks.append(CheckReport(
-                    check_id="gatekeeper.business_rules.human_review",
-                    name="Existing human review",
-                    status="PASS",
-                    reason_code="REVIEW_ALREADY_PRESENT",
-                    reason="A human-review request already exists; the domain handler remains idempotent.",
-                    observed={"order_id": order_id, "pending_request": True},
-                ))
+                checks.append(
+                    CheckReport(
+                        check_id="gatekeeper.business_rules.human_review",
+                        name="Existing human review",
+                        status="PASS",
+                        reason_code="REVIEW_ALREADY_PRESENT",
+                        reason="A human-review request already exists; the domain handler remains idempotent.",
+                        observed={"order_id": order_id, "pending_request": True},
+                    )
+                )
 
         return BusinessRuleResult(checks=checks)
 
@@ -252,17 +263,17 @@ class CustomerSupportBusinessRules(DeterministicBusinessRules):
         *,
         observed: dict[str, Any],
     ) -> BusinessRuleResult:
-        checks.append(CheckReport(
-            check_id=f"gatekeeper.business_rules.{code.lower()}",
-            name="Agent business rule",
-            status="FAIL",
-            reason_code=code,
-            reason=reason,
-            observed=observed,
-        ))
-        return BusinessRuleResult(
-            verdict="deny", reason_code=code, reason=reason, checks=checks
+        checks.append(
+            CheckReport(
+                check_id=f"gatekeeper.business_rules.{code.lower()}",
+                name="Agent business rule",
+                status="FAIL",
+                reason_code=code,
+                reason=reason,
+                observed=observed,
+            )
         )
+        return BusinessRuleResult(verdict="deny", reason_code=code, reason=reason, checks=checks)
 
 
 def _refund_budget_actions() -> frozenset[str]:

@@ -93,8 +93,7 @@ class DreamInbox:
     def _migrate(self) -> None:
         """Add `consolidated_at` to an inbox created before dreams existed."""
         columns = {
-            str(row["name"])
-            for row in self._store.iter_rows(f"PRAGMA table_info({self._TABLE})")
+            str(row["name"]) for row in self._store.iter_rows(f"PRAGMA table_info({self._TABLE})")
         }
         if _CONSOLIDATED not in columns:
             self._store.execute(f"ALTER TABLE {self._TABLE} ADD COLUMN {_CONSOLIDATED} TEXT")

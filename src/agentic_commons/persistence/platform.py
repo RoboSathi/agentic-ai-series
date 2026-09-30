@@ -66,9 +66,7 @@ class PlatformStore(Protocol):
 
     def execute(self, query: str, params: tuple[Any, ...] = ()) -> ExecutionResult: ...
 
-    def execute_many(
-        self, query: str, seq_of_params: list[tuple[Any, ...]]
-    ) -> ExecutionResult: ...
+    def execute_many(self, query: str, seq_of_params: list[tuple[Any, ...]]) -> ExecutionResult: ...
 
     def execute_script(self, script: str) -> None: ...
 
@@ -108,9 +106,7 @@ class SqlitePlatformStore:
     def execute(self, query: str, params: tuple[Any, ...] = ()) -> ExecutionResult:
         return self._pool.execute(query, params)
 
-    def execute_many(
-        self, query: str, seq_of_params: list[tuple[Any, ...]]
-    ) -> ExecutionResult:
+    def execute_many(self, query: str, seq_of_params: list[tuple[Any, ...]]) -> ExecutionResult:
         return self._pool.execute_many(query, seq_of_params)
 
     def execute_script(self, script: str) -> None:
@@ -130,8 +126,7 @@ class SqlitePlatformStore:
         if row is None:
             return
         columns = {
-            str(item["name"])
-            for item in self._pool.iter_rows("PRAGMA table_info(platform_agents)")
+            str(item["name"]) for item in self._pool.iter_rows("PRAGMA table_info(platform_agents)")
         }
         additions = [
             ("role", "TEXT NOT NULL DEFAULT 'unconfigured'"),

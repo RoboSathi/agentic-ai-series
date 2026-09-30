@@ -195,9 +195,7 @@ class FiveStagePipeline:
         instruction/data boundary legible to the model.
         """
         return [
-            chunk.model_copy(
-                update={"content": f"{provenance_header(chunk)}\n{chunk.content}"}
-            )
+            chunk.model_copy(update={"content": f"{provenance_header(chunk)}\n{chunk.content}"})
             for chunk in chunks
         ]
 
@@ -224,5 +222,3 @@ class FiveStagePipeline:
             len(needle & set(text.casefold().split())) / len(needle) if needle else 0.0
             for text in texts
         ]
-
-

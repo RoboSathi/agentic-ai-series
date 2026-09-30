@@ -57,9 +57,7 @@ async def test_jailbreak_guard_retries_503(monkeypatch: pytest.MonkeyPatch) -> N
 @pytest.mark.asyncio
 async def test_content_guard_retries_503(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NVIDIA_API_KEY", "test-key")
-    client = FakeClient(
-        {"choices": [{"message": {"content": '{"User Safety":"safe"}'}}]}
-    )
+    client = FakeClient({"choices": [{"message": {"content": '{"User Safety":"safe"}'}}]})
     retry = ExponentialBackoffRetry(max_attempts=3, base_delay_seconds=0, max_delay_seconds=0)
     guard = NvidiaHostedContentSafetyGuard(
         base_url="https://integrate.api.nvidia.com/v1",

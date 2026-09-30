@@ -87,7 +87,9 @@ class LexicalEntailmentModel:
                 calibrated=False,
             )
         same_polarity = self._is_negated(premise) == self._is_negated(hypothesis)
-        label = "entailment" if same_polarity else "contradiction"
+        label: Literal["entailment", "contradiction"] = (
+            "entailment" if same_polarity else "contradiction"
+        )
         return EntailmentResult(
             label=label,
             entailed=same_polarity,

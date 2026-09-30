@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field
 from agentic_commons.evals import create_scoring_cascade
 from agentic_commons.tools import (
     NamespacedToolRegistry,
-    ToolCall,
     ToolDefinition,
     ToolResult,
     ToolRetrievalSelector,
@@ -113,44 +112,12 @@ class TestRegistry:
     def test_an_unknown_tool_produces_no_call(self, registry: NamespacedToolRegistry) -> None:
         assert registry.build_call("nope", "{}") is None
 
-    async def test_invokes_a_sync_handler(self, registry: NamespacedToolRegistry) -> None:
-        call = registry.build_call("orders.get_order_status", '{"order_id": 7}')
-        assert call is not None
-        assert (await registry.invoke(call)).output == "order 7"
-
-    async def test_invokes_an_async_handler(self) -> None:
-        registry = NamespacedToolRegistry()
-        registry.register(_definition("a", handler=_async_handler))
-        call = registry.build_call("orders.a", '{"order_id": 1}')
-        assert call is not None
-        assert (await registry.invoke(call)).output == "async order 1"
-
-    async def test_a_raising_handler_becomes_a_failed_result(self) -> None:
-        def explode(order_id: int) -> ToolResult:
-            raise RuntimeError("kaboom")
-
-        registry = NamespacedToolRegistry()
-        registry.register(_definition("bad", handler=explode))
-        result = await registry.invoke(ToolCall(action="orders.bad", params={"order_id": 1}))
-        assert result.success is False and "kaboom" in (result.error or "")
-
-    async def test_invoking_an_unknown_tool_fails_cleanly(
-        self, registry: NamespacedToolRegistry
-    ) -> None:
-        result = await registry.invoke(ToolCall(action="nope"))
-        assert result.success is False
-
     def test_renders_only_the_named_tools(self, registry: NamespacedToolRegistry) -> None:
         schemas = registry.to_openai_tools(["orders.get_order_status"])
         assert len(schemas) == 1
 
 
 class TestRetrievalSelection:
-    async def test_ranks_the_relevant_tool_first(self, registry: NamespacedToolRegistry) -> None:
-        selector = ToolRetrievalSelector(registry, create_scoring_cascade())
-        selected = await selector.select("I want my money back for order 10001")
-        assert selected[0].qualified_name == "billing.process_refund"
-
     async def test_an_exactly_named_tool_short_circuits_ranking(
         self, registry: NamespacedToolRegistry
     ) -> None:

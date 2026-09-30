@@ -224,7 +224,7 @@ class OrderSanityCheck(BasicSanityChecker):
                 facts["requested_amount"] = str(requested_amount)
 
             if not validation.allowed:
-                finding_map = {
+                finding_map: dict[str, tuple[str, dict[str, Any]]] = {
                     "ORDER_ALREADY_REFUNDED": (
                         "not_already_refunded",
                         {"order_id": order_id, "refund_status": order.refund_status},

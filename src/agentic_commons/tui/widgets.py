@@ -660,13 +660,13 @@ class StageEventWidget(Collapsible):
             return self._tool_summary(fields)
 
         if stage == "gatekeeper_evaluation":
-            decision = fields.get("decision") or fields.get("verdict")
+            verdict = fields.get("decision") or fields.get("verdict")
             action = fields.get("action")
             order_id = fields.get("order_id")
             amount = _first_present(fields, AMOUNT_FIELDS)
             parts = []
-            if decision:
-                parts.append(str(decision).upper())
+            if verdict:
+                parts.append(str(verdict).upper())
             if action:
                 parts.append(self._labels.tool_label(str(action)))
             if order_id is not None:
