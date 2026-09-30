@@ -1,0 +1,5 @@
+# Ablation: only layer 1 (least privilege, outbound and source-policy checks).
+features:
+  injection_structural: true
+  injection_classifier: false
+  quarantined_extractor: false

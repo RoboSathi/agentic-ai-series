@@ -145,6 +145,9 @@ class AuditSettings(BaseModel):
 class ArchiveSettings(BaseModel):
     run_id_prefix: str
     history_limit: int = Field(ge=1)
+    # `make runs ra`: the archive read straight from the artifact store.
+    list_headers: list[str]
+    list_empty: str
 
 
 class CancelSettings(BaseModel):
@@ -160,6 +163,55 @@ class PanelSettings(BaseModel):
     command_help: dict[str, str]
     panel_labels: dict[str, str]
     history_headers: list[str]
+
+
+class ReferenceJudgeSettings(BaseModel):
+    """The offline judge the fixture backend grades soft quality with."""
+
+    # Lines that open with these state a trade-off and its counterweight.
+    tradeoff_markers: list[str]
+    # The heading a decision report leads with (trade-offs only apply there).
+    decision_heading: str
+    # A PARTIAL report must say so under this heading.
+    limits_heading: str
+    partial_status: str
+    # How the platform's judge prompt labels its parts, and the status line.
+    conversation_label: str
+    tool_calls_label: str
+    evidence_label: str
+    evidence_separator: str
+    status_prefix: str
+
+
+class ResearchEvalSettings(BaseModel):
+    """Where the eval cases live and how each one is isolated and checked."""
+
+    dataset_dir: str
+    suite_files: dict[str, str]
+    security_suite: str
+    judge_rubric_path: str
+    session_prefix: str
+    workspace_root: str
+    keep_case_workspaces: bool
+    # A query no fixture records: replay must raise on it, never improvise.
+    probe_query: str
+    # Roles that must never see raw page text (only the extractor may).
+    screened_roles: list[str]
+    # Page sentences shorter than this are too generic to prove a leak.
+    min_leak_sentence_chars: int = Field(ge=1)
+    reference_judge: ReferenceJudgeSettings
+
+    @property
+    def resolved_dataset_dir(self) -> Path:
+        return resolve_path(self.dataset_dir)
+
+    @property
+    def resolved_workspace_root(self) -> Path:
+        return resolve_path(self.workspace_root)
+
+    @property
+    def resolved_judge_rubric_path(self) -> Path:
+        return resolve_path(self.judge_rubric_path)
 
 
 class ResearchAgentSettings(YamlBackedSettings):
@@ -186,6 +238,7 @@ class ResearchAgentSettings(YamlBackedSettings):
     archive: ArchiveSettings
     cancel: CancelSettings
     tui: PanelSettings
+    evals: ResearchEvalSettings
 
     model_config = SettingsConfigDict(env_prefix="RESEARCH_AGENT__")
 

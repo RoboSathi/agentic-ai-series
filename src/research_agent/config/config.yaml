@@ -99,6 +99,34 @@ security:
       - note to ai
       - ai research assistant
 
+evals:
+  additional_manifest_paths: []
+  plugin: research_agent.evals.plugin:ResearchEvalPlugin
+  suites: [golden, security]
+  # Its own store and report folder: suite names (`golden`) are per agent,
+  # and "the latest golden run" must never be another agent's.
+  store:
+    db_path: data/research_evals/evals.duckdb
+  reporting:
+    output_dir: reports/research_evals
+  generation:
+    # Replay and the reference model are local and deterministic.
+    max_concurrency: 4
+  fingerprint:
+    source_roots: [src/agentic_commons, src/research_agent]
+    exclude_paths:
+      - src/agentic_commons/evals/store
+      - src/agentic_commons/evals/pipeline
+      - src/agentic_commons/evals/reporting
+      - src/agentic_commons/evals/graders
+      - src/agentic_commons/evals/adapters
+      - src/agentic_commons/evals/__main__.py
+      - src/agentic_commons/evals/cli.py
+      - src/agentic_commons/tui
+      - src/agentic_commons/commands
+      - src/research_agent/console
+      - src/research_agent/evals
+      - src/research_agent/design_docs
 
 research_agent:
   title: Research Agent
@@ -250,9 +278,36 @@ research_agent:
   archive:
     run_id_prefix: run
     history_limit: 20
+    list_headers: [run, status, archetype, topic, unmet, intact]
+    list_empty: No archived research runs yet — finish a run in `make tui ra`.
 
   cancel:
     key: ctrl+x
+
+  # Evals (research_agent/evals): fixtures only, web replay only.
+  evals:
+    dataset_dir: src/research_agent/evals/dataset
+    suite_files:
+      golden: golden_cases.yaml
+      security: security_cases.yaml
+    security_suite: security
+    judge_rubric_path: src/research_agent/evals/judge_rubric.yaml
+    session_prefix: eval
+    workspace_root: data/research_evals/workspaces
+    keep_case_workspaces: false
+    probe_query: a query nobody recorded
+    screened_roles: [planner, reflector, synthesizer]
+    min_leak_sentence_chars: 24
+    reference_judge:
+      tradeoff_markers: ["Trade-off:", "However,"]
+      decision_heading: Recommendation
+      limits_heading: Coverage & Limits
+      partial_status: PARTIAL
+      conversation_label: "CONVERSATION:"
+      tool_calls_label: "TOOL CALLS THE ASSISTANT MADE:"
+      evidence_label: "EVIDENCE THE ASSISTANT WAS GIVEN:"
+      evidence_separator: "\n---\n"
+      status_prefix: "Status: "
 
   tui:
     panel_title: Scope & run

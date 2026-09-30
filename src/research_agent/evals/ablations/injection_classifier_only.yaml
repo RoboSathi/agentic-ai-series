@@ -1,0 +1,5 @@
+# Ablation: only layer 2 (the platform's injection detector over fetched text).
+features:
+  injection_structural: false
+  injection_classifier: true
+  quarantined_extractor: false

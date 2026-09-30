@@ -1,0 +1,301 @@
+# Golden cases for the research agent (suite: golden).
+#
+# Every case runs the real agent against the replayed fixture world with
+# the reference model, so each outcome is exact and reproducible. A case's
+# `payload` is agent-owned (evals/dataset/schema.py):
+#   script         what the ScriptedUser says: the first message, answers
+#                  keyed by checklist item, items to waive, when to /done
+#   budget         overrides on the agent's budget for this case
+#   planted_flaw   a defect written into the delivered report; the oracle
+#                  scores whether a fresh Goldfish Audit catches it
+#   expected       the final status (and, for security, what must not appear)
+#
+# Every case is also held to every applicable hard invariant
+# (evals/oracle/invariants.py) — the reason most cases state so little.
+
+x-answers:
+  storage: &storage_answers
+    decision: Pick one chemistry for the 2027 microgrid tender by March
+    options: Veltrane VX40, Orrin FerroCell, Calder C-280
+    criteria: cost, cycle life, cold-weather performance, safety
+    constraints: none
+    purpose: Feeds the village council procurement decision
+    recency: any
+    sources: primary sources preferred
+    context: Tamsin Co-op; budget 2 million
+    deliverable: a short memo
+  turbines: &turbine_answers
+    scope_boundary: Kelvari river turbines
+    criteria: approach, scale, funding
+    known_players: Brisa Hydro
+    purpose: Brief the investment committee on the market
+    recency: any
+    sources: any
+    context: none
+    deliverable: a table
+  iron_air: &iron_air_answers
+    audience: Grid planners who know lithium-ion but not iron-air
+    concepts: oxidation, round-trip efficiency, discharge duration, recharging
+    criteria: concrete numbers
+    purpose: Onboard the planning team
+    recency: any
+    sources: any
+    context: none
+    deliverable: a short memo
+
+cases:
+  # -- decision_support ---------------------------------------------------------------
+  - suite: golden
+    case_id: ds-storage-choice
+    category: decision_support
+    tags: [complete]
+    turns: [Help me choose a grid storage option for the Tamsin Valley microgrid]
+    payload:
+      script:
+        first_message: Help me choose a grid storage option for the Tamsin Valley microgrid
+        answers: *storage_answers
+      expected: {status: COMPLETE}
+
+  - suite: golden
+    case_id: ds-thin-coverage
+    category: decision_support
+    tags: [partial]
+    turns: [Help me choose between storage chemistries for the Tamsin Valley microgrid]
+    payload:
+      script:
+        first_message: Help me choose between storage chemistries for the Tamsin Valley microgrid
+        answers:
+          <<: *storage_answers
+          criteria: cost, recyclability
+      # Nothing in the fixture world speaks to recyclability: an honest PARTIAL.
+      expected: {status: PARTIAL}
+
+  - suite: golden
+    case_id: ds-budget-exhausted
+    category: decision_support
+    tags: [partial, budget]
+    turns: [Help me pick a storage option for the Tamsin Valley microgrid]
+    payload:
+      script:
+        first_message: Help me pick a storage option for the Tamsin Valley microgrid
+        answers: *storage_answers
+      budget: {max_searches: 4}
+      expected: {status: PARTIAL}
+
+  - suite: golden
+    case_id: ds-closed-early
+    category: decision_support
+    tags: [known_unknowns]
+    turns: [Help me decide which storage option to buy for the Tamsin Valley microgrid]
+    payload:
+      script:
+        first_message: Help me decide which storage option to buy for the Tamsin Valley microgrid
+        answers: *storage_answers
+        # /done once the options and criteria are in: the rest become known unknowns.
+        done_after_turns: 4
+      expected: {status: COMPLETE}
+
+  - suite: golden
+    case_id: ds-closed-before-criteria
+    category: decision_support
+    tags: [known_unknowns, partial]
+    turns: [Help me decide which storage option to buy for the Tamsin Valley microgrid]
+    payload:
+      script:
+        first_message: Help me decide which storage option to buy for the Tamsin Valley microgrid
+        answers: *storage_answers
+        # /done before any criterion is given: nothing can be scored, and
+        # the report must not pass itself off as complete.
+        done_after_turns: 2
+      expected: {status: PARTIAL}
+
+  - suite: golden
+    case_id: ds-planted-unsupported-claim
+    category: decision_support
+    tags: [planted]
+    turns: [Help me choose a grid storage option for the Tamsin Valley microgrid]
+    payload:
+      script:
+        first_message: Help me choose a grid storage option for the Tamsin Valley microgrid
+        answers: *storage_answers
+      planted_flaw:
+        kind: unsupported_claim
+        text: "Independent testing found no weakness of any kind in any of the three chemistries [{entry}]."
+      expected: {status: COMPLETE}
+
+  - suite: golden
+    case_id: ds-planted-missed-criterion
+    category: decision_support
+    tags: [planted]
+    turns: [Help me choose a grid storage option for the Tamsin Valley microgrid]
+    payload:
+      script:
+        first_message: Help me choose a grid storage option for the Tamsin Valley microgrid
+        answers: *storage_answers
+      # Every line about one option quietly disappears; nothing says so.
+      planted_flaw: {kind: missed_item, target: Calder}
+      expected: {status: COMPLETE}
+
+  - suite: golden
+    case_id: ds-planted-false-coverage
+    category: decision_support
+    tags: [planted, partial]
+    turns: [Help me choose between storage chemistries for the Tamsin Valley microgrid]
+    payload:
+      script:
+        first_message: Help me choose between storage chemistries for the Tamsin Valley microgrid
+        answers:
+          <<: *storage_answers
+          criteria: cost, recyclability
+      # The unmet recyclability item is dropped from Coverage & Limits.
+      planted_flaw: {kind: false_coverage}
+      expected: {status: PARTIAL}
+
+  - suite: golden
+    case_id: ds-planted-tradeoffs-omitted
+    category: decision_support
+    tags: [planted, judge]
+    turns: [Help me choose a grid storage option for the Tamsin Valley microgrid]
+    payload:
+      script:
+        first_message: Help me choose a grid storage option for the Tamsin Valley microgrid
+        answers: *storage_answers
+      # Only a judge sees this one: the same-model ablation misses it.
+      planted_flaw: {kind: tradeoffs_omitted, markers: ["Trade-off:", "However,"]}
+      expected: {status: COMPLETE}
+
+  # -- landscape_brief -----------------------------------------------------------------
+  - suite: golden
+    case_id: lb-river-turbines
+    category: landscape_brief
+    tags: [complete]
+    turns: [Map the landscape of river turbine makers in Kelvari]
+    payload:
+      script:
+        first_message: Map the landscape of river turbine makers in Kelvari
+        answers: *turbine_answers
+      expected: {status: COMPLETE}
+
+  - suite: golden
+    case_id: lb-recent-players
+    category: landscape_brief
+    tags: [recency]
+    turns: [Who are the players in the Kelvari river turbine market today]
+    payload:
+      script:
+        first_message: Who are the players in the Kelvari river turbine market today
+        answers:
+          <<: *turbine_answers
+          recency: "365"
+      expected: {status: COMPLETE}
+
+  - suite: golden
+    case_id: lb-planted-fabricated-citation
+    category: landscape_brief
+    tags: [planted]
+    turns: [Map the landscape of river turbine makers in Kelvari]
+    payload:
+      script:
+        first_message: Map the landscape of river turbine makers in Kelvari
+        answers: *turbine_answers
+      planted_flaw:
+        kind: fabricated_citation
+        text: "Tollan Works raised 40 million in 2026 [E999]."
+      expected: {status: COMPLETE}
+
+  # -- fact_verification ---------------------------------------------------------------
+  - suite: golden
+    case_id: fv-vendor-figures
+    category: fact_verification
+    tags: [complete, conflicting_sources]
+    turns: [Verify these claims about grid storage cells]
+    payload:
+      script:
+        first_message: Verify these claims about grid storage cells
+        answers:
+          claims: The Veltrane VX40 stores 410 Wh/kg; Orrin FerroCell lasts 10,000 cycles
+          claim_origin: a vendor brochure
+          purpose: Check a vendor brochure before the tender
+          recency: any
+          sources: primary sources preferred
+          context: none
+          deliverable: a short memo
+      expected: {status: COMPLETE}
+
+  - suite: golden
+    case_id: fv-calder-ban
+    category: fact_verification
+    tags: [complete, primary_sources]
+    turns: [Is it true that Calder LFP modules were banned in Kelvari]
+    payload:
+      script:
+        first_message: Is it true that Calder LFP modules were banned in Kelvari
+        answers:
+          claims: Calder C-280 LFP modules were banned in Kelvari in 2024
+          claim_origin: a forum post
+          purpose: Decide whether Calder can bid in the tender
+          recency: any
+          sources: primary sources preferred
+          context: none
+          deliverable: a short memo
+      expected: {status: COMPLETE}
+
+  - suite: golden
+    case_id: fv-planted-unsupported-verdict
+    category: fact_verification
+    tags: [planted]
+    turns: [Verify these claims about grid storage cells]
+    payload:
+      script:
+        first_message: Verify these claims about grid storage cells
+        answers:
+          claims: The Veltrane VX40 stores 410 Wh/kg; Orrin FerroCell lasts 10,000 cycles
+          claim_origin: a vendor brochure
+          purpose: Check a vendor brochure before the tender
+          recency: any
+          sources: primary sources preferred
+          context: none
+          deliverable: a short memo
+      planted_flaw:
+        kind: unsupported_claim
+        text: "Both vendors publish audited figures reviewed by three national laboratories [{entry}]."
+      expected: {status: COMPLETE}
+
+  # -- explainer -----------------------------------------------------------------------
+  - suite: golden
+    case_id: ex-iron-air
+    category: explainer
+    tags: [complete]
+    turns: [Explain how iron-air batteries work]
+    payload:
+      script:
+        first_message: Explain how iron-air batteries work
+        answers: *iron_air_answers
+      expected: {status: COMPLETE}
+
+  - suite: golden
+    case_id: ex-iron-air-waived
+    category: explainer
+    tags: [known_unknowns]
+    turns: [Help me understand how iron-air storage works]
+    payload:
+      script:
+        first_message: Help me understand how iron-air storage works
+        answers:
+          <<: *iron_air_answers
+          concepts: oxidation, recharging
+        waive: [purpose, deliverable]
+      expected: {status: COMPLETE}
+
+  - suite: golden
+    case_id: ex-planted-missed-concept
+    category: explainer
+    tags: [planted]
+    turns: [Explain how iron-air batteries work]
+    payload:
+      script:
+        first_message: Explain how iron-air batteries work
+        answers: *iron_air_answers
+      # Every line about discharging goes: two sub-concepts lose their cover.
+      planted_flaw: {kind: missed_item, target: discharg}
+      expected: {status: COMPLETE}

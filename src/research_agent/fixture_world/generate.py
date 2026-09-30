@@ -34,7 +34,6 @@ from research_agent.fixture_world.mock_web import MockWeb
 from research_agent.fixture_world.world import World, load_world
 
 _RECORDER_KEY = "fixture-recorder"
-_PROBE_MISS = "a query nobody recorded"
 console = Console()
 
 
@@ -106,7 +105,8 @@ def _summaries(world: World) -> list[str]:
 
 async def _miss_is_loud(gateway: WebGateway, max_results: int) -> list[str]:
     try:
-        await gateway.search(SearchRequest(query=_PROBE_MISS, max_results=max_results))
+        probe = get_agent_settings().evals.probe_query
+        await gateway.search(SearchRequest(query=probe, max_results=max_results))
     except ReplayMissError:
         return []
     return ["a replay miss did not raise"]

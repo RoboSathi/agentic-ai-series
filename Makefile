@@ -35,6 +35,11 @@ endif
 # agent is named sets it, so the overlay cannot silently default to one.
 ifeq ($(words $(AGENT_ARGS)) $(words $(AGENT)),1 1)
 export AGENTIC_OVERLAYS := $($(AGENT)_OVERLAY)
+# An ablation is one more config layer over the agent's own:
+# `make eval-generate ra ABLATION=no_rubric_audit` (src/<pkg>/evals/ablations/).
+ifdef ABLATION
+export AGENTIC_OVERLAYS := $(AGENTIC_OVERLAYS):src/$($(AGENT)_PKG)/evals/ablations/$(ABLATION).yaml
+endif
 endif
 endif
 
@@ -101,7 +106,7 @@ help:
 	@echo "  make eval-runs <agent>       List recent runs"
 	@echo "  make eval-sql <agent>        Query the eval store (SQL=\"select ...\" or interactive)"
 	@echo ""
-	@echo "  Options: RPM=<n>  FRESH=1  LIMIT=<n>  CASE=<id>  TAG=<tag>  RUN=<id>"
+	@echo "  Options: RPM=<n>  FRESH=1  LIMIT=<n>  CASE=<id>  TAG=<tag>  RUN=<id>  ABLATION=<name>"
 	@echo "           EVAL_CONTINUE_ON_INVARIANT_FAILURE=1"
 
 # Fails the run unless exactly one known agent was named after the target.
@@ -112,6 +117,8 @@ _agent:
 	  echo "$(YELLOW)Name exactly one agent, got: $(AGENT_ARGS)   (agents: $(AGENTS))$(NC)"; exit 2; fi
 	@if [ -z "$(AGENT)" ]; then \
 	  echo "$(YELLOW)Unknown agent '$(AGENT_ARGS)'   (agents: $(AGENTS))$(NC)"; exit 2; fi
+	@if [ -n "$(ABLATION)" ] && [ ! -f "src/$($(AGENT)_PKG)/evals/ablations/$(ABLATION).yaml" ]; then \
+	  echo "$(YELLOW)No ablation '$(ABLATION)' for $(AGENT) (src/$($(AGENT)_PKG)/evals/ablations/)$(NC)"; exit 2; fi
 
 install:
 	python3 -m venv venv
@@ -158,7 +165,7 @@ runs: _agent
 	@$(PYTHON) -m $($(AGENT)_RUNS) list
 
 patterns:
-	@$(PYTHON) -m design_patterns.coverage $(foreach a,$(AGENTS),--agent $(a)=$($(a)_PKG))
+	@$(PYTHON) -m design_patterns.coverage $(foreach a,$(AGENTS),--agent $(a)=$($(a)_PKG)) --markdown design_docs/patterns_coverage.md
 
 # -- customer support admin (csa only) ---------------------------------------------
 # `make refund-limit 100`: the amount is the second goal, so it is given a

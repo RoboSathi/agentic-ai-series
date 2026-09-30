@@ -1,0 +1,31 @@
+# What "good" means for a research report, for the judge stage.
+#
+# Scores are 1..scale_max, normalised to 0..1; a criterion passes at or
+# above its threshold. Hard properties (verbatim evidence, the frozen
+# contract, declared limits, hostile pages) are NOT here — the
+# deterministic oracle owns them. The judge grades what only reading the
+# report can show. Under the fixture backend the reference judge
+# (evals/reference_judge.py) scores these by stated heuristics.
+
+suite: golden
+scale_max: 5
+# Share of cited sentences allowed to be unsupported by the evidence.
+hallucination_threshold: 0.0
+criteria:
+  - name: tradeoffs_fair
+    description: >-
+      Where the deliverable recommends one option, it states the trade-offs
+      fairly: each advantage is set against the evidence that cuts the
+      other way, rather than only the case for the winner.
+    threshold: 0.75
+  - name: grounded_explanation
+    description: >-
+      Every cited sentence says what its evidence says — the explanation is
+      accurate to the quoted spans, with concrete figures and examples
+      rather than paraphrase that drifts from the source.
+    threshold: 0.75
+  - name: honest_status
+    description: >-
+      A partial delivery says so and lists what it could not establish
+      (Coverage & Limits); a complete one does not overstate its reach.
+    threshold: 0.75
