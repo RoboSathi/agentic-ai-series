@@ -1,0 +1,21 @@
+# The research agent's overlay on the platform defaults (agentic_commons).
+# Loaded when AGENTIC_OVERLAYS names this file (`make tui ra`), or by
+# default when this package is imported and nothing else was named.
+
+agent:
+  id: research_agent
+  version: 0.1.0
+  host: research_agent.console:ResearchHost
+
+audit:
+  policy_version: research-contract-v1
+  data_version: fixture-world-v1
+  prompt_version: research-prompts-v1
+  tool_schema_version: research-tools-v1
+
+research_agent:
+  title: Research Agent
+  placeholder: "What should I research?  (/help for commands)"
+  greeting: >-
+    Tell me what you need to decide or understand. I will ask a few
+    questions to bound the scope before any research starts.
