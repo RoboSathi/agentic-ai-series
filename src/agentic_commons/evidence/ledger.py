@@ -88,9 +88,12 @@ class EvidenceLedger:
 
 
 def _same(entry: EvidenceEntry, candidate: EvidenceCandidate) -> bool:
+    """One span of one page is one piece of evidence, whichever question found it.
+
+    Counting it twice would let a single source look like corroboration.
+    """
     return (
         entry.claim == candidate.claim
         and entry.span == candidate.span
         and entry.source_url == candidate.source_url
-        and entry.subject == candidate.subject
     )

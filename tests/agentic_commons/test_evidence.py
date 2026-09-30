@@ -77,6 +77,12 @@ class TestLedger:
         second = ledger.append(_candidate("stores 410 Wh/kg"))
         assert first == second and len(ledger.entries) == 1
 
+    def test_the_same_span_found_by_another_subject_is_not_new_evidence(self) -> None:
+        ledger = _ledger()
+        first = ledger.append(_candidate("stores 410 Wh/kg"))
+        again = ledger.append(_candidate("stores 410 Wh/kg").model_copy(update={"subject": "q2"}))
+        assert again == first and len(ledger.entries) == 1
+
     def test_restore_and_discard(self) -> None:
         ledger = _ledger()
         ledger.append(_candidate("stores 410 Wh/kg"))

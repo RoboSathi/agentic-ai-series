@@ -7,15 +7,290 @@ agent:
   version: 0.1.0
   host: research_agent.console:ResearchHost
 
+# This agent's harness. Each key is independently togglable with /harness;
+# a withheld feature is a stage that is never built. Sub-features are off
+# whenever their parent is. Toggles apply from the *next* run, and the
+# effective set is snapshotted into that run's audit record.
+features:
+  # ra's own features
+  scoping_challenge_check: true      # anti-sycophancy guard on interview turns
+  rubric: true                       # acceptance criteria; off = run with no contract items
+  reflection: true                   # gap analysis + follow-up queries after each wave
+  goldfish_audit: true               # independent audit of the delivered report
+  citation_verification:             # verbatim-span rule + NLI claim support
+    enabled: true
+    nli: true
+  injection_structural: true         # least privilege, exfiltration + source-policy checks
+  injection_classifier: true         # platform prompt-injection detector over fetched text
+  quarantined_extractor: true        # only the extractor ever reads raw page text
+  # platform features this agent composes
+  pii: true
+  memory:
+    enabled: true
+    working: true
+    episodic: true
+    semantic: true
+    # Disabled by design: this agent learns nothing procedural across runs.
+    procedural: false
+  # Platform features this agent does not compose. Declared false because
+  # an overlay cannot delete keys the platform default declares; moving
+  # them with /harness changes nothing for this agent (ADR ra-0016).
+  basic_sanity: false
+  prompt_injection: false
+  content_moderation: false
+  intent_classification: false
+  hallucination_guard: false
+  gatekeeper: false
+  context:
+    enabled: false
+    rerank: false
+    failure_detection: false
+
 audit:
   policy_version: research-contract-v1
   data_version: fixture-world-v1
   prompt_version: research-prompts-v1
   tool_schema_version: research-tools-v1
 
+llm:
+  # Role -> model. `judge` must differ from `synthesizer` while
+  # research_agent.audit.independent_judge is true (checked at start-up).
+  roles:
+    interviewer: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
+    planner: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
+    researcher: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
+    extractor: {provider: local, model: mistral-nemo-12b}
+    reflector: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
+    synthesizer: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
+    judge: {provider: nim, model: openai/gpt-oss-20b}
+
+web:
+  mode: replay
+  fixtures_dir: data/web_fixtures
+  fixture_set: kelvari-v1
+
+artifacts:
+  root: data/research_runs
+
+persistence:
+  db_path: data/research_agent.db
+
+durability:
+  db_path: data/research_checkpoints.db
+
+memory:
+  episodic:
+    path: data/research_episodic
+
+security:
+  prompt_injection:
+    # Fetched pages are attacked in their own idiom: they impersonate the
+    # system and the search provider, and they address "AI assistants".
+    suspicious_phrases:
+      - ignore previous instructions
+      - ignore all previous
+      - disregard the above
+      - you are now
+      - system prompt
+      - new instructions
+      - override your
+      - system notice
+      - supersedes your instructions
+      - note to ai
+      - ai research assistant
+
+
 research_agent:
   title: Research Agent
   placeholder: "What should I research?  (/help for commands)"
   greeting: >-
     Tell me what you need to decide or understand. I will ask a few
-    questions to bound the scope before any research starts.
+    questions to bound the scope before any research starts; /done ends
+    the interview early, /approve starts the run once you have seen the
+    acceptance criteria.
+  # fixture: the deterministic reference model over the fixture world (no
+  # credentials, evals and the demo); routed: llm.roles via RoleModelRouter.
+  model_backend: fixture
+  # Where the fixture world lives and where its recorded web fixtures go.
+  fixture_world_path: src/research_agent/fixture_world/world.yaml
+
+  # The conversational slash commands (typed as /<name>).
+  command_names:
+    done: done
+    waive: waive
+    rubric: rubric
+    approve: approve
+    cancel: cancel
+    history: history
+    show: show
+    rubric_add: add
+    rubric_drop: drop
+    rubric_set: set
+
+  # Everything the agent says that is not written by a model.
+  messages:
+    refuse: I can't research that request.
+    reframe: >-
+      That is open-ended. What is the research for — choosing between
+      options, mapping a field, checking specific claims, or explaining how
+      something works?
+    challenge_prefix: "Before we go on: "
+    propose_done: "I have enough to plan. Draft plan:\n{plan}\nReply /done to confirm, or keep refining."
+    turn_cap: "We have reached the interview limit. Still open: {open}. Use /waive <id|all> or /done."
+    waived: "Waived: {items}. They will be listed as known unknowns."
+    finish_scoping_first: "We are still scoping: answer the question, /waive <id>, or /done."
+    rubric_hint: "Edit with /rubric add <text> | drop <id> | set <id> threshold=<x> must_pass=<bool>, or /approve to start."
+    rubric_error: "Rubric not changed: {error}"
+    approved: "Contract {contract_id} frozen (hash {hash}). Research is starting; /cancel stops it."
+    run_busy: A research run is in progress; you can watch it or cancel it (/cancel).
+    no_active_run: There is no research run in progress.
+    cancel_requested: Cancelling the run; it stops at the next safe point and keeps its checkpoint.
+    delivered: "Run {run_id} finished: {status}. {summary}"
+    new_scope: Ask a new question to start another scope.
+    history_empty: No archived runs yet.
+    unknown_run: "No archived run '{run_id}'."
+    plan_failed: "The plan could not be validated: {problems}"
+    brief_ready: "The Scope Brief is ready (no acceptance criteria: the rubric is withheld). /approve starts the run."
+
+  scoping:
+    max_turns: 12
+    # The anti-sycophancy guard: at least one challenge or follow-up every K turns.
+    challenge_every_k_turns: 3
+    checklists_path: src/research_agent/scoping/checklists.yaml
+    # First messages that ask for something this agent will not research.
+    refuse_patterns:
+      - '\b(?:make|build|synthesi[sz]e)\s+(?:a\s+)?(?:bomb|weapon|explosive|nerve agent)\b'
+      - '\b(?:dox|home address of)\b'
+    # Open-ended requests that need a reframe before they are scopable.
+    reframe_patterns:
+      - '^\s*(?:tell me (?:about|everything)|what about|research)\b'
+    archetype_keywords:
+      decision_support: [choose, choosing, decide, which should, compare, versus, " vs ", option, pick, recommend]
+      landscape_brief: [landscape, players, market map, who are the, competitors, ecosystem, market]
+      fact_verification: [verify, is it true, fact-check, fact check, claim, confirm whether, check whether]
+      explainer: [explain, how does, how do, what is, primer, understand how]
+    # A comma inside a number ("10,000 cycles") does not split an answer.
+    answer_split_pattern: '\s*(?:,(?!\d)|;|\band\b)\s*'
+    vague_answer_max_words: 3
+    absolute_words: [best, always, never, everyone, obviously, perfect]
+    waive_all_keyword: all
+    any_recency_words: [any, none, no limit]
+    # Answers that decline an optional item: the Brief keeps its default.
+    none_answers: [any, none, no preference, skip, "n/a", nothing]
+    primary_sources_phrase: primary
+
+  rubric:
+    templates_path: src/research_agent/rubric/templates.yaml
+
+  budget:
+    # Defaults and the ceiling: a Brief may lower these, never raise them.
+    max_searches: 24
+    max_fetches: 40
+    max_tokens: 200000
+    max_seconds: 600
+    max_rounds: 3
+    max_dag_nodes: 16
+    max_gap_fill_rounds: 1
+    concurrency: 4
+
+  planning:
+    max_queries_per_node: 2
+
+  # Deterministic coverage matching: stop rules, gap analysis, audit checks.
+  matching:
+    token_pattern: '[a-z0-9][a-z0-9,/]*'
+    stem_chars: 5
+    min_token_chars: 3
+    stopwords: [the, and, for, with, each, every, per, its, their, this, that, from, into, how, what, which, are, was, were, has, have, does, option, options]
+    synonyms:
+      cold: [cold, minus, celsius, degrees]
+      weather: [minus, celsius, cold]
+      cost: [cost, usd, price]
+      cycle: [cycle, cycles]
+      safety: [flammable, thermal, runaway, ignite, fire, safety, incident]
+      recyclability: [recycl]
+      approach: [builds, makes, develops, tests, turbines, kites]
+      scale: [installed, deployed, operates, units, sites, pilot]
+      funding: [raised, funded, round, loan, grant, seed]
+      oxidation: [oxidis, oxide, rust, oxygen]
+      recharging: [charg, reverses, backwards]
+      efficiency: [efficiency]
+      duration: [duration, hours, days]
+
+  research:
+    max_results_per_search: 3
+    max_fetches_per_node: 4
+    max_claims_per_page: 4
+    # Sources whose host contains one of these count as primary.
+    primary_source_markers: [regulator, lab, uni, safety-board, teardowns]
+    # A search query or fetch URL must match one of these to leave the process.
+    outbound_allow_patterns: ['^https?://', '^[\w\s\-.,/:%''"]+$']
+    outbound_deny_patterns: ['(?i)\bcollect\.', '(?i)[?&](?:q|d|data|log)=']
+    authority_rank: untrusted_content
+    recency_rejection: "outside the approved {days}-day recency window (published {date})"
+
+  reflection:
+    max_followups_per_round: 4
+    # Gap-fill follow-ups are numbered from this round, apart from reflection's.
+    gap_fill_round_offset: 100
+
+  synthesis:
+    citation_pattern: '\[(E\d+)\]'
+    entry_id_prefix: E
+    templates_path: src/research_agent/synthesis/report_templates.yaml
+
+  audit:
+    # When true, `judge` must resolve to a different model than `synthesizer`.
+    independent_judge: true
+    # lexical: deterministic (the fixture/eval posture); platform: the
+    # configured NLI cross-encoder, for live runs.
+    entailment_model: lexical
+    entity_pattern: '\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b'
+
+  archive:
+    run_id_prefix: run
+    history_limit: 20
+
+  cancel:
+    key: ctrl+x
+
+  tui:
+    panel_title: Scope & run
+    panel_width: 44
+    stage_labels:
+      scope_gate: SCOPE GATE
+      interview_turn: INTERVIEW
+      coverage_update: COVERAGE
+      close_scoping: SCOPE BRIEF
+      rubric_generate: RUBRIC
+      rubric_frozen: CONTRACT FROZEN
+      plan_dag: PLAN DAG
+      plan_validated: PLAN VALIDATED
+      wave_start: WAVE
+      worker_search: SEARCH
+      worker_fetch: FETCH
+      content_defense: CONTENT DEFENCE
+      extract_claims: EXTRACT CLAIMS
+      ledger_append: LEDGER
+      span_rejected: SPAN REJECTED
+      reflect_gap_analysis: REFLECT · GAPS
+      budget_tick: BUDGET
+      synthesize: SYNTHESIZE
+      goldfish_audit: GOLDFISH AUDIT
+      gap_fill: GAP FILL
+      finalize: FINAL STATUS
+      archive: ARCHIVE
+    command_help:
+      done: "End the interview now; open required items become known unknowns"
+      waive: "Waive an open checklist item (/waive <id> or /waive all)"
+      rubric: "Edit acceptance criteria: add <text> | drop <id> | set <id> threshold=<x> must_pass=<bool>"
+      approve: "Freeze the Research Contract and start the autonomous run"
+      cancel: "Cancel the research run in progress (checkpoint kept)"
+      history: "Archived research runs (the episodic run index)"
+      show: "Show an archived run's report"
+    history_headers: [run, status, archetype, topic, unmet]
+    panel_labels:
+      checklist: Checklist
+      run: Run
+      ledger: ledger entries
+      rejected: rejected sources
