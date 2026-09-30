@@ -223,6 +223,13 @@ class OutputNormalisationSettings(BaseModel):
     remove: list[str]
 
 
+class RoleModelSettings(BaseModel):
+    """Which configured provider and model plays one named role."""
+
+    provider: ProviderName
+    model: str
+
+
 class LLMSettings(YamlBackedSettings):
     """LLM adapters — the only place a provider SDK is used (LLD §3)."""
 
@@ -240,6 +247,9 @@ class LLMSettings(YamlBackedSettings):
     dialogue_summarizer: DialogueSummarizerSettings
     check: LLMCheckSettings
     output_normalisation: OutputNormalisationSettings
+    # Role name -> model. Empty in the platform: role names are an agent's
+    # vocabulary (`RoleModelRouter`), declared in its own overlay.
+    roles: dict[str, RoleModelSettings]
 
     model_config = SettingsConfigDict(env_prefix="LLM__")
 
@@ -1130,9 +1140,85 @@ class TuiSettings(YamlBackedSettings):
     copy_toast_seconds: float
     max_feed_lines: int
     spinner_frames: str
+    # The optional side panel an agent may offer (`PanelHost`).
+    side_panel_width: int
+    side_panel_refresh_ms: int
     command_output: CommandOutputSettings
 
     model_config = SettingsConfigDict(env_prefix="TUI__")
+
+
+WebMode = Literal["live", "record", "replay"]
+
+
+class TavilySettings(BaseModel):
+    """The Tavily search API (`POST {base_url}{endpoint}`, bearer auth)."""
+
+    base_url: str
+    endpoint: str
+    search_depth: Literal["basic", "advanced"]
+    # Provider-written summaries are never evidence; asking for one only
+    # spends tokens on text the gateway will discard.
+    include_answer: bool
+    timeout_seconds: float
+
+    @property
+    def api_key(self) -> str:
+        """From the bare `tavily_api_key` environment variable, never config."""
+        return os.environ.get("tavily_api_key", "")
+
+
+class WebSearchSettings(BaseModel):
+    """Search defaults the gateway applies when a caller does not say."""
+
+    provider: Literal["tavily"]
+    max_results: int = Field(ge=1)
+
+
+class WebFetchSettings(BaseModel):
+    """Plain HTTP fetching, and the reader fallback for script-rendered pages."""
+
+    timeout_seconds: float
+    user_agent: str
+    max_chars: int = Field(ge=1)
+    # Below this much extracted text a page is treated as script-rendered
+    # and re-read through the reader service.
+    min_text_chars: int = Field(ge=0)
+    js_markers: list[str]
+    reader_enabled: bool
+    # `{url}` is replaced by the page's URL (a Jina-Reader-style service).
+    reader_url_template: str
+
+
+class WebSettings(YamlBackedSettings):
+    """The web gateway: live, recording or replaying (spec §3.3)."""
+
+    _yaml_section = "web"
+    mode: WebMode
+    fixtures_dir: str
+    fixture_set: str
+    search: WebSearchSettings
+    fetch: WebFetchSettings
+    tavily: TavilySettings
+
+    model_config = SettingsConfigDict(env_prefix="WEB__")
+
+    @property
+    def resolved_fixtures_dir(self) -> Path:
+        return resolve_path(self.fixtures_dir)
+
+
+class ArtifactSettings(YamlBackedSettings):
+    """Where frozen artifacts are archived, one directory per run."""
+
+    _yaml_section = "artifacts"
+    root: str
+
+    model_config = SettingsConfigDict(env_prefix="ARTIFACTS__")
+
+    @property
+    def resolved_root(self) -> Path:
+        return resolve_path(self.root)
 
 
 class AppConfig(BaseSettings):
@@ -1175,6 +1261,8 @@ class AppConfig(BaseSettings):
     tools: ToolsSettings = Field(default_factory=lambda: ToolsSettings())  # type: ignore[call-arg]
     tui: TuiSettings = Field(default_factory=lambda: TuiSettings())  # type: ignore[call-arg]
     commands: CommandSettings = Field(default_factory=lambda: CommandSettings())  # type: ignore[call-arg]
+    web: WebSettings = Field(default_factory=lambda: WebSettings())  # type: ignore[call-arg]
+    artifacts: ArtifactSettings = Field(default_factory=lambda: ArtifactSettings())  # type: ignore[call-arg]
     # Which capabilities this deployment was given. Declared by the agent
     # rather than the platform, and merged here by the same overlay chain
     # as everything else — so an episode narrows the posture by declaring

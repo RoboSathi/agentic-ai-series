@@ -24,8 +24,10 @@ decision rather than an import.
 """
 
 import importlib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Protocol, runtime_checkable
+
+from rich.console import RenderableType
 
 from agentic_commons.commands.types import Command
 from agentic_commons.config import FeatureSet
@@ -81,6 +83,44 @@ class AgentHost(Protocol):
         ...
 
 
+# -- optional hooks --------------------------------------------------------------
+# An agent may offer any of these; the shell asks with `isinstance` and
+# behaves exactly as before when they are absent, so an agent that has
+# never heard of them (Customer Support) is unaffected.
+
+
+@runtime_checkable
+class GreetingHost(Protocol):
+    """An agent that says its own first words when the console opens."""
+
+    def greeting(self) -> str: ...
+
+
+@runtime_checkable
+class PanelHost(Protocol):
+    """An agent with live state worth a side panel (a checklist, run meters).
+
+    Called on the panel's refresh tick with the console's session; returns
+    Rich renderables. Must be cheap and must not raise: it reads state the
+    agent already holds, it never computes it.
+    """
+
+    def side_panels(self, session_id: str) -> Sequence[RenderableType]: ...
+
+
+@runtime_checkable
+class CancellableHost(Protocol):
+    """An agent whose long-running turn can be cancelled by a key binding."""
+
+    def cancel_key(self) -> str:
+        """The key that cancels, e.g. `ctrl+x`."""
+        ...
+
+    def cancel(self) -> bool:
+        """Ask the running turn to stop; False when nothing was running."""
+        ...
+
+
 def load_spec(spec: str) -> Any:
     """Load the object named by a `module.path:attribute` string.
 
@@ -113,4 +153,12 @@ def resolve_host(spec: str) -> AgentHost:
     return host
 
 
-__all__ = ["SPEC_SEPARATOR", "AgentHost", "load_spec", "resolve_host"]
+__all__ = [
+    "SPEC_SEPARATOR",
+    "AgentHost",
+    "CancellableHost",
+    "GreetingHost",
+    "PanelHost",
+    "load_spec",
+    "resolve_host",
+]

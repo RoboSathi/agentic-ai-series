@@ -218,6 +218,9 @@ llm:
   # ("order<U+202F>90019") and non-breaking hyphens in dates; they look like
   # ordinary spaces and hyphens on screen, but the NLI checker, the id and
   # amount matchers and JSON parsing all read them as something else.
+  # Named roles -> model (`llm/roles.py`). Empty here: which roles exist
+  # is an agent's vocabulary, declared in its own overlay.
+  roles: {}
   output_normalisation:
     enabled: true
     # Unicode categories whose characters become a plain space. Zs is every
@@ -803,6 +806,11 @@ resilience:
         # 35 leaves headroom for its own window boundaries and clock skew.
         max_requests: 35
         hosts: [integrate.api.nvidia.com, ai.api.nvidia.com]
+      # The web gateway's search provider (web.tavily). Its own bucket, so
+      # web traffic never spends the model budget or the reverse.
+      tavily:
+        max_requests: 20
+        hosts: [api.tavily.com]
 
 evals:
   enabled: true
@@ -958,6 +966,9 @@ tui:
   copy_toast_seconds: 2
   max_feed_lines: 0
   spinner_frames: "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+  # Only drawn when the running agent offers a side panel (PanelHost).
+  side_panel_width: 46
+  side_panel_refresh_ms: 500
 
   command_output:
     title_style: bold bright_cyan
@@ -969,3 +980,34 @@ tui:
     max_column_width: 64
     prompt_style: bold bright_black
 
+# The web gateway (agentic_commons/web). `replay` is the default because
+# it is the only mode that cannot reach the network: a process that was
+# not told to go live does not go live. A replay miss is an error, never
+# a quiet fall-through to a real request.
+web:
+  mode: replay               # live | record | replay
+  fixtures_dir: data/web_fixtures
+  fixture_set: default
+  search:
+    provider: tavily
+    max_results: 5
+  fetch:
+    timeout_seconds: 20
+    user_agent: "agentic-harness/0.1 (+https://robosathi.com)"
+    max_chars: 200000
+    # Below this much extracted text a page is treated as script-rendered.
+    min_text_chars: 200
+    js_markers: ["enable javascript", "requires javascript"]
+    reader_enabled: true
+    reader_url_template: "https://r.jina.ai/{url}"
+  tavily:
+    base_url: https://api.tavily.com
+    endpoint: /search
+    search_depth: basic
+    # Provider summaries are never evidence; do not pay for them.
+    include_answer: false
+    timeout_seconds: 20
+
+# Frozen artifacts (agentic_commons/artifacts), one directory per run.
+artifacts:
+  root: data/artifacts

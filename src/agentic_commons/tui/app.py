@@ -16,17 +16,25 @@ from collections.abc import Sequence
 from typing import Any, Callable
 from uuid import uuid4
 
+from rich.console import Group
 from textual import events
 from textual.actions import SkipAction
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Footer, Header, Input
+from textual.containers import Horizontal
+from textual.widgets import Footer, Header, Input, Static
 
 from agentic_commons.commands import Command, CommandRegistry, ConsoleEffect
 from agentic_commons.commands.data import MemoryCommand
 from agentic_commons.config import get_settings
 from agentic_commons.durability import DurableAgent
-from agentic_commons.host import AgentHost, resolve_host
+from agentic_commons.host import (
+    AgentHost,
+    CancellableHost,
+    GreetingHost,
+    PanelHost,
+    resolve_host,
+)
 from agentic_commons.logging import get_logger
 from agentic_commons.observability import InMemoryLiveStatusFeed, StageReporter
 from agentic_commons.observability.types import StatusEvent
@@ -141,6 +149,17 @@ class AgenticTuiApp(App[None]):
     #tokens {
         height: 0;
     }
+
+    #body {
+        height: 1fr;
+    }
+
+    #side-panel {
+        height: 1fr;
+        padding: 0 1;
+        border-left: solid $accent;
+        overflow-y: auto;
+    }
     """
 
     BINDINGS = [
@@ -195,6 +214,11 @@ class AgenticTuiApp(App[None]):
         for command in (*(host.commands() if host else ()), *(commands or ())):
             self._commands.register(command)
         self._bind_live_commands()
+        # Optional host hooks: absent, the console is exactly what it was.
+        self._side = Static(id="side-panel") if isinstance(host, PanelHost) else None
+        if isinstance(host, CancellableHost):
+            # Priority: the focused input would otherwise take the key for itself.
+            self._bindings.bind(host.cancel_key(), "cancel_run", "Cancel run", priority=True)
 
     def _bind_live_commands(self) -> None:
         """Point the commands that read live state at the agent on screen.
@@ -215,7 +239,12 @@ class AgenticTuiApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield self._panel
+        if self._side is None:
+            yield self._panel
+        else:
+            with Horizontal(id="body"):
+                yield self._panel
+                yield self._side
         yield self._status
         yield Input(
             placeholder=(
@@ -239,13 +268,37 @@ class AgenticTuiApp(App[None]):
             "Author = RoboSathi | robosathi.com",
             style="bold cyan",
         )
-
-        self._panel.note(
-            "Before I can look anything up, I need to verify your account.\n"
-            "Please share your 7-character user code.",
-            style="yellow",
-        )
+        self._panel.note(self._greeting(), style="yellow")
+        if self._side is not None:
+            self._side.styles.width = get_settings().tui.side_panel_width
+            self.set_interval(get_settings().tui.side_panel_refresh_ms / 1000, self._refresh_side)
         self._announce_resumable_runs()
+
+    def _greeting(self) -> str:
+        """The agent's own first words, when it offers them."""
+        if isinstance(self._host, GreetingHost):
+            return self._host.greeting()
+        return (
+            "Before I can look anything up, I need to verify your account.\n"
+            "Please share your 7-character user code."
+        )
+
+    def _refresh_side(self) -> None:
+        """Redraw the host's side panel from state it already holds."""
+        if self._side is None or not isinstance(self._host, PanelHost):
+            return
+        try:
+            self._side.update(Group(*self._host.side_panels(self._session_id)))
+        except Exception as exc:
+            self._journal.warning("Side panel failed to render", error=str(exc))
+
+    def action_cancel_run(self) -> None:
+        """The host's cancel key: ask the running turn to stop."""
+        if isinstance(self._host, CancellableHost):
+            stopped = self._host.cancel()
+            self._panel.note(
+                "⏹ cancel requested" if stopped else "Nothing is running.", style="yellow"
+            )
 
     def _announce_resumable_runs(self) -> None:
         """Say, on opening, which runs the last process left unfinished.
@@ -273,9 +326,11 @@ class AgenticTuiApp(App[None]):
             await self._run_command(query)
             return
 
-        # No request queue yet. Run the turn as a Textual worker so the UI event
-        # loop remains free to repaint the dashboard while the agent is running.
-        event.input.disabled = True
+        self._start_turn(query)
+
+    def _start_turn(self, query: str) -> None:
+        """Run a turn as a Textual worker, so the UI keeps repainting meanwhile."""
+        self.query_one("#query", Input).disabled = True
         self.run_worker(
             self._run(query),
             exclusive=True,
@@ -313,6 +368,8 @@ class AgenticTuiApp(App[None]):
         if effect.session_id and effect.session_id != self._session_id:
             self._session_id = effect.session_id
             self._panel.note(f"Session switched to {effect.session_id}", style="cyan")
+        if effect.agent_turn:
+            self._start_turn(effect.agent_turn)
 
     def _rebuild_agent(self) -> None:
         """Compose the agent again under the configuration as it now stands.
