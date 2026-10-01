@@ -18,8 +18,12 @@ Archetype = Literal[
 # What the user chooses between: a quick cited answer, or a scoped research run.
 Mode = Literal["qa", "research"]
 ItemStatus = Literal["open", "covered", "waived"]
-Depth = Literal["overview", "standard", "deep"]
+# How big a run and its report are: each size is a profile in config (`agent.depths`).
+Depth = Literal["small", "medium", "large"]
+DEFAULT_DEPTH: Depth = "small"
 GateDecision = Literal["scopable", "needs_reframe", "refuse"]
+# What decided a gate verdict: a pattern, the fine-tuned encoder, or the model.
+GateSource = Literal["rule", "encoder", "llm"]
 UnknownReason = Literal["waived", "closed_early", "turn_cap"]
 
 # The kinds a Research run can take; `general` when no specialised one fits.
@@ -36,12 +40,28 @@ QA: Archetype = "qa"
 GENERAL: Archetype = "general"
 
 
+class Choice(BaseModel):
+    """One answer offered from a menu: what the user sees, and what is recorded."""
+
+    model_config = ConfigDict(frozen=True)
+
+    label: str
+    value: str
+
+
 class CoverageItem(BaseModel):
     """One thing the interview must establish (or the user must waive)."""
 
     item_id: str
-    prompt: str
+    # What the interview needs to learn, as a short noun phrase; the interviewer
+    # words the actual question for this request, so this is never shown verbatim.
+    goal: str
+    # A closed set of answers, offered as a menu beside free text (empty: open-ended).
+    choices: tuple[Choice, ...] = ()
     required: bool = True
+    # An optional item the interviewer may drop as irrelevant to a request; False means it is
+    # always asked (a menu makes that one click), e.g. how big the research should be.
+    skippable: bool = True
     status: ItemStatus = "open"
     value: str = ""
     # A private item's value never leaves the process (queries, URLs).
@@ -60,6 +80,9 @@ class GateVerdict(BaseModel):
     archetype: Archetype | None = None
     topic: str = ""
     reason: str = ""
+    source: GateSource = "llm"
+    # The model that decided, when one did (encoder checkpoint or LLM).
+    source_model: str = ""
     # A time window stated in the message ("in the last 1 month" -> 30).
     recent_days: int | None = None
 
@@ -102,7 +125,7 @@ class ScopeBrief(BaseModel):
     source_policy: SourcePolicy = Field(default_factory=SourcePolicy)
     recency_days: int | None = None
     geography: str = ""
-    depth: Depth = "standard"
+    depth: Depth = DEFAULT_DEPTH
     deliverable_format: str = ""
     budget: Budget
     known_unknowns: tuple[KnownUnknown, ...] = ()

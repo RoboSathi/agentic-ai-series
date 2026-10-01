@@ -88,7 +88,12 @@ logging:
   # gatekeeper reasoning available after the fact without flooding the
   # screen someone is watching.
   file_level: DEBUG
+  # Every agent writes under its own folder here: logs/<agent id>/<subsystem>.log, so two agents
+  # never share a file. `agent.id` comes from the agent's overlay.
   dir: logs
+  # A sub-folder of the agent's own (logs/<agent id>/<run_label>/) for runs that are not the live
+  # agent, such as an offline profile; empty writes to the agent's folder.
+  run_label: ""
   # How a record's fields are drawn in the log files. `tree` is an
   # indented structure a person can follow; `json` is the parseable
   # object, for anything that reads these files rather than a human.
@@ -105,7 +110,7 @@ llm:
   enabled: true
   provider: nim            # nim | local — the default single-tier client
   max_tokens: 3000
-  # Write every request and response to logs/llm.log at DEBUG. The single
+  # Write every request and response to logs/<agent id>/llm.log at DEBUG. The single
   # most useful switch when the agent misbehaves: it shows what the model
   # was actually asked, which is rarely what you assume it was asked.
   # Off by default — payloads are verbose and may carry customer text.
@@ -213,6 +218,7 @@ llm:
   check:
     prompt: Reply with the single word OK.
     max_tokens: 4
+    timeout_seconds: 20
   # The model's typesetting habits, undone as its text arrives. Nemotron
   # writes a narrow no-break space between a label and its number
   # ("order<U+202F>90019") and non-breaking hyphens in dates; they look like
@@ -974,9 +980,35 @@ tui:
   copy_toast_seconds: 2
   max_feed_lines: 0
   spinner_frames: "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-  # Only drawn when the running agent offers a side panel (PanelHost).
-  side_panel_width: 46
-  side_panel_refresh_ms: 500
+  # Only drawn when the running agent offers a status block (StatusHost).
+  status_refresh_ms: 500
+  status_collapsed_symbol: "▸"
+  status_expanded_symbol: "▾"
+  status_styles:
+    running: "bold green"
+    complete: "bold blue"
+    failed: "bold red"
+  status_expand_hint: "click to expand"
+  status_history_hint: "scroll down to follow"
+  choice_menu_hint: "↑/↓ then Enter to pick · or type your own answer"
+  group_colors:
+    violet: "#C792EA"
+    blue: "#4FC3F7"
+    amber: "#FFB454"
+  section_title_style: "bold"
+  tone_styles:
+    pass: green
+    fail: red
+    warn: yellow
+    dim: dim
+  response_styles:
+    h1: "bold #4FC3F7"
+    h2: "bold #C792EA"
+    bold: "bold #FFB454"
+    bullet: "#82AAFF"
+    citation: "#00FF87"
+    url: dim
+    body: white
 
   command_output:
     title_style: bold bright_cyan
@@ -1015,6 +1047,8 @@ web:
     js_markers: ["enable javascript", "requires javascript"]
     reader_enabled: true
     reader_url_template: "https://r.jina.ai/{url}"
+    date_meta_keys: [article:published_time, og:article:published_time, datepublished, date, dc.date, dcterms.created, pubdate, publish-date, article:modified_time]
+    date_json_keys: [datePublished, dateCreated, dateModified]
   tavily:
     base_url: https://api.tavily.com
     endpoint: /search

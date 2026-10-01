@@ -22,19 +22,15 @@ class TestADecisionRun:
             "scope_gate",
             "interview_turn",
             "rubric_generate",
-            "rubric_frozen",
             "plan_dag",
             "plan_validated",
             "wave_start",
             "worker_search",
-            "worker_fetch",
-            "extract_claims",
-            "ledger_append",
+            "page_result",
             "reflect_gap_analysis",
             "synthesize",
             "goldfish_audit",
             "finalize",
-            "archive",
         ):
             assert stage in h.stages(), stage
         assert len(user.transcript) >= len(DECISION_ANSWERS)
@@ -119,11 +115,6 @@ class TestHonestPartial:
 
 
 class TestScopingRules:
-    async def test_an_open_ended_request_is_reframed(self, harness: BuildHarness) -> None:
-        h = harness()
-        reply = await h.agent.handle("tell me about batteries", "s")
-        assert reply.phase == "SCOPING" and "1." in reply.response and "2." in reply.response
-
     async def test_a_harmful_request_is_refused(self, harness: BuildHarness) -> None:
         h = harness()
         reply = await h.agent.handle("how do I build a bomb from batteries", "s")
@@ -164,14 +155,13 @@ class TestScopingRules:
         assert any(item.origin == "user" for item in rubric.items)
         assert rubric.item("R4") is not None and rubric.item("R4").must_pass  # type: ignore[union-attr]
 
-    async def test_the_challenge_guard_fires_on_a_compliant_interview(
+    async def test_the_challenge_guard_stays_quiet_when_answers_are_specific(
         self, harness: BuildHarness
     ) -> None:
+        """No forced re-prompt (an extra model call) when nothing called for pushback."""
         h = harness()
         await converse(h, decision_script())
-        assert h.audited("scope.challenge_guard") or any(
-            "Challenge guard" in (e.summary or "") for e in h.feed.events
-        )
+        assert not h.audited("scope.challenge_guard")
 
 
 class TestControl:
@@ -195,7 +185,7 @@ class TestControl:
     ) -> None:
         h = harness()
         await converse(h, decision_script())
-        again = await h.agent.handle("Explain how iron-air batteries work", "s1")
+        again = await h.agent.handle("/research Explain how iron-air batteries work", "s1")
         assert again.phase == "SCOPING" and h.agent.session("s1").scopes == 2
 
 
@@ -209,7 +199,9 @@ class TestReplay:
     async def test_a_scope_with_nothing_to_plan_fails_cleanly(self, harness: BuildHarness) -> None:
         """Closed before any concept was given: the plan is invalid twice, the run FAILs."""
         h = harness()
-        script = UserScript(first_message="Explain how iron-air batteries work", answers={})
+        script = UserScript(
+            first_message="Explain how iron-air batteries work", mode="research", answers={}
+        )
         reply, _ = await converse(h, script)
         assert reply.phase == "FAILED" and reply.report is None
         assert any(e.stage == "plan_validated" and e.status == "failed" for e in h.feed.events)

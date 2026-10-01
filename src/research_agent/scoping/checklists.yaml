@@ -5,53 +5,89 @@
 # unknown* on the Brief, which the Rubric and the report must acknowledge).
 #
 #   item_id      stable id; the ScriptedUser in evals answers by this id
-#   prompt       what the interviewer asks
+#   goal         what the interview needs to learn, as a short noun phrase. The
+#                interviewer words the question itself, for this request and in
+#                the user's context; the goal is never shown to the user as written
 #   required     whether the agent may propose "done" while it is open
+#   skippable    false: an optional item that is still always asked (it shapes the budget),
+#                though a menu makes that one click; default true
 #   brief_field  the ScopeBrief field the answer fills
 #   multi        the answer is a list (comma / semicolon / " and " separated)
 #   private      the value must never leave the process (queries, URLs)
+#   choices      a closed set of answers, offered as a menu beside free text:
+#                `label` is what the user sees, `value` is what is recorded
+#
+# Optional items the interviewer judges irrelevant to a request are skipped,
+# so a simple question needs fewer turns than a decision between options.
+
+choices:
+  recency: &recency_choices
+    - {label: Last 30 days, value: last 30 days}
+    - {label: Last 90 days, value: last 90 days}
+    - {label: Last year, value: last 365 days}
+    - {label: Any time, value: any}
+  sources: &source_choices
+    - {label: Primary sources preferred, value: primary sources preferred}
+    - {label: No preference, value: no preference}
+  deliverable: &deliverable_choices
+    - {label: Short memo, value: short memo}
+    - {label: Table, value: table}
+    - {label: Detailed report, value: detailed report}
+  depth: &depth_choices
+    - {label: Small — a short answer from a few pages, value: small}
+    - {label: Medium — a fuller picture, value: medium}
+    - {label: Large — thorough, many sources, value: large}
 
 common: &common
   - item_id: purpose
-    prompt: What will you do with the answer — what decision or action does it feed?
+    goal: what the answer will be used for
     required: true
     brief_field: purpose
   - item_id: recency
-    prompt: How recent must sources be? Give a window in days (e.g. 365), or say "any".
+    goal: how recent the sources must be
     required: false
     brief_field: recency_days
+    choices: *recency_choices
   - item_id: sources
-    prompt: Any sources to prefer or avoid? Name domains, or say "primary sources preferred".
+    goal: sources to prefer or avoid
     required: false
     brief_field: source_policy
+    choices: *source_choices
   - item_id: context
-    prompt: Anything about your own situation I should know (budget, organisation)? This stays private and is never searched for.
+    goal: the user's own situation that affects the answer (budget, organisation); private, never searched for
     required: false
     brief_field: private_terms
     multi: true
     private: true
   - item_id: deliverable
-    prompt: What should the deliverable look like — a short memo, a table, a detailed report?
+    goal: the shape of the deliverable
     required: false
     brief_field: deliverable_format
+    choices: *deliverable_choices
+  - item_id: depth
+    goal: how big the research should be
+    required: false
+    skippable: false
+    brief_field: depth
+    choices: *depth_choices
 
 decision_support:
   - item_id: decision
-    prompt: What exactly is being decided, and by when?
+    goal: the decision being made, and by when
     required: true
     brief_field: decision
   - item_id: options
-    prompt: Which options are on the table? List each one.
+    goal: the options on the table
     required: true
     brief_field: options
     multi: true
   - item_id: criteria
-    prompt: Which criteria matter for the choice? List each one (cost, safety, …).
+    goal: the criteria that matter for the choice
     required: true
     brief_field: criteria
     multi: true
   - item_id: constraints
-    prompt: Any hard constraints that rule an option out regardless of score?
+    goal: hard constraints that rule an option out regardless of score
     required: false
     brief_field: constraints
     multi: true
@@ -59,16 +95,16 @@ decision_support:
 
 landscape_brief:
   - item_id: scope_boundary
-    prompt: Where does the landscape start and stop — which segment, which region?
+    goal: where the landscape starts and stops (segment, region)
     required: true
     brief_field: geography
   - item_id: criteria
-    prompt: What should the map show for each player (approach, scale, funding, …)?
+    goal: what the map should show for each player
     required: true
     brief_field: criteria
     multi: true
   - item_id: known_players
-    prompt: Which players do you already know about? I will look beyond them.
+    goal: players the user already knows, so the research looks beyond them
     required: false
     brief_field: options
     multi: true
@@ -76,12 +112,12 @@ landscape_brief:
 
 fact_verification:
   - item_id: claims
-    prompt: Which claims should I verify? Quote each one as you have seen it.
+    goal: the claims to verify, as the user has seen them
     required: true
     brief_field: claims
     multi: true
   - item_id: claim_origin
-    prompt: Where did you see these claims? It helps me find the primary source.
+    goal: where the user saw the claims, to help find the primary source
     required: false
     brief_field: constraints
     multi: true
@@ -89,16 +125,16 @@ fact_verification:
 
 explainer:
   - item_id: audience
-    prompt: Who is the explanation for, and what do they already know?
+    goal: who the explanation is for and what they already know
     required: true
     brief_field: decision
   - item_id: concepts
-    prompt: Which sub-concepts must the explanation cover? List each one.
+    goal: the sub-concepts the explanation must cover
     required: true
     brief_field: concepts
     multi: true
   - item_id: criteria
-    prompt: What makes the explanation good enough — examples, numbers, a diagram in words?
+    goal: what would make the explanation good enough
     required: false
     brief_field: criteria
     multi: true
@@ -109,29 +145,38 @@ explainer:
 # recent, from where, and in what shape.
 general:
   - item_id: purpose
-    prompt: What will you do with the answer — what decision or action does it feed?
+    goal: what the answer will be used for
     required: true
     brief_field: purpose
   - item_id: recency
-    prompt: How recent must sources be? Give a window (e.g. "last 3 months", 365 days), or say "any".
+    goal: how recent the sources must be
     required: false
     brief_field: recency_days
+    choices: *recency_choices
   - item_id: criteria
-    prompt: What must the answer cover to be useful to you? List each point.
+    goal: what the answer must cover to be useful
     required: false
     brief_field: criteria
     multi: true
   - item_id: sources
-    prompt: Any sources to prefer or avoid? Name domains, or say "primary sources preferred".
+    goal: sources to prefer or avoid
     required: false
     brief_field: source_policy
+    choices: *source_choices
   - item_id: context
-    prompt: Anything about your own situation I should know (budget, organisation)? This stays private and is never searched for.
+    goal: the user's own situation that affects the answer (budget, organisation); private, never searched for
     required: false
     brief_field: private_terms
     multi: true
     private: true
   - item_id: deliverable
-    prompt: What should the deliverable look like — a short memo, a table, a detailed report?
+    goal: the shape of the deliverable
     required: false
     brief_field: deliverable_format
+    choices: *deliverable_choices
+  - item_id: depth
+    goal: how big the research should be
+    required: false
+    skippable: false
+    brief_field: depth
+    choices: *depth_choices

@@ -10,6 +10,7 @@ hosted model to config and its probe appears; switch a section off and
 its probe reports `skipped`.
 """
 
+import asyncio
 import time
 from pathlib import Path
 from typing import Awaitable, Callable, Literal, Protocol, runtime_checkable
@@ -59,6 +60,7 @@ class _TimedProbe:
         self._target = target
         self._model = model
         self._required = required
+        self._timeout = get_settings().llm.check.timeout_seconds
 
     def result(self, status: ProbeStatus, started: float, **fields: object) -> ProbeResult:
         return ProbeResult(
@@ -74,7 +76,10 @@ class _TimedProbe:
     async def timed(self, call: Callable[[], Awaitable[ProbeResult]]) -> ProbeResult:
         started = time.perf_counter()
         try:
-            return await call()
+            async with asyncio.timeout(self._timeout):
+                return await call()
+        except TimeoutError:
+            return self.result("failed", started, detail=f"no response within {self._timeout:g}s")
         except Exception as exc:
             return self.result("failed", started, http_status=_status_of(exc), detail=str(exc))
 

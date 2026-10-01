@@ -15,6 +15,7 @@ import httpx
 
 from agentic_commons.config.settings import WebFetchSettings
 from agentic_commons.hashing import text_hash
+from agentic_commons.web.page_date import published_from_html
 from agentic_commons.web.types import FetchedPage, FetchVia
 
 # `noscript` is kept: its "please enable JavaScript" text is how a shell page is recognised.
@@ -75,12 +76,20 @@ def extract_text(html: str) -> tuple[str, str]:
     return parser.title, parser.text()
 
 
-def page_from(url: str, status: int, body: str, via: FetchVia, max_chars: int) -> FetchedPage:
+def page_from(
+    url: str, status: int, body: str, via: FetchVia, settings: WebFetchSettings
+) -> FetchedPage:
     """A `FetchedPage` whose hash is over exactly the text it carries."""
     title, text = extract_text(body)
-    clipped = text[:max_chars]
+    clipped = text[: settings.max_chars]
     return FetchedPage(
-        url=url, status=status, text=clipped, page_hash=text_hash(clipped), via=via, title=title
+        url=url,
+        status=status,
+        text=clipped,
+        page_hash=text_hash(clipped),
+        via=via,
+        title=title,
+        published=published_from_html(body, settings.date_meta_keys, settings.date_json_keys),
     )
 
 
@@ -98,7 +107,7 @@ class HttpFetcher:
             timeout=self._settings.timeout_seconds,
             follow_redirects=True,
         )
-        return page_from(url, response.status_code, response.text, "http", self._settings.max_chars)
+        return page_from(url, response.status_code, response.text, "http", self._settings)
 
 
 class ReaderFetcher:
@@ -114,9 +123,7 @@ class ReaderFetcher:
             headers={"User-Agent": self._settings.user_agent},
             timeout=self._settings.timeout_seconds,
         )
-        return page_from(
-            url, response.status_code, response.text, "reader", self._settings.max_chars
-        )
+        return page_from(url, response.status_code, response.text, "reader", self._settings)
 
 
 class FallbackFetcher:

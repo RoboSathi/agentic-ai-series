@@ -20,6 +20,10 @@ that could close them, each serving at least one of the listed gap ids.
 Do not repeat queries that were already tried. Propose nothing for items
 that are not listed as gaps. If nothing new could help, return an empty
 list — an honest partial result is better than repeated searching.
+
+Today's date and the approved recency window are in the payload (`today`,
+`recency_days`). The search is already limited to that window: never put a
+year, month or date in a query, and never rely on dates from memory.
 """
 
 
@@ -47,6 +51,8 @@ def build(
         instructions=INSTRUCTIONS,
         payload={
             "task": "reflect",
+            "today": contract.frozen_at.date().isoformat(),
+            "recency_days": contract.brief.recency_days,
             "brief": brief_view(contract),
             "gaps": gaps,
             "queries_tried": tried,

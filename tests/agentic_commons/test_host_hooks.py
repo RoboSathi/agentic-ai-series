@@ -1,4 +1,4 @@
-"""Optional host hooks and console effects: greeting, side panel, cancel, forwarded turns.
+"""Optional host hooks and console effects: greeting, status block, cancel, forwarded turns.
 
 A host that implements none of them (customer support) gets the console
 exactly as before; one that implements them gets each behaviour.
@@ -9,12 +9,10 @@ from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from typing import Any
 
-from rich.console import RenderableType
-
 from agentic_commons.commands import CommandResult, ConsoleEffect
 from agentic_commons.commands.types import Command
 from agentic_commons.config import FeatureSet
-from agentic_commons.host import CancellableHost, GreetingHost, PanelHost
+from agentic_commons.host import CancellableHost, GreetingHost, StatusHost
 from agentic_commons.observability import StageReporter
 from agentic_commons.tui.app import AgenticTuiApp
 
@@ -62,8 +60,8 @@ class _Host:
     def greeting(self) -> str:
         return "Hello from the host"
 
-    def side_panels(self, session_id: str) -> Sequence[RenderableType]:
-        return [f"panel for {session_id}"]
+    def status_lines(self, session_id: str) -> tuple[Sequence[str], Sequence[str]]:
+        return [f"status for {session_id}"], [f"detail for {session_id}"]
 
     def cancel_key(self) -> str:
         return "ctrl+x"
@@ -76,7 +74,7 @@ class _Host:
 class TestOptionalHooks:
     def test_the_protocols_recognise_the_host(self) -> None:
         host = _Host()
-        assert isinstance(host, GreetingHost) and isinstance(host, PanelHost)
+        assert isinstance(host, GreetingHost) and isinstance(host, StatusHost)
         assert isinstance(host, CancellableHost)
 
     async def test_greeting_panel_cancel_and_forwarded_turns(self) -> None:
@@ -85,8 +83,11 @@ class TestOptionalHooks:
         async with app.run_test(size=(120, 30)) as pilot:
             await pilot.pause()
             assert "Hello from the host" in app._panel.as_text()
-            app._refresh_side()
-            assert app._side is not None
+            app._refresh_status()
+            assert "status for" in str(app._status.render())
+            assert "detail for" not in str(app._status.render())
+            await pilot.click("#status-line")
+            assert "detail for" in str(app._status.render())
             await pilot.press("ctrl+x")
             await pilot.pause()
             assert host.cancelled == 1
@@ -101,7 +102,7 @@ class TestOptionalHooks:
         app = AgenticTuiApp()
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
-            assert app._side is None
+            assert app._status_host is None
             assert "verify your account" in app._panel.as_text()
-            app._refresh_side()
+            app._refresh_status()
             app.action_cancel_run()

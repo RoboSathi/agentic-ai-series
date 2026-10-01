@@ -15,7 +15,7 @@ from pydantic_settings import SettingsConfigDict
 from agentic_commons.config.paths import resolve_path
 from agentic_commons.config.settings import YamlBackedSettings
 from research_agent.domain.budget import Budget
-from research_agent.domain.scope import Mode
+from research_agent.domain.scope import Depth, Mode
 
 ModelBackend = Literal["fixture", "routed"]
 
@@ -65,21 +65,23 @@ class MessageSettings(BaseModel):
     history_empty: str
     unknown_run: str
     plan_failed: str
+    # `{error}`: why a scoping step failed (the session is left ready for a new question).
+    scope_failed: str
+    # What working memory keeps of a delivered run: `{run_id}`, `{status}`, `{topic}`.
+    run_note: str
     brief_ready: str
 
 
 class GreetingSettings(BaseModel):
     """The lines the greeting is assembled from (console/greeting.py)."""
 
+    intro: str
+    research_line: str
+    examples: str
+    commands: str
     live_mode: str
     demo_mode: str
     topic_line: str
-    modes_title: str
-    qa_line: str
-    research_line: str
-    limits: str
-    wont: str
-    commands: str
 
 
 class SetupMessages(BaseModel):
@@ -89,8 +91,6 @@ class SetupMessages(BaseModel):
     missing_model_key: str
     # Not fatal: without a Tavily key, search is DuckDuckGo only.
     no_search_key: str
-    # The month's metered searches, for the greeting and the side panel.
-    search_usage: str
 
 
 class ReframeOption(BaseModel):
@@ -128,6 +128,11 @@ class ScopingSettings(BaseModel):
     archetype_keywords: dict[str, list[str]]
     # A message naming no specialised kind but asking for a *research run*.
     research_cues: list[str]
+    # The deterministic gate decides a research kind only when at least this many of that
+    # kind's cues appear (and no other kind ties it); otherwise the encoder, then the LLM.
+    # Why a plain message is answered as Q&A (shown on the scope card).
+    quick_reason: str
+    rule_gate_min_cue_hits: int = Field(ge=1)
     reframe_options: list[ReframeOption]
     time_window: TimeWindowSettings
     answer_split_pattern: str
@@ -136,7 +141,12 @@ class ScopingSettings(BaseModel):
     waive_all_keyword: str
     any_recency_words: list[str]
     none_answers: list[str]
+    # What an optional item the interviewer skipped is recorded as (one of `none_answers`).
+    skipped_answer: str
     primary_sources_phrase: str
+    # Words that pick a size, and the pattern for "N pages".
+    depth_words: dict[Depth, list[str]]
+    pages_pattern: str
 
     @property
     def resolved_checklists_path(self) -> Path:
@@ -153,6 +163,8 @@ class RubricSettings(BaseModel):
 
 class PlanningSettings(BaseModel):
     max_queries_per_node: int = Field(ge=1)
+    # Sub-questions are shown as Q1, Q2, ...; the planner's own ids are replaced by these.
+    node_id_prefix: str
 
 
 class MatchingSettings(BaseModel):
@@ -171,12 +183,24 @@ class ResearchSettings(BaseModel):
     max_results_per_search: int = Field(ge=1)
     max_fetches_per_node: int = Field(ge=1)
     max_claims_per_page: int = Field(ge=1)
+    # How much of a page the extractor reads; the rest is not sent to the model.
+    extractor_page_chars: int = Field(ge=1000)
     primary_source_markers: list[str]
     outbound_allow_patterns: list[str]
     outbound_deny_patterns: list[str]
     authority_rank: str
     # Why a search hit outside the approved recency window was not read.
     recency_rejection: str
+    # Host suffixes by kind of source ("press release": [prnewswire.com, ...]). A labelled
+    # source is shown with its label and fetched after unlabelled ones; never dropped.
+    source_labels: dict[str, list[str]] = Field(default_factory=dict)
+    # A hit with no date from the provider: "verify_on_page" reads it and checks the date
+    # the page declares; "reject" drops it unread.
+    undated_policy: Literal["verify_on_page", "reject"] = "verify_on_page"
+    undated_rejection: str = (
+        "no readable publication date (got '{date}'), so it cannot be shown to fall "
+        "inside the {days}-day window"
+    )
     # A Q&A or general question bounded to this many days or fewer is news:
     # search the providers' news vertical (`news_topic`).
     news_window_days: int = Field(ge=1)
@@ -185,10 +209,41 @@ class ResearchSettings(BaseModel):
     quota_stop: str
 
 
+class CallSettings(BaseModel):
+    """How model calls are capped, and what happens when one is cut off.
+
+    The roles run on a reasoning model whose hidden reasoning is spent from the same output
+    cap as the answer, so the platform default (`llm.max_tokens`) can leave no room for the
+    JSON: the call ends `length` with empty content. A role's own cap fixes the common case;
+    a cut-off call is retried with a larger one before it is given up on.
+    """
+
+    # Output-token cap per role; a role not listed uses the provider's default.
+    role_max_tokens: dict[str, int]
+    # A cut-off call is retried this many times, each with the cap multiplied by the factor.
+    truncation_retries: int = Field(ge=0)
+    truncation_retry_factor: float = Field(gt=1)
+    # Seconds one call may take before it is cancelled (`default` covers a role not listed). The
+    # provider's own timeout is 60 s with SDK retries, which turns one stalled call into minutes of
+    # silence; a call that stalls is cancelled here, named on the feed, and retried.
+    role_timeout_seconds: dict[str, float]
+    timeout_retries: int = Field(ge=0)
+
+
 class QaSettings(BaseModel):
     """The Q&A fast path: no interview, a small budget, one follow-up round."""
 
     budget: Budget
+
+
+class DepthProfile(BaseModel):
+    """One size of run: what it may spend, and how much report it writes."""
+
+    budget: Budget
+    # Ledger entries the synthesizer is shown (spread across sub-questions).
+    report_entries: int = Field(ge=1)
+    # Output-token cap for the synthesizer call.
+    report_max_tokens: int = Field(ge=1)
 
 
 class ReflectionSettings(BaseModel):
@@ -215,9 +270,178 @@ class AuditSettings(BaseModel):
     entailment_model: Literal["platform", "lexical"]
     # What counts as a named entity in a claim (distinct-subject checks).
     entity_pattern: str
+    # The weighted score a report needs for a PASS, and the floor below which it FAILs;
+    # between them it is PARTIAL (`audit/verdict.py`). A failed must-pass is never a PASS.
+    pass_threshold: float = Field(gt=0, le=1)
+    partial_threshold: float = Field(gt=0, le=1)
+
+
+class InjectionModelSettings(BaseModel):
+    """The hosted injection model that backs up the phrase check on fetched pages."""
+
+    # A page the phrase check flags is dropped only if the model agrees (score >= threshold).
+    threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    # Also score pages the phrase check passed (costs model calls; off by default).
+    scan_all: bool = False
+    # Models read a bounded window; flagged phrases are scored in their own context.
+    window_chars: int = Field(default=2000, ge=200)
+    max_windows: int = Field(default=4, ge=1)
+
+
+class EncoderGateSettings(BaseModel):
+    """A fine-tuned BERT-family classifier in front of the LLM scope gate (as in CSA)."""
+
+    # Empty: not trained yet. The feature stays off and the LLM gate answers.
+    model: str = ""
+    local_model_dir: str = "local_models/gate_classifier/ra-gate"
+    download_if_missing: bool = True
+    # Below either bar the message goes to the LLM gate instead.
+    min_confidence: float = Field(default=0.80, ge=0.0, le=1.0)
+    min_margin: float = Field(default=0.25, ge=0.0, le=1.0)
+    training_data_path: str = "src/research_agent/scoping/gate_training.yaml"
+
+
+class IntentRouterSettings(BaseModel):
+    """The front door: answer a question directly, or start a research scope.
+
+    Same layering as the Customer Support router: deterministic rules, then the BERT-family
+    encoder (`gate_encoder`), then the LLM for what the encoder is unsure of. With no encoder
+    trained, a message the rules do not claim is answered directly rather than sent to a
+    120B model just to be told so.
+    """
+
+    # A message with at least this many `scoping.research_cues` is a research request.
+    research_cue_min_hits: int = Field(ge=1)
+    # The labelled example messages the nearest-example classifier compares a message with
+    # (a file of `label: [messages]`), and how many of the nearest vote.
+    exemplars_path: str
+    neighbours: int = Field(ge=1)
+    # The grouped share (answer against research) a side needs to decide; below it, the LLM.
+    min_confidence: float = Field(ge=0.5, le=1.0)
+    # Labels that mean "answer directly"; any other known label is a research kind.
+    encoder_answer_labels: list[str]
+    # Ask the LLM when the encoder is unsure (off: unsure means answer directly).
+    llm_fallback: bool = True
+
+
+class AnswerBudget(BaseModel):
+    """What one direct answer may spend; the ReAct loop stops at the first cap reached."""
+
+    max_steps: int = Field(ge=1)
+    max_tool_calls: int = Field(ge=0)
+    max_total_tokens: int = Field(ge=1)
+    max_seconds: float = Field(gt=0)
+
+
+class AnswerMessages(BaseModel):
+    """What the direct-answer path says that no model wrote."""
+
+    # `{counter}` names the budget counter that ran out (steps, tool_calls, tokens, seconds).
+    cap_reached: str
+    # `{cause}`, `{step}` and `{seconds}`: why the answer could not be given, and when.
+    failed: str
+    # `{seconds}`: a model call that did not return in time.
+    model_timeout: str
+    empty: str
+    unknown_tool: str
+    bad_arguments: str
+    tool_failed: str
+    # `{tool}` and `{arguments}`: the heading of a tool-call card.
+    tool_call: str
+    section_arguments: str
+    section_result: str
+    section_answer: str
+    # `{steps}`, `{calls}`, `{tokens}`, `{seconds}`: the closing card's heading.
+    answered: str
+    no_results: str
+    sources_heading: str
+    # `{when}`: the moment a search or a page was retrieved; `{date}`: a hit's own publish date.
+    retrieved: str
+    published: str
+    # The grounding check's card: `{supported}`, `{claims}`, `{removed}`.
+    grounded_heading: str
+    ungrounded_heading: str
+    section_unsupported: str
+    # Appended when details were removed; and the whole reply when nothing could be verified.
+    filtered_note: str
+    withheld: str
+    # The context handed to the model: `{heading}` blocks in the system prompt, and the card.
+    session_state_heading: str
+    state_line: str
+    earlier_heading: str
+    # `{run_id}`, `{status}`, `{topic}`.
+    earlier_line: str
+    # `{turns}`, `{state}`, `{runs}`, `{tokens}`.
+    context_heading: str
+    # `{purpose}`.
+    request_heading: str
+    response_heading: str
+
+
+class AnswerContextSettings(BaseModel):
+    """What the direct answer knows about the session besides the question."""
+
+    # Recent turns of this session handed to the model (also the working memory's bound).
+    history_turns: int = Field(ge=0)
+    # Earlier archived runs scanned for ones that bear on the question, and how many are shown.
+    recall_scan: int = Field(ge=0)
+    recall_limit: int = Field(ge=0)
+    # Words shorter than this do not count when matching a question to an earlier run.
+    min_word_chars: int = Field(ge=1)
+
+
+class WeatherSettings(BaseModel):
+    """Open-Meteo: a keyless, structured forecast API (geocoding, then the forecast)."""
+
+    geocode_url: str
+    forecast_url: str
+    timeout_seconds: float = Field(gt=0)
+    # Place-name matches to read when geocoding (the first is used).
+    geocode_results: int = Field(ge=1)
+    forecast_days: int = Field(ge=1)
+    current_fields: list[str]
+    daily_fields: list[str]
+    # WMO weather interpretation codes, in words.
+    codes: dict[int, str]
+    unknown_code: str
+
+
+class AnswerGroundingSettings(BaseModel):
+    """Checking the answer against what the tools returned, before the user sees it."""
+
+    # A name: two or more capitalised words in a row. One the tools never returned (and the
+    # question did not contain) is invented, so its sentence is removed.
+    entity_pattern: str
+
+
+class AnswerSettings(BaseModel):
+    """The direct-answer path: a budgeted ReAct loop over a few read-only tools."""
+
+    role: str
+    budget: AnswerBudget
+    # One model call may take this long; below the provider's own timeout, so a stalled call
+    # fails here, named, instead of consuming the whole budget in silence.
+    call_timeout_seconds: float = Field(gt=0)
+    # Output-token cap for one model response.
+    max_tokens: int = Field(ge=1)
+    temperature: float = Field(ge=0.0)
+    search_max_results: int = Field(ge=1)
+    # A search hit's snippet is the page's own text; this much of it is shown to the model.
+    snippet_max_chars: int = Field(ge=100)
+    # How much of a fetched page the model is shown.
+    fetch_max_chars: int = Field(ge=200)
+    # strftime format for the date the prompt carries ("Today is ...").
+    date_format: str
+    context: AnswerContextSettings
+    grounding: AnswerGroundingSettings
+    weather: WeatherSettings
+    messages: AnswerMessages
 
 
 class ArchiveSettings(BaseModel):
+    # Remember each run as a semantic fact too. The episodic index row is the run pointer;
+    # a "fact" about a report is not something the agent believes true.
+    semantic_pointer: bool = False
     run_id_prefix: str
     history_limit: int = Field(ge=1)
     # `make runs ra`: the archive read straight from the artifact store.
@@ -229,15 +453,37 @@ class CancelSettings(BaseModel):
     key: str
 
 
+class ActionSpec(BaseModel):
+    """One button: its label, the command it runs (a `command_names` key) and any argument."""
+
+    label: str
+    command: str
+    argument: str = ""
+    # May be pressed while a turn is running (cancel); the others wait for the turn to end.
+    during_turn: bool = False
+
+
 class PanelSettings(BaseModel):
     """The console's presentation of this agent."""
 
-    panel_title: str
-    panel_width: int = Field(ge=10)
     stage_labels: dict[str, str]
+    # Stage -> presentation group (scoping, research, audit): a group's cards share a colour.
+    card_groups: dict[str, str]
     command_help: dict[str, str]
-    panel_labels: dict[str, str]
     history_headers: list[str]
+    # Every sentence a card or the status block says (`research_agent.narration`).
+    cards: dict[str, str]
+    # Rejection and gap codes, in words.
+    reasons: dict[str, str]
+    # How much of a claim or question a list line shows before an ellipsis.
+    clip_chars: int = Field(ge=20)
+    # Buttons offered beside the slash commands, by session phase.
+    actions: dict[str, list[ActionSpec]]
+    # The status block's colours: the phase line by phase, the other lines by what they show.
+    phase_colors: dict[str, str]
+    status_line_styles: dict[str, str]
+    # The budget counters named on a budget card's heading; the rest are in its expander.
+    budget_headline: list[str]
 
 
 class ReferenceJudgeSettings(BaseModel):
@@ -305,13 +551,22 @@ class ResearchAgentSettings(YamlBackedSettings):
     scoping: ScopingSettings
     rubric: RubricSettings
     budget: Budget
+    depths: dict[Depth, DepthProfile]
     qa: QaSettings
     planning: PlanningSettings
     matching: MatchingSettings
     research: ResearchSettings
+    calls: CallSettings
     reflection: ReflectionSettings
     synthesis: SynthesisSettings
     audit: AuditSettings
+    injection_model: InjectionModelSettings = Field(default_factory=InjectionModelSettings)
+    gate_encoder: EncoderGateSettings = Field(default_factory=EncoderGateSettings)
+    intent_router: IntentRouterSettings
+    answer: AnswerSettings
+    # The reply shows numbered sources and one finding per line; the archived report keeps
+    # the evidence ids. Off: the raw report text.
+    reader_view: bool = True
     archive: ArchiveSettings
     cancel: CancelSettings
     tui: PanelSettings

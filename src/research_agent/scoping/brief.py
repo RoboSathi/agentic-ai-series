@@ -9,15 +9,18 @@ Brief, which is what makes a frozen contract reproducible.
 """
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
-from research_agent.config.settings import ScopingSettings
+from agentic_commons.logging import instrument
+from research_agent.config.settings import DepthProfile, ScopingSettings
 from research_agent.domain.budget import Budget
 from research_agent.domain.scope import (
+    DEFAULT_DEPTH,
     QA,
     Archetype,
     CoverageItem,
+    Depth,
     KnownUnknown,
     ScopeBrief,
     SourcePolicy,
@@ -27,16 +30,26 @@ from research_agent.scoping.window import TimeWindowParser
 _DOMAIN = re.compile(r"\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b", re.IGNORECASE)
 _AVOID = re.compile(r"\b(?:avoid|block|exclude|not|never|except)\b", re.IGNORECASE)
 _CLAUSE = re.compile(r";|\.\s")
+DEPTH_FIELD = "depth"
 
 
+@instrument("research_agent")
 class BriefBuilder:
     """Assembles the Scope Brief from the interview's covered items."""
 
-    def __init__(self, settings: ScopingSettings, budget: Budget, qa_budget: Budget) -> None:
+    def __init__(
+        self,
+        settings: ScopingSettings,
+        budget: Budget,
+        qa_budget: Budget,
+        depths: Mapping[Depth, DepthProfile],
+    ) -> None:
         self._settings = settings
         self._split = re.compile(settings.answer_split_pattern, re.IGNORECASE)
+        self._pages = re.compile(settings.pages_pattern, re.IGNORECASE)
         self._budget = budget
         self._qa_budget = qa_budget
+        self._depths = depths
         self._window = TimeWindowParser(settings.time_window)
 
     def question(self, topic: str, recent_days: int | None) -> ScopeBrief:
@@ -56,15 +69,51 @@ class BriefBuilder:
         unknowns: Sequence[KnownUnknown],
     ) -> ScopeBrief:
         fields: dict[str, Any] = {}
+        size = ""
         for item in items:
-            if item.status == "covered" and item.brief_field and not self._declined(item.value):
+            if item.status != "covered" or not item.brief_field or self._declined(item.value):
+                continue
+            if item.brief_field == DEPTH_FIELD:
+                size = item.value
+            else:
                 fields[item.brief_field] = self._value(item)
+        depth, budget = self._sized(size)
         return ScopeBrief(
             archetype=archetype,
             topic=topic,
-            budget=self._budget,
+            budget=budget,
+            depth=depth,
             known_unknowns=tuple(unknowns),
             **fields,
+        )
+
+    def _sized(self, answer: str) -> tuple[Depth, Budget]:
+        """The size the user asked for (small when they did not) and the budget it allows.
+
+        "N pages" sets the fetch cap itself, on the smallest size that can read that many.
+        Whatever is asked, the agent's own budget is still the ceiling.
+        """
+        wanted = self._pages.search(answer)
+        depth = self._depth_named(answer) or DEFAULT_DEPTH
+        if wanted:
+            pages = int(wanted.group(1))
+            depth = self._smallest_reading(pages)
+            budget = self._depths[depth].budget.model_copy(update={"max_fetches": pages})
+        else:
+            budget = self._depths[depth].budget
+        return depth, budget.capped_by(self._budget)
+
+    def _depth_named(self, answer: str) -> Depth | None:
+        words = set(re.findall(r"[a-z]+", answer.casefold()))
+        for depth, names in self._settings.depth_words.items():
+            if words & {name.casefold() for name in names}:
+                return depth
+        return None
+
+    def _smallest_reading(self, pages: int) -> Depth:
+        by_fetches = sorted(self._depths, key=lambda d: self._depths[d].budget.max_fetches)
+        return next(
+            (d for d in by_fetches if self._depths[d].budget.max_fetches >= pages), by_fetches[-1]
         )
 
     def _value(self, item: CoverageItem) -> Any:

@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from typing import Any
 
+import yaml
 from pydantic import BaseModel, Field
 
 from agentic_commons.durability import (
@@ -24,16 +25,22 @@ from agentic_commons.durability import (
     RunOutcome,
     RunRegistry,
 )
+from agentic_commons.logging import get_logger
 from agentic_commons.memory import MemoryFacade
+from research_agent.answer import DirectAnswerer
 from research_agent.archive.store import ResearchArchive
 from research_agent.config.settings import ResearchAgentSettings
-from research_agent.domain.report import Report, SessionPhase
+from research_agent.domain.report import COVERAGE_AND_LIMITS, Report, SessionPhase
 from research_agent.domain.rubric import Contract
-from research_agent.domain.scope import QA, Mode
+from research_agent.domain.scope import QA, Choice, Mode
 from research_agent.graph.run_nodes import RunNodes
 from research_agent.graph.state import ScopingState
+from research_agent.intent import ResearchIntentRouter
+from research_agent.narration import say
 from research_agent.research.resources import RunResources
 from research_agent.research.telemetry import RunTelemetry
+from research_agent.scoping import checklist
+from research_agent.synthesis.reader_view import render_reader_view
 
 ResourcesFactory = Callable[[Contract], RunResources]
 _PHASE_KEY = "phase"
@@ -47,6 +54,8 @@ class TurnResult(BaseModel):
     phase: SessionPhase
     run_id: str = ""
     report: Report | None = None
+    # Answers offered as a menu beside free text, when the question has a closed set.
+    choices: list[Choice] = Field(default_factory=list)
 
 
 class SessionRecord(BaseModel):
@@ -76,6 +85,8 @@ class ResearchAgent:
         telemetry: RunTelemetry,
         settings: ResearchAgentSettings,
         memory: MemoryFacade | None = None,
+        router: ResearchIntentRouter | None = None,
+        answerer: DirectAnswerer | None = None,
     ) -> None:
         self._scoping = scoping
         self._runs = runs
@@ -83,8 +94,13 @@ class ResearchAgent:
         self._resources = resources
         self._archive = archive
         self._telemetry = telemetry
+        self._logger = get_logger("research_agent")
         self._settings = settings
         self._memory = memory
+        # Both or neither: without them every question starts a scope (the `direct_answer`
+        # feature withheld, or the offline fixture posture).
+        self._router = router if answerer is not None else None
+        self._answerer = answerer
         self._sessions: dict[str, SessionRecord] = {}
         self._active: RunResources | None = None
 
@@ -109,8 +125,23 @@ class ResearchAgent:
         if mode is not None:
             return await self._forced_scope(mode, query, session_id, record)
         if record.phase in _TERMINAL:
-            return await self._new_scope(query, session_id, record)
+            return await self._open_turn(query, session_id, record)
         return await self._continue_scope(query, session_id, record)
+
+    async def _open_turn(self, query: str, session_id: str, record: SessionRecord) -> TurnResult:
+        """A message that starts something new: answered directly, researched, or refused."""
+        if self._router is None or self._answerer is None:
+            return await self._new_scope(query, session_id, record)
+        route = await self._router.route(query)
+        if route.label == "research":
+            return await self._new_scope(query, session_id, record, forced="research")
+        if route.label == "refuse":
+            return TurnResult(response=self._settings.messages.refuse, phase=record.phase)
+        record.last_question = query
+        self._telemetry.retrace(f"answer-{uuid.uuid4().hex[:8]}")
+        return TurnResult(
+            response=await self._answerer.answer(query, session_id), phase=record.phase
+        )
 
     def _forced_mode(self, verb: str | None) -> Mode | None:
         names = self._settings.command_names
@@ -168,20 +199,39 @@ class ResearchAgent:
         record.phase = "SCOPING"
         record.last_question = query
         payload = {"session_id": session_id, "first_message": query, "forced_mode": forced}
-        outcome = await self._scoping.start(
-            record.scope_thread,
-            payload,
-            session_id=session_id,
-            subject_id=session_id,
-            preview=query,
-        )
+        try:
+            outcome = await self._scoping.start(
+                record.scope_thread,
+                payload,
+                session_id=session_id,
+                subject_id=session_id,
+                preview=query,
+            )
+        except ResumableRunError as exc:
+            return self._scope_failed(exc, record)
         return await self._after_scope(outcome, session_id, record)
 
     async def _continue_scope(
         self, query: str, session_id: str, record: SessionRecord
     ) -> TurnResult:
-        outcome = await self._scoping.resume(record.scope_thread, query)
+        try:
+            outcome = await self._scoping.resume(record.scope_thread, query)
+        except ResumableRunError as exc:
+            return self._scope_failed(exc, record)
         return await self._after_scope(outcome, session_id, record)
+
+    def _scope_failed(self, exc: ResumableRunError, record: SessionRecord) -> TurnResult:
+        """A scoping step failed (a model that stalled, a provider error): say so, and start clean.
+
+        The session ends the turn in a terminal phase, so the next message begins a new scope
+        instead of resuming a thread whose step failed.
+        """
+        record.phase = "FAILED"
+        self._telemetry.audit("scope.failed", "deny", str(exc), node=exc.node, error=exc.error)
+        self._logger.error("Scoping failed", node=exc.node, error=exc.error)
+        return TurnResult(
+            response=self._settings.messages.scope_failed.format(error=exc.error), phase="FAILED"
+        )
 
     async def _after_scope(
         self, outcome: RunOutcome, session_id: str, record: SessionRecord
@@ -192,23 +242,38 @@ class ResearchAgent:
         if outcome.status == "interrupted":
             record.phase = "RUBRIC_REVIEW" if scope.phase == "RUBRIC_REVIEW" else "SCOPING"
             reply = str((outcome.interrupt or {}).get(SUMMARY, scope.reply))
-            return TurnResult(response=reply, phase=record.phase)
+            return TurnResult(response=reply, phase=record.phase, choices=self._choices(scope))
         if scope.phase == "APPROVED" and scope.contract is not None:
-            return await self._run(scope.contract, scope.reply, session_id, record)
+            return await self._run(scope.contract, session_id, record)
         record.phase = "DELIVERED"
         return TurnResult(response=scope.reply, phase=record.phase)
 
+    def _choices(self, scope: ScopingState) -> list[Choice]:
+        """The menu for the question just asked: its item's choices, or the reframe options."""
+        if scope.phase == "REFRAME":
+            options = self._settings.scoping.reframe_options
+            return [Choice(label=option.label, value=option.mode) for option in options]
+        asked = checklist.item(scope.items, scope.asked_item_id)
+        return list(asked.choices) if scope.phase == "INTERVIEW" and asked is not None else []
+
     # -- the autonomous run ---------------------------------------------------------------
 
-    async def _run(
-        self, contract: Contract, approved: str, session_id: str, record: SessionRecord
-    ) -> TurnResult:
+    async def _run(self, contract: Contract, session_id: str, record: SessionRecord) -> TurnResult:
         resources = self._resources(contract)
         self._active = resources
         self._nodes.bind(resources)
         self._telemetry.retrace(contract.contract_id)
         record.phase, record.run_thread = "RUNNING", f"{contract.contract_id}"
         self._note(session_id, "run", contract.contract_id)
+        # The ids and hash are for the log and the audit trail; the screen says what to do.
+        self._logger.info(
+            "Contract frozen; research starting",
+            contract_id=contract.contract_id,
+            contract_hash=contract.contract_hash,
+            topic=contract.brief.topic,
+            depth=contract.brief.depth,
+        )
+        self._telemetry.card("run_started", say("run.started"))
         try:
             outcome = await self._runs.start(
                 record.run_thread,
@@ -223,10 +288,10 @@ class ResearchAgent:
             return TurnResult(response=str(exc), phase="FAILED", run_id=record.run_thread)
         finally:
             self._active = None
-        return self._delivered(outcome.values, approved, session_id, record)
+        return self._delivered(outcome.values, session_id, record)
 
     def _delivered(
-        self, values: Mapping[str, Any], approved: str, session_id: str, record: SessionRecord
+        self, values: Mapping[str, Any], session_id: str, record: SessionRecord
     ) -> TurnResult:
         status = str(values.get("status") or "FAILED")
         report = values.get("report")
@@ -235,22 +300,54 @@ class ResearchAgent:
         record.phase = "DELIVERED" if status in ("COMPLETE", "PARTIAL") else status  # type: ignore[assignment]
         self._note(session_id, "run_status", status)
         summary = (
-            record.last_report.text()
+            self._reader_text(record.last_report)
             if record.last_report is not None
             else str(values.get("stop_reason", ""))
         )
-        head = self._settings.messages.delivered.format(
-            run_id=record.run_thread, status=status, summary=""
+        self._logger.info("Research run finished", run_id=record.run_thread, status=status)
+        # The report speaks for itself; a run with no report says how it ended.
+        head = (
+            ""
+            if record.last_report is not None
+            else self._settings.messages.delivered.format(
+                run_id=record.run_thread, status=status, summary=""
+            )
         )
         contract = values.get("contract")
         quick = isinstance(contract, Contract) and contract.brief.archetype == QA
         tail = self._settings.messages.qa_followup if quick else self._failed_note(status)
+        self._remember_run(session_id, record, status)
         return TurnResult(
-            response=f"{approved}\n\n{head}\n\n{summary}\n\n{tail}".strip(),
+            response="\n\n".join(part for part in (head, summary, tail) if part).strip(),
             phase=record.phase,
             run_id=record.run_thread,
             report=record.last_report,
         )
+
+    def _remember_run(self, session_id: str, record: SessionRecord, status: str) -> None:
+        """Working memory keeps a pointer to the run, so a follow-up has something to refer to."""
+        if self._memory is None or self._memory.working is None:
+            return
+        note = self._settings.messages.run_note.format(
+            run_id=record.run_thread, status=status, topic=record.last_question
+        )
+        self._memory.working.get(session_id).add_history(record.last_question, note)
+
+    def _reader_text(self, report: Report) -> str:
+        """What the person reads: numbered sources and one finding per line (or the raw text)."""
+        if not self._settings.reader_view:
+            return report.text()
+        return render_reader_view(
+            report,
+            citation_pattern=self._settings.synthesis.citation_pattern,
+            hidden_headings=self._hidden_headings(),
+            source_labels=self._settings.research.source_labels,
+        )
+
+    def _hidden_headings(self) -> frozenset[str]:
+        """Sections written in code for the archive; the reader view shows them its own way."""
+        templates = yaml.safe_load(self._settings.synthesis.resolved_templates_path.read_text())
+        return frozenset({*templates["appended"].values(), COVERAGE_AND_LIMITS})
 
     def _failed_note(self, status: str) -> str:
         """In demo mode a failed run almost always means an off-world question."""

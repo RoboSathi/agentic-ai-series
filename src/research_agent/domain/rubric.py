@@ -41,6 +41,8 @@ class RubricItem(BaseModel):
     check: RubricCheck
     threshold: float
     must_pass: bool
+    # Its share of the audit's weighted score (a must-pass item also vetoes).
+    weight: float = Field(default=1.0, gt=0)
     origin: ItemOrigin
     # What in the Brief this item answers to: a criterion, subject, unknown…
     maps_to: tuple[str, ...] = ()

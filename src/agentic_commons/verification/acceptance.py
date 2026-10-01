@@ -46,6 +46,9 @@ class CheckOutcome(BaseModel):
     score: float
     detail: str = ""
     evidence: list[str] = Field(default_factory=list)
+    # False when there was nothing to check (no claims, no links): the score is then
+    # a vacuous 1.0 that must not count as a pass in any aggregate.
+    applicable: bool = True
 
 
 class CheckVerdict(BaseModel):
@@ -60,6 +63,7 @@ class CheckVerdict(BaseModel):
     must_pass: bool
     detail: str = ""
     evidence: list[str] = Field(default_factory=list)
+    applicable: bool = True
 
 
 CheckFunction = Callable[[CheckSpec, C], Awaitable[CheckOutcome]]
@@ -106,6 +110,7 @@ class AcceptanceCheckRegistry(Generic[C]):
             must_pass=spec.must_pass,
             detail=outcome.detail,
             evidence=outcome.evidence,
+            applicable=outcome.applicable,
         )
         self._logger.debug(
             "Acceptance check", item=spec.item_id, check=spec.name, passed=verdict.passed

@@ -3,7 +3,7 @@
     /rubric                                   show it
     /rubric add <text>                        a user item, judged
     /rubric drop <id>                         remove one
-    /rubric set <id> threshold=<x> must_pass=<bool>
+    /rubric set <id> threshold=<x> weight=<x> must_pass=<bool>
 
 Edits cannot break the contract's traceability: an item that is the last
 one mapping to a user criterion or a known unknown cannot be dropped,
@@ -13,7 +13,7 @@ one of the invariants the oracle holds every run to.
 
 from typing import Any
 
-from agentic_commons.logging import get_logger
+from agentic_commons.logging import get_logger, instrument
 from research_agent.domain.rubric import Rubric, RubricCheck, RubricItem
 
 _TRACED = frozenset({"criterion", "known_unknown"})
@@ -25,6 +25,7 @@ class RubricEditError(ValueError):
     """An edit the rubric cannot take; the message says why."""
 
 
+@instrument("research_agent")
 class RubricEditor:
     """Applies one edit command, returning a new Rubric."""
 
@@ -87,12 +88,14 @@ def _parse_assignments(assignments: list[str]) -> dict[str, Any]:
         key, _, value = assignment.partition("=")
         if key == "threshold":
             update["threshold"] = _float(value)
+        elif key == "weight":
+            update["weight"] = _float(value)
         elif key == "must_pass":
             update["must_pass"] = _bool(value)
         else:
-            raise RubricEditError(f"cannot set '{key}' (threshold, must_pass)")
+            raise RubricEditError(f"cannot set '{key}' (threshold, weight, must_pass)")
     if not update:
-        raise RubricEditError("usage: /rubric set <id> threshold=<x> must_pass=<bool>")
+        raise RubricEditError("usage: /rubric set <id> threshold=<x> weight=<x> must_pass=<bool>")
     return update
 
 
@@ -119,6 +122,6 @@ def render(rubric: Rubric) -> str:
         flag = "must" if item.must_pass else "soft"
         lines.append(
             f"  {item.item_id:<4} [{flag}] {item.text}  ({item.check.kind}:{item.check.name}"
-            f" ≥ {item.threshold:g}, {item.origin})"
+            f" ≥ {item.threshold:g}, weight {item.weight:g}, {item.origin})"
         )
     return "\n".join(lines)

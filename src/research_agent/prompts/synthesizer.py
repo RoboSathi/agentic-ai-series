@@ -22,6 +22,9 @@ Write the research report from the evidence ledger only.
 - Use exactly the section headings given, in order.
 - Every factual sentence cites at least one ledger entry as [E<n>]; cite
   only ids that appear in the ledger. Write no fact the ledger lacks.
+- Put the citation inside the sentence, before its final full stop:
+  "Fact stated here [E1][E2]." — never after the stop ("Fact. [E1]").
+- Be concise: a few short sentences per section, the most important findings first.
 - Where entries disagree, say so and cite both sides.
 - For a decision, recommend an option and state the trade-offs.
 - Do not write a Coverage & Limits, Known unknowns or Sources section;

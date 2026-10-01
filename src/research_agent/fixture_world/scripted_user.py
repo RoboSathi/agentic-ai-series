@@ -8,6 +8,8 @@ the screen — and speaks only through `handle()`, so it drives exactly the
 path the console does.
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from research_agent.config.settings import CommandNames
@@ -20,6 +22,9 @@ class UserScript(BaseModel):
     """What the user will say, by checklist item."""
 
     first_message: str
+    # `research` opens with /research (a plain message is a quick question); `qa` as typed.
+    # Unset: research when the script interviews (answers, waivers, edits), else qa.
+    mode: Literal["qa", "research"] | None = None
     answers: dict[str, str] = Field(default_factory=dict)
     waive: list[str] = Field(default_factory=list)
     rubric_edits: list[str] = Field(default_factory=list)
@@ -39,12 +44,22 @@ class ScriptedUser:
 
     async def converse(self, agent: ResearchAgent, session_id: str) -> TurnResult:
         """The whole conversation, first message to delivered report."""
-        reply = await self._say(agent, session_id, self._script.first_message)
+        reply = await self._say(agent, session_id, self._opening())
         for _ in range(self._max_turns):
             if reply.phase not in _SCOPING_PHASES:
                 return reply
             reply = await self._say(agent, session_id, self.next_message(agent, session_id, reply))
         return reply
+
+    def _opening(self) -> str:
+        """The first message, prefixed with the research command when the script interviews."""
+        script = self._script
+        interviews = bool(
+            script.answers or script.waive or script.rubric_edits or script.done_after_turns
+        )
+        research = script.mode == "research" or (script.mode is None and interviews)
+        command = f"/{self._names.research} " if research else ""
+        return f"{command}{script.first_message}"
 
     def next_message(self, agent: ResearchAgent, session_id: str, reply: TurnResult) -> str:
         if reply.phase == "RUBRIC_REVIEW":

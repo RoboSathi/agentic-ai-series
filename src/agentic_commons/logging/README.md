@@ -12,14 +12,18 @@ because the argument you need to read back is always the long one.
 
 ## Public interface
 
-- `get_logger(subsystem)` → `StructuredLogger`/`RichLogger` (`core.py`)
+- `get_logger(subsystem)` → `StructuredLogger`/`RichLogger`, `log_directory()` (`core.py`)
 - `@instrument(subsystem)`, `@logged` (`decorators.py`)
 - `get_current_trace_id` / `set_current_trace_id` (`trace_context.py`)
 
 ## Configuration
 
 Section `logging:` — `level`, `console_enabled`/`console_level`, `file_enabled`/`file_level`, `dir`,
-`file_format`, `payload_max_chars` (0 = everything), `max_bytes`, `backup_count`.
+`run_label`, `file_format`, `payload_max_chars` (0 = everything), `max_bytes`, `backup_count`.
+
+Files are written to `<dir>/<agent id>/<subsystem>.log` (`log_directory()`), so each agent has its own
+folder (`logs/customer_support_agent/`, `logs/research_agent/`); `run_label` adds a sub-folder for runs
+that are not the live agent (an offline profile).
 
 ## Seams
 

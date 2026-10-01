@@ -64,7 +64,7 @@ def interview(
         "updated_items": updated,
         "challenges": challenges,
         "proposes_done": False,
-        "next_question": nxt["prompt"],
+        "next_question": nxt["goal"],
         "next_item_id": nxt["item_id"],
     }
 

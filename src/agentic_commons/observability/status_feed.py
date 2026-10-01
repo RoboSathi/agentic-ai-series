@@ -149,6 +149,7 @@ class StageReporter:
         summary: str | None = None,
         fields: Mapping[str, Any] | None = None,
         quiet: bool = False,
+        group: str = "",
     ) -> None:
         """Emit one semantic runtime event for this run.
 
@@ -168,6 +169,7 @@ class StageReporter:
             tokens_delta=tokens_delta,
             detail=detail,
             summary=summary,
+            group=group,
             fields=self._stamped(stage, status, fields),
         )
         if self._tally is not None:

@@ -1,0 +1,88 @@
+# Labelled first messages for the scope gate's encoder (scoping/encoder_gate.py).
+#
+# One label per message: `qa`, or the research archetype the message asks for. Hand-written and
+# deliberately varied in phrasing; the golden cases and real first messages from the archive
+# (`make runs ra`) are the next source. `gate_training.py` holds out a stratified 20% and prints
+# accuracy and a confusion matrix before anything is saved — read it before trusting the model.
+qa:
+  - Important AI news in the last 1 month
+  - What did OpenAI announce this week?
+  - Who won the Nobel Prize in physics this year?
+  - What is the latest version of PostgreSQL?
+  - When does the EU AI Act come into force?
+  - How does retrieval-augmented generation work?
+  - What are the headlines in semiconductor news today?
+  - Latest research on solid-state batteries
+  - Which companies raised funding for AI agents in the past 30 days?
+  - What is the capital gains tax rate in India for equity?
+  - Is the new iPhone available in India yet?
+  - What happened at the last Federal Reserve meeting?
+  - Recent developments in quantum error correction
+  - Who is the CEO of Nvidia?
+  - What does the new GDPR fine decision say?
+  - Top stories about open-source LLMs this month
+decision_support:
+  - Help me choose a vector database for 10 million documents
+  - Which should we pick, Kafka or Pulsar, for our event pipeline?
+  - Should I use Postgres or MongoDB for a multi-tenant SaaS?
+  - Compare Tavily and Exa for an agent's web search
+  - What is the best laptop for ML work under 2 lakh rupees?
+  - Recommend a cloud provider for a small GPU training cluster
+  - LangGraph versus CrewAI for production agents, which is better?
+  - "Weigh the options for authentication: Auth0, Clerk or building our own"
+  - Help me decide between a master's degree and staying in industry
+  - Pick a message queue for a team of five engineers
+  - Is it better to fine-tune a model or use RAG for our support bot?
+  - Which CI system should we standardise on, GitHub Actions or Buildkite?
+landscape_brief:
+  - Map the market for AI coding assistants
+  - Who are the main players in vector databases?
+  - Give me a landscape of open-source LLM inference engines
+  - Survey the startups working on AI agent observability
+  - What does the competitive landscape for edge AI chips look like?
+  - Overview of the ecosystem around Model Context Protocol servers
+  - Map the vendors in the data-labelling market
+  - Who makes enterprise guardrail tooling for LLMs, and how do they differ?
+  - Landscape of speech-to-text providers
+  - Break down the players in the humanoid robotics space
+  - Map the main approaches to long-context models
+  - Who are the leading companies in solid-state battery manufacturing?
+fact_verification:
+  - Verify the claim that GPT-style models cannot do arithmetic
+  - Is it true that Python is slower than Go for all workloads?
+  - "Fact-check: the EU AI Act bans all facial recognition"
+  - Confirm whether the new regulation applies to startups under 50 people
+  - Check whether this chart showing 40% productivity gains is accurate
+  - Is it accurate that Tavily offers 1,000 free searches a month?
+  - Debunk the claim that LLMs only memorise their training data
+  - Verify that the company really raised 200 million dollars
+  - Is it true that DuckDuckGo has an official search API?
+  - Confirm the statement that BERT has 340 million parameters
+  - Fact check the claim that remote teams are always less productive
+  - Check whether the paper really reports a 12 percent improvement
+explainer:
+  - Explain how transformers handle long context, in depth
+  - Walk me through how consensus works in Raft
+  - Teach me how vector indexes like HNSW work
+  - I want to understand how diffusion models generate images
+  - Give me a primer on differential privacy
+  - Explain the CAP theorem with practical examples
+  - Help me understand how RLHF actually trains a model
+  - Walk me through the TCP congestion control algorithms
+  - Explain how zero-knowledge proofs work
+  - Primer on how mixture-of-experts models route tokens
+  - Explain how a database query planner chooses a join order
+  - Help me understand attention variants like multi-query and grouped-query
+general:
+  - Research the state of on-device AI for a report
+  - Do a deep dive into agent memory architectures
+  - Investigate how teams evaluate LLM applications in production
+  - Study of prompt-injection defences, in-depth
+  - Analyse the trade-offs of multi-agent systems in practice
+  - Research what makes RAG pipelines fail in production
+  - Investigate the economics of running open-weight models
+  - In-depth report on AI governance approaches in Asia
+  - Research best practices for LLM cost control
+  - Deep dive into evaluation methods for autonomous agents
+  - Investigate the reliability of tool-calling in current models
+  - Analyse how companies are adopting AI coding assistants

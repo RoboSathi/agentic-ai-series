@@ -1,4 +1,4 @@
-.PHONY: help install clean lint type-check format test verify tui episode llm-check data refund-limit \
+.PHONY: gen-key help install clean lint type-check format test verify tui episode llm-check model-check data refund-limit \
 	clean-memory show-memory dream runs patterns \
 	eval eval-generate eval-oracle eval-security eval-judge eval-deepeval eval-report eval-diff \
 	eval-runs eval-sql _agent
@@ -97,7 +97,7 @@ help:
 	@echo "  make data <agent>         csa: rebuild the agent DB (KEEP_MEMORY=1); ra: build + validate the fixture world"
 	@echo "  make runs ra              List archived research runs"
 	@echo "  make episode E=05         One episode (calls the live model)"
-	@echo "  make llm-check            Probe every hosted model endpoint (one tiny call each)"
+	@echo "  make llm-check            Probe every hosted model endpoint (one tiny call each; alias: model-check)"
 	@echo "  make patterns             Pattern coverage matrix across agents"
 	@echo ""
 	@echo "$(GREEN)Customer support admin$(NC) (csa only):"
@@ -144,7 +144,7 @@ clean:
 	rm -rf venv .pytest_cache .coverage .mypy_cache dist build *.egg-info
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete
-	rm -rf logs/*.log
+	rm -rf logs/*.log logs/*/
 
 lint:
 	./venv/bin/ruff check src/ tests/ design_patterns/
@@ -168,7 +168,7 @@ episode:
 	@test -n "$(E)" || (echo "$(YELLOW)Usage: make episode E=05$(NC)" && exit 1)
 	AGENTIC_OVERLAYS=$(csa_OVERLAY) $(PYTHON) -m episodes.e$(E)
 
-llm-check:
+llm-check model-check:
 	$(PYTHON) -m agentic_commons.llm.cli
 
 data: _agent
@@ -237,6 +237,15 @@ eval-runs: _agent
 
 eval-sql: _agent
 	$(EVALS) sql $(SQL)
+
+# A fresh 32-byte checkpoint key (durability.encryption). Put the line in .env, or export it,
+# to stop the "Checkpoints are stored UNENCRYPTED" warning:  make gen-key >> .env
+gen-key:
+	@echo "LANGGRAPH_AES_KEY=$$(openssl rand -hex 16)"
+
+# Fine-tune the research agent's scope-gate encoder (see research_agent/scoping/gate_training.py).
+train-gate:
+	AGENTIC_OVERLAYS=$(ra_OVERLAY) $(PYTHON) -m research_agent.scoping.gate_training $(if $(BASE),--base $(BASE))
 
 # Quick verification (for CI/CD).
 #

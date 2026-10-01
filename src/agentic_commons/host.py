@@ -25,9 +25,8 @@ decision rather than an import.
 
 import importlib
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
-
-from rich.console import RenderableType
 
 from agentic_commons.commands.types import Command
 from agentic_commons.config import FeatureSet
@@ -97,15 +96,37 @@ class GreetingHost(Protocol):
 
 
 @runtime_checkable
-class PanelHost(Protocol):
-    """An agent with live state worth a side panel (a checklist, run meters).
+class StatusHost(Protocol):
+    """An agent with live state worth a status block under the feed.
 
-    Called on the panel's refresh tick with the console's session; returns
-    Rich renderables. Must be cheap and must not raise: it reads state the
-    agent already holds, it never computes it.
+    Called on the block's refresh tick with the console's session; returns
+    the lines always shown, then the lines shown when the operator expands
+    the block. Lines are Rich markup. Must be cheap and must not raise: it
+    reads state the agent already holds, it never computes it.
     """
 
-    def side_panels(self, session_id: str) -> Sequence[RenderableType]: ...
+    def status_lines(self, session_id: str) -> tuple[Sequence[str], Sequence[str]]: ...
+
+
+@dataclass(frozen=True)
+class HostAction:
+    """One button the console offers: what it says, and the command it runs when pressed."""
+
+    label: str
+    command: str
+    # Whether it may be pressed while a turn is running (a cancel can; a "finish" cannot).
+    during_turn: bool = False
+
+
+@runtime_checkable
+class ActionHost(Protocol):
+    """An agent with next steps worth a button beside the slash command (done, approve, cancel).
+
+    Called on the status block's refresh tick with the console's session. A press runs the
+    command exactly as if it had been typed. Must be cheap and must not raise.
+    """
+
+    def actions(self, session_id: str) -> Sequence[HostAction]: ...
 
 
 @runtime_checkable
@@ -158,7 +179,9 @@ __all__ = [
     "AgentHost",
     "CancellableHost",
     "GreetingHost",
-    "PanelHost",
+    "ActionHost",
+    "HostAction",
+    "StatusHost",
     "load_spec",
     "resolve_host",
 ]

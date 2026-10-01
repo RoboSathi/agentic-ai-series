@@ -34,6 +34,9 @@ class RunTrace(BaseModel):
     queries_by_node: dict[str, list[str]] = Field(default_factory=dict)
     sources_examined: list[str] = Field(default_factory=list)
     rejected_sources: dict[str, str] = Field(default_factory=dict)
+    # A short machine code per rejected URL (recency, undated, dead_link, injection),
+    # so a report can group rejections instead of listing every one.
+    rejected_codes: dict[str, str] = Field(default_factory=dict)
     blocked_outbound: list[str] = Field(default_factory=list)
     attempted_outbound: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
@@ -48,8 +51,9 @@ class RunTrace(BaseModel):
         if url not in self.sources_examined:
             self.sources_examined.append(url)
 
-    def reject(self, url: str, reason: str) -> None:
+    def reject(self, url: str, reason: str, code: str = "other") -> None:
         self.rejected_sources.setdefault(url, reason)
+        self.rejected_codes.setdefault(url, code)
 
 
 @dataclass

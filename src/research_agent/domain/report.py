@@ -50,6 +50,9 @@ class Report(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     limits: list[LimitEntry] = Field(default_factory=list)
     rejected_sources: list[str] = Field(default_factory=list)
+    # Why each rejected URL was not used (a short code), and any cap that cut the run short.
+    rejected_codes: dict[str, str] = Field(default_factory=dict)
+    budget_notes: list[str] = Field(default_factory=list)
     known_unknowns: list[str] = Field(default_factory=list)
 
     def section(self, heading: str) -> ReportSection | None:

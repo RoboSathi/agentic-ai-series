@@ -17,6 +17,7 @@ from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger
 from agentic_commons.observability import StageReporter
 from agentic_commons.observability.types import StatusKind
+from research_agent.config import get_agent_settings
 
 ACTOR = "research_agent"
 
@@ -48,9 +49,34 @@ class RunTelemetry:
         tokens: int | None = None,
     ) -> None:
         """One card in the live feed (and one line in the observability log)."""
-        self._logger.debug("Stage", stage=stage, summary=summary, status=status)
+        self._logger.debug(
+            "Stage", stage=stage, summary=summary, status=status, fields=dict(fields or {})
+        )
         if self._reporter is not None:
             self._reporter.emit(stage, status, tokens_delta=tokens, summary=summary, fields=fields)
+
+    def card(
+        self,
+        stage: str,
+        heading: str,
+        sections: Mapping[str, Any] | None = None,
+        status: StatusKind = "completed",
+        tokens: int | None = None,
+    ) -> None:
+        """One written card: a heading, and titled sections of lines under it."""
+        self._logger.debug(
+            "Stage", stage=stage, summary=heading, status=status, fields=dict(sections or {})
+        )
+        if self._reporter is not None:
+            self._reporter.emit(
+                stage,
+                status,
+                tokens_delta=tokens,
+                event_kind="narrative",
+                summary=heading,
+                group=get_agent_settings().tui.card_groups.get(stage, ""),
+                fields=sections,
+            )
 
     def started(self, stage: str, summary: str) -> None:
         if self._reporter is not None:

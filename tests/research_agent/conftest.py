@@ -56,6 +56,7 @@ DECISION_ANSWERS = {
     "sources": "primary sources preferred",
     "context": "Tamsin Co-op; budget 2 million",
     "deliverable": "a short memo",
+    "depth": "large",
 }
 DECISION_REQUEST = "Help me choose a grid storage option for the Tamsin Valley microgrid"
 

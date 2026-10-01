@@ -17,6 +17,7 @@ Every node that needs a live collaborator reaches it through the run's
 from the checkpointed snapshots, when a crashed run resumes).
 """
 
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,14 +30,18 @@ from agentic_commons.verification.acceptance import AcceptanceCheckRegistry, Che
 from research_agent.archive.store import ResearchArchive
 from research_agent.audit.context import CheckContext
 from research_agent.audit.goldfish import AuditResult, GoldfishAuditor
-from research_agent.domain.budget import GAP_FILL_ROUNDS, ROUNDS
+from research_agent.audit.verdict import AuditVerdict, decide
+from research_agent.domain.budget import GAP_FILL_ROUNDS, ROUNDS, SEARCHES
 from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.report import Report, RunStatus
 from research_agent.graph.state import RunState
+from research_agent.narration import say
+from research_agent.planning.ids import renumber
 from research_agent.planning.planner import Planner, PlanRejectedError
+from research_agent.research import cards
 from research_agent.research.reflector import GapAnalyzer, Reflector
 from research_agent.research.resources import RunResources
-from research_agent.research.worker import ResearcherWorker
+from research_agent.research.worker import UNREADABLE, ResearcherWorker
 from research_agent.synthesis.limits import build_limits, unmet_must_pass
 from research_agent.synthesis.synthesizer import Synthesizer
 
@@ -57,8 +62,52 @@ class RunParts:
     features: FeatureSet
     # Gap-fill node ids are numbered from here, apart from reflection rounds'.
     gap_fill_round_offset: int
+    # The audit's weighted-score bands, and how cards word what they show.
+    pass_threshold: float
+    partial_threshold: float
+    clip_chars: int
+    node_id_prefix: str
+    # The budget counters shown on a budget card's heading (the rest are in its expander).
+    budget_headline: Sequence[str]
+    reasons: Mapping[str, str]
     auditor: GoldfishAuditor | None = None
     reflection_enabled: bool = True
+    # Per-role {tokens, seconds, calls} so far (`StructuredCaller.usage`); None: not tracked.
+    usage: Callable[[], dict[str, dict[str, float]]] | None = None
+
+
+# Rejection codes that mean "the filter could not read the result", not "the result is
+# unwanted": when they are the only thing standing between a run and its evidence, another
+# round of searching cannot help, so the run stops and says so.
+FAIL_FAST_CODES = frozenset({"undated", UNREADABLE})
+
+# Counters whose exhaustion cuts work short by itself (model calls and the clock stop mid-way).
+# Searches, fetches and rounds only truncate a run when a reservation was actually refused,
+# and that is what `trace.budget_stops` records.
+TRUNCATING_COUNTERS = frozenset({"tokens", "seconds"})
+
+
+def truncated_by_budget(exhausted: list[str], stops: list[str]) -> bool:
+    """Whether a budget limit cut the run short, as opposed to merely being reached."""
+    return bool(stops) or bool(TRUNCATING_COUNTERS & set(exhausted))
+
+
+def fit_to_budget(follow_ups: list[SubQuestion], searches_left: float) -> list[SubQuestion]:
+    """Follow-ups trimmed so their queries fit the searches that remain (one search per query)."""
+    room, fitted = int(searches_left), []
+    for node in follow_ups:
+        if room <= 0:
+            break
+        queries = node.queries[:room]
+        if not queries:
+            continue
+        room -= len(queries)
+        fitted.append(
+            node
+            if len(queries) == len(node.queries)
+            else node.model_copy(update={"queries": queries})
+        )
+    return fitted
 
 
 class RunNodes:
@@ -91,7 +140,7 @@ class RunNodes:
             contract_hash=contract.contract_hash,
             toggles=toggles,
         )
-        self._budget_card("budget_tick", "Budget at start")
+        self._budget_card(say("budget.at_start"))
         return {
             "toggles": toggles,
             "round": 1,
@@ -120,6 +169,14 @@ class RunNodes:
                 "plans": [],
                 "round_nodes": [],
             }
+        except Exception as exc:
+            # A model timeout, a spent quota, a cut-off answer: end the run with the reason,
+            # rather than failing the node with a raw error and leaving the shell waiting.
+            error = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            message = say("plan.unavailable", error=error)
+            r.telemetry.stage("plan_dag", message, {"error": error}, status="failed")
+            r.telemetry.audit("plan.unavailable", "deny", error)
+            return {"status": "FAILED", "stop_reason": message, "plans": [], "round_nodes": []}
         r.telemetry.stage(
             "plan_dag",
             f"{len(plan.nodes)} sub-questions · {len(TaskGraph(plan.tasks()).waves())} wave(s)",
@@ -142,15 +199,17 @@ class RunNodes:
         ready, blocked = self._ready(state)
         wave = state.get("wave", 0) + (1 if ready else 0)
         if ready:
-            self.resources.telemetry.stage(
-                "wave_start",
-                f"Round {state['round']} · wave {wave} · {len(ready)} node(s) in parallel",
-                {
-                    "nodes": [n.node_id for n in ready],
-                    "blocked": blocked,
-                    "concurrency": state["contract"].budget.concurrency,
-                },
+            contract = state["contract"]
+            heading, sections = cards.batch_card(
+                state["round"],
+                wave,
+                ready,
+                blocked,
+                contract.budget.concurrency,
+                contract.rubric,
+                self._p.clip_chars,
             )
+            self.resources.telemetry.card("wave_start", heading, sections)
         return {"wave": wave, "done": {node_id: "blocked" for node_id in blocked}}
 
     def fan_out(self, state: RunState) -> list[Send] | str:
@@ -178,13 +237,20 @@ class RunNodes:
                 result = await ResearcherWorker(self.resources).run(node)
             except Exception as exc:
                 self.resources.trace.errors.append(f"{node.node_id}: {exc}")
+                self.resources.telemetry.card(
+                    "page_result",
+                    say("node.failed", node=node.node_id),
+                    {say("node.section.error"): [str(exc) or type(exc).__name__]},
+                    status="failed",
+                )
                 return {"done": {node.node_id: "failed"}, "results": []}
         return {"done": {node.node_id: "done"}, "results": [result]}
 
     async def wave_done(self, state: RunState) -> Update:
         """The wave boundary: snapshot what a resumed run needs, show the meters."""
         r = self.resources
-        self._budget_card("budget_tick", f"After wave {state.get('wave', 0)}")
+        self._budget_card(say("budget.after_batch", batch=state.get("wave", 0)))
+        self._wave_summary(state.get("wave", 0), state.get("plans", []))
         return {
             "ledger": r.ledger.snapshot(),
             "spent": _spent(r.budget),
@@ -197,17 +263,27 @@ class RunNodes:
         r, contract = self.resources, state["contract"]
         ctx = self._p.context(contract, r.ledger.snapshot(), None)
         verdicts = await self._p.analyzer.verdicts(ctx)
-        gaps = [v.item_id for v in verdicts if not v.passed]
+        failing = [v for v in verdicts if not v.passed]
+        gaps = [v.item_id for v in failing]
         entities = GapAnalyzer.entities(ctx, ctx.entity_pattern)
         stop, reason = self._should_stop(state, verdicts, entities)
-        r.telemetry.stage(
-            "reflect_gap_analysis",
-            f"{len(gaps)} gap(s) · {'stop' if stop else 'continue'}: {reason}",
-            {"gaps": gaps, "round": state["round"], "entities": entities},
+        update: Update = (
+            {"gaps": gaps, "stop_reason": reason, "round_nodes": []}
+            if stop
+            else await self._next_round(state, ctx, verdicts, gaps)
         )
-        if stop:
-            return {"gaps": gaps, "stop_reason": reason, "round_nodes": [], "entities": entities}
-        return {**await self._next_round(state, ctx, verdicts, gaps), "entities": entities}
+        follow_ups = update["round_nodes"]
+        heading, sections = cards.reflect_card(
+            state["round"],
+            failing,
+            bool(follow_ups),
+            update.get("stop_reason") or reason,
+            follow_ups,
+            contract.rubric,
+            self._p.clip_chars,
+        )
+        r.telemetry.card("reflect_gap_analysis", heading, sections)
+        return {**update, "entities": entities}
 
     def _should_stop(
         self, state: RunState, verdicts: list[CheckVerdict], entities: int
@@ -215,13 +291,17 @@ class RunNodes:
         r = self.resources
         if r.cancelled:
             return True, "cancelled"
-        exhausted = r.budget.exhausted_counters()
-        if exhausted or r.trace.budget_stops:
-            return True, f"budget exhausted ({', '.join(exhausted or r.trace.budget_stops)})"
+        blocked = self._unreadable_only()
+        if blocked:
+            return True, blocked
         archetype = state["contract"].brief.archetype
         decision = self._p.reflector.decide(archetype, verdicts, state.get("entities", 0), entities)
         if decision.stop:
+            # Answered is answered, even if a cap was reached getting there.
             return True, decision.reason
+        exhausted = r.budget.exhausted_counters()
+        if exhausted or r.trace.budget_stops:
+            return True, f"budget exhausted ({', '.join(exhausted or r.trace.budget_stops)})"
         if not self._p.reflection_enabled:
             return True, "reflection withheld: the plan ran once"
         if r.budget.remaining(ROUNDS) <= 0:
@@ -233,7 +313,13 @@ class RunNodes:
     ) -> Update:
         r = self.resources
         tried = [q for queries in r.trace.queries_by_node.values() for q in queries]
-        follow_ups = await self._p.reflector.follow_ups(ctx, verdicts, tried, state["round"] + 1)
+        follow_ups = self._numbered(
+            fit_to_budget(
+                await self._p.reflector.follow_ups(ctx, verdicts, tried, state["round"] + 1),
+                r.budget.remaining(SEARCHES),
+            ),
+            state,
+        )
         if not follow_ups:
             return {
                 "gaps": gaps,
@@ -252,6 +338,11 @@ class RunNodes:
             "plans": plans,
         }
 
+    def _numbered(self, follow_ups: list[SubQuestion], state: RunState) -> list[SubQuestion]:
+        """Follow-ups carry on the plan's numbering (Q5, Q6 after Q1..Q4), not a round's own."""
+        asked = sum(len(plan.nodes) for plan in state.get("plans", []))
+        return list(renumber(follow_ups, self._p.node_id_prefix, start=asked + 1))
+
     @staticmethod
     def after_reflect(state: RunState) -> str:
         return "wave_start" if state.get("round_nodes") else "synthesize"
@@ -268,15 +359,21 @@ class RunNodes:
             contract, verdicts, state.get("plans", []), r.trace, state.get("stop_reason", "")
         )
         report = self._p.synthesizer.with_limits(checked.report, ledger, limits, r.trace, status)
-        r.telemetry.stage(
-            "synthesize",
-            f"Report drafted · {len(report.citations)} citation(s) · {status}",
-            {
-                "sections": [s.heading for s in report.sections],
-                "fabricated_citations_removed": len(checked.removed),
-                "unmet_must_pass": [limit.item_id for limit in limits],
-            },
-            status="warning" if checked.removed else "completed",
+        plan_nodes = [node for plan in state.get("plans", []) for node in plan.nodes]
+        answered = len({e.subject for e in ledger.entries} & {n.node_id for n in plan_nodes})
+        heading, sections = cards.synthesize_card(
+            report,
+            ledger.entries,
+            answered,
+            len(plan_nodes),
+            len(checked.removed),
+            [limit.item_id for limit in limits],
+            contract.rubric,
+            status,
+            self._p.clip_chars,
+        )
+        r.telemetry.card(
+            "synthesize", heading, sections, status="warning" if checked.removed else "completed"
         )
         return {"report": report, "ledger": ledger}
 
@@ -287,10 +384,9 @@ class RunNodes:
         )
 
     def _provisional_status(self, verdicts: list[CheckVerdict]) -> RunStatus:
-        exhausted = bool(
-            self.resources.budget.exhausted_counters() or self.resources.trace.budget_stops
-        )
-        return "PARTIAL" if exhausted or unmet_must_pass(verdicts) else "COMPLETE"
+        r = self.resources
+        truncated = truncated_by_budget(r.budget.exhausted_counters(), r.trace.budget_stops)
+        return "PARTIAL" if truncated or unmet_must_pass(verdicts) else "COMPLETE"
 
     async def goldfish_audit(self, state: RunState) -> Update:
         if self._p.auditor is None:
@@ -298,25 +394,31 @@ class RunNodes:
         report = state["report"]
         assert report is not None
         audit = await self._p.auditor.audit_report(state["contract"], report, state["ledger"])
-        self._report_audit(audit)
+        self._report_audit(audit, state["contract"].rubric)
         return {"audit": audit}
 
-    def _report_audit(self, audit: AuditResult) -> None:
+    def _verdict(self, verdicts: list[CheckVerdict], rubric: Any) -> AuditVerdict:
+        return decide(verdicts, rubric, self._p.pass_threshold, self._p.partial_threshold)
+
+    def _report_audit(self, audit: AuditResult, rubric: Any) -> None:
         r = self.resources
-        passed = sum(v.passed for v in audit.verdicts)
-        r.telemetry.stage(
+        result = self._verdict(audit.verdicts, rubric)
+        heading, sections = cards.audit_card(
+            audit.verdicts,
+            rubric,
+            result,
+            self._p.pass_threshold,
+            self._p.partial_threshold,
+            audit.judge_model,
+            audit.independent,
+            audit.honest,
+            self._p.clip_chars,
+        )
+        r.telemetry.card(
             "goldfish_audit",
-            f"{passed}/{len(audit.verdicts)} criteria met · must-pass gaps: {', '.join(audit.must_pass_gaps) or 'none'}",
-            {
-                v.item_id: f"{'✓' if v.passed else '✗'} {v.name} {v.score:.2f}"
-                for v in audit.verdicts
-            }
-            | {
-                "honest_limits": audit.honest,
-                "judge_model": audit.judge_model,
-                "independent": audit.independent,
-            },
-            status="completed" if not audit.must_pass_gaps else "warning",
+            heading,
+            sections,
+            status="completed" if result.outcome == "PASS" else "warning",
         )
         r.telemetry.audit(
             "audit.goldfish",
@@ -342,8 +444,14 @@ class RunNodes:
         ctx = self._p.context(state["contract"], r.ledger.snapshot(), None)
         gaps = [v for v in audit.verdicts if v.must_pass and not v.passed]
         tried = [q for queries in r.trace.queries_by_node.values() for q in queries]
-        follow_ups = await self._p.reflector.follow_ups(
-            ctx, gaps, tried, self._p.gap_fill_round_offset + state["gap_fill_round"]
+        follow_ups = self._numbered(
+            fit_to_budget(
+                await self._p.reflector.follow_ups(
+                    ctx, gaps, tried, self._p.gap_fill_round_offset + state["gap_fill_round"]
+                ),
+                r.budget.remaining(SEARCHES),
+            ),
+            state,
         )
         r.telemetry.stage(
             "gap_fill",
@@ -383,18 +491,7 @@ class RunNodes:
             spent=_spent(r.budget),
             stop_reason=state.get("stop_reason", ""),
         )
-        r.telemetry.stage(
-            "finalize",
-            f"{status} · {state.get('stop_reason', '')}",
-            {
-                "status": status,
-                "contract_intact": intact,
-                "rejected_sources": len(r.trace.rejected_sources),
-                "span_rejections": r.trace.span_rejections,
-                "blocked_outbound": len(r.trace.blocked_outbound),
-            },
-            status="completed" if status == "COMPLETE" else "warning",
-        )
+        self._final_card(state, status, report, intact)
         return {
             "status": status,
             "report": report,
@@ -408,10 +505,12 @@ class RunNodes:
             return "CANCELLED"
         if state.get("status") == "FAILED":
             return "FAILED"
-        exhausted = bool(r.budget.exhausted_counters() or r.trace.budget_stops)
-        verdicts = self._final_verdicts(state)
-        # Budget exhaustion can never yield COMPLETE, whatever the verdicts say.
-        return "PARTIAL" if exhausted or unmet_must_pass(verdicts) else "COMPLETE"
+        truncated = truncated_by_budget(r.budget.exhausted_counters(), r.trace.budget_stops)
+        verdict = self._verdict(self._final_verdicts(state), state["contract"].rubric)
+        # PARTIAL means the weighted score fell short, a must-pass criterion is unmet, or the
+        # budget actually cut the work short. A cap reached exactly, with every must-pass
+        # criterion met and the score high enough, is COMPLETE.
+        return "PARTIAL" if truncated or verdict.outcome != "PASS" else "COMPLETE"
 
     def _final_verdicts(self, state: RunState) -> list[CheckVerdict]:
         audit = state.get("audit")
@@ -450,6 +549,39 @@ class RunNodes:
         )
         return self._p.synthesizer.with_limits(report, state["ledger"], limits, r.trace, status)
 
+    def _final_card(
+        self, state: RunState, status: RunStatus, report: Report | None, intact: bool
+    ) -> None:
+        r, contract = self.resources, state["contract"]
+        verdicts = self._final_verdicts(state)
+        scored = bool(verdicts)
+        urls = [e.source_url for e in state["ledger"].entries] if state.get("ledger") else []
+        saved = report is not None and status in ("COMPLETE", "PARTIAL")
+        heading, sections = cards.final_card(
+            status,
+            state.get("stop_reason", ""),
+            report,
+            cards.distinct_hosts(urls),
+            len(urls),
+            self._verdict(verdicts, contract.rubric) if scored else None,
+            (
+                sum(v.passed for v in verdicts if v.applicable),
+                sum(v.applicable for v in verdicts),
+            )
+            if scored
+            else None,
+            intact,
+            len(r.trace.rejected_sources),
+            len(r.trace.blocked_outbound),
+            {name: (c.spent, c.cap) for name, c in r.budget.snapshot().items()},
+            self._usage_fields()["model_usage"],
+            contract.contract_id if saved else "",
+            r.trace.errors,
+        )
+        r.telemetry.card(
+            "finalize", heading, sections, status="completed" if status == "COMPLETE" else "warning"
+        )
+
     async def archive(self, state: RunState) -> Update:
         r = self.resources
         report = state.get("report")
@@ -458,22 +590,62 @@ class RunNodes:
             index = self._p.archive.archive(
                 state["contract"], report, _spent(r.budget)
             ).model_dump()
-            r.telemetry.stage(
-                "archive",
-                f"Archived brief, rubric, report → {index['run_id']}",
-                {"paths": index["artifact_paths"]},
-            )
         r.ledger.discard()
         return {"index": index}
 
     # -- shared -----------------------------------------------------------------------------
 
-    def _budget_card(self, stage: str, label: str) -> None:
+    def _usage_fields(self) -> dict[str, Any]:
+        """Tokens and model time by role, so the dominant cost is visible at a glance."""
+        usage = self._p.usage() if self._p.usage is not None else {}
+        total = sum(v["tokens"] for v in usage.values()) or 1
+        return {
+            "model_usage": {
+                role: f"{int(v['tokens']):,} tokens ({v['tokens'] / total:.0%}) · "
+                f"{v['seconds']:.1f}s · {int(v['calls'])} call(s)"
+                for role, v in sorted(usage.items(), key=lambda item: -item[1]["tokens"])
+            }
+        }
+
+    def _unreadable_only(self) -> str:
+        """A stop reason when nothing was admitted and every rejection was unreadable.
+
+        Unreadable is a date that could not be read, or a page the model could not read; more
+        rounds of searching cannot help either, so the run stops and says which it was.
+        """
         r = self.resources
-        meters = {name: f"{c.spent:g}/{c.cap:g}" for name, c in r.budget.snapshot().items()}
-        r.telemetry.stage(
-            stage, f"{label} · " + " · ".join(f"{k} {v}" for k, v in meters.items()), meters
+        if r.ledger.snapshot().entries or not r.trace.rejected_codes:
+            return ""
+        codes = set(r.trace.rejected_codes.values())
+        if codes <= FAIL_FAST_CODES:
+            count = len(r.trace.rejected_codes)
+            return say("stop.undated" if codes == {"undated"} else "stop.unreadable", count=count)
+        return ""
+
+    def _wave_summary(self, wave: int, plans: list[PlanDag]) -> None:
+        """What became of this run's search hits so far: admitted, or rejected and why."""
+        r = self.resources
+        entries = r.ledger.snapshot().entries
+        questions = {n.node_id: n.question for plan in plans for n in plan.nodes}
+        heading, sections = cards.batch_result_card(
+            wave,
+            r.trace.sources_examined,
+            entries,
+            r.trace.rejected_codes,
+            questions,
+            self._p.reasons,
+            self._p.clip_chars,
         )
+        r.telemetry.card(
+            "wave_summary", heading, sections, status="completed" if entries else "warning"
+        )
+
+    def _budget_card(self, label: str) -> None:
+        """The few meters that matter on the heading; every meter in the expander."""
+        r = self.resources
+        meters = {name: (c.spent, c.cap) for name, c in r.budget.snapshot().items()}
+        heading, sections = cards.budget_card(label, meters, self._p.budget_headline)
+        r.telemetry.card("budget_tick", heading, sections)
 
 
 def _spent(budget: BudgetGuard) -> dict[str, float]:

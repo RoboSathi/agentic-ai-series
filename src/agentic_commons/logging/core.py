@@ -7,6 +7,7 @@ detail for the same event always lands here (PRD FR-56).
 
 import json
 import logging
+import re
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -543,14 +544,8 @@ class LoggerFactory:
     ) -> logging.Handler:
         settings = get_settings().logging
 
-        log_dir: Path = settings.resolved_dir
-        log_dir.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
         handler = RotatingFileHandler(
-            log_dir / f"{subsystem}.log",
+            log_directory() / f"{subsystem}.log",
             maxBytes=settings.max_bytes,
             backupCount=settings.backup_count,
         )
@@ -560,6 +555,25 @@ class LoggerFactory:
         handler.setFormatter(PlainFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
 
         return handler
+
+
+_UNSAFE_FOLDER_CHARS = re.compile(r"[^\w.-]+")
+
+
+def log_directory() -> Path:
+    """Where this process's log files go: `<logging.dir>/<agent id>[/<run_label>]`, created.
+
+    Each agent owns a folder, so two agents (or an agent and its offline eval runs, via
+    `logging.run_label`) never write to the same file. The platform does not name an agent:
+    the id is whatever the running agent's overlay declares.
+    """
+    settings = get_settings()
+    parts = [settings.agent.id, settings.logging.run_label]
+    folder = settings.logging.resolved_dir.joinpath(
+        *(_UNSAFE_FOLDER_CHARS.sub("_", part) for part in parts if part)
+    )
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
 
 
 def get_logger(

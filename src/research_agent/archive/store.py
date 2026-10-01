@@ -15,6 +15,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from agentic_commons.artifacts import DirectoryArtifactStore, FrozenArtifact
+from agentic_commons.logging import instrument
 from agentic_commons.memory import MemoryFacade
 from agentic_commons.memory.types import MemoryCommand, MemoryPrincipal
 from research_agent.archive.render import render_brief, render_report, render_rubric
@@ -40,15 +41,22 @@ class RunIndexRow(BaseModel):
     artifact_paths: list[str] = Field(default_factory=list)
 
 
+@instrument("research_agent")
 class ResearchArchive:
     """Writes the three artifacts, the index row and the semantic fact."""
 
     def __init__(
-        self, store: DirectoryArtifactStore, memory: MemoryFacade | None, index_session: str
+        self,
+        store: DirectoryArtifactStore,
+        memory: MemoryFacade | None,
+        index_session: str,
+        semantic_pointer: bool = False,
     ) -> None:
         self._store = store
         self._memory = memory
         self._index_session = index_session
+        # The episodic row is the run pointer; a semantic "fact" about it is opt-in.
+        self._semantic_pointer = semantic_pointer
 
     def archive(self, contract: Contract, report: Report, spent: dict[str, float]) -> RunIndexRow:
         run_id = contract.contract_id
@@ -77,7 +85,7 @@ class ResearchArchive:
             contract_hash=contract.contract_hash,
             budget_spent=spent,
             unmet_items=[limit.item_id for limit in report.limits],
-            artifact_paths=[str(p) for p in paths],
+            artifact_paths=[self._relative(str(p)) for p in paths],
         )
         self._index(row, report)
         return row
@@ -98,6 +106,13 @@ class ResearchArchive:
     def root(self) -> Path:
         return self._store.root
 
+    def _relative(self, path: str) -> str:
+        """The path under the artifact root, so no machine-specific prefix is remembered."""
+        try:
+            return str(Path(path).relative_to(self._store.root))
+        except ValueError:
+            return path
+
     def _index(self, row: RunIndexRow, report: Report) -> None:
         if self._memory is None:
             return
@@ -110,7 +125,9 @@ class ResearchArchive:
             category=INDEX_CATEGORY,
             key=f"run:{row.run_id}",
         )
-        if self._memory.semantic is not None:
+        # A run that established nothing is indexed (so /history shows it) but not
+        # remembered as a fact a later session should rely on.
+        if self._semantic_pointer and self._memory.semantic is not None and report.citations:
             self._memory.submit(
                 MemoryCommand(
                     principal=principal,

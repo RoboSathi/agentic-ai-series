@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from agentic_commons.durability.isolated import IsolatedGraphRunner
 from agentic_commons.evidence import LedgerSnapshot
+from agentic_commons.logging import instrument
 from agentic_commons.verification.acceptance import (
     AcceptanceCheckRegistry,
     CheckKind,
@@ -82,6 +83,7 @@ class LlmJudge:
         return CheckOutcome(score=answer.score, detail=answer.rationale, evidence=answer.evidence)
 
 
+@instrument("research_agent")
 class GoldfishAuditor:
     """Runs the audit graph in isolation on exactly three inputs."""
 

@@ -42,19 +42,19 @@ class TestTimeWindows:
     def test_the_brief_reads_a_month_as_thirty_days(self, ra_config: None) -> None:
         item = CoverageItem(
             item_id="recency",
-            prompt="p",
+            goal="p",
             brief_field="recency_days",
             status="covered",
             value="last 1 month",
         )
         budget = get_agent_settings().budget
-        brief = BriefBuilder(get_agent_settings().scoping, budget, budget).build(
-            "general", "t", [item], []
-        )
+        brief = BriefBuilder(
+            get_agent_settings().scoping, budget, budget, get_agent_settings().depths
+        ).build("general", "t", [item], [])
         assert brief.recency_days == 30
 
     def test_a_stated_window_is_not_asked_again(self) -> None:
-        items = [CoverageItem(item_id="recency", prompt="p", brief_field="recency_days")]
+        items = [CoverageItem(item_id="recency", goal="p", brief_field="recency_days")]
         assert checklist.prefill_window(items, 30)[0].status == "covered"
         assert checklist.prefill_window(items, None)[0].status == "open"
 
@@ -77,16 +77,6 @@ class TestReframeMenu:
     ) -> None:
         assert resolve_reframe_choice(reply, get_agent_settings().scoping.reframe_options) == mode
 
-    async def test_the_menu_shows_both_modes_with_examples(self, harness: BuildHarness) -> None:
-        h = harness()
-        reply = await h.agent.handle("tell me about batteries", "s")
-        for option in get_agent_settings().scoping.reframe_options:
-            assert option.example in reply.response
-        again = await h.agent.handle("2", "s")
-        scope = h.agent.session("s").scope
-        assert again.phase == "SCOPING" and scope is not None and scope.archetype == "general"
-        assert scope.topic.startswith("tell me about batteries")
-
 
 class TestRouting:
     async def test_a_direct_question_is_answered_in_one_turn(self, harness: BuildHarness) -> None:
@@ -99,22 +89,31 @@ class TestRouting:
         contract = h.agent.session("s").run_values["contract"]
         assert contract.brief.archetype == "qa" and contract.verify()
 
-    async def test_a_decision_goes_to_research(self, harness: BuildHarness) -> None:
+    async def test_a_plain_message_is_always_a_quick_answer(self, harness: BuildHarness) -> None:
+        """No classifier or model routes it: even a decision-shaped message is Q&A."""
         h = harness()
         reply = await h.agent.handle("Help me choose a grid storage option for my microgrid", "s")
+        scope = h.agent.session("s").scope
+        assert reply.phase != "SCOPING" and scope is not None and scope.mode == "qa"
+
+    async def test_slash_research_asks_which_kind(self, harness: BuildHarness) -> None:
+        h = harness()
+        reply = await h.agent.handle(
+            "/research Help me choose a grid storage option for my microgrid", "s"
+        )
         scope = h.agent.session("s").scope
         assert reply.phase == "SCOPING" and scope is not None
         assert scope.mode == "research" and scope.archetype == "decision_support"
 
     async def test_a_research_cue_without_a_kind_is_general(self, harness: BuildHarness) -> None:
         h = harness()
-        await h.agent.handle("Research the cycle life of iron-air cells", "s")
+        await h.agent.handle("/research the cycle life of iron-air cells", "s")
         scope = h.agent.session("s").scope
         assert scope is not None and scope.archetype == "general"
 
     async def test_a_window_in_the_question_is_carried(self, harness: BuildHarness) -> None:
         h = harness()
-        await h.agent.handle("Help me choose a storage option from the last 2 years", "s")
+        await h.agent.handle("/research Help me choose a storage option from the last 2 years", "s")
         scope = h.agent.session("s").scope
         assert scope is not None and scope.recent_days == 730
         recency = checklist.item(scope.items, "recency")
@@ -203,7 +202,7 @@ class TestGreeting:
         text = ResearchHost().greeting()
         world = load_world(get_agent_settings().resolved_fixture_world_path)
         assert all(topic.example in text for topic in world.topics)
-        assert get_agent_settings().greeting.wont in text
+        assert get_agent_settings().greeting.intro in text
 
     def test_live_names_its_providers_and_claims_no_demo_topics(self, ra_config: None) -> None:
         from research_agent.console.greeting import build_greeting

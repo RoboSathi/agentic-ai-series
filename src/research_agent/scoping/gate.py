@@ -16,7 +16,7 @@ read from the message by the same parser the Brief uses.
 import re
 from typing import Protocol, runtime_checkable
 
-from agentic_commons.logging import get_logger
+from agentic_commons.logging import get_logger, instrument
 from research_agent.config.settings import ReframeOption, ScopingSettings
 from research_agent.domain.scope import (
     GENERAL,
@@ -34,11 +34,16 @@ _WORD_EDGE = r"(?<![\w&]){}(?![\w&])"
 
 @runtime_checkable
 class ArchetypeClassifier(Protocol):
-    """Classifies a first message into a gate verdict."""
+    """Classifies a first message into a gate verdict.
 
-    async def classify(self, message: str) -> GateVerdict: ...
+    `forced` is the mode the user asked for (`/qa`, `/research`); without one the message is
+    a plain question and is answered, never routed to research.
+    """
+
+    async def classify(self, message: str, forced: Mode | None = None) -> GateVerdict: ...
 
 
+@instrument("research_agent")
 class LlmArchetypeClassifier:
     """Deterministic refusal filter, a structured model call, deterministic clean-up."""
 
@@ -52,15 +57,44 @@ class LlmArchetypeClassifier:
         self._window = TimeWindowParser(settings.time_window)
         self._logger = get_logger("research_agent")
 
-    async def classify(self, message: str) -> GateVerdict:
-        if any(pattern.search(message) for pattern in self._refuse):
-            return GateVerdict(decision="refuse", reason="matches a refusal pattern")
+    def refused(self, message: str) -> bool:
+        """Whether a refusal pattern matches — checked before any model is asked."""
+        return any(pattern.search(message) for pattern in self._refuse)
+
+    def window_days(self, message: str) -> int | None:
+        """The time window the message states, read by rule (never by a model)."""
+        return self._window.days(message)
+
+    def normalise(self, verdict: GateVerdict, message: str) -> GateVerdict:
+        """The window read by rule, a reframe for a purposeless message, a kind that fits."""
+        return self._normalise(verdict, message)
+
+    def quick(self, message: str) -> GateVerdict:
+        """A plain question: Q&A, with the time window it states. Decided in code, no model."""
+        return GateVerdict(
+            decision="scopable",
+            mode="qa",
+            archetype=QA,
+            topic=message.strip(),
+            reason=self._settings.quick_reason,
+            source="rule",
+            recent_days=self.window_days(message),
+        )
+
+    async def classify(self, message: str, forced: Mode | None = None) -> GateVerdict:
+        if self.refused(message):
+            return GateVerdict(decision="refuse", reason="matches a refusal pattern", source="rule")
+        if forced != "research":
+            return self.quick(message)
         cues: dict[str, list[str]] = {
             name: self._settings.archetype_keywords.get(name, []) for name in RESEARCH_ARCHETYPES
         }
         prompt = gate_prompt.build(message, cues, self._settings.research_cues)
         answer = await self._caller.call(prompt, gate_prompt.GateAnswer)
-        verdict = self._normalise(GateVerdict.model_validate(answer.model_dump()), message)
+        decided = GateVerdict.model_validate(answer.model_dump()).model_copy(
+            update={"source": "llm", "source_model": self._caller.model_key(prompt.role)}
+        )
+        verdict = self._normalise(decided, message)
         self._logger.info(
             "Gate decision",
             decision=verdict.decision,

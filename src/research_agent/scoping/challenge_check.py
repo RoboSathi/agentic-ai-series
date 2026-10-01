@@ -7,6 +7,8 @@ pass without one, the turn is re-prompted *once* with an explicit
 instruction to challenge, and the violation is an audit event.
 """
 
+from collections.abc import Sequence
+
 from pydantic import BaseModel
 
 from research_agent.prompts.interviewer import InterviewTurn
@@ -22,6 +24,17 @@ class ChallengeGuard:
 
     def __init__(self, every_k_turns: int) -> None:
         self._k = every_k_turns
+
+    @staticmethod
+    def warranted(answer: str, vague_max_words: int, absolute_words: Sequence[str]) -> bool:
+        """Whether an answer calls for pushback: it is vague (a few words) or absolute ("best").
+
+        Deterministic, like the rest of the guard. An answer that is neither needs no challenge,
+        and forcing one (a second model call) only slows the interview down.
+        """
+        words = answer.casefold().split()
+        absolute = {word.casefold() for word in absolute_words}
+        return 0 < len(words) <= vague_max_words or bool(absolute & set(words))
 
     @staticmethod
     def challenged(turn: InterviewTurn, asked_item_id: str) -> bool:

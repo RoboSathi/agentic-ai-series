@@ -6,7 +6,8 @@ and why the run stopped. A report whose status is PARTIAL without this
 section — or whose section omits an unmet item — fails the oracle.
 """
 
-from collections.abc import Iterable
+from collections import Counter
+from collections.abc import Iterable, Mapping
 
 from agentic_commons.verification.acceptance import CheckVerdict
 from research_agent.domain.plan import PlanDag
@@ -51,8 +52,14 @@ def _reason(verdict: CheckVerdict, stop_reason: str) -> str:
     return f"{verdict.detail or 'not met'}, {score}{found}; run stopped: {stop_reason}"
 
 
+EXAMPLES_PER_REASON = 2
+
+
 def render_limits(
-    limits: list[LimitEntry], rejected: dict[str, str], budget_stops: list[str]
+    limits: list[LimitEntry],
+    rejected: dict[str, str],
+    budget_stops: list[str],
+    codes: Mapping[str, str] | None = None,
 ) -> ReportSection:
     lines = [
         f"- {e.item_id}: {e.text} — {e.reason}. Tried: {', '.join(e.tried_queries) or 'no queries'}."
@@ -60,6 +67,36 @@ def render_limits(
     ]
     if not limits:
         lines.append("- Every must-pass criterion was met.")
-    lines.extend(f"- Rejected source: {url} ({why})." for url, why in rejected.items())
+    lines.extend(_rejection_lines(rejected, codes or {}))
     lines.extend(f"- Budget: {stop}." for stop in budget_stops)
     return ReportSection(heading=COVERAGE_AND_LIMITS, body="\n".join(lines))
+
+
+def _rejection_lines(rejected: dict[str, str], codes: Mapping[str, str]) -> list[str]:
+    """One line per rejection reason (count, reason, a few examples), not one per URL.
+
+    The complete list stays on `Report.rejected_sources` and in the archived report.
+    """
+    if not rejected:
+        return []
+    groups: dict[str, list[str]] = {}
+    for url, why in rejected.items():
+        groups.setdefault(codes.get(url) or _generic(why), []).append(url)
+    counts = Counter({code: len(urls) for code, urls in groups.items()})
+    lines = []
+    for code, _ in counts.most_common():
+        urls = groups[code]
+        reason = _generic(rejected[urls[0]])
+        examples = ", ".join(urls[:EXAMPLES_PER_REASON])
+        more = (
+            f" (+{len(urls) - EXAMPLES_PER_REASON} more in the archived report)"
+            if len(urls) > EXAMPLES_PER_REASON
+            else ""
+        )
+        lines.append(f"- {len(urls)} source(s) rejected — {reason}. e.g. {examples}{more}")
+    return lines
+
+
+def _generic(reason: str) -> str:
+    """A reason without its per-URL detail ('… (published Tue, 29 Sep …)' → '…')."""
+    return reason.split(" (", 1)[0].strip()

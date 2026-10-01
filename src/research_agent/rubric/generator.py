@@ -14,12 +14,14 @@ from typing import Any
 
 import yaml
 
+from agentic_commons.logging import instrument
 from research_agent.domain.rubric import ItemOrigin, Rubric, RubricCheck, RubricItem
 from research_agent.domain.scope import ScopeBrief
 
 _ID_PREFIX = "R"
 
 
+@instrument("research_agent")
 class RubricGenerator:
     """Expands `templates.yaml` against a Brief."""
 
@@ -42,9 +44,10 @@ class RubricGenerator:
             *self._source_items(brief),
             self._findings_item(),
         ]
+        weight = float(self._templates["defaults"]["weight"])
         return Rubric(
             items=tuple(
-                RubricItem(item_id=f"{_ID_PREFIX}{index}", **draft)
+                RubricItem(item_id=f"{_ID_PREFIX}{index}", **{"weight": weight, **draft})
                 for index, draft in enumerate(drafts, start=1)
             )
         )
@@ -128,7 +131,7 @@ def _draft(
     text = str(raw.get("text", "")).format(**{key: value for key, value in params.items()})
     check = dict(raw["check"])
     merged = {**check.get("params", {}), **{k: v for k, v in params.items() if k != "value"}}
-    return {
+    draft: dict[str, Any] = {
         "text": text,
         "check": RubricCheck(kind=check["kind"], name=check["name"], params=merged),
         "threshold": float(raw["threshold"]),
@@ -136,3 +139,6 @@ def _draft(
         "origin": origin,
         "maps_to": maps_to,
     }
+    if "weight" in raw:
+        draft["weight"] = float(raw["weight"])
+    return draft

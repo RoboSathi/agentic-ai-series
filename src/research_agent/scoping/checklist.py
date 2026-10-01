@@ -61,8 +61,14 @@ def prefill_window(items: Sequence[CoverageItem], days: int | None) -> list[Cove
 
 
 def open_items(items: Sequence[CoverageItem], required_only: bool = False) -> list[CoverageItem]:
+    """Open items; with `required_only`, those that must be settled before finishing.
+
+    That is every required item, and every optional one the interviewer may not skip.
+    """
     return [
-        item for item in items if item.status == "open" and (item.required or not required_only)
+        item
+        for item in items
+        if item.status == "open" and (item.required or not item.skippable or not required_only)
     ]
 
 
@@ -87,7 +93,7 @@ def known_unknowns(
     return [
         KnownUnknown(
             item_id=item.item_id,
-            question=item.prompt,
+            question=item.goal,
             reason="waived" if item.status == "waived" else closing_reason,
         )
         for item in items

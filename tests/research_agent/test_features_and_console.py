@@ -7,7 +7,7 @@ import pytest
 from agentic_commons.commands import CommandResult
 from agentic_commons.commands.types import CommandError
 from agentic_commons.config import get_settings
-from agentic_commons.host import CancellableHost, GreetingHost, PanelHost
+from agentic_commons.host import CancellableHost, GreetingHost, StatusHost
 from agentic_commons.llm.roles import RoleCollisionError
 from research_agent.config import get_agent_settings, reload_agent_settings
 from research_agent.console import ResearchHost
@@ -147,12 +147,12 @@ class TestConsoleHost:
         host = ResearchHost()
         assert (
             isinstance(host, GreetingHost)
-            and isinstance(host, PanelHost)
+            and isinstance(host, StatusHost)
             and isinstance(host, CancellableHost)
         )
         assert host.greeting() and host.cancel_key() == get_agent_settings().cancel.key
         assert set(get_agent_settings().tui.stage_labels) <= set(host.stage_labels())
-        assert host.side_panels("s") == [] and host.cancel() is False
+        assert host.status_lines("s") == ([], []) and host.cancel() is False
 
     async def test_conversational_commands_are_forwarded_as_turns(self, ra_config: None) -> None:
         commands = {c.name: c for c in ResearchHost().commands()}
@@ -179,8 +179,8 @@ class TestConsoleHost:
             await commands["show"].run(["nope"])
         with pytest.raises(CommandError):
             await commands["show"].run([])
-        panels = host.side_panels("s1")
-        assert panels and "DELIVERED" in str(panels[0])
+        summary, _ = host.status_lines("s1")
+        assert summary and "DELIVERED" in summary[0]
 
 
 def _any_contract() -> object:

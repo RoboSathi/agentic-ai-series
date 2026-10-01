@@ -11,15 +11,18 @@ The logger remains responsible for implementation-level debugging.
 """
 
 import json
+import re
 import textwrap
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from rich.text import Text
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.reactive import reactive
-from textual.widgets import Collapsible, Static
+from textual.widgets import Button, Collapsible, OptionList, Static
+from textual.widgets._collapsible import CollapsibleTitle
+from textual.widgets.option_list import Option
 
 from agentic_commons.config import get_settings
 from agentic_commons.money import money_or_none
@@ -27,6 +30,8 @@ from agentic_commons.observability.types import StatusEvent
 from agentic_commons.tui.labels import StageLabelRegistry
 
 # State is the primary visual language.
+# Outcomes whose title keeps its group's colour; warning, failure and block stay yellow/red.
+GROUP_COLOURED_STATUSES = frozenset({"completed", "started"})
 STATUS_MARKS = {
     "started": "→",
     "completed": "✓",
@@ -301,6 +306,9 @@ class StatusLineWidget(Static):
         self._history_pending = 0
         self._run_state = "idle"
         self._show_token_count = get_settings().tui.show_token_count
+        self._summary_lines: tuple[str, ...] = ()
+        self._detail_lines: tuple[str, ...] = ()
+        self._expanded = False
 
     @property
     def elapsed_seconds(self) -> float:
@@ -351,25 +359,65 @@ class StatusLineWidget(Static):
         self._history_pending = max(0, count)
         self.refresh()
 
+    def set_block(self, summary: Sequence[str], detail: Sequence[str]) -> None:
+        """The host's live lines: always the summary, the detail when expanded."""
+        block = (tuple(summary), tuple(detail))
+        if block != (self._summary_lines, self._detail_lines):
+            self._summary_lines, self._detail_lines = block
+            self.refresh(layout=True)
+
+    def toggle_detail(self) -> None:
+        self._expanded = not self._expanded
+        self.refresh(layout=True)
+
+    def on_click(self) -> None:
+        """The block opens and closes on a click, like the cards above it."""
+        if self._detail_lines:
+            self.toggle_detail()
+
     def render(self) -> Text:
+        headline = self._render_headline()
+        lines = [*self._summary_lines, *(self._detail_lines if self._expanded else ())]
+        if not lines:
+            return headline
+        text = self._with_toggle(headline)
+        for line in lines:
+            if text:
+                text.append("\n")
+            text.append_text(Text.from_markup(line))
+        return text
+
+    def _with_toggle(self, headline: Text) -> Text:
+        """The headline, led by the open/closed marker when there is more to show."""
+        settings = get_settings().tui
+        if not self._detail_lines:
+            return headline
+        marker = (
+            settings.status_expanded_symbol if self._expanded else settings.status_collapsed_symbol
+        )
+        text = Text(f"{marker} ", style="bold")
+        text.append_text(headline)
+        if not self._expanded:
+            text.append(f"  {settings.status_expand_hint}", style="dim")
+        return text
+
+    def _render_headline(self) -> Text:
         if not self.stage_label:
             return Text("")
 
+        styles = get_settings().tui.status_styles
         if self.running:
             symbol = self._frames[self.frame % len(self._frames)] if self._frames else "●"
-            symbol_style = "cyan"
-            label_style = "bold cyan"
+            style = styles["running"]
         elif self._run_state == "failed":
             symbol = "✗"
-            symbol_style = "red"
-            label_style = "bold red"
+            style = styles["failed"]
         else:
             symbol = "✓"
-            symbol_style = "green"
-            label_style = "bold green"
+            style = styles["complete"]
 
-        line = Text(f"{symbol} ", style=symbol_style)
-        line.append(self.stage_label, style=label_style)
+        line = Text(f"{symbol} ", style=style)
+        line.append(self.stage_label, style=style)
 
         if self._show_token_count and self._tokens is not None and self._started_at:
             line.append(
@@ -387,6 +435,7 @@ class StatusLineWidget(Static):
             line.append("  · HISTORY", style="yellow")
             if self._history_pending:
                 line.append(f" · +{self._history_pending} new", style="yellow")
+            line.append(f" · {get_settings().tui.status_history_hint}", style="dim yellow")
 
         return line
 
@@ -409,6 +458,8 @@ class StageEventWidget(Collapsible):
         # failed or all of them did. Painting a partial block yellow made
         # a refused answer look like a warning.
         classes = f"stage-event stage-{self._status}"
+        if event.group:
+            classes += f" group-{event.group}"
 
         super().__init__(
             Static(body, classes="stage-details"),
@@ -418,6 +469,12 @@ class StageEventWidget(Collapsible):
             expanded_symbol="⌄",
             classes=classes,
         )
+
+    def on_mount(self) -> None:
+        """A grouped card's title takes its group's colour, unless the outcome is a problem."""
+        colour = get_settings().tui.group_colors.get(self.event.group)
+        if colour and self._status in GROUP_COLOURED_STATUSES:
+            self.query_one(CollapsibleTitle).styles.color = colour
 
     def _build_title(self) -> str:
         mark = STATUS_MARKS.get(self.event.status, "·")
@@ -432,6 +489,10 @@ class StageEventWidget(Collapsible):
 
     def _build_body(self) -> Text:
         body = Text()
+
+        if self.event.event_kind == "narrative":
+            _append_narrative(body, self.event)
+            return body
 
         if self.event.stage == "hallucination_check":
             _append_grounding(body, self.event.fields)
@@ -516,6 +577,8 @@ class StageEventWidget(Collapsible):
         fields = self.event.fields
         status = self.event.status
 
+        if self.event.event_kind == "narrative":
+            return self.event.summary or ""
         if status == "failed":
             return self.event.summary or "failed"
         if status == "blocked":
@@ -794,6 +857,50 @@ class StageEventWidget(Collapsible):
         return f"{title}\n{body}"
 
 
+NARRATIVE_TIMING_FIELD = "latency_ms"
+
+
+def _append_narrative(body: Text, event: StatusEvent) -> None:
+    """A card its emitter wrote: titled sections of plain or toned lines.
+
+    A section is a field whose name is its title. Its value is a string, a
+    list of strings, or a list of `{"text", "tone"}` mappings, where tone
+    is one of the configured `tui.tone_styles`. The widget knows nothing
+    about the agent; it only lays out what it was given. Section titles
+    take the card group's colour, so they stand apart from the lines.
+    """
+    settings = get_settings().tui
+    accent = settings.group_colors.get(event.group, "")
+    title_style = f"{settings.section_title_style} {accent}".strip()
+    for title, value in event.fields.items():
+        if title == NARRATIVE_TIMING_FIELD:
+            continue
+        if body:
+            body.append("\n")
+        body.append(f"  {title}", style=title_style)
+        for text, tone in _narrative_lines(value):
+            body.append(f"\n    {text}", style=settings.tone_styles.get(tone, "bright_white"))
+    took = event.fields.get(NARRATIVE_TIMING_FIELD)
+    if took is not None:
+        body.append(f"\n  took {_format_value(NARRATIVE_TIMING_FIELD, took)}", style="dim")
+    if not body:
+        body.append(event.summary or "", style="bold")
+
+
+def _narrative_lines(value: Any) -> list[tuple[str, str]]:
+    if isinstance(value, Mapping):
+        return [(f"{key}: {item}", "") for key, item in value.items()]
+    if isinstance(value, (list, tuple)):
+        return [_narrative_line(item) for item in value]
+    return [(line, "") for line in str(value).splitlines() or [""]]
+
+
+def _narrative_line(item: Any) -> tuple[str, str]:
+    if isinstance(item, Mapping):
+        return str(item.get("text", "")), str(item.get("tone", ""))
+    return str(item), ""
+
+
 def _append_grounding(body: Text, fields: Mapping[str, Any]) -> None:
     """The hallucination check, as a verdict and one line of proof per claim.
 
@@ -986,6 +1093,142 @@ class FeedNote(Static):
         self.plain_text = text
 
 
+_BOLD = re.compile(r"\*\*(.+?)\*\*")
+_CITATION = re.compile(r"\[\d+\]")
+_URL = re.compile(r"https?://\S+")
+_BULLET = re.compile(r"^(\s*)([-•*])\s+")
+_HEADINGS = (("## ", "h2"), ("# ", "h1"))
+
+
+def render_response(text: str, styles: Mapping[str, str]) -> Text:
+    """An answer in light Markdown, coloured by role: headings, bullets, bold, citations, URLs.
+
+    Text with none of that marks up as plain body text, so a reply that is not
+    Markdown comes out exactly as it went in.
+    """
+    out = Text()
+    for index, line in enumerate(text.split("\n")):
+        if index:
+            out.append("\n")
+        _append_response_line(out, line, styles)
+    return out
+
+
+def _append_response_line(out: Text, line: str, styles: Mapping[str, str]) -> None:
+    for prefix, role in _HEADINGS:
+        if line.startswith(prefix):
+            out.append(line[len(prefix) :], style=styles[role])
+            return
+    bullet = _BULLET.match(line)
+    if bullet:
+        out.append(f"{bullet.group(1)}{bullet.group(2)} ", style=styles["bullet"])
+        line = line[bullet.end() :]
+    _append_inline(out, line, styles)
+
+
+def _append_inline(out: Text, line: str, styles: Mapping[str, str]) -> None:
+    """Bold runs, citation markers and URLs within one line."""
+    position = 0
+    spans = sorted(
+        [(m.start(), m.end(), m.group(1), "bold") for m in _BOLD.finditer(line)]
+        + [(m.start(), m.end(), m.group(0), "citation") for m in _CITATION.finditer(line)]
+        + [(m.start(), m.end(), m.group(0), "url") for m in _URL.finditer(line)]
+    )
+    for start, end, shown, role in spans:
+        if start < position:
+            continue
+        out.append(line[position:start], style=styles["body"])
+        out.append(shown, style=styles[role])
+        position = end
+    out.append(line[position:], style=styles["body"])
+
+
+class ChoiceMenu(OptionList):
+    """A fixed menu of answers beside the free-text input; hidden unless a question offers one."""
+
+    def __init__(self) -> None:
+        super().__init__(id="choices")
+        self._values: list[str] = []
+        self.display = False
+
+    @property
+    def offered(self) -> bool:
+        return bool(self._values) and self.display
+
+    def offer(self, choices: Sequence[Any]) -> None:
+        """Show these choices (anything with a `label` and a `value`); none hides the menu."""
+        self.clear_options()
+        self._values = [str(_choice_part(choice, "value")) for choice in choices]
+        self.add_options([Option(str(_choice_part(choice, "label"))) for choice in choices])
+        self.border_title = get_settings().tui.choice_menu_hint
+        self.display = bool(self._values)
+        if self._values:
+            self.highlighted = 0
+
+    def dismiss(self) -> None:
+        self._values = []
+        self.display = False
+
+    def move(self, step: int) -> None:
+        if self.offered:
+            count = len(self._values)
+            self.highlighted = ((self.highlighted or 0) + step) % count
+
+    def chosen(self) -> str | None:
+        """The highlighted choice's value, or None when no menu is showing."""
+        index = self.highlighted
+        if not self.offered or index is None or index >= len(self._values):
+            return None
+        return self._values[index]
+
+    def value_at(self, index: int) -> str | None:
+        return self._values[index] if 0 <= index < len(self._values) else None
+
+
+def _choice_part(choice: Any, name: str) -> Any:
+    return choice[name] if isinstance(choice, Mapping) else getattr(choice, name)
+
+
+class ActionBar(Horizontal):
+    """A row of buttons for the next steps an agent offers; hidden when there are none."""
+
+    def __init__(self) -> None:
+        super().__init__(id="actions")
+        self._shown: tuple[tuple[Any, bool], ...] = ()
+        self._commands: dict[str, str] = {}
+        self.display = False
+
+    def offer(self, actions: Sequence[Any], busy: bool) -> None:
+        """Show these actions (anything with `label`, `command`, `during_turn`).
+
+        While a turn runs, only the actions marked `during_turn` can be pressed.
+        """
+        key = tuple((action, busy) for action in actions)
+        if key == self._shown:
+            return
+        self._shown = key
+        self._commands = {}
+        self.remove_children()
+        for index, action in enumerate(actions):
+            button_id = f"action-{index}"
+            self._commands[button_id] = action.command
+            button = Button(action.label, id=button_id, compact=True)
+            button.disabled = busy and not action.during_turn
+            self.mount(button)
+        self.display = bool(actions)
+
+    def command_for(self, button_id: str | None) -> str | None:
+        return self._commands.get(button_id or "")
+
+
+class ResponseNote(Static):
+    """The assistant's final answer, coloured by the role of each line."""
+
+    def __init__(self, text: str, styles: Mapping[str, str]) -> None:
+        super().__init__(render_response(text, styles), classes="feed-note")
+        self.plain_text = text
+
+
 def _merge_control_loop_events(
     previous: StatusEvent,
     current: StatusEvent,
@@ -1037,7 +1280,7 @@ class LiveStatusPanel(VerticalScroll):
         super().__init__(id="feed")
         self._labels = labels or StageLabelRegistry()
         self._max_entries = get_settings().tui.max_feed_lines
-        self._entries: list[StageEventWidget | FeedNote] = []
+        self._entries: list[StageEventWidget | FeedNote | ResponseNote] = []
 
     def show_status(self, event: StatusEvent) -> None:
         """Render completed/warning/failed semantic events as cards.
@@ -1077,6 +1320,13 @@ class LiveStatusPanel(VerticalScroll):
 
     def note(self, text: str, style: str = "") -> None:
         note = FeedNote(text, style)
+        self._entries.append(note)
+        self._trim_if_needed()
+        self.mount(note)
+
+    def response(self, text: str) -> None:
+        """The assistant's answer, with its headings, bullets and citations coloured."""
+        note = ResponseNote(text, get_settings().tui.response_styles)
         self._entries.append(note)
         self._trim_if_needed()
         self.mount(note)

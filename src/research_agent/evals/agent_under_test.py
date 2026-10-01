@@ -46,7 +46,7 @@ from research_agent.graph.builder import build_auditor, entailment_for
 from research_agent.graph.state import StateTypes
 from research_agent.prompts.base import role_of
 
-_FROZEN_STAGE, _HASH_FIELD = "rubric_frozen", "hash"
+_FROZEN_ACTION, _HASH_FIELD = "contract.frozen", "contract_hash"
 _SEARCH, _FETCH, _BLOCKED = "web.search", "web.fetch", "web.outbound"
 _URL_SCHEMES = ("http://", "https://")
 _COMPLETED, _DENIED = "completed", "deny"
@@ -161,13 +161,14 @@ class CaseRun:
             self._gateways.append(self._owner.gateway())
             return self._gateways[-1]
 
+        self._audit = SqliteAuditLedger(pool, agent_id=get_settings().agent.id)
         return build_agent(
             reporter=StageReporter(self._feed, self._session),
             clients=self._roles,
             gateway=gateway,
             pool=pool,
             checkpointer=checkpointer,
-            audit=SqliteAuditLedger(pool, agent_id=get_settings().agent.id),
+            audit=self._audit,
             artifacts=DirectoryArtifactStore(self._workspace / "artifacts"),
             episodic=EpisodicStore(self._workspace / "episodic"),
             agent_settings=self._agent_settings,
@@ -225,8 +226,9 @@ class CaseRun:
         return False
 
     def _frozen_hash(self) -> str:
-        frozen = [e for e in self._feed.events if e.stage == _FROZEN_STAGE]
-        return str(frozen[-1].fields.get(_HASH_FIELD, "")) if frozen else ""
+        """The hash recorded when the user approved: the audit trail's, not a screen card's."""
+        frozen = [e for e in self._audit.by_decision("allow") if e.action == _FROZEN_ACTION]
+        return str(frozen[-1].authority_context.get(_HASH_FIELD, "")) if frozen else ""
 
     # -- the transcript --------------------------------------------------------------------
 

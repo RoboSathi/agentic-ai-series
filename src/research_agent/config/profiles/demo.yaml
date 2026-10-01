@@ -5,6 +5,11 @@
 # fixture world's reference model. No key, no network, no quota spent.
 # Tests and every `make eval* ra` / `make data ra` use this profile;
 # `make tui ra PROFILE=demo` runs the console on it.
+# Offline runs (tests, evals, the demo console) log under logs/research_agent/demo/, so they never
+# bury the live agent's logs.
+logging:
+  run_label: demo
+
 web:
   mode: replay
   fixture_set: kelvari-v1
@@ -17,6 +22,18 @@ research_agent:
     max_seconds: 600
     max_dag_nodes: 16
     concurrency: 4
+  audit:
+    entailment_model: lexical
+  # The fixture world is tiny and offline: every size may use the demo's whole budget, so a
+  # scripted interview that picks "large" can cover every option against every criterion.
+  depths:
+    large:
+      budget:
+        max_searches: 24
+        max_fetches: 40
+        max_seconds: 600
+        max_dag_nodes: 16
+        concurrency: 4
   planning:
     max_queries_per_node: 2
   research:

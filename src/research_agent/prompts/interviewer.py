@@ -9,17 +9,33 @@ ROLE = "interviewer"
 
 INSTRUCTIONS = """
 You are scoping a research request before any research starts. You keep a
-coverage checklist; each item is open, covered or waived.
+coverage checklist; each item has a `goal` (what you need to learn) and is
+open, covered or waived. The goal is for you, not for the user: never read
+it out or quote it.
 
 Each turn:
-- Read the user's latest answer. Record what it establishes in
-  `updated_items` (item_id + value, in the user's own words). Never mark
-  an item covered that the answer does not address.
-- Challenge vague or absolute answers ("the best", "everything") in
-  `challenges`: ask what would make one option better than another, or
-  what would change the decision. Do not simply agree.
+- Read the user's latest answer, and on the first turn the request itself.
+  Record what it establishes in `updated_items` (item_id + value, in the
+  user's own words). Never mark an item covered that nothing said addresses,
+  and never ask what the request or an earlier answer already told you.
+- Keep the interview as short as this request allows. An optional item
+  (`required: false`) is worth a question only if the answer would change
+  what is researched or how it is reported for THIS request; otherwise list
+  it in `skip_items` with a short reason, and do not ask. An item marked
+  `skippable: false` is never skipped: ask it, even though it is optional. A simple, narrow
+  question needs few turns; a choice between options needs more.
+- Challenge vague or absolute answers ("the best", "everything") to open
+  questions (purpose, options, criteria, decisions) in `challenges`: ask
+  what would make one option better than another, or what would change the
+  decision. Never challenge an answer to an item that has `choices`: a
+  picked choice is a complete answer.
 - Ask exactly one `next_question`, about the most important open item
-  (`next_item_id`).
+  (`next_item_id`). Write it fresh, for this request: one short, plain
+  sentence (about twenty words or fewer), no jargon, no checklist words,
+  and where it helps, a concrete example drawn from the user's own topic.
+  When the item has `choices`, a menu of them is shown beside your question,
+  so ask a question those choices answer, and do not list them yourself.
+  Never tell the user what to type.
 - Set `proposes_done` only when no required item is open, and then write
   a short `draft_plan`: the sub-questions you would research. You propose
   the plan; do not ask the user to write it.
@@ -41,6 +57,13 @@ class ItemUpdate(BaseModel):
     value: str
 
 
+class ItemSkip(BaseModel):
+    """An optional item the interviewer judged irrelevant to this request."""
+
+    item_id: str
+    reason: str = ""
+
+
 class InterviewTurn(BaseModel):
     """One structured interviewer turn."""
 
@@ -48,6 +71,7 @@ class InterviewTurn(BaseModel):
     next_item_id: str = ""
     challenges: list[str] = Field(default_factory=list)
     updated_items: list[ItemUpdate] = Field(default_factory=list)
+    skip_items: list[ItemSkip] = Field(default_factory=list)
     proposes_done: bool = False
     draft_plan: list[str] = Field(default_factory=list)
 
@@ -81,8 +105,10 @@ def _visible(item: CoverageItem) -> dict[str, object]:
     value = "(private, recorded)" if item.private and item.value else item.value
     return {
         "item_id": item.item_id,
-        "prompt": item.prompt,
+        "goal": item.goal,
+        "choices": [choice.label for choice in item.choices],
         "required": item.required,
+        "skippable": item.skippable,
         "status": item.status,
         "value": value,
         "private": item.private,

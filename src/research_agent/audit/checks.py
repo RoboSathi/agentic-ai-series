@@ -36,7 +36,10 @@ COVERAGE_CHECKS = frozenset(
 
 def _fraction(hit: int, total: int, missing: list[str]) -> CheckOutcome:
     score = 1.0 if total == 0 else hit / total
-    return CheckOutcome(score=score, detail=f"{hit}/{total}", evidence=missing)
+    # Nothing to check passes the item (no spurious veto) but earns no credit in a score.
+    return CheckOutcome(
+        score=score, detail=f"{hit}/{total}", evidence=missing, applicable=total != 0
+    )
 
 
 async def subject_criterion_coverage(spec: CheckSpec, ctx: CheckContext) -> CheckOutcome:

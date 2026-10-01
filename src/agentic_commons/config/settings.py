@@ -75,6 +75,9 @@ class LoggingSettings(YamlBackedSettings):
     file_enabled: bool
     file_level: str
     dir: str
+    # Optional sub-folder under the agent's own, for runs that are not the live agent (an offline
+    # profile, an eval): its records stay out of the live logs. Empty: the agent's folder itself.
+    run_label: str = ""
     file_format: Literal["tree", "json"]
     payload_max_chars: int
     max_bytes: int
@@ -212,6 +215,9 @@ class LLMCheckSettings(BaseModel):
 
     prompt: str
     max_tokens: int
+    # An endpoint that has not answered in this long has failed: the probe is cancelled (and the SDK's
+    # own retries with it), so one stalled model cannot hold the whole check for minutes.
+    timeout_seconds: float
 
 
 class OutputNormalisationSettings(BaseModel):
@@ -1143,9 +1149,24 @@ class TuiSettings(YamlBackedSettings):
     copy_toast_seconds: float
     max_feed_lines: int
     spinner_frames: str
-    # The optional side panel an agent may offer (`PanelHost`).
-    side_panel_width: int
-    side_panel_refresh_ms: int
+    # The optional status block an agent may offer (`StatusHost`).
+    status_refresh_ms: int
+    status_collapsed_symbol: str
+    status_expanded_symbol: str
+    status_expand_hint: str
+    status_history_hint: str
+    # The live status line's colour by state: running, complete, failed.
+    status_styles: dict[str, str]
+    # Shown on a menu of fixed answers; free text can always be typed instead.
+    choice_menu_hint: str
+    # Title colour of a card by presentation group (a card's `group`, here a colour name), so
+    # one kind of card reads apart from another and from the live status line.
+    group_colors: dict[str, str]
+    # Style of a written card's section titles, and of its lines by tone.
+    section_title_style: str
+    tone_styles: dict[str, str]
+    # How the final answer's light Markdown is coloured (h1, h2, bold, bullet, citation, ...).
+    response_styles: dict[str, str]
     command_output: CommandOutputSettings
 
     model_config = SettingsConfigDict(env_prefix="TUI__")
@@ -1219,6 +1240,10 @@ class WebFetchSettings(BaseModel):
     reader_enabled: bool
     # `{url}` is replaced by the page's URL (a Jina-Reader-style service).
     reader_url_template: str
+    # Where a page declares its own publication date: `<meta>` names (in priority order)
+    # and JSON-LD keys. Search hits outside a news vertical carry no date.
+    date_meta_keys: list[str]
+    date_json_keys: list[str]
 
 
 class WebSettings(YamlBackedSettings):

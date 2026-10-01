@@ -28,7 +28,14 @@ Plan the research as a small DAG of sub-questions.
 - For a `qa` or `general` brief the topic is the question itself: plan the
   fewest nodes (often one) whose queries would find pages that answer it.
 - When the brief has `recency_days`, write queries for recent coverage
-  (the search is already limited to that window; do not add dates).
+  (the search is already limited to that window; do not add dates or
+  words like "last month").
+- Each node must cover a distinct angle. Never plan two nodes whose queries
+  would return the same pages; for a broad question, one node with a specific
+  query beats two near-duplicates. Name concrete subjects, not "AI news".
+- Every query costs one search from `max_searches`. Plan at most
+  `max_searches` minus one queries in total, so one search stays in reserve
+  for a follow-up. Do not name publishers or sites unless the brief does.
 """
 
 REPAIR_INSTRUCTION = "Your previous plan was rejected for these reasons; fix every one:\n{problems}"
@@ -75,5 +82,6 @@ def build(contract: Contract, max_nodes: int, max_queries: int) -> RolePrompt:
             "rubric": rubric_view(contract),
             "max_nodes": max_nodes,
             "max_queries_per_node": max_queries,
+            "max_searches": contract.budget.max_searches,
         },
     )

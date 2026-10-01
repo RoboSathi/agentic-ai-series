@@ -1,0 +1,110 @@
+"""One question in, one answer out: a budgeted ReAct graph, with no scope, plan or audit pipeline.
+
+The graph is in `graph.py`; this is its facade. It builds the per-question budget (steps, tool
+calls, tokens, seconds — all from config), runs the loop, and never lets an unexpected error leave
+the shell waiting: whatever happens, the user gets a reply that says what happened.
+"""
+
+from datetime import datetime
+from typing import Any
+
+from agentic_commons.control_loop import BudgetGuard
+from agentic_commons.control_loop.types import ControlLoopReport
+from agentic_commons.control_loop.watchdogs import ToolControlLoop
+from agentic_commons.logging import get_logger, instrument
+from agentic_commons.tools.registry import NamespacedToolRegistry
+from research_agent.answer.context import AnswerContext, SessionContext
+from research_agent.answer.graph import (
+    STEPS,
+    TOOL_CALLS,
+    AnswerNodes,
+    Turn,
+    build_answer_graph,
+    initial_state,
+)
+from research_agent.answer.grounding import AnswerGrounding
+from research_agent.config.settings import AnswerSettings
+from research_agent.domain.budget import TOKENS
+from research_agent.prompts import answer as prompt
+from research_agent.research.cards import cap_reached_card
+from research_agent.research.telemetry import RunTelemetry
+from research_agent.structured import StructuredCaller
+
+
+@instrument("research_agent")
+class DirectAnswerer:
+    """Answers a plain question, calling tools when the model asks for them."""
+
+    def __init__(
+        self,
+        caller: StructuredCaller,
+        registry: NamespacedToolRegistry,
+        settings: AnswerSettings,
+        telemetry: RunTelemetry,
+        grounding: AnswerGrounding | None = None,
+        context: AnswerContext | None = None,
+    ) -> None:
+        self._context = context
+        self._settings = settings
+        self._telemetry = telemetry
+        self._graph = build_answer_graph(
+            AnswerNodes(caller, registry, settings, telemetry, grounding)
+        )
+        self._logger = get_logger("research_agent")
+
+    async def answer(self, question: str, session_id: str = "") -> str:
+        context = (
+            self._context.assemble(session_id, question) if self._context else SessionContext()
+        )
+        turn = Turn(question, self._budget(), ToolControlLoop(), context)
+        today = datetime.now().astimezone().strftime(self._settings.date_format)
+        system = "\n\n".join([prompt.INSTRUCTIONS.format(today=today), *context.blocks])
+        self._card_context(context)
+        try:
+            final = await self._graph.ainvoke(
+                initial_state(system, question, context.history),
+                config={"configurable": {"turn": turn}},
+            )
+        except Exception as exc:
+            cause = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            self._logger.error("Direct answer crashed", cause=cause, question=question)
+            self._telemetry.audit("answer.failed", "deny", cause, question=question)
+            return self._settings.messages.failed.format(
+                cause=cause, step=int(turn.spent(STEPS)), seconds=turn.budget.elapsed()
+            )
+        text: str = final["text"]
+        if not final["failure"] and self._context is not None:
+            self._context.remember(session_id, question, self._without_sources(text))
+        return text
+
+    def _without_sources(self, text: str) -> str:
+        """The answer as the model should remember it: its words, not the citation list.
+
+        A "Sources" list in the history reads as something to go and fetch, so a follow-up
+        opens an API URL instead of asking the tool that produced the answer.
+        """
+        heading = self._settings.messages.sources_heading
+        return text.partition(heading)[0].rstrip() or text
+
+    def _card_context(self, context: SessionContext) -> None:
+        heading = self._settings.messages.context_heading.format(
+            turns=context.turns,
+            state=len(context.state),
+            runs=len(context.runs),
+            tokens=context.tokens(),
+        )
+        self._telemetry.stage(
+            "answer_context", heading, {"state": context.state, "earlier_runs": context.runs}
+        )
+
+    def _budget(self) -> BudgetGuard:
+        caps = self._settings.budget
+        return BudgetGuard(
+            {STEPS: caps.max_steps, TOOL_CALLS: caps.max_tool_calls, TOKENS: caps.max_total_tokens},
+            max_seconds=caps.max_seconds,
+            on_exhausted=self._announce,
+        )
+
+    def _announce(self, report: ControlLoopReport) -> None:
+        observed: dict[str, Any] = report.checks[0].observed if report.checks else {}
+        self._telemetry.card("budget_tick", *cap_reached_card(report.reason, observed))

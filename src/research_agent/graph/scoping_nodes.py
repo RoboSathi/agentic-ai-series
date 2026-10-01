@@ -15,6 +15,7 @@ from typing import Any
 from research_agent.config.settings import CommandNames, MessageSettings, ScopingSettings
 from research_agent.domain.rubric import Contract, Rubric
 from research_agent.domain.scope import GENERAL, GateVerdict, Mode, ScopeBrief, UnknownReason
+from research_agent.graph import cards
 from research_agent.graph.state import ScopingState
 from research_agent.prompts import interviewer as interviewer_prompt
 from research_agent.research.telemetry import RunTelemetry
@@ -74,7 +75,7 @@ class ScopingNodes:
             if state.phase == "GATE" or choice is not None
             else f"{state.first_message} {state.user_input}"
         )
-        verdict = await self._p.classifier.classify(message)
+        verdict = await self._p.classifier.classify(message, forced)
         if forced is not None and verdict.decision != "refuse":
             verdict = with_mode(verdict, forced)
         self._report_gate(verdict)
@@ -104,11 +105,11 @@ class ScopingNodes:
         return self._p.messages.reframe.format(options=options)
 
     def _report_gate(self, verdict: GateVerdict) -> None:
-        kind = verdict.archetype if verdict.decision == "scopable" else None
-        self._p.telemetry.stage(
+        heading, sections = cards.gate_card(verdict)
+        self._p.telemetry.card(
             "scope_gate",
-            f"{verdict.decision}" + (f" · {verdict.mode} · {kind}" if kind else ""),
-            verdict.model_dump(),
+            heading,
+            sections,
             status="blocked" if verdict.decision == "refuse" else "completed",
         )
         self._p.telemetry.audit(
@@ -118,6 +119,8 @@ class ScopingNodes:
             archetype=verdict.archetype,
             gate_decision=verdict.decision,
             mode=verdict.mode,
+            classifier=verdict.source,
+            classifier_model=verdict.source_model,
         )
 
     @staticmethod
@@ -164,7 +167,8 @@ class ScopingNodes:
         return {
             "items": items,
             "turn": turn_number,
-            "asked_item_id": turn.next_item_id,
+            # Only a question is "asked": a proposal to finish waits for /done, not an item.
+            "asked_item_id": turn.next_item_id if decision.outcome == "ask" else "",
             "since_challenge": since,
             "draft_plan": turn.draft_plan,
             "reply": reply,
@@ -178,6 +182,11 @@ class ScopingNodes:
         """The anti-sycophancy guard: re-prompt once when K turns passed unchallenged."""
         if self._p.challenge is None:
             return turn, 0
+        if self._menu_answer(state) or not self._needs_challenge(state.user_input):
+            # A picked choice, or an answer that is specific and measured, calls for no pushback:
+            # nothing is forced and nothing is counted (unless the model challenged anyway).
+            challenged = ChallengeGuard.challenged(turn, state.asked_item_id)
+            return turn, 0 if challenged else state.since_challenge
         verdict = self._p.challenge.check(turn, state.asked_item_id, state.since_challenge)
         if not verdict.violated:
             return turn, verdict.turns_without_challenge
@@ -187,12 +196,8 @@ class ScopingNodes:
             "interviewer went K turns without a challenge",
             turns=verdict.turns_without_challenge,
         )
-        self._p.telemetry.stage(
-            "interview_turn",
-            "Challenge guard: re-prompting with an explicit challenge",
-            {"turns_without_challenge": verdict.turns_without_challenge},
-            status="warning",
-        )
+        heading, sections = cards.guard_card(verdict.turns_without_challenge)
+        self._p.telemetry.card("interview_turn", heading, sections, status="warning")
         retried = await self._p.caller.call(
             prompt.with_instruction(interviewer_prompt.CHALLENGE_INSTRUCTION),
             interviewer_prompt.InterviewTurn,
@@ -201,12 +206,33 @@ class ScopingNodes:
             retried, state.asked_item_id
         ) else verdict.turns_without_challenge
 
+    def _needs_challenge(self, answer: str) -> bool:
+        settings = self._p.settings
+        return ChallengeGuard.warranted(
+            answer, settings.vague_answer_max_words, settings.absolute_words
+        )
+
     @staticmethod
-    def _apply(items: list[Any], turn: interviewer_prompt.InterviewTurn) -> list[Any]:
+    def _menu_answer(state: ScopingState) -> bool:
+        asked = checklist.item(state.items, state.asked_item_id)
+        return asked is not None and bool(asked.choices)
+
+    def _apply(self, items: list[Any], turn: interviewer_prompt.InterviewTurn) -> list[Any]:
         for update in turn.updated_items:
             if update.value.strip():
                 items = checklist.with_status(
                     items, update.item_id, "covered", update.value.strip()
+                )
+        for skip in turn.skip_items:
+            target = checklist.item(items, skip.item_id)
+            if (
+                target is not None
+                and not target.required
+                and target.skippable
+                and target.status == "open"
+            ):
+                items = checklist.with_status(
+                    items, skip.item_id, "covered", self._p.settings.skipped_answer
                 )
         return items
 
@@ -225,20 +251,8 @@ class ScopingNodes:
     def _report_turn(
         self, number: int, turn: Any, items: list[Any], outcome: str, overruled: bool
     ) -> None:
-        self._p.telemetry.stage(
-            "interview_turn",
-            f"Turn {number} · {outcome}" + (" · premature done overruled" if overruled else ""),
-            {
-                "next_item": turn.next_item_id,
-                "challenges": len(turn.challenges),
-                "outcome": outcome,
-            },
-        )
-        self._p.telemetry.stage(
-            "coverage_update",
-            " · ".join(f"{i.item_id}:{i.status}" for i in items),
-            {i.item_id: i.status for i in items},
-        )
+        heading, sections = cards.interview_card(number, turn, outcome, overruled)
+        self._p.telemetry.card("interview_turn", heading, sections)
 
     # -- waivers, closing ----------------------------------------------------------------
 
@@ -248,9 +262,8 @@ class ScopingNodes:
         )
         items = checklist.waive(state.items, target, self._p.settings.waive_all_keyword)
         waived = [i.item_id for i in items if i.status == "waived"]
-        self._p.telemetry.stage(
-            "coverage_update", f"Waived: {', '.join(waived) or 'nothing'}", {"waived": waived}
-        )
+        heading, sections = cards.waiver_card(waived)
+        self._p.telemetry.card("coverage_update", heading, sections)
         return {
             "items": items,
             "notice": self._p.messages.waived.format(items=", ".join(waived) or target),
@@ -264,10 +277,12 @@ class ScopingNodes:
         )
         unknowns = checklist.known_unknowns(state.items, reason)
         brief = self._p.briefs.build(state.archetype or GENERAL, state.topic, state.items, unknowns)
-        self._p.telemetry.stage(
-            "close_scoping",
-            f"Scope Brief · {len(unknowns)} known unknown(s)",
-            {"archetype": brief.archetype, "known_unknowns": [u.item_id for u in unknowns]},
+        self._p.telemetry.audit(
+            "scope.closed",
+            "allow",
+            reason,
+            archetype=brief.archetype,
+            known_unknowns=[u.item_id for u in unknowns],
         )
         return {"brief": brief, "phase": "RUBRIC_REVIEW", "user_input": ""}
 
@@ -278,12 +293,8 @@ class ScopingNodes:
         rubric = (
             self._p.generator.generate(state.brief) if self._p.generator is not None else Rubric()
         )
-        must = sum(item.must_pass for item in rubric.items)
-        self._p.telemetry.stage(
-            "rubric_generate",
-            f"{len(rubric.items)} criteria ({must} must-pass)",
-            {"items": [i.item_id for i in rubric.items]},
-        )
+        heading, sections = cards.rubric_card(rubric, state.brief)
+        self._p.telemetry.card("rubric_generate", heading, sections)
         return {"rubric": rubric, "reply": f"{render(rubric)}\n{self._p.messages.rubric_hint}"}
 
     async def brief_ready(self, state: ScopingState) -> Update:
@@ -296,11 +307,8 @@ class ScopingNodes:
             rubric = self._edit(state.rubric, state.user_input.split()[1:])
         except RubricEditError as exc:
             return {"reply": self._p.messages.rubric_error.format(error=exc), "user_input": ""}
-        self._p.telemetry.stage(
-            "rubric_generate",
-            f"Rubric edited · {len(rubric.items)} criteria",
-            {"edit": state.user_input},
-        )
+        heading, sections = cards.rubric_card(rubric, state.brief, edited=state.user_input)
+        self._p.telemetry.card("rubric_generate", heading, sections)
         return {
             "rubric": rubric,
             "reply": f"{render(rubric)}\n{self._p.messages.rubric_hint}",
@@ -337,11 +345,6 @@ class ScopingNodes:
             why,
             contract_id=contract.contract_id,
             contract_hash=contract.contract_hash,
-        )
-        self._p.telemetry.stage(
-            "rubric_frozen",
-            f"Contract {contract.contract_id} · {contract.contract_hash[:12]}",
-            {"contract_id": contract.contract_id, "hash": contract.contract_hash},
         )
         return contract
 

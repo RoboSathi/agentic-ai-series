@@ -94,6 +94,8 @@ class FetchedPage(BaseModel):
     retrieved_at: datetime = Field(default_factory=utc_now)
     via: FetchVia = "http"
     title: str = ""
+    # The date the page declares for itself (raw, unparsed); "" when it declares none.
+    published: str = ""
 
     @property
     def ok(self) -> bool:

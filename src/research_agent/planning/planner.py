@@ -4,10 +4,11 @@ One repair attempt, then stop. A planner that cannot produce a valid plan
 twice is not going to on the fifth try, and every retry is spent budget.
 """
 
-from agentic_commons.logging import get_logger
+from agentic_commons.logging import get_logger, instrument
 from research_agent.domain.plan import PlanDag, PlanValidation, SubQuestion
 from research_agent.domain.rubric import Contract
 from research_agent.planning.dag_validation import validate_plan
+from research_agent.planning.ids import renumber
 from research_agent.prompts import planner as prompt
 from research_agent.prompts.base import RolePrompt
 from research_agent.structured import StructuredCaller
@@ -21,12 +22,16 @@ class PlanRejectedError(RuntimeError):
         self.validation = validation
 
 
+@instrument("research_agent")
 class Planner:
     """Asks the planner role for a DAG and holds it to the validation gate."""
 
-    def __init__(self, caller: StructuredCaller, max_queries_per_node: int) -> None:
+    def __init__(
+        self, caller: StructuredCaller, max_queries_per_node: int, node_id_prefix: str
+    ) -> None:
         self._caller = caller
         self._max_queries = max_queries_per_node
+        self._prefix = node_id_prefix
         self._logger = get_logger("research_agent")
 
     async def plan(self, contract: Contract) -> tuple[PlanDag, PlanValidation, bool]:
@@ -35,7 +40,7 @@ class Planner:
         plan = await self._ask(request)
         validation = validate_plan(plan, contract.rubric, contract.budget.max_dag_nodes)
         if validation.valid:
-            return plan, validation, False
+            return self._numbered(plan), validation, False
         self._logger.warning("Plan rejected; one repair attempt", problems=validation.problems)
         repair = request.with_instruction(
             prompt.REPAIR_INSTRUCTION.format(problems="\n".join(validation.problems))
@@ -44,7 +49,11 @@ class Planner:
         validation = validate_plan(plan, contract.rubric, contract.budget.max_dag_nodes)
         if not validation.valid:
             raise PlanRejectedError(validation)
-        return plan, validation, True
+        return self._numbered(plan), validation, True
+
+    def _numbered(self, plan: PlanDag) -> PlanDag:
+        """The validated plan with readable ids (validated first: duplicates must be seen)."""
+        return plan.model_copy(update={"nodes": renumber(plan.nodes, self._prefix)})
 
     async def _ask(self, request: RolePrompt) -> PlanDag:
         answer = await self._caller.call(request, prompt.PlanAnswer)

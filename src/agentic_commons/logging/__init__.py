@@ -8,6 +8,7 @@ from agentic_commons.logging.core import (
     RichLogger,
     StructuredLogger,
     get_logger,
+    log_directory,
 )
 from agentic_commons.logging.decorators import instrument, logged
 from agentic_commons.logging.trace_context import get_current_trace_id, set_current_trace_id
@@ -22,6 +23,7 @@ __all__ = [
     "get_current_trace_id",
     "get_logger",
     "instrument",
+    "log_directory",
     "logged",
     "set_current_trace_id",
 ]

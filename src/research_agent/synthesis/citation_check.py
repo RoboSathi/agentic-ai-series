@@ -22,6 +22,24 @@ class CitationCheck(BaseModel):
     unknown_ids: list[str] = Field(default_factory=list)
 
 
+def normalize_citations(body: str, pattern: re.Pattern[str]) -> str:
+    """Citations moved to before the sentence's full stop, wherever the model put them.
+
+    A model often writes `A fact. [E1][E2] Next fact. [E3]`: the marker follows the stop, so
+    every splitter that ends a sentence at its stop attaches it to the *next* sentence, and
+    the audit then checks each sentence against the wrong evidence. One convention, here,
+    before anything reads the body: `A fact [E1][E2]. Next fact [E3].`
+    """
+    run = rf"(?:{pattern.pattern})(?:\s*(?:{pattern.pattern}))*"
+    misplaced = re.compile(rf"(?P<stop>[.!?])[ \t]*(?P<cites>{run})")
+    return misplaced.sub(lambda m: f" {_compact(m.group('cites'))}{m.group('stop')}", body)
+
+
+def _compact(citations: str) -> str:
+    """A citation run without the whitespace between its markers."""
+    return re.sub(r"\s+", "", citations)
+
+
 def cited_ids(report: Report, pattern: re.Pattern[str]) -> list[str]:
     text = "\n".join(section.body for section in report.sections)
     return list(dict.fromkeys(pattern.findall(text)))

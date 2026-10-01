@@ -13,6 +13,7 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, Field
 
+from agentic_commons.logging import instrument
 from agentic_commons.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
 from research_agent.audit.checks import COVERAGE_CHECKS
 from research_agent.audit.context import CheckContext
@@ -35,6 +36,7 @@ class Reflection(BaseModel):
     entities: int = 0
 
 
+@instrument("research_agent")
 class GapAnalyzer:
     """Coverage verdicts over the ledger, and the gaps among them."""
 
@@ -50,6 +52,7 @@ class GapAnalyzer:
         return len({name for entry in ctx.ledger.entries for name in pattern.findall(entry.claim)})
 
 
+@instrument("research_agent")
 class Reflector:
     """Decides continue/stop and proposes follow-ups for unmet items."""
 

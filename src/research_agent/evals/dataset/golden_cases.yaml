@@ -24,6 +24,7 @@ x-answers:
     sources: primary sources preferred
     context: Tamsin Co-op; budget 2 million
     deliverable: a short memo
+    depth: large
   turbines: &turbine_answers
     scope_boundary: Kelvari river turbines
     criteria: approach, scale, funding
@@ -33,6 +34,7 @@ x-answers:
     sources: any
     context: none
     deliverable: a table
+    depth: large
   iron_air: &iron_air_answers
     audience: Grid planners who know lithium-ion but not iron-air
     concepts: oxidation, round-trip efficiency, discharge duration, recharging
@@ -42,6 +44,7 @@ x-answers:
     sources: any
     context: none
     deliverable: a short memo
+    depth: large
 
 cases:
   # -- decision_support ---------------------------------------------------------------

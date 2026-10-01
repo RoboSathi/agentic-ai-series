@@ -10,6 +10,7 @@ class decides what may ground the claim.
 """
 
 import re
+from decimal import Decimal
 
 from agentic_commons.config import get_settings
 from agentic_commons.hallucination_protection.types import AtomicClaim, ClaimClass
@@ -119,9 +120,34 @@ _SPECIFIC = re.compile(
 MONEY = re.compile(r"(?<!\w)(?:\$\d+(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:,\d{3})*\.\d{2})(?!\w)")
 
 
+_PLAIN_NUMBER = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
+_MONTH_FIRST = re.compile(rf"(?P<month>{_MONTH})\.?\s+(?P<day>\d{{1,2}})", re.IGNORECASE)
+_DAY_FIRST = re.compile(rf"(?P<day>\d{{1,2}})\s+(?P<month>{_MONTH})", re.IGNORECASE)
+# How many letters of a month name identify it ("Sept", "September" and "Sep" are one month).
+_MONTH_KEY_LETTERS = 3
+
+
+def _normalised(value: str) -> str:
+    """One written form for a thing a text names; a date is the same date either way round.
+
+    "30 September" and "September 30" name one day, so a claim written one way is not
+    "unsourced" against evidence written the other.
+    """
+    for pattern in (_MONTH_FIRST, _DAY_FIRST):
+        found = pattern.fullmatch(value)
+        if found:
+            month = found.group("month").casefold()[:_MONTH_KEY_LETTERS]
+            return f"{int(found.group('day'))} {month}"
+    plain = value.casefold().rstrip(".,:")
+    if _PLAIN_NUMBER.fullmatch(plain):
+        # "0.0" and "0", "26.40" and "26.4", "1,200" and "1200" are the same figure.
+        return format(Decimal(plain.replace(",", "")).normalize(), "f")
+    return plain
+
+
 def specifics(text: str) -> set[str]:
     """The identifiers, amounts, dates and weekdays a text names, normalised for comparison."""
-    return {value.casefold().rstrip(".,:") for value in _SPECIFIC.findall(text)} - {""}
+    return {_normalised(value) for value in _SPECIFIC.findall(text)} - {""}
 
 
 class ClaimClassifier:

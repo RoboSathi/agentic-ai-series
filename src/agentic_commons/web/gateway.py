@@ -225,7 +225,9 @@ class WebGateway:
         try:
             return await (caller.call(call, idempotency_key=key) if caller else call())
         except Exception as exc:
-            raise WebUnavailableError(f"{key.split(':')[0]} failed: {exc}") from exc
+            # `str(exc)` is empty for timeouts and resets: name the exception instead.
+            detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            raise WebUnavailableError(f"{key.split(':')[0]} failed: {detail}") from exc
 
     def _notify(self, call: WebCall) -> None:
         log = self._logger.info if call.left_the_machine or not call.ok else self._logger.debug

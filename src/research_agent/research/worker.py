@@ -16,16 +16,28 @@ fails, so parallel workers cannot overshoot a cap. The loop is bounded
 by the node's queries (plus any follow-ups) and by the per-node fetch cap.
 """
 
+from datetime import date
+
 from pydantic import BaseModel, Field
 
-from agentic_commons.evidence import EvidenceCandidate, EvidenceEntry, SpanRejection
+from agentic_commons.evidence import EvidenceCandidate, EvidenceEntry
+from agentic_commons.logging import instrument
 from agentic_commons.resilience import QuotaExhaustedError
 from agentic_commons.web import FetchedPage, SearchHit, SearchRequest, SearchResponse
+from research_agent.config import get_agent_settings
 from research_agent.domain.budget import FETCHES, SEARCHES
 from research_agent.domain.evidence import ClaimCandidate
 from research_agent.domain.plan import SubQuestion
-from research_agent.research.defenses import apply_source_policy, within_window
+from research_agent.narration import say
+from research_agent.research import cards
+from research_agent.research.defenses import apply_source_policy, rank_by_kind, window_verdict
 from research_agent.research.resources import RunResources
+from research_agent.research.spans import canonical_span, nearest_match
+from research_agent.structured import OutputTruncatedError
+from research_agent.synthesis.reader_view import host_of
+
+# The rejection code of a page the model could not read (its answer was cut off or invalid).
+UNREADABLE = "unreadable"
 
 
 class NodeResult(BaseModel):
@@ -38,6 +50,7 @@ class NodeResult(BaseModel):
     stopped: str = ""
 
 
+@instrument("research_agent")
 class ResearcherWorker:
     """Researches one sub-question with the run's shared resources."""
 
@@ -115,58 +128,110 @@ class ResearcherWorker:
         self._r.telemetry.audit(
             "web.search", "allow", query, node=node.node_id, hits=len(response.hits)
         )
-        self._r.telemetry.stage(
-            "worker_search",
-            f"{node.node_id} · '{query}' → {len(response.hits)} hits",
-            {
-                "node": node.node_id,
-                "query": query,
-                "hits": len(response.hits),
-                "provider_summary": "ignored (untrusted)" if response.provider_summary else "",
-            },
+        heading, sections = cards.search_card(
+            node.node_id,
+            query,
+            response.provider,
+            _window_label(response.request),
+            [f"{host_of(h.url)} · {h.published_date[:16] or 'undated'}" for h in response.hits],
+            bool(response.provider_summary),
         )
+        self._r.telemetry.card("worker_search", heading, sections)
 
     def _policy(self, hits: list[SearchHit]) -> list[SearchHit]:
         in_scope = [hit for hit in hits if self._recent(hit)]
-        if self._r.outbound is None:
-            return in_scope
-        return apply_source_policy(in_scope, self._r.contract.brief)
+        if self._r.outbound is not None:
+            in_scope = apply_source_policy(in_scope, self._r.contract.brief)
+        return rank_by_kind(in_scope, self._r.settings.source_labels)
 
     def _recent(self, hit: SearchHit) -> bool:
         """The approved recency window is scope, not a defence: it always applies."""
         contract = self._r.contract
         days = contract.brief.recency_days
-        if days is None or within_window(hit.published_date, contract.frozen_at.date(), days):
+        if days is None:
             return True
-        reason = self._r.settings.recency_rejection.format(days=days, date=hit.published_date)
-        self._r.trace.reject(hit.url, reason)
+        verdict = window_verdict(hit.published_date, contract.frozen_at.date(), days)
+        if verdict == "in" or (verdict == "undated" and self._verify_on_page()):
+            return True
+        template = (
+            self._r.settings.undated_rejection
+            if verdict == "undated"
+            else self._r.settings.recency_rejection
+        )
+        reason = template.format(days=days, date=hit.published_date)
+        self._r.trace.reject(hit.url, reason, "undated" if verdict == "undated" else "recency")
         return False
+
+    def _verify_on_page(self) -> bool:
+        return self._r.settings.undated_policy == "verify_on_page"
+
+    def _page_dated(self, hit: SearchHit, page: FetchedPage) -> SearchHit | None:
+        """An undated hit, once read: the page's own date decides, else it is kept unverified.
+
+        The provider already applied the window to its results, so an unreadable date is
+        unverified, not out of window; a readable one outside the window is rejected here.
+        """
+        days = self._r.contract.brief.recency_days
+        if days is None or window_verdict(hit.published_date, self._as_of(), days) != "undated":
+            return hit
+        verdict = window_verdict(page.published, self._as_of(), days)
+        if verdict == "out":
+            reason = self._r.settings.recency_rejection.format(days=days, date=page.published)
+            self._r.trace.reject(hit.url, reason, "recency")
+            return None
+        return hit.model_copy(update={"published_date": page.published})
+
+    def _as_of(self) -> date:
+        return self._r.contract.frozen_at.date()
 
     # -- fetch and read -------------------------------------------------------------
 
     async def _visit(
         self, node: SubQuestion, hit: SearchHit, queue: list[str], result: NodeResult
     ) -> None:
-        page = await self._fetch(hit.url, result)
+        page = await self._fetch(hit.url, node, result)
         if page is None:
             return
         result.sources.append(page.url)
         self._r.trace.examined(page.url)
-        if not self._clean(page):
+        dated = self._page_dated(hit, page)
+        if dated is None or not await self._clean(page, node):
             return
-        reading = await self._r.reader.read(node.question, page)
-        self._admit(node, reading.candidates, hit, result)
+        hit = dated
+        try:
+            reading = await self._r.reader.read(node.question, page)
+        except Exception as exc:
+            # One unreadable page must not take the node's other pages down with it.
+            self._unreadable(node, page, exc)
+            return
+        admitted, refused = self._admit(node, reading.candidates, hit, page, result)
+        self._page_card(node, page, len(reading.candidates), admitted, refused)
         await self._follow(node, reading.follow_up_queries, reading.follow_up_urls, queue, result)
 
-    async def _fetch(self, url: str, result: NodeResult) -> FetchedPage | None:
+    def _unreadable(self, node: SubQuestion, page: FetchedPage, exc: Exception) -> None:
+        """A page the model could not turn into claims: recorded, shown, and explained."""
+        why = (
+            say("page.unreadable_cut_off")
+            if isinstance(exc, OutputTruncatedError)
+            else say("page.unreadable_error", error=_describe(exc))
+        )
+        self._r.trace.errors.append(f"{node.node_id}: {page.url}: {_describe(exc)}")
+        self._r.trace.reject(page.url, why, UNREADABLE)
+        self._r.telemetry.audit("web.read", "deny", _describe(exc), node=node.node_id, url=page.url)
+        heading, sections = cards.unreadable_card(host_of(page.url), page.url, why, node.node_id)
+        self._r.telemetry.card("page_result", heading, sections, status="warning")
+
+    async def _fetch(self, url: str, node: SubQuestion, result: NodeResult) -> FetchedPage | None:
         cached = self._r.gateway.page_for(url)
         if cached is not None:
             return cached if cached.ok else None
         if not self._outbound_ok("url", url):
             return None
-        return await self._fetch_new(url, result)
+        return await self._fetch_new(url, node, result)
 
-    async def _fetch_new(self, url: str, result: NodeResult) -> FetchedPage | None:
+    async def _fetch_new(
+        self, url: str, node: SubQuestion, result: NodeResult
+    ) -> FetchedPage | None:
         held = self._r.budget.try_reserve(FETCHES)
         if held is None:
             result.stopped = "budget"
@@ -177,52 +242,76 @@ class ResearcherWorker:
             page = await self._r.gateway.fetch(url)
         except Exception as exc:
             self._r.budget.release(held)
-            self._failed("worker_fetch", url, exc)
+            self._failed("worker_fetch", url, exc, node.node_id)
+            self._r.trace.examined(url)
+            self._r.trace.reject(url, _describe(exc), "error")
             return None
         self._r.budget.commit(held)
-        return self._fetched(page)
+        return self._fetched(page, node)
 
-    def _fetched(self, page: FetchedPage) -> FetchedPage | None:
+    def _fetched(self, page: FetchedPage, node: SubQuestion) -> FetchedPage | None:
+        """A readable page goes on to its page card; only a failure draws a card of its own."""
         self._r.telemetry.audit(
             "web.fetch", "allow" if page.ok else "deny", page.url, status=page.status, via=page.via
         )
+        if page.ok:
+            return page
+        code, label = _fetch_outcome(page.status)
         self._r.telemetry.stage(
             "worker_fetch",
-            f"{page.url} · {page.status} · {len(page.text)} chars"
-            + (" · via reader" if page.via == "reader" else ""),
+            f"{node.node_id} · {host_of(page.url)} · HTTP {page.status} — {label}",
             {
+                "node": node.node_id,
                 "url": page.url,
                 "status": page.status,
                 "via": page.via,
                 "page_hash": page.page_hash[:12],
             },
-            status="completed" if page.ok else "warning",
+            status="warning",
         )
-        if not page.ok:
-            self._r.trace.examined(page.url)
-            self._r.trace.reject(page.url, f"dead link (HTTP {page.status})")
-            return None
-        return page
+        self._r.trace.examined(page.url)
+        self._r.trace.reject(page.url, f"{label} (HTTP {page.status})", code)
+        return None
 
-    def _clean(self, page: FetchedPage) -> bool:
-        """Layer 2: drop a page the injection detector flags."""
+    async def _clean(self, page: FetchedPage, node: SubQuestion) -> bool:
+        """Layer 2: the phrase check, with the injection model as a second opinion."""
         if self._r.screen is None:
             return True
-        phrases = self._r.screen.flagged(page.text)
-        if not phrases:
+        verdict = await self._r.screen.assess(page.text)
+        if verdict.decision == "clean":
             return True
-        self._r.trace.reject(page.url, f"injection detected: {', '.join(phrases)}")
-        self._r.telemetry.audit(
-            "security.page_rejected",
-            "deny",
-            "prompt injection in fetched text",
-            url=page.url,
-            phrases=phrases,
+        detail = {
+            "node": node.node_id,
+            "url": page.url,
+            "phrases": verdict.phrases,
+            "model": verdict.model,
+            "model_score": verdict.score,
+            "decision": verdict.decision,
+            "layer": "classifier+model" if verdict.model else "classifier",
+        }
+        phrases = ", ".join(verdict.phrases) or "none"
+        if not verdict.drop:
+            self._r.telemetry.audit(
+                "security.page_kept", "allow", "phrase hit cleared by the injection model",
+                url=page.url, phrases=verdict.phrases, score=verdict.score,
+            )  # fmt: skip
+            self._r.telemetry.stage(
+                "content_defense",
+                f"{node.node_id} · kept {host_of(page.url)} — phrase [{phrases}], {verdict.why}",
+                detail,
+            )
+            return True
+        self._r.trace.reject(
+            page.url, f"injection detected: {phrases} ({verdict.why})", "injection"
         )
+        self._r.telemetry.audit(
+            "security.page_rejected", "deny", "prompt injection in fetched text",
+            url=page.url, phrases=verdict.phrases, score=verdict.score,
+        )  # fmt: skip
         self._r.telemetry.stage(
             "content_defense",
-            f"Page dropped — injection phrasing: {', '.join(phrases)}",
-            {"url": page.url, "phrases": phrases, "layer": "classifier"},
+            f"{node.node_id} · dropped {host_of(page.url)} — phrase [{phrases}], {verdict.why}",
+            detail,
             status="blocked",
         )
         return False
@@ -232,13 +321,18 @@ class ResearcherWorker:
         node: SubQuestion,
         candidates: list[ClaimCandidate],
         hit: SearchHit,
+        page: FetchedPage,
         result: NodeResult,
-    ) -> None:
+    ) -> tuple[list[EvidenceEntry], list[dict[str, str]]]:
+        """Append each claim under the verbatim rule; the page's own text is what is stored."""
+        admitted: list[EvidenceEntry] = []
+        refused: list[dict[str, str]] = []
         for candidate in candidates:
+            span = canonical_span(page.text, candidate.span) or candidate.span
             outcome = self._r.ledger.append(
                 EvidenceCandidate(
                     claim=candidate.claim,
-                    span=candidate.span,
+                    span=span,
                     source_url=candidate.url,
                     source_hash=candidate.page_hash,
                     retrieved_at=candidate.retrieved_at,
@@ -246,32 +340,45 @@ class ResearcherWorker:
                     subject=node.node_id,
                 )
             )
-            self._record(outcome, result)
-        self._r.telemetry.stage(
-            "extract_claims",
-            f"{node.node_id} · {len(candidates)} claim(s) from {hit.url}",
-            {"node": node.node_id, "url": hit.url, "claims": len(candidates)},
-        )
-
-    def _record(self, outcome: EvidenceEntry | SpanRejection, result: NodeResult) -> None:
-        if isinstance(outcome, EvidenceEntry):
-            result.entries.append(outcome.entry_id)
-            self._r.telemetry.stage(
-                "ledger_append",
-                f"{outcome.entry_id} · {outcome.claim[:70]}",
-                {"entry": outcome.entry_id, "url": outcome.source_url},
+            if isinstance(outcome, EvidenceEntry):
+                result.entries.append(outcome.entry_id)
+                admitted.append(outcome)
+                continue
+            self._r.trace.span_rejections += 1
+            near = nearest_match(page.text, candidate.span)
+            refused.append(
+                {
+                    "reason": outcome.reason_code,
+                    "span": candidate.span[:80],
+                    "nearest": near.describe(),
+                    "page_says": near.context,
+                }
             )
-            return
-        self._r.trace.span_rejections += 1
-        self._r.telemetry.stage(
-            "span_rejected",
-            f"Span rejected ({outcome.reason_code})",
-            {
-                "url": outcome.candidate.source_url,
-                "reason_code": outcome.reason_code,
-                "span": outcome.candidate.span[:80],
-            },
-            status="warning",
+        return admitted, refused
+
+    def _page_card(
+        self,
+        node: SubQuestion,
+        page: FetchedPage,
+        extracted: int,
+        admitted: list[EvidenceEntry],
+        refused: list[dict[str, str]],
+    ) -> None:
+        """One card per page: the site, the evidence kept, and the claims refused and why."""
+        tui = get_agent_settings().tui
+        heading, sections = cards.page_card(
+            node,
+            page.url,
+            len(page.text),
+            page.via == "reader",
+            extracted,
+            admitted,
+            refused,
+            tui.reasons,
+            tui.clip_chars,
+        )
+        self._r.telemetry.card(
+            "page_result", heading, sections, status="completed" if admitted else "warning"
         )
 
     async def _follow(
@@ -315,16 +422,38 @@ class ResearcherWorker:
         )
         return False
 
-    def _failed(self, stage: str, target: str, exc: Exception) -> None:
-        detail = f"{type(exc).__name__}: {exc}"
+    def _failed(self, stage: str, target: str, exc: Exception, node: str = "") -> None:
+        detail = _describe(exc)
         self._r.trace.errors.append(f"{target}: {detail}")
         self._r.telemetry.audit(stage.replace("worker_", "web."), "deny", detail, target=target)
         self._r.telemetry.stage(
             stage,
-            f"{target} failed — {detail}",
-            {"target": target, "error": detail},
+            f"{node + ' · ' if node else ''}{target} failed — {detail}",
+            {"node": node, "target": target, "error": detail},
             status="failed",
         )
+
+
+def _describe(exc: BaseException) -> str:
+    """The exception with its type, even when its message is empty (timeouts, resets)."""
+    message = str(exc).strip()
+    return f"{type(exc).__name__}: {message}" if message else type(exc).__name__
+
+
+def _fetch_outcome(status: int) -> tuple[str, str]:
+    """A failed fetch's reason code and wording: blocked is not dead, and neither is an error."""
+    if status in (401, 402, 403, 407, 429, 451):
+        return "blocked", "blocked or paywalled"
+    if status in (404, 410):
+        return "dead_link", "dead link"
+    if 200 <= status < 300:
+        return "empty", "no readable text"
+    return "error", "fetch error"
+
+
+def _window_label(request: SearchRequest) -> str:
+    window = f"{request.recent_days}d" if request.recent_days else "any time"
+    return f"{request.topic}, {window}" if request.topic else window
 
 
 def _quota_spent(exc: BaseException | None) -> bool:

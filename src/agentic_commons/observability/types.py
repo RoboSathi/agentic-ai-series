@@ -32,6 +32,9 @@ EventKind = Literal[
     "grounding",
     "escalation",
     "system",
+    # The emitter wrote the card itself: its summary is the heading and its
+    # fields are titled sections of lines, rendered as given.
+    "narrative",
 ]
 
 CostComponent = Literal[
@@ -67,6 +70,8 @@ class StatusEvent(BaseModel):
     tokens_delta: int | None = None
     detail: str | None = None
     summary: str | None = None
+    # A presentation group (a colour name): the feed colours a group's cards alike.
+    group: str = ""
     fields: dict[str, Any] = Field(default_factory=dict)
 
 

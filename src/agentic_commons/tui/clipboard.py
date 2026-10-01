@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from agentic_commons.config import get_settings
-from agentic_commons.logging import get_logger
+from agentic_commons.logging import get_logger, log_directory
 from agentic_commons.observability.types import utc_now
 
 # Terminals commonly cap an OSC 52 payload around 100KB; stay well under.
@@ -40,7 +40,7 @@ class Osc52ClipboardService:
         settings = get_settings()
         self._method = settings.tui.copy_method
         self._commands = settings.tui.system_clipboard_commands
-        self._export_dir = export_dir or settings.logging.resolved_dir
+        self._export_dir = export_dir or log_directory()
         self._logger = get_logger("tui")
 
     def copy(self, text: str) -> str:

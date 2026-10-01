@@ -24,8 +24,8 @@ def _budget() -> Budget:
 
 def _items() -> list[CoverageItem]:
     return [
-        CoverageItem(item_id="a", prompt="A?", required=True),
-        CoverageItem(item_id="b", prompt="B?", required=False),
+        CoverageItem(item_id="a", goal="A?", required=True),
+        CoverageItem(item_id="b", goal="B?", required=False),
     ]
 
 
@@ -76,6 +76,15 @@ class TestTermination:
 
 
 class TestChallengeGuard:
+    def test_only_vague_or_absolute_answers_call_for_pushback(self) -> None:
+        absolute = ["best", "always"]
+        assert ChallengeGuard.warranted("cost", 3, absolute)  # vague: a few words
+        assert ChallengeGuard.warranted("it must always be cheap and safe for us", 3, absolute)
+        assert not ChallengeGuard.warranted(
+            "Feeds the village council procurement decision", 3, absolute
+        )
+        assert not ChallengeGuard.warranted("", 3, absolute)  # no answer yet: nothing to challenge
+
     def test_k_turns_without_a_challenge_is_a_violation(self) -> None:
         guard = ChallengeGuard(every_k_turns=2)
         quiet = InterviewTurn(next_item_id="b")
@@ -94,7 +103,7 @@ class TestBriefBuilder:
         items = [
             CoverageItem(
                 item_id="options",
-                prompt="?",
+                goal="?",
                 status="covered",
                 value="X, Y and Z",
                 brief_field="options",
@@ -102,28 +111,28 @@ class TestBriefBuilder:
             ),
             CoverageItem(
                 item_id="recency",
-                prompt="?",
+                goal="?",
                 status="covered",
                 value="within 365 days",
                 brief_field="recency_days",
             ),
             CoverageItem(
                 item_id="sources",
-                prompt="?",
+                goal="?",
                 status="covered",
                 value="prefer lab.example; avoid spam.example. primary sources",
                 brief_field="source_policy",
             ),
             CoverageItem(
                 item_id="context",
-                prompt="?",
+                goal="?",
                 status="covered",
                 value="none",
                 brief_field="private_terms",
                 multi=True,
             ),
         ]
-        brief = BriefBuilder(settings, _budget(), _budget()).build(
+        brief = BriefBuilder(settings, _budget(), _budget(), get_agent_settings().depths).build(
             "decision_support", "t", items, []
         )
         assert brief.options == ("X", "Y", "Z") and brief.recency_days == 365
@@ -135,14 +144,14 @@ class TestBriefBuilder:
     def test_any_recency_means_no_window(self, ra_config: None) -> None:
         item = CoverageItem(
             item_id="recency",
-            prompt="?",
+            goal="?",
             status="covered",
             value="no limit",
             brief_field="recency_days",
         )
-        brief = BriefBuilder(get_agent_settings().scoping, _budget(), _budget()).build(
-            "explainer", "t", [item], []
-        )
+        brief = BriefBuilder(
+            get_agent_settings().scoping, _budget(), _budget(), get_agent_settings().depths
+        ).build("explainer", "t", [item], [])
         assert brief.recency_days is None
 
 

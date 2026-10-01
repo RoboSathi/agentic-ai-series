@@ -49,6 +49,7 @@ from agentic_commons.observability import (
     StageReporter,
     Tracer,
 )
+from agentic_commons.observability.llm_fields import llm_request_fields, llm_response_fields
 from agentic_commons.observability.types import EventKind
 from agentic_commons.resilience import (
     DeadLetterQueue,
@@ -75,7 +76,6 @@ from customer_support_agent.persistence.repositories import OrdersRepository
 from customer_support_agent.presentation.orders import (
     OrderMenu,
 )
-from customer_support_agent.presentation.reporting import llm_request_fields, llm_response_fields
 from customer_support_agent.prompts.policy import policy_text
 from customer_support_agent.prompts.system_prompt import (
     build_reply_instruction,

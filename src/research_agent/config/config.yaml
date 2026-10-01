@@ -20,6 +20,10 @@ agent:
 features:
   # ra's own features
   scoping_challenge_check: true      # anti-sycophancy guard on interview turns
+  gate_encoder: true                 # rules + BERT-family classifier before the LLM gate; the LLM is the fallback
+  direct_answer:                     # plain questions are answered directly (tools on demand); off = every question starts a scope
+    enabled: true
+    grounding: true                  # the answer is checked against what its tools returned; unsupported details are removed
   rubric: true                       # acceptance criteria; off = run with no contract items
   reflection: true                   # gap analysis + follow-up queries after each wave
   goldfish_audit: true               # independent audit of the delivered report
@@ -27,7 +31,9 @@ features:
     enabled: true
     nli: true
   injection_structural: true         # least privilege, exfiltration + source-policy checks
-  injection_classifier: true         # platform prompt-injection detector over fetched text
+  injection_classifier:              # phrase check over fetched text
+    enabled: true
+    model: true                      # a hosted injection model adjudicates phrase hits
   quarantined_extractor: true        # only the extractor ever reads raw page text
   # platform features this agent composes
   pii: true
@@ -69,6 +75,7 @@ llm:
     reflector: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
     synthesizer: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
     judge: {provider: nim, model: openai/gpt-oss-20b}
+    answerer: {provider: nim, model: openai/gpt-oss-20b}
 
 web:
   mode: live
@@ -136,19 +143,17 @@ evals:
 
 research_agent:
   title: Research Agent
-  placeholder: "What should I research?  (/help for commands)"
+  placeholder: "Ask a question · /research for deep research · /help"
   # The greeting is assembled in code (console/greeting.py) from these
   # lines and the current mode, so it always says what this run can do.
   greeting:
-    live_mode: "Live: I search the web (DuckDuckGo first; Tavily for news, time-bounded questions, or when DuckDuckGo finds nothing) and read the pages with NVIDIA models."
-    demo_mode: "Demo (offline): a synthetic world called Kelvari, recorded and replayed. I can only research these topics:"
+    intro: "Ask me anything — I answer directly, and search the web when I need something current."
+    research_line: "For a deeper run use /research <question>: a short interview, acceptance criteria, then an audited report with a cited page behind every sentence."
+    examples: "Try: \"{qa}\"  ·  /research \"{research}\""
+    commands: "/research [question] · /qa <question> · /done · /approve · /cancel · /help"
+    live_mode: "Live: web search + NVIDIA models."
+    demo_mode: "Demo (offline): a synthetic world called Kelvari; I can only research these topics:"
     topic_line: "  - {title} — e.g. \"{example}\""
-    modes_title: "Two ways to ask:"
-    qa_line: "  1. Q&A — ask a question; I search, read and answer with every sentence citing a page. e.g. \"{example}\""
-    research_line: "  2. Research — I ask a few questions, show acceptance criteria (/approve), research on my own, and audit the report. e.g. \"{example}\""
-    limits: "Limits: Q&A up to {qa_searches} searches; Research up to {searches} searches and {fetches} pages in {minutes} minutes. Every run ends COMPLETE or PARTIAL, with what I could not establish."
-    wont: "I won't: browse with no question, help with harmful requests, read paywalled or login pages, or answer from memory — no page, no claim."
-    commands: "/qa <question> · /research [question] · /done · /approve · ctrl+x cancels a run · /help"
   # routed: llm.roles via RoleModelRouter (real models); fixture: the
   # deterministic reference model over the fixture world (profiles/demo.yaml).
   model_backend: routed
@@ -163,7 +168,6 @@ research_agent:
     no_search_key: >-
       `tavily_api_key` is not set: web search uses DuckDuckGo only (free,
       best effort; no fallback when it finds nothing).
-    search_usage: "Tavily this month: {used} / {quota} searches (free tier; cached repeats are free)."
 
   # The conversational slash commands (typed as /<name>).
   command_names:
@@ -204,6 +208,8 @@ research_agent:
     history_empty: No archived runs yet.
     unknown_run: "No archived run '{run_id}'."
     plan_failed: "The plan could not be validated: {problems}"
+    run_note: "Research run {run_id} finished {status}, on: {topic}. It can be opened with /show {run_id}."
+    scope_failed: "Could not continue: {error}. Nothing was lost; ask again, or start over with /research <question>."
     brief_ready: "The Scope Brief is ready (no acceptance criteria: the rubric is withheld). /approve starts the run."
 
   scoping:
@@ -222,6 +228,8 @@ research_agent:
       - '^\s*(?:tell me (?:about|everything)|what about)\b'
     # A message that asks for a research *run* rather than an answer, even
     # when it names no specialised kind: it becomes a `general` Research scope.
+    quick_reason: "a plain question is answered directly; /research starts a full research run"
+    rule_gate_min_cue_hits: 2
     research_cues: [research, investigate, deep dive, in-depth, report on, study of, analyse, analyze]
     # The reframe menu: one line per mode, each with a question that works.
     reframe_options:
@@ -256,7 +264,14 @@ research_agent:
     any_recency_words: [any, none, no limit]
     # Answers that decline an optional item: the Brief keeps its default.
     none_answers: [any, none, no preference, skip, "n/a", nothing]
+    skipped_answer: "n/a"
     primary_sources_phrase: primary
+    # What picks a size in the "how big" answer; "N pages" sets the page count itself.
+    depth_words:
+      small: [small, short, brief, quick, few, concise]
+      medium: [medium, moderate, standard, normal]
+      large: [large, big, deep, detailed, thorough, extensive, comprehensive, full]
+    pages_pattern: '(\d+)\s*(?:pages?|sources?)'
 
   rubric:
     templates_path: src/research_agent/rubric/templates.yaml
@@ -275,6 +290,23 @@ research_agent:
     max_gap_fill_rounds: 1
     concurrency: 2
 
+  # How big a run is, chosen in the interview ("small", "medium", "large" or "N pages"); small
+  # when unanswered. Each budget is lowered to the ceiling above if it asks for more. The report
+  # shows `report_entries` ledger entries, written within `report_max_tokens`.
+  depths:
+    small:
+      budget: {max_searches: 3, max_fetches: 6, max_tokens: 60000, max_seconds: 300, max_rounds: 1, max_dag_nodes: 2, max_gap_fill_rounds: 0, concurrency: 2}
+      report_entries: 12
+      report_max_tokens: 3072
+    medium:
+      budget: {max_searches: 5, max_fetches: 12, max_tokens: 120000, max_seconds: 600, max_rounds: 2, max_dag_nodes: 4, max_gap_fill_rounds: 1, concurrency: 2}
+      report_entries: 28
+      report_max_tokens: 5120
+    large:
+      budget: {max_searches: 8, max_fetches: 24, max_tokens: 200000, max_seconds: 900, max_rounds: 3, max_dag_nodes: 8, max_gap_fill_rounds: 1, concurrency: 2}
+      report_entries: 60
+      report_max_tokens: 8192
+
   # Q&A: a quick cited answer, no interview. Three searches at most (the
   # router asks DuckDuckGo first, Tavily only for news/time-bounded
   # questions or when DuckDuckGo finds nothing), one follow-up round.
@@ -291,6 +323,7 @@ research_agent:
 
   planning:
     max_queries_per_node: 1
+    node_id_prefix: Q
 
   # Deterministic coverage matching: stop rules, gap analysis, audit checks.
   matching:
@@ -315,10 +348,31 @@ research_agent:
       news: [announced, launched, released, approved, registry, raised]
       important: [announced, launched, released, approved]
 
+  calls:
+    # The roles run on a reasoning model: its hidden reasoning counts against the cap,
+    # so the default 3000 tokens can leave an empty answer on a long page.
+    role_max_tokens:
+      interviewer: 4096
+      planner: 6144
+      extractor: 8192
+      researcher: 8192
+      reflector: 4096
+    truncation_retries: 1
+    truncation_retry_factor: 2
+    # A stalled call is cancelled after this many seconds and retried `timeout_retries` times.
+    role_timeout_seconds:
+      default: 60
+      planner: 90
+      extractor: 90
+      researcher: 90
+      synthesizer: 120
+    timeout_retries: 1
+
   research:
     max_results_per_search: 5
     max_fetches_per_node: 4
     max_claims_per_page: 4
+    extractor_page_chars: 40000
     # Sources whose host contains one of these count as primary.
     primary_source_markers: [regulator, lab, uni, safety-board, teardowns]
     # A search query or fetch URL must match one of these to leave the process.
@@ -326,7 +380,12 @@ research_agent:
     outbound_deny_patterns: ['(?i)\bcollect\.', '(?i)[?&](?:q|d|data|log)=']
     authority_rank: untrusted_content
     recency_rejection: "outside the approved {days}-day recency window (published {date})"
+    undated_policy: verify_on_page
+    undated_rejection: "no readable publication date (got '{date}'), so it cannot be shown to fall inside the {days}-day window"
     news_window_days: 31
+    # Kinds of source, by host suffix: shown with their label and fetched after the rest.
+    source_labels:
+      press release: [prnewswire.com, businesswire.com, globenewswire.com, accesswire.com, einpresswire.com]
     news_topic: news
     quota_stop: "search quota for this month is used up (it resets on the 1st)"
 
@@ -340,15 +399,142 @@ research_agent:
     entry_id_prefix: E
     templates_path: src/research_agent/synthesis/report_templates.yaml
 
+  # The hosted injection model behind the phrase check on fetched pages. A phrase hit is dropped
+  # only if the model agrees (score >= threshold); scan_all also scores pages with no phrase hit.
+  injection_model:
+    threshold: 0.5
+    scan_all: false
+    window_chars: 2000
+    max_windows: 4
+
+  # Fine-tuned BERT-family classifier in front of the LLM scope gate. Train it with
+  # `make train-gate ra`, publish it, set `model`, then turn `features.gate_encoder` on.
+  gate_encoder:
+    model: ""
+    local_model_dir: local_models/gate_classifier/ra-gate
+    download_if_missing: true
+    min_confidence: 0.80
+    min_margin: 0.25
+    training_data_path: src/research_agent/scoping/gate_training.yaml
+
+  # The front door. A plain question is answered directly (no scope, no plan, no audit
+  # pipeline); only a research request starts a scope. Rules first, then the encoder above,
+  # then the LLM for what the encoder is unsure of. Anything left is answered directly.
+  intent_router:
+    research_cue_min_hits: 1
+    # No training: a message is compared with the labelled examples the scope gate already ships
+    # (scoping/gate_training.yaml) and the nearest 7 vote. On those examples, leave-one-out: 91%
+    # right overall, and 98% right on the 83% of messages that clear 0.7; the rest go to the LLM.
+    exemplars_path: src/research_agent/scoping/gate_training.yaml
+    neighbours: 7
+    min_confidence: 0.7
+    encoder_answer_labels: [qa, answer]
+    llm_fallback: true
+
+  # The direct-answer path: a ReAct loop (reason -> act -> reason) with the tools below. The
+  # model answers from what it knows and calls a tool when it needs more; the loop ends at the
+  # first budget cap, and says which.
+  answer:
+    role: answerer
+    budget:
+      max_steps: 6
+      max_tool_calls: 4
+      max_total_tokens: 30000
+      max_seconds: 120
+    call_timeout_seconds: 45
+    max_tokens: 2048
+    temperature: 0.2
+    search_max_results: 5
+    snippet_max_chars: 1200
+    fetch_max_chars: 6000
+    date_format: "%A, %d %B %Y, %H:%M %Z"
+    context:
+      history_turns: 6
+      recall_scan: 50
+      recall_limit: 3
+      min_word_chars: 4
+    grounding:
+      entity_pattern: "\\b(?:[A-Z][\\w'-]+\\s+)+[A-Z][\\w'-]+\\b"
+    weather:
+      geocode_url: https://geocoding-api.open-meteo.com/v1/search
+      forecast_url: https://api.open-meteo.com/v1/forecast
+      timeout_seconds: 15
+      geocode_results: 1
+      forecast_days: 3
+      current_fields: [temperature_2m, apparent_temperature, relative_humidity_2m, precipitation, wind_speed_10m, weather_code]
+      daily_fields: [weather_code, temperature_2m_max, temperature_2m_min, precipitation_probability_max]
+      codes:
+        0: clear sky
+        1: mainly clear
+        2: partly cloudy
+        3: overcast
+        45: fog
+        48: rime fog
+        51: light drizzle
+        53: drizzle
+        55: dense drizzle
+        61: light rain
+        63: rain
+        65: heavy rain
+        71: light snow
+        73: snow
+        75: heavy snow
+        80: rain showers
+        81: heavy rain showers
+        82: violent rain showers
+        95: thunderstorm
+        96: thunderstorm with hail
+        99: severe thunderstorm with hail
+      unknown_code: unclassified conditions
+    messages:
+      cap_reached: "(I stopped at my {counter} limit, so this is the best answer from what I found.)"
+      failed: "Could not answer: {cause} (step {step}, {seconds:.0f}s). Try again, or use /research."
+      model_timeout: "the model did not respond within {seconds:.0f}s"
+      empty: "I could not form an answer. Try rephrasing, or use /research for a fuller run."
+      unknown_tool: "There is no tool called '{tool}'."
+      bad_arguments: "The arguments for '{tool}' were not valid."
+      tool_failed: "'{tool}' failed: {error}"
+      tool_call: "{tool}({arguments})"
+      section_arguments: Arguments
+      section_result: Result
+      section_answer: Answer
+      answered: "Answered · {steps} step(s) · {calls} tool call(s) · {tokens} tokens · {seconds:.1f}s"
+      no_results: "No results."
+      sources_heading: "Sources:"
+      retrieved: "Retrieved {when}"
+      published: "Published {date}"
+      grounded_heading: "Checked against the sources · nothing unsupported ({supported} of {claims} claims confirmed)"
+      ungrounded_heading: "Checked against the sources · {removed} unsupported detail(s) removed"
+      section_unsupported: Not supported by the sources
+      filtered_note: "(I removed details I could not verify against the sources.)"
+      session_state_heading: "# Session state"
+      state_line: "- {key}: {value}"
+      earlier_heading: "# Earlier research in this workspace (pointers, not facts)"
+      earlier_line: "- {run_id} · {status} · {topic} (open it with /show {run_id})"
+      context_heading: "Context · {turns} turn(s) · {state} state item(s) · {runs} earlier run(s) · ~{tokens} tokens"
+      request_heading: "LLM request · {purpose}"
+      response_heading: "LLM response · {purpose}"
+      withheld: "I could not verify an answer from the sources I found. Try again, or use /research for a fuller run."
+
+  # The reply shows numbered sources and one finding per line; the archive keeps evidence ids.
+  reader_view: true
+
   audit:
     # When true, `judge` must resolve to a different model than `synthesizer`.
     independent_judge: true
     # lexical: deterministic (the fixture/eval posture); platform: the
     # configured NLI cross-encoder, for live runs.
-    entailment_model: lexical
+    entailment_model: platform
     entity_pattern: '\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b'
+    # Verdict: the weighted score (criterion weights in rubric/templates.yaml) needs
+    # `pass_threshold` for a PASS; below `partial_threshold` it FAILs; between, PARTIAL.
+    # A failed must-pass criterion is a veto: never a PASS, whatever the score.
+    pass_threshold: 0.8
+    partial_threshold: 0.5
 
   archive:
+    # Off: the episodic index row is the run pointer. On: also file it as a semantic fact.
+    semantic_pointer: false
     run_id_prefix: run
     history_limit: 20
     list_headers: [run, status, archetype, topic, unmet, intact]
@@ -383,31 +569,49 @@ research_agent:
       status_prefix: "Status: "
 
   tui:
-    panel_title: Scope & run
-    panel_width: 44
     stage_labels:
       scope_gate: SCOPE GATE
+      run_started: RUN
+      llm_interviewer: THINKING · INTERVIEWER
+      llm_planner: THINKING · PLANNER
+      llm_researcher: THINKING · READING A PAGE
+      llm_extractor: THINKING · READING A PAGE
+      llm_reflector: THINKING · REFLECTING
+      llm_synthesizer: THINKING · WRITING THE REPORT
+      llm_judge: THINKING · QA CHECK
       interview_turn: INTERVIEW
-      coverage_update: COVERAGE
-      close_scoping: SCOPE BRIEF
+      coverage_update: WAIVER
       rubric_generate: RUBRIC
-      rubric_frozen: CONTRACT FROZEN
       plan_dag: PLAN DAG
       plan_validated: PLAN VALIDATED
-      wave_start: WAVE
+      wave_start: RESEARCH BATCH
       worker_search: SEARCH
       worker_fetch: FETCH
       content_defense: CONTENT DEFENCE
       extract_claims: EXTRACT CLAIMS
       ledger_append: LEDGER
       span_rejected: SPAN REJECTED
-      reflect_gap_analysis: REFLECT · GAPS
+      reflect_gap_analysis: REFLECT
       budget_tick: BUDGET
+      page_result: PAGE
+      wave_summary: BATCH RESULT
       synthesize: SYNTHESIZE
-      goldfish_audit: GOLDFISH AUDIT
+      goldfish_audit: INDEPENDENT QA CHECK
       gap_fill: GAP FILL
       finalize: FINAL STATUS
-      archive: ARCHIVE
+    card_groups:
+      scope_gate: violet
+      run_started: blue
+      interview_turn: violet
+      coverage_update: violet
+      rubric_generate: violet
+      wave_start: blue
+      page_result: blue
+      wave_summary: blue
+      reflect_gap_analysis: blue
+      synthesize: blue
+      goldfish_audit: amber
+      finalize: amber
     command_help:
       qa: "Quick cited answer from a few web searches, no interview (/qa <question>)"
       research: "Full research run on a question — interview, criteria, audit (/research [question]; bare = the last question)"
@@ -419,8 +623,234 @@ research_agent:
       history: "Archived research runs (the episodic run index)"
       show: "Show an archived run's report"
     history_headers: [run, status, archetype, topic, unmet]
-    panel_labels:
-      checklist: Checklist
-      run: Run
-      ledger: ledger entries
-      rejected: rejected sources
+    clip_chars: 110
+    budget_headline: [searches, fetches]
+    actions:
+      SCOPING:
+        - {label: "Done interviewing", command: done}
+      RUBRIC_REVIEW:
+        - {label: "Approve and run", command: approve}
+      RUNNING:
+        - {label: "Cancel run", command: cancel, during_turn: true}
+    phase_colors:
+      SCOPING: "bold #C792EA"
+      RUBRIC_REVIEW: "bold #C792EA"
+      RUNNING: "bold green"
+      AUDITING: "bold #FFB454"
+      DELIVERED: "bold #4FC3F7"
+      CANCELLED: "bold red"
+      FAILED: "bold red"
+    status_line_styles:
+      coverage: yellow
+      evidence: cyan
+      budget: dim
+    # Rejection and gap codes, in words.
+    reasons:
+      recency: results older than the approved time window
+      undated: results with no readable publication date
+      dead_link: dead links
+      blocked: pages that block or paywall readers
+      empty: pages with no readable text
+      error: pages that failed to load
+      injection: pages carrying hidden instructions (dropped)
+      unreadable: pages the model could not read
+      other: other reasons
+      EMPTY_SPAN: the quoted passage was empty
+      SOURCE_UNKNOWN: the page was not one the run fetched
+      SOURCE_HASH_MISMATCH: the page changed after it was read
+      SPAN_NOT_VERBATIM: the quote does not appear word-for-word on the page
+    # Every sentence a card or the status block says. Placeholders are filled by the card.
+    cards:
+      mode.qa: quick answer
+      mode.research: full research
+      classifier.rule: "a deterministic rule"
+      classifier.encoder: "the intent classifier ({model})"
+      classifier.llm: "the LLM ({model})"
+      scope_gate.refused: "Request declined · decided by {classifier}"
+      scope_gate.reframe: "Needs a clearer goal · decided by {classifier}"
+      scope_gate.scopable: "Scope: {mode} · {kind} · decided by {classifier}"
+      scope_gate.topic: "Topic: {topic}"
+      scope_gate.window: "Time window: last {days} days"
+      scope_gate.section.understood: What was understood
+      scope_gate.section.classifier: How it was decided
+      interview.heading: "Interview · turn {turn} · asking about {item}"
+      interview.no_item: wrap-up
+      interview.guard: "Interviewer went too long without challenging an answer · asking again with a challenge"
+      interview.section.asked: Question asked
+      interview.section.learned: Understood from your last answer
+      interview.section.skipped: Left out as not relevant to this request
+      interview.skipped_line: "{item} — {reason}"
+      interview.no_reason: not needed
+      interview.section.challenges: Challenges raised
+      interview.section.next: What happens next
+      interview.outcome.ask: Waiting for your answer.
+      interview.outcome.propose_done: "Everything required is covered · waiting for /done to confirm."
+      interview.outcome.turn_cap: "Turn limit reached · /waive an open item or /done to finish."
+      interview.overruled: The model proposed finishing too early; required items are still open.
+      waiver.heading: "Waived: {items}"
+      waiver.nothing: nothing
+      rubric.heading: "Acceptance criteria · {count} criteria ({must} must-pass)"
+      rubric.edited: "Acceptance criteria edited · {count} criteria ({must} must-pass)"
+      rubric.section.edit: Your edit
+      rubric.section.criteria: Criteria
+      rubric.section.unknowns: Left open on purpose (known unknowns)
+      rubric.line: "{id} · {text} — {how}, needs ≥ {threshold}, weight {weight}, {gate}"
+      rubric.must: must-pass
+      rubric.soft: soft
+      check.subject_criterion_coverage: every option checked against every criterion
+      check.criterion_evidence: cited evidence per criterion
+      check.distinct_subjects: enough distinct subjects named
+      check.distinct_domains: enough independent websites
+      check.claim_verdict: claim verdict backed by sources
+      check.concept_covered: concept explained from sources
+      check.citations_per_claim: every claim cited
+      check.links_resolved: every cited link resolved
+      check.blocked_domains_absent: no blocked websites cited
+      check.primary_sources_cited: primary sources cited
+      check.recency_window: sources inside the time window
+      check.known_unknown_acknowledged: open question acknowledged in the report
+      check.counter_evidence_reported: counter-evidence reported
+      check.findings_present: at least one cited finding
+      check.claims_entailed: claims supported by their quoted passages
+      check.tradeoffs_stated: trade-offs stated (model-judged)
+      check.explanation_accuracy: explanation accurate (model-judged)
+      check.user_item: your own criterion (model-judged)
+      llm.heading: "{role} · {tokens} tokens · {seconds}s"
+      llm.section.model: Model
+      llm.section.response: Response
+      llm.section.finish: Finish reason
+      llm.empty: (empty)
+      llm.timeout_retry: "{role} did not respond within {seconds}s · retrying"
+      llm.timeout_final: "{role} did not respond within {seconds}s · giving up"
+      llm.error: "{role} call failed · {error}"
+      llm.cut_off: "Cut off at the output limit before the answer was written (a reasoning model may have spent the limit thinking)."
+      batch.heading: "Research round {round} · batch {batch} · {count} sub-question(s) in parallel"
+      batch.searches: "searching: {queries}"
+      batch.serves: "serves: {criteria}"
+      batch.blocked: "{nodes} (waiting for the questions they depend on)"
+      batch.concurrency: "Up to {n} at a time"
+      batch.section.questions: Sub-questions
+      batch.section.waiting: Held back
+      batch.section.parallel: Parallelism
+      search.heading: "{node} · \"{query}\""
+      search.provider: "Provider: {provider}"
+      search.unknown_provider: unknown
+      search.window: "Time window: {window}"
+      search.hits: "{n} result(s)"
+      search.section.search: Search
+      search.section.results: Results (site · date)
+      search.section.note: Note
+      search.summary_ignored: The provider's own summary was ignored (untrusted).
+      page.heading: "{host} · {kept} fact(s) kept"
+      page.evidence: "{id} · {claim}"
+      page.rejected: "{why} · “{span}” — {nearest}"
+      stop.undated: "no evidence admitted: all {count} result(s) had no readable publication date, so none could be checked against the recency window"
+      stop.unreadable: "no evidence admitted: none of the {count} page(s) could be read, so searching more cannot help"
+      run.started: "Research is running · /cancel or the Cancel button stops it"
+      node.failed: "{node} · research stopped by an error"
+      node.section.error: Error
+      page.unreadable: "{host} · could not be read"
+      page.unreadable_cut_off: "The model ran out of output budget before it could write the claims for this page."
+      page.unreadable_error: "The model's answer could not be used ({error})."
+      page.section.why: Why
+      page.nothing: The extractor found no claim on this page.
+      page.size: "{chars} characters{via}"
+      page.via_reader: " · read through the page reader"
+      page.section.kept: "Evidence kept (quoted word-for-word from the page)"
+      page.section.rejected: Claims refused
+      page.section.note: Note
+      page.section.for: Researching
+      page.section.page: Page
+      batch_result.heading: "Batch {batch} result · {pages} page(s) read · {evidence} evidence item(s) collected"
+      batch_result.per_question: "{id} · {question} → {n} evidence item(s)"
+      batch_result.section.by_question: Evidence per sub-question
+      batch_result.section.sites: Websites with evidence
+      batch_result.section.refused: Results not used
+      batch_result.section.meaning: What “evidence” means
+      batch_result.glossary: "A claim quoted word-for-word from a page that was read. Only evidence can be cited in the report."
+      reflect.continue: "Reflect · round {round} · {gaps} gap(s) · researching further"
+      reflect.stop: "Reflect · {gaps} gap(s) · stopping"
+      reflect.question: "Does the evidence collected so far meet every acceptance criterion, and is more research worthwhile?"
+      reflect.no_gaps: Every criterion is met by the evidence so far.
+      reflect.section.question: Reflection question
+      reflect.section.gaps: Gaps (criteria not yet met)
+      reflect.section.decision: Decision
+      reflect.section.follow_ups: Follow-up questions
+      synthesize.heading: "Writing the report · {citations} citation(s) · {status}"
+      synthesize.evidence: "{n} evidence item(s) from {sites} website(s)"
+      synthesize.questions: "{answered} of {asked} sub-question(s) produced evidence"
+      synthesize.intent: Write the report only from the collected evidence, citing each claim; state plainly what could not be established.
+      synthesize.removed: "{n} citation(s) naming evidence that does not exist were removed"
+      synthesize.section.inputs: Drawing on
+      synthesize.section.intent: Intent
+      synthesize.section.sections: Sections
+      synthesize.section.unmet: Criteria still unmet (reported as limits)
+      synthesize.section.removed: Corrections
+      qa.heading: "Independent QA check · {passed}/{total} criteria met · score {score} · {outcome}"
+      qa.line: "{mark} {id} · {text} — score {score} (needs {threshold}) · weight {weight} · {gate}"
+      qa.not_applicable: "– {id} · {text} — nothing to check, so it earns no credit"
+      qa.mark.pass: ✓
+      qa.mark.fail: ✗
+      qa.score: "Weighted score {score} (pass at {pass_at}, partial at {partial_at})"
+      qa.vetoed: "Must-pass criteria failed: {items} · caps the verdict at partial"
+      qa.no_veto: All must-pass criteria met
+      qa.outcome.PASS: "Verdict: PASS · the report meets the contract."
+      qa.outcome.PARTIAL: "Verdict: PARTIAL · delivered with the unmet criteria stated."
+      qa.outcome.FAIL: "Verdict: FAIL · the score is below the partial threshold."
+      qa.how: "A second model that sees only the report and its evidence, never the run's reasoning, scores each criterion."
+      qa.judge: "Judge: {model} · {independent}"
+      qa.independent.True: independent of the writer
+      qa.independent.False: not independent of the writer
+      qa.honest.True: The report's stated limits match the check.
+      qa.honest.False: The report's stated limits do not match the check.
+      qa.section.criteria: Criteria
+      qa.section.to_pass: What would make this COMPLETE
+      qa.gap: "The weighted score {score} must reach {pass_at}."
+      qa.section.verdict: Verdict
+      qa.section.how: How this check works
+      final.COMPLETE: "Research complete · {evidence} evidence item(s) from {sources} website(s)"
+      final.PARTIAL: "Research finished with gaps · {evidence} evidence item(s) from {sources} website(s)"
+      final.FAILED: "Research failed"
+      final.CANCELLED: "Research cancelled"
+      final.found: "{evidence} evidence item(s) from {sources} website(s)"
+      final.citations: "{n} citation(s) in the report"
+      final.criteria: "{passed} of {total} criteria met"
+      final.qa: "QA score {score} · {outcome}"
+      final.contract_intact: The agreed contract was not changed during the run.
+      final.contract_changed: The agreed contract changed during the run.
+      final.rejected: "{n} source(s) rejected"
+      final.blocked: "{n} outbound request(s) blocked"
+      final.meter: "{name}: {spent} of {cap}"
+      final.saved: "Saved as {run} · /show {run} to read it again"
+      final.no_reason: Finished normally.
+      final.section.why: Why it ended
+      final.section.found: What was found
+      final.section.quality: Quality check
+      final.section.integrity: Safety and integrity
+      final.section.problems: Problems during the run
+      final.section.budget: Budget used
+      final.section.cost: Model cost by role
+      final.section.saved: Saved
+      budget.at_start: at the start
+      plan.unavailable: "Planning stopped: the model did not respond ({error}). Nothing was researched; try again."
+      budget.after_batch: "after batch {batch}"
+      budget.heading: "Budget · {label} · {meters}"
+      budget.meter: "{name} {spent}/{cap}"
+      budget.line: "{name}: {spent} of {cap}"
+      budget.section.all: Everything counted
+      budget.section.limit: The limit
+      budget.cap_reached: "Limit reached · {reason}"
+      budget.cap_note: "Calls already in flight finish; no new ones start."
+      budget.name.searches: searches
+      budget.name.fetches: pages read
+      budget.name.tokens: model tokens
+      budget.name.seconds: seconds
+      budget.name.rounds: research rounds
+      budget.name.gap_fill_rounds: gap-filling rounds
+      status.phase: "{phase}"
+      status.coverage: "Scope coverage {covered}/{total} covered · {waived} waived"
+      status.evidence: "Evidence {n} item(s) · {rejected} source(s) rejected"
+      status.budget: "Budget {meters}"
+      status.meter: "{name} {spent}/{cap}"
+      status.detail.checklist: "Checklist"
+      status.detail.budget: "Budget"
