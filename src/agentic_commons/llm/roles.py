@@ -11,10 +11,13 @@ This is not the cascade. The cascade (`cascade.py`) asks which tier is
 good enough for one request; routing decides who is asked at all.
 """
 
+import json
 from collections.abc import Callable, Mapping
+from typing import Any
 
 from agentic_commons.config.settings import ProviderName, RoleModelSettings
 from agentic_commons.llm.client import LLMClient, create_pinned_llm_client
+from agentic_commons.llm.types import CompletionRequest, CompletionResult, HealthCheckResult
 
 ClientFactory = Callable[[ProviderName, str], LLMClient]
 
@@ -29,6 +32,33 @@ class RoleCollisionError(ValueError):
 
 def _pinned(provider: ProviderName, model: str) -> LLMClient:
     return create_pinned_llm_client(provider, model)
+
+
+class RequestExtras(LLMClient):
+    """A client whose every request carries a role's provider-specific fields (Decorator).
+
+    Two roles on one model can differ in how they ask — the interviewer with reasoning off,
+    the answerer with it on — without a second adapter or a second connection pool.
+    """
+
+    def __init__(self, client: LLMClient, extra_body: Mapping[str, Any]) -> None:
+        self._client = client
+        self._extra = dict(extra_body)
+
+    async def complete(self, request: CompletionRequest) -> CompletionResult:
+        extra = {**self._extra, **request.extra_body}
+        return await self._client.complete(request.model_copy(update={"extra_body": extra}))
+
+    async def health_check(self) -> HealthCheckResult:
+        return await self._client.health_check()
+
+    @property
+    def model(self) -> str:
+        return self._client.model
+
+    @property
+    def tier(self) -> str:
+        return self._client.tier
 
 
 class RoleModelRouter:
@@ -51,11 +81,16 @@ class RoleModelRouter:
         return f"{spec.provider}:{spec.model}"
 
     def client_for(self, role: str) -> LLMClient:
-        """The client for a role, shared with every role on the same model."""
-        key = self.model_key(role)
+        """The client for a role, shared with every role on the same model and request fields."""
+        spec = self._spec(role)
+        model = self.model_key(role)
+        if model not in self._clients:
+            self._clients[model] = self._factory(spec.provider, spec.model)
+        if not spec.extra_body:
+            return self._clients[model]
+        key = f"{model}#{json.dumps(spec.extra_body, sort_keys=True)}"
         if key not in self._clients:
-            spec = self._spec(role)
-            self._clients[key] = self._factory(spec.provider, spec.model)
+            self._clients[key] = RequestExtras(self._clients[model], spec.extra_body)
         return self._clients[key]
 
     def require_distinct(self, first: str, second: str) -> None:

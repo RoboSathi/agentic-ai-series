@@ -6,7 +6,6 @@ import pytest
 
 from agentic_commons.intent.types import IntentCandidate
 from research_agent.config import get_agent_settings
-from research_agent.config.settings import EncoderGateSettings
 from research_agent.domain.scope import GateVerdict, Mode
 from research_agent.scoping.encoder_gate import LABELS, EncoderGateClassifier
 from research_agent.scoping.gate import LlmArchetypeClassifier
@@ -15,6 +14,9 @@ from research_agent.scoping.gate_training import (
     load_examples,
     stratified_split,
 )
+
+# The gate reads the research agent's own settings.
+pytestmark = pytest.mark.usefixtures("ra_config")
 
 
 class _Backend:
@@ -44,17 +46,30 @@ class _Llm(LlmArchetypeClassifier):
 
 def _gate(backend: _Backend) -> tuple[EncoderGateClassifier, _Llm]:
     llm = _Llm()
-    return EncoderGateClassifier(backend, llm, EncoderGateSettings()), llm  # type: ignore[arg-type]
+    return EncoderGateClassifier(backend, llm, get_agent_settings().gate_encoder), llm  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
 async def test_a_confident_unambiguous_label_is_answered_without_the_llm() -> None:
-    gate, llm = _gate(_Backend(("qa", 0.94), ("general", 0.03)))
+    gate, llm = _gate(_Backend(("general", 0.90), ("explainer", 0.05), ("qa", 0.05)))
     verdict = await gate.classify("Important AI news in the last 1 month", "research")
-    assert (verdict.decision, verdict.mode, verdict.archetype) == ("scopable", "qa", "qa")
+    assert (verdict.decision, verdict.mode, verdict.archetype) == (
+        "scopable",
+        "research",
+        "general",
+    )
     assert verdict.recent_days == 30  # read by rule, not by the encoder
     assert verdict.topic == "Important AI news in the last 1 month"
-    assert verdict.source == "encoder" and "p=0.94" in verdict.reason
+    assert verdict.source == "encoder" and "(general)" in verdict.reason
+    assert llm.asked == 0
+
+
+@pytest.mark.asyncio
+async def test_under_research_the_quick_answer_label_is_out_of_the_running() -> None:
+    """`/research` settled that it is research; the encoder only decides which kind."""
+    gate, llm = _gate(_Backend(("qa", 0.94), ("general", 0.05), ("explainer", 0.005)))
+    verdict = await gate.classify("Important AI news in the last 1 month", "research")
+    assert (verdict.mode, verdict.archetype) == ("research", "general")
     assert llm.asked == 0
 
 
@@ -71,8 +86,7 @@ async def test_a_research_label_becomes_a_research_scope() -> None:
 @pytest.mark.parametrize(
     "scores",
     [
-        (("qa", 0.55), ("general", 0.30)),  # not confident enough
-        (("qa", 0.82), ("general", 0.75)),  # confident but ambiguous (margin too small)
+        (("general", 0.55), ("explainer", 0.40)),  # not confident enough among research kinds
         (("not_a_label", 0.99),),  # a label the gate does not know
         (),
     ],

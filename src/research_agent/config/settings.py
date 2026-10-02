@@ -50,7 +50,24 @@ class MessageSettings(BaseModel):
     # Added to a FAILED run in demo mode: the question is outside Kelvari.
     demo_off_world: str
     challenge_prefix: str
+    # `{plan}`: the draft plan, one "  - step" line per sub-question.
     propose_done: str
+    # One step of a draft plan built from the interview's answers: `{part}`.
+    plan_step: str
+    # The last line of a turn that waits on the user: what to do next. Each starts with
+    # `next_step_marker`, which the console colours.
+    next_step_marker: str
+    next_step_proposed: str
+    next_step_rubric: str
+    # The menu offered beside them.
+    done_choice: str
+    approve_choice: str
+    # The rubric as the user reviews it: `{id}`, `{gate}`, `{text}`, `{kind}`, `{check}`,
+    # `{threshold}`, `{weight}`, `{origin}`; `{gate}` is `rubric_must` or `rubric_soft`.
+    rubric_heading: str
+    rubric_line: str
+    rubric_must: str
+    rubric_soft: str
     turn_cap: str
     waived: str
     finish_scoping_first: str
@@ -147,6 +164,11 @@ class ScopingSettings(BaseModel):
     # Words that pick a size, and the pattern for "N pages".
     depth_words: dict[Depth, list[str]]
     pages_pattern: str
+    # The item whose answer becomes the draft plan when the interviewer proposes none.
+    plan_item: str
+    # A reply that agrees to what was proposed ("yes", "looks good"): after the draft plan it
+    # closes the interview, in rubric review it approves. Matched whole, case-insensitively.
+    affirmations: list[str]
 
     @property
     def resolved_checklists_path(self) -> Path:
@@ -255,10 +277,39 @@ class SynthesisSettings(BaseModel):
     citation_pattern: str
     entry_id_prefix: str
     templates_path: str
+    # The citation guard's rewrites of unsupported sentences before a sentence is removed
+    # (0: remove without asking).
+    max_guard_rewrites: int = Field(ge=0)
 
     @property
     def resolved_templates_path(self) -> Path:
         return resolve_path(self.templates_path)
+
+
+class ReaderViewWording(BaseModel):
+    """What the reader's view of a report says that no model wrote."""
+
+    # `{status}`, `{count}`, `{noun}`.
+    status_line: str
+    source_singular: str
+    source_plural: str
+    no_evidence: str
+    sources_heading: str
+    # `{number}`, `{host}`, `{label}`, `{url}`, `{date}`; `{label}` is " (press release)" or "".
+    source_line: str
+    unknown_date: str
+    not_established_heading: str
+    # `{text}`, `{tried}`; `{note}`.
+    not_established_line: str
+    nothing_tried: str
+    stopped_early: str
+    # `{hosts}`, `{more}`; `{count}`.
+    not_read: str
+    more_hosts: str
+    max_not_read: int = Field(ge=1)
+    # A rejection code in words; anything unlisted reads `not_used`.
+    reasons: dict[str, str]
+    not_used: str
 
 
 class AuditSettings(BaseModel):
@@ -289,16 +340,11 @@ class InjectionModelSettings(BaseModel):
 
 
 class EncoderGateSettings(BaseModel):
-    """A fine-tuned BERT-family classifier in front of the LLM scope gate (as in CSA)."""
+    """The learned classifier in front of the LLM scope gate: when it may answer alone."""
 
-    # Empty: not trained yet. The feature stays off and the LLM gate answers.
-    model: str = ""
-    local_model_dir: str = "local_models/gate_classifier/ra-gate"
-    download_if_missing: bool = True
     # Below either bar the message goes to the LLM gate instead.
-    min_confidence: float = Field(default=0.80, ge=0.0, le=1.0)
-    min_margin: float = Field(default=0.25, ge=0.0, le=1.0)
-    training_data_path: str = "src/research_agent/scoping/gate_training.yaml"
+    min_confidence: float = Field(ge=0.0, le=1.0)
+    min_margin: float = Field(ge=0.0, le=1.0)
 
 
 class IntentRouterSettings(BaseModel):
@@ -346,36 +392,54 @@ class AnswerMessages(BaseModel):
     unknown_tool: str
     bad_arguments: str
     tool_failed: str
-    # `{tool}` and `{arguments}`: the heading of a tool-call card.
+    # One loop step's description beside its number: `{step}`, `{max}`.
+    loop_step_detail: str
+    # THOUGHT: `{calls}` the tools it chose, `{tokens}`, `{seconds}`.
+    thought_tools: str
+    thought_answer: str
+    # REVISE: `{claims}` the unsupported claims it was asked to fix, `{tokens}`, `{seconds}`.
+    revise_heading: str
+    # ACTION: `{tool}` and `{arguments}`.
     tool_call: str
-    section_arguments: str
-    section_result: str
-    section_answer: str
-    # `{steps}`, `{calls}`, `{tokens}`, `{seconds}`: the closing card's heading.
+    # OBSERVATION: `{tool}`, `{lines}`; or `{tool}`, `{error}`.
+    observation_heading: str
+    observation_failed: str
+    # ANSWER: `{steps}`, `{calls}`, `{tokens}`, `{seconds}`.
     answered: str
     no_results: str
     sources_heading: str
     # `{when}`: the moment a search or a page was retrieved; `{date}`: a hit's own publish date.
     retrieved: str
     published: str
-    # The grounding check's card: `{supported}`, `{claims}`, `{removed}`.
+    # REFLECT: `{tally}` the claim verdicts; `{removed}` the details taken out.
     grounded_heading: str
     ungrounded_heading: str
-    section_unsupported: str
+    # What happened to the answer, in one line.
+    outcome_unchanged: str
+    outcome_repaired: str
+    outcome_filtered: str
+    outcome_withheld: str
     # Appended when details were removed; and the whole reply when nothing could be verified.
     filtered_note: str
     withheld: str
-    # The context handed to the model: `{heading}` blocks in the system prompt, and the card.
+    # The context handed to the model, as system-prompt blocks.
     session_state_heading: str
     state_line: str
     earlier_heading: str
     # `{run_id}`, `{status}`, `{topic}`.
     earlier_line: str
-    # `{turns}`, `{state}`, `{runs}`, `{tokens}`.
-    context_heading: str
-    # `{purpose}`.
-    request_heading: str
-    response_heading: str
+    # The THOUGHT card's context lines: `{turns}`; `{runs}`.
+    context_turns: str
+    context_runs: str
+    # Tool messages: `{timezone}`; `{location}`; `{status}`; `{why}`.
+    unknown_timezone: str
+    no_place: str
+    page_unreadable: str
+    page_withheld: str
+    # The weather report: `{where}`, `{url}`, `{time}`; `{conditions}`; `{day}`.
+    weather_header: str
+    weather_now: str
+    weather_day: str
 
 
 class AnswerContextSettings(BaseModel):
@@ -388,6 +452,8 @@ class AnswerContextSettings(BaseModel):
     recall_limit: int = Field(ge=0)
     # Words shorter than this do not count when matching a question to an earlier run.
     min_word_chars: int = Field(ge=1)
+    # Words a question must share with an earlier run's topic for the run to be offered.
+    min_overlap: int = Field(ge=1)
 
 
 class WeatherSettings(BaseModel):
@@ -404,6 +470,8 @@ class WeatherSettings(BaseModel):
     # WMO weather interpretation codes, in words.
     codes: dict[int, str]
     unknown_code: str
+    # Each API field as the report words it ("temperature_2m_max" -> "high").
+    field_labels: dict[str, str] = Field(default_factory=dict)
 
 
 class AnswerGroundingSettings(BaseModel):
@@ -412,6 +480,12 @@ class AnswerGroundingSettings(BaseModel):
     # A name: two or more capitalised words in a row. One the tools never returned (and the
     # question did not contain) is invented, so its sentence is removed.
     entity_pattern: str
+    # A name is invented when more than this share of its words appears in no source.
+    name_unknown_share: float = Field(ge=0.0, lt=1.0)
+    # The answer's own "Sources:" block: cited URLs, not claims, so it is not checked.
+    sources_pattern: str
+    # Evidence lines handed to the rewrite for each refuted claim (the closest by shared words).
+    repair_evidence_per_claim: int = Field(ge=1)
 
 
 class AnswerSettings(BaseModel):
@@ -422,6 +496,10 @@ class AnswerSettings(BaseModel):
     # One model call may take this long; below the provider's own timeout, so a stalled call
     # fails here, named, instead of consuming the whole budget in silence.
     call_timeout_seconds: float = Field(gt=0)
+    # The grounding rewrite's own time limit: it is never squeezed to what the loop left.
+    repair_timeout_seconds: float = Field(gt=0)
+    # A step is not started with less time than this left; the loop answers with what it has.
+    min_call_seconds: float = Field(gt=0)
     # Output-token cap for one model response.
     max_tokens: int = Field(ge=1)
     temperature: float = Field(ge=0.0)
@@ -432,6 +510,8 @@ class AnswerSettings(BaseModel):
     fetch_max_chars: int = Field(ge=200)
     # strftime format for the date the prompt carries ("Today is ...").
     date_format: str
+    # strftime format of the clock tool's answer.
+    clock_format: str
     context: AnswerContextSettings
     grounding: AnswerGroundingSettings
     weather: WeatherSettings
@@ -484,6 +564,8 @@ class PanelSettings(BaseModel):
     status_line_styles: dict[str, str]
     # The budget counters named on a budget card's heading; the rest are in its expander.
     budget_headline: list[str]
+    # Counters the plan is meant to use up (rounds): reaching their cap draws no card.
+    quiet_budget_counters: list[str] = Field(default_factory=list)
 
 
 class ReferenceJudgeSettings(BaseModel):
@@ -561,12 +643,13 @@ class ResearchAgentSettings(YamlBackedSettings):
     synthesis: SynthesisSettings
     audit: AuditSettings
     injection_model: InjectionModelSettings = Field(default_factory=InjectionModelSettings)
-    gate_encoder: EncoderGateSettings = Field(default_factory=EncoderGateSettings)
+    gate_encoder: EncoderGateSettings
     intent_router: IntentRouterSettings
     answer: AnswerSettings
     # The reply shows numbered sources and one finding per line; the archived report keeps
     # the evidence ids. Off: the raw report text.
     reader_view: bool = True
+    reader_view_wording: ReaderViewWording
     archive: ArchiveSettings
     cancel: CancelSettings
     tui: PanelSettings

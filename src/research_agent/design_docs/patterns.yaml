@@ -10,7 +10,7 @@ patterns:
     where: graph/scoping_graph.py · await_user (durability/hitl.await_decision)
     notes: the interview and rubric review pause the durable graph until the user answers; /approve freezes the contract
   - pattern: planning
-    where: planning/planner.py + planning/dag_validation.py · plan_dag, plan_validated
+    where: planning/planner.py + planning/dag_validation.py · plan_dag (with its validation)
     notes: the planner decomposes the contract into a DAG of sub-questions, validated (acyclic, bounded, traced) before anything runs
   - pattern: fan_out_fan_in
     where: graph/run_graph.py · wave_start → research_node (Send per ready node) → wave_done

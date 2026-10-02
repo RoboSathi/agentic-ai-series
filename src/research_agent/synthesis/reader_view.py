@@ -21,21 +21,11 @@ import re
 from collections.abc import Collection, Mapping, Sequence
 from urllib.parse import urlparse
 
+from research_agent.config.settings import ReaderViewWording
 from research_agent.domain.report import Citation, Report
 
 _ADJACENT = r"(?:\s*{c})+"
 _LEAD = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
-_MAX_NOT_READ = 8
-
-_NOT_READ = {
-    "recency": "outside the date window",
-    "undated": "no readable date",
-    "blocked": "blocked or paywalled",
-    "dead_link": "not found",
-    "error": "could not be fetched",
-    "empty": "no readable text",
-    "injection": "flagged as unsafe",
-}
 
 
 def host_of(url: str) -> str:
@@ -57,6 +47,7 @@ def render_reader_view(
     *,
     citation_pattern: str,
     hidden_headings: Collection[str],
+    wording: ReaderViewWording,
     source_labels: Mapping[str, Sequence[str]] | None = None,
 ) -> str:
     """The report as text for a person; the archived report is unchanged."""
@@ -82,16 +73,20 @@ def render_reader_view(
         head = [] if len(bodies) == 1 else [f"## {section.heading}"]
         blocks.append("\n".join([*head, *(f"• {item}" for item in items)]))
 
-    lines = [f"# {report.title}", _status_line(report, len(numbers))]
+    lines = [f"# {report.title}", _status_line(report, len(numbers), wording)]
     if blocks:
         lines += ["", *("\n\n".join(blocks).splitlines())]
     else:
-        lines += ["", "No usable evidence was found."]
+        lines += ["", wording.no_evidence]
     if numbers:
-        lines += ["", "## Sources", *_sources(numbers, cited, source_labels or {})]
-    lines += _not_established(report)
-    lines += _not_read(report)
-    return "\n".join(lines).strip()
+        lines += [
+            "",
+            wording.sources_heading,
+            *_sources(numbers, cited, source_labels or {}, wording),
+        ]
+    lines += _not_established(report, wording)
+    lines += _not_read(report, wording)
+    return "\n".join(line.rstrip() for line in lines).strip()
 
 
 def split_findings(body: str, pattern: re.Pattern[str]) -> list[str]:
@@ -137,38 +132,51 @@ def _with_numbers(text: str, pattern: re.Pattern[str], number) -> str:  # type: 
     return run.sub(replace, text).strip()
 
 
-def _status_line(report: Report, sources: int) -> str:
-    noun = "source" if sources == 1 else "sources"
-    return f"**Status:** {report.status} · {sources} {noun}"
+def _status_line(report: Report, sources: int, wording: ReaderViewWording) -> str:
+    noun = wording.source_singular if sources == 1 else wording.source_plural
+    return wording.status_line.format(status=report.status, count=sources, noun=noun)
 
 
 def _sources(
-    numbers: Mapping[str, int], cited: Mapping[str, Citation], labels: Mapping[str, Sequence[str]]
+    numbers: Mapping[str, int],
+    cited: Mapping[str, Citation],
+    labels: Mapping[str, Sequence[str]],
+    wording: ReaderViewWording,
 ) -> list[str]:
     retrieved = {c.url: c.retrieved_at.date().isoformat() for c in cited.values()}
     lines = []
     for url, n in sorted(numbers.items(), key=lambda item: item[1]):
         kind = label_for(url, labels)
-        suffix = f" ({kind})" if kind else ""
-        lines.append(f"[{n}] {host_of(url)}{suffix} — {url} — retrieved {retrieved.get(url, '?')}")
+        lines.append(
+            wording.source_line.format(
+                number=n,
+                host=host_of(url),
+                label=f" ({kind})" if kind else "",
+                url=url,
+                date=retrieved.get(url, wording.unknown_date),
+            )
+        )
     return lines
 
 
-def _not_established(report: Report) -> list[str]:
+def _not_established(report: Report, wording: ReaderViewWording) -> list[str]:
     lines = [
-        f"- {limit.text} Tried: {', '.join(limit.tried_queries) or 'nothing'}."
+        wording.not_established_line.format(
+            text=limit.text, tried=", ".join(limit.tried_queries) or wording.nothing_tried
+        )
         for limit in report.limits
     ]
-    lines += [f"- Stopped early: {note}." for note in report.budget_notes]
-    return ["", "## Not established", *lines] if lines else []
+    lines += [wording.stopped_early.format(note=note) for note in report.budget_notes]
+    return ["", wording.not_established_heading, *lines] if lines else []
 
 
-def _not_read(report: Report) -> list[str]:
+def _not_read(report: Report, wording: ReaderViewWording) -> list[str]:
     if not report.rejected_codes:
         return []
     by_host: dict[str, set[str]] = {}
     for url, code in report.rejected_codes.items():
-        by_host.setdefault(host_of(url), set()).add(_NOT_READ.get(code, "not used"))
+        by_host.setdefault(host_of(url), set()).add(wording.reasons.get(code, wording.not_used))
     shown = [f"{host} ({', '.join(sorted(why))})" for host, why in sorted(by_host.items())]
-    extra = f", +{len(shown) - _MAX_NOT_READ} more" if len(shown) > _MAX_NOT_READ else ""
-    return ["", f"**Not read:** {', '.join(shown[:_MAX_NOT_READ])}{extra}"]
+    cap = wording.max_not_read
+    more = wording.more_hosts.format(count=len(shown) - cap) if len(shown) > cap else ""
+    return ["", wording.not_read.format(hosts=", ".join(shown[:cap]), more=more)]

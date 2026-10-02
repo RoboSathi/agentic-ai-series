@@ -45,6 +45,8 @@ class ScopingState(BaseModel):
     asked_item_id: str = ""
     since_challenge: int = 0
     draft_plan: list[str] = Field(default_factory=list)
+    # The interviewer proposed to finish (with `draft_plan`): a "yes" now closes the interview.
+    proposed: bool = False
     user_input: str = ""
     reply: str = ""
     # Said before the next question (e.g. which items a waiver moved).

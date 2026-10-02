@@ -11,9 +11,9 @@ from typing import Any
 
 from agentic_commons.context.types import AssembledContext, Chunk, ContextFinding
 from agentic_commons.llm.types import CompletionRequest, Message
+from agentic_commons.observability.llm_fields import llm_request_fields
 from customer_support_agent.graph.nodes.context import ContextNodes
 from customer_support_agent.graph.state import AgentState
-from customer_support_agent.presentation.reporting import llm_request_fields
 
 
 class _Nodes(ContextNodes):

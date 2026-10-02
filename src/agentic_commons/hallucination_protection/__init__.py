@@ -10,6 +10,8 @@ from agentic_commons.hallucination_protection.checker import (
 from agentic_commons.hallucination_protection.claims import (
     ClaimClassifier,
     ClaimDecomposer,
+    plain_text,
+    sentence_pieces,
     split_sentences,
 )
 from agentic_commons.hallucination_protection.direct import (
@@ -19,6 +21,12 @@ from agentic_commons.hallucination_protection.direct import (
     NOT_EXECUTED_MARKER,
     ORDER_MISMATCH,
     REFUND_STATE_MISMATCH,
+)
+from agentic_commons.hallucination_protection.evidence import (
+    TOOL_RESULT_KIND,
+    Observation,
+    observation_facts,
+    tool_evidence,
 )
 from agentic_commons.hallucination_protection.resolver import (
     OBSERVATION_SEQUENCE,
@@ -61,5 +69,11 @@ __all__ = [
     "TrustCalibrationTracker",
     "TrustMeasurement",
     "TrustReport",
+    "TOOL_RESULT_KIND",
+    "Observation",
+    "observation_facts",
+    "plain_text",
+    "sentence_pieces",
     "split_sentences",
+    "tool_evidence",
 ]

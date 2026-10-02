@@ -141,23 +141,24 @@ explainer:
   - *common
 
 # A Research run on a question no specialised kind fits: the question is
-# the topic (from the first message); the interview settles why, how
-# recent, from where, and in what shape.
+# the topic (from the first message); the interview settles first what the
+# answer must cover — the subject's own parts — then, only where it matters,
+# why, how recent, from where, and in what shape.
 general:
+  - item_id: criteria
+    goal: which parts of the topic the answer must cover (its sub-areas, players, products, regions)
+    required: true
+    brief_field: criteria
+    multi: true
   - item_id: purpose
     goal: what the answer will be used for
-    required: true
+    required: false
     brief_field: purpose
   - item_id: recency
     goal: how recent the sources must be
     required: false
     brief_field: recency_days
     choices: *recency_choices
-  - item_id: criteria
-    goal: what the answer must cover to be useful
-    required: false
-    brief_field: criteria
-    multi: true
   - item_id: sources
     goal: sources to prefer or avoid
     required: false

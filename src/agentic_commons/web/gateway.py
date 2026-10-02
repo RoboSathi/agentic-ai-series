@@ -23,7 +23,7 @@ from typing import Literal, TypeVar
 from pydantic import BaseModel
 
 from agentic_commons.config.settings import WebMode
-from agentic_commons.logging import get_logger
+from agentic_commons.logging import describe_error, get_logger
 from agentic_commons.resilience import ResilientCaller
 from agentic_commons.web.cache import SearchCache
 from agentic_commons.web.fetcher import Fetcher
@@ -226,7 +226,7 @@ class WebGateway:
             return await (caller.call(call, idempotency_key=key) if caller else call())
         except Exception as exc:
             # `str(exc)` is empty for timeouts and resets: name the exception instead.
-            detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            detail = describe_error(exc)
             raise WebUnavailableError(f"{key.split(':')[0]} failed: {detail}") from exc
 
     def _notify(self, call: WebCall) -> None:

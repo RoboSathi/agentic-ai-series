@@ -41,9 +41,12 @@ DATETIME_DESCRIPTION = (
     "The current date and time in an IANA timezone, for example Asia/Kolkata or UTC."
 )
 
-# Asked of the model when its answer holds details the sources do not support.
+# Asked of the model when the grounding check refuted claims in its answer. It is handed the
+# answer, the refuted claims, and the evidence lines that bear on them — nothing else.
 REVISE_INSTRUCTIONS = """
-Rewrite the answer using only what `sources` say. Remove every claim listed under
-`unsupported`, add nothing that the sources do not state, and say a live event is in progress
-if the sources show it in progress. Keep it short. Reply with the rewritten answer text only.
+The answer below holds claims the tool results do not support, listed under `unsupported`.
+Rewrite the answer so each of those claims either matches `evidence` exactly (quote figures and
+dates as the evidence gives them) or is removed. Keep every other sentence as it was, keep its
+layout (lines, bullets), add nothing the evidence does not state, and keep the Sources line if it
+has one. Reply with the rewritten answer text only.
 """.strip()

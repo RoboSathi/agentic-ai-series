@@ -9,10 +9,10 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field
 
-from agentic_commons.logging import logged
+from agentic_commons.logging import describe_error, logged
 from agentic_commons.tools.types import ToolResult
-from research_agent.answer.tools.sources import URLS_KEY
-from research_agent.config.settings import WeatherSettings
+from research_agent.config.settings import AnswerSettings
+from research_agent.tools import URLS_KEY
 
 
 class WeatherArgs(BaseModel):
@@ -20,22 +20,23 @@ class WeatherArgs(BaseModel):
 
 
 class OpenMeteoWeather:
-    """`WeatherSettings` and an HTTP client in; a short written report out."""
+    """The weather settings and an HTTP client in; a short written report out."""
 
-    def __init__(self, settings: WeatherSettings, client: httpx.AsyncClient) -> None:
-        self._settings = settings
+    def __init__(self, settings: AnswerSettings, client: httpx.AsyncClient) -> None:
+        self._settings = settings.weather
+        self._messages = settings.messages
         self._client = client
-        self._fields = {*settings.current_fields, *settings.daily_fields}
+        self._fields = {*self._settings.current_fields, *self._settings.daily_fields}
 
     @logged("research_agent")
     async def __call__(self, location: str) -> ToolResult:
         try:
             place = await self._geocode(location)
             if place is None:
-                return ToolResult(error=f"no place found for '{location}'")
+                return ToolResult(error=self._messages.no_place.format(location=location))
             forecast = await self._forecast(place)
         except httpx.HTTPError as exc:
-            return ToolResult(error=f"{type(exc).__name__}: {exc}")
+            return ToolResult(error=describe_error(exc))
         return ToolResult(
             success=True,
             output=self._report(place, forecast),
@@ -75,15 +76,19 @@ class OpenMeteoWeather:
             str(place[key]) for key in ("name", "admin1", "country") if place.get(key)
         )
         current = forecast["current"]
+        notes = self._messages
         lines = [
-            f"Weather for {where} (source: {self._settings.forecast_url}), "
-            f"as of {current.get('time', '')}"
+            notes.weather_header.format(
+                where=where, url=self._settings.forecast_url, time=current.get("time", "")
+            ),
+            notes.weather_now.format(
+                conditions=self._line(current, forecast.get("current_units", {}))
+            ),
         ]
-        lines.append("Now: " + self._line(current, forecast.get("current_units", {})))
         daily, units = forecast.get("daily", {}), forecast.get("daily_units", {})
         for index, day in enumerate(daily.get("time", [])):
             row = {key: values[index] for key, values in daily.items() if key != "time"}
-            lines.append(f"{day}: " + self._line(row, units))
+            lines.append(notes.weather_day.format(day=day, conditions=self._line(row, units)))
         return "\n".join(lines)
 
     def _line(self, values: dict[str, Any], units: dict[str, str]) -> str:
@@ -94,5 +99,7 @@ class OpenMeteoWeather:
             if key == "weather_code":
                 parts.append(self._settings.codes.get(int(value), self._settings.unknown_code))
             else:
-                parts.append(f"{key}={value}{units.get(key, '')}")
+                # Words, not API field names: the model and the grounding check both read this.
+                label = self._settings.field_labels.get(key, key)
+                parts.append(f"{label} {value}{units.get(key, '')}")
         return ", ".join(parts)

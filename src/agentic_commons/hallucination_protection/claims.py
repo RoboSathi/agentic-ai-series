@@ -11,6 +11,7 @@ class decides what may ground the claim.
 
 import re
 from decimal import Decimal
+from functools import cache
 
 from agentic_commons.config import get_settings
 from agentic_commons.hallucination_protection.types import AtomicClaim, ClaimClass
@@ -24,13 +25,38 @@ from agentic_commons.llm.embeddings import tokenize
 # single claim, and its two halves were scored against evidence that
 # matched only one of them — so a sentence half of which was verbatim
 # supported scored as entirely unsupported.
-_SENTENCE = re.compile(r"(?<=[.!?;])\s+")
+_SENTENCE = re.compile(r"[ \t]*\n\s*|(?<=[.!?;])(?<![\s(][A-Z]\.)[ \t]+")
+# A line break ends a claim too (checked first, so "policy.  \n- next" keeps its break), and
+# an initial does not end one ("Governor Lisa D. Cook" is one name). A model writes lists and labelled lines
+# ("- **Humidity**: 70 %") with no full stop, and a whole bulleted answer read
+# as one claim is one premise no evidence line can entail.
+#
+# Markdown is layout, not content: a bullet, a heading marker or emphasis is
+# taken off before a claim is checked, so "**Wind**: 2.8 km/h" is read as
+# "Wind: 2.8 km/h".
+_MARKDOWN_LEAD = re.compile(r"^\s*(?:#{1,6}\s+|[-*•+]\s+|\d+[.)]\s+|>\s*)")
+_MARKDOWN_MARKS = re.compile(r"\*\*|__|`")
+# How a line that introduces a list ends.
+_LEAD_IN = ":"
+
+
 # Causal connectives split too. "Queued for review because the amount
 # exceeds the limit" is two claims from two tiers — the outcome from a tool
 # result, the reason from the policy — and no single premise entails both.
 # "Totals $117.23, so I cannot issue a $1 refund" likewise: joined, NLI
 # read the pair as contradicting "a refund is always for the full total".
-_CONJUNCTION = re.compile(r",?\s+\b(?:and|but|however|although|while|because|since|so)\b\s+")
+# Which connectives split is configuration (`hallucination_protection.claim_conjunctions`):
+# a support reply joins an outcome and its reason, a news summary joins items of one fact.
+def conjunction_pattern(words: tuple[str, ...]) -> re.Pattern[str]:
+    return _conjunction(words)
+
+
+@cache
+def _conjunction(words: tuple[str, ...]) -> re.Pattern[str]:
+    alternatives = "|".join(re.escape(word) for word in words) or "(?!)"
+    return re.compile(rf",?\s+\b(?:{alternatives})\b\s+")
+
+
 # A clause that opens on one of these has lost its subject to the split:
 # "Your order has been cancelled and is awaiting review" leaves "is awaiting
 # review", which no premise can entail — it names nothing. It borrows the
@@ -88,7 +114,6 @@ _OPENERS = "(["
 _CLOSERS = ")]"
 # Stripped from a word before asking whether it is a bare specific.
 _ITEM_PUNCTUATION = "()[],;:"
-_MIN_CONTENT_TOKENS = 3
 
 # The concrete details a reply can only get from the record: identifiers,
 # amounts, dates, weekdays. They are what separates a claim the detector
@@ -117,7 +142,22 @@ _SPECIFIC = re.compile(
 
 # An amount in prose: "$210", "$1,234.56", or a bare "210.00". Money is a
 # shape, not vocabulary, so it is code; what counts as an outcome is not.
-MONEY = re.compile(r"(?<!\w)(?:\$\d+(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:,\d{3})*\.\d{2})(?!\w)")
+#
+# A figure with a scale ("$1.2 M", "$1.2M", "$1.2 million", "₹4 lakh") is a size, not an exact
+# amount: read as money it became "$1.20", an amount no evidence held. The scale words are
+# configuration (`hallucination_protection.money_scales`).
+def money_pattern() -> re.Pattern[str]:
+    """Exact amounts in prose, as this deployment's scale words leave them."""
+    return _money(tuple(get_settings().hallucination_protection.money_scales))
+
+
+@cache
+def _money(scales: tuple[str, ...]) -> re.Pattern[str]:
+    scale = "|".join(re.escape(word) for word in sorted(scales, key=len, reverse=True))
+    unscaled = rf"(?!\s*(?i:{scale})\b)" if scale else ""
+    return re.compile(
+        r"(?<!\w)(?:\$\d+(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:,\d{3})*\.\d{2})(?!\.?\w)" + unscaled
+    )
 
 
 _PLAIN_NUMBER = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
@@ -125,6 +165,9 @@ _MONTH_FIRST = re.compile(rf"(?P<month>{_MONTH})\.?\s+(?P<day>\d{{1,2}})", re.IG
 _DAY_FIRST = re.compile(rf"(?P<day>\d{{1,2}})\s+(?P<month>{_MONTH})", re.IGNORECASE)
 # How many letters of a month name identify it ("Sept", "September" and "Sep" are one month).
 _MONTH_KEY_LETTERS = 3
+# The month keys in calendar order, so an ISO date's month number reads as a month.
+_MONTH_KEYS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+_ISO_DATE = re.compile(r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})")
 
 
 def _normalised(value: str) -> str:
@@ -147,7 +190,21 @@ def _normalised(value: str) -> str:
 
 def specifics(text: str) -> set[str]:
     """The identifiers, amounts, dates and weekdays a text names, normalised for comparison."""
-    return {_normalised(value) for value in _SPECIFIC.findall(text)} - {""}
+    return {form for value in _SPECIFIC.findall(text) for form in _forms(value)} - {""}
+
+
+def _forms(value: str) -> set[str]:
+    """Every way a claim may write what `value` names.
+
+    An ISO date ("2026-10-02", as an API or a page's metadata writes it) is also the day a
+    sentence names ("2 October") and its year ("2026"): evidence that says 2026-10-02 sources a
+    claim about "2 October 2026".
+    """
+    iso = _ISO_DATE.match(value)
+    if iso is None or not 1 <= int(iso.group("month")) <= len(_MONTH_KEYS):
+        return {_normalised(value)}
+    day, month = int(iso.group("day")), _MONTH_KEYS[int(iso.group("month")) - 1]
+    return {_normalised(value), f"{day} {month}", iso.group("year")}
 
 
 class ClaimClassifier:
@@ -177,7 +234,7 @@ class ClaimClassifier:
         return "rule"
 
     def _is_record(self, claim: str) -> bool:
-        if self._identifier.search(claim) or MONEY.search(claim):
+        if self._identifier.search(claim) or money_pattern().search(claim):
             return True
         return bool(self._outcome.search(claim)) and not self._promise.search(claim)
 
@@ -192,19 +249,22 @@ class ClaimDecomposer:
 
     def __init__(self, classifier: ClaimClassifier | None = None) -> None:
         self._classifier = classifier or ClaimClassifier()
+        settings = get_settings().hallucination_protection
         self._rule_phrases = [
-            (re.compile(phrase.pattern, re.IGNORECASE), phrase)
-            for phrase in get_settings().hallucination_protection.rule_phrases
+            (re.compile(phrase.pattern, re.IGNORECASE), phrase) for phrase in settings.rule_phrases
         ]
+        self._conjunction = conjunction_pattern(tuple(settings.claim_conjunctions))
+        # Fewer content words than this and a fragment is not a checkable claim.
+        self._min_tokens = settings.claim_min_content_tokens
 
     def decompose(self, generation: str) -> list[AtomicClaim]:
         """Split on sentence boundaries, then on joining conjunctions, then by class."""
         pieces = [
             (index, text, forced)
             for index, sentence in enumerate(split_sentences(generation))
-            for part in _with_subjects(_clauses(sentence))
+            for part in _with_subjects(_clauses(plain_text(sentence), self._conjunction))
             for text, forced in self._carve(part.strip().rstrip(".;"))
-            if text
+            if text and not _is_lead_in(text)
         ]
         return [
             self._claim(text, position, forced, index)
@@ -221,7 +281,7 @@ class ClaimDecomposer:
             sentence=sentence,
             claim_class=claim_class,
             is_verifiable=claim_class != "conversational"
-            and len(tokenize(text)) >= _MIN_CONTENT_TOKENS,
+            and len(tokenize(text)) >= self._min_tokens,
         )
 
     def _carve(self, text: str) -> list[tuple[str, ClaimClass | None]]:
@@ -240,12 +300,34 @@ class ClaimDecomposer:
         return [(text, None), *pieces]
 
 
+def _is_lead_in(text: str) -> bool:
+    """A line that introduces what follows ("Tomorrow in Pune:") labels a list; it claims nothing."""
+    return text.rstrip().endswith(_LEAD_IN)
+
+
 def split_sentences(text: str) -> list[str]:
     """A text's sentences, split exactly as claims are split into them."""
-    return _SENTENCE.split(text.strip())
+    return [sentence for sentence, _ in sentence_pieces(text)]
 
 
-def _clauses(sentence: str) -> list[str]:
+def sentence_pieces(text: str) -> list[tuple[str, str]]:
+    """Each sentence with the separator that follows it, so a text can be rebuilt as written."""
+    stripped = text.strip()
+    pieces: list[tuple[str, str]] = []
+    start = 0
+    for match in _SENTENCE.finditer(stripped):
+        pieces.append((stripped[start : match.start()], match.group(0)))
+        start = match.end()
+    pieces.append((stripped[start:], ""))
+    return pieces
+
+
+def plain_text(sentence: str) -> str:
+    """A sentence without its markdown: no bullet or heading marker, no emphasis."""
+    return _MARKDOWN_MARKS.sub("", _MARKDOWN_LEAD.sub("", sentence)).strip()
+
+
+def _clauses(sentence: str, conjunction: re.Pattern[str]) -> list[str]:
     """Split one sentence at the conjunctions that join clauses, and only those.
 
     "and" also joins the items of a list. Split there and "orders 10876
@@ -256,7 +338,7 @@ def _clauses(sentence: str) -> list[str]:
     """
     parts: list[str] = []
     start = 0
-    for match in _CONJUNCTION.finditer(sentence):
+    for match in conjunction.finditer(sentence):
         if _joins_items(sentence, match.start(), match.end()):
             continue
         parts.append(sentence[start : match.start()])

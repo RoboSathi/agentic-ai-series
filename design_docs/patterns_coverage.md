@@ -15,7 +15,7 @@ agent's `design_docs/patterns.yaml`. Do not edit by hand.
 | rag_pipeline | WF | E19 | graph/builder.py · FiveStagePipeline with KnowledgeBaseContextSource (assemble_context) | — |
 | tool_use | AG | E05 | graph/nodes/reason.py ⇄ graph/nodes/act.py | — |
 | react | AG | E05 | — | research/worker.py · research_node |
-| planning | AG | E06 | control_loop/quality_gate.py · PlanLookup | planning/planner.py + planning/dag_validation.py · plan_dag, plan_validated |
+| planning | AG | E06 | control_loop/quality_gate.py · PlanLookup | planning/planner.py + planning/dag_validation.py · plan_dag (with its validation) |
 | reflection | AG | E06 | control_loop/quality_gate.py · GroundedCritic | research/reflector.py · reflect_gap_analysis |
 | evaluator_optimizer | AG | E06 | control_loop/quality_gate.py · OutputQualityGate (critique, at most one repair, IndependentScorer) | graph/run_nodes.py · synthesize → goldfish_audit → gap_fill → wave_start |
 | orchestrator_subagent | AG | E41 | — | audit/goldfish.py · GoldfishAuditor (agentic_commons.durability.IsolatedGraphRunner) |

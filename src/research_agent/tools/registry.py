@@ -1,21 +1,20 @@
-"""The direct-answer agent's tools: read-only, each returning data for the model."""
+"""Every tool the direct answerer may call, in one namespace, none with a side effect."""
 
 import httpx
 
 from agentic_commons.tools.registry import NamespacedToolRegistry
 from agentic_commons.tools.types import ToolDefinition
 from agentic_commons.web import WebGateway
-from research_agent.answer.tools.clock import DateTimeArgs, current_datetime
-from research_agent.answer.tools.sources import URLS_KEY
-from research_agent.answer.tools.weather import OpenMeteoWeather, WeatherArgs
-from research_agent.answer.tools.web import FetchArgs, FetchUrl, SearchArgs, WebSearch
 from research_agent.config.settings import AnswerSettings
 from research_agent.prompts import answer as prompt
 from research_agent.research.defenses import InjectionScreen
+from research_agent.tools.clock import Clock, DateTimeArgs
+from research_agent.tools.weather import OpenMeteoWeather, WeatherArgs
+from research_agent.tools.web import FetchArgs, FetchUrl, SearchArgs, WebSearch
 
 NAMESPACE = "answer"
 
-__all__ = ["NAMESPACE", "URLS_KEY", "build_answer_registry"]
+__all__ = ["NAMESPACE", "build_answer_registry"]
 
 
 def build_answer_registry(
@@ -40,12 +39,12 @@ def build_answer_registry(
                 FetchArgs,
                 FetchUrl(gateway, settings, screen),
             ),
-            _tool("current_datetime", prompt.DATETIME_DESCRIPTION, DateTimeArgs, current_datetime),
+            _tool("current_datetime", prompt.DATETIME_DESCRIPTION, DateTimeArgs, Clock(settings)),
             _tool(
                 "weather",
                 prompt.WEATHER_DESCRIPTION,
                 WeatherArgs,
-                OpenMeteoWeather(settings.weather, http),
+                OpenMeteoWeather(settings, http),
             ),
         ]
     )

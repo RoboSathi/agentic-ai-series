@@ -48,7 +48,7 @@ class ResearchHost:
         return build_greeting(settings, agent, notes)
 
     def prepare(self) -> None:
-        """Stop on a missing live credential; record the fixture world if replay needs it."""
+        """Stop on a missing live credential; record the fixture world; warm the local models."""
         settings, agent = get_settings(), get_agent_settings()
         problem = missing_model_key(settings, agent)
         if problem is not None:
@@ -58,6 +58,25 @@ class ResearchHost:
 
             fixtures = ensure_recorded()
             get_logger("research_agent").info("Fixture world ready", path=str(fixtures.folder))
+        if agent.model_backend != "fixture":
+            self._preload_local_models(agent.audit.entailment_model == "platform")
+
+    @staticmethod
+    def _preload_local_models(nli: bool) -> None:
+        """Load the local models now, before the TUI's event loop owns the process descriptors.
+
+        Loaded lazily inside the TUI, the NLI model fails on macOS (`bad value(s) in
+        fds_to_keep`) and every claim after that is judged by the lexical fallback. A model that
+        cannot load still does not stop the console: the checker logs why and falls back.
+        """
+        from agentic_commons.evals.entailment import preload_entailment_model
+        from research_agent.graph.builder import intent_embedder
+
+        if nli:
+            preload_entailment_model()
+        embedder = intent_embedder()
+        if hasattr(embedder, "ensure_loaded_sync"):
+            embedder.ensure_loaded_sync()
 
     def build(self, reporter: StageReporter, features: FeatureSet | None = None) -> Any:
         """Compose the agent, reporting its stages to this feed."""

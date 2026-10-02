@@ -49,6 +49,7 @@ _TASKS: dict[str, Behaviour] = {
     "reflect": reading.reflect,
     "synthesize": writing.synthesize,
     "judge": writing.judge,
+    "rewrite_unsupported": writing.rewrite,
 }
 
 

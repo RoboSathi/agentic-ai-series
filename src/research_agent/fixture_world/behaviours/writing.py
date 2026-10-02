@@ -237,3 +237,17 @@ _HEURISTICS = {
     "explanation_accuracy": _explanation_accuracy,
     "user_item": _user_item,
 }
+
+
+def rewrite(
+    model: "FixtureWorldModel", payload: dict[str, Any], instructions: str
+) -> dict[str, Any]:
+    """The reference rewrite of an unsupported sentence: its first cited span, cited as before."""
+    del model, instructions
+    rewrites = []
+    for item in payload.get("items", []):
+        spans = [str(span) for span in item.get("spans", []) if str(span).strip()]
+        markers = "".join(str(marker) for marker in item.get("citations", []))
+        text = f"{spans[0].strip().rstrip('.')} {markers}." if spans else ""
+        rewrites.append({"index": item.get("index", 0), "text": text})
+    return {"rewrites": rewrites}

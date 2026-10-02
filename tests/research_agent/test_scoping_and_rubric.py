@@ -66,7 +66,10 @@ class TestTermination:
         assert early.outcome == "ask" and early.overruled and early.open_required == ["a"]
         ready = checklist.with_status(_items(), "a", "covered", "x")
         assert policy.decide(proposing, ready, 1).outcome == "propose_done"
-        assert policy.decide(InterviewTurn(), ready, 1).outcome == "ask"
+        asking = InterviewTurn(next_question="Which regions?", next_item_id="b")
+        assert policy.decide(asking, ready, 1).outcome == "ask"
+        # Nothing left to ask once nothing required is open: a proposal, never an empty reply.
+        assert policy.decide(InterviewTurn(), ready, 1).outcome == "propose_done"
 
     def test_the_turn_cap_stops_asking(self) -> None:
         assert (
@@ -236,7 +239,7 @@ class TestRubricEditing:
         assert len(dropped.items) == len(rubric.items)
         changed = editor.set(rubric, "R1", ["threshold=0.5", "must_pass=false"])
         assert changed.item("R1").threshold == 0.5 and not changed.item("R1").must_pass  # type: ignore[union-attr]
-        assert "R1" in render(changed)
+        assert "R1" in render(changed, get_agent_settings().messages)
 
     def test_the_last_item_for_a_criterion_cannot_be_dropped(self, ra_config: None) -> None:
         rubric = self._rubric()

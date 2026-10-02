@@ -10,9 +10,11 @@ from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from agentic_commons.evidence.types import EvidenceEntry
 from agentic_commons.verification.acceptance import CheckVerdict
-from research_agent.audit.verdict import AuditVerdict
+from research_agent.audit.verdict import DEFAULT_WEIGHT, AuditVerdict
 from research_agent.domain.plan import SubQuestion
 from research_agent.domain.report import Report
 from research_agent.domain.rubric import Rubric
@@ -273,22 +275,33 @@ def synthesize_card(
 # -- the independent QA check --------------------------------------------------------------
 
 
+class JudgeSetup(BaseModel):
+    """Who judged, with what, at what cost — the card's "how" section."""
+
+    judge_model: str
+    writer_model: str = ""
+    nli_model: str = ""
+    independent: bool = True
+    honest: bool = True
+    # The judge role's meter: tokens, seconds, calls (empty when not tracked).
+    usage: dict[str, float] = Field(default_factory=dict)
+
+
 def audit_card(
     verdicts: Sequence[CheckVerdict],
     rubric: Rubric,
     result: AuditVerdict,
     pass_threshold: float,
     partial_threshold: float,
-    judge_model: str,
-    independent: bool,
-    honest: bool,
+    setup: JudgeSetup,
     limit: int,
 ) -> Card:
-    """Each criterion pass/fail with its score, then the weighted verdict and why."""
+    """The judge, each criterion with how it was checked, the weighted score, and the verdict."""
     checked = [v for v in verdicts if v.applicable]
     passed = sum(v.passed for v in checked)
     heading = say(
-        "qa.heading",
+        "judge.heading",
+        model=setup.judge_model or say("judge.unknown_model"),
         passed=passed,
         total=len(checked),
         score=f"{result.score:.0%}",
@@ -296,56 +309,100 @@ def audit_card(
     )
     order = {item.item_id: index for index, item in enumerate(rubric.items)}
     ordered = sorted(verdicts, key=lambda v: order.get(v.item_id, len(order)))
-    lines = [_audit_line(v, rubric, limit) for v in ordered]
-    verdict_lines = [
-        say(
-            "qa.score",
-            score=f"{result.score:.0%}",
-            pass_at=f"{pass_threshold:.0%}",
-            partial_at=f"{partial_threshold:.0%}",
-        ),
-        toned(say("qa.vetoed", items=", ".join(result.vetoed_by)), "fail")
-        if result.vetoed_by
-        else toned(say("qa.no_veto"), "pass"),
-        toned(say(f"qa.outcome.{result.outcome}"), _OUTCOME_TONE[result.outcome]),
-    ]
     to_pass = [_criterion(rubric, item_id, limit) for item_id in result.vetoed_by]
     if result.score < pass_threshold:
-        to_pass.append(say("qa.gap", score=f"{result.score:.0%}", pass_at=f"{pass_threshold:.0%}"))
+        to_pass.append(
+            say("judge.gap", score=f"{result.score:.0%}", pass_at=f"{pass_threshold:.0%}")
+        )
     return heading, _present(
         {
-            say("qa.section.criteria"): lines,
-            say("qa.section.verdict"): verdict_lines,
-            say("qa.section.to_pass"): [toned(line, "warn") for line in to_pass]
+            say("judge.section.judge"): _judge_lines(setup),
+            say("judge.section.criteria"): [_audit_line(v, rubric, setup, limit) for v in ordered],
+            say("judge.section.score"): _score_lines(
+                checked, rubric, result, pass_threshold, partial_threshold
+            ),
+            say("judge.section.to_pass"): [toned(line, "warn") for line in to_pass]
             if result.outcome != "PASS"
             else [],
-            say("qa.section.how"): [
-                say("qa.how"),
-                say(
-                    "qa.judge",
-                    model=judge_model or "—",
-                    independent=say(f"qa.independent.{independent}"),
-                ),
-                say(f"qa.honest.{honest}"),
-            ],
         }
     )
+
+
+def _judge_lines(setup: JudgeSetup) -> list[Line | str]:
+    usage = setup.usage
+    lines: list[Line | str] = [
+        say("judge.model", model=setup.judge_model or say("judge.unknown_model")),
+        say(
+            f"judge.independent.{setup.independent}",
+            writer=setup.writer_model or say("judge.unknown_model"),
+        ),
+    ]
+    if usage.get("calls"):
+        lines.append(
+            say(
+                "judge.usage",
+                calls=int(usage["calls"]),
+                tokens=f"{int(usage.get('tokens', 0)):,}",
+                seconds=f"{usage.get('seconds', 0.0):.1f}",
+            )
+        )
+    if setup.nli_model:
+        lines.append(say("judge.nli", model=setup.nli_model))
+    lines.append(say("judge.how"))
+    lines.append(toned(say(f"judge.honest.{setup.honest}"), "pass" if setup.honest else "warn"))
+    return lines
+
+
+def _score_lines(
+    checked: Sequence[CheckVerdict],
+    rubric: Rubric,
+    result: AuditVerdict,
+    pass_threshold: float,
+    partial_threshold: float,
+) -> list[Line | str]:
+    """The weighted score worked through, then the bands and the verdict."""
+    weights = [_weight(rubric, verdict) for verdict in checked]
+    terms = [
+        say("judge.term", weight=f"{weight:g}", score=f"{verdict.score:.2f}")
+        for weight, verdict in zip(weights, checked, strict=True)
+    ]
+    total = sum(weights)
+    return [
+        say(
+            "judge.formula",
+            terms=" + ".join(terms) or "0",
+            total=f"{total:g}",
+            score=f"{result.score:.0%}",
+        ),
+        say("judge.bands", pass_at=f"{pass_threshold:.0%}", partial_at=f"{partial_threshold:.0%}"),
+        toned(say("judge.vetoed", items=", ".join(result.vetoed_by)), "fail")
+        if result.vetoed_by
+        else toned(say("judge.no_veto"), "pass"),
+        toned(say(f"judge.outcome.{result.outcome}"), _OUTCOME_TONE[result.outcome]),
+    ]
 
 
 _OUTCOME_TONE = {"PASS": "pass", "PARTIAL": "warn", "FAIL": "fail"}
 
 
-def _audit_line(verdict: CheckVerdict, rubric: Rubric, limit: int) -> Line:
+def _weight(rubric: Rubric, verdict: CheckVerdict) -> float:
+    item = rubric.item(verdict.item_id)
+    return item.weight if item is not None else DEFAULT_WEIGHT
+
+
+def _audit_line(verdict: CheckVerdict, rubric: Rubric, setup: JudgeSetup, limit: int) -> Line:
     item = rubric.item(verdict.item_id)
     text = clip(item.text, limit) if item is not None else verdict.name
     weight = f"{item.weight:g}" if item is not None else "1"
     if not verdict.applicable:
-        return toned(say("qa.not_applicable", id=verdict.item_id, text=text), "dim")
+        return toned(say("judge.not_applicable", id=verdict.item_id, text=text), "dim")
+    checker = {"judge": setup.judge_model, "nli": setup.nli_model}.get(verdict.kind, "")
     line = say(
-        "qa.line",
-        mark=say("qa.mark.pass") if verdict.passed else say("qa.mark.fail"),
+        "judge.line",
+        mark=say("judge.mark.pass") if verdict.passed else say("judge.mark.fail"),
         id=verdict.item_id,
         text=text,
+        how=say(f"judge.kind.{verdict.kind}", model=checker or say("judge.unknown_model")),
         score=f"{verdict.score:.2f}",
         threshold=f"{verdict.threshold:g}",
         weight=weight,

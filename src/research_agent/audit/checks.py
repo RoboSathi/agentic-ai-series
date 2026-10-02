@@ -11,8 +11,11 @@ reflection evaluates only those when it looks for gaps.
 
 import re
 from collections.abc import Awaitable, Callable
+from typing import Any
 
+from agentic_commons.evals.entailment import EntailmentModel
 from agentic_commons.evidence import EvidenceEntry
+from agentic_commons.hallucination_protection import plain_text
 from agentic_commons.verification.acceptance import AcceptanceCheckRegistry, CheckOutcome, CheckSpec
 from research_agent.audit.context import CheckContext, distinct_hosts, host
 from research_agent.research.defenses import is_primary
@@ -195,10 +198,28 @@ async def claims_entailed(spec: CheckSpec, ctx: CheckContext) -> CheckOutcome:
 
 async def _entailed(sentence: str, ctx: CheckContext) -> bool:
     assert ctx.entailment is not None
-    claim = ctx.citation_pattern.sub("", sentence).strip(" []")
-    for entry_id in ctx.citation_pattern.findall(sentence):
-        entry = ctx.ledger.entry(entry_id)
-        if entry is not None and (await ctx.entailment.entails(entry.span, claim)).entailed:
+    return await sentence_entailed(sentence, ctx.ledger, ctx.entailment, ctx.citation_pattern)
+
+
+async def sentence_entailed(
+    sentence: str, ledger: Any, entailment: EntailmentModel, pattern: re.Pattern[str]
+) -> bool:
+    """Whether the spans a sentence cites entail what it says.
+
+    The hypothesis is the sentence without its citation markers or markdown. The premise is
+    each cited span on its own, then — for a sentence that joins facts from several entries —
+    the cited spans together: "X costs 4 lakh [E1] and includes a laptop [E2]" is entailed by
+    neither span alone.
+    """
+    claim = plain_text(pattern.sub("", sentence)).strip(" []")
+    spans = [
+        entry.span
+        for entry_id in dict.fromkeys(pattern.findall(sentence))
+        if (entry := ledger.entry(entry_id)) is not None
+    ]
+    premises = [*spans, " ".join(spans)] if len(spans) > 1 else spans
+    for premise in premises:
+        if (await entailment.entails(premise, claim)).entailed:
             return True
     return False
 

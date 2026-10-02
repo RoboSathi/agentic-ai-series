@@ -14,6 +14,7 @@ one of the invariants the oracle holds every run to.
 from typing import Any
 
 from agentic_commons.logging import get_logger, instrument
+from research_agent.config.settings import MessageSettings
 from research_agent.domain.rubric import Rubric, RubricCheck, RubricItem
 
 _TRACED = frozenset({"criterion", "known_unknown"})
@@ -115,13 +116,20 @@ def _bool(value: str) -> bool:
     raise RubricEditError(f"must_pass must be true or false, got '{value}'")
 
 
-def render(rubric: Rubric) -> str:
-    """The rubric as the user reviews it."""
-    lines = ["Acceptance criteria (edit with /rubric add|drop|set, then /approve):"]
+def render(rubric: Rubric, wording: MessageSettings) -> str:
+    """The rubric as the user reviews it: a heading, then one aligned line per criterion."""
+    lines = [wording.rubric_heading]
     for item in rubric.items:
-        flag = "must" if item.must_pass else "soft"
         lines.append(
-            f"  {item.item_id:<4} [{flag}] {item.text}  ({item.check.kind}:{item.check.name}"
-            f" ≥ {item.threshold:g}, weight {item.weight:g}, {item.origin})"
+            wording.rubric_line.format(
+                id=item.item_id,
+                gate=wording.rubric_must if item.must_pass else wording.rubric_soft,
+                text=item.text,
+                kind=item.check.kind,
+                check=item.check.name,
+                threshold=f"{item.threshold:g}",
+                weight=f"{item.weight:g}",
+                origin=item.origin,
+            )
         )
     return "\n".join(lines)

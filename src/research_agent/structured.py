@@ -21,7 +21,7 @@ from agentic_commons.control_loop import BudgetGuard
 from agentic_commons.guardrails.guards import PydanticValidator
 from agentic_commons.llm.client import LLMClient
 from agentic_commons.llm.types import CompletionRequest, CompletionResult, Message
-from agentic_commons.logging import get_logger
+from agentic_commons.logging import describe_error, get_logger
 from agentic_commons.observability import StageReporter
 from agentic_commons.resilience import ResilientCaller
 from research_agent.domain.budget import TOKENS
@@ -132,18 +132,22 @@ class StructuredCaller:
         max_tokens: int | None = None,
         temperature: float | None = None,
         timeout: float | None = None,
+        quiet: bool = False,
     ) -> CompletionResult:
         """One free-form model call (tool calling allowed), reported and metered like any role.
 
         Not charged to the research run's budget: the caller keeps its own. A call that does not
-        return within `timeout` seconds raises `ModelCallTimeoutError`.
+        return within `timeout` seconds raises `ModelCallTimeoutError`. A `quiet` call is logged
+        and metered but draws no card: its caller shows the call on a card of its own.
         """
         cap = max_tokens if max_tokens is not None else self._role_max_tokens.get(role)
         request = CompletionRequest(
             messages=messages, tools=tools, temperature=temperature, max_tokens=cap
         )
         try:
-            return await self._send(self._clients.client_for(role), role, request, timeout, False)
+            return await self._send(
+                self._clients.client_for(role), role, request, timeout, False, quiet=quiet
+            )
         except ModelCallTimeoutError as exc:
             self._stalled(role, exc.seconds, final=True)
             raise
@@ -203,6 +207,7 @@ class StructuredCaller:
         request: CompletionRequest,
         timeout: float | None,
         charge: bool,
+        quiet: bool = False,
     ) -> CompletionResult:
         started = time.perf_counter()
         if self._reporter is not None:
@@ -231,12 +236,13 @@ class StructuredCaller:
             elapsed,
             _shown(result),
             result.finish_reason or "",
+            quiet=quiet,
         )
         return result
 
     def _failed(self, role: str, exc: Exception) -> None:
         """A provider error is a card too, so the feed never just stops."""
-        error = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+        error = describe_error(exc)
         self._logger.error("Model call failed", role=role, error=error)
         if self._reporter is not None:
             self._reporter.emit(
@@ -254,13 +260,15 @@ class StructuredCaller:
         elapsed: float = 0.0,
         response: str = "",
         finish_reason: str = "",
+        quiet: bool = False,
     ) -> None:
         self._logger.debug("Role call", role=role, tokens=tokens, model=model)
         if self._reporter is not None:
             self._reporter.emit(
                 LLM_STAGE,
                 "completed",
-                tokens_delta=tokens,
+                quiet=quiet,
+                tokens_delta=None if quiet else tokens,
                 event_kind="narrative",
                 summary=say(
                     "llm.heading",

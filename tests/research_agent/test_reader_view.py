@@ -3,6 +3,7 @@
 import re
 from datetime import datetime, timezone
 
+from research_agent.config import get_agent_settings
 from research_agent.domain.report import Citation, Report, ReportSection
 from research_agent.synthesis.reader_view import render_reader_view, split_findings
 
@@ -51,7 +52,11 @@ def _report(**overrides: object) -> Report:
 
 def _view(report: Report) -> str:
     return render_reader_view(
-        report, citation_pattern=PATTERN, hidden_headings=HIDDEN, source_labels=LABELS
+        report,
+        citation_pattern=PATTERN,
+        hidden_headings=HIDDEN,
+        wording=get_agent_settings().reader_view_wording,
+        source_labels=LABELS,
     )
 
 

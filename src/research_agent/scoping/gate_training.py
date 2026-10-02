@@ -1,14 +1,10 @@
-"""Fine-tune the scope gate's encoder on `gate_training.yaml` (`make train-gate ra`).
+"""The scope gate's labelled examples (`gate_training.yaml`), and how to score a classifier on them.
 
-    python -m research_agent.scoping.gate_training --base distilbert-base-uncased
-
-Needs the platform's `torch` and `transformers`. Holds out a stratified share of the examples,
-prints accuracy and a confusion matrix on it, and saves the model to
-`research_agent.gate_encoder.local_model_dir`. Publish it and set `gate_encoder.model` (and turn
-`features.gate_encoder` on) to use it; until then the LLM gate answers every message.
+The examples are what the intent classifier votes with (nearest labelled examples over the local
+embedder); these helpers load them, split them by label, and print a confusion matrix — for
+measuring a classifier, not for training one.
 """
 
-import argparse
 import random
 from collections import defaultdict
 from pathlib import Path
@@ -60,69 +56,3 @@ def confusion(true: list[str], predicted: list[str]) -> str:
     for t in LABELS:
         rows.append(f"{t:<{width}}  " + " ".join(f"{cells[(t, p)]:>5}" for p in LABELS))
     return "\n".join(rows)
-
-
-def main() -> None:  # pragma: no cover - needs torch and a model download
-    import numpy as np
-    import torch
-    from transformers import (
-        AutoModelForSequenceClassification,
-        AutoTokenizer,
-        Trainer,
-        TrainingArguments,
-    )
-
-    from research_agent.config import get_agent_settings
-
-    cfg = get_agent_settings().gate_encoder
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--base", default="distilbert-base-uncased")
-    parser.add_argument("--epochs", type=int, default=8)
-    args = parser.parse_args()
-
-    train, test = stratified_split(load_examples(Path(cfg.training_data_path)))
-    label2id: dict[str, int] = {label: i for i, label in enumerate(LABELS)}
-    tokenizer = AutoTokenizer.from_pretrained(args.base)
-    model = AutoModelForSequenceClassification.from_pretrained(
-        args.base, num_labels=len(LABELS), id2label=dict(enumerate(LABELS)), label2id=label2id
-    )
-
-    class Rows(torch.utils.data.Dataset):  # type: ignore[type-arg]
-        def __init__(self, rows: list[tuple[str, str]]) -> None:
-            self.enc = tokenizer([t for t, _ in rows], truncation=True, padding=True, max_length=64)
-            self.y = [label2id[label] for _, label in rows]
-
-        def __len__(self) -> int:
-            return len(self.y)
-
-        def __getitem__(self, i: int) -> dict[str, object]:
-            return {**{k: torch.tensor(v[i]) for k, v in self.enc.items()}, "labels": self.y[i]}
-
-    out = Path(cfg.local_model_dir)
-    trainer = Trainer(
-        model=model,
-        args=TrainingArguments(
-            output_dir=str(out / "runs"),
-            num_train_epochs=args.epochs,
-            per_device_train_batch_size=8,
-            learning_rate=5e-5,
-            report_to=[],
-            save_strategy="no",
-        ),  # fmt: skip
-        train_dataset=Rows(train),
-    )
-    trainer.train()
-    logits = trainer.predict(Rows(test)).predictions
-    predicted = [LABELS[i] for i in np.argmax(logits, axis=1)]
-    true = [label for _, label in test]
-    accuracy = sum(p == t for p, t in zip(predicted, true, strict=True)) / len(true)
-    print(
-        f"held-out accuracy: {accuracy:.1%} on {len(test)} examples\n{confusion(true, predicted)}"
-    )
-    trainer.save_model(str(out))
-    tokenizer.save_pretrained(str(out))
-    print(f"saved to {out}")
-
-
-if __name__ == "__main__":
-    main()

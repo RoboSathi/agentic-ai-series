@@ -25,6 +25,7 @@ from langgraph.types import Send
 
 from agentic_commons.config import FeatureSet
 from agentic_commons.control_loop import BudgetGuard
+from agentic_commons.logging import describe_error
 from agentic_commons.scheduling import AsyncDagScheduler, TaskGraph
 from agentic_commons.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
 from research_agent.archive.store import ResearchArchive
@@ -35,13 +36,14 @@ from research_agent.domain.budget import GAP_FILL_ROUNDS, ROUNDS, SEARCHES
 from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.report import Report, RunStatus
 from research_agent.graph.state import RunState
-from research_agent.narration import say
+from research_agent.narration import clip, say
 from research_agent.planning.ids import renumber
 from research_agent.planning.planner import Planner, PlanRejectedError
 from research_agent.research import cards
 from research_agent.research.reflector import GapAnalyzer, Reflector
 from research_agent.research.resources import RunResources
 from research_agent.research.worker import UNREADABLE, ResearcherWorker
+from research_agent.synthesis.citation_guard import CitationGuard, GuardedReport
 from research_agent.synthesis.limits import build_limits, unmet_must_pass
 from research_agent.synthesis.synthesizer import Synthesizer
 
@@ -74,6 +76,12 @@ class RunParts:
     reflection_enabled: bool = True
     # Per-role {tokens, seconds, calls} so far (`StructuredCaller.usage`); None: not tracked.
     usage: Callable[[], dict[str, dict[str, float]]] | None = None
+    # What the judge card names: the model that wrote the report, and the NLI model.
+    writer_model: str = ""
+    nli_model: str = ""
+    judge_role: str = ""
+    # Checks every cited sentence against its spans before the audit; None: withheld.
+    citation_guard: CitationGuard | None = None
 
 
 # Rejection codes that mean "the filter could not read the result", not "the result is
@@ -81,15 +89,17 @@ class RunParts:
 # round of searching cannot help, so the run stops and says so.
 FAIL_FAST_CODES = frozenset({"undated", UNREADABLE})
 
-# Counters whose exhaustion cuts work short by itself (model calls and the clock stop mid-way).
-# Searches, fetches and rounds only truncate a run when a reservation was actually refused,
-# and that is what `trace.budget_stops` records.
+# Counters whose exhaustion cuts work short by itself: model calls and the clock stop mid-way,
+# so whatever was being written is unfinished. A refused search or page read (recorded in
+# `trace.budget_stops`) is not: the report says what was not read, and whether the contract was
+# still met is the audit's to judge. A run whose every must-pass criterion holds is COMPLETE
+# even if it could have read more.
 TRUNCATING_COUNTERS = frozenset({"tokens", "seconds"})
 
 
-def truncated_by_budget(exhausted: list[str], stops: list[str]) -> bool:
-    """Whether a budget limit cut the run short, as opposed to merely being reached."""
-    return bool(stops) or bool(TRUNCATING_COUNTERS & set(exhausted))
+def truncated_by_budget(exhausted: list[str]) -> bool:
+    """Whether a budget limit cut the run's work short, as opposed to merely bounding it."""
+    return bool(TRUNCATING_COUNTERS & set(exhausted))
 
 
 def fit_to_budget(follow_ups: list[SubQuestion], searches_left: float) -> list[SubQuestion]:
@@ -156,38 +166,47 @@ class RunNodes:
         try:
             plan, validation, repaired = await self._p.planner.plan(state["contract"])
         except PlanRejectedError as exc:
-            r.telemetry.stage(
-                "plan_validated",
-                f"Plan rejected twice: {exc}",
-                {"problems": exc.validation.problems},
+            r.telemetry.card(
+                "plan_dag",
+                say("plan.rejected", error=str(exc)),
+                {say("plan.section.problems"): list(exc.validation.problems)},
                 status="failed",
             )
             r.telemetry.audit("plan.rejected", "deny", str(exc))
             return {
                 "status": "FAILED",
-                "stop_reason": f"plan invalid: {exc}",
+                "stop_reason": say("plan.rejected", error=str(exc)),
                 "plans": [],
                 "round_nodes": [],
             }
         except Exception as exc:
             # A model timeout, a spent quota, a cut-off answer: end the run with the reason,
             # rather than failing the node with a raw error and leaving the shell waiting.
-            error = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            error = describe_error(exc)
             message = say("plan.unavailable", error=error)
             r.telemetry.stage("plan_dag", message, {"error": error}, status="failed")
             r.telemetry.audit("plan.unavailable", "deny", error)
             return {"status": "FAILED", "stop_reason": message, "plans": [], "round_nodes": []}
-        r.telemetry.stage(
-            "plan_dag",
-            f"{len(plan.nodes)} sub-questions · {len(TaskGraph(plan.tasks()).waves())} wave(s)",
-            {n.node_id: f"{n.question} ← {','.join(n.rubric_items)}" for n in plan.nodes},
-        )
-        r.telemetry.stage(
-            "plan_validated",
-            "Plan valid" + (" after one repair" if repaired else ""),
-            {"acyclic": True, "traced": True, "repaired": repaired},
-        )
+        self._plan_card(plan, repaired)
         return {"plans": [plan], "round_nodes": list(plan.nodes)}
+
+    def _plan_card(self, plan: PlanDag, repaired: bool) -> None:
+        """The plan and its validation, as one card: what will be asked, and that it can run."""
+        waves = len(TaskGraph(plan.tasks()).waves())
+        validity = say("plan.valid_repaired") if repaired else say("plan.valid")
+        heading = say("plan.heading", nodes=len(plan.nodes), waves=waves, validity=validity)
+        questions = [
+            say("plan.line", id=n.node_id, question=n.question, items=", ".join(n.rubric_items))
+            for n in plan.nodes
+        ]
+        checks = [say("plan.check.acyclic"), say("plan.check.traced")]
+        if repaired:
+            checks.append(say("plan.check.repaired"))
+        sections = {
+            say("plan.section.questions"): questions,
+            say("plan.section.validation"): checks,
+        }
+        self.resources.telemetry.card("plan_dag", heading, sections)
 
     @staticmethod
     def after_plan(state: RunState) -> str:
@@ -290,7 +309,7 @@ class RunNodes:
     ) -> tuple[bool, str]:
         r = self.resources
         if r.cancelled:
-            return True, "cancelled"
+            return True, say("stop.cancelled")
         blocked = self._unreadable_only()
         if blocked:
             return True, blocked
@@ -299,13 +318,15 @@ class RunNodes:
         if decision.stop:
             # Answered is answered, even if a cap was reached getting there.
             return True, decision.reason
-        exhausted = r.budget.exhausted_counters()
-        if exhausted or r.trace.budget_stops:
-            return True, f"budget exhausted ({', '.join(exhausted or r.trace.budget_stops)})"
         if not self._p.reflection_enabled:
-            return True, "reflection withheld: the plan ran once"
+            return True, say("stop.reflection_withheld")
+        # Rounds used up is the plan running its course, not a limit hit mid-way.
+        exhausted = [c for c in r.budget.exhausted_counters() if c != ROUNDS]
+        if exhausted or r.trace.budget_stops:
+            spent = ", ".join(exhausted or r.trace.budget_stops)
+            return True, say("stop.budget", counters=spent)
         if r.budget.remaining(ROUNDS) <= 0:
-            return True, "maximum rounds reached"
+            return True, say("stop.max_rounds")
         return False, decision.reason
 
     async def _next_round(
@@ -353,6 +374,10 @@ class RunNodes:
         r, contract = self.resources, state["contract"]
         ledger = r.ledger.snapshot()
         checked = await self._p.synthesizer.draft(contract, ledger, state.get("gaps", []))
+        if self._p.citation_guard is not None and ledger.entries:
+            guarded = await self._p.citation_guard.guard(checked.report, ledger)
+            self._guard_card(guarded)
+            checked = checked.model_copy(update={"report": guarded.report})
         verdicts = await self._self_check(contract, ledger, checked.report)
         status = self._provisional_status(verdicts)
         limits = build_limits(
@@ -377,6 +402,34 @@ class RunNodes:
         )
         return {"report": report, "ledger": ledger}
 
+    def _guard_card(self, guarded: GuardedReport) -> None:
+        """What the citation guard did to the draft, before the audit reads it."""
+        clean = not guarded.dropped
+        heading = say(
+            "guard.heading" if clean else "guard.heading_dropped",
+            supported=guarded.supported,
+            checked=guarded.checked,
+            rewritten=len(guarded.rewritten),
+            dropped=len(guarded.dropped),
+        )
+        limit = self._p.clip_chars
+        sections = {
+            say("guard.section.rewritten"): [clip(s, limit) for s in guarded.rewritten],
+            say("guard.section.dropped"): [clip(s, limit) for s in guarded.dropped],
+            say("guard.section.how"): [say("guard.how", model=self._p.nli_model)],
+        }
+        r = self.resources
+        r.telemetry.card(
+            "citation_guard", heading, sections, status="completed" if clean else "warning"
+        )
+        r.telemetry.audit(
+            "report.citation_guard",
+            "allow" if clean else "escalate",
+            heading,
+            rewritten=guarded.rewritten,
+            dropped=guarded.dropped,
+        )
+
     async def _self_check(self, contract: Any, ledger: Any, report: Report) -> list[CheckVerdict]:
         ctx = self._p.context(contract, ledger, report)
         return await self._p.registry.evaluate(
@@ -385,7 +438,7 @@ class RunNodes:
 
     def _provisional_status(self, verdicts: list[CheckVerdict]) -> RunStatus:
         r = self.resources
-        truncated = truncated_by_budget(r.budget.exhausted_counters(), r.trace.budget_stops)
+        truncated = truncated_by_budget(r.budget.exhausted_counters())
         return "PARTIAL" if truncated or unmet_must_pass(verdicts) else "COMPLETE"
 
     async def goldfish_audit(self, state: RunState) -> Update:
@@ -403,15 +456,22 @@ class RunNodes:
     def _report_audit(self, audit: AuditResult, rubric: Any) -> None:
         r = self.resources
         result = self._verdict(audit.verdicts, rubric)
+        usage = self._p.usage() if self._p.usage is not None else {}
+        setup = cards.JudgeSetup(
+            judge_model=audit.judge_model,
+            writer_model=self._p.writer_model,
+            nli_model=self._p.nli_model,
+            independent=audit.independent,
+            honest=audit.honest,
+            usage=usage.get(self._p.judge_role, {}),
+        )
         heading, sections = cards.audit_card(
             audit.verdicts,
             rubric,
             result,
             self._p.pass_threshold,
             self._p.partial_threshold,
-            audit.judge_model,
-            audit.independent,
-            audit.honest,
+            setup,
             self._p.clip_chars,
         )
         r.telemetry.card(
@@ -455,7 +515,7 @@ class RunNodes:
         )
         r.telemetry.stage(
             "gap_fill",
-            f"Gap-fill round {state['gap_fill_round'] + 1}: {len(follow_ups)} targeted node(s)",
+            say("gap_fill.heading", round=state["gap_fill_round"] + 1, nodes=len(follow_ups)),
             {"gaps": [g.item_id for g in gaps], "nodes": [f.node_id for f in follow_ups]},
         )
         update: Update = {"gap_fill_round": state["gap_fill_round"] + 1, "round_nodes": follow_ups}
@@ -505,11 +565,12 @@ class RunNodes:
             return "CANCELLED"
         if state.get("status") == "FAILED":
             return "FAILED"
-        truncated = truncated_by_budget(r.budget.exhausted_counters(), r.trace.budget_stops)
+        truncated = truncated_by_budget(r.budget.exhausted_counters())
         verdict = self._verdict(self._final_verdicts(state), state["contract"].rubric)
         # PARTIAL means the weighted score fell short, a must-pass criterion is unmet, or the
-        # budget actually cut the work short. A cap reached exactly, with every must-pass
-        # criterion met and the score high enough, is COMPLETE.
+        # model or the clock was cut off mid-way. A search or page the budget refused is in the
+        # report's limits; with every must-pass criterion met and the score high enough, the
+        # run is COMPLETE.
         return "PARTIAL" if truncated or verdict.outcome != "PASS" else "COMPLETE"
 
     def _final_verdicts(self, state: RunState) -> list[CheckVerdict]:

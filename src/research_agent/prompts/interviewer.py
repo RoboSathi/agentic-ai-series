@@ -29,6 +29,12 @@ Each turn:
   what would make one option better than another, or what would change the
   decision. Never challenge an answer to an item that has `choices`: a
   picked choice is a complete answer.
+- Ask about the subject of THIS request (`request`) before anything about its
+  use: which parts of the topic matter — its sub-areas, the named options,
+  players, products, regions or time frame — with examples taken from the
+  topic itself ("models, policy, funding or products?"). Ask about purpose,
+  format or depth only when the request does not already imply it; when it
+  does, record the implied value in `updated_items` instead of asking.
 - Ask exactly one `next_question`, about the most important open item
   (`next_item_id`). Write it fresh, for this request: one short, plain
   sentence (about twenty words or fewer), no jargon, no checklist words,
@@ -79,6 +85,7 @@ class InterviewTurn(BaseModel):
 def build(
     *,
     archetype: str,
+    request: str,
     topic: str,
     items: list[CoverageItem],
     asked_item_id: str,
@@ -91,6 +98,7 @@ def build(
         payload={
             "task": "interview",
             "archetype": archetype,
+            "request": request,
             "topic": topic,
             "turn": turn,
             "asked_item_id": asked_item_id,
@@ -103,6 +111,9 @@ def build(
 def _visible(item: CoverageItem) -> dict[str, object]:
     """An item as the model sees it; a private value is replaced by a marker."""
     value = "(private, recorded)" if item.private and item.value else item.value
+    if item.status != "open":
+        # Settled: what it holds is all the model needs, not its goal and options again.
+        return {"item_id": item.item_id, "status": item.status, "value": value}
     return {
         "item_id": item.item_id,
         "goal": item.goal,

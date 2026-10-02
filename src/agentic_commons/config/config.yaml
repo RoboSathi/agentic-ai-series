@@ -119,6 +119,9 @@ llm:
   # thing: a truncated prompt hides the end of the system prompt and the
   # most recent turn, which is usually the part you are debugging.
   payload_max_chars: 0
+  # Message attributes a provider uses for the model's reasoning, shown as the
+  # THOUGHT of a reasoning loop. The first one present is used.
+  reasoning_fields: [reasoning_content, reasoning]
   providers:
     nim:
       base_url: https://integrate.api.nvidia.com/v1
@@ -205,8 +208,19 @@ llm:
   # Summarises a session's conversation for a memory dream. BART fine-tuned
   # on SAMSum (chat dialogues). Local, like the intent BERT and NLI DeBERTa:
   # no key, no rate limit. ~1.6 GB, downloaded on first use.
+  # A local sentence-embedding model, off unless an agent names one (`make model-check`
+  # lists it only where it is used). Mean-pooled and normalised, like sentence-transformers.
+  local_embedder:
+    enabled: false
+    model: ""
+    local_model_dir: ""
+    download_if_missing: true
+    max_length: 128
+    prefixes: {query: "", passage: ""}
+  # Off in the platform: only an agent that summarises sessions (the support agent's memory
+  # dream) turns it on in its overlay.
   dialogue_summarizer:
-    enabled: true
+    enabled: false
     model: philschmid/bart-large-cnn-samsum
     local_model_dir: local_models/summarizer/bart-large-cnn-samsum
     download_if_missing: true
@@ -219,6 +233,22 @@ llm:
     prompt: Reply with the single word OK.
     max_tokens: 4
     timeout_seconds: 20
+    # Each in-process model is loaded and run once on these.
+    local:
+      nli_premise: "The forecast for Pune on 2 October is light drizzle with a high of 32.5 °C."
+      nli_hypothesis: "It will drizzle in Pune on 2 October."
+      intent_text: "I want a refund for my order"
+      dialogue: "User: What is the weather in Pune?\nAssistant: Light drizzle, 26 °C.\nUser: And tomorrow?\nAssistant: Light drizzle again, up to 32.5 °C."
+    # `make model-check BENCH=1`: a judge-sized request, repeated, to each chat model.
+    benchmark:
+      samples: 3
+      prompt: >-
+        Score this report sentence against its evidence on a 0-1 scale and give a
+        one-paragraph rationale. Sentence: "The program costs 4 lakh a year and includes a
+        laptop." Evidence: "Annual fee: INR 4,00,000. An Apple MacBook is included in the
+        above course fee." Answer as JSON {"score": float, "rationale": str}.
+      max_tokens: 512
+      timeout_seconds: 120
   # The model's typesetting habits, undone as its text arrives. Nemotron
   # writes a narrow no-break space between a label and its number
   # ("order<U+202F>90019") and non-breaking hyphens in dates; they look like
@@ -238,6 +268,9 @@ llm:
     # Invisible characters removed: zero-width space, non-joiner, joiner,
     # word joiner, byte-order mark.
     remove: ["​", "‌", "‍", "⁠", "﻿"]
+    # Markup removed with the space before it: a browsing model's tool-result citations
+    # ("【0†L1-L9】"), whose digits read as figures to every check after it.
+    strip_patterns: ['[ \t]*【[^】]*】']
 
 
 persistence:
@@ -290,6 +323,11 @@ observability:
   # tool it asked for, and the result — not reason/act/observe.
   loop_step_prefix: "Step {step} · "
   loop_step_detail: "{step} of {max} (model call → tool → result)"
+  llm_request_heading: "LLM request · {purpose}"
+  llm_response_heading: "LLM response · {purpose}"
+  llm_tool_requested_heading: "LLM response · tool requested: {tool}"
+  unparseable_arguments: "unparseable — the call will be refused"
+  invalid_amount: "{value} (not a valid amount)"
   slo_targets:
     task_success_rate: 0.95
     unauthorized_action_rate: 0.0
@@ -506,6 +544,19 @@ guardrails:
 
 hallucination_protection:
   enforce_grounding: true
+  # What is said instead when nothing in an answer could be verified.
+  withheld_reply: "I couldn't verify all of the details in that response. Please try again."
+  # The lexical fallback's contradictions refute (true) or only leave a claim unverified.
+  uncalibrated_may_refute: true
+  # A claim a rule refuted (an id, amount or date in no evidence) is removed without asking
+  # the model to rewrite it (false), or rewritten once from the evidence first (true).
+  repair_direct_refutations: false
+  # A figure followed by one of these is a size ("$1.2 M"), never read as the amount "$1.20".
+  # Connectives that split a sentence into claims checked separately, and the fewest content
+  # words a claim needs to be checked at all.
+  claim_conjunctions: [and, but, however, although, while, because, since, so]
+  claim_min_content_tokens: 3
+  money_scales: [k, m, mn, mm, b, bn, t, tn, thousand, million, billion, trillion, lakh, lac, crore, cr]
   confidence_threshold: 0.7
   # Minimum NLI probability required to accept an entailment as grounded.
   # This is separate from the generic cascade confidence threshold so the
@@ -1009,6 +1060,12 @@ tui:
     citation: "#00FF87"
     url: dim
     body: white
+  # Extra colouring by pattern; each agent adds its own vocabulary in its overlay.
+  response_highlights:
+    - {pattern: '(?m)^\*\*Status:\*\* COMPLETE.*$', style: "bold green"}
+    - {pattern: '(?m)^\*\*Status:\*\* PARTIAL.*$', style: "bold yellow"}
+    - {pattern: '(?m)^\*\*Status:\*\* (?:FAILED|CANCELLED).*$', style: "bold red"}
+    - {pattern: '(?m)^(?:\*\*)?Sources?:?(?:\*\*)?:?', style: "bold #C792EA"}
 
   command_output:
     title_style: bold bright_cyan

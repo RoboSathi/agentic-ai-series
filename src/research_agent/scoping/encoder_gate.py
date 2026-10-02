@@ -96,7 +96,7 @@ class EncoderGateClassifier:
             recent_days=self._llm.window_days(message),
             reason=f"p={top.score:.2f} ({top.intent})",
             source="encoder",
-            source_model=str(getattr(self._backend, "model_name", self._settings.model)),
+            source_model=str(getattr(self._backend, "model_name", "")),
         )
         return self._llm.normalise(verdict, message)
 

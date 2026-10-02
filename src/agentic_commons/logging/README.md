@@ -22,7 +22,7 @@ Section `logging:` — `level`, `console_enabled`/`console_level`, `file_enabled
 `run_label`, `file_format`, `payload_max_chars` (0 = everything), `max_bytes`, `backup_count`.
 
 Files are written to `<dir>/<agent id>/<subsystem>.log` (`log_directory()`), so each agent has its own
-folder (`logs/customer_support_agent/`, `logs/research_agent/`); `run_label` adds a sub-folder for runs
+folder (`logs/<agent id>/`, one per agent); `run_label` adds a sub-folder for runs
 that are not the live agent (an offline profile).
 
 ## Seams

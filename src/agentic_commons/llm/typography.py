@@ -11,8 +11,13 @@ look for ASCII, and a no-break space between JSON tokens is invalid JSON.
 So the text is normalised once, where it enters — the adapter — and every
 consumer (guardrails, the customer, memory, logs) sees the same plain
 text. Which characters are rewritten is configuration, not code.
+
+The same goes for markup a model leaves in its text that means nothing
+outside its own training: `【0†L1-L9】`, a browsing model's citation of a
+tool result, read as the numbers 0, 1 and 9 by every check after it.
 """
 
+import re
 import unicodedata
 
 from agentic_commons.config.settings import OutputNormalisationSettings
@@ -27,14 +32,23 @@ class TypographyNormaliser:
         self._table = {ord(char): None for char in settings.remove} | {
             ord(char): replacement for char, replacement in settings.replacements.items()
         }
+        self._strip = [re.compile(pattern) for pattern in settings.strip_patterns]
 
     def normalise(self, text: str) -> tuple[str, int]:
         """The text in plain characters, and how many characters were changed."""
         if not self._enabled or not text or text.isascii():
             return text, 0
-        parts = [self._plain(char) for char in text]
-        changed = sum(1 for char, part in zip(text, parts, strict=True) if part != char)
+        stripped = self._stripped(text)
+        parts = [self._plain(char) for char in stripped]
+        changed = len(text) - len(stripped)
+        changed += sum(1 for char, part in zip(stripped, parts, strict=True) if part != char)
         return "".join(parts), changed
+
+    def _stripped(self, text: str) -> str:
+        """The text without the markup a model leaves behind (its own citation markers)."""
+        for pattern in self._strip:
+            text = pattern.sub("", text)
+        return text
 
     def _plain(self, char: str) -> str:
         """One character as plain text: a space, its replacement, nothing, or itself."""

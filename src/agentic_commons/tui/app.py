@@ -464,11 +464,11 @@ class AgenticTuiApp(App[None]):
                 session_id=self._session_id,
             )
 
-            self._panel.note("\nASSISTANT", style="bold green")
+            self._panel.note("ASSISTANT", style="bold green")
             self._panel.response(state.response or "")
             self._menu.offer(getattr(state, "choices", None) or [])
             self._panel.note(
-                f"\n──────── TURN {self._turn:02d} COMPLETE · "
+                f"──────── TURN {self._turn:02d} COMPLETE · "
                 f"{self._status.elapsed_seconds:.2f}s · "
                 f"{_compact(self._tokens.turn_tokens)} tokens ────────",
                 style="dim",

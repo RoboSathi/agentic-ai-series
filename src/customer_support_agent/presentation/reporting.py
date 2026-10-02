@@ -12,46 +12,33 @@ customer's data in a second place.
 
 import json
 import re
-from collections.abc import Callable
 from typing import Any
 
-from agentic_commons.control_loop import ControlLoopReport
 from agentic_commons.money import money_or_none
+from agentic_commons.observability.tool_fields import (
+    control_loop_fields,
+    display_tool_name,
+    parse_arguments,
+    tool_request_fields,
+)
+from agentic_commons.observability.tool_fields import (
+    tool_result_fields as platform_tool_result_fields,
+)
 
-
-def tool_request_fields(
-    name: str, arguments: str, redact: Callable[[str], str] | None = None
-) -> dict[str, Any]:
-    """Every argument the model sent to a tool — what it is acting on.
-
-    All of them, not a hand-picked few: a reason, a note, a status the
-    model chose are part of the decision being made. Text passes through
-    the redactor first (the card must not become a copy of personal data)
-    and an amount is shown in dollars.
-    """
-    fields: dict[str, Any] = {
-        "tool": display_tool_name(name),
-        "qualified_tool": name.replace("__", "."),
-    }
-    try:
-        raw = json.loads(arguments or "{}")
-    except (TypeError, ValueError, json.JSONDecodeError):
-        fields["arguments"] = "unparseable — the call will be refused"
-        return fields
-    if not isinstance(raw, dict):
-        return fields
-    for key, value in raw.items():
-        fields[f"arg_{key}"] = _shown_argument(key, value, redact)
-    return fields
-
-
-def _shown_argument(key: str, value: Any, redact: Callable[[str], str] | None) -> Any:
-    if key == "amount":
-        parsed = money_or_none(value)
-        return str(parsed) if parsed is not None else f"{value} (not a valid amount)"
-    if isinstance(value, str) and redact is not None:
-        return redact(value)
-    return value
+# Re-exported: the support agent's graph reads every card helper from here.
+__all__ = [
+    "FALLBACK_REPLY",
+    "asks_for_the_list",
+    "basic_sanity_fields",
+    "control_loop_fields",
+    "display_tool_name",
+    "gatekeeper_fields",
+    "is_customer_ready",
+    "memory_fact_fields",
+    "parse_arguments",
+    "tool_request_fields",
+    "tool_result_fields",
+]
 
 
 def memory_fact_fields(fact: Any, *, score: float | None = None) -> dict[str, Any]:
@@ -130,22 +117,6 @@ def basic_sanity_fields(result: Any) -> dict[str, Any]:
     return fields
 
 
-def control_loop_fields(report: ControlLoopReport) -> dict[str, Any]:
-    """Render a control-loop intervention with its evidence and limits."""
-    fields: dict[str, Any] = {
-        "decision": report.decision,
-        "reason_code": report.reason_code,
-        "reason": report.reason,
-        "round": report.round_number,
-        "max_rounds": report.max_rounds,
-        "checks": [check.model_dump(mode="json") for check in report.checks],
-    }
-    # The fingerprint is only useful when diagnosing duplicate suppression.
-    if report.fingerprint:
-        fields["fingerprint"] = report.fingerprint
-    return fields
-
-
 def gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
     """Expose the exact proposal and deterministic checks behind the ruling."""
     fields: dict[str, Any] = {
@@ -176,54 +147,26 @@ def gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
     return fields
 
 
-def display_tool_name(name: str) -> str:
-    """Return the concise tool name used in the operator-facing dashboard."""
-    normalized = name.replace("__", ".")
-    return normalized.rsplit(".", maxsplit=1)[-1]
+# The result keys this agent's tool cards show: what a support operator reads.
+TOOL_RESULT_KEYS = (
+    "order_id",
+    "amount",
+    "order_status",
+    "refund_status",
+    "pending_review",
+    "queued",
+    "already_queued",
+    "request_id",
+    "refund_id",
+    "steps",
+    "failed_step",
+    "compensated",
+)
 
 
 def tool_result_fields(call: Any, result: Any, *, outcome: Any | None = None) -> dict[str, Any]:
-    """Expose domain outcome plus generic Executor lifecycle metadata."""
-    fields: dict[str, Any] = {
-        "tool": display_tool_name(call.action),
-        "qualified_tool": call.action,
-        "result": "success" if result.success else "failed",
-    }
-    if outcome is not None:
-        fields.update(
-            {
-                # One field says how it ended: completed, failed, timed_out or replayed.
-                "execution_status": outcome.status,
-                "duration_ms": round(outcome.duration_ms, 2),
-            }
-        )
-    for key in (
-        "order_id",
-        "amount",
-        "order_status",
-        "refund_status",
-        "pending_review",
-        "queued",
-        "already_queued",
-        "request_id",
-        "refund_id",
-        "steps",
-        "failed_step",
-        "compensated",
-    ):
-        value = result.data.get(key)
-        if value is None:
-            continue
-        if key == "amount":
-            parsed = money_or_none(value)
-            fields[key] = str(parsed) if parsed is not None else value
-        elif isinstance(value, (str, int, float, bool)):
-            fields[key] = value
-        elif isinstance(value, list):
-            fields[key] = len(value)
-    if not result.success and result.error:
-        fields["error"] = result.error
-    return fields
+    """The platform's tool-result fields, showing this agent's result keys."""
+    return platform_tool_result_fields(call, result, outcome=outcome, keys=TOOL_RESULT_KEYS)
 
 
 # Shown when the model produces nothing a customer could read.
@@ -269,11 +212,3 @@ def is_customer_ready(content: str) -> bool:
     # key names only catches the spellings you thought of, and the live
     # failures used three different ones.
     return False
-
-
-def parse_arguments(raw: str) -> dict[str, Any]:
-    """Parse a model's tool arguments, tolerating an empty string."""
-    if not raw.strip():
-        return {}
-    parsed: dict[str, Any] = json.loads(raw)
-    return parsed

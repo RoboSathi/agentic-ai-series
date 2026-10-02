@@ -9,7 +9,8 @@ on the PII card (one boolean twice, and a config constant).
 
 from types import SimpleNamespace
 
-from customer_support_agent.presentation.reporting import llm_response_fields, tool_result_fields
+from agentic_commons.observability.llm_fields import llm_response_fields
+from customer_support_agent.presentation.reporting import tool_result_fields
 
 
 class TestTheResponseCardDoesNotRepeatTheRequest:

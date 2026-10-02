@@ -42,7 +42,10 @@ class TerminationPolicy:
         """Ask again, propose done (only if allowed), or stop at the turn cap."""
         still_open = [item.item_id for item in open_items(items, required_only=True)]
         allowed = self.may_propose_done(items)
-        if turn.proposes_done and allowed:
+        # A turn with nothing left to ask, once nothing required is open, is a proposal to
+        # finish: shown as a question it was an empty reply that left the user waiting.
+        nothing_to_ask = not turn.next_question.strip()
+        if (turn.proposes_done or nothing_to_ask) and allowed:
             return TerminationDecision(outcome="propose_done")
         if turn_number >= self._max_turns:
             return TerminationDecision(outcome="turn_cap", open_required=still_open)

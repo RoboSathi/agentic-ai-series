@@ -11,6 +11,7 @@ from agentic_commons.logging.core import (
     log_directory,
 )
 from agentic_commons.logging.decorators import instrument, logged
+from agentic_commons.logging.errors import describe_error
 from agentic_commons.logging.trace_context import get_current_trace_id, set_current_trace_id
 
 __all__ = [
@@ -20,6 +21,7 @@ __all__ = [
     "RichLogger",
     "SUBSYSTEM_COLORS",
     "StructuredLogger",
+    "describe_error",
     "get_current_trace_id",
     "get_logger",
     "instrument",

@@ -21,7 +21,7 @@ from datetime import date
 from pydantic import BaseModel, Field
 
 from agentic_commons.evidence import EvidenceCandidate, EvidenceEntry
-from agentic_commons.logging import instrument
+from agentic_commons.logging import describe_error, instrument
 from agentic_commons.resilience import QuotaExhaustedError
 from agentic_commons.web import FetchedPage, SearchHit, SearchRequest, SearchResponse
 from research_agent.config import get_agent_settings
@@ -213,11 +213,13 @@ class ResearcherWorker:
         why = (
             say("page.unreadable_cut_off")
             if isinstance(exc, OutputTruncatedError)
-            else say("page.unreadable_error", error=_describe(exc))
+            else say("page.unreadable_error", error=describe_error(exc))
         )
-        self._r.trace.errors.append(f"{node.node_id}: {page.url}: {_describe(exc)}")
+        self._r.trace.errors.append(f"{node.node_id}: {page.url}: {describe_error(exc)}")
         self._r.trace.reject(page.url, why, UNREADABLE)
-        self._r.telemetry.audit("web.read", "deny", _describe(exc), node=node.node_id, url=page.url)
+        self._r.telemetry.audit(
+            "web.read", "deny", describe_error(exc), node=node.node_id, url=page.url
+        )
         heading, sections = cards.unreadable_card(host_of(page.url), page.url, why, node.node_id)
         self._r.telemetry.card("page_result", heading, sections, status="warning")
 
@@ -244,7 +246,7 @@ class ResearcherWorker:
             self._r.budget.release(held)
             self._failed("worker_fetch", url, exc, node.node_id)
             self._r.trace.examined(url)
-            self._r.trace.reject(url, _describe(exc), "error")
+            self._r.trace.reject(url, describe_error(exc), "error")
             return None
         self._r.budget.commit(held)
         return self._fetched(page, node)
@@ -423,7 +425,7 @@ class ResearcherWorker:
         return False
 
     def _failed(self, stage: str, target: str, exc: Exception, node: str = "") -> None:
-        detail = _describe(exc)
+        detail = describe_error(exc)
         self._r.trace.errors.append(f"{target}: {detail}")
         self._r.telemetry.audit(stage.replace("worker_", "web."), "deny", detail, target=target)
         self._r.telemetry.stage(
@@ -432,12 +434,6 @@ class ResearcherWorker:
             {"node": node, "target": target, "error": detail},
             status="failed",
         )
-
-
-def _describe(exc: BaseException) -> str:
-    """The exception with its type, even when its message is empty (timeouts, resets)."""
-    message = str(exc).strip()
-    return f"{type(exc).__name__}: {message}" if message else type(exc).__name__
 
 
 def _fetch_outcome(status: int) -> tuple[str, str]:

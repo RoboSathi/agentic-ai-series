@@ -138,6 +138,7 @@ class OpenAICompatibleClient(LLMClient):
             # agentic_commons.tools stays provider-neutral.
             tools=request.tools if request.tools else omit,  # type: ignore[arg-type]
             **self._structured_output_kwargs(request),
+            extra_body=request.extra_body or None,
         )
         choice = completion.choices[0]
         usage = self._usage_from(completion.usage)
@@ -146,6 +147,7 @@ class OpenAICompatibleClient(LLMClient):
         )
         result = CompletionResult(
             content=content,
+            reasoning=self._reasoning_of(choice.message),
             tool_calls=tool_calls,
             model=completion.model,
             finish_reason=choice.finish_reason,
@@ -156,6 +158,15 @@ class OpenAICompatibleClient(LLMClient):
         )
         self._log_response(result, normalised)
         return result
+
+    def _reasoning_of(self, message: Any) -> str:
+        """The model's reasoning, from the first configured attribute the provider filled."""
+        extra = getattr(message, "model_extra", None) or {}
+        for name in self._settings.reasoning_fields:
+            value = getattr(message, name, None) or extra.get(name)
+            if isinstance(value, str) and value.strip():
+                return self._typography.normalise(value.strip())[0]
+        return ""
 
     def _plain_text(
         self, content: str, tool_calls: list[ModelToolCall] | None
@@ -199,6 +210,7 @@ class OpenAICompatibleClient(LLMClient):
             temperature=request.temperature,
             max_tokens=request.max_tokens,
             json_schema=request.json_schema,
+            extra_body=request.extra_body,
         )
 
     def _log_response(self, result: CompletionResult, normalised: int = 0) -> None:
@@ -221,6 +233,7 @@ class OpenAICompatibleClient(LLMClient):
             cost_usd=result.cost_usd,
             normalised_chars=normalised,
             content=self._clip(result.content),
+            reasoning=self._clip(result.reasoning),
             tool_calls=[
                 {
                     "id": call.id,

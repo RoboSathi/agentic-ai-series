@@ -15,6 +15,7 @@ import re
 import textwrap
 import time
 from collections.abc import Mapping, Sequence
+from functools import cache
 from typing import Any
 
 from rich.text import Text
@@ -70,7 +71,13 @@ SUMMARY_ACCENT_STYLES = {
 # follow alphabetically.
 FIELD_PRIORITY = (
     # A model card reads in the order the exchange happened: what the
-    # customer asked, what we sent, what came back.
+    # customer asked, what we sent, what came back. A reasoning loop's card
+    # leads with what the model thought, then what it decided.
+    "loop_step",
+    "model",
+    "reasoning",
+    "tool_calls",
+    "observation",
     "user_query",
     "system_prompt",
     "response",
@@ -250,6 +257,8 @@ MUTED_FIELDS = {
 # show a token count and a finish reason but never the prompt or the
 # answer — the two things a person watching actually wants.
 BLOCK_FIELDS = (
+    "reasoning",
+    "observation",
     "system_prompt",
     "user_query",
     "prompt",
@@ -693,10 +702,17 @@ class StageEventWidget(Collapsible):
                     if amount is not None:
                         parts.append(_format_value("amount", amount))
                     return " · ".join(parts)
-            requested = fields.get("tools_offered")
-            if stage == "llm_request" and requested:
+            if stage == "llm_request":
+                # A request is a prompt sent, with or without tools; it never "generated" anything.
+                requested = fields.get("tools_offered")
                 count = len(requested) if isinstance(requested, list) else 0
-                return f"prompt sent · {count} tools offered" if count else "prompt sent"
+                purpose = fields.get("purpose")
+                parts = [
+                    "prompt sent",
+                    f"{count} tools offered" if count else "",
+                    str(purpose or ""),
+                ]
+                return " · ".join(part for part in parts if part)
             if fields.get("finish_reason") == "tool_calls":
                 return "tool requested"
             return "response generated"
@@ -1098,6 +1114,7 @@ _CITATION = re.compile(r"\[\d+\]")
 _URL = re.compile(r"https?://\S+")
 _BULLET = re.compile(r"^(\s*)([-•*])\s+")
 _HEADINGS = (("## ", "h2"), ("# ", "h1"))
+_BLANK_RUN = re.compile(r"\n[ \t]*(?:\n[ \t]*)+")
 
 
 def render_response(text: str, styles: Mapping[str, str]) -> Text:
@@ -1107,7 +1124,10 @@ def render_response(text: str, styles: Mapping[str, str]) -> Text:
     Markdown comes out exactly as it went in.
     """
     out = Text()
-    for index, line in enumerate(text.split("\n")):
+    # No blank line before or after the answer, and never two in a row inside it: the
+    # card's own margin spaces it from the notes around it.
+    lines = _BLANK_RUN.sub("\n\n", text.strip()).split("\n")
+    for index, line in enumerate(line.rstrip() for line in lines):
         if index:
             out.append("\n")
         _append_response_line(out, line, styles)
@@ -1127,20 +1147,49 @@ def _append_response_line(out: Text, line: str, styles: Mapping[str, str]) -> No
 
 
 def _append_inline(out: Text, line: str, styles: Mapping[str, str]) -> None:
-    """Bold runs, citation markers and URLs within one line."""
+    """Configured highlights, then bold runs, citation markers and URLs, within one line.
+
+    Each span is (start, end, text shown, style, rank); at one position the lower rank wins,
+    and a span that overlaps one already drawn is left as body text.
+    """
     position = 0
     spans = sorted(
-        [(m.start(), m.end(), m.group(1), "bold") for m in _BOLD.finditer(line)]
-        + [(m.start(), m.end(), m.group(0), "citation") for m in _CITATION.finditer(line)]
-        + [(m.start(), m.end(), m.group(0), "url") for m in _URL.finditer(line)]
+        _highlight_spans(line)
+        + [(m.start(), m.end(), m.group(1), styles["bold"], 1) for m in _BOLD.finditer(line)]
+        + [
+            (m.start(), m.end(), m.group(0), styles["citation"], 1)
+            for m in _CITATION.finditer(line)
+        ]
+        + [(m.start(), m.end(), m.group(0), styles["url"], 1) for m in _URL.finditer(line)],
+        key=lambda span: (span[0], span[4]),
     )
-    for start, end, shown, role in spans:
+    for start, end, shown, style, _ in spans:
         if start < position:
             continue
         out.append(line[position:start], style=styles["body"])
-        out.append(shown, style=styles[role])
+        out.append(shown, style=style)
         position = end
     out.append(line[position:], style=styles["body"])
+
+
+def _highlight_spans(line: str) -> list[tuple[int, int, str, str, int]]:
+    """The configured highlight rules' matches, Markdown bold markers dropped from what shows."""
+    return [
+        (m.start(), m.end(), m.group(0).replace(_MARKDOWN_BOLD, ""), style, 0)
+        for pattern, style in _highlights()
+        for m in pattern.finditer(line)
+        if m.end() > m.start()
+    ]
+
+
+def _highlights() -> list[tuple[re.Pattern[str], str]]:
+    rules = get_settings().tui.response_highlights
+    return _compiled_highlights(tuple((rule.pattern, rule.style) for rule in rules))
+
+
+@cache
+def _compiled_highlights(rules: tuple[tuple[str, str], ...]) -> list[tuple[re.Pattern[str], str]]:
+    return [(re.compile(pattern), style) for pattern, style in rules]
 
 
 class ChoiceMenu(OptionList):
@@ -1196,6 +1245,7 @@ class ActionBar(Horizontal):
         super().__init__(id="actions")
         self._shown: tuple[tuple[Any, bool], ...] = ()
         self._commands: dict[str, str] = {}
+        self._generation = 0
         self.display = False
 
     def offer(self, actions: Sequence[Any], busy: bool) -> None:
@@ -1206,15 +1256,23 @@ class ActionBar(Horizontal):
         key = tuple((action, busy) for action in actions)
         if key == self._shown:
             return
-        self._shown = key
-        self._commands = {}
-        self.remove_children()
+        # Fresh ids every time: `remove_children` completes after this returns, so reusing
+        # `action-0` collided with the button still being removed, the mount raised, and the
+        # bar stayed empty for the rest of the session.
+        self._generation += 1
+        commands: dict[str, str] = {}
+        buttons = []
         for index, action in enumerate(actions):
-            button_id = f"action-{index}"
-            self._commands[button_id] = action.command
+            button_id = f"action-{self._generation}-{index}"
+            commands[button_id] = action.command
             button = Button(action.label, id=button_id, compact=True)
             button.disabled = busy and not action.during_turn
-            self.mount(button)
+            buttons.append(button)
+        self.remove_children()
+        if buttons:
+            self.mount(*buttons)
+        self._commands = commands
+        self._shown = key
         self.display = bool(actions)
 
     def command_for(self, button_id: str | None) -> str | None:

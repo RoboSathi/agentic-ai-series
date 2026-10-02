@@ -1,4 +1,4 @@
-.PHONY: gen-key help install clean lint type-check format test verify tui episode llm-check model-check data refund-limit \
+.PHONY: gen-key help install clean lint type-check format test verify tui episode llm-check model-check models data refund-limit \
 	clean-memory show-memory dream runs patterns \
 	eval eval-generate eval-oracle eval-security eval-judge eval-deepeval eval-report eval-diff \
 	eval-runs eval-sql _agent
@@ -24,7 +24,7 @@ ra_RUNS := $(ra_PKG).archive.cli
 ra_OFFLINE_PROFILE := demo
 
 # Targets whose second goal names the agent they act on.
-AGENT_SCOPED := tui data runs eval eval-generate eval-oracle eval-security eval-judge \
+AGENT_SCOPED := tui data runs model-check llm-check models eval eval-generate eval-oracle eval-security eval-judge \
 	eval-deepeval eval-report eval-diff eval-runs eval-sql
 
 ifneq ($(filter $(firstword $(MAKECMDGOALS)),$(AGENT_SCOPED)),)
@@ -97,7 +97,8 @@ help:
 	@echo "  make data <agent>         csa: rebuild the agent DB (KEEP_MEMORY=1); ra: build + validate the fixture world"
 	@echo "  make runs ra              List archived research runs"
 	@echo "  make episode E=05         One episode (calls the live model)"
-	@echo "  make llm-check            Probe every hosted model endpoint (one tiny call each; alias: model-check)"
+	@echo "  make model-check [agent]  Probe every hosted model and run every local model, per agent (BENCH=1 times them; alias: llm-check)"
+	@echo "  make models [agent]       Download (if missing) and run each agent's local models (run by make install)"
 	@echo "  make patterns             Pattern coverage matrix across agents"
 	@echo ""
 	@echo "$(GREEN)Customer support admin$(NC) (csa only):"
@@ -138,7 +139,8 @@ install:
 	python3 -m venv venv
 	./venv/bin/pip install -q --upgrade pip
 	./venv/bin/pip install -q -e ".[dev,evals]"
-	@echo "$(GREEN)✓ Installed. Activate with: source venv/bin/activate$(NC)"
+	@$(MAKE) --no-print-directory models
+	@echo "$(GREEN)✓ Installed, with every agent's local models. Activate with: source venv/bin/activate$(NC)"
 
 clean:
 	rm -rf venv .pytest_cache .coverage .mypy_cache dist build *.egg-info
@@ -168,8 +170,19 @@ episode:
 	@test -n "$(E)" || (echo "$(YELLOW)Usage: make episode E=05$(NC)" && exit 1)
 	AGENTIC_OVERLAYS=$(csa_OVERLAY) $(PYTHON) -m episodes.e$(E)
 
+# Every agent's models, one agent at a time (its overlay names its roles and local models):
+# `make model-check`, or `make model-check ra`. BENCH=1 also times each chat model.
+MODEL_CHECK_AGENTS = $(or $(AGENT),$(AGENTS))
+
+# Download (if missing), load and run every local model each agent uses — a fresh checkout's
+# first step after `make install`: `make models`, or `make models ra`.
+models:
+	@$(foreach a,$(MODEL_CHECK_AGENTS),echo "$(BLUE)── $(a) ──$(NC)" && \
+		AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(PYTHON) -m agentic_commons.llm.local_probes && ) true
+
 llm-check model-check:
-	$(PYTHON) -m agentic_commons.llm.cli
+	@$(foreach a,$(MODEL_CHECK_AGENTS),echo "$(BLUE)── $(a) ──$(NC)" && \
+		AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(PYTHON) -m agentic_commons.llm.cli $(if $(BENCH),--bench) && ) true
 
 data: _agent
 	$(PYTHON) -m $($(AGENT)_DATA)
@@ -242,10 +255,6 @@ eval-sql: _agent
 # to stop the "Checkpoints are stored UNENCRYPTED" warning:  make gen-key >> .env
 gen-key:
 	@echo "LANGGRAPH_AES_KEY=$$(openssl rand -hex 16)"
-
-# Fine-tune the research agent's scope-gate encoder (see research_agent/scoping/gate_training.py).
-train-gate:
-	AGENTIC_OVERLAYS=$(ra_OVERLAY) $(PYTHON) -m research_agent.scoping.gate_training $(if $(BASE),--base $(BASE))
 
 # Quick verification (for CI/CD).
 #

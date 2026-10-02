@@ -188,7 +188,12 @@ class BudgetGuard:
             status="FAIL" if stopped else "PASS",
             reason_code=_EXHAUSTED_CODE if stopped else "BUDGET_AVAILABLE",
             reason=f"{counter}: {state.spent:g} spent of {state.cap:g}",
-            observed={"cap": state.cap, "spent": state.spent, "reserved": state.reserved},
+            observed={
+                "counter": counter,
+                "cap": state.cap,
+                "spent": state.spent,
+                "reserved": state.reserved,
+            },
         )
         return ControlLoopReport(
             decision="abort" if stopped else "continue",

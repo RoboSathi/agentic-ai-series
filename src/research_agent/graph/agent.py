@@ -27,16 +27,15 @@ from agentic_commons.durability import (
 )
 from agentic_commons.logging import get_logger
 from agentic_commons.memory import MemoryFacade
-from research_agent.answer import DirectAnswerer
 from research_agent.archive.store import ResearchArchive
 from research_agent.config.settings import ResearchAgentSettings
 from research_agent.domain.report import COVERAGE_AND_LIMITS, Report, SessionPhase
 from research_agent.domain.rubric import Contract
 from research_agent.domain.scope import QA, Choice, Mode
+from research_agent.graph.answerer import DirectAnswerer
 from research_agent.graph.run_nodes import RunNodes
 from research_agent.graph.state import ScopingState
 from research_agent.intent import ResearchIntentRouter
-from research_agent.narration import say
 from research_agent.research.resources import RunResources
 from research_agent.research.telemetry import RunTelemetry
 from research_agent.scoping import checklist
@@ -137,6 +136,11 @@ class ResearchAgent:
             return await self._new_scope(query, session_id, record, forced="research")
         if route.label == "refuse":
             return TurnResult(response=self._settings.messages.refuse, phase=record.phase)
+        return await self._answer(query, session_id, record)
+
+    async def _answer(self, query: str, session_id: str, record: SessionRecord) -> TurnResult:
+        """A direct answer: the ReAct loop over the read-only tools, with no scope."""
+        assert self._answerer is not None
         record.last_question = query
         self._telemetry.retrace(f"answer-{uuid.uuid4().hex[:8]}")
         return TurnResult(
@@ -150,7 +154,7 @@ class ResearchAgent:
     async def _forced_scope(
         self, mode: Mode, query: str, session_id: str, record: SessionRecord
     ) -> TurnResult:
-        """`/qa <question>` or `/research [question]` starts a new scope in that mode.
+        """`/qa <question>` answers directly; `/research [question]` starts a research scope.
 
         A bare `/research` goes deeper on the last question asked; an
         interview in progress is abandoned for the new one.
@@ -159,6 +163,9 @@ class ResearchAgent:
         question = parts[1].strip() if len(parts) > 1 else record.last_question
         if not question:
             return TurnResult(response=self._settings.messages.new_scope, phase=record.phase)
+        if mode == "qa" and self._answerer is not None:
+            # A quick cited answer, no interview: the direct answerer, not a scoped run.
+            return await self._answer(question, session_id, record)
         return await self._new_scope(question, session_id, record, forced=mode)
 
     def cancel(self) -> bool:
@@ -249,10 +256,16 @@ class ResearchAgent:
         return TurnResult(response=scope.reply, phase=record.phase)
 
     def _choices(self, scope: ScopingState) -> list[Choice]:
-        """The menu for the question just asked: its item's choices, or the reframe options."""
+        """The menu beside the reply: the reframe options, Approve or Done when either is the
+        next step, or the asked item's own choices."""
         if scope.phase == "REFRAME":
             options = self._settings.scoping.reframe_options
             return [Choice(label=option.label, value=option.mode) for option in options]
+        notes, names = self._settings.messages, self._settings.command_names
+        if scope.phase == "RUBRIC_REVIEW":
+            return [Choice(label=notes.approve_choice, value=f"/{names.approve}")]
+        if scope.phase == "INTERVIEW" and scope.proposed:
+            return [Choice(label=notes.done_choice, value=f"/{names.done}")]
         asked = checklist.item(scope.items, scope.asked_item_id)
         return list(asked.choices) if scope.phase == "INTERVIEW" and asked is not None else []
 
@@ -273,7 +286,6 @@ class ResearchAgent:
             topic=contract.brief.topic,
             depth=contract.brief.depth,
         )
-        self._telemetry.card("run_started", say("run.started"))
         try:
             outcome = await self._runs.start(
                 record.run_thread,
@@ -341,6 +353,7 @@ class ResearchAgent:
             report,
             citation_pattern=self._settings.synthesis.citation_pattern,
             hidden_headings=self._hidden_headings(),
+            wording=self._settings.reader_view_wording,
             source_labels=self._settings.research.source_labels,
         )
 

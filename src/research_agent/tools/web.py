@@ -15,9 +15,9 @@ from pydantic import BaseModel, Field
 from agentic_commons.logging import logged
 from agentic_commons.tools.types import ToolResult
 from agentic_commons.web import SearchRequest, WebGateway
-from research_agent.answer.tools.sources import URLS_KEY
 from research_agent.config.settings import AnswerSettings
 from research_agent.research.defenses import InjectionScreen
+from research_agent.tools import URLS_KEY
 
 _BLANK_RUNS = re.compile(r"\n\s*\n+")
 
@@ -82,11 +82,15 @@ class FetchUrl:
     async def __call__(self, url: str) -> ToolResult:
         page = await self._gateway.fetch(url)
         if not page.ok:
-            return ToolResult(error=f"could not read the page (HTTP {page.status})")
+            return ToolResult(
+                error=self._settings.messages.page_unreadable.format(status=page.status)
+            )
         if self._screen is not None:
             verdict = await self._screen.assess(page.text)
             if verdict.drop:
-                return ToolResult(error=f"the page was withheld: {verdict.why}")
+                return ToolResult(
+                    error=self._settings.messages.page_withheld.format(why=verdict.why)
+                )
         notes = self._settings.messages
         dated = notes.published.format(date=page.published) if page.published else ""
         header = "\n".join(

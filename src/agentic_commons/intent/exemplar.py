@@ -6,7 +6,7 @@ scores — the same labels-and-scores shape a fine-tuned classifier gives, so th
 tests apply. The examples are the agent's own data and the embedder is injected; nothing here
 knows what a label means.
 
-It beat zero-shot NLI on the research agent's own examples (91% against 80% leave-one-out) because
+It beat zero-shot NLI on an agent's own labelled examples (91% against 80% leave-one-out) because
 "a quick lookup or a deep report" is a property of how a request is phrased, not of its topic.
 """
 

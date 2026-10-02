@@ -6,6 +6,7 @@ the frozen contract. What the model proposes is filtered through code —
 the termination policy and the challenge guard — before it becomes state.
 """
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -63,6 +64,9 @@ class ScopingNodes:
 
     def __init__(self, parts: ScopingParts) -> None:
         self._p = parts
+        self._affirmations = [
+            re.compile(pattern, re.IGNORECASE) for pattern in parts.settings.affirmations
+        ]
 
     # -- gate ------------------------------------------------------------------------
 
@@ -150,6 +154,7 @@ class ScopingNodes:
         turn_number = state.turn + 1
         prompt = interviewer_prompt.build(
             archetype=state.archetype or "",
+            request=state.first_message,
             topic=state.topic,
             items=state.items,
             asked_item_id=state.asked_item_id,
@@ -169,6 +174,7 @@ class ScopingNodes:
             "turn": turn_number,
             # Only a question is "asked": a proposal to finish waits for /done, not an item.
             "asked_item_id": turn.next_item_id if decision.outcome == "ask" else "",
+            "proposed": decision.outcome == "propose_done",
             "since_challenge": since,
             "draft_plan": turn.draft_plan,
             "reply": reply,
@@ -239,14 +245,23 @@ class ScopingNodes:
     def _reply(self, turn: interviewer_prompt.InterviewTurn, outcome: str, items: list[Any]) -> str:
         challenges = [f"{self._p.messages.challenge_prefix}{c}" for c in turn.challenges]
         if outcome == "propose_done":
-            plan = "\n".join(f"  - {step}" for step in turn.draft_plan)
-            return "\n".join([*challenges, self._p.messages.propose_done.format(plan=plan)])
+            steps = turn.draft_plan or self._fallback_plan(items)
+            plan = "\n".join(f"  - {step}" for step in steps)
+            proposal = self._p.messages.propose_done.format(plan=plan)
+            return "\n".join([*challenges, proposal, "", self._p.messages.next_step_proposed])
         if outcome == "turn_cap":
             open_ids = ", ".join(
                 item.item_id for item in checklist.open_items(items, required_only=True)
             )
             return "\n".join([*challenges, self._p.messages.turn_cap.format(open=open_ids)])
         return "\n".join([*challenges, turn.next_question])
+
+    def _fallback_plan(self, items: list[Any]) -> list[str]:
+        """A plan from what the interview established, when the model proposed none."""
+        criteria = checklist.item(items, self._p.settings.plan_item)
+        values = criteria.value if criteria is not None and criteria.value else ""
+        parts = [p.strip() for p in re.split(self._p.settings.answer_split_pattern, values)]
+        return [self._p.messages.plan_step.format(part=part) for part in parts if part]
 
     def _report_turn(
         self, number: int, turn: Any, items: list[Any], outcome: str, overruled: bool
@@ -284,7 +299,7 @@ class ScopingNodes:
             archetype=brief.archetype,
             known_unknowns=[u.item_id for u in unknowns],
         )
-        return {"brief": brief, "phase": "RUBRIC_REVIEW", "user_input": ""}
+        return {"brief": brief, "phase": "RUBRIC_REVIEW", "user_input": "", "proposed": False}
 
     # -- rubric ---------------------------------------------------------------------
 
@@ -295,7 +310,7 @@ class ScopingNodes:
         )
         heading, sections = cards.rubric_card(rubric, state.brief)
         self._p.telemetry.card("rubric_generate", heading, sections)
-        return {"rubric": rubric, "reply": f"{render(rubric)}\n{self._p.messages.rubric_hint}"}
+        return {"rubric": rubric, "reply": self._rubric_reply(rubric)}
 
     async def brief_ready(self, state: ScopingState) -> Update:
         """With the rubric withheld there is nothing to review but the Brief."""
@@ -311,9 +326,13 @@ class ScopingNodes:
         self._p.telemetry.card("rubric_generate", heading, sections)
         return {
             "rubric": rubric,
-            "reply": f"{render(rubric)}\n{self._p.messages.rubric_hint}",
+            "reply": self._rubric_reply(rubric),
             "user_input": "",
         }
+
+    def _rubric_reply(self, rubric: Rubric) -> str:
+        """The criteria to review, then — set apart — what to do next."""
+        return f"{render(rubric, self._p.messages)}\n\n{self._p.messages.next_step_rubric}"
 
     def _edit(self, rubric: Rubric, args: list[str]) -> Rubric:
         names, editor = self._p.commands, self._p.editor
@@ -362,9 +381,20 @@ class ScopingNodes:
         if state.phase == "REFRAME":
             return "scope_gate"
         verb = _verb(state.user_input)
+        if verb is None and self._affirmed(state.user_input):
+            # "yes" to what was just proposed: the plan closes the interview, the criteria
+            # approve. Anything else is an answer, or a change to the plan.
+            if state.phase == "RUBRIC_REVIEW":
+                return "rubric_frozen"
+            if state.proposed:
+                return "close_scoping"
         if state.phase == "RUBRIC_REVIEW":
             return self._review_route(verb)
         return self._interview_route(verb)
+
+    def _affirmed(self, reply: str) -> bool:
+        text = reply.strip()
+        return any(pattern.fullmatch(text) for pattern in self._affirmations)
 
     def _interview_route(self, verb: str | None) -> str:
         names = self._p.commands

@@ -14,6 +14,7 @@ get the real wiring of everything else.
 import re
 from collections.abc import Callable
 from datetime import datetime
+from functools import cache
 from typing import Any
 
 import yaml
@@ -23,6 +24,7 @@ from agentic_commons.audit import AuditLedger, create_audit_ledger
 from agentic_commons.config import FeatureSet, active_features, get_settings, set_active_features
 from agentic_commons.config.paths import resolve_path
 from agentic_commons.control_loop import BudgetGuard
+from agentic_commons.control_loop.types import ControlLoopReport
 from agentic_commons.durability import (
     DurableGraphRunner,
     RunRegistry,
@@ -41,8 +43,9 @@ from agentic_commons.guardrails.guards import PydanticValidator
 from agentic_commons.guardrails.response import ResponseGuardrail
 from agentic_commons.hallucination_protection.checker import DetectionLadder
 from agentic_commons.intent.exemplar import ExemplarIntentClassifier
-from agentic_commons.llm.embeddings import create_embedding_client
+from agentic_commons.llm.embeddings import EmbeddingClient, create_embedding_client
 from agentic_commons.llm.http import create_http_client
+from agentic_commons.llm.local_embeddings import LocalSentenceEmbedder
 from agentic_commons.llm.roles import RoleModelRouter
 from agentic_commons.logging import get_logger
 from agentic_commons.memory import EpisodicStore, MemoryFacade, SemanticStore, WorkingMemoryStore
@@ -55,24 +58,22 @@ from agentic_commons.security.pii import PIIFilterImpl
 from agentic_commons.security.prompt_injection.detector import InstructionDataSeparator
 from agentic_commons.security.prompt_injection.nvidia import NvidiaHostedJailbreakGuard
 from agentic_commons.web import WebGateway, create_web_gateway
-from research_agent.answer import DirectAnswerer
-from research_agent.answer.context import AnswerContext
-from research_agent.answer.grounding import AnswerGrounding
-from research_agent.answer.tools import build_answer_registry
 from research_agent.archive.store import ResearchArchive
 from research_agent.audit.checks import build_registry
 from research_agent.audit.context import CheckContext
 from research_agent.audit.goldfish import GoldfishAuditor, LlmJudge
 from research_agent.config import ResearchAgentSettings, get_agent_settings
-from research_agent.config.settings import EncoderGateSettings
+from research_agent.context.session import AnswerContext
 from research_agent.domain.report import COVERAGE_AND_LIMITS
 from research_agent.domain.rubric import Contract
 from research_agent.graph.agent import ResearchAgent
+from research_agent.graph.answerer import DirectAnswerer
 from research_agent.graph.run_graph import build_run_graph
 from research_agent.graph.run_nodes import RunNodes, RunParts
 from research_agent.graph.scoping_graph import build_scoping_graph
 from research_agent.graph.scoping_nodes import ScopingNodes, ScopingParts
 from research_agent.graph.state import StateTypes
+from research_agent.guardrails.answer_grounding import AnswerGrounding
 from research_agent.intent import ResearchIntentRouter
 from research_agent.planning.planner import Planner
 from research_agent.research.cards import cap_reached_card
@@ -92,7 +93,9 @@ from research_agent.scoping.gate import ArchetypeClassifier, LlmArchetypeClassif
 from research_agent.scoping.rule_gate import RuleGate
 from research_agent.scoping.termination import TerminationPolicy
 from research_agent.structured import RoleClients, StructuredCaller
+from research_agent.synthesis.citation_guard import CitationGuard
 from research_agent.synthesis.synthesizer import Synthesizer
+from research_agent.tools import build_answer_registry
 
 GatewayFactory = Callable[[], WebGateway]
 JUDGE, SYNTHESIZER = "judge", "synthesizer"
@@ -204,28 +207,42 @@ def _encoder_wanted(agent: ResearchAgentSettings, posture: FeatureSet) -> bool:
 
 
 def _classifier_backend(agent: ResearchAgentSettings, posture: FeatureSet) -> IntentBackend | None:
-    """The learned classifier behind the scope gate and the front door.
+    """The learned classifier behind the scope gate and the front door, or None.
 
-    A fine-tuned encoder when one is published or trained locally; otherwise nearest labelled
-    example over the embedding model, which needs no training. None when the posture withholds
+    Nearest labelled examples (`intent_router.exemplars_path`) over an embedding model: no
+    training, and the examples are the agent's own data. None when the posture withholds
     classifiers (the offline fixture world, or `gate_encoder` off): rules and the LLM decide.
     """
     if not _encoder_wanted(agent, posture):
         return None
-    return _gate_backend(agent.gate_encoder) or _exemplar_backend(agent)
-
-
-def _exemplar_backend(agent: ResearchAgentSettings) -> IntentBackend:
     path = resolve_path(agent.intent_router.exemplars_path)
     exemplars = yaml.safe_load(path.read_text())
+    embedder = intent_embedder()
     get_logger("research_agent").info(
-        "Intent classifier: nearest labelled example over the embedding model",
+        "Intent classifier: nearest labelled example",
+        embedder=embedder.model_id or get_settings().llm.embedding.nim_model,
         examples=sum(len(texts) for texts in exemplars.values()),
         labels=sorted(exemplars),
     )
-    return ExemplarIntentClassifier(
-        create_embedding_client(), exemplars, agent.intent_router.neighbours
-    )
+    return ExemplarIntentClassifier(embedder, exemplars, agent.intent_router.neighbours)
+
+
+def intent_embedder() -> EmbeddingClient:
+    """The local sentence embedder when one is configured, else the platform's hosted one.
+
+    Measured 2026-10-02 on the 76 labelled examples (leave-one-out, 7-neighbour vote):
+    intfloat/e5-large-v2 84.2% and right 97% of the time it decides alone (43% of messages),
+    against 78.9% / 91% / 29% for the hosted nemotron embedder — and no network call per message.
+    """
+    if get_settings().llm.local_embedder.enabled:
+        return _local_embedder()
+    return create_embedding_client()
+
+
+@cache
+def _local_embedder() -> LocalSentenceEmbedder:
+    """One embedder per process: the console warms it before its event loop starts."""
+    return LocalSentenceEmbedder()
 
 
 def gate_classifier(
@@ -244,36 +261,6 @@ def gate_classifier(
     if not _encoder_wanted(agent, posture):
         return llm
     return EncoderGateClassifier(backend, llm, agent.gate_encoder, RuleGate(agent.scoping))
-
-
-def _gate_backend(cfg: EncoderGateSettings) -> IntentBackend | None:
-    """The fine-tuned encoder, loaded now (before any event loop), or None to skip that layer.
-
-    It is the published `model`, or a model trained locally into `local_model_dir`
-    (`make train-gate ra`). With neither, the layer is skipped and the LLM answers what the
-    rules do not.
-    """
-    from agentic_commons.config.paths import resolve_path
-    from agentic_commons.intent.classifier import HuggingFaceIntentClassifier
-
-    local = resolve_path(cfg.local_model_dir)
-    if not cfg.model and not local.exists():
-        get_logger("research_agent").debug(
-            "No fine-tuned gate encoder is published or trained (`make train-gate ra` trains one)",
-            local_model_dir=str(local),
-        )
-        return None
-    backend = HuggingFaceIntentClassifier(
-        model=cfg.model or str(local),
-        local_model_dir=local,
-        download_if_missing=cfg.download_if_missing and bool(cfg.model),
-    )
-    try:
-        backend.ensure_loaded_sync()
-    except Exception as exc:
-        get_logger("research_agent").warning("Gate encoder failed to load", error=str(exc))
-        return None
-    return backend
 
 
 def _front_door(
@@ -398,6 +385,25 @@ def _run_parts(
         auditor=auditor,
         reflection_enabled=reflection,
         usage=caller.usage,
+        writer_model=roles.model_key(SYNTHESIZER),
+        nli_model=str(getattr(nli, "model_name", "")) if nli is not None else "",
+        judge_role=JUDGE,
+        citation_guard=_citation_guard(agent, caller, nli),
+    )
+
+
+def _citation_guard(
+    agent: ResearchAgentSettings, caller: StructuredCaller, nli: EntailmentModel | None
+) -> CitationGuard | None:
+    """The report's sentence-by-sentence check against its spans — wherever NLI is."""
+    if nli is None:
+        return None
+    return CitationGuard(
+        nli,
+        caller,
+        re.compile(agent.synthesis.citation_pattern),
+        appended_headings(agent),
+        agent.synthesis.max_guard_rewrites,
     )
 
 
@@ -431,6 +437,12 @@ def _entailment(
     return injected if injected is not None else entailment_for(agent)
 
 
+def appended_headings(agent: ResearchAgentSettings) -> frozenset[str]:
+    """The sections code writes after the model (Known unknowns, Coverage & Limits)."""
+    templates = yaml.safe_load(agent.synthesis.resolved_templates_path.read_text())
+    return frozenset({*templates["appended"].values(), COVERAGE_AND_LIMITS})
+
+
 def context_factory(
     agent: ResearchAgentSettings, entailment: EntailmentModel | None, judge: Any
 ) -> Callable[[Contract, Any, Any], CheckContext]:
@@ -438,14 +450,7 @@ def context_factory(
     citation = re.compile(agent.synthesis.citation_pattern)
     entity = re.compile(agent.audit.entity_pattern)
 
-    appended = frozenset(
-        {
-            *yaml.safe_load(agent.synthesis.resolved_templates_path.read_text())[
-                "appended"
-            ].values(),
-            COVERAGE_AND_LIMITS,
-        }
-    )
+    appended = appended_headings(agent)
 
     def build(contract: Contract, ledger: Any, report: Any) -> CheckContext:
         return CheckContext(
@@ -478,12 +483,7 @@ def _resources_factory(
         budget = BudgetGuard(
             contract.budget.counters(),
             max_seconds=contract.budget.max_seconds,
-            on_exhausted=lambda report: telemetry.card(
-                "budget_tick",
-                *cap_reached_card(
-                    report.reason, report.checks[0].observed if report.checks else {}
-                ),
-            ),
+            on_exhausted=lambda report: _announce_cap(telemetry, report, agent),
         )
         caller.bind_budget(budget)
         validator = (
@@ -521,6 +521,20 @@ def _resources_factory(
         )
 
     return build
+
+
+def _announce_cap(
+    telemetry: RunTelemetry, report: ControlLoopReport, agent: ResearchAgentSettings
+) -> None:
+    """A budget limit hit mid-run, as a card — but not a counter the plan is meant to use up.
+
+    Rounds reach their cap by design (one round of one is the whole plan); the reflect card
+    already says the run stopped there. A card announcing it is noise.
+    """
+    observed: dict[str, Any] = report.checks[0].observed if report.checks else {}
+    if observed.get("counter") in agent.tui.quiet_budget_counters:
+        return
+    telemetry.card("budget_tick", *cap_reached_card(report.reason, observed))
 
 
 def _injection_screen(

@@ -23,7 +23,6 @@ class TestADecisionRun:
             "interview_turn",
             "rubric_generate",
             "plan_dag",
-            "plan_validated",
             "wave_start",
             "worker_search",
             "page_result",
@@ -204,5 +203,5 @@ class TestReplay:
         )
         reply, _ = await converse(h, script)
         assert reply.phase == "FAILED" and reply.report is None
-        assert any(e.stage == "plan_validated" and e.status == "failed" for e in h.feed.events)
+        assert any(e.stage == "plan_dag" and e.status == "failed" for e in h.feed.events)
         assert h.audited("plan.rejected")

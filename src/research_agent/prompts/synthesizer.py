@@ -25,6 +25,9 @@ Write the research report from the evidence ledger only.
 - Put the citation inside the sentence, before its final full stop:
   "Fact stated here [E1][E2]." — never after the stop ("Fact. [E1]").
 - Be concise: a few short sentences per section, the most important findings first.
+- Say no more than the claims you cite: keep their figures, units, names and
+  qualifiers exactly as written ("Upto 1Cr" stays "up to 1 crore", never "₹1 crore
+  for student startups" when the claim does not say who it is for).
 - Where entries disagree, say so and cite both sides.
 - For a decision, recommend an option and state the trade-offs.
 - Do not write a Coverage & Limits, Known unknowns or Sources section;

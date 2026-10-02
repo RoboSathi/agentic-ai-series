@@ -188,6 +188,23 @@ class IntentClassifierSettings(BaseModel):
         return resolve_path(self.local_model_dir)
 
 
+class LocalEmbedderSettings(BaseModel):
+    """A local sentence-embedding model (mean-pooled encoder), for an agent that wants
+    similarity without a network call per text — the exemplar intent classifier."""
+
+    enabled: bool
+    model: str
+    local_model_dir: str
+    download_if_missing: bool
+    max_length: int = Field(ge=8)
+    # Text put before each input by purpose ("query: " for e5); empty for most models.
+    prefixes: dict[str, str]
+
+    @property
+    def resolved_local_model_dir(self) -> Path:
+        return resolve_path(self.local_model_dir)
+
+
 class DialogueSummarizerSettings(BaseModel):
     """A local seq2seq model that summarises a conversation (memory dreams).
 
@@ -210,6 +227,24 @@ class DialogueSummarizerSettings(BaseModel):
         return resolve_path(self.local_model_dir)
 
 
+class LocalCheckSettings(BaseModel):
+    """The one tiny input each in-process model is run on by `make model-check`."""
+
+    nli_premise: str
+    nli_hypothesis: str
+    intent_text: str
+    dialogue: str
+
+
+class BenchmarkSettings(BaseModel):
+    """`make model-check BENCH=1`: repeated, judge-sized calls to each chat model."""
+
+    samples: int = Field(ge=1)
+    prompt: str
+    max_tokens: int = Field(ge=1)
+    timeout_seconds: float = Field(gt=0)
+
+
 class LLMCheckSettings(BaseModel):
     """The smallest real request `make llm-check` sends to each endpoint."""
 
@@ -218,6 +253,8 @@ class LLMCheckSettings(BaseModel):
     # An endpoint that has not answered in this long has failed: the probe is cancelled (and the SDK's
     # own retries with it), so one stalled model cannot hold the whole check for minutes.
     timeout_seconds: float
+    local: LocalCheckSettings
+    benchmark: BenchmarkSettings
 
 
 class OutputNormalisationSettings(BaseModel):
@@ -227,6 +264,8 @@ class OutputNormalisationSettings(BaseModel):
     space_categories: list[str]
     replacements: dict[str, str]
     remove: list[str]
+    # Regexes removed outright: model-specific markup with no meaning to a reader.
+    strip_patterns: list[str]
 
 
 class RoleModelSettings(BaseModel):
@@ -234,6 +273,8 @@ class RoleModelSettings(BaseModel):
 
     provider: ProviderName
     model: str
+    # Provider-specific request fields for this role only (`CompletionRequest.extra_body`).
+    extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
 class LLMSettings(YamlBackedSettings):
@@ -245,12 +286,16 @@ class LLMSettings(YamlBackedSettings):
     max_tokens: int
     log_payloads: bool
     payload_max_chars: int
+    # Where a provider returns the model's reasoning beside its answer
+    # (`reasoning_content` on NIM). Read in order; the first present wins.
+    reasoning_fields: list[str] = Field(default_factory=list)
     providers: dict[str, LLMProviderSettings]
     cascade: LLMCascadeSettings
     embedding: EmbeddingSettings
     encoders: EncoderSettings
     intent_classifier: IntentClassifierSettings
     dialogue_summarizer: DialogueSummarizerSettings
+    local_embedder: LocalEmbedderSettings
     check: LLMCheckSettings
     output_normalisation: OutputNormalisationSettings
     # Role name -> model. Empty in the platform: role names are an agent's
@@ -365,6 +410,15 @@ class ObservabilitySettings(YamlBackedSettings):
     # model call being made, `{max}` the cap on tool iterations.
     loop_step_prefix: str
     loop_step_detail: str
+    # The model-call cards' headings: `{purpose}` is why the call was made,
+    # `{tool}` the tool the model asked for.
+    llm_request_heading: str
+    llm_response_heading: str
+    llm_tool_requested_heading: str
+    # What a tool card shows when the model's arguments are not JSON.
+    unparseable_arguments: str
+    # An `amount` argument that is not money, as the card shows it.
+    invalid_amount: str
 
     model_config = SettingsConfigDict(env_prefix="OBSERVABILITY__")
 
@@ -658,6 +712,18 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     _yaml_section = "hallucination_protection"
     enforce_grounding: bool
     confidence_threshold: float
+    # The reply when the gate refuses every sentence of an answer.
+    withheld_reply: str
+    # Whether an uncalibrated detector (the lexical fallback) may refute a claim, or only
+    # support it. Off: its contradictions leave the claim unverified.
+    uncalibrated_may_refute: bool
+    # Whether a claim refuted by a rule (an unsourced figure) still gets the bounded rewrite.
+    repair_direct_refutations: bool
+    # Words after a figure that make it a size, not an exact amount ("$1.2 M", "4 lakh").
+    money_scales: list[str]
+    # Connectives that split one sentence into separately checked claims.
+    claim_conjunctions: list[str]
+    claim_min_content_tokens: int = Field(ge=1)
     # Grounding-specific NLI threshold. Keep the generic confidence threshold
     # for compatibility with the rest of the evaluation configuration.
     nli_entailment_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
@@ -1121,6 +1187,13 @@ class CommandSettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="COMMANDS__")
 
 
+class ResponseHighlight(BaseModel):
+    """One colouring rule for the final answer: a regex, and the style of what it matches."""
+
+    pattern: str
+    style: str
+
+
 class CommandOutputSettings(BaseModel):
     """How slash-command output is drawn (LLD §20)."""
 
@@ -1167,6 +1240,9 @@ class TuiSettings(YamlBackedSettings):
     tone_styles: dict[str, str]
     # How the final answer's light Markdown is coloured (h1, h2, bold, bullet, citation, ...).
     response_styles: dict[str, str]
+    # More of the answer coloured by pattern, in order: an agent's own vocabulary ("[must]",
+    # its slash commands, a next-step line). The first rule to claim a span wins.
+    response_highlights: list[ResponseHighlight]
     command_output: CommandOutputSettings
 
     model_config = SettingsConfigDict(env_prefix="TUI__")

@@ -36,6 +36,11 @@ class RunTelemetry:
     def trace_id(self) -> str:
         return self._trace_id
 
+    @property
+    def reporter(self) -> StageReporter | None:
+        """The live feed, for a component that numbers its own cards (a reasoning loop)."""
+        return self._reporter
+
     def retrace(self, trace_id: str) -> None:
         """Attribute what follows to another trace (a new run)."""
         self._trace_id = trace_id

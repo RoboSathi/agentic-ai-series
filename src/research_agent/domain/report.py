@@ -59,4 +59,6 @@ class Report(BaseModel):
         return next((section for section in self.sections if section.heading == heading), None)
 
     def text(self) -> str:
-        return "\n\n".join(f"## {section.heading}\n{section.body}" for section in self.sections)
+        return "\n\n".join(
+            f"## {section.heading}\n{section.body.strip()}".rstrip() for section in self.sections
+        ).strip()
