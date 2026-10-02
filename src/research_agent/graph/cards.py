@@ -11,6 +11,7 @@ from typing import Any
 
 from research_agent.domain.rubric import Rubric, RubricItem
 from research_agent.domain.scope import CoverageItem, GateVerdict, ScopeBrief
+from research_agent.intent.router import IntentRoute
 from research_agent.narration import Line, bullets, describe, say, title_of, toned
 
 Card = tuple[str, dict[str, Any]]
@@ -22,7 +23,7 @@ def _present(sections: dict[str, Any]) -> dict[str, Any]:
 
 def gate_card(verdict: GateVerdict) -> Card:
     """What the first message was taken to be, and what decided it."""
-    classifier = say(f"classifier.{verdict.source}", model=verdict.source_model)
+    classifier = say(f"classifier.{verdict.source}")
     if verdict.decision == "refuse":
         heading = say("scope_gate.refused", classifier=classifier)
     elif verdict.decision == "needs_reframe" or verdict.archetype is None:
@@ -41,9 +42,65 @@ def gate_card(verdict: GateVerdict) -> Card:
     return heading, _present(
         {
             say("scope_gate.section.understood"): [line for line in understood if line],
-            say("scope_gate.section.classifier"): [classifier, verdict.reason],
+            say("scope_gate.section.classifier"): [
+                classifier,
+                *_model_line(verdict.source_model),
+                *_encoder_read(verdict),
+                verdict.reason,
+            ],
         }
     )
+
+
+def intent_card(route: IntentRoute) -> Card:
+    """The front door in four lines: who decided (and on which model), the scores, the rules,
+    and the route. The heading never names a model; the body does."""
+    heading = say(f"intent.heading.{route.label}", classifier=say(f"intent.source.{route.source}"))
+    decided = say(f"intent.source.{route.source}")
+    lines = [
+        toned(
+            say("intent.decided_by", by=decided, model=route.model or say("intent.no_model")),
+            "pass",
+        ),
+        *_intent_scores(route),
+        _intent_rules(route),
+        toned(say(f"intent.decision.{route.label}"), "fail" if route.label == "refuse" else "pass"),
+    ]
+    return heading, {say("intent.section.checks"): lines}
+
+
+def _intent_scores(route: IntentRoute) -> list[Line]:
+    step = next((s for s in route.steps if s.key in ("encoder_decided", "encoder_unsure")), None)
+    if step is None:
+        return []
+    return [toned(say("intent.scores", **step.values), step.tone)]
+
+
+def _intent_rules(route: IntentRoute) -> Line:
+    """What the deterministic layer found, in one line."""
+    hit = next((s for s in route.steps if s.key in ("refusal_hit", "cues_hit", "kind_hit")), None)
+    if hit is None:
+        return toned(say("intent.rules_clear"), "dim")
+    return toned(say(f"intent.rules.{hit.key}", **hit.values), hit.tone)
+
+
+def _model_line(model: str) -> list[str]:
+    """Which model decided, in the card's body: headings never name a model (config may swap it)."""
+    return [say("scope_gate.model", model=model)] if model else []
+
+
+def _encoder_read(verdict: GateVerdict) -> list[str]:
+    """What the intent classifier made of the message, even when the LLM decided in the end."""
+    if not verdict.encoder_label:
+        return []
+    return [
+        say(
+            "scope_gate.encoder_read",
+            label=title_of(verdict.encoder_label),
+            share=f"{verdict.encoder_share:.0%}",
+            runner_up=f"{verdict.encoder_runner_up:.0%}",
+        )
+    ]
 
 
 def interview_card(

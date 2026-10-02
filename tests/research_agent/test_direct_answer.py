@@ -103,10 +103,13 @@ async def test_each_step_is_a_numbered_thought_action_observation_card() -> None
     assert "answer" in stages and "answer_context" not in stages
     # One card per model call: no separate request, response or usage cards.
     assert not {"llm_request", "llm_response_received", "llm_call"} & set(stages)
-    thoughts = [e for e in events if e.stage == "thought"]
+    thoughts = [e for e in events if e.stage == "thought" and e.status == "completed"]
     assert thoughts[0].summary is not None and thoughts[0].summary.startswith("Step 1 · ")
     assert thoughts[1].summary is not None and thoughts[1].summary.startswith("Step 2 · ")
     assert thoughts[0].tokens_delta == 15
+    # Each THOUGHT is announced as pending before its model call, then settled in place.
+    statuses = [e.status for e in events if e.stage == "thought"]
+    assert statuses == ["started", "completed", "started", "completed"]
     assert FORECAST_URL in reply
 
 

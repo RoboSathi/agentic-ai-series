@@ -13,6 +13,7 @@ from agentic_commons.resilience.dead_letter_queue import (
     DeadLetterReason,
     DeadLetterStatus,
 )
+from agentic_commons.resilience.hedge import HedgedCall, HedgeListener
 from agentic_commons.resilience.idempotency import IdempotencyGuard, SqliteIdempotencyGuard
 from agentic_commons.resilience.pub_sub import (
     EventHandler,
@@ -50,6 +51,8 @@ __all__ = [
     "dependency_failure_fields",
     "external_api_error_fields",
     "EventHandler",
+    "HedgedCall",
+    "HedgeListener",
     "ExponentialBackoffRetry",
     "IdempotencyGuard",
     "InMemoryPubSub",

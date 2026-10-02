@@ -103,7 +103,9 @@ class DirectAnswerer:
 
     def _announce(self, report: ControlLoopReport) -> None:
         observed: dict[str, Any] = report.checks[0].observed if report.checks else {}
-        self._telemetry.card("budget_tick", *cap_reached_card(report.reason, observed))
+        self._telemetry.card(
+            "budget_tick", *cap_reached_card(report.reason, observed), status="warning"
+        )
 
 
 __all__ = ["DirectAnswerer"]

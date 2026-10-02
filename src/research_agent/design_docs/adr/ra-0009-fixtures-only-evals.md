@@ -1,5 +1,7 @@
 # ADR ra-0009 — Fixtures-only evals
 
+**Status:** superseded by ra-0019 (2026-10-02) — the fixture world and its evals were removed.
+
 ## Context
 
 Evals that touch the live web or a hosted model are neither reproducible nor free, and an invariant that holds "usually" cannot gate at 100%.

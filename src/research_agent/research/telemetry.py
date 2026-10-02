@@ -17,7 +17,6 @@ from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger
 from agentic_commons.observability import StageReporter
 from agentic_commons.observability.types import StatusKind
-from research_agent.config import get_agent_settings
 
 ACTOR = "research_agent"
 
@@ -79,7 +78,6 @@ class RunTelemetry:
                 tokens_delta=tokens,
                 event_kind="narrative",
                 summary=heading,
-                group=get_agent_settings().tui.card_groups.get(stage, ""),
                 fields=sections,
             )
 

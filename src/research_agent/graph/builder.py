@@ -3,7 +3,7 @@
 Every feature is read here, once, from the posture handed in (or the
 declared configuration). A withheld feature is a collaborator that is
 never built — no challenge guard, no rubric generator, no classifier, no
-quarantined extractor, no Goldfish node in the compiled graph — never a
+quarantined extractor, no independent-audit node in the compiled graph — never a
 component that runs and reports having done nothing.
 
 Anything passed in is used as-is; anything omitted is built from config.
@@ -13,7 +13,6 @@ get the real wiring of everything else.
 
 import re
 from collections.abc import Callable
-from datetime import datetime
 from functools import cache
 from typing import Any
 
@@ -23,6 +22,15 @@ from agentic_commons.artifacts import DirectoryArtifactStore
 from agentic_commons.audit import AuditLedger, create_audit_ledger
 from agentic_commons.config import FeatureSet, active_features, get_settings, set_active_features
 from agentic_commons.config.paths import resolve_path
+from agentic_commons.context import (
+    CandidateSource,
+    ContextFailureDetector,
+    ContextWindow,
+    CrossEncoderReranker,
+    FiveStagePipeline,
+    StrategySelector,
+    WorkingMemoryContextSource,
+)
 from agentic_commons.control_loop import BudgetGuard
 from agentic_commons.control_loop.types import ControlLoopReport
 from agentic_commons.durability import (
@@ -44,25 +52,35 @@ from agentic_commons.guardrails.response import ResponseGuardrail
 from agentic_commons.hallucination_protection.checker import DetectionLadder
 from agentic_commons.intent.exemplar import ExemplarIntentClassifier
 from agentic_commons.llm.embeddings import EmbeddingClient, create_embedding_client
+from agentic_commons.llm.encoders import create_reranker
 from agentic_commons.llm.http import create_http_client
 from agentic_commons.llm.local_embeddings import LocalSentenceEmbedder
+from agentic_commons.llm.observer import ModelCallObserver
 from agentic_commons.llm.roles import RoleModelRouter
 from agentic_commons.logging import get_logger
 from agentic_commons.memory import EpisodicStore, MemoryFacade, SemanticStore, WorkingMemoryStore
 from agentic_commons.observability import StageReporter
+from agentic_commons.observability.model_observer import StageReporterModelObserver
 from agentic_commons.observability.store import DuckDbObservabilityStore
 from agentic_commons.observability.types import utc_now
 from agentic_commons.persistence import SqliteConnectionPool, SqlitePlatformStore
-from agentic_commons.resilience import ResilientCaller
+from agentic_commons.resilience import ResilientCaller, ResourcePoolBulkhead
+from agentic_commons.security import (
+    MessageScreener,
+    PromptInjectionGuard,
+    SecuritySuite,
+    TermContentModerator,
+)
 from agentic_commons.security.pii import PIIFilterImpl
 from agentic_commons.security.prompt_injection.detector import InstructionDataSeparator
-from agentic_commons.security.prompt_injection.nvidia import NvidiaHostedJailbreakGuard
+from agentic_commons.security.prompt_injection.hosted import HostedJailbreakGuard
 from agentic_commons.web import WebGateway, create_web_gateway
 from research_agent.archive.store import ResearchArchive
 from research_agent.audit.checks import build_registry
 from research_agent.audit.context import CheckContext
-from research_agent.audit.goldfish import GoldfishAuditor, LlmJudge
+from research_agent.audit.independent import IndependentAuditor, LlmJudge
 from research_agent.config import ResearchAgentSettings, get_agent_settings
+from research_agent.context.earlier_runs import EarlierRunsSource
 from research_agent.context.session import AnswerContext
 from research_agent.domain.report import COVERAGE_AND_LIMITS
 from research_agent.domain.rubric import Contract
@@ -74,6 +92,7 @@ from research_agent.graph.scoping_graph import build_scoping_graph
 from research_agent.graph.scoping_nodes import ScopingNodes, ScopingParts
 from research_agent.graph.state import StateTypes
 from research_agent.guardrails.answer_grounding import AnswerGrounding
+from research_agent.guardrails.input_screen import InputScreen
 from research_agent.intent import ResearchIntentRouter
 from research_agent.planning.planner import Planner
 from research_agent.research.cards import cap_reached_card
@@ -118,8 +137,6 @@ def build_agent(
     settings, agent = get_settings(), agent_settings or get_agent_settings()
     posture = features if features is not None else active_features(settings.features)
     set_active_features(posture)
-    roles = clients or role_clients(agent)
-    _require_independent_judge(roles, posture, agent)
     platform = SqlitePlatformStore(
         pool or SqliteConnectionPool(settings.persistence.resolved_db_path),
         agent_id=settings.agent.id,
@@ -128,6 +145,8 @@ def build_agent(
         store=DuckDbObservabilityStore(), agent_id=settings.agent.id
     )
     telemetry = RunTelemetry(reporter, ledger, trace_id=settings.agent.id)
+    roles = clients or role_clients(StageReporterModelObserver(lambda: telemetry.reporter))
+    _require_independent_judge(roles, posture, agent)
     caller = StructuredCaller(
         roles,
         PydanticValidator(),
@@ -135,8 +154,6 @@ def build_agent(
         role_max_tokens=agent.calls.role_max_tokens,
         truncation_retries=agent.calls.truncation_retries,
         truncation_retry_factor=agent.calls.truncation_retry_factor,
-        role_timeout_seconds=agent.calls.role_timeout_seconds,
-        timeout_retries=agent.calls.timeout_retries,
     )
     memory = _memory(agent, posture, platform, ledger, reporter, episodic)
     backend = _classifier_backend(agent, posture)
@@ -163,7 +180,7 @@ def build_agent(
             registry,
         ),
         runs=DurableGraphRunner(
-            build_run_graph(run_nodes, saver, posture.is_on("goldfish_audit")), saver, registry
+            build_run_graph(run_nodes, saver, posture.is_on("independent_audit")), saver, registry
         ),
         run_nodes=run_nodes,
         resources=_resources_factory(agent, posture, caller, telemetry, gateway),
@@ -173,17 +190,28 @@ def build_agent(
         memory=memory,
         router=router,
         answerer=answerer,
+        screen=_input_screen(agent, posture, telemetry),
     )
 
 
-def role_clients(agent: ResearchAgentSettings) -> RoleClients:
-    """`llm.roles` through the router — real models, or the fixture world's reference model."""
-    roles = get_settings().llm.roles
-    if agent.model_backend == "fixture":
-        from research_agent.fixture_world.model import fixture_client_factory
+def _input_screen(
+    agent: ResearchAgentSettings, posture: FeatureSet, telemetry: RunTelemetry
+) -> InputScreen | None:
+    """The person's message screened by the declared detectors — or None when none is declared."""
+    suite = SecuritySuite(
+        pii=PIIFilterImpl() if posture.is_on("pii") else None,
+        injection=PromptInjectionGuard() if posture.is_on("prompt_injection") else None,
+        moderator=TermContentModerator() if posture.is_on("content_moderation") else None,
+    )
+    if suite.pii is None and not suite.enabled:
+        return None
+    return InputScreen(MessageScreener(suite), telemetry)
 
-        return RoleModelRouter(roles, factory=fixture_client_factory(agent))
-    return RoleModelRouter(roles)
+
+def role_clients(observer: ModelCallObserver | None = None) -> RoleClients:
+    """`llm.roles` through the router: each role on its model, protected and backed up by the
+    platform, its backup events told to `observer`."""
+    return RoleModelRouter(get_settings().llm.roles, observer=observer)
 
 
 def _require_independent_judge(
@@ -191,7 +219,7 @@ def _require_independent_judge(
 ) -> None:
     """At start-up, not mid-run: an independent judge that is the writer is a config error."""
     if (
-        posture.is_on("goldfish_audit")
+        posture.is_on("independent_audit")
         and agent.audit.independent_judge
         and isinstance(roles, RoleModelRouter)
     ):
@@ -203,7 +231,7 @@ def _require_independent_judge(
 
 def _encoder_wanted(agent: ResearchAgentSettings, posture: FeatureSet) -> bool:
     """Whether the BERT-family encoder is part of this posture (never in the offline one)."""
-    return posture.is_on("gate_encoder") and agent.model_backend != "fixture"
+    return posture.is_on("gate_encoder")
 
 
 def _classifier_backend(agent: ResearchAgentSettings, posture: FeatureSet) -> IntentBackend | None:
@@ -211,7 +239,7 @@ def _classifier_backend(agent: ResearchAgentSettings, posture: FeatureSet) -> In
 
     Nearest labelled examples (`intent_router.exemplars_path`) over an embedding model: no
     training, and the examples are the agent's own data. None when the posture withholds
-    classifiers (the offline fixture world, or `gate_encoder` off): rules and the LLM decide.
+    classifiers (`gate_encoder` off): rules and the LLM decide.
     """
     if not _encoder_wanted(agent, posture):
         return None
@@ -220,7 +248,7 @@ def _classifier_backend(agent: ResearchAgentSettings, posture: FeatureSet) -> In
     embedder = intent_embedder()
     get_logger("research_agent").info(
         "Intent classifier: nearest labelled example",
-        embedder=embedder.model_id or get_settings().llm.embedding.nim_model,
+        embedder=embedder.model_id or get_settings().llm.embedding.model,
         examples=sum(len(texts) for texts in exemplars.values()),
         labels=sorted(exemplars),
     )
@@ -275,10 +303,9 @@ def _front_door(
 ) -> tuple[ResearchIntentRouter | None, DirectAnswerer | None]:
     """The intent router and the direct answerer — or neither, so every question starts a scope.
 
-    Withheld with the `direct_answer` feature, and in the offline fixture posture, whose scripted
-    model cannot call tools.
+    Withheld with the `direct_answer` feature.
     """
-    if not posture.is_on("direct_answer") or agent.model_backend == "fixture":
+    if not posture.is_on("direct_answer"):
         return None, None
     web = gateway() if gateway is not None else create_web_gateway()
     registry = build_answer_registry(
@@ -289,8 +316,44 @@ def _front_door(
     )
     router = ResearchIntentRouter(agent.intent_router, agent.scoping, backend, caller)
     grounding = _answer_grounding(agent, posture)
-    context = AnswerContext(memory, archive, agent.answer.context, agent.answer.messages)
+    earlier = EarlierRunsSource(archive, agent.answer.context, agent.answer.messages)
+    context = AnswerContext(
+        memory,
+        earlier,
+        agent.answer.context,
+        agent.answer.messages,
+        window=_context_window(posture, memory, earlier),
+        reporter=lambda: telemetry.reporter,
+    )
     return router, DirectAnswerer(caller, registry, agent.answer, telemetry, grounding, context)
+
+
+def _context_window(
+    posture: FeatureSet, memory: MemoryFacade | None, earlier: EarlierRunsSource
+) -> ContextWindow | None:
+    """The platform's context window over this agent's sources — or None with `context` off.
+
+    The same assembly the support agent runs (five-stage pipeline, strategies, health check,
+    card); only the sources are this agent's: working memory, and earlier research.
+    """
+    if not posture.is_on("context"):
+        return None
+    scoring = create_scoring_cascade()
+    sources: list[CandidateSource] = [earlier]
+    if memory is not None and memory.working is not None:
+        sources.insert(0, WorkingMemoryContextSource(memory.working))
+    reranker = create_reranker(fallback=scoring) if posture.is_on("context.rerank") else None
+    pipeline = FiveStagePipeline(
+        sources=sources,
+        ranker=scoring,
+        reranker=CrossEncoderReranker(reranker) if reranker is not None else None,
+    )
+    health = (
+        ContextFailureDetector(screen=InstructionDataSeparator())
+        if posture.is_on("context.failure_detection")
+        else None
+    )
+    return ContextWindow(pipeline, StrategySelector(), health)
 
 
 def _answer_grounding(agent: ResearchAgentSettings, posture: FeatureSet) -> AnswerGrounding | None:
@@ -299,16 +362,6 @@ def _answer_grounding(agent: ResearchAgentSettings, posture: FeatureSet) -> Answ
         return None
     ladder = DetectionLadder(create_scoring_cascade(), entailment=entailment_for(agent))
     return AnswerGrounding(ResponseGuardrail(ladder), agent.answer.grounding, agent.answer.messages)
-
-
-def contract_clock(agent: ResearchAgentSettings) -> Callable[[], datetime]:
-    """Real time, except over the fixture world, whose dates are fixed at its `as_of`."""
-    if agent.model_backend != "fixture":
-        return utc_now
-    from research_agent.fixture_world.world import load_world
-
-    as_of = load_world(agent.resolved_fixture_world_path).as_of
-    return lambda: as_of
 
 
 def _scoping_parts(
@@ -321,7 +374,7 @@ def _scoping_parts(
     rubric_on = posture.is_on("rubric")
     generator = RubricGenerator(agent.rubric.resolved_templates_path) if rubric_on else None
     return ScopingParts(
-        clock=contract_clock(agent),
+        clock=utc_now,
         classifier=gate_classifier(agent, posture, caller, backend),
         caller=caller,
         checklists=agent.scoping.resolved_checklists_path,
@@ -356,7 +409,9 @@ def _run_parts(
     judge = LlmJudge(caller)
     context = context_factory(agent, nli, judge)
     auditor = (
-        _goldfish(registry, context, roles, agent) if posture.is_on("goldfish_audit") else None
+        _independent_auditor(registry, context, roles, agent)
+        if posture.is_on("independent_audit")
+        else None
     )
     reflection = posture.is_on("reflection")
     return RunParts(
@@ -407,18 +462,22 @@ def _citation_guard(
     )
 
 
-def _goldfish(
+def _independent_auditor(
     registry: Any, context: Any, roles: RoleClients, agent: ResearchAgentSettings
-) -> GoldfishAuditor:
-    return GoldfishAuditor(registry, context, roles.model_key(JUDGE), agent.audit.independent_judge)
+) -> IndependentAuditor:
+    return IndependentAuditor(
+        registry, context, roles.model_key(JUDGE), agent.audit.independent_judge
+    )
 
 
 def build_auditor(
     agent: ResearchAgentSettings, roles: RoleClients, entailment: EntailmentModel
-) -> GoldfishAuditor:
-    """A stand-alone Goldfish Audit, whatever the agent's posture — the evals' instrument."""
+) -> IndependentAuditor:
+    """A stand-alone Independent Audit, whatever the agent's posture — the evals' instrument."""
     judge = LlmJudge(StructuredCaller(roles, PydanticValidator()))
-    return _goldfish(build_registry(), context_factory(agent, entailment, judge), roles, agent)
+    return _independent_auditor(
+        build_registry(), context_factory(agent, entailment, judge), roles, agent
+    )
 
 
 def entailment_for(agent: ResearchAgentSettings) -> EntailmentModel:
@@ -497,6 +556,7 @@ def _resources_factory(
                 separator,
                 agent.research.max_claims_per_page,
                 agent.research.extractor_page_chars,
+                agent.research.extractor_window_chars,
             )
             if posture.is_on("quarantined_extractor")
             else UnquarantinedReader(
@@ -504,6 +564,7 @@ def _resources_factory(
                 agent.research.max_claims_per_page,
                 contract.brief.model_dump(mode="json"),
                 agent.research.extractor_page_chars,
+                agent.research.extractor_window_chars,
             )
         )
         return RunResources(
@@ -518,6 +579,7 @@ def _resources_factory(
             if posture.is_on("injection_structural")
             else None,
             screen=_injection_screen(agent, posture, separator),
+            page_reads=ResourcePoolBulkhead(agent.research.page_concurrency),
         )
 
     return build
@@ -534,7 +596,7 @@ def _announce_cap(
     observed: dict[str, Any] = report.checks[0].observed if report.checks else {}
     if observed.get("counter") in agent.tui.quiet_budget_counters:
         return
-    telemetry.card("budget_tick", *cap_reached_card(report.reason, observed))
+    telemetry.card("budget_tick", *cap_reached_card(report.reason, observed), status="warning")
 
 
 def _injection_screen(
@@ -549,18 +611,13 @@ def _injection_screen(
         return None
     guard = None
     guards = get_settings().security.guards
-    if (
-        posture.is_on("injection_classifier.model")
-        and agent.model_backend != "fixture"
-        and guards.enabled
-        and guards.jailbreak.enabled
-    ):
-        guard = NvidiaHostedJailbreakGuard(
+    if posture.is_on("injection_classifier.model") and guards.enabled and guards.jailbreak.enabled:
+        guard = HostedJailbreakGuard(
             base_url=guards.jailbreak.base_url,
             endpoint=guards.jailbreak.endpoint,
             timeout_seconds=guards.jailbreak.timeout_seconds,
             model=guards.jailbreak.model,
-            resilient=ResilientCaller("nvidia-jailbreak"),
+            resilient=ResilientCaller(guards.jailbreak.resilience_key),
         )
     cfg = agent.injection_model
     return InjectionScreen(

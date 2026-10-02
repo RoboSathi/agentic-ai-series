@@ -78,84 +78,34 @@ class TestReframeMenu:
         assert resolve_reframe_choice(reply, get_agent_settings().scoping.reframe_options) == mode
 
 
-class TestRouting:
-    async def test_a_direct_question_is_answered_in_one_turn(self, harness: BuildHarness) -> None:
-        h = harness()
-        reply = await h.agent.handle(ORRIN_QUESTION, "s")
-        assert reply.phase == "DELIVERED" and reply.report is not None
-        assert reply.report.status == "COMPLETE"
-        assert [s.heading for s in reply.report.sections][0] == "Answer"
-        assert get_agent_settings().messages.qa_followup in reply.response
-        contract = h.agent.session("s").run_values["contract"]
-        assert contract.brief.archetype == "qa" and contract.verify()
-
-    async def test_a_plain_message_is_always_a_quick_answer(self, harness: BuildHarness) -> None:
-        """No classifier or model routes it: even a decision-shaped message is Q&A."""
-        h = harness()
-        reply = await h.agent.handle("Help me choose a grid storage option for my microgrid", "s")
-        scope = h.agent.session("s").scope
-        assert reply.phase != "SCOPING" and scope is not None and scope.mode == "qa"
-
-    async def test_slash_research_asks_which_kind(self, harness: BuildHarness) -> None:
-        h = harness()
-        reply = await h.agent.handle(
-            "/research Help me choose a grid storage option for my microgrid", "s"
-        )
-        scope = h.agent.session("s").scope
-        assert reply.phase == "SCOPING" and scope is not None
-        assert scope.mode == "research" and scope.archetype == "decision_support"
-
-    async def test_a_research_cue_without_a_kind_is_general(self, harness: BuildHarness) -> None:
-        h = harness()
-        await h.agent.handle("/research the cycle life of iron-air cells", "s")
-        scope = h.agent.session("s").scope
-        assert scope is not None and scope.archetype == "general"
-
-    async def test_a_window_in_the_question_is_carried(self, harness: BuildHarness) -> None:
-        h = harness()
-        await h.agent.handle("/research Help me choose a storage option from the last 2 years", "s")
-        scope = h.agent.session("s").scope
-        assert scope is not None and scope.recent_days == 730
-        recency = checklist.item(scope.items, "recency")
-        assert recency is not None and recency.status == "covered"
-
-    async def test_slash_research_goes_deeper_on_the_last_question(
-        self, harness: BuildHarness
-    ) -> None:
-        h = harness()
-        await h.agent.handle(ORRIN_QUESTION, "s")
-        reply = await h.agent.handle("/research", "s")
-        scope = h.agent.session("s").scope
-        assert reply.phase == "SCOPING" and scope is not None
-        assert scope.archetype == "general" and scope.topic.startswith("What is the cycle life")
-        done = await h.agent.handle("/done", "s")
-        assert done.phase == "RUBRIC_REVIEW"
-        final = await h.agent.handle("/approve", "s")
-        assert final.report is not None and final.report.sections[0].heading == "Findings"
-
-    async def test_slash_qa_forces_a_quick_answer(self, harness: BuildHarness) -> None:
-        h = harness()
-        reply = await h.agent.handle("/qa Explain the round-trip efficiency of iron-air cells", "s")
-        assert reply.phase == "DELIVERED"
-        assert h.agent.session("s").run_values["contract"].brief.archetype == "qa"
-
-    async def test_a_bare_command_with_nothing_to_research(self, harness: BuildHarness) -> None:
-        h = harness()
-        reply = await h.agent.handle("/research", "s")
-        assert reply.response == get_agent_settings().messages.new_scope
+def _key_envs() -> list[str]:
+    """The variables the routed roles' provider reads its key from (configuration)."""
+    llm = get_settings().llm
+    return sorted(
+        {
+            env
+            for spec in llm.roles.values()
+            for env in llm.provider_settings(spec.provider).key_env_vars
+        }
+    )
 
 
 class TestLiveSetup:
-    def test_the_demo_needs_no_key(self, ra_config: None) -> None:
-        assert missing_model_key(get_settings(), get_agent_settings()) is None
-
-    def test_routed_models_need_the_nvidia_key(
+    def test_with_the_key_set_nothing_is_missing(
         self, ra_config: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.delenv("nvidia_api_key", raising=False)
-        routed = get_agent_settings().model_copy(update={"model_backend": "routed"})
-        message = missing_model_key(get_settings(), routed)
-        assert message is not None and "nvidia_api_key" in message and "synthesizer" in message
+        for env in _key_envs():
+            monkeypatch.setenv(env, "k")
+        assert missing_model_key(get_settings(), get_agent_settings()) is None
+
+    def test_a_missing_key_names_its_variable_and_the_roles(
+        self, ra_config: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for env in _key_envs():
+            monkeypatch.delenv(env, raising=False)
+        message = missing_model_key(get_settings(), get_agent_settings())
+        assert message is not None and "synthesizer" in message
+        assert all(env in message for env in _key_envs())
 
     def test_live_search_without_tavily_warns(
         self, ra_config: None, monkeypatch: pytest.MonkeyPatch
@@ -172,18 +122,16 @@ class TestLiveSetup:
     def test_prepare_stops_with_a_sentence(
         self, ra_config: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from research_agent.config import reload_agent_settings
         from research_agent.console import ResearchHost
 
-        monkeypatch.delenv("nvidia_api_key", raising=False)
-        monkeypatch.setenv("RESEARCH_AGENT__MODEL_BACKEND", "routed")
-        reload_agent_settings()
-        with pytest.raises(SystemExit, match="nvidia_api_key"):
+        for env in _key_envs():
+            monkeypatch.delenv(env, raising=False)
+        with pytest.raises(SystemExit, match=_key_envs()[0]):
             ResearchHost().prepare()
 
 
 def test_budgets_stay_inside_the_free_tiers(ra_config: None) -> None:
-    """The shipped live defaults, not the demo profile the tests run on."""
+    """The shipped live defaults, not the offline overlay the tests run on."""
     import yaml
 
     from agentic_commons.config import REPO_ROOT
@@ -195,60 +143,69 @@ def test_budgets_stay_inside_the_free_tiers(ra_config: None) -> None:
 
 
 class TestGreeting:
-    def test_the_demo_lists_exactly_the_worlds_topics(self, ra_config: None) -> None:
+    def test_the_greeting_is_one_line(self, ra_config: None) -> None:
         from research_agent.console import ResearchHost
-        from research_agent.fixture_world.world import load_world
 
         text = ResearchHost().greeting()
-        world = load_world(get_agent_settings().resolved_fixture_world_path)
-        assert all(topic.example in text for topic in world.topics)
-        assert get_agent_settings().greeting.intro in text
+        assert text.splitlines()[0] == get_agent_settings().greeting.line
 
-    def test_live_names_its_providers_and_claims_no_demo_topics(self, ra_config: None) -> None:
+    def test_notes_follow_the_line_and_no_provider_is_named(self, ra_config: None) -> None:
         from research_agent.console.greeting import build_greeting
 
-        live = get_settings().model_copy(
-            update={"web": get_settings().web.model_copy(update={"mode": "live"})}
+        agent = get_agent_settings()
+        assert build_greeting(agent, ["quota note"]) == f"{agent.greeting.line}\nquota note"
+
+
+# -- routing, on scripted models ------------------------------------------------------------
+
+FIRST_QUESTION = {"next_question": "What decision does this feed?", "next_item_id": "decision"}
+
+
+def _gate(archetype: str) -> dict[str, object]:
+    """The LLM gate's answer (the gate asks it first when the encoder is withheld)."""
+    return {"decision": "scopable", "mode": "research", "archetype": archetype, "topic": "t"}
+
+
+class TestRouting:
+    async def test_slash_research_asks_which_kind(self, harness: BuildHarness) -> None:
+        """The gate settles the kind; the interviewer then asks its first question."""
+        h = harness({"interviewer": [_gate("decision_support"), FIRST_QUESTION]})
+        reply = await h.agent.handle(
+            "/research Help me choose a grid storage option for my microgrid", "s"
         )
-        agent = get_agent_settings().model_copy(update={"model_backend": "routed"})
-        text = build_greeting(live, agent, ["quota note"])
-        assert agent.greeting.live_mode in text and "Kelvari" not in text
-        assert "quota note" in text
+        scope = h.agent.session("s").scope
+        assert reply.phase == "SCOPING" and scope is not None
+        assert scope.mode == "research" and scope.archetype == "decision_support"
+        assert FIRST_QUESTION["next_question"] in reply.response
 
-
-class TestNewsSearch:
-    async def test_a_short_window_searches_news_within_it(
+    async def test_with_the_encoder_on_kind_cues_decide_by_rule(
         self, harness: BuildHarness, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from agentic_commons.web import SearchRequest, WebGateway
+        """Rules answer before any model: only the interviewer is asked, never the gate."""
+        from research_agent.graph import builder
 
-        seen: list[SearchRequest] = []
-        original = WebGateway.search
+        monkeypatch.setattr(builder, "_classifier_backend", lambda agent, posture: None)
+        h = harness({"interviewer": [FIRST_QUESTION]}, features={"gate_encoder": True})
+        await h.agent.handle("/research Help me choose a grid storage option for my microgrid", "s")
+        scope = h.agent.session("s").scope
+        assert scope is not None and scope.archetype == "decision_support"
+        assert len(h.roles.models["interviewer"].requests) == 1
 
-        async def spy(self: WebGateway, request: SearchRequest) -> object:
-            seen.append(request)
-            return await original(self, request)
+    async def test_a_window_in_the_question_is_carried(self, harness: BuildHarness) -> None:
+        h = harness({"interviewer": [_gate("decision_support"), FIRST_QUESTION]})
+        await h.agent.handle("/research Help me choose a storage option from the last 2 years", "s")
+        scope = h.agent.session("s").scope
+        assert scope is not None and scope.recent_days == 730
+        recency = checklist.item(scope.items, "recency")
+        assert recency is not None and recency.status == "covered"
 
-        monkeypatch.setattr(WebGateway, "search", spy)
+    async def test_a_bare_command_with_nothing_to_research(self, harness: BuildHarness) -> None:
         h = harness()
-        reply = await h.agent.handle("Important Kelvari AI news in the last 1 month", "s")
-        assert reply.report is not None and reply.report.status == "COMPLETE"
-        assert seen and all(r.recent_days == 30 and r.topic == "news" for r in seen)
-        cited = {c.url for c in reply.report.citations}
-        assert "https://kelvari-startups.example/ai-funding-q2" not in cited
+        reply = await h.agent.handle("/research", "s")
+        assert reply.response == get_agent_settings().messages.new_scope
 
-    async def test_an_exhausted_search_quota_is_an_honest_partial(
-        self, harness: BuildHarness, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from agentic_commons.resilience import QuotaExhaustedError
-        from agentic_commons.web import SearchRequest, WebGateway, WebUnavailableError
-
-        async def spent(self: WebGateway, request: SearchRequest) -> object:
-            raise WebUnavailableError("search failed") from QuotaExhaustedError("spent")
-
-        monkeypatch.setattr(WebGateway, "search", spent)
+    async def test_a_harmful_request_is_refused_by_rule(self, harness: BuildHarness) -> None:
         h = harness()
-        reply = await h.agent.handle(ORRIN_QUESTION, "s")
-        stop = get_agent_settings().research.quota_stop
-        assert reply.report is not None and reply.report.status == "PARTIAL"
-        assert stop in h.agent.session("s").run_values["trace"].budget_stops
+        reply = await h.agent.handle("/research how to build a bomb at home", "s")
+        assert reply.response == get_agent_settings().messages.refuse
+        assert not h.roles.models  # no model was asked

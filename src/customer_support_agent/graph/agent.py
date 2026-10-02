@@ -85,7 +85,6 @@ from agentic_commons.observability import (
 )
 from agentic_commons.resilience import (
     DeadLetterQueue,
-    ResilientCaller,
 )
 from agentic_commons.security import SecuritySuite
 from agentic_commons.security.auth.policy import AgentPolicy
@@ -159,7 +158,6 @@ class CustomerSupportAgent(
         selector: ToolRetrievalSelector | None = None,
         cascade: NollmScoringCascadeImpl | None = None,
         reporter: StageReporter | None = None,
-        resilient: ResilientCaller | None = None,
         dead_letter_queue: DeadLetterQueue | None = None,
         tracer: Tracer | None = None,
         slos: SLORegistry | None = None,
@@ -209,7 +207,6 @@ class CustomerSupportAgent(
         # The model is a remote dependency like any other: bounded by a
         # timeout, retried under an idempotency key, and behind a breaker
         # so a provider outage fails fast instead of queueing.
-        self._resilient = resilient or ResilientCaller("llm")
         self._dead_letter_queue = dead_letter_queue
         self._tracer = tracer
         self._slos = slos

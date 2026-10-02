@@ -69,10 +69,16 @@ class TestSettings:
         first = get_settings()
         assert reload_settings() is not first
 
-    def test_api_keys_are_never_config_fields(self) -> None:
-        """Keys come from the environment; a key in a settings dump leaks."""
-        dumped = str(get_settings().llm.model_dump())
-        assert "api_key" not in dumped
+    def test_api_keys_are_never_config_fields(self, monkeypatch) -> None:
+        """Keys come from the environment; a key's value in a settings dump leaks.
+
+        The variable *names* are configuration; the values never reach a field.
+        """
+        llm = get_settings().llm
+        for provider in llm.providers.values():
+            for env in provider.key_env_vars:
+                monkeypatch.setenv(env, "sk-test-never-shown")
+        assert "sk-test-never-shown" not in str(reload_settings().llm.model_dump())
 
     def test_api_key_is_read_from_the_environment(self, monkeypatch) -> None:
         monkeypatch.setenv("nvidia_api_key", "value-from-env")

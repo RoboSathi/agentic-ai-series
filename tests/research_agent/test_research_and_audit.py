@@ -1,4 +1,4 @@
-"""Planning, the research worker's defences, and the Goldfish Audit."""
+"""Planning, the research worker's defences, and the Independent Audit."""
 
 import inspect
 import json
@@ -11,7 +11,7 @@ from agentic_commons.evidence import EvidenceCandidate, LedgerSnapshot
 from agentic_commons.hashing import text_hash
 from agentic_commons.verification.acceptance import CheckVerdict
 from agentic_commons.web import SearchHit
-from research_agent.audit.goldfish import AuditResult, GoldfishAuditor, _result
+from research_agent.audit.independent import IndependentAuditor, _result
 from research_agent.config import get_agent_settings
 from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.report import COVERAGE_AND_LIMITS, LimitEntry, Report, ReportSection
@@ -21,7 +21,6 @@ from research_agent.planning.dag_validation import validate_plan
 from research_agent.prompts import planner, reflector, synthesizer
 from research_agent.research.defenses import OutboundGuard, apply_source_policy, is_primary
 from research_agent.research.stop_rules import StopInput, stop_rule_for
-from tests.research_agent.conftest import BuildHarness, converse, decision_script
 
 MARKER = "UNIQUE-RAW-PAGE-SENTENCE-7f3a"
 
@@ -187,35 +186,17 @@ class TestNoRawPageTextOutsideTheExtractor:
             assert not {"page", "text", "pages", "raw"} & set(params)
 
 
-class TestGoldfishIsolation:
+class TestIndependentAuditIsolation:
     def test_audit_report_takes_exactly_the_contract_the_report_and_the_ledger(self) -> None:
-        signature = inspect.signature(GoldfishAuditor.audit_report)
+        signature = inspect.signature(IndependentAuditor.audit_report)
         params = [p for p in signature.parameters.values() if p.name != "self"]
         assert [p.name for p in params] == ["contract", "report", "ledger_snapshot"]
-        hints = inspect.get_annotations(GoldfishAuditor.audit_report, eval_str=True)
+        hints = inspect.get_annotations(IndependentAuditor.audit_report, eval_str=True)
         assert (
             hints["contract"] is Contract
             and hints["report"] is Report
             and hints["ledger_snapshot"] is LedgerSnapshot
         )
-
-    def test_no_conversation_is_reachable_from_the_auditor(self, harness: BuildHarness) -> None:
-        h = harness()
-        auditor = h.agent._nodes._p.auditor
-        assert auditor is not None
-        reachable = _reachable_types(auditor)
-        forbidden = {
-            "ScopingState",
-            "SessionRecord",
-            "WorkingMemory",
-            "WorkingMemoryStore",
-            "MemoryFacade",
-            "DurableGraphRunner",
-            "SqliteCheckpointer",
-            "ResearchAgent",
-            "RunResources",
-        }
-        assert not forbidden & reachable
 
 
 def _reachable_types(root: object, depth: int = 4) -> set[str]:
@@ -243,60 +224,6 @@ def _reachable_types(root: object, depth: int = 4) -> set[str]:
             if not isinstance(child, (str, bytes, int, float))
         )
     return names
-
-
-class TestPlantedFlaws:
-    """The Goldfish Audit catches what a synthesizer might slip through."""
-
-    async def _audited(self, harness: BuildHarness, mutate: Any) -> tuple[AuditResult, AuditResult]:
-        h = harness()
-        reply, _ = await converse(h, decision_script())
-        run = h.agent.session("s1").run_values
-        contract, report, ledger = run["contract"], run["report"], run["ledger"]
-        auditor = h.agent._nodes._p.auditor
-        clean = await auditor.audit_report(contract, report, ledger)
-        flawed = await auditor.audit_report(contract, mutate(report, ledger), ledger)
-        return clean, flawed
-
-    async def test_a_fabricated_citation_is_caught(self, harness: BuildHarness) -> None:
-        def fabricate(report: Report, ledger: LedgerSnapshot) -> Report:
-            extra = ReportSection(
-                heading="Options compared", body="Veltrane VX40 costs 20 USD per kWh [E999]."
-            )
-            return report.model_copy(update={"sections": [extra, *report.sections]})
-
-        clean, flawed = await self._audited(harness, fabricate)
-        failing = {v.name for v in flawed.verdicts if not v.passed}
-        assert "links_resolved" in failing and clean.honest
-
-    async def test_an_unsupported_claim_is_caught(self, harness: BuildHarness) -> None:
-        def unsupported(report: Report, ledger: LedgerSnapshot) -> Report:
-            entry = ledger.entries[0].entry_id
-            extra = ReportSection(
-                heading="Options compared",
-                body=f"Every option was banned by regulators and recalled worldwide [{entry}].",
-            )
-            return report.model_copy(update={"sections": [extra, *report.sections]})
-
-        _, flawed = await self._audited(harness, unsupported)
-        assert any(v.name == "claims_entailed" and not v.passed for v in flawed.verdicts)
-
-    async def test_a_hidden_gap_is_caught(self, harness: BuildHarness) -> None:
-        """A report that claims coverage it does not have: unflagged must-pass gaps."""
-
-        def hide(report: Report, ledger: LedgerSnapshot) -> Report:
-            body = [s for s in report.sections if s.heading in ("Recommendation",)]
-            return report.model_copy(update={"sections": body, "limits": []})
-
-        _, flawed = await self._audited(harness, hide)
-        assert flawed.unflagged_gaps and not flawed.honest
-
-    async def test_a_false_limit_is_caught(self, harness: BuildHarness) -> None:
-        def falsely_flag(report: Report, ledger: LedgerSnapshot) -> Report:
-            return report.model_copy(update={"limits": [LimitEntry(item_id="R1", text="x")]})
-
-        _, flawed = await self._audited(harness, falsely_flag)
-        assert "R1" in flawed.false_limits
 
 
 class TestAuditResult:

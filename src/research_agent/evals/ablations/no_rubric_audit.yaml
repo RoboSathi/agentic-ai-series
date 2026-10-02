@@ -1,4 +1,0 @@
-# Ablation: no acceptance criteria and no independent audit.
-features:
-  rubric: false
-  goldfish_audit: false

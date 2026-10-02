@@ -4,8 +4,8 @@ Waves are LangGraph supersteps: `wave_start` fans out one `Send` per
 ready node, every `research_node` of the wave runs concurrently (bounded
 by the scheduler's semaphore), and `wave_done` runs once after the whole
 superstep — so a checkpoint lands at every wave boundary and a crash
-resumes at the wave it interrupted. With the Goldfish Audit withheld,
-`goldfish_audit` is simply not a node: synthesis goes straight to
+resumes at the wave it interrupted. With the Independent Audit withheld,
+`independent_audit` is simply not a node: synthesis goes straight to
 finalization.
 """
 
@@ -54,6 +54,6 @@ def _audit_edges(builder: StateGraph, nodes: RunNodes, with_audit: bool) -> None
     if not with_audit:
         builder.add_edge("synthesize", "finalize")
         return
-    builder.add_node("goldfish_audit", nodes.goldfish_audit)
-    builder.add_edge("synthesize", "goldfish_audit")
-    builder.add_conditional_edges("goldfish_audit", nodes.after_audit, ["gap_fill", "finalize"])
+    builder.add_node("independent_audit", nodes.independent_audit)
+    builder.add_edge("synthesize", "independent_audit")
+    builder.add_conditional_edges("independent_audit", nodes.after_audit, ["gap_fill", "finalize"])

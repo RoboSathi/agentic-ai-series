@@ -1,5 +1,0 @@
-# Ablation: every content-defence layer withheld.
-features:
-  injection_structural: false
-  injection_classifier: false
-  quarantined_extractor: false

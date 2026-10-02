@@ -1,5 +1,7 @@
 # ADR ra-0015 — Model backend: fixture or routed (deviation)
 
+**Status:** superseded by ra-0019 (2026-10-02) — the fixture world and its evals were removed.
+
 ## Context
 
 The build brief requires `make tui ra` to run the whole flow in replay mode and evals to be deterministic, but this environment has no model credentials and hosted models are not deterministic.

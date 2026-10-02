@@ -1,52 +1,13 @@
-"""The greeting: how to use the agent, in a few lines.
+"""The greeting: one line on how to use the agent.
 
-Behaviour first (ask a question; `/research` for a deeper run), then the commands, then which
-world it is searching. Limits, budgets, providers and refusals are in the configuration and the
-logs, not repeated here. In demo mode the last block lists exactly the topics the replayed
-fixture world holds, so it cannot drift from the truth.
+Ask a question and it is answered; `/research` for an audited deep run; `/help` for the rest.
+Limits, budgets, providers and models are in the configuration and the logs, not repeated
+here. Notes (a missing-key warning) follow on their own lines, only when there are any.
 """
 
-from agentic_commons.config.settings import AppConfig
 from research_agent.config.settings import ResearchAgentSettings
 
-_QA, _RESEARCH = "qa", "research"
 
-
-def build_greeting(settings: AppConfig, agent: ResearchAgentSettings, notes: list[str]) -> str:
-    """The greeting for this mode; `notes` (a missing-key warning) are appended as given."""
-    lines = agent.greeting
-    demo = agent.model_backend == "fixture" and settings.web.mode == "replay"
-    examples = _demo_examples(agent) if demo else _live_examples(agent)
-    parts = [
-        lines.intro,
-        lines.research_line,
-        lines.examples.format(qa=examples[_QA], research=examples[_RESEARCH]),
-        "",
-        lines.commands,
-        *notes,
-        "",
-        *_mode_lines(agent, demo),
-    ]
-    return "\n".join(parts)
-
-
-def _mode_lines(agent: ResearchAgentSettings, demo: bool) -> list[str]:
-    if not demo:
-        return [agent.greeting.live_mode]
-    from research_agent.fixture_world.world import load_world
-
-    world = load_world(agent.resolved_fixture_world_path)
-    topics = [
-        agent.greeting.topic_line.format(title=t.title, example=t.example) for t in world.topics
-    ]
-    return [agent.greeting.demo_mode, *topics]
-
-
-def _demo_examples(agent: ResearchAgentSettings) -> dict[str, str]:
-    from research_agent.fixture_world.world import load_world
-
-    return load_world(agent.resolved_fixture_world_path).examples
-
-
-def _live_examples(agent: ResearchAgentSettings) -> dict[str, str]:
-    return {option.mode: option.example for option in agent.scoping.reframe_options}
+def build_greeting(agent: ResearchAgentSettings, notes: list[str]) -> str:
+    """The greeting line, then any notes as given."""
+    return "\n".join([agent.greeting.line, *notes])

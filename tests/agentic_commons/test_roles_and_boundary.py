@@ -21,7 +21,7 @@ from agentic_commons.llm.roles import RoleCollisionError, RoleModelRouter, RoleN
 from tests.conftest import ScriptedLLM
 
 COMMONS = REPO_ROOT / "src" / "agentic_commons"
-BANNED_EVERYWHERE = ("archetype", "research", "goldfish", "brief")
+BANNED_EVERYWHERE = ("archetype", "research", "brief")
 BANNED_IN_NEW = ("rubric",)
 # Modules added for the research agent: no research vocabulary at all.
 NEW_MODULES = (
@@ -52,13 +52,14 @@ def _router(**roles: tuple[ProviderName, str]) -> tuple[RoleModelRouter, list[tu
 
 
 class TestRoleModelRouter:
-    def test_roles_on_one_model_share_a_client(self) -> None:
+    def test_roles_on_one_model_share_its_adapter(self) -> None:
         router, built = _router(
             writer=("nim", "big"), planner=("nim", "big"), judge=("nim", "other")
         )
-        assert router.client_for("writer") is router.client_for("planner")
-        assert router.client_for("judge") is not router.client_for("writer")
-        assert built == [("nim", "big"), ("nim", "other")]
+        for role in ("writer", "planner", "judge"):
+            router.client_for(role)
+        assert router.client_for("writer") is router.client_for("writer")  # built once per role
+        assert built == [("nim", "big"), ("nim", "other")]  # one adapter per distinct model
         assert router.roles == ["judge", "planner", "writer"]
 
     def test_independence_is_checked(self) -> None:

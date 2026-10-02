@@ -17,8 +17,8 @@ agent's `design_docs/patterns.yaml`. Do not edit by hand.
 | react | AG | E05 | — | research/worker.py · research_node |
 | planning | AG | E06 | control_loop/quality_gate.py · PlanLookup | planning/planner.py + planning/dag_validation.py · plan_dag (with its validation) |
 | reflection | AG | E06 | control_loop/quality_gate.py · GroundedCritic | research/reflector.py · reflect_gap_analysis |
-| evaluator_optimizer | AG | E06 | control_loop/quality_gate.py · OutputQualityGate (critique, at most one repair, IndependentScorer) | graph/run_nodes.py · synthesize → goldfish_audit → gap_fill → wave_start |
-| orchestrator_subagent | AG | E41 | — | audit/goldfish.py · GoldfishAuditor (agentic_commons.durability.IsolatedGraphRunner) |
+| evaluator_optimizer | AG | E06 | control_loop/quality_gate.py · OutputQualityGate (critique, at most one repair, IndependentScorer) | graph/run_nodes.py · synthesize → independent_audit → gap_fill → wave_start |
+| orchestrator_subagent | AG | E41 | — | audit/independent.py · IndependentAuditor (agentic_commons.durability.IsolatedGraphRunner) |
 | agentic_retrieval | AG | E19 | — | research/worker.py + research/reflector.py |
 | memory_systems | AG | E13 | graph/builder.py · MemoryFacade over the four CoALA stores; admin/dream.py consolidation | archive/store.py · archive node |
 
@@ -38,7 +38,7 @@ agent's `design_docs/patterns.yaml`. Do not edit by hand.
 | strategy | ra | research/stop_rules/ (one stop rule per archetype) |
 | adapter | ra | agentic_commons/web/providers.py · TavilyProvider and DuckDuckGoProvider behind SearchProvider |
 | chain of responsibility | ra | agentic_commons/web/router.py · SearchRouter (free provider first, metered fallback) |
-| factory | ra | graph/builder.py (composition root) · fixture_world/model.py fixture_client_factory |
+| factory | ra | graph/builder.py (composition root) |
 | builder | ra | scoping/brief.py · BriefBuilder |
 | observer | ra | research/telemetry.py (StageReporter + AuditLedger) · WebGateway observer |
 | decorator | ra | research_agent/evals/agent_under_test.py · RecordingLLMClient around every role client |

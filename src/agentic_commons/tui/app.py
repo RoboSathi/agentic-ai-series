@@ -92,41 +92,11 @@ class AgenticTuiApp(App[None]):
         text-style: bold;
     }
 
-    /* RUNNING */
-    .stage-started > CollapsibleTitle,
-    .stage-started > CollapsibleTitle:hover,
-    .stage-started > CollapsibleTitle:focus {
-        color: cyan;
-        background: transparent;
-    }
-
-    /* SUCCESS */
-    .stage-completed > CollapsibleTitle,
-    .stage-completed > CollapsibleTitle:hover,
-    .stage-completed > CollapsibleTitle:focus {
-        color: #00FF87;
-        background: transparent;
-    }
-
-    /* WARNING / WAITING */
-    .stage-warning > CollapsibleTitle,
-    .stage-warning > CollapsibleTitle:hover,
-    .stage-warning > CollapsibleTitle:focus,
-    .stage-waiting > CollapsibleTitle,
-    .stage-waiting > CollapsibleTitle:hover,
-    .stage-waiting > CollapsibleTitle:focus {
-        color: yellow;
-        background: transparent;
-    }
-
-    /* FAILURE / BLOCKED */
-    .stage-failed > CollapsibleTitle,
-    .stage-failed > CollapsibleTitle:hover,
-    .stage-failed > CollapsibleTitle:focus,
-    .stage-blocked > CollapsibleTitle,
-    .stage-blocked > CollapsibleTitle:hover,
-    .stage-blocked > CollapsibleTitle:focus {
-        color: red;
+    /* The title's colour is set per card from `tui.outcome_colors` / `tui.group_colors`
+       (an inline style, so hover and focus keep it); the CSS only keeps the title flat. */
+    .stage-event > CollapsibleTitle,
+    .stage-event > CollapsibleTitle:hover,
+    .stage-event > CollapsibleTitle:focus {
         background: transparent;
     }
 
@@ -492,7 +462,12 @@ class AgenticTuiApp(App[None]):
             query_input.focus()
 
     def _on_status(self, event: StatusEvent) -> None:
-        """Render one semantic event and update the current-stage status."""
+        """Render one semantic event and update the current-stage status.
+
+        A started event names the stage on the status line; the panel draws a pending card
+        for it only when its kind is in `tui.pending_card_kinds`.
+        """
+        self._panel.show_status(event)
         if event.status == "started":
             self._status.update_stage(
                 self._labels.title_for(
@@ -500,15 +475,12 @@ class AgenticTuiApp(App[None]):
                     tool_name=str(event.fields.get("tool", event.detail or "")),
                 )
             )
-        else:
-            self._panel.show_status(event)
-
+        elif not self._follow_latest:
             # If a failure / warning / blocked event happens, leave the event
             # visible at once. Otherwise preserve the user's chosen history
             # position.
-            if not self._follow_latest:
-                self._history_pending += 1
-                self._status.set_history_pending(self._history_pending)
+            self._history_pending += 1
+            self._status.set_history_pending(self._history_pending)
 
         if event.tokens_delta:
             self._tokens.add(event.tokens_delta)

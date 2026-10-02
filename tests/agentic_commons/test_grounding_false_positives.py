@@ -7,7 +7,7 @@ from agentic_commons.config.settings import RoleModelSettings
 from agentic_commons.evals.entailment import LexicalEntailmentModel, negation_pattern
 from agentic_commons.hallucination_protection.claims import ClaimDecomposer, specifics
 from agentic_commons.hallucination_protection.direct import amounts
-from agentic_commons.llm.roles import RequestExtras, RoleModelRouter
+from agentic_commons.llm.roles import RoleModelRouter
 from agentic_commons.llm.types import CompletionRequest, Message
 from agentic_commons.llm.typography import TypographyNormaliser
 from tests.conftest import ScriptedLLM
@@ -74,8 +74,9 @@ async def test_a_roles_request_fields_ride_on_every_request() -> None:
         },
         factory=lambda provider, model: llm,
     )
-    client = router.client_for("interviewer")
-    assert isinstance(client, RequestExtras) and router.client_for("answerer") is llm
-    await client.complete(CompletionRequest(messages=[Message(role="user", content="q")]))
-    assert llm.requests[0].extra_body == extra
+    request = CompletionRequest(messages=[Message(role="user", content="q")])
+    await router.client_for("interviewer").complete(request)
+    await router.client_for("answerer").complete(request)
+    # One adapter for the model; only the interviewer's requests carry its fields.
+    assert llm.requests[0].extra_body == extra and llm.requests[1].extra_body == {}
     assert router.model_key("interviewer") == router.model_key("answerer")

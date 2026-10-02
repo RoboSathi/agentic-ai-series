@@ -82,6 +82,20 @@ logging:
   level: INFO
   console_enabled: true
   console_level: INFO
+  # Bright console colours by level (Rich's defaults are dark on a dark terminal), and the
+  # subsystem in front of each line. The file log is unaffected.
+  console_theme:
+    log.time: "bright_black"
+    logging.level.debug: "bright_black"
+    logging.level.info: "bold bright_cyan"
+    logging.level.warning: "bold bright_yellow"
+    logging.level.error: "bold bright_red"
+    logging.level.critical: "bold white on red"
+    log.message: "bright_white"
+    repr.number: "bold bright_magenta"
+    repr.str: "bright_green"
+    repr.url: "underline bright_blue"
+  console_format: "[bold bright_blue]%(name)s[/] %(message)s"
   file_enabled: true
   # The file log is the authoritative record, so it captures more than the
   # console: DEBUG here is what makes LLM payloads, call traces and
@@ -124,6 +138,8 @@ llm:
   reasoning_fields: [reasoning_content, reasoning]
   providers:
     nim:
+      adapter: hosted
+      key_env_vars: [nvidia_api_key]
       base_url: https://integrate.api.nvidia.com/v1
       # NIM entitlements are per-account; this model is confirmed invokable
       # and does reliable multi-step tool calling for the refund agent.
@@ -136,11 +152,21 @@ llm:
       input_cost_per_1k_tokens: 0.0002
       output_cost_per_1k_tokens: 0.0006
     local:
+      adapter: grammar
+      key_env_vars: []
       base_url: http://localhost:8080/v1
       model: mistral-nemo-12b
       timeout_seconds: 120
       input_cost_per_1k_tokens: 0.0
       output_cost_per_1k_tokens: 0.0
+  # The default client's protection (`create_llm_client`): every attempt bounded and retried by
+  # the resilience stack; when the model fails, or has not answered after `hedge_after_seconds`,
+  # the backup starts beside it and the first answer wins. Slower, but the call gets an answer.
+  chain:
+    timeout_seconds: 60
+    hedge_after_seconds: 30
+    fallbacks:
+      - {provider: nim, model: nvidia/nemotron-3-ultra-550b-a55b}
   cascade:
     enabled: false
     tiers: [local, nim]    # cheapest sufficient tier first (E44)
@@ -148,8 +174,9 @@ llm:
     escalate_on_empty_content: true
     escalate_on_error: true
   embedding:
-    provider: nim          # nim | local
-    nim_model: nvidia/nemotron-3-embed-1b
+    backend: hosted        # hosted (the provider below) | hashing (local, no network)
+    provider: nim
+    model: nvidia/nemotron-3-embed-1b
     local_dimensions: 256
     # Asymmetric retrieval models embed questions and passages
     # differently. RAG indexes as `passage` and searches as `query`.
@@ -227,6 +254,11 @@ llm:
     max_input_tokens: 1024
     max_summary_tokens: 60
     num_beams: 4
+  # Silenced only while a local model loads. transformers 5.17's DeBERTa-v2 (the local NLI
+  # model) still decorates helpers with `torch.jit.script`, which torch 2.14 deprecates on
+  # Python 3.14: the library's code, not ours. Drop the entry once transformers moves off it.
+  suppressed_load_warnings:
+    - '`torch\.jit\.script` is (?:deprecated|not supported)'
   # `make llm-check` sends one real, minimal request to every hosted
   # endpoint: an account can list a model it is not entitled to invoke.
   check:
@@ -249,6 +281,31 @@ llm:
         above course fee." Answer as JSON {"score": float, "rationale": str}.
       max_tokens: 512
       timeout_seconds: 120
+    # The tables' colours: bright, so they read on a dark terminal; each cell by what it is.
+    styles:
+      title: "bold bright_white"
+      border: "bright_blue"
+      header: "bold bright_cyan"
+      status:
+        ok: "bold bright_green"
+        failed: "bold bright_red"
+        skipped: "bright_black"
+        downloaded: "bold bright_cyan"
+        pending: "bold bright_yellow"
+      name: "bold bright_magenta"
+      model: "bright_cyan"
+      target: "bright_blue"
+      required: "bold bright_yellow"
+      optional: "bright_black"
+      detail: "bright_white"
+      failure: "bold bright_red"
+      fast: "bright_green"
+      medium: "bright_yellow"
+      slow: "bright_red"
+      fast_ms: 1500
+      slow_ms: 5000
+      bench_fast_seconds: 5
+      bench_slow_seconds: 15
   # The model's typesetting habits, undone as its text arrives. Nemotron
   # writes a narrow no-break space between a label and its number
   # ("order<U+202F>90019") and non-breaking hyphens in dates; they look like
@@ -326,6 +383,13 @@ observability:
   llm_request_heading: "LLM request · {purpose}"
   llm_response_heading: "LLM response · {purpose}"
   llm_tool_requested_heading: "LLM response · tool requested: {tool}"
+  # A model chain's backup cards (`llm/observer.py`). No heading names a model.
+  model_events:
+    backup_started: "{label} · {reason} · asking the backup model"
+    backup_answered: "{label} · the backup model answered"
+    reasons: {slow: "no answer yet", failed: "the call failed", weak: "an empty or cut-off answer"}
+    primary_label: Primary model
+    backup_label: Backup model
   unparseable_arguments: "unparseable — the call will be refused"
   invalid_amount: "{value} (not a valid amount)"
   slo_targets:
@@ -348,6 +412,19 @@ observability:
   # evaluator passes and human review are what actually add up.
 
 context:
+  # The `context_assembly` card (context/window.py), the same for every agent.
+  window:
+    started: Assembling the model context window
+    assembled: Context window assembled
+    withheld: Context assembly withheld
+    unhealthy: "Context health: {modes} — {action}"
+    removed: "{count} chunk(s) removed"
+    nothing_removed: flagged, nothing removed
+    finding_line: "{mode} · {source} · {rule}: {detail} → {action}"
+    routine_modes: [distraction]
+    not_acted_on: flagged
+    dropped_action: dropped
+    quiet_when_healthy: true
   token_budget: 3000
   chars_per_token: 4
   retrieval_mode: hybrid   # lexical | dense | hybrid | graph
@@ -540,7 +617,7 @@ guardrails:
   enabled: true
   mode: auto_repair
   max_repair_attempts: 2
-  constrained_backend: llamacpp_grammar
+  constrained_backend: grammar
 
 hallucination_protection:
   enforce_grounding: true
@@ -749,6 +826,23 @@ gatekeeper:
     per_action_amount_escalation_usd: {}
 
 security:
+  # What the screens of the person's message say on their cards (security/screening.py).
+  screening:
+    pii_started: Removing personal data before the model call
+    pii_redacted: "REDACTED · {categories} · {count} match(es)"
+    pii_clear: PASS · no PII detected
+    injection_started: Checking untrusted input for injection
+    injection_blocked_rule: Prompt injection blocked · deterministic match
+    injection_blocked_model: Prompt injection blocked · model detection
+    injection_unavailable: Prompt injection model check unavailable
+    injection_passed_model: Prompt injection check passed · model verified
+    injection_passed_rule: Prompt injection check passed · deterministic scan
+    moderation_started: Checking content policy
+    moderation_blocked_rule: Content safety blocked · deterministic match
+    moderation_blocked_model: Content safety blocked · model detection
+    moderation_unavailable: Content safety model check unavailable
+    moderation_passed_model: Content safety check passed · model verified
+    moderation_passed_rule: Content safety check passed · deterministic scan
   # RBAC (auth) stays on because the Gatekeeper's "who is asking?" question
   # depends on it. Whether each screening stage exists is a feature
   # (`features:`), not a flag here.
@@ -795,6 +889,10 @@ security:
       Classify only the latest user message. Return JSON and nothing else.
       Schema: {"User Safety":"safe"|"unsafe","Safety Categories":"comma-separated categories"}.
       Omit Safety Categories when the message is safe. Ordinary product-support requests are safe.
+    response_safety_key: User Safety
+    response_categories_key: Safety Categories
+    safe_word: safe
+    unsafe_word: unsafe
   guards:
     # Hosted model guards. These are optional defense-in-depth detectors;
     # the existing deterministic checks remain in place and the application
@@ -806,19 +904,36 @@ security:
     jailbreak:
       enabled: true
       provider: nvidia
+      key_env_vars: [nvidia_api_key, NVIDIA_API_KEY]
       base_url: https://ai.api.nvidia.com
       endpoint: /v1/security/nvidia/nemoguard-jailbreak-detect
       model: nvidia/nemoguard-jailbreak-detect
       timeout_seconds: 8
+      resilience_key: hosted-jailbreak
+      check_name: NemoGuard JailbreakDetect
+      flagged_reason: The jailbreak classifier flagged the input.
+      allowed_reason: The jailbreak classifier allowed the input.
+      missing_key_reason: "{env} is not configured"
     content_safety:
       enabled: true
       provider: nvidia
+      key_env_vars: [nvidia_api_key, NVIDIA_API_KEY]
       base_url: https://integrate.api.nvidia.com/v1
       endpoint: /chat/completions
       model: nvidia/nemotron-3.5-content-safety
       # nvidia/llama-3.1-nemotron-safety-guard-8b-v3
       timeout_seconds: 8
       max_tokens: 128
+      resilience_key: hosted-content-safety
+      check_name: Nemotron Content Safety
+      flagged_reason: The content-safety model flagged the input.
+      allowed_reason: The content-safety model classified the input as safe.
+      missing_key_reason: "{env} is not configured"
+    rule_checks:
+      injection: Deterministic prompt-injection scan
+      moderation: Deterministic blocked-term scan
+    hosted_flagged_reason: "hosted {guard} flagged the input"
+    fail_closed_reason: "hosted {guard} unavailable and security policy is configured to fail closed"
 
 resilience:
   circuit_breaker:
@@ -1042,16 +1157,52 @@ tui:
   status_expand_hint: "click to expand"
   status_history_hint: "scroll down to follow"
   choice_menu_hint: "↑/↓ then Enter to pick · or type your own answer"
-  group_colors:
-    violet: "#C792EA"
-    blue: "#4FC3F7"
-    amber: "#FFB454"
-  section_title_style: "bold"
+  # Event kinds whose `started` event draws a pending card at once (replaced in place by
+  # the finished card) instead of only the status line: a model call the person waits on.
+  pending_card_kinds: [model]
+  # A card title's colour by outcome (its `status`) — the one colour convention for every
+  # card, whatever stage or agent it comes from: running cyan, done green, warning yellow,
+  # failure red. The colour is in the title's own text, so focus and hover never repaint it.
+  outcome_colors:
+    started: "#4FC3F7"
+    completed: "#00FF87"
+    warning: "#FFCB6B"
+    waiting: "#FFCB6B"
+    failed: "#FF5370"
+    blocked: "#FF5370"
+  # An expanded card: section titles, `key = value` / `key: value` keys, and plain values.
+  # A value that says a state (PASS, FAIL, ...) takes that state's tone instead.
+  section_title_style: "bold #4FC3F7"
+  body_styles:
+    key: "bold #82AAFF"
+    separator: "#7F8C98"
+    value: "#EEFFFF"
+    muted: "#9E9E9E"
+  # The same state colours as the titles, for a card's lines and values.
   tone_styles:
-    pass: green
-    fail: red
-    warn: yellow
-    dim: dim
+    pass: "#00FF87"
+    fail: "#FF5370"
+    warn: "#FFCB6B"
+    dim: "#9E9E9E"
+  # Words that name a state, wherever a card shows them as a value -> their tone.
+  state_words:
+    PASS: pass
+    OK: pass
+    CLEAR: pass
+    ALLOW: pass
+    ALLOWED: pass
+    COMPLETED: pass
+    MATCH: fail
+    FAIL: fail
+    FAILED: fail
+    BLOCKED: fail
+    DENY: fail
+    DENIED: fail
+    ESCALATE: warn
+    WARNING: warn
+    REFERRED: warn
+    SKIPPED: dim
+    NO_MATCH: pass
   response_styles:
     h1: "bold #4FC3F7"
     h2: "bold #C792EA"
@@ -1097,6 +1248,7 @@ web:
     cache_dir: data/web_cache
   fetch:
     timeout_seconds: 20
+    max_attempts: 3
     user_agent: "agentic-harness/0.1 (+https://robosathi.com)"
     max_chars: 200000
     # Below this much extracted text a page is treated as script-rendered.

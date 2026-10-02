@@ -2,10 +2,10 @@
 
 An autonomous research agent that **interviews the user to bound the
 scope**, derives **frozen acceptance criteria**, **researches autonomously
-against that contract**, and has an **independent "Goldfish" pass audit the
-result**. It is Rensin's *Elephants, Goldfish…* turned into a graph: the
+against that contract**, and has an **independent audit check the
+result**. It is a writer/verifier split turned into a graph: the
 **Elephant** is the frozen Scope Brief + Rubric that remembers what was
-agreed; the **Goldfish** is a fresh-context verifier that sees only the
+agreed; the **Independent Audit** is a fresh-context verifier that sees only the
 contract, the report and the evidence.
 
 It is deliberately **not an open-ended search engine**:
@@ -58,7 +58,7 @@ reproducible, but it can only research the Kelvari topics the greeting lists.
 | `planning/` | the planner and the plan validation gate |
 | `research/` | the worker, the three content defences, extraction, reflection, stop rules, telemetry |
 | `synthesis/` | the report writer, the citation check, Coverage & Limits |
-| `audit/` | the named acceptance checks and the Goldfish Auditor |
+| `audit/` | the named acceptance checks and the Independent Auditor |
 | `archive/` | the three-artifact archive, the run index, `make runs ra` |
 | `graph/` | both LangGraph graphs, their nodes, the agent, the composition root |
 | `console/` | `ResearchHost` — the agent as the shared TUI sees it |

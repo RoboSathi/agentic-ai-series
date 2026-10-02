@@ -103,7 +103,7 @@ class TestConstrainedGeneration:
             await LlmConstrainedGenerator(scripted_llm).generate_constrained("x", RefundCommand)
 
     def test_the_backend_is_configured_not_assumed(self, scripted_llm) -> None:
-        assert LlmConstrainedGenerator(scripted_llm).backend == "llamacpp_grammar"
+        assert LlmConstrainedGenerator(scripted_llm).backend == "grammar"
 
 
 class TestASwitchedOffGuardrail:

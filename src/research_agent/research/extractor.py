@@ -14,6 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from agentic_commons.context.excerpt import relevant_excerpt
 from agentic_commons.logging import instrument
 from agentic_commons.security.prompt_injection.detector import InstructionDataSeparator
 from agentic_commons.web import FetchedPage
@@ -57,16 +58,17 @@ class QuarantinedExtractor:
         separator: InstructionDataSeparator,
         max_claims: int,
         page_chars: int,
+        window_chars: int,
     ) -> None:
         self._caller = caller
         self._separator = separator
         self._max = max_claims
         self._page_chars = page_chars
+        self._window_chars = window_chars
 
     async def read(self, question: str, page: FetchedPage) -> PageReading:
-        wrapped = delimit(
-            self._separator, extractor_prompt.INSTRUCTIONS, page.text[: self._page_chars]
-        )
+        text = relevant_excerpt(page.text, question, self._page_chars, self._window_chars)
+        wrapped = delimit(self._separator, extractor_prompt.INSTRUCTIONS, text)
         answer = await self._caller.call(
             extractor_prompt.build(question, page.url, wrapped, self._max),
             extractor_prompt.ExtractorAnswer,
@@ -78,18 +80,23 @@ class UnquarantinedReader:
     """The researcher reads the page itself and may propose actions (ablation)."""
 
     def __init__(
-        self, caller: StructuredCaller, max_claims: int, brief: dict[str, Any], page_chars: int
+        self,
+        caller: StructuredCaller,
+        max_claims: int,
+        brief: dict[str, Any],
+        page_chars: int,
+        window_chars: int,
     ) -> None:
         self._caller = caller
         self._max = max_claims
         self._brief = brief
         self._page_chars = page_chars
+        self._window_chars = window_chars
 
     async def read(self, question: str, page: FetchedPage) -> PageReading:
+        text = relevant_excerpt(page.text, question, self._page_chars, self._window_chars)
         answer = await self._caller.call(
-            researcher_prompt.build(
-                question, page.url, page.text[: self._page_chars], self._max, self._brief
-            ),
+            researcher_prompt.build(question, page.url, text, self._max, self._brief),
             researcher_prompt.ResearcherAnswer,
         )
         return PageReading(

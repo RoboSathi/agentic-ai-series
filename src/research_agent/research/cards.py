@@ -299,9 +299,9 @@ def audit_card(
     """The judge, each criterion with how it was checked, the weighted score, and the verdict."""
     checked = [v for v in verdicts if v.applicable]
     passed = sum(v.passed for v in checked)
-    heading = say(
+    unjudged = sum(1 for v in verdicts if v.kind == "judge" and not v.applicable and not v.passed)
+    heading = (say("judge.unjudged_heading", count=unjudged) if unjudged else "") + say(
         "judge.heading",
-        model=setup.judge_model or say("judge.unknown_model"),
         passed=passed,
         total=len(checked),
         score=f"{result.score:.0%}",
@@ -394,6 +394,11 @@ def _audit_line(verdict: CheckVerdict, rubric: Rubric, setup: JudgeSetup, limit:
     item = rubric.item(verdict.item_id)
     text = clip(item.text, limit) if item is not None else verdict.name
     weight = f"{item.weight:g}" if item is not None else "1"
+    if not verdict.applicable and verdict.kind == "judge" and not verdict.passed:
+        # The judge never scored it: unverified, and the card says why.
+        return toned(
+            say("judge.not_judged", id=verdict.item_id, text=text, detail=verdict.detail), "warn"
+        )
     if not verdict.applicable:
         return toned(say("judge.not_applicable", id=verdict.item_id, text=text), "dim")
     checker = {"judge": setup.judge_model, "nli": setup.nli_model}.get(verdict.kind, "")

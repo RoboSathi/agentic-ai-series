@@ -35,9 +35,11 @@ from agentic_commons.context.types import (
     ContextHealth,
     Task,
 )
+from agentic_commons.context.window import ContextWindow, WindowResult
 from agentic_commons.context.working_memory import WorkingMemoryContextSource
 
 __all__ = [
+    "WindowResult",
     "AssembledContext",
     "Context",
     "CacheStrategy",
@@ -51,6 +53,7 @@ __all__ = [
     "ContextFailureMode",
     "ContextHealth",
     "ContextStrategy",
+    "ContextWindow",
     "CrossEncoderReranker",
     "DenseRetriever",
     "FiveStagePipeline",

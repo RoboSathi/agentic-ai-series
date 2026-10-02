@@ -17,7 +17,7 @@ lives in `research_agent` (pattern composition, research vocabulary).
 | Budgets | `control_loop/watchdogs.py` = duplicate-action + iteration ceiling; `WatchdogLayer` names `token_budget`/`cost_budget` but nothing implements them; `gatekeeper/ledger.py` = money window per action class | **new** `control_loop/budget.py` `BudgetGuard` (reserve → commit/release, hard caps, exhaustion event) reporting through the existing `ControlCheck`/`ControlLoopReport` types, so a budget stop reads like any other control-loop stop. Gatekeeper ledger is a cumulative *money* ledger across sessions — not reused. |
 | Durable graphs | `durability/` `DurableGraphRunner`, `RunRegistry`, `create_checkpointer`, `model_types` | **reuse** for both ra graphs. |
 | HITL interrupt | csa `graph/nodes/review_wait.py::await_approval` — its generic core is `interrupt({WAITING_ON, SUMMARY, …})` | **extend** `durability/hitl.py` `await_decision(waiting_on, summary, **fields)`. ra uses it for every interview/rubric turn (the scoping graph *pauses on the user*). csa is **not** migrated to it (would touch csa). |
-| Isolated sub-graph | none | **new** `durability/isolated.py` `IsolatedGraphRunner` (fresh thread, in-memory checkpointer, explicit inputs only). The Goldfish Audit runs on it. |
+| Isolated sub-graph | none | **new** `durability/isolated.py` `IsolatedGraphRunner` (fresh thread, in-memory checkpointer, explicit inputs only). The Independent Audit runs on it. |
 | Prompt-injection classifier | `security/prompt_injection/detector.py` `InstructionDataSeparator.find_phrases` / `separate` | **reuse** as layer 2 (classifier) over fetched text and for delimiting untrusted text. Agent-specific phrases are added in ra's overlay (`security.prompt_injection.suspicious_phrases`). |
 | Authority ranking | `gatekeeper.authority_hierarchy` already ranks `untrusted_content` last | **reuse** the configured hierarchy; ra tags every fetched span with the bottom rank. |
 | NLI | `evals/entailment.py` `EntailmentModel`, `create_entailment_model()` (local DeBERTa → hosted → lexical); `hallucination_protection.DetectionLadder` wraps it with retrieval over chunks | **reuse** `EntailmentModel` for claim→span support (the span is already *the* evidence, so the ladder's retrieval stage adds nothing). |
@@ -36,7 +36,7 @@ lives in `research_agent` (pattern composition, research vocabulary).
 | Shell | `host.py` `AgentHost`, `tui/app.py` | **extend** with optional hooks (`greeting`, `side_panels`, `cancel`) and `ConsoleEffect.agent_turn` (a slash command that is a conversational act is forwarded to `handle()`). csa implements none of them and is unaffected. |
 | Eval pipeline | `evals/` plugin seam, stages, store, reporter, `RubricJudge` | **reuse**; **extend** two optional plugin hooks: `native_security_suite()` (run the security suite as native golden cases instead of Promptfoo) and `judge_client()` (the plugin may supply the judge's client — ra supplies a deterministic one in fixture mode). |
 | Feature toggles | `config/features.py` `FeatureSet` — a generic tree; agents declare their own keys | **reuse** unchanged: ra declares its eight keys in its own overlay. |
-| Logging colours | `logging/core.py` `SUBSYSTEM_COLORS` | **extend** with `scheduler, budget, web, ledger, artifacts, research_agent, audit_goldfish` (the last two are agent logger names, registered the same way `customer_support_agent` already is). |
+| Logging colours | `logging/core.py` `SUBSYSTEM_COLORS` | **extend** with `scheduler, budget, web, ledger, artifacts, research_agent` (an agent logger name, registered the same way `customer_support_agent` already is). |
 
 ## 2. Conflicts between the spec and the repository (and how each is resolved)
 
@@ -61,7 +61,7 @@ lives in `research_agent` (pattern composition, research vocabulary).
    judge (`evals/contracts.py::Rubric`, `graders/rubric_judge.py`) and
    `report` is everywhere (`StageReporter`, `evals/reporting`). A grep for
    either across all of commons would fail on code that predates ra.
-   Resolution: the guard test bans `archetype`, `goldfish`, `research`,
+   Resolution: the guard test bans `archetype`, `research`,
    `brief` everywhere in commons (one pre-existing English use of "brief"
    is allow-listed by file+line), and bans `rubric`/`report` inside every
    commons module *added for ra*. Recorded in ADR 0003.
@@ -112,7 +112,7 @@ lives in `research_agent` (pattern composition, research vocabulary).
 | 3 | Scoping: gate, checklists, interviewer, hybrid termination, `/done`, `/waive`, challenge check, checklist panel | verify green |
 | 4 | Rubric: templates, generator, editor, freeze + hash | verify green |
 | 5 | Research core: planner + validation, scheduler wiring, worker, `WebGateway`, three defences, ledger + verbatim rule | verify green |
-| 6 | Reflection, synthesis, Goldfish Audit, gap-fill, partial delivery, archive, cancel | verify green |
+| 6 | Reflection, synthesis, Independent Audit, gap-fill, partial delivery, archive, cancel | verify green |
 | 7 | Evals: fixture world, plugin, oracle, security suite, judge rubric, planted flaws, ablations | `make eval ra` oracle at 100% |
 | 8 | Docs, ADRs, `patterns.yaml`, `make patterns`, final verify, optional `/recall` | DoD (spec §10) |
 

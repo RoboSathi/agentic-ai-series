@@ -19,12 +19,12 @@ from pydantic import BaseModel
 from agentic_commons.config import AppConfig, get_settings
 from agentic_commons.config.settings import ProviderName, SecurityGuardModelSettings
 from agentic_commons.llm.client import create_pinned_llm_client
-from agentic_commons.llm.embeddings import NimEmbeddingClient
+from agentic_commons.llm.embeddings import HOSTED, HostedEmbeddingClient
 from agentic_commons.llm.types import CompletionRequest, Message
 from agentic_commons.resilience import ResilientCaller
-from agentic_commons.security.content_moderation.nvidia import NvidiaHostedContentSafetyGuard
+from agentic_commons.security.content_moderation.hosted import HostedContentSafetyGuard
 from agentic_commons.security.guard_types import GuardVerdict
-from agentic_commons.security.prompt_injection.nvidia import NvidiaHostedJailbreakGuard
+from agentic_commons.security.prompt_injection.hosted import HostedJailbreakGuard
 
 ProbeStatus = Literal["ok", "failed", "skipped"]
 
@@ -114,8 +114,8 @@ class EmbeddingProbe(_TimedProbe):
     def __init__(self, settings: AppConfig) -> None:
         super().__init__(
             "embeddings",
-            settings.llm.provider_settings("nim").base_url,
-            settings.llm.embedding.nim_model,
+            settings.llm.provider_settings(settings.llm.embedding.provider).base_url,
+            settings.llm.embedding.model,
             required=True,
         )
         self._text = settings.llm.check.prompt
@@ -125,7 +125,7 @@ class EmbeddingProbe(_TimedProbe):
 
     async def _call(self) -> ProbeResult:
         started = time.perf_counter()
-        client = NimEmbeddingClient()
+        client = HostedEmbeddingClient()
         vectors = await client.embed([self._text])
         if client.model_id != self._model:
             return self.result("failed", started, detail="fell back to the local embedder")
@@ -133,7 +133,7 @@ class EmbeddingProbe(_TimedProbe):
 
 
 GuardFactory = Callable[
-    [SecurityGuardModelSettings], NvidiaHostedContentSafetyGuard | NvidiaHostedJailbreakGuard
+    [SecurityGuardModelSettings], HostedContentSafetyGuard | HostedJailbreakGuard
 ]
 
 
@@ -220,9 +220,9 @@ def _judge_probe(config: AppConfig) -> EndpointProbe:
 
 def _embedding_probe(config: AppConfig) -> EndpointProbe:
     embedding = config.llm.embedding
-    if embedding.provider != "nim":
+    if embedding.backend != HOSTED:
         return SkippedProbe(
-            "embeddings", "local", embedding.nim_model, "embedding.provider is local"
+            "embeddings", embedding.backend, embedding.model, "embedding.backend is not hosted"
         )
     return EmbeddingProbe(config)
 
@@ -240,8 +240,8 @@ def _guard_probe(
     return GuardProbe(name, guard, required, factory, config.llm.check.prompt)
 
 
-def _content_safety_guard(settings: SecurityGuardModelSettings) -> NvidiaHostedContentSafetyGuard:
-    return NvidiaHostedContentSafetyGuard(
+def _content_safety_guard(settings: SecurityGuardModelSettings) -> HostedContentSafetyGuard:
+    return HostedContentSafetyGuard(
         base_url=settings.base_url,
         endpoint=settings.endpoint,
         timeout_seconds=settings.timeout_seconds,
@@ -251,8 +251,8 @@ def _content_safety_guard(settings: SecurityGuardModelSettings) -> NvidiaHostedC
     )
 
 
-def _jailbreak_guard(settings: SecurityGuardModelSettings) -> NvidiaHostedJailbreakGuard:
-    return NvidiaHostedJailbreakGuard(
+def _jailbreak_guard(settings: SecurityGuardModelSettings) -> HostedJailbreakGuard:
+    return HostedJailbreakGuard(
         base_url=settings.base_url,
         endpoint=settings.endpoint,
         timeout_seconds=settings.timeout_seconds,

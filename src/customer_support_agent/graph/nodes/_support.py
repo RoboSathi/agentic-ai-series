@@ -53,7 +53,6 @@ from agentic_commons.observability.loop_reporter import mark_step
 from agentic_commons.observability.types import EventKind
 from agentic_commons.resilience import (
     DeadLetterQueue,
-    ResilientCaller,
 )
 from agentic_commons.security import SecuritySuite
 from agentic_commons.security.auth.policy import AgentPolicy
@@ -116,7 +115,6 @@ class NodeSupport:
     _selector: ToolRetrievalSelector | None
     _cascade: NollmScoringCascadeImpl | None
     _reporter: StageReporter | None
-    _resilient: ResilientCaller
     _dead_letter_queue: DeadLetterQueue | None
     _tracer: Tracer | None
     _slos: SLORegistry | None
@@ -224,10 +222,8 @@ class NodeSupport:
         """The transcript handed to the model this turn."""
         raise NotImplementedError
 
-    async def _call_model(
-        self, request: CompletionRequest, state: AgentState, key: str
-    ) -> CompletionResult:
-        """One model call, under timeout, retry and circuit breaker."""
+    async def _call_model(self, request: CompletionRequest, state: AgentState) -> CompletionResult:
+        """One model call, traced; its protection is the client's own (`create_llm_client`)."""
         raise NotImplementedError
 
     async def _invoke(

@@ -23,7 +23,7 @@ These names are used as written in code, logs, stage labels and docs.
 | **Verbatim-span rule** | a span is admitted only if it is a substring of the page text this run fetched, whose hash it records | `agentic_commons.evidence.VerbatimSpanValidator` |
 | **Gap** | a Rubric Item the ledger (or report) does not yet satisfy | `research/reflector.py::GapAnalyzer` |
 | **Stop rule** | the archetype's "done" test (every option scored; no new entities; every claim decided; every concept cross-checked) | `research/stop_rules/` |
-| **Goldfish Audit** | the independent verification; its signature accepts only `(contract, report, ledger_snapshot)` | `audit/goldfish.py::GoldfishAuditor.audit_report` |
+| **Independent Audit** | the independent verification; its signature accepts only `(contract, report, ledger_snapshot)` | `audit/independent.py::IndependentAuditor.audit_report` |
 | **Gap-fill** | one bounded round of targeted research for must-pass gaps the audit found | `graph/run_nodes.py::gap_fill` |
 | **Coverage & Limits** | the report section, built in code, that lists every unmet must-pass item with what was tried and why the run stopped | `synthesis/limits.py` |
 | **COMPLETE / PARTIAL** | every must-pass item met and no budget exhausted / anything less | `graph/run_nodes.py::_final_status` |

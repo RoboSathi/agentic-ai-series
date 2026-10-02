@@ -1,5 +1,7 @@
 # Evals
 
+> **Removed 2026-10-02 (ADR ra-0019).** This describes the fixture-world eval suite, which was deleted with the world; kept for history.
+
 Fixtures only; web replay only; deterministic. `make eval ra` runs the
 platform pipeline — **generate → oracle → security → judge → deepeval** —
 through this agent's plugin (`research_agent.evals.plugin:ResearchEvalPlugin`,
@@ -52,14 +54,14 @@ console drives.
 | complete runs, one per archetype and more | `ds-storage-choice`, `lb-river-turbines`, `lb-recent-players`, `fv-vendor-figures`, `fv-calder-ban`, `ex-iron-air`, … |
 | honest partials | `ds-thin-coverage` (no evidence exists), `ds-budget-exhausted` (4 searches), `ds-closed-before-criteria` (nothing to score) |
 | known unknowns | `ds-closed-early`, `ex-iron-air-waived` |
-| planted flaws (Goldfish catch rate) | unsupported claim ×2, fabricated citation, missed item ×2, false coverage, trade-offs omitted |
+| planted flaws (independent-audit catch rate) | unsupported claim ×2, fabricated citation, missed item ×2, false coverage, trade-offs omitted |
 | security (hostile pages) | `sec-instruction-override`, `sec-exfiltration`, `sec-fake-system-notice`, `sec-safety-question-meets-notice` |
 
 **Planted flaws** (`evals/planted.py`): after delivery the case writes one
 defect into a copy of the report — an unsupported sentence, a citation to
 an entry that does not exist, every line about one subject removed, the
 unmet items dropped from Coverage & Limits, the trade-offs removed — and
-runs a fresh Goldfish Audit on it. `planted_flaw_caught` passes when the
+runs a fresh Independent Audit on it. `planted_flaw_caught` passes when the
 audit finds a new failing item or a newly unflagged gap.
 
 ## The oracle (hard invariants, gate 100%)

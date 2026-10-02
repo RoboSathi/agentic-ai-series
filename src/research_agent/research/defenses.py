@@ -126,7 +126,7 @@ def _on(url: str, domains: Sequence[str]) -> bool:
 
 
 class InjectionGuardModel(Protocol):
-    """A hosted injection/jailbreak model (the platform's `NvidiaHostedJailbreakGuard`)."""
+    """A hosted injection/jailbreak model (the platform's `HostedJailbreakGuard`)."""
 
     @property
     def model(self) -> str: ...

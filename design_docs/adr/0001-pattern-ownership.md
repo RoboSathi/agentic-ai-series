@@ -30,7 +30,7 @@ and where.
 
 ## Consequences
 
-- ra's planner, reflector and Goldfish audit are ra code; the scheduler
+- ra's planner, reflector and Independent audit are ra code; the scheduler
   they run on, the isolation they rely on and the budget that bounds them
   are commons.
 - A third agent gets mechanisms, not a framework — it composes its own.

@@ -147,15 +147,16 @@ class TestTheEscalationPathDrains:
 
 
 class TestSubsystemsAreActuallyWired:
-    async def test_the_model_call_runs_through_the_resilience_stack(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        """The model is a remote dependency like any other."""
-        agent = build_agent(
-            llm=ScriptedLLM([{"content": "hello"}]), pool=seeded_pool, with_memory=False
-        )
-        await agent.handle("who are you", customer=Customer(customer_id=1))
-        assert agent._resilient.healthy is True
+    async def test_the_model_call_runs_through_the_resilience_stack(self) -> None:
+        """The model is a remote dependency like any other: the default client is the
+        platform's protected chain — each model behind its own resilience stack, with a backup."""
+        from agentic_commons.llm.cascade import CascadingLLMClient
+        from agentic_commons.llm.client import create_llm_client
+        from agentic_commons.llm.resilient import ResilientLLMClient
+
+        client = create_llm_client()
+        assert isinstance(client, CascadingLLMClient)
+        assert all(isinstance(tier, ResilientLLMClient) for tier in client._tiers)
 
     async def test_grounding_is_advisory_not_blocking(
         self, seeded_pool: SqliteConnectionPool

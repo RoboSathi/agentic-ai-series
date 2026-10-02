@@ -32,9 +32,11 @@ from research_agent.config.settings import ResearchAgentSettings
 from research_agent.domain.report import COVERAGE_AND_LIMITS, Report, SessionPhase
 from research_agent.domain.rubric import Contract
 from research_agent.domain.scope import QA, Choice, Mode
+from research_agent.graph import cards
 from research_agent.graph.answerer import DirectAnswerer
 from research_agent.graph.run_nodes import RunNodes
 from research_agent.graph.state import ScopingState
+from research_agent.guardrails.input_screen import InputScreen
 from research_agent.intent import ResearchIntentRouter
 from research_agent.research.resources import RunResources
 from research_agent.research.telemetry import RunTelemetry
@@ -44,6 +46,13 @@ from research_agent.synthesis.reader_view import render_reader_view
 ResourcesFactory = Callable[[Contract], RunResources]
 _PHASE_KEY = "phase"
 _TERMINAL: frozenset[SessionPhase] = frozenset({"DELIVERED", "CANCELLED", "FAILED"})
+# The front door's card: the platform's INTENT stage, its outcome by where the message went.
+INTENT_STAGE = "intent_classification"
+_ROUTE_STATUS: Mapping[str, Any] = {
+    "answer": "completed",
+    "research": "completed",
+    "refuse": "blocked",
+}
 
 
 class TurnResult(BaseModel):
@@ -86,8 +95,11 @@ class ResearchAgent:
         memory: MemoryFacade | None = None,
         router: ResearchIntentRouter | None = None,
         answerer: DirectAnswerer | None = None,
+        screen: InputScreen | None = None,
     ) -> None:
         self._scoping = scoping
+        # The person's own message, screened before any layer reads it (None: no screen declared).
+        self._screen = screen
         self._runs = runs
         self._nodes = run_nodes
         self._resources = resources
@@ -121,6 +133,13 @@ class ResearchAgent:
         if record.phase == "RUNNING":
             return TurnResult(response=self._settings.messages.run_busy, phase="RUNNING")
         mode = self._forced_mode(verb)
+        if self._screen is not None and (verb is None or mode is not None):
+            screened = await self._screen.screen(query)
+            if screened.blocked:
+                return TurnResult(
+                    response=self._settings.messages.input_blocked, phase=record.phase
+                )
+            query = screened.text
         if mode is not None:
             return await self._forced_scope(mode, query, session_id, record)
         if record.phase in _TERMINAL:
@@ -132,6 +151,9 @@ class ResearchAgent:
         if self._router is None or self._answerer is None:
             return await self._new_scope(query, session_id, record)
         route = await self._router.route(query)
+        self._telemetry.card(
+            INTENT_STAGE, *cards.intent_card(route), status=_ROUTE_STATUS[route.label]
+        )
         if route.label == "research":
             return await self._new_scope(query, session_id, record, forced="research")
         if route.label == "refuse":
@@ -216,7 +238,7 @@ class ResearchAgent:
             )
         except ResumableRunError as exc:
             return self._scope_failed(exc, record)
-        return await self._after_scope(outcome, session_id, record)
+        return await self._after_scope(outcome, session_id, record, query)
 
     async def _continue_scope(
         self, query: str, session_id: str, record: SessionRecord
@@ -225,7 +247,7 @@ class ResearchAgent:
             outcome = await self._scoping.resume(record.scope_thread, query)
         except ResumableRunError as exc:
             return self._scope_failed(exc, record)
-        return await self._after_scope(outcome, session_id, record)
+        return await self._after_scope(outcome, session_id, record, query)
 
     def _scope_failed(self, exc: ResumableRunError, record: SessionRecord) -> TurnResult:
         """A scoping step failed (a model that stalled, a provider error): say so, and start clean.
@@ -241,7 +263,7 @@ class ResearchAgent:
         )
 
     async def _after_scope(
-        self, outcome: RunOutcome, session_id: str, record: SessionRecord
+        self, outcome: RunOutcome, session_id: str, record: SessionRecord, query: str
     ) -> TurnResult:
         scope = ScopingState.model_validate(outcome.values)
         record.scope = scope
@@ -249,6 +271,9 @@ class ResearchAgent:
         if outcome.status == "interrupted":
             record.phase = "RUBRIC_REVIEW" if scope.phase == "RUBRIC_REVIEW" else "SCOPING"
             reply = str((outcome.interrupt or {}).get(SUMMARY, scope.reply))
+            # The interview is part of the conversation: a direct answer after it can refer
+            # back to what was asked and said.
+            self._remember_turn(session_id, query, reply)
             return TurnResult(response=reply, phase=record.phase, choices=self._choices(scope))
         if scope.phase == "APPROVED" and scope.contract is not None:
             return await self._run(scope.contract, session_id, record)
@@ -327,7 +352,7 @@ class ResearchAgent:
         )
         contract = values.get("contract")
         quick = isinstance(contract, Contract) and contract.brief.archetype == QA
-        tail = self._settings.messages.qa_followup if quick else self._failed_note(status)
+        tail = self._settings.messages.qa_followup if quick else ""
         self._remember_run(session_id, record, status)
         return TurnResult(
             response="\n\n".join(part for part in (head, summary, tail) if part).strip(),
@@ -338,12 +363,15 @@ class ResearchAgent:
 
     def _remember_run(self, session_id: str, record: SessionRecord, status: str) -> None:
         """Working memory keeps a pointer to the run, so a follow-up has something to refer to."""
-        if self._memory is None or self._memory.working is None:
-            return
         note = self._settings.messages.run_note.format(
             run_id=record.run_thread, status=status, topic=record.last_question
         )
-        self._memory.working.get(session_id).add_history(record.last_question, note)
+        self._remember_turn(session_id, record.last_question, note)
+
+    def _remember_turn(self, session_id: str, said: str, replied: str) -> None:
+        """One exchange into the session's working memory (when the agent keeps one)."""
+        if self._memory is not None and self._memory.working is not None:
+            self._memory.working.get(session_id).add_history(said, replied)
 
     def _reader_text(self, report: Report) -> str:
         """What the person reads: numbered sources and one finding per line (or the raw text)."""
@@ -361,11 +389,6 @@ class ResearchAgent:
         """Sections written in code for the archive; the reader view shows them its own way."""
         templates = yaml.safe_load(self._settings.synthesis.resolved_templates_path.read_text())
         return frozenset({*templates["appended"].values(), COVERAGE_AND_LIMITS})
-
-    def _failed_note(self, status: str) -> str:
-        """In demo mode a failed run almost always means an off-world question."""
-        offline = self._settings.model_backend == "fixture"
-        return self._settings.messages.demo_off_world if offline and status == "FAILED" else ""
 
     # -- control commands -----------------------------------------------------------------
 

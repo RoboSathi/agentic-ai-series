@@ -1,6 +1,7 @@
 """Embedding backends for the NOLLM cascade, RAG and memory scoring.
 
-Two implementations behind one interface: NIM's hosted embedding model, and
+Two implementations behind one interface: a hosted embedding model (the configured
+provider's), and
 a deterministic local hashing embedder that needs no network and no model
 download — the fallback that keeps tests fast, offline and reproducible.
 """
@@ -17,6 +18,11 @@ from agentic_commons.config.settings import LLMSettings
 from agentic_commons.llm.http import create_sdk_http_client
 from agentic_commons.logging import get_logger
 from agentic_commons.resilience import external_api_error_fields
+
+# The embedding backend that calls a provider (`llm.embedding.backend`); any other is local.
+HOSTED = "hosted"
+# The SDK requires a key even for an endpoint that needs none.
+_NO_KEY = "not-needed"
 
 _TOKEN_PATTERN = re.compile(r"[a-z0-9']+")
 
@@ -100,8 +106,8 @@ class HashingEmbeddingClient:
         return [value / norm for value in vector] if norm else vector
 
 
-class NimEmbeddingClient:
-    """NVIDIA NIM hosted embeddings, with the local embedder as a fallback.
+class HostedEmbeddingClient:
+    """A hosted embedding model (`llm.embedding`), with the local embedder as a fallback.
 
     Entitlements are per-account, so a failure here degrades to the hashing
     embedder rather than taking down every caller that needs a similarity
@@ -115,8 +121,9 @@ class NimEmbeddingClient:
         fallback: EmbeddingClient | None = None,
     ) -> None:
         self._settings = settings or get_settings().llm
-        provider = self._settings.provider_settings("nim")
-        self._model = self._settings.embedding.nim_model
+        embedding = self._settings.embedding
+        provider = self._settings.provider_settings(embedding.provider)
+        self._model = embedding.model
         self._input_types = self._settings.embedding.input_types
         self._truncate = self._settings.embedding.truncate
         self._logger = get_logger("llm")
@@ -125,7 +132,7 @@ class NimEmbeddingClient:
         self._last_model_id = self._model
         self._client = client or AsyncOpenAI(
             base_url=provider.base_url,
-            api_key=self._settings.api_key_for("nim") or "not-needed",
+            api_key=self._settings.api_key_for(embedding.provider) or _NO_KEY,
             timeout=provider.timeout_seconds,
             http_client=create_sdk_http_client(provider.timeout_seconds),
         )
@@ -141,7 +148,7 @@ class NimEmbeddingClient:
     async def embed(
         self, texts: list[str], purpose: EmbeddingPurpose = "query"
     ) -> list[list[float]]:
-        """Embed via NIM, falling back locally if the endpoint refuses."""
+        """Embed via the hosted model, falling back locally if the endpoint refuses."""
         input_type = getattr(self._input_types, purpose)
         try:
             response = await self._client.embeddings.create(
@@ -151,7 +158,7 @@ class NimEmbeddingClient:
             )
         except Exception as exc:
             self._logger.warning(
-                "NIM embeddings unavailable, using local fallback",
+                "Hosted embeddings unavailable, using local fallback",
                 error=str(exc),
                 **(external_api_error_fields(exc) or {}),
             )
@@ -166,6 +173,6 @@ class NimEmbeddingClient:
 def create_embedding_client(settings: LLMSettings | None = None) -> EmbeddingClient:
     """Build the configured embedding client (Factory)."""
     resolved = settings or get_settings().llm
-    if resolved.embedding.provider == "nim":
-        return NimEmbeddingClient(resolved)
+    if resolved.embedding.backend == HOSTED:
+        return HostedEmbeddingClient(resolved)
     return HashingEmbeddingClient(resolved.embedding.local_dimensions)

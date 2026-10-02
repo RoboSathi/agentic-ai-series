@@ -1,7 +1,7 @@
 """The research agent's ubiquitous language, as types.
 
 Scope Brief, Rubric, Research Contract, Evidence Ledger (commons), Round,
-Wave, Goldfish Audit, Gap, Known unknown — see design_docs/ubiquitous_language.md.
+Wave, Independent Audit, Gap, Known unknown — see design_docs/ubiquitous_language.md.
 """
 
 from research_agent.domain.budget import Budget

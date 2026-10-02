@@ -1,6 +1,6 @@
 """What every acceptance check is evaluated against.
 
-Exactly the Goldfish's inputs — the contract, the report (absent before
+Exactly the independent audit's inputs — the contract, the report (absent before
 synthesis, when reflection asks "what is still unmet?") and a ledger
 snapshot — plus the deterministic helpers the checks share. Nothing else:
 no conversation, no pages, no run state.

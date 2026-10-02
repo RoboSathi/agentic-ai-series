@@ -42,7 +42,7 @@ Update = dict[str, Any]
 class ScopingParts:
     """The collaborators scoping is composed of; optional ones are features."""
 
-    # "Now" for the contract (real time live; the fixture world's date in the demo).
+    # "Now" for the contract (injectable, so a test can fix the date).
     clock: Callable[[], datetime]
     classifier: ArchetypeClassifier
     caller: StructuredCaller

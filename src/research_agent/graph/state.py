@@ -16,7 +16,7 @@ from typing import Annotated, Any, Literal, TypedDict
 from pydantic import BaseModel, Field
 
 from agentic_commons.evidence import LedgerSnapshot
-from research_agent.audit.goldfish import AuditResult
+from research_agent.audit.independent import AuditResult
 from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.report import Report, RunStatus
 from research_agent.domain.rubric import Contract, Rubric
@@ -78,6 +78,8 @@ class RunState(TypedDict, total=False):
     entities: int
     report: Report | None
     audit: AuditResult | None
+    # Why the independent audit could not run at all (empty: it ran, or was withheld).
+    audit_error: str
     gap_fill_round: int
     status: RunStatus | None
     stop_reason: str

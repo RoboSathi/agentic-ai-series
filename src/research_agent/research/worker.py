@@ -16,6 +16,7 @@ fails, so parallel workers cannot overshoot a cap. The loop is bounded
 by the node's queries (plus any follow-ups) and by the per-node fetch cap.
 """
 
+import asyncio
 from datetime import date
 
 from pydantic import BaseModel, Field
@@ -38,6 +39,10 @@ from research_agent.synthesis.reader_view import host_of
 
 # The rejection code of a page the model could not read (its answer was cut off or invalid).
 UNREADABLE = "unreadable"
+
+
+# The bulkhead pool every page read of a run shares (`RunResources.page_reads`).
+PAGE_POOL = "page_reads"
 
 
 class NodeResult(BaseModel):
@@ -78,8 +83,16 @@ class ResearcherWorker:
         if response is None:
             return
         hits = self._policy(response.hits)[: self._r.settings.max_results_per_search]
-        for hit in hits:
-            if len(result.sources) >= self._r.settings.max_fetches_per_node or result.stopped:
+        room = self._r.settings.max_fetches_per_node - len(result.sources)
+        # The pages are read side by side (fetch, screen, extract), bounded run-wide by the
+        # `page_reads` bulkhead; one page's failure never takes the others down.
+        await asyncio.gather(*(self._read_in_pool(node, hit, queue, result) for hit in hits[:room]))
+
+    async def _read_in_pool(
+        self, node: SubQuestion, hit: SearchHit, queue: list[str], result: NodeResult
+    ) -> None:
+        async with self._r.page_reads.acquire(PAGE_POOL):
+            if result.stopped or self._r.cancelled:
                 return
             await self._visit(node, hit, queue, result)
 

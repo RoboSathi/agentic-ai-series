@@ -1,7 +1,7 @@
 """The judge's prompt: score one judgement-only criterion against the report.
 
 The judge sees the criterion, the report and the ledger's claims — the
-Goldfish's inputs, nothing from the conversation that produced them.
+independent audit's inputs, nothing from the conversation that produced them.
 """
 
 from pydantic import BaseModel, Field

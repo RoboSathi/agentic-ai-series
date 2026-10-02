@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from agentic_commons.control_loop import BudgetGuard
 from agentic_commons.evidence import EvidenceLedger
+from agentic_commons.resilience import Bulkhead, ResourcePoolBulkhead
 from agentic_commons.web import FetchedPage, WebGateway
 from research_agent.config.settings import ResearchSettings
 from research_agent.domain.rubric import Contract
@@ -69,6 +70,8 @@ class RunResources:
     settings: ResearchSettings
     outbound: OutboundGuard | None = None
     screen: InjectionScreen | None = None
+    # Bounds how many pages the run reads at once (the platform bulkhead, one pool).
+    page_reads: Bulkhead = field(default_factory=ResourcePoolBulkhead)
     cancel: asyncio.Event = field(default_factory=asyncio.Event)
     trace: RunTrace = field(default_factory=RunTrace)
 

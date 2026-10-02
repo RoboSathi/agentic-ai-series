@@ -67,6 +67,8 @@ class CompletionResult(BaseModel):
     cost_usd: float = 0.0
     tier: str = ""
     latency_ms: float = 0.0
+    # Attempts the model's resilience stack made for this answer (1: it worked first time).
+    attempts: int = 1
 
 
 class HealthCheckResult(BaseModel):

@@ -10,18 +10,22 @@
 # Adding an agent is three lines here and nothing in the platform.
 AGENTS := csa ra
 
+csa_NAME := Customer Support Agent
 csa_PKG := customer_support_agent
 csa_OVERLAY := src/customer_support_agent/config/config.yaml
 csa_DATA := $(csa_PKG).dummy_data.generate_dummy_data $(if $(KEEP_MEMORY),--keep-memory)
 csa_RUNS :=
 csa_OFFLINE_PROFILE :=
+csa_EVALS := yes
 
+ra_NAME := Research Agent
 ra_PKG := research_agent
 ra_OVERLAY := src/research_agent/config/config.yaml
-ra_DATA := $(ra_PKG).fixture_world.generate
+ra_DATA :=
 ra_RUNS := $(ra_PKG).archive.cli
-# Evals and fixture data never touch the network: they pin this profile.
-ra_OFFLINE_PROFILE := demo
+ra_OFFLINE_PROFILE :=
+# No eval suite yet: the fixture-world suite was removed (ADR ra-0019).
+ra_EVALS :=
 
 # Targets whose second goal names the agent they act on.
 AGENT_SCOPED := tui data runs model-check llm-check models eval eval-generate eval-oracle eval-security eval-judge \
@@ -39,7 +43,7 @@ endif
 ifeq ($(words $(AGENT_ARGS)) $(words $(AGENT)),1 1)
 export AGENTIC_OVERLAYS := $($(AGENT)_OVERLAY)
 # A profile is a named posture of the agent's own config:
-# `make tui ra PROFILE=demo` (src/<pkg>/config/profiles/). Evals and
+# `make tui csa PROFILE=<name>` (src/<pkg>/config/profiles/). Evals and
 # `make data` always use the agent's offline profile, whatever was typed.
 ifneq ($(filter data eval eval-%,$(firstword $(MAKECMDGOALS))),)
 override PROFILE := $($(AGENT)_OFFLINE_PROFILE)
@@ -73,13 +77,14 @@ EVAL_SELECT := $(if $(FRESH),--fresh) $(if $(LIMIT),--limit $(LIMIT)) \
 	$(foreach c,$(CASE),--case $(c)) $(foreach t,$(TAG),--tag $(t))
 EVAL_RUN := $(if $(RUN),--run $(RUN)) $(if $(FRESH),--fresh)
 
-GREEN := \033[0;32m
-YELLOW := \033[0;33m
-BLUE := \033[0;34m
+# Bright, bold colours: the dark 0;3x set is hard to read on a dark terminal.
+GREEN := \033[1;92m
+YELLOW := \033[1;93m
+BLUE := \033[1;96m
 NC := \033[0m
 
 help:
-	@echo "$(BLUE)Agentic Harness$(NC)   agents: $(AGENTS)  (csa = customer support, ra = research)"
+	@echo "$(BLUE)Agentic Harness$(NC)   agents: $(foreach a,$(AGENTS), $(a) → $($(a)_NAME) )"
 	@echo ""
 	@echo "$(GREEN)Setup:$(NC)"
 	@echo "  make install              Create the venv and install the package with dev + eval extras"
@@ -93,7 +98,7 @@ help:
 	@echo "  make verify               All gates: lint, format, types, tests (80% coverage), both composition roots"
 	@echo ""
 	@echo "$(GREEN)Run$(NC) (agent name required):"
-	@echo "  make tui <agent>          The operator console (make tui csa; make tui ra = live web, PROFILE=demo = offline)"
+	@echo "  make tui <agent>          The operator console (make tui csa; make tui ra)"
 	@echo "  make data <agent>         csa: rebuild the agent DB (KEEP_MEMORY=1); ra: build + validate the fixture world"
 	@echo "  make runs ra              List archived research runs"
 	@echo "  make episode E=05         One episode (calls the live model)"
@@ -134,6 +139,8 @@ _agent:
 	  echo "$(YELLOW)No profile '$(PROFILE)' for $(AGENT) (src/$($(AGENT)_PKG)/config/profiles/)$(NC)"; exit 2; fi
 	@if [ -n "$(ABLATION)" ] && [ ! -f "src/$($(AGENT)_PKG)/evals/ablations/$(ABLATION).yaml" ]; then \
 	  echo "$(YELLOW)No ablation '$(ABLATION)' for $(AGENT) (src/$($(AGENT)_PKG)/evals/ablations/)$(NC)"; exit 2; fi
+	@if [ "$(filter eval eval-%,$(firstword $(MAKECMDGOALS)))" != "" ] && [ -z "$($(AGENT)_EVALS)" ]; then \
+	  echo "$(YELLOW)'$(AGENT)' has no eval suite$(NC)"; exit 2; fi
 
 install:
 	python3 -m venv venv
@@ -177,14 +184,15 @@ MODEL_CHECK_AGENTS = $(or $(AGENT),$(AGENTS))
 # Download (if missing), load and run every local model each agent uses — a fresh checkout's
 # first step after `make install`: `make models`, or `make models ra`.
 models:
-	@$(foreach a,$(MODEL_CHECK_AGENTS),echo "$(BLUE)── $(a) ──$(NC)" && \
+	@$(foreach a,$(MODEL_CHECK_AGENTS),echo "$(BLUE)── $($(a)_NAME) ($(a)) ──$(NC)" && \
 		AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(PYTHON) -m agentic_commons.llm.local_probes && ) true
 
 llm-check model-check:
-	@$(foreach a,$(MODEL_CHECK_AGENTS),echo "$(BLUE)── $(a) ──$(NC)" && \
+	@$(foreach a,$(MODEL_CHECK_AGENTS),echo "$(BLUE)── $($(a)_NAME) ($(a)) ──$(NC)" && \
 		AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(PYTHON) -m agentic_commons.llm.cli $(if $(BENCH),--bench) && ) true
 
 data: _agent
+	@test -n "$($(AGENT)_DATA)" || (echo "$(YELLOW)'$(AGENT)' has no generated data$(NC)" && exit 2)
 	$(PYTHON) -m $($(AGENT)_DATA)
 
 runs: _agent

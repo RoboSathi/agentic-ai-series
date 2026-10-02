@@ -17,8 +17,6 @@ from agentic_commons.config.settings import YamlBackedSettings
 from research_agent.domain.budget import Budget
 from research_agent.domain.scope import Depth, Mode
 
-ModelBackend = Literal["fixture", "routed"]
-
 
 class CommandNames(BaseModel):
     """The conversational slash commands, by role."""
@@ -41,14 +39,14 @@ class MessageSettings(BaseModel):
     """Every agent-authored sentence the user sees (none are model-written)."""
 
     refuse: str
+    # A message one of the input screens (injection, moderation) stopped.
+    input_blocked: str
     # `{options}` becomes the numbered menu, one `reframe_option` line each.
     reframe: str
     reframe_option: str
     # Said when a question goes straight to a quick answer, and after it.
     qa_started: str
     qa_followup: str
-    # Added to a FAILED run in demo mode: the question is outside Kelvari.
-    demo_off_world: str
     challenge_prefix: str
     # `{plan}`: the draft plan, one "  - step" line per sub-question.
     propose_done: str
@@ -90,15 +88,10 @@ class MessageSettings(BaseModel):
 
 
 class GreetingSettings(BaseModel):
-    """The lines the greeting is assembled from (console/greeting.py)."""
+    """What the greeting says (console/greeting.py)."""
 
-    intro: str
-    research_line: str
-    examples: str
-    commands: str
-    live_mode: str
-    demo_mode: str
-    topic_line: str
+    # The whole greeting, one line.
+    line: str
 
 
 class SetupMessages(BaseModel):
@@ -207,6 +200,11 @@ class ResearchSettings(BaseModel):
     max_claims_per_page: int = Field(ge=1)
     # How much of a page the extractor reads; the rest is not sent to the model.
     extractor_page_chars: int = Field(ge=1000)
+    # The page is cut into windows of this size and the ones sharing most terms with the
+    # sub-question are kept (in page order) up to `extractor_page_chars`.
+    extractor_window_chars: int = Field(ge=200)
+    # Pages read at once across the run (fetch, screen, extract), on top of node concurrency.
+    page_concurrency: int = Field(ge=1)
     primary_source_markers: list[str]
     outbound_allow_patterns: list[str]
     outbound_deny_patterns: list[str]
@@ -245,11 +243,8 @@ class CallSettings(BaseModel):
     # A cut-off call is retried this many times, each with the cap multiplied by the factor.
     truncation_retries: int = Field(ge=0)
     truncation_retry_factor: float = Field(gt=1)
-    # Seconds one call may take before it is cancelled (`default` covers a role not listed). The
-    # provider's own timeout is 60 s with SDK retries, which turns one stalled call into minutes of
-    # silence; a call that stalls is cancelled here, named on the feed, and retried.
-    role_timeout_seconds: dict[str, float]
-    timeout_retries: int = Field(ge=0)
+    # Timeouts, retries and backup models are not here: they are each role's
+    # `llm.roles.<role>` chain, applied by the platform (`ModelChainBuilder`).
 
 
 class QaSettings(BaseModel):
@@ -313,7 +308,7 @@ class ReaderViewWording(BaseModel):
 
 
 class AuditSettings(BaseModel):
-    """How independent the Goldfish Audit's judge must be, and what its checks read."""
+    """How independent the Independent Audit's judge must be, and what its checks read."""
 
     independent_judge: bool
     # `platform`: the platform's configured NLI (local cross-encoder, hosted,
@@ -362,8 +357,10 @@ class IntentRouterSettings(BaseModel):
     # (a file of `label: [messages]`), and how many of the nearest vote.
     exemplars_path: str
     neighbours: int = Field(ge=1)
-    # The grouped share (answer against research) a side needs to decide; below it, the LLM.
+    # The grouped share (answer against research) the answer side needs to decide; below it,
+    # the LLM. Starting research needs `research_min_confidence`: it is the expensive path.
     min_confidence: float = Field(ge=0.5, le=1.0)
+    research_min_confidence: float = Field(ge=0.5, le=1.0)
     # Labels that mean "answer directly"; any other known label is a research kind.
     encoder_answer_labels: list[str]
     # Ask the LLM when the encoder is unsure (off: unsure means answer directly).
@@ -395,6 +392,8 @@ class AnswerMessages(BaseModel):
     # One loop step's description beside its number: `{step}`, `{max}`.
     loop_step_detail: str
     # THOUGHT: `{calls}` the tools it chose, `{tokens}`, `{seconds}`.
+    # The pending THOUGHT card while its model call runs: `{role}`.
+    thought_waiting: str
     thought_tools: str
     thought_answer: str
     # REVISE: `{claims}` the unsupported claims it was asked to fix, `{tokens}`, `{seconds}`.
@@ -440,6 +439,14 @@ class AnswerMessages(BaseModel):
     weather_header: str
     weather_now: str
     weather_day: str
+
+
+class PointwiseSettings(BaseModel):
+    """A prose answer of `min_sentences` or more becomes one point per sentence."""
+
+    enabled: bool
+    marker: str
+    min_sentences: int = Field(ge=2)
 
 
 class AnswerContextSettings(BaseModel):
@@ -513,6 +520,8 @@ class AnswerSettings(BaseModel):
     # strftime format of the clock tool's answer.
     clock_format: str
     context: AnswerContextSettings
+    # The answer as points when the model wrote prose (`graph/points.py`).
+    pointwise: PointwiseSettings
     grounding: AnswerGroundingSettings
     weather: WeatherSettings
     messages: AnswerMessages
@@ -547,8 +556,6 @@ class PanelSettings(BaseModel):
     """The console's presentation of this agent."""
 
     stage_labels: dict[str, str]
-    # Stage -> presentation group (scoping, research, audit): a group's cards share a colour.
-    card_groups: dict[str, str]
     command_help: dict[str, str]
     history_headers: list[str]
     # Every sentence a card or the status block says (`research_agent.narration`).
@@ -562,59 +569,11 @@ class PanelSettings(BaseModel):
     # The status block's colours: the phase line by phase, the other lines by what they show.
     phase_colors: dict[str, str]
     status_line_styles: dict[str, str]
+    checklist_styles: dict[str, str]
     # The budget counters named on a budget card's heading; the rest are in its expander.
     budget_headline: list[str]
     # Counters the plan is meant to use up (rounds): reaching their cap draws no card.
     quiet_budget_counters: list[str] = Field(default_factory=list)
-
-
-class ReferenceJudgeSettings(BaseModel):
-    """The offline judge the fixture backend grades soft quality with."""
-
-    # Lines that open with these state a trade-off and its counterweight.
-    tradeoff_markers: list[str]
-    # The heading a decision report leads with (trade-offs only apply there).
-    decision_heading: str
-    # A PARTIAL report must say so under this heading.
-    limits_heading: str
-    partial_status: str
-    # How the platform's judge prompt labels its parts, and the status line.
-    conversation_label: str
-    tool_calls_label: str
-    evidence_label: str
-    evidence_separator: str
-    status_prefix: str
-
-
-class ResearchEvalSettings(BaseModel):
-    """Where the eval cases live and how each one is isolated and checked."""
-
-    dataset_dir: str
-    suite_files: dict[str, str]
-    security_suite: str
-    judge_rubric_path: str
-    session_prefix: str
-    workspace_root: str
-    keep_case_workspaces: bool
-    # A query no fixture records: replay must raise on it, never improvise.
-    probe_query: str
-    # Roles that must never see raw page text (only the extractor may).
-    screened_roles: list[str]
-    # Page sentences shorter than this are too generic to prove a leak.
-    min_leak_sentence_chars: int = Field(ge=1)
-    reference_judge: ReferenceJudgeSettings
-
-    @property
-    def resolved_dataset_dir(self) -> Path:
-        return resolve_path(self.dataset_dir)
-
-    @property
-    def resolved_workspace_root(self) -> Path:
-        return resolve_path(self.workspace_root)
-
-    @property
-    def resolved_judge_rubric_path(self) -> Path:
-        return resolve_path(self.judge_rubric_path)
 
 
 class ResearchAgentSettings(YamlBackedSettings):
@@ -625,8 +584,6 @@ class ResearchAgentSettings(YamlBackedSettings):
     title: str
     placeholder: str
     greeting: GreetingSettings
-    model_backend: ModelBackend
-    fixture_world_path: str
     command_names: CommandNames
     messages: MessageSettings
     setup: SetupMessages
@@ -653,13 +610,8 @@ class ResearchAgentSettings(YamlBackedSettings):
     archive: ArchiveSettings
     cancel: CancelSettings
     tui: PanelSettings
-    evals: ResearchEvalSettings
 
     model_config = SettingsConfigDict(env_prefix="RESEARCH_AGENT__")
-
-    @property
-    def resolved_fixture_world_path(self) -> Path:
-        return resolve_path(self.fixture_world_path)
 
 
 _SETTINGS: ResearchAgentSettings | None = None

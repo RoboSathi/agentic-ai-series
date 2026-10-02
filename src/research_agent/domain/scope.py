@@ -85,6 +85,11 @@ class GateVerdict(BaseModel):
     source_model: str = ""
     # A time window stated in the message ("in the last 1 month" -> 30).
     recent_days: int | None = None
+    # What the intent classifier made of the message, when it was asked, whether or not it was
+    # the one that decided: its top label, its share of the vote and the runner-up's.
+    encoder_label: str = ""
+    encoder_share: float = 0.0
+    encoder_runner_up: float = 0.0
 
 
 class SourcePolicy(BaseModel):

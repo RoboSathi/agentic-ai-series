@@ -174,7 +174,7 @@ async def test_failed_fetches_are_told_apart_and_tagged_with_their_node() -> Non
         "https://wired.com/d": WebUnavailableError("fetch failed: ReadTimeout"),
     }
     worker, _, resources, rec = _setup(pages)
-    # The demo profile reads three hits a search; this test feeds four.
+    # Read up to eight hits a search; this test feeds four.
     resources.settings = resources.settings.model_copy(update={"max_results_per_search": 8})
     await worker.run(NODE)
     codes = resources.trace.rejected_codes

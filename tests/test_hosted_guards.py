@@ -4,8 +4,8 @@ import httpx
 import pytest
 
 from agentic_commons.resilience import ExponentialBackoffRetry, ResilientCaller
-from agentic_commons.security.content_moderation.nvidia import NvidiaHostedContentSafetyGuard
-from agentic_commons.security.prompt_injection.nvidia import NvidiaHostedJailbreakGuard
+from agentic_commons.security.content_moderation.hosted import HostedContentSafetyGuard
+from agentic_commons.security.prompt_injection.hosted import HostedJailbreakGuard
 
 
 class FakeResponse:
@@ -56,7 +56,7 @@ class FakeAsyncClient:
 async def test_jailbreak_guard_records_real_api_call(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NVIDIA_API_KEY", "test-key")
     client = FakeAsyncClient({"jailbreak": True, "score": 0.97})
-    guard = NvidiaHostedJailbreakGuard(
+    guard = HostedJailbreakGuard(
         base_url="https://ai.api.nvidia.com",
         endpoint="/v1/security/nvidia/nemoguard-jailbreak-detect",
         timeout_seconds=2,
@@ -91,7 +91,7 @@ async def test_content_guard_records_model_and_categories(monkeypatch: pytest.Mo
             ]
         }
     )
-    guard = NvidiaHostedContentSafetyGuard(
+    guard = HostedContentSafetyGuard(
         base_url="https://integrate.api.nvidia.com/v1",
         endpoint="/chat/completions",
         timeout_seconds=2,
@@ -116,7 +116,7 @@ async def test_content_guard_polls_nvidia_202_result(monkeypatch: pytest.MonkeyP
         status_code=202,
         poll_payload={"choices": [{"message": {"content": '{"User Safety":"safe"}'}}]},
     )
-    guard = NvidiaHostedContentSafetyGuard(
+    guard = HostedContentSafetyGuard(
         base_url="https://integrate.api.nvidia.com/v1",
         endpoint="/chat/completions",
         timeout_seconds=2,
@@ -137,7 +137,7 @@ async def test_jailbreak_guard_retries_503(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("NVIDIA_API_KEY", "test-key")
     client = FakeAsyncClient({"jailbreak": False, "score": 0.1}, statuses=[503, 200])
     retry = ExponentialBackoffRetry(max_attempts=3, base_delay_seconds=0, max_delay_seconds=0)
-    guard = NvidiaHostedJailbreakGuard(
+    guard = HostedJailbreakGuard(
         base_url="https://ai.api.nvidia.com",
         endpoint="/v1/security/nvidia/nemoguard-jailbreak-detect",
         timeout_seconds=2,

@@ -33,7 +33,7 @@ memory stores behind `MemoryFacade`, `AuditLedger`, `StageReporter`, the
 eval pipeline and `FeatureSet`.
 
 **The vocabulary guard.** `tests/agentic_commons/test_roles_and_boundary.py`
-bans `archetype`, `goldfish`, `research` and `brief` everywhere in commons
+bans `archetype`, `research` and `brief` everywhere in commons
 (one pre-existing English "brief" is allow-listed by file), and bans
 `rubric` in every module added for ra. `rubric` and `report` predate ra in
 the eval judge and `StageReporter`, so a blanket ban would fail on code

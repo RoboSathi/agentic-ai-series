@@ -22,8 +22,17 @@ RedactionMode = Literal["mask", "tokenize", "remove"]
 GuardrailMode = Literal["reject", "auto_repair", "constrained"]
 RetrievalMode = Literal["lexical", "dense", "hybrid", "graph"]
 ProvenanceKindName = Literal["verified_system_of_record", "agent_inference", "self_reported"]
-ProviderName = Literal["nim", "local"]
+# A key of `llm.providers`: which providers exist, and what each is called, is configuration.
+ProviderName = str
+# How a provider's endpoint is spoken to: `hosted` (OpenAI-compatible, structured output
+# validated after generation) or `grammar` (also sends `response_format.json_schema`).
+ProviderAdapter = Literal["hosted", "grammar"]
 SurfaceClassName = Literal["locked", "editable", "append_only", "human_controlled"]
+
+
+def _first_env(names: list[str]) -> str | None:
+    """The first of these bare environment variables that is set, or None."""
+    return next((os.environ[name] for name in names if os.environ.get(name)), None)
 
 
 class YamlBackedSettings(BaseSettings):
@@ -82,6 +91,10 @@ class LoggingSettings(YamlBackedSettings):
     payload_max_chars: int
     max_bytes: int
     backup_count: int
+    # The console's colours, as Rich theme entries (`logging.level.info`, `log.time`, ...), and
+    # its line format (`%(name)s` the subsystem). The file log stays plain text.
+    console_theme: dict[str, str] = Field(default_factory=dict)
+    console_format: str = "%(message)s"
 
     model_config = SettingsConfigDict(env_prefix="LOGGING__")
 
@@ -93,6 +106,10 @@ class LoggingSettings(YamlBackedSettings):
 class LLMProviderSettings(BaseModel):
     """One provider's connection and pricing parameters."""
 
+    adapter: ProviderAdapter
+    # Bare environment variables holding the provider's key, first present wins; empty for
+    # a provider that needs none. Keys are never config fields, so they never reach a dump.
+    key_env_vars: list[str] = Field(default_factory=list)
     base_url: str
     model: str
     timeout_seconds: float
@@ -124,8 +141,11 @@ class EmbeddingInputTypes(BaseModel):
 class EmbeddingSettings(BaseModel):
     """Embedding backend used by the NOLLM cascade, RAG and memory scoring."""
 
+    # `hosted`: `model` on the `llm.providers` entry named by `provider`; `hashing`: the
+    # deterministic local fallback (no network).
+    backend: Literal["hosted", "hashing"]
     provider: ProviderName
-    nim_model: str
+    model: str
     local_dimensions: int
     input_types: EmbeddingInputTypes
     truncate: str
@@ -245,6 +265,32 @@ class BenchmarkSettings(BaseModel):
     timeout_seconds: float = Field(gt=0)
 
 
+class CheckStyleSettings(BaseModel):
+    """How `make model-check` colours its tables: each cell by what it is."""
+
+    title: str
+    border: str
+    header: str
+    # A probe's status (ok, failed, skipped, downloaded, pending) -> style.
+    status: dict[str, str]
+    name: str
+    model: str
+    target: str
+    required: str
+    optional: str
+    detail: str
+    failure: str
+    # Latency coloured against two bars: under `fast_ms` fast, over `slow_ms` slow.
+    fast: str
+    medium: str
+    slow: str
+    fast_ms: float
+    slow_ms: float
+    # The same bands for the benchmark's p50/p95, in seconds.
+    bench_fast_seconds: float
+    bench_slow_seconds: float
+
+
 class LLMCheckSettings(BaseModel):
     """The smallest real request `make llm-check` sends to each endpoint."""
 
@@ -255,6 +301,7 @@ class LLMCheckSettings(BaseModel):
     timeout_seconds: float
     local: LocalCheckSettings
     benchmark: BenchmarkSettings
+    styles: CheckStyleSettings
 
 
 class OutputNormalisationSettings(BaseModel):
@@ -268,13 +315,37 @@ class OutputNormalisationSettings(BaseModel):
     strip_patterns: list[str]
 
 
-class RoleModelSettings(BaseModel):
-    """Which configured provider and model plays one named role."""
+class ModelRef(BaseModel):
+    """One model on one configured provider, and the request fields it is called with."""
 
     provider: ProviderName
     model: str
-    # Provider-specific request fields for this role only (`CompletionRequest.extra_body`).
+    # Provider-specific request fields for this model only (`CompletionRequest.extra_body`).
     extra_body: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def key(self) -> str:
+        """`provider:model` — what "the same model" means."""
+        return f"{self.provider}:{self.model}"
+
+
+class ModelChainSettings(BaseModel):
+    """How one model call is protected: its backups, each attempt's limit, when to hedge.
+
+    `fallbacks` are tried in order when the model before them fails or is slow. Each model's
+    attempts are bounded by `timeout_seconds` (unset: `resilience.timeout.default_seconds`)
+    and retried by the platform's resilience stack. With `hedge_after_seconds` set, a backup
+    starts *beside* a model that has not answered by then, and the first answer wins; unset,
+    a backup starts only when the model before it has failed.
+    """
+
+    fallbacks: list[ModelRef] = Field(default_factory=list)
+    timeout_seconds: float | None = Field(default=None, gt=0)
+    hedge_after_seconds: float | None = Field(default=None, gt=0)
+
+
+class RoleModelSettings(ModelRef, ModelChainSettings):
+    """Which model plays one named role, and how its calls are protected."""
 
 
 class LLMSettings(YamlBackedSettings):
@@ -290,6 +361,8 @@ class LLMSettings(YamlBackedSettings):
     # (`reasoning_content` on NIM). Read in order; the first present wins.
     reasoning_fields: list[str] = Field(default_factory=list)
     providers: dict[str, LLMProviderSettings]
+    # The default client's protection (`create_llm_client`): backups, timeout, hedge.
+    chain: ModelChainSettings = Field(default_factory=ModelChainSettings)
     cascade: LLMCascadeSettings
     embedding: EmbeddingSettings
     encoders: EncoderSettings
@@ -298,6 +371,9 @@ class LLMSettings(YamlBackedSettings):
     local_embedder: LocalEmbedderSettings
     check: LLMCheckSettings
     output_normalisation: OutputNormalisationSettings
+    # Warnings a third-party library raises while a local model loads, matched by message
+    # (a regex) and silenced for that load only: a dependency's own deprecation, not ours.
+    suppressed_load_warnings: list[str] = Field(default_factory=list)
     # Role name -> model. Empty in the platform: role names are an agent's
     # vocabulary (`RoleModelRouter`), declared in its own overlay.
     roles: dict[str, RoleModelSettings]
@@ -314,7 +390,7 @@ class LLMSettings(YamlBackedSettings):
         Keys are deliberately not fields: they never appear in model_dump()
         and so can never leak into a log line or settings dump.
         """
-        return os.environ.get("nvidia_api_key") if name == "nim" else None
+        return _first_env(self.providers[name].key_env_vars)
 
 
 class PersistenceSettings(YamlBackedSettings):
@@ -396,6 +472,17 @@ class ReviewQueueSettings(BaseModel):
     minutes_per_review: float
 
 
+class ModelEventWording(BaseModel):
+    """Card wording for a model chain's backup events."""
+
+    backup_started: str
+    backup_answered: str
+    # Why a backup started, in words, by `StartReason`.
+    reasons: dict[str, str]
+    primary_label: str
+    backup_label: str
+
+
 class ObservabilitySettings(YamlBackedSettings):
     """Tracing, SLOs, cost stack, queue math (LLD §6)."""
 
@@ -419,6 +506,9 @@ class ObservabilitySettings(YamlBackedSettings):
     unparseable_arguments: str
     # An `amount` argument that is not money, as the card shows it.
     invalid_amount: str
+    # What a model call's backup cards say (`ModelCallObserver`): `{label}` the role or
+    # client, `{reason}` slow/failed. Headings never name a model; the body does.
+    model_events: "ModelEventWording"
 
     model_config = SettingsConfigDict(env_prefix="OBSERVABILITY__")
 
@@ -448,6 +538,29 @@ class ContextFailureDetectionSettings(BaseModel):
     degradation_threshold: float
 
 
+class ContextWindowWording(BaseModel):
+    """What the `context_assembly` card says (`context/window.py`), for every agent."""
+
+    started: str
+    assembled: str
+    # Said (quietly) when an agent withholds context assembly.
+    withheld: str
+    # `{modes}` the failure modes found, `{action}` what mitigation did.
+    unhealthy: str
+    # `{count}` chunks dropped by mitigation.
+    removed: str
+    nothing_removed: str
+    # One finding: `{mode}`, `{source}`, `{rule}`, `{detail}`, `{action}`.
+    finding_line: str
+    # Failure modes that are retrieval noise the check already removed: no warning for them.
+    routine_modes: list[str]
+    # A finding's `action` when mitigation did nothing, and the prefix of one it dropped.
+    not_acted_on: str
+    dropped_action: str
+    # A clean window is logged and counted but draws no card of its own.
+    quiet_when_healthy: bool
+
+
 class ContextSettings(YamlBackedSettings):
     """Five-stage assembly pipeline, retrieval and strategies (LLD §7)."""
 
@@ -463,6 +576,7 @@ class ContextSettings(YamlBackedSettings):
     strategies: ContextStrategySettings
     reduce_keep_ratio: float
     failure_detection: ContextFailureDetectionSettings
+    window: ContextWindowWording
 
     model_config = SettingsConfigDict(env_prefix="CONTEXT__")
 
@@ -664,7 +778,7 @@ class GuardrailsSettings(YamlBackedSettings):
     enabled: bool
     mode: Literal["reject", "auto_repair", "constrained"]
     max_repair_attempts: int
-    constrained_backend: Literal["llamacpp_grammar", "nim_guided_json"]
+    constrained_backend: Literal["grammar", "guided_json"]
 
     model_config = SettingsConfigDict(env_prefix="GUARDRAILS__")
 
@@ -854,25 +968,46 @@ class PiiSettings(BaseModel):
 
 
 class SecurityGuardModelSettings(BaseModel):
-    """Hosted security-model endpoint settings; credentials stay in env vars."""
+    """Hosted security-model endpoint settings; credentials stay in env vars.
+
+    Everything that names the vendor or the model — the provider, the key's variable, the
+    check's name on a card, the verdict's wording — is here, so swapping the guard is a
+    config edit and the adapter never names who it calls.
+    """
 
     enabled: bool
-    provider: Literal["nvidia"]
+    provider: str
+    # Bare environment variables holding the key, first present wins.
+    key_env_vars: list[str]
     base_url: str
     endpoint: str
     model: str
     timeout_seconds: float
     max_tokens: int = 16
+    # The dependency name of this guard's retry/circuit-breaker stack.
+    resilience_key: str
+    # The check's name on a card, and what the verdict says (`{env}` the key's variables).
+    check_name: str
+    flagged_reason: str
+    allowed_reason: str
+    missing_key_reason: str
 
     @property
     def api_key(self) -> str:
-        """Return the existing NVIDIA credential from the bare environment."""
-        return os.environ.get("nvidia_api_key") or os.environ.get("NVIDIA_API_KEY", "")
+        """The credential from the first configured bare environment variable."""
+        return _first_env(self.key_env_vars) or ""
 
     @property
     def usable(self) -> bool:
         """Whether this hosted guard can be invoked."""
         return self.enabled and bool(self.api_key)
+
+
+class RuleCheckNames(BaseModel):
+    """The deterministic checks' names on a card: the phrase scan and the term scan."""
+
+    injection: str
+    moderation: str
 
 
 class SecurityGuardSettings(BaseModel):
@@ -882,6 +1017,11 @@ class SecurityGuardSettings(BaseModel):
     fail_open_on_unavailable: bool
     jailbreak: SecurityGuardModelSettings
     content_safety: SecurityGuardModelSettings
+    rule_checks: RuleCheckNames
+    # What an assessment says when a hosted guard flagged the text, or was unavailable and
+    # the policy fails closed (`{guard}` the guard's check name).
+    hosted_flagged_reason: str
+    fail_closed_reason: str
 
 
 class PromptInjectionSettings(BaseModel):
@@ -902,6 +1042,33 @@ class ContentModerationSettings(BaseModel):
 
     blocked_terms: list[str]
     system_prompt: str
+    # How the classifier's JSON answer is read: the keys `system_prompt` asks for, and the
+    # words that mean safe and unsafe. Agrees with the prompt, so both live here.
+    response_safety_key: str
+    response_categories_key: str
+    safe_word: str
+    unsafe_word: str
+
+
+class ScreeningMessages(BaseModel):
+    """What each screen's card says (`security/screening.py`), the same for every agent."""
+
+    pii_started: str
+    # `{categories}` the kinds redacted, `{count}` how many spans.
+    pii_redacted: str
+    pii_clear: str
+    injection_started: str
+    injection_blocked_rule: str
+    injection_blocked_model: str
+    injection_unavailable: str
+    injection_passed_model: str
+    injection_passed_rule: str
+    moderation_started: str
+    moderation_blocked_rule: str
+    moderation_blocked_model: str
+    moderation_unavailable: str
+    moderation_passed_model: str
+    moderation_passed_rule: str
 
 
 class SecuritySettings(YamlBackedSettings):
@@ -913,6 +1080,7 @@ class SecuritySettings(YamlBackedSettings):
     prompt_injection: PromptInjectionSettings
     content_moderation: ContentModerationSettings
     guards: SecurityGuardSettings
+    screening: ScreeningMessages
 
     model_config = SettingsConfigDict(env_prefix="SECURITY__")
 
@@ -1232,12 +1400,16 @@ class TuiSettings(YamlBackedSettings):
     status_styles: dict[str, str]
     # Shown on a menu of fixed answers; free text can always be typed instead.
     choice_menu_hint: str
-    # Title colour of a card by presentation group (a card's `group`, here a colour name), so
-    # one kind of card reads apart from another and from the live status line.
-    group_colors: dict[str, str]
-    # Style of a written card's section titles, and of its lines by tone.
+    # Event kinds whose `started` event draws a pending card, replaced in place when done.
+    pending_card_kinds: list[str]
+    # Title colour of a card by outcome (its `status`): started, completed, warning, ...
+    outcome_colors: dict[str, str]
+    # Style of a card's section titles, its keys and values (`key`, `separator`, `value`,
+    # `muted`), its lines by tone (pass, fail, warn, dim), and the words that name a state.
     section_title_style: str
+    body_styles: dict[str, str]
     tone_styles: dict[str, str]
+    state_words: dict[str, str]
     # How the final answer's light Markdown is coloured (h1, h2, bold, bullet, citation, ...).
     response_styles: dict[str, str]
     # More of the answer coloured by pattern, in order: an agent's own vocabulary ("[must]",
@@ -1307,6 +1479,9 @@ class WebFetchSettings(BaseModel):
     """Plain HTTP fetching, and the reader fallback for script-rendered pages."""
 
     timeout_seconds: float
+    # Attempts per page through the fetch's resilience stack: a dead page costs at most
+    # `max_attempts` × `timeout_seconds` (plus backoff).
+    max_attempts: int = Field(ge=1)
     user_agent: str
     max_chars: int = Field(ge=1)
     # Below this much extracted text a page is treated as script-rendered

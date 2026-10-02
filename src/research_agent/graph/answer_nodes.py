@@ -32,6 +32,7 @@ from research_agent.config import get_agent_settings
 from research_agent.config.settings import AnswerSettings
 from research_agent.domain.budget import TOKENS
 from research_agent.graph.answer_state import STEPS, TOOL_CALLS, AnswerState, Turn, turn_of
+from research_agent.graph.points import as_points
 from research_agent.guardrails.answer_grounding import AnswerGrounding, GroundingOutcome
 from research_agent.narration import clip
 from research_agent.prompts import answer as prompt
@@ -105,6 +106,7 @@ class AnswerNodes:
     ) -> CompletionResult:
         """One reasoning step: the model call, shown as one THOUGHT card."""
         request = CompletionRequest(messages=messages, tools=tools)
+        self._emit(turn, THOUGHT, self._waiting(), {}, event_kind="model", status="started")
         result = await self._call(turn, messages, tools, self._call_timeout(turn))
         calls = ", ".join(
             self._notes.tool_call.format(tool=display_tool_name(c.name), arguments=c.arguments)
@@ -187,12 +189,18 @@ class AnswerNodes:
     def _call_timeout(self, turn: Turn) -> float:
         return min(self._settings.call_timeout_seconds, self._time_left(turn))
 
+    def _waiting(self) -> str:
+        """The pending THOUGHT card's heading, shown while the model call is in flight."""
+        return self._notes.thought_waiting.format(role=self._settings.role)
+
     def _failed(self, turn: Turn, exc: Exception) -> dict[str, Any]:
         if isinstance(exc, ModelCallTimeoutError):
             cause = self._notes.model_timeout.format(seconds=exc.seconds)
         else:
             cause = describe_error(exc)
         self._logger.error("Direct answer step failed", cause=cause, question=turn.question)
+        # Settles the pending THOUGHT card, which would otherwise wait forever.
+        self._emit(turn, THOUGHT, cause, {}, event_kind="model", status="failed")
         self._telemetry.audit("answer.failed", "deny", cause, question=turn.question)
         return {"failure": cause}
 
@@ -381,6 +389,9 @@ class AnswerNodes:
             self._card_answer(turn, text, failed=True)
             return {"text": text}
         text = state["text"] or self._notes.empty
+        points = self._settings.pointwise
+        if points.enabled:
+            text = as_points(text, self._notes.sources_heading, points.marker, points.min_sentences)
         if state["sources"] and not _URL.search(text):
             # The model's own Sources line named no URL ("weather data for Pune"): the URLs the
             # tools actually read replace it.
@@ -440,7 +451,6 @@ class AnswerNodes:
             fields=fields,
             event_kind=event_kind,
             tokens=tokens.usage.total_tokens if tokens is not None else None,
-            group=get_agent_settings().tui.card_groups.get(stage, ""),
         )
 
 

@@ -2,11 +2,8 @@
 # Loaded when AGENTIC_OVERLAYS names this file (`make tui ra`), or by
 # default when this package is imported and nothing else was named.
 #
-# These defaults are LIVE: real web search (DuckDuckGo, then Tavily) and
-# real NVIDIA models, sized to stay inside the providers' free tiers.
-# `profiles/demo.yaml` is the offline posture (the synthetic Kelvari world,
-# replayed, with the reference model) that tests and evals always use:
-# `make tui ra PROFILE=demo`.
+# Live web search (DuckDuckGo, then Tavily) and the models `llm.roles` names, sized to stay
+# inside the providers' free tiers. Tests inject scripted models and a replayed web.
 
 agent:
   id: research_agent
@@ -26,7 +23,7 @@ features:
     grounding: true                  # the answer is checked against what its tools returned; unsupported details are removed
   rubric: true                       # acceptance criteria; off = run with no contract items
   reflection: true                   # gap analysis + follow-up queries after each wave
-  goldfish_audit: true               # independent audit of the delivered report
+  independent_audit: true               # independent audit of the delivered report
   citation_verification:             # verbatim-span rule + NLI claim support
     enabled: true
     nli: true
@@ -35,8 +32,10 @@ features:
     enabled: true
     model: true                      # a hosted injection model adjudicates phrase hits
   quarantined_extractor: true        # only the extractor ever reads raw page text
-  # platform features this agent composes
+  # platform features this agent composes: all three screen the person's own message
   pii: true
+  prompt_injection: true             # phrase scan + hosted jailbreak model on the user's message
+  content_moderation: true           # term scan + hosted safety model on the user's message
   memory:
     enabled: true
     working: true
@@ -44,48 +43,78 @@ features:
     semantic: true
     # Disabled by design: this agent learns nothing procedural across runs.
     procedural: false
+  # The platform's context window for the direct answer: working memory and earlier research,
+  # ranked, fitted and health-checked. The reranker is a hosted cross-encoder: off by default.
+  context:
+    enabled: true
+    rerank: false
+    failure_detection: true
   # Platform features this agent does not compose. Declared false because
   # an overlay cannot delete keys the platform default declares; moving
   # them with /harness changes nothing for this agent (ADR ra-0016).
   basic_sanity: false
-  prompt_injection: false
-  content_moderation: false
   intent_classification: false
   hallucination_guard: false
   gatekeeper: false
-  context:
-    enabled: false
-    rerank: false
-    failure_detection: false
 
 audit:
   policy_version: research-contract-v1
-  data_version: fixture-world-v1
+  data_version: live-web-v1
   prompt_version: research-prompts-v1
   tool_schema_version: research-tools-v1
+
+# The research roles' default model and its protection: nemotron-super, backed up by
+# gpt-oss-20b (fast) and then nemotron-ultra (slow, but it answers).
+x-super-chain: &super_chain
+  provider: nim
+  model: nvidia/nemotron-3-super-120b-a12b
+  timeout_seconds: 60
+  hedge_after_seconds: 25
+  fallbacks:
+    - {provider: nim, model: openai/gpt-oss-20b}
+    - {provider: nim, model: nvidia/nemotron-3-ultra-550b-a55b}
 
 llm:
   # Role -> model. `judge` must differ from `synthesizer` while
   # research_agent.audit.independent_judge is true (checked at start-up).
+  # Each role's model, its backups and its protection. Every call runs through the platform's
+  # resilience stack per model (retry, breaker, `timeout_seconds` per attempt); when a model has
+  # not answered after `hedge_after_seconds`, or fails, the next backup starts beside it and the
+  # first answer wins (`ModelChainBuilder`). Measured on run-01ff185590 (2026-10-02): 210 of 367 s
+  # were stalled calls retried on the same model — the backups exist to end exactly that.
   roles:
     # Thinking off: an interview turn is one short question, and with reasoning on the model
     # spent 600-4,000 hidden tokens (3.5-32s) on it. Measured 2026-10-02 on a scoping prompt:
     # 5.5-9.9s with thinking, 0.5s without, and the questions were as specific.
     interviewer:
-      provider: nim
-      model: nvidia/nemotron-3-super-120b-a12b
+      <<: *super_chain
       extra_body: {chat_template_kwargs: {enable_thinking: false}}
-    planner: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
-    researcher: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
-    extractor: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
-    reflector: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
-    synthesizer: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
-    # The judge is the strongest model on the account, and a different one from the writer:
+    # Thinking off for the structured roles: a plan, an extraction, a gap list are schema-shaped
+    # answers; with reasoning on the planner spent 34 s on a two-step plan (run-01ff185590).
+    planner:
+      <<: *super_chain
+      timeout_seconds: 90
+      extra_body: {chat_template_kwargs: {enable_thinking: false}}
+    researcher: {<<: *super_chain, timeout_seconds: 90}
+    extractor:
+      <<: *super_chain
+      timeout_seconds: 90
+      extra_body: {chat_template_kwargs: {enable_thinking: false}}
+    reflector:
+      <<: *super_chain
+      extra_body: {chat_template_kwargs: {enable_thinking: false}}
+    synthesizer: {<<: *super_chain, timeout_seconds: 120, hedge_after_seconds: 60}
+    # The judge is the strongest model on the account, and a different one from the writer;
     # about 2x slower than gpt-oss-20b at the median (6.0s vs 2.8s per call, measured
-    # 2026-10-01), for the 1-3 judge calls a run makes.
-    judge: {provider: nim, model: nvidia/nemotron-3-ultra-550b-a55b}
+    # 2026-10-01). Its backup is gpt-oss-20b: also not the writer.
+    judge:
+      provider: nim
+      model: nvidia/nemotron-3-ultra-550b-a55b
+      timeout_seconds: 120
+      hedge_after_seconds: 45
+      fallbacks: [{provider: nim, model: openai/gpt-oss-20b}]
     # Multi-step tool calling: the model the platform recommends for it.
-    answerer: {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
+    answerer: *super_chain
 
   # The intent classifier's embedder, local: nearest labelled examples need similarity, not a
   # network call per message. e5 expects "query: " before every text it compares.
@@ -130,8 +159,11 @@ hallucination_protection:
 
 web:
   mode: live
-  fixtures_dir: data/web_fixtures
-  fixture_set: kelvari-v1
+  # A dead page costs at most ~20 s here, not a minute: one hung fetch held a reader 17 s and
+  # more in run-01ff185590, and other pages are waiting.
+  fetch:
+    timeout_seconds: 10
+    max_attempts: 2
 
 artifacts:
   root: data/research_runs
@@ -163,59 +195,18 @@ security:
       - note to ai
       - ai research assistant
 
-evals:
-  additional_manifest_paths: []
-  plugin: research_agent.evals.plugin:ResearchEvalPlugin
-  suites: [golden, security]
-  # Its own store and report folder: suite names (`golden`) are per agent,
-  # and "the latest golden run" must never be another agent's.
-  store:
-    db_path: data/research_evals/evals.duckdb
-  reporting:
-    output_dir: reports/research_evals
-  generation:
-    # Replay and the reference model are local and deterministic.
-    max_concurrency: 4
-  fingerprint:
-    source_roots: [src/agentic_commons, src/research_agent]
-    exclude_paths:
-      - src/agentic_commons/evals/store
-      - src/agentic_commons/evals/pipeline
-      - src/agentic_commons/evals/reporting
-      - src/agentic_commons/evals/graders
-      - src/agentic_commons/evals/adapters
-      - src/agentic_commons/evals/__main__.py
-      - src/agentic_commons/evals/cli.py
-      - src/agentic_commons/tui
-      - src/agentic_commons/commands
-      - src/research_agent/console
-      - src/research_agent/evals
-      - src/research_agent/design_docs
 
 research_agent:
   title: Research Agent
   placeholder: "Ask a question · /research for deep research · /help"
-  # The greeting is assembled in code (console/greeting.py) from these
-  # lines and the current mode, so it always says what this run can do.
+  # The greeting: one line. Notes (a missing key) follow it only when there are any.
   greeting:
-    intro: "Ask me anything — I answer directly, and search the web when I need something current."
-    research_line: "For a deeper run use /research <question>: a short interview, acceptance criteria, then an audited report with a cited page behind every sentence."
-    examples: "Try: \"{qa}\"  ·  /research \"{research}\""
-    commands: "/research [question] · /qa <question> · /done · /approve · /cancel · /help"
-    live_mode: "Live: web search + NVIDIA models."
-    demo_mode: "Demo (offline): a synthetic world called Kelvari; I can only research these topics:"
-    topic_line: "  - {title} — e.g. \"{example}\""
-  # routed: llm.roles via RoleModelRouter (real models); fixture: the
-  # deterministic reference model over the fixture world (profiles/demo.yaml).
-  model_backend: routed
-  # Where the fixture world lives and where its recorded web fixtures go.
-  fixture_world_path: src/research_agent/fixture_world/world.yaml
-
+    line: "Ask me anything · /research <question> for an audited deep-research report · /help for commands"
   # What start-up says when the live posture lacks a credential.
   setup:
     missing_model_key: >-
-      The research agent runs on NVIDIA models ({roles}) but `nvidia_api_key`
-      is not set. Export it, or run offline with `make tui ra PROFILE=demo`.
+      The model roles {roles} need a key that is not set ({env}). Export it and
+      start again.
     no_search_key: >-
       `tavily_api_key` is not set: web search uses DuckDuckGo only (free,
       best effort; no fallback when it finds nothing).
@@ -238,11 +229,11 @@ research_agent:
   # Everything the agent says that is not written by a model.
   messages:
     refuse: I can't research that request.
+    input_blocked: "I can't act on that message: a safety screen stopped it. Rephrase it and try again."
     reframe: "What would you like?\n{options}\nReply with a number, or rephrase your question."
     reframe_option: '  {number}. {label} — e.g. "{example}"'
     qa_started: "Quick answer: searching the web now (no interview). /research gives a full, audited research run instead."
     qa_followup: "Want more depth? /research runs a full, audited research scope on this question."
-    demo_off_world: "Demo mode only knows the synthetic Kelvari topics listed at start-up; for the real web run `make tui ra` (no PROFILE)."
     challenge_prefix: "Before we go on: "
     propose_done: "I have enough to plan. Draft plan:\n{plan}"
     plan_step: "Research {part}"
@@ -421,26 +412,27 @@ research_agent:
     role_max_tokens:
       # With thinking off a turn's JSON is ~150 tokens; 1024 leaves room for a long plan.
       interviewer: 1024
-      planner: 6144
+      planner: 8192
       extractor: 8192
       researcher: 8192
-      reflector: 4096
+      reflector: 8192
+      judge: 8192
+      # A long report plus the model's reasoning; `report_max_tokens` bounds what it is asked for.
+      synthesizer: 16384
     truncation_retries: 1
     truncation_retry_factor: 2
-    # A stalled call is cancelled after this many seconds and retried `timeout_retries` times.
-    role_timeout_seconds:
-      default: 60
-      planner: 90
-      extractor: 90
-      researcher: 90
-      synthesizer: 120
-    timeout_retries: 1
 
   research:
     max_results_per_search: 5
     max_fetches_per_node: 4
     max_claims_per_page: 4
-    extractor_page_chars: 40000
+    # The relevant windows of a page, not its head: 40,000 characters of navigation and comments
+    # took 15-30 s an extraction and stalled (run-01ff185590); 12,000 of the windows that share
+    # the sub-question's terms keep what matters.
+    extractor_page_chars: 12000
+    extractor_window_chars: 1500
+    # Pages read at once across the run; the rate limiter still paces the model calls.
+    page_concurrency: 4
     # Sources whose host contains one of these count as primary.
     primary_source_markers: [regulator, lab, uni, safety-board, teardowns]
     # A search query or fetch URL must match one of these to leave the process.
@@ -488,11 +480,15 @@ research_agent:
   intent_router:
     research_cue_min_hits: 1
     # No training: a message is compared with the labelled examples the scope gate already ships
-    # (scoping/gate_training.yaml) and the nearest 7 vote. On those examples, leave-one-out: 91%
-    # right overall, and 98% right on the 83% of messages that clear 0.7; the rest go to the LLM.
+    # (scoping/gate_training.yaml) and the nearest 7 vote. Measured 2026-10-02, leave-one-out over
+    # the 88 examples (answer vs research): one bar of 0.70 decided 91% but sent 2 questions to
+    # research; answer at 0.70 and research at 0.85 decide 85%, 95% right, 1 question sent to
+    # research. "Important AI news on impact of software jobs in the last 3 months" went to
+    # research at 0.71 before the news examples were added; it now reads answer at 0.86.
     exemplars_path: src/research_agent/scoping/gate_training.yaml
     neighbours: 7
     min_confidence: 0.7
+    research_min_confidence: 0.85
     encoder_answer_labels: [qa, answer]
     llm_fallback: true
 
@@ -510,8 +506,13 @@ research_agent:
     call_timeout_seconds: 45
     repair_timeout_seconds: 45
     min_call_seconds: 5
-    max_tokens: 2048
+    max_tokens: 8192
     temperature: 0.2
+    # An answer of three or more sentences written as prose is shown one point per sentence.
+    pointwise:
+      enabled: true
+      marker: "-"
+      min_sentences: 3
     search_max_results: 5
     snippet_max_chars: 1200
     fetch_max_chars: 6000
@@ -578,6 +579,7 @@ research_agent:
       bad_arguments: "The arguments for '{tool}' were not valid."
       tool_failed: "'{tool}' failed: {error}"
       loop_step_detail: "{step} of {max} (thought → action → observation)"
+      thought_waiting: "waiting for the {role}…"
       thought_tools: "decided to call {calls} · {tokens} tokens · {seconds:.1f}s"
       thought_answer: "ready to answer · {tokens} tokens · {seconds:.1f}s"
       revise_heading: "rewrote the answer without {claims} unsupported claim(s) · {tokens} tokens · {seconds:.1f}s"
@@ -641,8 +643,8 @@ research_agent:
   audit:
     # When true, `judge` must resolve to a different model than `synthesizer`.
     independent_judge: true
-    # lexical: deterministic (the fixture/eval posture); platform: the
-    # configured NLI cross-encoder, for live runs.
+    # lexical: deterministic (what tests inject); platform: the configured NLI
+    # cross-encoder.
     entailment_model: platform
     entity_pattern: '\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b'
     # Verdict: the weighted score (criterion weights in rubric/templates.yaml) needs
@@ -662,42 +664,18 @@ research_agent:
   cancel:
     key: ctrl+x
 
-  # Evals (research_agent/evals): fixtures only, web replay only.
-  evals:
-    dataset_dir: src/research_agent/evals/dataset
-    suite_files:
-      golden: golden_cases.yaml
-      security: security_cases.yaml
-    security_suite: security
-    judge_rubric_path: src/research_agent/evals/judge_rubric.yaml
-    session_prefix: eval
-    workspace_root: data/research_evals/workspaces
-    keep_case_workspaces: false
-    probe_query: a query nobody recorded
-    screened_roles: [planner, reflector, synthesizer]
-    min_leak_sentence_chars: 24
-    reference_judge:
-      tradeoff_markers: ["Trade-off:", "However,"]
-      decision_heading: Recommendation
-      limits_heading: Coverage & Limits
-      partial_status: PARTIAL
-      conversation_label: "CONVERSATION:"
-      tool_calls_label: "TOOL CALLS THE ASSISTANT MADE:"
-      evidence_label: "EVIDENCE THE ASSISTANT WAS GIVEN:"
-      evidence_separator: "\n---\n"
-      status_prefix: "Status: "
-
   tui:
     stage_labels:
       scope_gate: SCOPE GATE
       hallucination_check: HALLUCINATION CHECK
-      llm_interviewer: THINKING · INTERVIEWER
-      llm_planner: THINKING · PLANNER
-      llm_researcher: THINKING · READING A PAGE
-      llm_extractor: THINKING · READING A PAGE
-      llm_reflector: THINKING · REFLECTING
-      llm_synthesizer: THINKING · WRITING THE REPORT
-      llm_judge: THINKING · LLM AS A JUDGE
+      llm_call_interviewer: THINKING · INTERVIEWER
+      llm_call_planner: THINKING · PLANNER
+      llm_call_researcher: THINKING · READING A PAGE
+      llm_call_extractor: THINKING · READING A PAGE
+      llm_call_reflector: THINKING · REFLECTING
+      llm_call_synthesizer: THINKING · WRITING THE REPORT
+      llm_call_judge: THINKING · JUDGE
+      llm_call_answerer: THINKING · ANSWERING
       interview_turn: INTERVIEW
       coverage_update: WAIVER
       rubric_generate: RUBRIC
@@ -715,22 +693,9 @@ research_agent:
       wave_summary: BATCH RESULT
       synthesize: SYNTHESIZE
       citation_guard: HALLUCINATION CHECK · REPORT
-      goldfish_audit: LLM AS A JUDGE
+      independent_audit: LLM JUDGE
       gap_fill: GAP FILL
       finalize: FINAL STATUS
-    card_groups:
-      scope_gate: violet
-      interview_turn: violet
-      coverage_update: violet
-      rubric_generate: violet
-      wave_start: blue
-      page_result: blue
-      wave_summary: blue
-      reflect_gap_analysis: blue
-      synthesize: blue
-      citation_guard: blue
-      goldfish_audit: amber
-      finalize: amber
     command_help:
       qa: "Quick cited answer from a few web searches, no interview (/qa <question>)"
       research: "Full research run on a question — interview, criteria, audit (/research [question]; bare = the last question)"
@@ -761,9 +726,14 @@ research_agent:
       CANCELLED: "bold red"
       FAILED: "bold red"
     status_line_styles:
-      coverage: yellow
-      evidence: cyan
-      budget: dim
+      coverage: "#FFCB6B"
+      evidence: "#4FC3F7"
+      budget: "#9E9E9E"
+    # A checklist item's status in the status line's expander (covered, waived, open).
+    checklist_styles:
+      covered: "#00FF87"
+      waived: "#FFCB6B"
+      open: "#EEFFFF"
     # Rejection and gap codes, in words.
     reasons:
       recency: results older than the approved time window
@@ -784,8 +754,8 @@ research_agent:
       mode.qa: quick answer
       mode.research: full research
       classifier.rule: "a deterministic rule"
-      classifier.encoder: "the intent classifier ({model})"
-      classifier.llm: "the LLM ({model})"
+      classifier.encoder: the intent classifier
+      classifier.llm: the LLM
       scope_gate.refused: "Request declined · decided by {classifier}"
       scope_gate.reframe: "Needs a clearer goal · decided by {classifier}"
       scope_gate.scopable: "Scope: {mode} · {kind} · decided by {classifier}"
@@ -793,6 +763,26 @@ research_agent:
       scope_gate.window: "Time window: last {days} days"
       scope_gate.section.understood: What was understood
       scope_gate.section.classifier: How it was decided
+      scope_gate.model: "Model: {model}"
+      intent.heading.answer: "Answer directly · {classifier}"
+      intent.heading.research: "Research run · {classifier}"
+      intent.heading.refuse: "Refused · {classifier}"
+      intent.source.rule: rules
+      intent.source.encoder: the intent classifier
+      intent.source.llm: the LLM
+      intent.source.default: the default (answer directly)
+      intent.section.checks: Front door
+      intent.decided_by: "Decided by: {by} · {model}"
+      intent.no_model: rules, no model
+      intent.scores: "Scores: answer {answer} · research {research} · bar {bar}"
+      intent.rules_clear: "Rules: no refusal · no research cue"
+      intent.rules.refusal_hit: "Rules: matches a refusal pattern"
+      intent.rules.cues_hit: "Rules: research cue — {cues}"
+      intent.rules.kind_hit: "Rules: {kind} cues — {cues}"
+      intent.decision.answer: "Route: direct answer — ReAct with web tools"
+      intent.decision.research: "Route: research — interview, criteria, audited report"
+      intent.decision.refuse: "Route: refused"
+      scope_gate.encoder_read: "The intent classifier read it as {label}: {share} of the vote, runner-up {runner_up}."
       interview.heading: "Interview · turn {turn} · asking about {item}"
       interview.no_item: wrap-up
       interview.guard: "Interviewer went too long without challenging an answer · asking again with a challenge"
@@ -905,7 +895,7 @@ research_agent:
       synthesize.section.sections: Sections
       synthesize.section.unmet: Criteria still unmet (reported as limits)
       synthesize.section.removed: Corrections
-      judge.heading: "{model} · {passed}/{total} criteria met · score {score} · {outcome}"
+      judge.heading: "{passed}/{total} criteria met · score {score} · {outcome}"
       judge.unknown_model: "(model not recorded)"
       judge.section.judge: The judge
       judge.section.criteria: Criteria, and how each was checked
@@ -924,6 +914,10 @@ research_agent:
       judge.kind.nli: "NLI ({model})"
       judge.kind.judge: "judged by {model}"
       judge.not_applicable: "– {id} · {text} — nothing to check, so it earns no credit"
+      judge.not_judged: "? {id} · {text} — not judged ({detail}); reported as unverified"
+      judge.unjudged_heading: "{count} criteria not judged · judge unavailable · "
+      judge.unavailable: "the judge and its backup models did not answer: {error}"
+      audit.unavailable: "The independent audit could not run ({error}); the report is delivered unverified."
       judge.mark.pass: ✓
       judge.mark.fail: ✗
       judge.term: "{weight}×{score}"
@@ -1002,4 +996,3 @@ research_agent:
       status.budget: "Budget {meters}"
       status.meter: "{name} {spent}/{cap}"
       status.detail.checklist: "Checklist"
-      status.detail.budget: "Budget"

@@ -27,6 +27,9 @@ from agentic_commons.tui.command_view import CommandView
 from agentic_commons.tui.suggest import CommandSuggester
 from customer_support_agent.console.commands import QueueCommand
 
+# A key value that must never be rendered, whatever variable holds it.
+SECRET = "sk-test-never-shown"
+
 
 class TestDispatch:
     def test_a_slash_line_is_a_command_and_a_sentence_is_not(self) -> None:
@@ -78,18 +81,22 @@ class TestInspectionCommands:
         assert detail.rows
 
     @pytest.mark.asyncio
-    async def test_config_never_renders_a_secret(self) -> None:
+    async def test_config_never_renders_a_secret(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """API keys live in bare env vars, so they cannot appear here.
 
-        This asserts the property rather than the implementation: if a
-        key were ever added to the YAML, `/config` would print it to
-        whoever is watching the screen.
+        This asserts the property rather than the implementation: whatever value a configured
+        key variable holds, `/config` never prints it to whoever is watching the screen. (The
+        variable's *name* is configuration and may be shown.)
         """
+        llm = get_settings().llm
+        for provider in llm.providers.values():
+            for env in provider.key_env_vars:
+                monkeypatch.setenv(env, SECRET)
         for section in (await ConfigCommand().run([])).rows:
             detail = await ConfigCommand().run([section.cells[0]])
-            rendered = " ".join(cell for row in detail.rows for cell in row.cells).casefold()
-            assert "api_key" not in rendered
-            assert "nvapi-" not in rendered
+            rendered = " ".join(cell for row in detail.rows for cell in row.cells)
+            assert SECRET not in rendered
+            assert "nvapi-" not in rendered.casefold()
 
     @pytest.mark.asyncio
     async def test_an_unknown_config_section_is_an_error_not_an_empty_table(self) -> None:

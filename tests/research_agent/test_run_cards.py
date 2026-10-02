@@ -18,7 +18,7 @@ class _Telemetry:
     def __init__(self) -> None:
         self.cards: list[str] = []
 
-    def card(self, stage: str, heading: str, *_: object) -> None:
+    def card(self, stage: str, heading: str, *_: object, **__: object) -> None:
         self.cards.append(heading)
 
 
@@ -55,7 +55,7 @@ def _item(item_id: str, kind: str, must: bool, weight: float) -> RubricItem:
     )
 
 
-def test_the_judge_card_names_its_models_and_works_the_score_through() -> None:
+def test_the_judge_card_names_its_models_in_the_body_and_works_the_score_through() -> None:
     rubric = Rubric(items=(_item("R1", "nli", True, 3), _item("R2", "judge", False, 1)))
     verdicts = [
         CheckVerdict(
@@ -85,7 +85,9 @@ def test_the_judge_card_names_its_models_and_works_the_score_through() -> None:
         usage={"calls": 1, "tokens": 900, "seconds": 5.3},
     )
     heading, sections = audit_card(verdicts, rubric, result, 0.8, 0.5, setup, 110)
-    assert heading.startswith("nim:ultra · 1/2 criteria met · score 62% · PARTIAL")
+    # The heading never names a model (config may swap it); the body names every one.
+    assert heading.startswith("1/2 criteria met · score 62% · PARTIAL")
+    assert "nim:ultra" not in heading
     text = str(sections)
-    assert "nim:super" in text and "deberta" in text and "5.3" in text
+    assert "nim:ultra" in text and "nim:super" in text and "deberta" in text and "5.3" in text
     assert "(3×0.50 + 1×1.00) ÷ 4 = 62%" in text

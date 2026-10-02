@@ -13,11 +13,14 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from rich.console import Console
 from rich.logging import RichHandler
 from rich.text import Text
+from rich.theme import Theme
 
 from agentic_commons.config import get_settings
 from agentic_commons.logging.trace_context import get_current_trace_id
+from agentic_commons.text_tree import value_lines
 
 Level = Literal["debug", "info", "warning", "error"]
 
@@ -89,7 +92,6 @@ SUBSYSTEM_COLORS: dict[str, str] = {
     "hallucination_protection": "orange3",
     "customer_support_agent": "bright_green",
     "research_agent": "light_goldenrod1",
-    "audit_goldfish": "gold1",
     "scheduler": "medium_purple1",
     "budget": "salmon1",
     "web": "deep_sky_blue1",
@@ -113,20 +115,6 @@ class StructuredLogger(Protocol):
         message: str,
         **fields: Any,
     ) -> None: ...
-
-
-# Drawing characters for the field tree. A record's structure is the
-# thing you are usually reading past in a log, so it is drawn rather
-# than punctuated: the eye follows a line down a page faster than it
-# counts braces.
-_BRANCH = "├─ "
-_LAST = "└─ "
-_PIPE = "│  "
-_GAP = "   "
-
-# Long values are wrapped rather than cut. Full payloads are the point of
-# these files — the screen is where things are summarised.
-_WRAP_AT = 100
 
 
 class PlainFormatter(logging.Formatter):
@@ -166,7 +154,7 @@ class PlainFormatter(logging.Formatter):
         if _file_format() == "json":
             rendered = json.dumps(fields, indent=2, ensure_ascii=False, default=str)
             return [f"  {line}" for line in rendered.splitlines()]
-        return _tree(fields, prefix="  ")
+        return value_lines(fields, prefix="  ")
 
 
 def _file_format() -> str:
@@ -182,60 +170,6 @@ def _file_format() -> str:
         return str(get_settings().logging.file_format)
     except Exception:
         return "tree"
-
-
-def _tree(node: Any, prefix: str) -> list[str]:
-    """One value, drawn as an indented tree."""
-    if isinstance(node, dict):
-        return _branches(list(node.items()), prefix, labelled=True)
-    if isinstance(node, list):
-        return _branches(list(enumerate(node)), prefix, labelled=False)
-    return [f"{prefix}{line}" for line in _scalar_lines(node)]
-
-
-def _branches(items: list[Any], prefix: str, labelled: bool) -> list[str]:
-    """Each child of a mapping or sequence, with its connector."""
-    lines: list[str] = []
-    for index, (key, value) in enumerate(items):
-        last = index == len(items) - 1
-        connector = _LAST if last else _BRANCH
-        label = f"{key}" if labelled else f"[{key}]"
-        below = prefix + (_GAP if last else _PIPE)
-        if isinstance(value, (dict, list)) and value:
-            lines.append(f"{prefix}{connector}{label}:")
-            lines.extend(_tree(value, below))
-            continue
-        rendered = _scalar_lines(value)
-        lines.append(f"{prefix}{connector}{label}: {rendered[0]}")
-        lines.extend(f"{below}{line}" for line in rendered[1:])
-    return lines
-
-
-def _scalar_lines(value: Any) -> list[str]:
-    """A leaf value as one or more lines, never elided.
-
-    Embedded newlines are honoured, because a system prompt is a document
-    and reading it as one escaped string is how these files stopped being
-    worth opening.
-    """
-    if value is None:
-        return ["null"]
-    if isinstance(value, bool):
-        return ["true" if value else "false"]
-    if isinstance(value, (dict, list)):
-        return ["{}" if isinstance(value, dict) else "[]"]
-    text = str(value)
-    lines: list[str] = []
-    for raw in text.splitlines() or [""]:
-        lines.extend(_wrapped(raw))
-    return lines or [""]
-
-
-def _wrapped(line: str) -> list[str]:
-    """One line, folded at a readable width rather than cut."""
-    if len(line) <= _WRAP_AT:
-        return [line]
-    return [line[start : start + _WRAP_AT] for start in range(0, len(line), _WRAP_AT)]
 
 
 class RichLogger:
@@ -518,7 +452,9 @@ class LoggerFactory:
         cls,
         level: str,
     ) -> logging.Handler:
+        settings = get_settings().logging
         handler = RichHandler(
+            console=Console(theme=Theme(settings.console_theme)),
             markup=True,
             rich_tracebacks=True,
             show_time=True,
@@ -530,7 +466,7 @@ class LoggerFactory:
 
         handler.setFormatter(
             logging.Formatter(
-                "%(message)s",
+                settings.console_format,
                 datefmt="[%X]",
             )
         )

@@ -1,5 +1,0 @@
-# Ablation: only layer 3 (the quarantined extractor reads raw pages).
-features:
-  injection_structural: false
-  injection_classifier: false
-  quarantined_extractor: true

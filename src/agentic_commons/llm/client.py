@@ -2,7 +2,7 @@
 
 import time
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, omit
 from openai.types.chat import (
@@ -15,7 +15,12 @@ from openai.types.chat import (
 )
 
 from agentic_commons.config import get_settings
-from agentic_commons.config.settings import LLMProviderSettings, LLMSettings, ProviderName
+from agentic_commons.config.settings import (
+    LLMProviderSettings,
+    LLMSettings,
+    ProviderAdapter,
+    ProviderName,
+)
 from agentic_commons.llm.http import create_sdk_http_client
 from agentic_commons.llm.types import (
     CompletionRequest,
@@ -26,6 +31,9 @@ from agentic_commons.llm.types import (
     TokenUsage,
 )
 from agentic_commons.llm.typography import TypographyNormaliser
+
+if TYPE_CHECKING:
+    from agentic_commons.llm.observer import ModelCallObserver
 from agentic_commons.logging import get_logger
 
 _PLACEHOLDER_API_KEY = "not-needed"
@@ -93,20 +101,21 @@ def _tool_calls_from(raw: Any) -> list[ModelToolCall] | None:
 class OpenAICompatibleClient(LLMClient):
     """Adapter for any OpenAI-compatible chat/completions endpoint.
 
-    NVIDIA NIM and a local llama.cpp server both speak this wire format, so
-    the provider is a configuration value rather than a separate code path;
-    `NvidiaNimClient` and `LocalLlamaCppClient` differ only in which config
-    section and API key they bind to.
+    A hosted catalogue and a local llama.cpp server both speak this wire format, so
+    the provider is a configuration value rather than a separate code path: which
+    `llm.providers` entry a client binds to is its `provider` (the configured default when
+    none is named), and the entry's `adapter` picks `HostedClient` or
+    `GrammarConstrainedClient`, which differ only in how they ask for structured output.
     """
-
-    provider_name: ProviderName = "nim"
 
     def __init__(
         self,
         settings: LLMSettings | None = None,
         client: AsyncOpenAI | None = None,
+        provider: ProviderName | None = None,
     ) -> None:
         self._settings = settings or get_settings().llm
+        self.provider_name: ProviderName = provider or self._settings.provider
         self._provider: LLMProviderSettings = self._settings.provider_settings(self.provider_name)
         self._logger = get_logger("llm")
         self._typography = TypographyNormaliser(self._settings.output_normalisation)
@@ -282,31 +291,27 @@ class OpenAICompatibleClient(LLMClient):
         return HealthCheckResult(healthy=True, latency_ms=(time.perf_counter() - started) * 1000)
 
 
-class NvidiaNimClient(OpenAICompatibleClient):
-    """NVIDIA NIM cloud provider."""
-
-    provider_name: ProviderName = "nim"
+class HostedClient(OpenAICompatibleClient):
+    """A hosted OpenAI-compatible catalogue (`adapter: hosted`)."""
 
     def _structured_output_kwargs(self, request: CompletionRequest) -> dict[str, Any]:
-        """Do not send unsupported guided-decoding fields to NVIDIA API Catalog.
+        """Send no guided-decoding fields: hosted catalogues reject them.
 
-        The configured NVIDIA hosted model accepts the OpenAI-compatible chat
-        completion request, but rejects the legacy ``nvext.guided_json``
-        extension with HTTP 400. Structured output is therefore validated
-        after generation by the provider-neutral Pydantic/response guardrails.
+        The hosted models accept the OpenAI-compatible chat completion request
+        but reject guided-decoding extensions with HTTP 400. Structured output
+        is therefore validated after generation by the provider-neutral
+        Pydantic/response guardrails.
         """
         return {}
 
 
-class LocalLlamaCppClient(OpenAICompatibleClient):
-    """Local llama.cpp-style server.
+class GrammarConstrainedClient(OpenAICompatibleClient):
+    """A local llama.cpp-style server (`adapter: grammar`).
 
     llama.cpp enforces `response_format.json_schema` with a real GBNF
     grammar, so this is the backend that can actually guarantee structurally
     valid output (see guardrails.constrained_backend).
     """
-
-    provider_name: ProviderName = "local"
 
     def _structured_output_kwargs(self, request: CompletionRequest) -> dict[str, Any]:
         if not request.json_schema:
@@ -319,29 +324,43 @@ class LocalLlamaCppClient(OpenAICompatibleClient):
         }
 
 
-_PROVIDER_CLIENTS: dict[ProviderName, type[OpenAICompatibleClient]] = {
-    "nim": NvidiaNimClient,
-    "local": LocalLlamaCppClient,
+_ADAPTERS: dict[ProviderAdapter, type[OpenAICompatibleClient]] = {
+    "hosted": HostedClient,
+    "grammar": GrammarConstrainedClient,
 }
 
 
+def _client_for(settings: LLMSettings, provider: ProviderName) -> OpenAICompatibleClient:
+    """The adapter the provider's entry names, bound to that entry."""
+    adapter = _ADAPTERS[settings.provider_settings(provider).adapter]
+    return adapter(settings, provider=provider)
+
+
 def create_llm_client(
-    settings: LLMSettings | None = None, provider: ProviderName | None = None
+    settings: LLMSettings | None = None,
+    provider: ProviderName | None = None,
+    observer: "ModelCallObserver | None" = None,
 ) -> LLMClient:
     """Build the configured LLM client (Factory).
 
-    Returns a cascading client when `llm.cascade.enabled` is set, otherwise
-    the single configured provider's adapter.
+    Returns a cascading client when `llm.cascade.enabled` is set; otherwise the configured
+    provider's model, protected by the platform's resilience stack and backed up by
+    `llm.chain.fallbacks` (`ModelChainBuilder`) — so even a plain call has a second model.
     """
+    from agentic_commons.config.settings import ModelRef
     from agentic_commons.llm.cascade import CascadingLLMClient
+    from agentic_commons.llm.chain import ModelChainBuilder
 
     resolved = settings or get_settings().llm
     if provider is None and resolved.cascade.enabled:
-        tiers: list[LLMClient] = [
-            _PROVIDER_CLIENTS[name](resolved) for name in resolved.cascade.tiers
-        ]
+        tiers: list[LLMClient] = [_client_for(resolved, name) for name in resolved.cascade.tiers]
         return CascadingLLMClient(tiers, resolved.cascade)
-    return _PROVIDER_CLIENTS[provider or resolved.provider](resolved)
+    name = provider or resolved.provider
+    primary = ModelRef(provider=name, model=resolved.provider_settings(name).model)
+    builder = ModelChainBuilder(
+        lambda p, m: create_pinned_llm_client(p, m, resolved), observer, resolved
+    )
+    return builder.build(primary, resolved.chain, label=name)
 
 
 def create_pinned_llm_client(
@@ -355,4 +374,4 @@ def create_pinned_llm_client(
     resolved = settings or get_settings().llm
     pinned = resolved.provider_settings(provider).model_copy(update={"model": model})
     overridden = resolved.model_copy(update={"providers": {**resolved.providers, provider: pinned}})
-    return _PROVIDER_CLIENTS[provider](overridden)
+    return _client_for(overridden, provider)

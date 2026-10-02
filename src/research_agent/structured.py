@@ -6,11 +6,14 @@ role is routed to its configured model; the answer is validated against
 the role's Pydantic schema by the platform guardrail (repair is mechanical
 and bounded, failure is loud); and the tokens spent are charged to the
 run's budget and reported to the live feed.
+
+Resilience is not here. Each role's client is already protected by the platform
+(`RoleModelRouter` → `ModelChainBuilder`): every model behind its own retry, breaker and
+timeout, and backup models when one fails or is slow. This class only asks, validates and
+accounts.
 """
 
-import asyncio
 import time
-import uuid
 from collections import defaultdict
 from collections.abc import Mapping
 from typing import Any, Protocol, TypeVar, runtime_checkable
@@ -23,7 +26,8 @@ from agentic_commons.llm.client import LLMClient
 from agentic_commons.llm.types import CompletionRequest, CompletionResult, Message
 from agentic_commons.logging import describe_error, get_logger
 from agentic_commons.observability import StageReporter
-from agentic_commons.resilience import ResilientCaller
+from agentic_commons.resilience import AsyncTimeoutGuard
+from agentic_commons.text_tree import value_lines
 from research_agent.domain.budget import TOKENS
 from research_agent.narration import say, title_of, toned
 from research_agent.prompts.base import RolePrompt
@@ -31,8 +35,6 @@ from research_agent.prompts.base import RolePrompt
 T = TypeVar("T", bound=BaseModel)
 
 LLM_STAGE = "llm_call"
-# The dependency name of a role's resilience stack (retry with backoff, circuit breaker, bulkhead).
-RESILIENCE_PREFIX = "research_llm_"
 # The provider's finish reason when the output hit its token cap.
 TRUNCATED = "length"
 # ...and when it ended normally.
@@ -40,7 +42,7 @@ FINISHED = "stop"
 
 
 class ModelCallTimeoutError(RuntimeError):
-    """A model call did not return within its own time limit."""
+    """A model call did not return before its caller's deadline (the direct answer's clock)."""
 
     def __init__(self, role: str, seconds: float) -> None:
         super().__init__(f"'{role}' did not respond within {seconds:.0f}s")
@@ -72,13 +74,8 @@ class StructuredCaller:
         role_max_tokens: Mapping[str, int] | None = None,
         truncation_retries: int = 0,
         truncation_retry_factor: float = 2.0,
-        role_timeout_seconds: Mapping[str, float] | None = None,
-        timeout_retries: int = 0,
     ) -> None:
         self._clients = clients
-        self._role_timeouts = dict(role_timeout_seconds or {})
-        self._timeout_retries = timeout_retries
-        self._resilient: dict[str, ResilientCaller] = {}
         self._role_max_tokens = dict(role_max_tokens or {})
         self._retries = truncation_retries
         self._retry_factor = truncation_retry_factor
@@ -136,76 +133,41 @@ class StructuredCaller:
     ) -> CompletionResult:
         """One free-form model call (tool calling allowed), reported and metered like any role.
 
-        Not charged to the research run's budget: the caller keeps its own. A call that does not
-        return within `timeout` seconds raises `ModelCallTimeoutError`. A `quiet` call is logged
+        Not charged to the research run's budget: the caller keeps its own. `timeout` is the
+        caller's deadline (what is left of its own clock), not the model's resilience — a call
+        still running when it passes raises `ModelCallTimeoutError`. A `quiet` call is logged
         and metered but draws no card: its caller shows the call on a card of its own.
         """
         cap = max_tokens if max_tokens is not None else self._role_max_tokens.get(role)
         request = CompletionRequest(
             messages=messages, tools=tools, temperature=temperature, max_tokens=cap
         )
+        client = self._clients.client_for(role)
+        if timeout is None:
+            return await self._send(client, role, request, False, quiet=quiet)
         try:
-            return await self._send(
-                self._clients.client_for(role), role, request, timeout, False, quiet=quiet
+            return await AsyncTimeoutGuard().run(
+                lambda: self._send(client, role, request, False, quiet=quiet), timeout
             )
-        except ModelCallTimeoutError as exc:
-            self._stalled(role, exc.seconds, final=True)
-            raise
+        except TimeoutError as exc:
+            raise ModelCallTimeoutError(role, timeout or 0.0) from exc
 
     async def _attempt(
         self, client: LLMClient, prompt: RolePrompt, schema: type[T], cap: int | None
     ) -> CompletionResult:
-        """One structured model call, charged to the budget and the role's meter.
-
-        A call that does not return in its role's time is cancelled and tried again (it is a
-        pure read), up to `timeout_retries` times; each stall is a card on the feed.
-        """
+        """One structured model call, charged to the budget and the role's meter."""
         request = CompletionRequest(
             messages=prompt.messages(schema),
             json_schema=schema.model_json_schema(),
             max_tokens=cap,
         )
-        timeout = self._role_timeouts.get(prompt.role, self._role_timeouts.get("default"))
-        for attempt in range(self._timeout_retries + 1):
-            try:
-                return await self._send(client, prompt.role, request, timeout, True)
-            except ModelCallTimeoutError as exc:
-                final = attempt == self._timeout_retries
-                self._stalled(prompt.role, exc.seconds, final)
-                if final:
-                    raise
-        raise AssertionError("unreachable")  # pragma: no cover
-
-    async def _complete(
-        self, client: LLMClient, role: str, request: CompletionRequest, timeout: float | None
-    ) -> CompletionResult:
-        """The call itself: through the role's retry and breaker when it has a time limit.
-
-        A provider error (a 500, a dropped connection) is retried with backoff inside the
-        role's time limit; the limit still bounds everything, so a stall ends where it always did.
-        """
-        if timeout is None:
-            return await client.complete(request)
-        stack = self._resilient.setdefault(role, ResilientCaller(f"{RESILIENCE_PREFIX}{role}"))
-        return await stack.call(
-            lambda: client.complete(request),
-            idempotency_key=f"{role}:{uuid.uuid4().hex}",
-            timeout_seconds=timeout,
-        )
-
-    def _stalled(self, role: str, seconds: float, final: bool) -> None:
-        key = "llm.timeout_final" if final else "llm.timeout_retry"
-        summary = say(key, role=title_of(role), seconds=f"{seconds:.0f}")
-        self._logger.warning("Model call stalled", role=role, seconds=seconds, final=final)
-        if self._reporter is not None:
-            self._reporter.emit(LLM_STAGE, "failed", event_kind="narrative", summary=summary)
+        return await self._send(client, prompt.role, request, True)
 
     async def _send(
         self,
         client: LLMClient,
         role: str,
         request: CompletionRequest,
-        timeout: float | None,
         charge: bool,
         quiet: bool = False,
     ) -> CompletionResult:
@@ -214,10 +176,7 @@ class StructuredCaller:
             # The live status line names what is being waited for, per role.
             self._reporter.started(f"{LLM_STAGE}_{role}")
         try:
-            async with asyncio.timeout(timeout):
-                result = await self._complete(client, role, request, timeout)
-        except TimeoutError as exc:
-            raise ModelCallTimeoutError(role, timeout or 0.0) from exc
+            result = await client.complete(request)
         except Exception as exc:
             self._failed(role, exc)
             raise
@@ -283,7 +242,8 @@ class StructuredCaller:
     def _card_sections(model: str, response: str, finish_reason: str) -> dict[str, object]:
         sections: dict[str, object] = {
             say("llm.section.model"): [model],
-            say("llm.section.response"): response.splitlines() or [say("llm.empty")],
+            # A structured answer reads as a tree of its own fields, never as JSON.
+            say("llm.section.response"): value_lines(response) if response else [say("llm.empty")],
         }
         if finish_reason == TRUNCATED:
             sections[say("llm.section.finish")] = [toned(say("llm.cut_off"), "fail")]

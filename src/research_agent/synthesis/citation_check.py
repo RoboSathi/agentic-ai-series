@@ -2,7 +2,7 @@
 
 A sentence citing an id the ledger never issued is a fabricated citation.
 It is removed from the draft (and counted), so the delivered report can
-only point at evidence that exists; the Goldfish Audit re-checks the same
+only point at evidence that exists; the Independent Audit re-checks the same
 rule independently on what is delivered.
 """
 

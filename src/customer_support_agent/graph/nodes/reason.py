@@ -34,9 +34,7 @@ class ReasoningNodes(NodeSupport):
         )
         self._report_llm_request(request, purpose="tool_selection")
         try:
-            result = await self._call_model(
-                request, state, f"{state.session_id}:{state.tool_rounds}"
-            )
+            result = await self._call_model(request, state)
         except Exception as exc:
             error_fields = external_api_error_fields(exc)
             self._done_failed(
@@ -44,7 +42,7 @@ class ReasoningNodes(NodeSupport):
                 summary="LLM unavailable after retries",
                 event_kind="resilience",
                 fields={
-                    "dependency": self._resilient.name,
+                    "dependency": self._llm.model,
                     **(error_fields or {}),
                     **({"reason": str(exc)} if not error_fields else {}),
                 },
@@ -72,30 +70,18 @@ class ReasoningNodes(NodeSupport):
             },
         }
 
-    async def _call_model(
-        self, request: CompletionRequest, state: AgentState, key: str
-    ) -> CompletionResult:
-        """One model call, protected and traced.
+    async def _call_model(self, request: CompletionRequest, state: AgentState) -> CompletionResult:
+        """One model call, traced.
 
-        The retry key includes the round so two genuinely different turns
-        are not mistaken for a repeat of one — an idempotency key that is
-        too coarse suppresses work that should happen.
+        Its protection — retry with backoff, circuit breaker, per-attempt timeout and a backup
+        model — is the client's own (`create_llm_client` → `ModelChainBuilder`), so the node
+        never wraps the model again: a second retry layer here would multiply the attempts.
         """
-
-        async def call() -> CompletionResult:
-            return await self._llm.complete(request)
-
-        attempts_before = self._resilient.attempts
         try:
-            result = await self._resilient.call(call, idempotency_key=key)
+            result = await self._llm.complete(request)
         except Exception as exc:
             error_fields = external_api_error_fields(exc)
-            self._note_recovery(
-                state,
-                attempts_before,
-                succeeded=False,
-                error_fields=error_fields,
-            )
+            self._note_recovery(state, attempts=0, succeeded=False, error_fields=error_fields)
             self._done_failed(
                 "llm_response_received",
                 summary="LLM call failed",
@@ -105,14 +91,14 @@ class ReasoningNodes(NodeSupport):
             if error_fields:
                 self._logger.error("LLM API call failed", **error_fields)
             raise
-        self._note_recovery(state, attempts_before, succeeded=True)
+        self._note_recovery(state, attempts=result.attempts, succeeded=True)
         self._account_for(result, state)
         return result
 
     def _note_recovery(
         self,
         state: AgentState,
-        attempts_before: int,
+        attempts: int,
         succeeded: bool,
         error_fields: dict[str, Any] | None = None,
     ) -> None:
@@ -123,8 +109,9 @@ class ReasoningNodes(NodeSupport):
         and counting it as a success would report a recovery rate of
         100% for a system that has never had to recover.
         """
-        attempts = self._resilient.attempts - attempts_before
-        if attempts <= 1:
+        # A failed call exhausted its retries (and its backups) by definition; a successful one
+        # recovered only when it took more than one attempt.
+        if succeeded and attempts <= 1:
             return
         metadata = state.metadata
         metadata["recoveries_attempted"] = int(metadata.get("recoveries_attempted", 0)) + 1

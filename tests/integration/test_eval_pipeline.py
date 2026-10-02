@@ -60,7 +60,7 @@ REFUND_90001 = [
 def security_off(monkeypatch: pytest.MonkeyPatch) -> None:
     """No hosted guards or hosted embeddings in CI."""
     monkeypatch.setattr(get_settings().security.guards, "enabled", False)
-    monkeypatch.setattr(get_settings().llm.embedding, "provider", "local")
+    monkeypatch.setattr(get_settings().llm.embedding, "backend", "hashing")
 
 
 async def test_generate_oracle_and_reports(security_off: None) -> None:

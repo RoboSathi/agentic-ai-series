@@ -21,6 +21,19 @@ qa:
   - Who is the CEO of Nvidia?
   - What does the new GDPR fine decision say?
   - Top stories about open-source LLMs this month
+  # News and "impact of X" questions with a time window: a quick cited answer, not a report.
+  - Key news on AI's effect on hiring in the last 2 months
+  - Latest news about layoffs in the tech industry this quarter
+  - What are the important updates on AI regulation in the past 6 weeks?
+  - Recent news on how AI is affecting customer support jobs
+  - What has happened with GPU export controls in the last 3 months?
+  - Major announcements from Google about Gemini this month
+  - Top news on the impact of automation on manufacturing jobs this year
+  - Any important news on electric vehicle sales in India recently?
+  - What changed in the AI startup funding market in the last quarter?
+  - Biggest cybersecurity incidents reported in the past month
+  - News on remote work trends in the last 60 days
+  - What are people saying about the impact of AI coding assistants on developers lately?
 decision_support:
   - Help me choose a vector database for 10 million documents
   - Which should we pick, Kafka or Pulsar, for our event pipeline?

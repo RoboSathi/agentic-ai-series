@@ -80,9 +80,9 @@ flowchart TD
     wave_start -->|cancelled / budget| finalize
     reflect_gap_analysis -->|follow-ups| wave_start
     reflect_gap_analysis -->|stop rule met / nothing to add| synthesize
-    synthesize --> goldfish_audit
-    goldfish_audit -->|must-pass gaps, budget left| gap_fill
-    goldfish_audit -->|otherwise| finalize
+    synthesize --> independent_audit
+    independent_audit -->|must-pass gaps, budget left| gap_fill
+    independent_audit -->|otherwise| finalize
     gap_fill -->|targeted nodes| wave_start
     gap_fill -->|nothing to try| finalize
     finalize --> archive --> END([end])
@@ -92,7 +92,7 @@ flowchart TD
   commons `TaskGraph` and fans out one `Send` per node; each
   `research_node` holds a slot of the `AsyncDagScheduler`'s semaphore; a
   checkpoint lands at every wave boundary.
-- With `goldfish_audit` withheld, `synthesize` goes straight to
+- With `independent_audit` withheld, `synthesize` goes straight to
   `finalize`; with `reflection` withheld the plan runs once.
 
 ## One research node (the worker)
@@ -128,15 +128,15 @@ flowchart LR
     worker --> extractor --> ledger[(Evidence Ledger)]
     ledger --> reflector
     ledger --> synthesizer --> report[Report]
-    contract & report & ledger --> goldfish{{Goldfish Audit<br/>isolated sub-graph}}
-    goldfish --> final[Coverage & Limits · status]
+    contract & report & ledger --> audit{{Independent Audit<br/>isolated sub-graph}}
+    audit --> final[Coverage & Limits · status]
     final --> archive[(brief · rubric · report artifacts<br/>+ run index)]
 ```
 
 Only the **extractor** reads raw page text. The planner, reflector and
 synthesizer see the contract, the ledger's verbatim claims and run
 bookkeeping — never a page (an oracle invariant, `no_raw_page_text`). The
-Goldfish sees exactly three inputs; `IsolatedGraphRunner` refuses any
+The independent audit sees exactly three inputs; `IsolatedGraphRunner` refuses any
 other key.
 
 ## Composition root

@@ -7,7 +7,7 @@
                  reflect_gap_analysis ── continue (follow-ups) ──► wave_start
                         │ stop
                         ▼
-                    synthesize → goldfish_audit ── must-pass gaps ──► gap_fill → wave_start
+                    synthesize → independent_audit ── must-pass gaps ──► gap_fill → wave_start
                                         │ (or audit withheld)
                                         ▼
                                     finalize → archive → END
@@ -30,11 +30,11 @@ from agentic_commons.scheduling import AsyncDagScheduler, TaskGraph
 from agentic_commons.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
 from research_agent.archive.store import ResearchArchive
 from research_agent.audit.context import CheckContext
-from research_agent.audit.goldfish import AuditResult, GoldfishAuditor
+from research_agent.audit.independent import AuditResult, IndependentAuditor
 from research_agent.audit.verdict import AuditVerdict, decide
 from research_agent.domain.budget import GAP_FILL_ROUNDS, ROUNDS, SEARCHES
 from research_agent.domain.plan import PlanDag, SubQuestion
-from research_agent.domain.report import Report, RunStatus
+from research_agent.domain.report import LimitEntry, Report, RunStatus
 from research_agent.graph.state import RunState
 from research_agent.narration import clip, say
 from research_agent.planning.ids import renumber
@@ -72,7 +72,7 @@ class RunParts:
     # The budget counters shown on a budget card's heading (the rest are in its expander).
     budget_headline: Sequence[str]
     reasons: Mapping[str, str]
-    auditor: GoldfishAuditor | None = None
+    auditor: IndependentAuditor | None = None
     reflection_enabled: bool = True
     # Per-role {tokens, seconds, calls} so far (`StructuredCaller.usage`); None: not tracked.
     usage: Callable[[], dict[str, dict[str, float]]] | None = None
@@ -441,14 +441,25 @@ class RunNodes:
         truncated = truncated_by_budget(r.budget.exhausted_counters())
         return "PARTIAL" if truncated or unmet_must_pass(verdicts) else "COMPLETE"
 
-    async def goldfish_audit(self, state: RunState) -> Update:
+    async def independent_audit(self, state: RunState) -> Update:
         if self._p.auditor is None:
             return {"audit": None}
         report = state["report"]
         assert report is not None
-        audit = await self._p.auditor.audit_report(state["contract"], report, state["ledger"])
+        try:
+            audit = await self._p.auditor.audit_report(state["contract"], report, state["ledger"])
+        except Exception as exc:
+            return self._audit_failed(describe_error(exc))
         self._report_audit(audit, state["contract"].rubric)
         return {"audit": audit}
+
+    def _audit_failed(self, error: str) -> Update:
+        """The audit could not run: deliver the report unverified, never fail the run for it."""
+        r = self.resources
+        note = say("audit.unavailable", error=error)
+        r.telemetry.card("independent_audit", note, status="warning")
+        r.telemetry.audit("audit.independent", "escalate", note)
+        return {"audit": None, "audit_error": error}
 
     def _verdict(self, verdicts: list[CheckVerdict], rubric: Any) -> AuditVerdict:
         return decide(verdicts, rubric, self._p.pass_threshold, self._p.partial_threshold)
@@ -475,13 +486,13 @@ class RunNodes:
             self._p.clip_chars,
         )
         r.telemetry.card(
-            "goldfish_audit",
+            "independent_audit",
             heading,
             sections,
             status="completed" if result.outcome == "PASS" else "warning",
         )
         r.telemetry.audit(
-            "audit.goldfish",
+            "audit.independent",
             "allow" if not audit.must_pass_gaps else "escalate",
             f"must-pass gaps: {audit.must_pass_gaps}; unflagged: {audit.unflagged_gaps}; false limits: {audit.false_limits}",
         )
@@ -565,6 +576,8 @@ class RunNodes:
             return "CANCELLED"
         if state.get("status") == "FAILED":
             return "FAILED"
+        if state.get("audit_error"):
+            return "PARTIAL"  # nothing verified the report: never call it COMPLETE
         truncated = truncated_by_budget(r.budget.exhausted_counters())
         verdict = self._verdict(self._final_verdicts(state), state["contract"].rubric)
         # PARTIAL means the weighted score fell short, a must-pass criterion is unmet, or the
@@ -608,6 +621,12 @@ class RunNodes:
             if state.get("audit") is not None
             else report.limits
         )
+        error = state.get("audit_error")
+        if error:
+            unverified = LimitEntry(
+                item_id="independent_audit", text=say("audit.unavailable", error=error)
+            )
+            limits = [*limits, unverified]
         return self._p.synthesizer.with_limits(report, state["ledger"], limits, r.trace, status)
 
     def _final_card(

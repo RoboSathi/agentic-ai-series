@@ -16,7 +16,6 @@ from rich.markup import escape
 from agentic_commons.commands.types import Command
 from agentic_commons.config import FeatureSet, get_settings
 from agentic_commons.host import HostAction
-from agentic_commons.logging import get_logger
 from agentic_commons.observability import StageReporter
 from research_agent.config import get_agent_settings
 from research_agent.console.commands import (
@@ -28,8 +27,6 @@ from research_agent.console.commands import (
 from research_agent.console.greeting import build_greeting
 from research_agent.console.setup import missing_model_key, search_warning
 from research_agent.narration import say, title_of
-
-_STATUS_STYLE = {"covered": "green", "waived": "yellow", "open": "white"}
 
 
 class ResearchHost:
@@ -45,21 +42,15 @@ class ResearchHost:
         settings, agent = get_settings(), get_agent_settings()
         warning = search_warning(settings, agent)
         notes = [warning] if warning is not None else []
-        return build_greeting(settings, agent, notes)
+        return build_greeting(agent, notes)
 
     def prepare(self) -> None:
-        """Stop on a missing live credential; record the fixture world; warm the local models."""
+        """Stop on a missing live credential; warm the local models."""
         settings, agent = get_settings(), get_agent_settings()
         problem = missing_model_key(settings, agent)
         if problem is not None:
             raise SystemExit(problem)
-        if settings.web.mode == "replay" and agent.model_backend == "fixture":
-            from research_agent.fixture_world.generate import ensure_recorded
-
-            fixtures = ensure_recorded()
-            get_logger("research_agent").info("Fixture world ready", path=str(fixtures.folder))
-        if agent.model_backend != "fixture":
-            self._preload_local_models(agent.audit.entailment_model == "platform")
+        self._preload_local_models(agent.audit.entailment_model == "platform")
 
     @staticmethod
     def _preload_local_models(nli: bool) -> None:
@@ -155,7 +146,11 @@ class ResearchHost:
         ]
 
     def status_lines(self, session_id: str) -> tuple[Sequence[str], Sequence[str]]:
-        """Always: phase, coverage and evidence in a line or two; expanded: the full lists."""
+        """Nothing always shown: phase, coverage, evidence, budget and the checklist expand.
+
+        The status line keeps one line (the current stage); everything about the run in
+        progress sits behind its marker, so the feed above it keeps the room.
+        """
         if self.agent is None:
             return [], []
         state = self.agent.panel_state(session_id)
@@ -163,30 +158,27 @@ class ResearchHost:
             return [], []  # nothing in progress yet: no phase to report
         styles = get_agent_settings().tui
         phase = state["phase"]
-        summary = [
-            _styled(say("status.phase", phase=phase), styles.phase_colors.get(phase, "bold"))
-        ]
-        detail: list[str] = []
+        detail = [_styled(say("status.phase", phase=phase), styles.phase_colors.get(phase, "bold"))]
         items: list[tuple[str, str]] = state.get("items") or []
         if items:
-            summary.append(_styled(_coverage_line(items), styles.status_line_styles["coverage"]))
-            detail += _checklist_lines(items)
+            detail.append(_styled(_coverage_line(items), styles.status_line_styles["coverage"]))
         budget = state.get("budget")
         if budget:
             evidence = say(
                 "status.evidence", n=state.get("ledger", 0), rejected=state.get("rejected", 0)
             )
-            summary.append(_styled(evidence, styles.status_line_styles["evidence"]))
+            detail.append(_styled(evidence, styles.status_line_styles["evidence"]))
             meters = [_meter(name, spent, cap) for name, (spent, cap) in budget.items()]
             budget_line = say("status.budget", meters=" · ".join(meters))
-            summary.append(_styled(budget_line, styles.status_line_styles["budget"]))
-            detail += [f"[bold]{say('status.detail.budget')}[/bold]", *[f"  {m}" for m in meters]]
-        return summary, detail
+            detail.append(_styled(budget_line, styles.status_line_styles["budget"]))
+        if items:
+            detail += _checklist_lines(items)
+        return [], detail
 
 
 def _styled(text: str, style: str) -> str:
-    """`text` as Rich markup in `style`."""
-    return f"[{style}]{escape(text)}[/]"
+    """`text` as Rich markup in `style` (plain when there is no style)."""
+    return f"[{style}]{escape(text)}[/]" if style else escape(text)
 
 
 def _coverage_line(items: list[tuple[str, str]]) -> str:
@@ -199,7 +191,8 @@ def _coverage_line(items: list[tuple[str, str]]) -> str:
 def _checklist_lines(items: list[tuple[str, str]]) -> list[str]:
     lines = [f"[bold]{say('status.detail.checklist')}[/bold]"]
     for item_id, status in items:
-        lines.append(f"  [{_STATUS_STYLE.get(status, 'white')}]{status:<8}[/] {title_of(item_id)}")
+        style = get_agent_settings().tui.checklist_styles.get(status, "")
+        lines.append(f"  {_styled(f'{status:<8}', style)} {escape(title_of(item_id))}")
     return lines
 
 

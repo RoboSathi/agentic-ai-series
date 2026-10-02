@@ -17,7 +17,6 @@ pytestmark = pytest.mark.skipif(shutil.which("make") is None, reason="make is no
 
 CSA_OVERLAY = "src/customer_support_agent/config/config.yaml"
 RA_OVERLAY = "src/research_agent/config/config.yaml"
-RA_DEMO = f"{RA_OVERLAY}:src/research_agent/config/profiles/demo.yaml"
 
 
 def _env() -> dict[str, str]:
@@ -75,14 +74,15 @@ class TestTheAgentIsNamed:
 
 
 class TestProfiles:
-    def test_the_console_is_live_unless_a_profile_is_named(self) -> None:
+    def test_the_console_runs_the_agents_own_overlay(self) -> None:
         assert _exported("tui", "ra") == RA_OVERLAY
-        assert _exported("tui", "ra", "PROFILE=demo") == RA_DEMO
 
-    @pytest.mark.parametrize("target", ["eval", "eval-oracle", "data"])
-    def test_evals_and_data_are_always_offline(self, target: str) -> None:
-        assert _exported(target, "ra") == RA_DEMO
-        assert _exported(target, "ra", "PROFILE=anything") == RA_DEMO
+    @pytest.mark.parametrize(
+        ("target", "said"), [("eval", "no eval suite"), ("data", "no generated data")]
+    )
+    def test_an_agent_without_evals_or_data_says_so(self, target: str, said: str) -> None:
+        result = _make(target, "ra", dry=False)
+        assert result.returncode != 0 and said in result.stdout
 
     def test_csa_has_no_offline_profile(self) -> None:
         assert _exported("eval-oracle", "csa") == CSA_OVERLAY
@@ -97,7 +97,7 @@ class TestTargetsKeepTheirBehaviour:
         assert "-m agentic_commons.tui" in _make("tui", "csa").stdout
 
     def test_eval_options_still_pass_through(self) -> None:
-        out = _make("eval", "ra", "FRESH=1", "LIMIT=2", "CASE=c1", "TAG=t").stdout
+        out = _make("eval", "csa", "FRESH=1", "LIMIT=2", "CASE=c1", "TAG=t").stdout
         assert "run --fresh --limit 2 --case c1 --tag t" in out
 
     def test_run_option_reaches_the_graders(self) -> None:
@@ -107,7 +107,6 @@ class TestTargetsKeepTheirBehaviour:
         assert (
             "customer_support_agent.dummy_data.generate_dummy_data" in _make("data", "csa").stdout
         )
-        assert "research_agent.fixture_world.generate" in _make("data", "ra").stdout
 
     def test_csa_admin_targets_name_their_agent(self) -> None:
         out = _make("refund-limit", "100").stdout

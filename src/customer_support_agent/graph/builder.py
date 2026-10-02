@@ -65,6 +65,7 @@ from agentic_commons.observability import (
     SLORegistry,
     StageReporter,
 )
+from agentic_commons.observability.model_observer import StageReporterModelObserver
 from agentic_commons.observability.tracer import LocalTracer
 from agentic_commons.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agentic_commons.resilience import CompensatingSaga, DeadLetterQueue, SqliteIdempotencyGuard
@@ -428,7 +429,7 @@ def build_agent(
     )
 
     return CustomerSupportAgent(
-        llm=llm or create_llm_client(),
+        llm=llm or create_llm_client(observer=StageReporterModelObserver(lambda: reporter)),
         gatekeeper=governed,
         # Only a Gatekeeper escalates, so only a governed agent refers.
         referral=ReviewReferral(tools) if governed is not None else None,

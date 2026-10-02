@@ -11,7 +11,7 @@ import httpx
 from agentic_commons.config import get_settings
 from agentic_commons.config.settings import WebMode, WebSettings
 from agentic_commons.llm.http import create_http_client
-from agentic_commons.resilience import ResilientCaller
+from agentic_commons.resilience import ExponentialBackoffRetry, ResilientCaller
 from agentic_commons.resilience.rate_limiter import get_rate_limiter
 from agentic_commons.web.cache import SearchCache
 from agentic_commons.web.fetcher import FallbackFetcher, HttpFetcher, ReaderFetcher
@@ -44,7 +44,10 @@ def create_web_gateway(
         provider=create_search_router(resolved, client),
         fetcher=FallbackFetcher(HttpFetcher(resolved.fetch, client), reader, resolved.fetch),
         fixtures=fixtures if chosen == "record" else None,
-        fetch_caller=ResilientCaller(_FETCH_DEPENDENCY),
+        fetch_caller=ResilientCaller(
+            _FETCH_DEPENDENCY,
+            retry=ExponentialBackoffRetry(max_attempts=resolved.fetch.max_attempts),
+        ),
         observer=observer,
         cache=SearchCache(resolved.search.resolved_cache_dir, resolved.search.cache_ttl_hours),
     )
