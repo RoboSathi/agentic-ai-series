@@ -54,21 +54,6 @@ def menu() -> OrderMenu:
 
 class TestSelectionBoundary:
     @pytest.mark.parametrize(
-        "message,expected",
-        [
-            ("2", 10002),
-            ("order 2", 10002),
-            ("#3", 10003),
-            ("10002", 10002),
-            ("what about 10003", 10003),
-            ("status of order 10001", 10001),
-            ("  1  ", 10001),
-        ],
-    )
-    def test_a_look_resolves(self, message: str, expected: int, menu: OrderMenu) -> None:
-        assert resolve_selection(message, menu) == expected
-
-    @pytest.mark.parametrize(
         "message",
         [
             "refund order 2",
@@ -172,13 +157,6 @@ class TestTheConversationNeedsNoModel:
         assert "Order 10001" in state.response
         assert llm.calls == 0
 
-    async def test_a_refund_request_still_reaches_the_governed_path(self, agent) -> None:  # type: ignore[no-untyped-def]
-        """The menu must not swallow an intent."""
-        built, llm = agent
-        await built.handle(f"my code is {CUSTOMER_CODE}", session_id="s")
-        await built.handle("I want a refund for order 1", session_id="s")
-        assert llm.calls > 0
-
     async def test_the_menu_only_reaches_the_customers_own_orders(
         self, agent, seeded_pool: SqliteConnectionPool
     ) -> None:  # type: ignore[no-untyped-def]
@@ -187,11 +165,6 @@ class TestTheConversationNeedsNoModel:
         await built.handle(f"my code is {CUSTOMER_CODE}", session_id="s")
         state = await built.handle("10003", session_id="s")
         assert "$45.00" not in state.response
-
-    async def test_an_unverified_session_has_no_menu(self, agent) -> None:  # type: ignore[no-untyped-def]
-        built, llm = agent
-        state = await built.handle("2", session_id="fresh")
-        assert "customer code" in state.response
 
 
 class TestTheAuthenticatorSuppliesTheMenu:

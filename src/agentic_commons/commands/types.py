@@ -34,6 +34,13 @@ class ConsoleEffect(BaseModel):
     # opened after a crash is on a fresh session; resuming a run from the
     # old one should leave the operator talking in the old one.
     session_id: str = ""
+    # Hand this line to the agent as a conversation turn. Most commands
+    # are an operator asking the harness about itself and never reach the
+    # agent; a few are *conversational acts* the agent itself must see
+    # (ending an interview, approving a contract). The command validates
+    # and forwards, so there is still exactly one way a turn reaches the
+    # agent: `handle()`.
+    agent_turn: str = ""
 
 
 class CommandRow(BaseModel):

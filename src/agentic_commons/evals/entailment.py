@@ -9,6 +9,8 @@ answers the question is a hosted cross-encoder
 that cannot be reached.
 """
 
+import re
+from collections.abc import Iterable
 from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel
@@ -68,6 +70,7 @@ class LexicalEntailmentModel:
         settings = get_settings().evals.nli
         self._min_overlap = settings.min_overlap
         self._negations = {marker.casefold() for marker in settings.negation_markers}
+        self._negation = negation_pattern(self._negations)
 
     @property
     def model_name(self) -> str:
@@ -87,7 +90,9 @@ class LexicalEntailmentModel:
                 calibrated=False,
             )
         same_polarity = self._is_negated(premise) == self._is_negated(hypothesis)
-        label = "entailment" if same_polarity else "contradiction"
+        label: Literal["entailment", "contradiction"] = (
+            "entailment" if same_polarity else "contradiction"
+        )
         return EntailmentResult(
             label=label,
             entailed=same_polarity,
@@ -108,9 +113,22 @@ class LexicalEntailmentModel:
         return len(hypothesis_tokens & premise_tokens) / len(hypothesis_tokens)
 
     def _is_negated(self, text: str) -> bool:
-        """Whether the text carries a negation marker."""
-        lowered = text.casefold()
-        return any(marker in lowered for marker in self._negations)
+        """Whether the text carries a negation marker, as a word.
+
+        A substring test found "no" inside "announced", "economy" and "Now:", and read an
+        exact restatement as its opposite.
+        """
+        return bool(self._negation.search(text.casefold()))
+
+
+def negation_pattern(markers: Iterable[str]) -> re.Pattern[str]:
+    """Each marker as a whole word; a contraction ending ("n't") as the end of one."""
+    parts = [
+        rf"\b{re.escape(m)}\b" if m.isalnum() else rf"{re.escape(m)}\b"
+        for m in sorted(markers, key=len, reverse=True)
+        if m
+    ]
+    return re.compile("|".join(parts) or r"(?!)")
 
 
 # NLI checkpoints spell their labels ENTAILMENT/entailment and so on,

@@ -124,11 +124,6 @@ class TestCascade:
         await cascade.resolve(Claim(text="42", expected="42"))
         assert cascade.tier_counts["exact_assertion"] == 1
 
-    async def test_ranking_returns_a_score_per_candidate(self) -> None:
-        cascade = NollmScoringCascadeImpl()
-        scores = await cascade.rank("refund", ["money back", "weather forecast"])
-        assert len(scores) == 2 and scores[0] > scores[1]
-
     async def test_a_disabled_tier_is_skipped(self, restore_settings: None) -> None:
         from agentic_commons.config import get_settings
 

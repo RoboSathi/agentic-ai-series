@@ -64,8 +64,7 @@ _NO_LONGER = (
 _REVIEW_QUEUED: dict[str, str] = {
     "refund": "Refund of {amount} for order {order_id} has been queued for human review",
     "cancel_and_refund": (
-        "Cancellation of order {order_id} and its {amount} refund have been queued for "
-        "human review"
+        "Cancellation of order {order_id} and its {amount} refund have been queued for human review"
     ),
 }
 
@@ -233,7 +232,9 @@ class SupportTools:
         order = self._owned_order(order_id)
         if order is None:
             return ToolResult(success=False, error=_NOT_FOUND.format(order_id=order_id))
-        parcel = f", {order.whereabouts}" if order.is_trackable or order.estimated_delivery_date else ""
+        parcel = (
+            f", {order.whereabouts}" if order.is_trackable or order.estimated_delivery_date else ""
+        )
         tracking = (
             f", tracking {order.carrier} {order.tracking_number}"
             if order.tracking_number and order.carrier
@@ -245,8 +246,11 @@ class SupportTools:
                 f"Order {order.order_id}: {order.description}, {order.order_status}"
                 f"{parcel}{tracking}, total {order.amount}"
             ),
-            data={**order.model_dump(exclude={"amount", "unit_price"}),
-                  "amount": str(order.amount), "unit_price": str(order.unit_price)},
+            data={
+                **order.model_dump(exclude={"amount", "unit_price"}),
+                "amount": str(order.amount),
+                "unit_price": str(order.unit_price),
+            },
         )
 
     def get_refund_status(self, order_id: int) -> ToolResult:
@@ -333,8 +337,13 @@ class SupportTools:
                 f"{verb} {refund} for order {order_id}. "
                 + _REFUND_STATUS.format(order_id=order_id, status=status)
             ),
-            data={"order_id": order_id, "amount": str(refund), "amount_cents": refund.cents,
-                  "steps": result.completed, "refund_status": status},
+            data={
+                "order_id": order_id,
+                "amount": str(refund),
+                "amount_cents": refund.cents,
+                "steps": result.completed,
+                "refund_status": status,
+            },
         )
 
     def _settled_status(self, order_id: int) -> str:
@@ -386,7 +395,8 @@ class SupportTools:
         return ToolResult(
             success=True,
             output=(
-                _REVIEW_QUEUED[action].format(amount=requested, order_id=order_id) + ". "
+                _REVIEW_QUEUED[action].format(amount=requested, order_id=order_id)
+                + ". "
                 + _REFUND_STATUS.format(order_id=order_id, status=status)
             ),
             data={
@@ -418,7 +428,9 @@ class SupportTools:
             return ToolResult(success=False, error=validation.reason)
         previous = validation.order.order_status
         if not self._orders.set_order_status(order_id, _CANCELLED, expected=previous):
-            return ToolResult(success=False, error=_NO_LONGER.format(order_id=order_id, status=previous))
+            return ToolResult(
+                success=False, error=_NO_LONGER.format(order_id=order_id, status=previous)
+            )
         queued = self.queue_for_approval(order_id, amount, action="refund")
         if not queued.success:
             self._orders.set_order_status(order_id, previous, expected=_CANCELLED)
@@ -464,8 +476,7 @@ class CustomerSupportToolHandler(ToolExecutionHandler):
     def __init__(self, tools: SupportTools) -> None:
         self._tools = tools
         self._handlers = {
-            definition.qualified_name: definition.handler
-            for definition in tools.definitions()
+            definition.qualified_name: definition.handler for definition in tools.definitions()
         }
 
     async def execute(self, call: ToolCall) -> ToolResult:

@@ -1,0 +1,230 @@
+# Rubric templates, per archetype. The generator expands these against a
+# Scope Brief deterministically — no model call, no second interview:
+#
+#   template items      copied as they are (origin: template)
+#   per_subject items   one per option / claim / concept     (origin: criterion)
+#   per_criterion items one per user-stated criterion        (origin: criterion)
+#   rules (every archetype, rubric/generator.py)
+#     every known unknown  -> "acknowledged and bounded"    (origin: known_unknown)
+#     source policy        -> distinct-domain / blocked-domain checks (origin: source_policy)
+#     recency window       -> recency check                 (origin: source_policy)
+#     always               -> at least one cited finding    (origin: template)
+#
+# `{subject}` and `{criterion}` are substituted. Check kinds:
+#   deterministic  string/number rules over report + ledger (always run first)
+#   nli            claim -> quoted span entailment
+#   judge          a model's judgement, only where nothing cheaper decides
+
+defaults:
+  # How much a criterion counts toward the audit's weighted score; an item
+  # states its own `weight` where it matters more (or less) than this.
+  weight: 1
+  citations_per_claim: 1
+  # Every cited sentence must be entailed by a span it cites: one
+  # unsupported sentence among twenty is still a fabrication.
+  nli_support_threshold: 1.0
+
+decision_support:
+  template:
+    - text: Every option is assessed against every stated criterion.
+      check: {kind: deterministic, name: subject_criterion_coverage}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+    - text: Every factual sentence in the report cites collected evidence.
+      check: {kind: deterministic, name: citations_per_claim, params: {min_citations: 1}}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+    - text: Cited claims are supported by their quoted spans.
+      check: {kind: nli, name: claims_entailed}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+    - text: Where sources disagree, the counter-evidence is reported.
+      check: {kind: deterministic, name: counter_evidence_reported}
+      threshold: 1.0
+      must_pass: false
+    - text: The recommendation states its trade-offs fairly.
+      check: {kind: judge, name: tradeoffs_stated}
+      threshold: 0.7
+      must_pass: false
+  per_criterion:
+    - text: "Evidence on '{criterion}' is cited for each option."
+      check: {kind: deterministic, name: criterion_evidence, params: {min_citations: 1}}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+  stop_rule: every_subject_scored
+
+landscape_brief:
+  template:
+    - text: The map names at least three distinct players.
+      check: {kind: deterministic, name: distinct_subjects, params: {min_subjects: 3}}
+      threshold: 1.0
+      weight: 2
+      must_pass: true
+    - text: Every factual sentence in the report cites collected evidence.
+      check: {kind: deterministic, name: citations_per_claim, params: {min_citations: 1}}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+    - text: Cited claims are supported by their quoted spans.
+      check: {kind: nli, name: claims_entailed}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+    - text: Sources span at least three independent domains.
+      check: {kind: deterministic, name: distinct_domains, params: {min_domains: 3}}
+      threshold: 1.0
+      must_pass: false
+  per_criterion:
+    - text: "Each player's '{criterion}' is described with a citation."
+      check: {kind: deterministic, name: criterion_evidence, params: {min_citations: 1}}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+  stop_rule: no_new_entities
+
+fact_verification:
+  template:
+    - text: Every factual sentence in the report cites collected evidence.
+      check: {kind: deterministic, name: citations_per_claim, params: {min_citations: 1}}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+    - text: Cited claims are supported by their quoted spans.
+      check: {kind: nli, name: claims_entailed}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+  per_subject:
+    - text: "The claim '{subject}' has a verdict backed by independent sources."
+      check: {kind: deterministic, name: claim_verdict, params: {min_sources: 2}}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+  stop_rule: every_claim_decided
+
+explainer:
+  template:
+    - text: Every factual sentence in the report cites collected evidence.
+      check: {kind: deterministic, name: citations_per_claim, params: {min_citations: 1}}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+    - text: Cited claims are supported by their quoted spans.
+      check: {kind: nli, name: claims_entailed}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+    - text: The explanation is accurate and uses concrete examples.
+      check: {kind: judge, name: explanation_accuracy}
+      threshold: 0.7
+      must_pass: false
+  per_subject:
+    - text: "The sub-concept '{subject}' is explained and cross-checked in two sources."
+      check: {kind: deterministic, name: concept_covered, params: {min_sources: 2}}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+  per_criterion:
+    - text: "The explanation meets the stated standard: '{criterion}'."
+      check: {kind: judge, name: user_item}
+      threshold: 0.7
+      must_pass: false
+  stop_rule: every_concept_covered
+
+# Research on a question no specialised kind fits.
+general:
+  template:
+    - text: Every factual sentence in the report cites collected evidence.
+      check: {kind: deterministic, name: citations_per_claim, params: {min_citations: 1}}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+    - text: Cited claims are supported by their quoted spans.
+      check: {kind: nli, name: claims_entailed}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+    - text: Findings come from at least two independent domains.
+      check: {kind: deterministic, name: distinct_domains, params: {min_domains: 2}}
+      threshold: 1.0
+      must_pass: false
+    - text: The findings answer the question as asked.
+      check: {kind: judge, name: user_item}
+      threshold: 0.7
+      must_pass: false
+  per_criterion:
+    - text: "The report covers '{criterion}' with a citation."
+      check: {kind: deterministic, name: criterion_evidence, params: {min_citations: 1}}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+  stop_rule: question_answered
+
+# Q&A: a quick, cited answer to one question (no interview).
+qa:
+  template:
+    - text: Every factual sentence in the answer cites collected evidence.
+      check: {kind: deterministic, name: citations_per_claim, params: {min_citations: 1}}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+    - text: Cited claims are supported by their quoted spans.
+      check: {kind: nli, name: claims_entailed}
+      threshold: 1.0
+      weight: 3
+      must_pass: true
+    - text: The answer draws on at least two independent domains.
+      check: {kind: deterministic, name: distinct_domains, params: {min_domains: 2}}
+      threshold: 1.0
+      must_pass: false
+  stop_rule: question_answered
+
+rules:
+  known_unknown:
+    text: "The known unknown '{subject}' is acknowledged and bounded in the report."
+    check: {kind: deterministic, name: known_unknown_acknowledged}
+    threshold: 1.0
+    weight: 2
+    must_pass: true
+  min_distinct_domains:
+    text: "Sources span at least {value} independent domains."
+    check: {kind: deterministic, name: distinct_domains}
+    threshold: 1.0
+    must_pass: true
+  blocked_domains:
+    text: "No cited source is on a blocked domain ({value})."
+    check: {kind: deterministic, name: blocked_domains_absent}
+    threshold: 1.0
+    weight: 2
+    must_pass: true
+  primary_sources:
+    text: Primary sources are cited where they exist.
+    check: {kind: deterministic, name: primary_sources_cited}
+    threshold: 1.0
+    must_pass: false
+  recency:
+    text: "Cited sources fall within the {value}-day recency window."
+    check: {kind: deterministic, name: recency_window}
+    threshold: 1.0
+    weight: 2
+    must_pass: true
+  findings_present:
+    text: "The report establishes at least {value} cited finding(s)."
+    check: {kind: deterministic, name: findings_present, params: {min_findings: 1}}
+    threshold: 1.0
+    weight: 3
+    must_pass: true
+  links_resolved:
+    text: Every cited link was fetched and resolved.
+    check: {kind: deterministic, name: links_resolved}
+    threshold: 1.0
+    weight: 2
+    must_pass: true
+  user:
+    check: {kind: judge, name: user_item}
+    threshold: 0.7
+    must_pass: false

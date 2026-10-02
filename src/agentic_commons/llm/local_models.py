@@ -17,9 +17,13 @@ import asyncio
 import shutil
 import tempfile
 import threading
+import warnings
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger
 
 # What a sequence-classification checkpoint needs on disk, and nothing more.
@@ -183,16 +187,29 @@ def _preflight_dependencies(purpose: str) -> None:
 
 def _load_from(model_dir: Path, auto_class: str = _CLASSIFIER) -> LoadedModel:
     """Tokenizer, model and torch from one folder, local files only."""
-    import torch
-    import transformers
-    from transformers import AutoTokenizer
-
     _require_artifact(model_dir)
-    tokenizer = AutoTokenizer.from_pretrained(str(model_dir), local_files_only=True)
-    model_class = getattr(transformers, auto_class)
-    model = model_class.from_pretrained(str(model_dir), local_files_only=True)
+    with _library_warnings_silenced():
+        import torch
+        import transformers
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(str(model_dir), local_files_only=True)
+        model_class = getattr(transformers, auto_class)
+        model = model_class.from_pretrained(str(model_dir), local_files_only=True)
     model.eval()
     return tokenizer, model, torch
+
+
+@contextmanager
+def _library_warnings_silenced() -> Iterator[None]:
+    """`llm.suppressed_load_warnings` silenced for one load; every other warning still shows."""
+    patterns = get_settings().llm.suppressed_load_warnings
+    with warnings.catch_warnings():
+        for pattern in patterns:
+            warnings.filterwarnings("ignore", message=pattern)
+        yield
+    if patterns:
+        get_logger("llm").debug("Third-party load warnings silenced", patterns=patterns)
 
 
 def _require_artifact(model_dir: Path) -> None:

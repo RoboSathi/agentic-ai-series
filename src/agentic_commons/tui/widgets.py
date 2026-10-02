@@ -11,22 +11,29 @@ The logger remains responsible for implementation-level debugging.
 """
 
 import json
+import re
 import textwrap
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from functools import cache
 from typing import Any
 
 from rich.text import Text
-from textual.containers import VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
+from textual.content import Content
 from textual.reactive import reactive
-from textual.widgets import Collapsible, Static
+from textual.widgets import Button, Collapsible, OptionList, Static
+from textual.widgets._collapsible import CollapsibleTitle
+from textual.widgets.option_list import Option
 
 from agentic_commons.config import get_settings
 from agentic_commons.money import money_or_none
 from agentic_commons.observability.types import StatusEvent
+from agentic_commons.text_tree import as_structure, value_lines
 from agentic_commons.tui.labels import StageLabelRegistry
 
-# State is the primary visual language.
+# State is the visual language: a card's title, marks and state words take the colour of
+# their outcome (`tui.outcome_colors`, `tui.tone_styles`), whatever stage they belong to.
 STATUS_MARKS = {
     "started": "→",
     "completed": "✓",
@@ -34,15 +41,6 @@ STATUS_MARKS = {
     "warning": "⚠",
     "waiting": "…",
     "blocked": "✗",
-}
-
-STATUS_STYLES = {
-    "started": "cyan",
-    "completed": "green",
-    "failed": "red",
-    "warning": "yellow",
-    "waiting": "yellow",
-    "blocked": "red",
 }
 
 SUMMARY_ACCENT_STYLES = {
@@ -65,7 +63,13 @@ SUMMARY_ACCENT_STYLES = {
 # follow alphabetically.
 FIELD_PRIORITY = (
     # A model card reads in the order the exchange happened: what the
-    # customer asked, what we sent, what came back.
+    # customer asked, what we sent, what came back. A reasoning loop's card
+    # leads with what the model thought, then what it decided.
+    "loop_step",
+    "model",
+    "reasoning",
+    "tool_calls",
+    "observation",
     "user_query",
     "system_prompt",
     "response",
@@ -245,6 +249,8 @@ MUTED_FIELDS = {
 # show a token count and a finish reason but never the prompt or the
 # answer — the two things a person watching actually wants.
 BLOCK_FIELDS = (
+    "reasoning",
+    "observation",
     "system_prompt",
     "user_query",
     "prompt",
@@ -301,6 +307,9 @@ class StatusLineWidget(Static):
         self._history_pending = 0
         self._run_state = "idle"
         self._show_token_count = get_settings().tui.show_token_count
+        self._summary_lines: tuple[str, ...] = ()
+        self._detail_lines: tuple[str, ...] = ()
+        self._expanded = False
 
     @property
     def elapsed_seconds(self) -> float:
@@ -351,25 +360,65 @@ class StatusLineWidget(Static):
         self._history_pending = max(0, count)
         self.refresh()
 
+    def set_block(self, summary: Sequence[str], detail: Sequence[str]) -> None:
+        """The host's live lines: always the summary, the detail when expanded."""
+        block = (tuple(summary), tuple(detail))
+        if block != (self._summary_lines, self._detail_lines):
+            self._summary_lines, self._detail_lines = block
+            self.refresh(layout=True)
+
+    def toggle_detail(self) -> None:
+        self._expanded = not self._expanded
+        self.refresh(layout=True)
+
+    def on_click(self) -> None:
+        """The block opens and closes on a click, like the cards above it."""
+        if self._detail_lines:
+            self.toggle_detail()
+
     def render(self) -> Text:
+        headline = self._render_headline()
+        lines = [*self._summary_lines, *(self._detail_lines if self._expanded else ())]
+        if not lines and not self._detail_lines:
+            return headline
+        text = self._with_toggle(headline)
+        for line in lines:
+            if text:
+                text.append("\n")
+            text.append_text(Text.from_markup(line))
+        return text
+
+    def _with_toggle(self, headline: Text) -> Text:
+        """The headline, led by the open/closed marker when there is more to show."""
+        settings = get_settings().tui
+        if not self._detail_lines:
+            return headline
+        marker = (
+            settings.status_expanded_symbol if self._expanded else settings.status_collapsed_symbol
+        )
+        text = Text(f"{marker} ", style="bold")
+        text.append_text(headline)
+        if not self._expanded:
+            text.append(f"  {settings.status_expand_hint}", style="dim")
+        return text
+
+    def _render_headline(self) -> Text:
         if not self.stage_label:
             return Text("")
 
+        styles = get_settings().tui.status_styles
         if self.running:
             symbol = self._frames[self.frame % len(self._frames)] if self._frames else "●"
-            symbol_style = "cyan"
-            label_style = "bold cyan"
+            style = styles["running"]
         elif self._run_state == "failed":
             symbol = "✗"
-            symbol_style = "red"
-            label_style = "bold red"
+            style = styles["failed"]
         else:
             symbol = "✓"
-            symbol_style = "green"
-            label_style = "bold green"
+            style = styles["complete"]
 
-        line = Text(f"{symbol} ", style=symbol_style)
-        line.append(self.stage_label, style=label_style)
+        line = Text(f"{symbol} ", style=style)
+        line.append(self.stage_label, style=style)
 
         if self._show_token_count and self._tokens is not None and self._started_at:
             line.append(
@@ -387,6 +436,7 @@ class StatusLineWidget(Static):
             line.append("  · HISTORY", style="yellow")
             if self._history_pending:
                 line.append(f" · +{self._history_pending} new", style="yellow")
+            line.append(f" · {get_settings().tui.status_history_hint}", style="dim yellow")
 
         return line
 
@@ -409,6 +459,8 @@ class StageEventWidget(Collapsible):
         # failed or all of them did. Painting a partial block yellow made
         # a refused answer look like a warning.
         classes = f"stage-event stage-{self._status}"
+        if event.group:
+            classes += f" group-{event.group}"
 
         super().__init__(
             Static(body, classes="stage-details"),
@@ -418,6 +470,18 @@ class StageEventWidget(Collapsible):
             expanded_symbol="⌄",
             classes=classes,
         )
+
+    def on_mount(self) -> None:
+        """The title coloured by its outcome, in the label's own text.
+
+        Not a widget style: CollapsibleTitle's `:focus` rule repaints the widget's colour, so a
+        clicked card went white. A styled label is set without the reactive's comparison (it
+        compares by text, so the same words would be dropped) and then pushed to the screen.
+        """
+        colour = get_settings().tui.outcome_colors.get(self._status, "")
+        title = self.query_one(CollapsibleTitle)
+        title.set_reactive(CollapsibleTitle.label, Content.styled(self._build_title(), colour))
+        title.mutate_reactive(CollapsibleTitle.label)
 
     def _build_title(self) -> str:
         mark = STATUS_MARKS.get(self.event.status, "·")
@@ -433,6 +497,10 @@ class StageEventWidget(Collapsible):
     def _build_body(self) -> Text:
         body = Text()
 
+        if self.event.event_kind == "narrative":
+            _append_narrative(body, self.event)
+            return body
+
         if self.event.stage == "hallucination_check":
             _append_grounding(body, self.event.fields)
             return body
@@ -447,7 +515,7 @@ class StageEventWidget(Collapsible):
                 self._append_checks(body, value)
                 rendered_fields = True
                 continue
-            if name in BLOCK_FIELDS and value:
+            if value and (name in BLOCK_FIELDS or _is_structured(value)):
                 if rendered_fields:
                     body.append("\n")
                 self._append_block(body, name, value)
@@ -457,12 +525,7 @@ class StageEventWidget(Collapsible):
             if rendered_fields:
                 body.append("\n")
             body.append("  ")
-            body.append(FIELD_LABELS.get(name, name), style="bright_white")
-            body.append(" = ")
-            body.append(
-                _format_value(name, value),
-                style=_field_style(self.event.event_kind, name),
-            )
+            _append_pair(body, FIELD_LABELS.get(name, name), " = ", _format_value(name, value))
             rendered_fields = True
 
         # The summary is already shown in the collapsed title.
@@ -484,11 +547,8 @@ class StageEventWidget(Collapsible):
             if rendered_fields or self.event.summary or self.event.detail:
                 body.append("\n")
 
-            body.append("  tokens = ")
-            body.append(
-                f"+{self.event.tokens_delta}",
-                style="dim",
-            )
+            body.append("  ")
+            _append_pair(body, "tokens", " = ", f"+{self.event.tokens_delta}")
 
         if not body:
             body.append(
@@ -505,17 +565,19 @@ class StageEventWidget(Collapsible):
         read the thing, and a prompt cut at eighty characters is a prompt
         you still have to go to the log files for.
         """
-        body.append(f"  {FIELD_LABELS.get(name, name)}:\n", style="bright_white")
+        styles = get_settings().tui.body_styles
+        body.append(f"  {FIELD_LABELS.get(name, name)}:", style=styles["key"])
         for line in _block_lines(value):
-            body.append(f"    {line}\n", style="dim")
-        # Drop the trailing newline so blocks sit flush with plain fields.
-        body.right_crop(1)
+            body.append("\n    ")
+            _append_line(body, line, "")
 
     def _summary(self) -> str:
         stage = self.event.stage
         fields = self.event.fields
         status = self.event.status
 
+        if self.event.event_kind == "narrative":
+            return self.event.summary or ""
         if status == "failed":
             return self.event.summary or "failed"
         if status == "blocked":
@@ -630,10 +692,17 @@ class StageEventWidget(Collapsible):
                     if amount is not None:
                         parts.append(_format_value("amount", amount))
                     return " · ".join(parts)
-            requested = fields.get("tools_offered")
-            if stage == "llm_request" and requested:
+            if stage == "llm_request":
+                # A request is a prompt sent, with or without tools; it never "generated" anything.
+                requested = fields.get("tools_offered")
                 count = len(requested) if isinstance(requested, list) else 0
-                return f"prompt sent · {count} tools offered" if count else "prompt sent"
+                purpose = fields.get("purpose")
+                parts = [
+                    "prompt sent",
+                    f"{count} tools offered" if count else "",
+                    str(purpose or ""),
+                ]
+                return " · ".join(part for part in parts if part)
             if fields.get("finish_reason") == "tool_calls":
                 return "tool requested"
             return "response generated"
@@ -660,13 +729,13 @@ class StageEventWidget(Collapsible):
             return self._tool_summary(fields)
 
         if stage == "gatekeeper_evaluation":
-            decision = fields.get("decision") or fields.get("verdict")
+            verdict = fields.get("decision") or fields.get("verdict")
             action = fields.get("action")
             order_id = fields.get("order_id")
             amount = _first_present(fields, AMOUNT_FIELDS)
             parts = []
-            if decision:
-                parts.append(str(decision).upper())
+            if verdict:
+                parts.append(str(verdict).upper())
             if action:
                 parts.append(self._labels.tool_label(str(action)))
             if order_id is not None:
@@ -720,34 +789,34 @@ class StageEventWidget(Collapsible):
 
     def _append_checks(self, body: Text, checks: list[Any]) -> None:
         """Render structured checks as an operator-readable decision tree."""
-        body.append("  checks", style="bold bright_white")
+        settings = get_settings().tui
+        styles = settings.body_styles
+        body.append("  checks", style=settings.section_title_style)
         for check in checks:
             if not isinstance(check, Mapping):
                 continue
             status = str(check.get("status", ""))
-            mark, style = {
-                "PASS": ("✓", "green"),
-                "FAIL": ("✗", "red"),
-                "ESCALATE": ("⚠", "yellow"),
-                "SKIPPED": ("·", "dim"),
-            }.get(status, ("·", "white"))
             name = str(check.get("name") or check.get("check_id") or "check")
             reason_code = str(check.get("reason_code") or "")
             reason = str(check.get("reason") or "")
+            state = _state_style(status) or styles["value"]
             body.append("\n    ")
-            body.append(f"{mark} {name} [{status}]", style=style)
+            body.append(f"{CHECK_MARKS.get(status, '·')} ", style=state)
+            body.append(name, style=styles["key"])
+            body.append(f" [{status}]", style=state)
             if reason_code:
-                body.append(f" · {reason_code}", style="dim")
+                body.append(f" · {reason_code}", style=styles["muted"])
             if reason:
-                body.append(f" — {reason}", style="bright_white")
-            observed = check.get("observed")
-            if isinstance(observed, Mapping) and observed:
-                body.append("\n      observed = ", style="dim")
-                body.append(_format_mapping(observed), style="dim")
-            evidence = check.get("evidence")
-            if isinstance(evidence, Mapping) and evidence:
-                body.append("\n      evidence = ", style="dim")
-                body.append(_format_mapping(evidence), style="dim")
+                body.append(" — ", style=styles["separator"])
+                body.append(reason, style=styles["value"])
+            for label in ("observed", "evidence"):
+                detail = check.get(label)
+                if isinstance(detail, Mapping) and detail:
+                    body.append("\n      ")
+                    body.append(f"{label}:", style=styles["key"])
+                    for line in value_lines(dict(detail)):
+                        body.append("\n        ")
+                        _append_line(body, line, "")
 
     def _compact_from_fields(
         self,
@@ -792,6 +861,94 @@ class StageEventWidget(Collapsible):
         title = self._build_title()
         body = self._build_body().plain
         return f"{title}\n{body}"
+
+
+NARRATIVE_TIMING_FIELD = "latency_ms"
+# A check's mark by its status; its colour comes from `tui.state_words`.
+CHECK_MARKS = {"PASS": "✓", "FAIL": "✗", "ESCALATE": "⚠", "SKIPPED": "·"}
+# A written line that reads as `key: value`: a short key (no URL, no sentence) before ": ".
+# The branch glyphs in front of a tree line (`text_tree.value_lines`).
+_TREE_PREFIX = re.compile(r"^[\s│├└─]*")
+# A tree list item's key, `[0]`, reads as a key too.
+_LINE_KEY = re.compile(r"^([A-Za-z\[][\w \-/().'·\]]{0,40}?):(?: (?=\S)|$)")
+
+
+def _append_narrative(body: Text, event: StatusEvent) -> None:
+    """A card its emitter wrote: titled sections of plain or toned lines.
+
+    A section is a field whose name is its title. Its value is a string, a
+    list of strings, or a list of `{"text", "tone"}` mappings, where tone
+    is one of the configured `tui.tone_styles`. The widget knows nothing
+    about the agent; it only lays out what it was given. A `key: value`
+    line shows its key apart from its value, and a toned line's value takes
+    its tone, so a pass, a warning and a failure read apart at a glance.
+    """
+    settings = get_settings().tui
+    for title, value in event.fields.items():
+        if title == NARRATIVE_TIMING_FIELD:
+            continue
+        if body:
+            body.append("\n")
+        body.append(f"  {title}", style=settings.section_title_style)
+        for text, tone in _narrative_lines(value):
+            body.append("\n    ")
+            _append_line(body, text, settings.tone_styles.get(tone, ""))
+    took = event.fields.get(NARRATIVE_TIMING_FIELD)
+    if took is not None:
+        body.append("\n  ")
+        _append_pair(body, "took", " ", _format_value(NARRATIVE_TIMING_FIELD, took))
+    if not body:
+        body.append(event.summary or "", style="bold")
+
+
+def _append_line(body: Text, text: str, tone_style: str) -> None:
+    """One written line: `key: value` split by colour when it reads as one, else whole.
+
+    A tree line's branch glyphs (`├─ `, `│  `) are drawn muted and the rest read as a line.
+    """
+    glyphs = _TREE_PREFIX.match(text)
+    if glyphs and glyphs.end():
+        body.append(glyphs.group(0), style=get_settings().tui.body_styles["separator"])
+        text = text[glyphs.end() :]
+    keyed = _LINE_KEY.match(text)
+    if keyed is None:
+        body.append(text, style=tone_style or _value_style(text))
+        return
+    key, value = keyed.group(1), text[keyed.end() :]
+    _append_pair(body, key, ": ", value, tone_style)
+
+
+def _append_pair(body: Text, key: str, separator: str, value: str, tone_style: str = "") -> None:
+    """`key = value`: the key in the key colour, the value by its tone or the state it names."""
+    styles = get_settings().tui.body_styles
+    body.append(key, style=styles["key"])
+    body.append(separator, style=styles["separator"])
+    body.append(value, style=tone_style or _value_style(value))
+
+
+def _value_style(value: str) -> str:
+    """A value naming a state (PASS, BLOCKED, ...) takes its tone; any other the value colour."""
+    return _state_style(value) or get_settings().tui.body_styles["value"]
+
+
+def _state_style(word: str) -> str:
+    settings = get_settings().tui
+    tone = settings.state_words.get(word.strip().upper())
+    return settings.tone_styles.get(tone, "") if tone else ""
+
+
+def _narrative_lines(value: Any) -> list[tuple[str, str]]:
+    if isinstance(value, Mapping):
+        return [(f"{key}: {item}", "") for key, item in value.items()]
+    if isinstance(value, (list, tuple)):
+        return [_narrative_line(item) for item in value]
+    return [(line, "") for line in str(value).splitlines() or [""]]
+
+
+def _narrative_line(item: Any) -> tuple[str, str]:
+    if isinstance(item, Mapping):
+        return str(item.get("text", "")), str(item.get("tone", ""))
+    return str(item), ""
 
 
 def _append_grounding(body: Text, fields: Mapping[str, Any]) -> None:
@@ -930,13 +1087,14 @@ _BLOCK_WIDTH = 88
 
 
 def _block_lines(value: Any) -> list[str]:
-    """A document-shaped value as wrapped, readable lines."""
-    if isinstance(value, Mapping):
-        return [f"{key}: {item}" for key, item in value.items()]
-    if isinstance(value, list):
-        text = "\n".join(
-            _message_line(item) if isinstance(item, Mapping) else str(item) for item in value
-        )
+    """A document-shaped value as readable lines: a chat transcript as `role: content`,
+    structured data (or JSON text of it) as a tree, prose wrapped on word boundaries."""
+    if _is_transcript(value):
+        text = "\n".join(_message_line(item) for item in value)
+    elif _is_structured(value):
+        return value_lines(value)
+    elif isinstance(value, list):
+        text = "\n".join(str(item) for item in value)
     else:
         text = str(value)
     lines: list[str] = []
@@ -947,31 +1105,30 @@ def _block_lines(value: Any) -> list[str]:
     return lines
 
 
+def _is_structured(value: Any) -> bool:
+    """A mapping or list worth drawing as a tree (or JSON text of one)."""
+    structured = as_structure(value)
+    return isinstance(structured, (dict, list)) and bool(structured) and not _flat_list(structured)
+
+
+def _flat_list(value: Any) -> bool:
+    """A short list of plain values reads fine inline (`[a, b, c]`)."""
+    return isinstance(value, list) and all(not isinstance(v, (dict, list)) for v in value)
+
+
+def _is_transcript(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(item, Mapping) and "role" in item for item in value)
+    )
+
+
 def _message_line(message: Mapping[str, Any]) -> str:
     """One chat message, as `role: content`."""
     role = message.get("role", "?")
     content = message.get("content", "")
     return f"{role}: {content}"
-
-
-def _format_mapping(value: Mapping[str, Any]) -> str:
-    """Compact nested mapping for evidence/observed values."""
-    parts = []
-    for key, item in value.items():
-        rendered = str(item)
-        if isinstance(item, list):
-            rendered = "[" + ", ".join(str(x) for x in item) + "]"
-        parts.append(f"{key}={rendered}")
-    return "; ".join(parts)
-
-
-def _status_style_for_result(result: str) -> str:
-    normalized = result.upper()
-    if normalized == "PASS":
-        return "green"
-    if normalized in {"FAIL", "ESCALATE"}:
-        return "red" if normalized == "FAIL" else "yellow"
-    return "dim"
 
 
 class FeedNote(Static):
@@ -983,6 +1140,184 @@ class FeedNote(Static):
         style: str = "",
     ) -> None:
         super().__init__(Text(text, style=style), classes="feed-note")
+        self.plain_text = text
+
+
+_BOLD = re.compile(r"\*\*(.+?)\*\*")
+_CITATION = re.compile(r"\[\d+\]")
+_URL = re.compile(r"https?://\S+")
+_BULLET = re.compile(r"^(\s*)([-•*])\s+")
+_HEADINGS = (("## ", "h2"), ("# ", "h1"))
+_BLANK_RUN = re.compile(r"\n[ \t]*(?:\n[ \t]*)+")
+
+
+def render_response(text: str, styles: Mapping[str, str]) -> Text:
+    """An answer in light Markdown, coloured by role: headings, bullets, bold, citations, URLs.
+
+    Text with none of that marks up as plain body text, so a reply that is not
+    Markdown comes out exactly as it went in.
+    """
+    out = Text()
+    # No blank line before or after the answer, and never two in a row inside it: the
+    # card's own margin spaces it from the notes around it.
+    lines = _BLANK_RUN.sub("\n\n", text.strip()).split("\n")
+    for index, line in enumerate(line.rstrip() for line in lines):
+        if index:
+            out.append("\n")
+        _append_response_line(out, line, styles)
+    return out
+
+
+def _append_response_line(out: Text, line: str, styles: Mapping[str, str]) -> None:
+    for prefix, role in _HEADINGS:
+        if line.startswith(prefix):
+            out.append(line[len(prefix) :], style=styles[role])
+            return
+    bullet = _BULLET.match(line)
+    if bullet:
+        out.append(f"{bullet.group(1)}{bullet.group(2)} ", style=styles["bullet"])
+        line = line[bullet.end() :]
+    _append_inline(out, line, styles)
+
+
+def _append_inline(out: Text, line: str, styles: Mapping[str, str]) -> None:
+    """Configured highlights, then bold runs, citation markers and URLs, within one line.
+
+    Each span is (start, end, text shown, style, rank); at one position the lower rank wins,
+    and a span that overlaps one already drawn is left as body text.
+    """
+    position = 0
+    spans = sorted(
+        _highlight_spans(line)
+        + [(m.start(), m.end(), m.group(1), styles["bold"], 1) for m in _BOLD.finditer(line)]
+        + [
+            (m.start(), m.end(), m.group(0), styles["citation"], 1)
+            for m in _CITATION.finditer(line)
+        ]
+        + [(m.start(), m.end(), m.group(0), styles["url"], 1) for m in _URL.finditer(line)],
+        key=lambda span: (span[0], span[4]),
+    )
+    for start, end, shown, style, _ in spans:
+        if start < position:
+            continue
+        out.append(line[position:start], style=styles["body"])
+        out.append(shown, style=style)
+        position = end
+    out.append(line[position:], style=styles["body"])
+
+
+def _highlight_spans(line: str) -> list[tuple[int, int, str, str, int]]:
+    """The configured highlight rules' matches, Markdown bold markers dropped from what shows."""
+    return [
+        (m.start(), m.end(), m.group(0).replace(_MARKDOWN_BOLD, ""), style, 0)
+        for pattern, style in _highlights()
+        for m in pattern.finditer(line)
+        if m.end() > m.start()
+    ]
+
+
+def _highlights() -> list[tuple[re.Pattern[str], str]]:
+    rules = get_settings().tui.response_highlights
+    return _compiled_highlights(tuple((rule.pattern, rule.style) for rule in rules))
+
+
+@cache
+def _compiled_highlights(rules: tuple[tuple[str, str], ...]) -> list[tuple[re.Pattern[str], str]]:
+    return [(re.compile(pattern), style) for pattern, style in rules]
+
+
+class ChoiceMenu(OptionList):
+    """A fixed menu of answers beside the free-text input; hidden unless a question offers one."""
+
+    def __init__(self) -> None:
+        super().__init__(id="choices")
+        self._values: list[str] = []
+        self.display = False
+
+    @property
+    def offered(self) -> bool:
+        return bool(self._values) and self.display
+
+    def offer(self, choices: Sequence[Any]) -> None:
+        """Show these choices (anything with a `label` and a `value`); none hides the menu."""
+        self.clear_options()
+        self._values = [str(_choice_part(choice, "value")) for choice in choices]
+        self.add_options([Option(str(_choice_part(choice, "label"))) for choice in choices])
+        self.border_title = get_settings().tui.choice_menu_hint
+        self.display = bool(self._values)
+        if self._values:
+            self.highlighted = 0
+
+    def dismiss(self) -> None:
+        self._values = []
+        self.display = False
+
+    def move(self, step: int) -> None:
+        if self.offered:
+            count = len(self._values)
+            self.highlighted = ((self.highlighted or 0) + step) % count
+
+    def chosen(self) -> str | None:
+        """The highlighted choice's value, or None when no menu is showing."""
+        index = self.highlighted
+        if not self.offered or index is None or index >= len(self._values):
+            return None
+        return self._values[index]
+
+    def value_at(self, index: int) -> str | None:
+        return self._values[index] if 0 <= index < len(self._values) else None
+
+
+def _choice_part(choice: Any, name: str) -> Any:
+    return choice[name] if isinstance(choice, Mapping) else getattr(choice, name)
+
+
+class ActionBar(Horizontal):
+    """A row of buttons for the next steps an agent offers; hidden when there are none."""
+
+    def __init__(self) -> None:
+        super().__init__(id="actions")
+        self._shown: tuple[tuple[Any, bool], ...] = ()
+        self._commands: dict[str, str] = {}
+        self._generation = 0
+        self.display = False
+
+    def offer(self, actions: Sequence[Any], busy: bool) -> None:
+        """Show these actions (anything with `label`, `command`, `during_turn`).
+
+        While a turn runs, only the actions marked `during_turn` can be pressed.
+        """
+        key = tuple((action, busy) for action in actions)
+        if key == self._shown:
+            return
+        # Fresh ids every time: `remove_children` completes after this returns, so reusing
+        # `action-0` collided with the button still being removed, the mount raised, and the
+        # bar stayed empty for the rest of the session.
+        self._generation += 1
+        commands: dict[str, str] = {}
+        buttons = []
+        for index, action in enumerate(actions):
+            button_id = f"action-{self._generation}-{index}"
+            commands[button_id] = action.command
+            button = Button(action.label, id=button_id, compact=True)
+            button.disabled = busy and not action.during_turn
+            buttons.append(button)
+        self.remove_children()
+        if buttons:
+            self.mount(*buttons)
+        self._commands = commands
+        self._shown = key
+        self.display = bool(actions)
+
+    def command_for(self, button_id: str | None) -> str | None:
+        return self._commands.get(button_id or "")
+
+
+class ResponseNote(Static):
+    """The assistant's final answer, coloured by the role of each line."""
+
+    def __init__(self, text: str, styles: Mapping[str, str]) -> None:
+        super().__init__(render_response(text, styles), classes="feed-note")
         self.plain_text = text
 
 
@@ -1037,16 +1372,25 @@ class LiveStatusPanel(VerticalScroll):
         super().__init__(id="feed")
         self._labels = labels or StageLabelRegistry()
         self._max_entries = get_settings().tui.max_feed_lines
-        self._entries: list[StageEventWidget | FeedNote] = []
+        self._entries: list[StageEventWidget | FeedNote | ResponseNote] = []
+        # Cards still in progress, by (run, stage): the finished card takes its place.
+        self._pending: dict[tuple[str, str], StageEventWidget] = {}
 
     def show_status(self, event: StatusEvent) -> None:
         """Render completed/warning/failed semantic events as cards.
 
-        Started events are intentionally represented by the separate current
-        status line. This keeps the timeline from showing ``→ X`` followed by
-        ``✓ X`` as two unrelated records.
+        Most started events are represented by the separate current status line only. A
+        started event of a kind in `tui.pending_card_kinds` (a model call the person waits
+        on) draws a pending card at once, and its finished card replaces it in place, so the
+        timeline never shows ``→ X`` followed by ``✓ X`` as two unrelated records.
         """
         if event.status == "started":
+            if event.event_kind in get_settings().tui.pending_card_kinds:
+                self._show_pending(event)
+            return
+        pending = self._pending.pop((event.run_id, event.stage), None)
+        if pending is not None and pending in self._entries:
+            self._replace(pending, StageEventWidget(event, self._labels))
             return
 
         if (
@@ -1075,8 +1419,28 @@ class LiveStatusPanel(VerticalScroll):
         self._trim_if_needed()
         self.mount(card)
 
+    def _show_pending(self, event: StatusEvent) -> None:
+        card = StageEventWidget(event, self._labels)
+        self._pending[(event.run_id, event.stage)] = card
+        self._entries.append(card)
+        self._trim_if_needed()
+        self.mount(card)
+
+    def _replace(self, old: StageEventWidget, new: StageEventWidget) -> None:
+        """The finished card where its pending card was, in the timeline and the feed."""
+        self._entries[self._entries.index(old)] = new
+        self.mount(new, before=old)
+        old.remove()
+
     def note(self, text: str, style: str = "") -> None:
         note = FeedNote(text, style)
+        self._entries.append(note)
+        self._trim_if_needed()
+        self.mount(note)
+
+    def response(self, text: str) -> None:
+        """The assistant's answer, with its headings, bullets and citations coloured."""
+        note = ResponseNote(text, get_settings().tui.response_styles)
         self._entries.append(note)
         self._trim_if_needed()
         self.mount(note)
@@ -1087,6 +1451,7 @@ class LiveStatusPanel(VerticalScroll):
 
     def clear_feed(self) -> None:
         self._entries.clear()
+        self._pending.clear()
         self.remove_children()
 
     def as_text(self) -> str:
@@ -1121,20 +1486,6 @@ def _decision_summary(
     if action:
         parts.append(labels.tool_label(str(action)))
     return " · ".join(parts)
-
-
-def _field_style(event_kind: str, name: str) -> str:
-    if name == "reflection_comment":
-        return "yellow"
-    if name in {"decision", "intent"}:
-        return "magenta"
-    if name in {"reason"}:
-        return "dim"
-    if event_kind in {"context", "memory"}:
-        return "blue"
-    if event_kind in {"security", "resilience", "escalation"}:
-        return "yellow"
-    return "white"
 
 
 def _first_present(

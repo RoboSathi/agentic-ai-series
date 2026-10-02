@@ -166,7 +166,9 @@ class SemanticStore:
         )
         return _to_fact(row) if row else None
 
-    def exact(self, keys: list[str], identifiers: list[str], subject_id: str, limit: int) -> list[MemoryFact]:
+    def exact(
+        self, keys: list[str], identifiers: list[str], subject_id: str, limit: int
+    ) -> list[MemoryFact]:
         """R1 — facts whose key is asked for, or whose value names an identifier."""
         if not keys and not identifiers:
             return []
@@ -196,9 +198,7 @@ class SemanticStore:
         )
         # bm25() is negative, more negative is better; scale against the best.
         best = min((float(row["rank"]) for row in rows), default=0.0)
-        return [
-            (_to_fact(row), float(row["rank"]) / best if best else 0.0) for row in rows
-        ]
+        return [(_to_fact(row), float(row["rank"]) / best if best else 0.0) for row in rows]
 
     def tombstone(self, key: str, subject_id: str, actor: str) -> int:
         """Delete a fact the way a source of truth deletes: keep it, stop believing it."""
@@ -271,9 +271,7 @@ class SemanticStore:
 
     def fuzzy_get(self, key: str, include_superseded: bool = False) -> list[MemoryFact]:
         """Tier 3 — closest stored key above the configured similarity floor."""
-        matches = difflib.get_close_matches(
-            key, self.keys(), n=1, cutoff=self._fuzzy_threshold
-        )
+        matches = difflib.get_close_matches(key, self.keys(), n=1, cutoff=self._fuzzy_threshold)
         if not matches:
             return []
         self._logger.debug("Semantic fuzzy key match", requested=key, matched=matches[0])

@@ -49,8 +49,12 @@ class CumulativeLedger:
         self._store = as_platform_store(store, agent_id=agent_id)
         self._agent_id = agent_id or self._store.agent_id
         self._enabled = defaults.enabled if enabled is None else enabled
-        self._window = timedelta(hours=defaults.window_hours if window_hours is None else window_hours)
-        self._action_classes = dict(defaults.action_classes if action_classes is None else action_classes)
+        self._window = timedelta(
+            hours=defaults.window_hours if window_hours is None else window_hours
+        )
+        self._action_classes = dict(
+            defaults.action_classes if action_classes is None else action_classes
+        )
         self._thresholds = (
             {name: Money.from_cents(cents) for name, cents in defaults.thresholds_cents.items()}
             if thresholds is None
@@ -173,8 +177,10 @@ class CumulativeLedger:
         """Every entry in the window — the evidence behind a refusal."""
         return [
             LedgerEntry.model_validate(
-                {**{k: v for k, v in row.items() if k != "amount_cents"},
-                 "amount": Money.from_cents(int(row["amount_cents"]))}
+                {
+                    **{k: v for k, v in row.items() if k != "amount_cents"},
+                    "amount": Money.from_cents(int(row["amount_cents"])),
+                }
             )
             for row in self._store.iter_rows(
                 "SELECT agent_id, ledger_key, action_class, actor, amount_cents, trace_id, recorded_at "

@@ -1,0 +1,42 @@
+# Where the customer support agent uses each pattern (read by `make patterns`).
+# Derived from the code as it stands; nothing here is aspirational.
+agent: customer_support_agent
+patterns:
+  - pattern: sequence
+    where: graph/edges.py · the front-door stages (pii_filtering → prompt_injection → content_moderation → classify_intent → assemble_context)
+    notes: fixed order; a withheld stage is not built and its neighbours are wired together
+  - pattern: branch
+    where: graph/edges.py · _after_authenticate, _after_screening, _after_finalize
+    notes: deterministic predicates halt the turn or continue it
+  - pattern: router
+    where: intent/router.py · classify_intent → read_intent
+    notes: deterministic out-of-scope rejection, then a small classifier, then one clarification question
+  - pattern: tool_use
+    where: graph/nodes/reason.py ⇄ graph/nodes/act.py
+    notes: the model proposes a typed tool call, act executes it through the Gatekeeper, bounded by max_tool_iterations
+  - pattern: human_in_the_loop
+    where: graph/nodes/review_wait.py · await_approval (interrupt) + review/queue.py
+    notes: above-limit refunds pause the durable run until a reviewer decides
+  - pattern: rag_pipeline
+    where: graph/builder.py · FiveStagePipeline with KnowledgeBaseContextSource (assemble_context)
+  - pattern: memory_systems
+    where: graph/builder.py · MemoryFacade over the four CoALA stores; admin/dream.py consolidation
+  - pattern: planning
+    where: control_loop/quality_gate.py · PlanLookup
+    notes: a config lookup of the tool order per intent, committed before acting
+  - pattern: reflection
+    where: control_loop/quality_gate.py · GroundedCritic
+    notes: one deterministic critique of the draft against tool outputs
+  - pattern: evaluator_optimizer
+    where: control_loop/quality_gate.py · OutputQualityGate (critique, at most one repair, IndependentScorer)
+other:
+  - pattern: saga
+    where: resilience/refund_saga.py · resilience/cancellation_saga.py
+  - pattern: retry + idempotency + circuit breaker + timeout
+    where: graph/nodes/reason.py · the model call through ResilientCaller
+  - pattern: strategy
+    where: control_loop/quality_gate.py · Planner / Reflector / Evaluator protocols
+  - pattern: factory
+    where: graph/builder.py (composition root)
+  - pattern: facade
+    where: agentic_commons MemoryFacade

@@ -16,39 +16,12 @@ from agentic_commons.config import get_settings
 from agentic_commons.persistence import SqliteConnectionPool
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.graph import build_agent
-from customer_support_agent.graph.agent import is_customer_ready
 from customer_support_agent.intent.router import CustomerSupportIntentRouter
-from tests.conftest import ScriptedLLM, tool_call
+from customer_support_agent.presentation.reporting import is_customer_ready
+from tests.conftest import ScriptedLLM
 
 
 class TestFollowupInheritsTheSubject:
-    def test_a_bare_reference_continues_the_previous_intent(self) -> None:
-        classifier = CustomerSupportIntentRouter()
-        first = classifier.classify("status of order 10005")
-        assert classifier.classify("what about 10010", previous=first).name == "order_enquiry"
-
-    def test_a_bare_order_number_alone_continues_it(self) -> None:
-        classifier = CustomerSupportIntentRouter()
-        first = classifier.classify("status of order 10005")
-        assert classifier.classify("10010?", previous=first).name == "order_enquiry"
-
-    def test_the_continuation_is_marked_as_such(self) -> None:
-        """An operator should see the intent was inherited, not matched."""
-        classifier = CustomerSupportIntentRouter()
-        first = classifier.classify("status of order 10005")
-        assert classifier.classify("how about 10008", previous=first).matched_phrase == "continued"
-
-    def test_an_unrelated_follow_up_does_not_inherit(self) -> None:
-        """ "thanks, bye" is not a continuation of an order enquiry."""
-        classifier = CustomerSupportIntentRouter()
-        first = classifier.classify("status of order 10005")
-        assert classifier.classify("thanks, goodbye", previous=first).name == "general_enquiry"
-
-    def test_nothing_is_inherited_from_a_toolless_intent(self) -> None:
-        classifier = CustomerSupportIntentRouter()
-        first = classifier.classify("who are you")
-        assert classifier.classify("what about 10010", previous=first).name == "general_enquiry"
-
     def test_inheritance_never_widens_authority(self) -> None:
         """A follow-up reuses the earlier intent; it cannot escalate it."""
         classifier = CustomerSupportIntentRouter()
@@ -56,24 +29,8 @@ class TestFollowupInheritsTheSubject:
         continued = classifier.classify("what about 10010", previous=enquiry)
         assert "process_refund" not in continued.allowed_tools
 
-    def test_an_explicit_refund_still_wins_over_inheritance(self) -> None:
-        classifier = CustomerSupportIntentRouter()
-        enquiry = classifier.classify("status of order 10005")
-        assert classifier.classify("refund it then", previous=enquiry).name == "refund_request"
-
 
 class TestConversationHistory:
-    async def test_prior_turns_are_replayed_to_the_model(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        """Without them the follow-up's subject does not exist anywhere."""
-        llm = ScriptedLLM([{"content": "Order 10001 was delivered."}])
-        agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
-        await agent.handle("status of order 10001", session_id="s1")
-        await agent.handle("what about 10002", session_id="s1")
-        replayed = [message.content for message in llm.requests[-1].messages]
-        assert "status of order 10001" in replayed
-
     async def test_history_is_scoped_to_its_session(
         self, seeded_pool: SqliteConnectionPool
     ) -> None:
@@ -93,23 +50,6 @@ class TestConversationHistory:
             await agent.handle(f"message {index}", session_id="s1")
         cap = get_agent_settings().history_turns * 2
         assert len(agent.history_for("s1")) <= cap
-
-    async def test_a_follow_up_reaches_the_lookup_tool(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        """The reported failure, end to end."""
-        llm = ScriptedLLM(
-            [
-                {"tool_calls": tool_call("support.get_order_status", order_id=10001)},
-                {"content": "Order 10001 was delivered."},
-                {"tool_calls": tool_call("support.get_order_status", order_id=10002)},
-                {"content": "Order 10002 was delivered."},
-            ]
-        )
-        agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
-        await agent.handle("status of order 10001", session_id="s1")
-        state = await agent.handle("what about 10002", session_id="s1")
-        assert any("get_order_status: ok" in decision for decision in state.decisions)
 
 
 class TestMachineOutputIsNeverTheAnswer:

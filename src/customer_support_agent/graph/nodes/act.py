@@ -53,11 +53,13 @@ _ESCALATE = "escalate"
 # Verdicts that cannot become an allow by re-proposing with different
 # arguments. `escalate` is already terminal for the turn; these are the
 # denials that are terminal for the same reason.
-_TERMINAL_DENIALS = frozenset({
-    "TARGET_NOT_IN_SCOPE",
-    "ACTION_NOT_OFFERED",
-    "ACTOR_NOT_AUTHORIZED",
-})
+_TERMINAL_DENIALS = frozenset(
+    {
+        "TARGET_NOT_IN_SCOPE",
+        "ACTION_NOT_OFFERED",
+        "ACTOR_NOT_AUTHORIZED",
+    }
+)
 
 
 def _has_terminal_denial(invocations: list[dict[str, Any]]) -> bool:
@@ -116,7 +118,9 @@ class ToolUseNodes(NodeSupport):
                 role="tool", content=text, tool_call_id=requested.id or requested.name
             )
             self._add_action(
-                state, requested.name, requested.arguments,
+                state,
+                requested.name,
+                requested.arguments,
                 str(invocation_fields.get("evidence", text)),
                 outcome=str(invocation_fields.get("tool_status", TOOL_BLOCKED)),
             )
@@ -211,7 +215,9 @@ class ToolUseNodes(NodeSupport):
         """
         started = utc_now()
         if self._handler is None:
-            result = ToolResult(success=False, error="No tool handler is wired for direct execution")
+            result = ToolResult(
+                success=False, error="No tool handler is wired for direct execution"
+            )
         else:
             result = await self._handler.execute(call)
         return ExecutionOutcome(
@@ -331,9 +337,7 @@ class ToolUseNodes(NodeSupport):
             # An escalation is the harness working as designed — a person
             # takes over — so it reads as a caution, not as a refusal.
             report = (
-                self._reporter_warning
-                if decision.verdict == _ESCALATE
-                else self._reporter_blocked
+                self._reporter_warning if decision.verdict == _ESCALATE else self._reporter_blocked
             )
             report(
                 "gatekeeper_evaluation",
@@ -351,9 +355,7 @@ class ToolUseNodes(NodeSupport):
                 }
                 tool_status = TOOL_BLOCKED
             elif decision.verdict == _ESCALATE:
-                evidence, result_fields, tool_status = self._refer_for_review(
-                    call, decision.reason
-                )
+                evidence, result_fields, tool_status = self._refer_for_review(call, decision.reason)
             else:
                 # Say that it is final. The previous wording read like a
                 # transient failure, and the model answered it the way it
@@ -388,7 +390,9 @@ class ToolUseNodes(NodeSupport):
                     "control_loop": control_fields,
                     "control_loop_status": "completed",
                     "gatekeeper": decision_fields,
-                    "gatekeeper_status": "escalated" if decision.verdict == _ESCALATE else "blocked",
+                    "gatekeeper_status": "escalated"
+                    if decision.verdict == _ESCALATE
+                    else "blocked",
                     "tool_result": result_fields,
                     "tool_status": tool_status,
                     "evidence": evidence,
@@ -425,11 +429,15 @@ class ToolUseNodes(NodeSupport):
             text = f"That action requires human review: {reason}"
             if referred is not None:
                 text = f"That action requires human review, but queuing it failed: {referred.error}"
-            return text, {
-                "tool": call.action,
-                "result": "human_review_required",
-                "execution_status": "not_executed",
-            }, TOOL_BLOCKED
+            return (
+                text,
+                {
+                    "tool": call.action,
+                    "result": "human_review_required",
+                    "execution_status": "not_executed",
+                },
+                TOOL_BLOCKED,
+            )
         self._done(
             "escalation",
             event_kind="escalation",
@@ -558,8 +566,11 @@ class ToolUseNodes(NodeSupport):
                 action=report.effect.action,
                 authority_context={"target": report.effect.target, "verified": False},
                 model_version="",
-                decision=report.reason_code,
-                rationale=report.summary,
+                # An effect that did not take is a denied claim. The reason
+                # code is the rationale's prefix: `decision` only takes
+                # allow/deny/escalate, and passing the code there raised.
+                decision="deny",
+                rationale=f"{report.reason_code}: {report.summary}",
             )
         )
         return report

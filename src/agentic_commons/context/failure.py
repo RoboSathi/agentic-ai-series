@@ -105,21 +105,27 @@ class ContextFailureDetector:
         if self.distraction_ratio(context, task_terms) > _MODE_RATIO:
             findings += self._distracting(context, task_terms) or [
                 ContextFinding(
-                    mode="distraction", source="window", rule="no term shared with the task",
+                    mode="distraction",
+                    source="window",
+                    rule="no term shared with the task",
                     detail=f"over {_MODE_RATIO:.0%} of chunks are off the task",
                 )
             ]
         if self.near_duplicate_ratio(context) > _MODE_RATIO:
             findings.append(
                 ContextFinding(
-                    mode="confusion", source="window", rule="near-duplicate chunks",
+                    mode="confusion",
+                    source="window",
+                    rule="near-duplicate chunks",
                     detail=f"over {_MODE_RATIO:.0%} of chunks are near-copies",
                 )
             )
         if context.used_tokens > max(self._checkpoints, default=0):
             findings.append(
                 ContextFinding(
-                    mode="rot", source="window", rule="token checkpoint",
+                    mode="rot",
+                    source="window",
+                    rule="token checkpoint",
                     detail=f"{context.used_tokens} tokens exceeds the last checkpoint",
                 )
             )
@@ -129,7 +135,9 @@ class ContextFailureDetector:
         self, context: AssembledContext, findings: list[ContextFinding]
     ) -> tuple[AssembledContext, list[ContextFinding]]:
         """Drop what should not reach the model; say what was done."""
-        removed = {f.index for f in findings if f.action.startswith("dropped") and f.index is not None}
+        removed = {
+            f.index for f in findings if f.action.startswith("dropped") and f.index is not None
+        }
         if not removed:
             return context, findings
         kept = [chunk for index, chunk in enumerate(context.chunks) if index not in removed]
@@ -209,8 +217,12 @@ class ContextFailureDetector:
             if phrases:
                 findings.append(
                     ContextFinding(
-                        mode="poisoning", source=_label(chunk), rule="injection phrasing in data",
-                        detail=f"matched {phrases}", action="dropped", index=index,
+                        mode="poisoning",
+                        source=_label(chunk),
+                        rule="injection phrasing in data",
+                        detail=f"matched {phrases}",
+                        action="dropped",
+                        index=index,
                     )
                 )
         return findings
@@ -228,8 +240,12 @@ class ContextFailureDetector:
         """Retrieved chunks with nothing to do with the task (history and memory are kept)."""
         return [
             ContextFinding(
-                mode="distraction", source=_label(chunk), rule="no term shared with the task",
-                detail="retrieved material off the task", action="dropped", index=index,
+                mode="distraction",
+                source=_label(chunk),
+                rule="no term shared with the task",
+                detail="retrieved material off the task",
+                action="dropped",
+                index=index,
             )
             for index, chunk in enumerate(context.chunks)
             if chunk.kind == "retrieved" and not chunk.pinned and not _on_task(chunk, task_terms)
@@ -291,11 +307,16 @@ def _resolve(key: str, stated: _Stated) -> list[ContextFinding]:
     tie = len(winners) > 1
     return [
         ContextFinding(
-            mode="clash", source=_label(chunk), rule=f"'{key}' disagrees", detail=detail,
+            mode="clash",
+            source=_label(chunk),
+            rule=f"'{key}' disagrees",
+            detail=detail,
             index=index,
             action=(
-                "flagged (equal authority)" if tie
-                else "kept (higher authority)" if _AUTHORITY.get(chunk.kind, 0) == top
+                "flagged (equal authority)"
+                if tie
+                else "kept (higher authority)"
+                if _AUTHORITY.get(chunk.kind, 0) == top
                 else "dropped (lower authority)"
             ),
         )

@@ -58,7 +58,8 @@ own words (`rule_restatement_coverage`) supports it directly: NLI on an
 
 ## Public interface
 
-- `ClaimClassifier`, `ClaimDecomposer` (`claims.py`), `StateModel` (`states.py`)
+- `ClaimClassifier`, `ClaimDecomposer`, `split_sentences`, `sentence_pieces`, `plain_text` (`claims.py`): a line break ends a claim, markdown is stripped, a lead-in line ("Tomorrow in Pune:") claims nothing; `StateModel` (`states.py`)
+- `tool_evidence`, `Observation` (`evidence.py`): tool results as one `tool_result` premise per sentence, in call order — every agent builds its grounding evidence here
 - `GroundingResolver` (`resolver.py`), `DirectChecker` (`direct.py`)
 - `DetectionLadder`, `GroundingReasoningDiagnoser`, `TrustCalibrationTracker` (`checker.py`)
 - `AtomicClaim`, `ClaimClass`, `EvidenceCheck`, `DetectionVerdict`, `GenerationAssessment`, `TrustReport` (`types.py`)

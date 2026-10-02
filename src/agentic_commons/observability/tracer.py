@@ -101,8 +101,12 @@ class LocalTracer:
         self._subscribers: list[Any] = []
         self._pool = pool
         self._store = store
-        self._platform_store = platform_store or (as_platform_store(pool, agent_id=agent_id) if pool is not None else None)
-        self._agent_id = agent_id or (self._platform_store.agent_id if self._platform_store else get_settings().agent.id)
+        self._platform_store = platform_store or (
+            as_platform_store(pool, agent_id=agent_id) if pool is not None else None
+        )
+        self._agent_id = agent_id or (
+            self._platform_store.agent_id if self._platform_store else get_settings().agent.id
+        )
         if self._store is not None and self._settings.persist_traces:
             self._store.execute_script(_CREATE_DUCKDB_SPANS_TABLE)
         elif self._platform_store is not None and self._settings.persist_traces:

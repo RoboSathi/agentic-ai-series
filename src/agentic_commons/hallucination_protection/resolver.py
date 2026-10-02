@@ -50,7 +50,8 @@ RECORD_LABEL = "record"
 DIRECT_TIER = "deterministic"
 NO_TIER = "none"
 
-_DECIDING_LABELS = frozenset({"entailment", "contradiction"})
+ENTAILMENT_LABEL = "entailment"
+_DECIDING_LABELS = frozenset({ENTAILMENT_LABEL, "contradiction"})
 # The NLI model's third label, as a reader should meet it: not a failure.
 _LABEL_NAMES = {"unknown": "neutral"}
 
@@ -96,6 +97,7 @@ class GroundingResolver:
         self._retriever = DenseRetriever(ranker)
         self._top_k = settings.embedding_top_k
         self._threshold = settings.nli_entailment_threshold
+        self._uncalibrated_refutes = settings.uncalibrated_may_refute
         self._floor = settings.evidence_min_similarity
         self._tiers = settings.tiers
         self._restatement = settings.rule_restatement_coverage
@@ -424,9 +426,13 @@ class GroundingResolver:
         coverage instead, and a claim that restates its evidence exactly
         still covers only the words the evidence happens to contain. So
         the threshold applies only where it means something: an
-        uncalibrated model's label is its decision.
+        uncalibrated model's label is its decision. Whether that includes refuting is the
+        agent's call (`uncalibrated_may_refute`): a word-overlap guess that two sentences
+        disagree is not evidence enough to remove a sentence from an answer.
         """
-        return result.score >= self._threshold if result.calibrated else True
+        if not result.calibrated:
+            return result.label == ENTAILMENT_LABEL or self._uncalibrated_refutes
+        return result.score >= self._threshold
 
     def _checks(
         self, retrieved: list[Chunk], judged: list[tuple[EntailmentResult, Chunk]]

@@ -16,7 +16,11 @@ from rich.table import Table
 from agentic_commons.config import get_settings
 from agentic_commons.evals.contracts import EvalPlugin, GoldenCase, StageName
 from agentic_commons.evals.pipeline.gate import FAIL, GateResult, evaluate_gate
-from agentic_commons.evals.pipeline.orchestrator import EvalPipeline, NoRunError
+from agentic_commons.evals.pipeline.orchestrator import (
+    EvalPipeline,
+    NoRunError,
+    native_security_suite,
+)
 from agentic_commons.evals.plugin import resolve_eval_plugin
 from agentic_commons.evals.store import DuckDbEvalStore
 
@@ -57,14 +61,26 @@ def _grade(args: argparse.Namespace) -> int:
 
 
 def _security(args: argparse.Namespace) -> int:
+    plugin = _prepared_plugin()
+    suite = native_security_suite(plugin)
+    if suite is not None:
+        return _native_security(plugin, suite, args)
     from agentic_commons.evals.adapters.promptfoo import PromptfooSuite
 
-    plugin = _prepared_plugin()
     pipeline = EvalPipeline(plugin)
     run = PromptfooSuite(plugin, pipeline.store).run(fresh=args.fresh)
     EvalPipeline(plugin, pipeline.store).report(run.run_id)
     _print_run(pipeline, run.run_id)
     gate = evaluate_gate(pipeline.store, run.run_id, run.suite)
+    return _FAILED if gate.verdict == FAIL else _OK
+
+
+def _native_security(plugin: EvalPlugin, suite: str, args: argparse.Namespace) -> int:
+    """A plugin's own security suite: generate its cases, grade them with its oracle."""
+    pipeline = EvalPipeline(plugin)
+    run = asyncio.run(pipeline.generate(suite, plugin.load_cases(suite), fresh=args.fresh))
+    gate = asyncio.run(pipeline.grade("oracle", run.run_id, fresh=args.fresh))
+    _print_run(pipeline, run.run_id)
     return _FAILED if gate.verdict == FAIL else _OK
 
 

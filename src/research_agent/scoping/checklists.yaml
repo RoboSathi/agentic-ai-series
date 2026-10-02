@@ -1,0 +1,183 @@
+# Coverage checklists — what the interview must establish, per archetype.
+#
+# Each item is `open` until the user's answers cover it, or `waived` when
+# the user closes scoping with it unsettled (it then becomes a *known
+# unknown* on the Brief, which the Rubric and the report must acknowledge).
+#
+#   item_id      stable id; the ScriptedUser in evals answers by this id
+#   goal         what the interview needs to learn, as a short noun phrase. The
+#                interviewer words the question itself, for this request and in
+#                the user's context; the goal is never shown to the user as written
+#   required     whether the agent may propose "done" while it is open
+#   skippable    false: an optional item that is still always asked (it shapes the budget),
+#                though a menu makes that one click; default true
+#   brief_field  the ScopeBrief field the answer fills
+#   multi        the answer is a list (comma / semicolon / " and " separated)
+#   private      the value must never leave the process (queries, URLs)
+#   choices      a closed set of answers, offered as a menu beside free text:
+#                `label` is what the user sees, `value` is what is recorded
+#
+# Optional items the interviewer judges irrelevant to a request are skipped,
+# so a simple question needs fewer turns than a decision between options.
+
+choices:
+  recency: &recency_choices
+    - {label: Last 30 days, value: last 30 days}
+    - {label: Last 90 days, value: last 90 days}
+    - {label: Last year, value: last 365 days}
+    - {label: Any time, value: any}
+  sources: &source_choices
+    - {label: Primary sources preferred, value: primary sources preferred}
+    - {label: No preference, value: no preference}
+  deliverable: &deliverable_choices
+    - {label: Short memo, value: short memo}
+    - {label: Table, value: table}
+    - {label: Detailed report, value: detailed report}
+  depth: &depth_choices
+    - {label: Small — a short answer from a few pages, value: small}
+    - {label: Medium — a fuller picture, value: medium}
+    - {label: Large — thorough, many sources, value: large}
+
+common: &common
+  - item_id: purpose
+    goal: what the answer will be used for
+    required: true
+    brief_field: purpose
+  - item_id: recency
+    goal: how recent the sources must be
+    required: false
+    brief_field: recency_days
+    choices: *recency_choices
+  - item_id: sources
+    goal: sources to prefer or avoid
+    required: false
+    brief_field: source_policy
+    choices: *source_choices
+  - item_id: context
+    goal: the user's own situation that affects the answer (budget, organisation); private, never searched for
+    required: false
+    brief_field: private_terms
+    multi: true
+    private: true
+  - item_id: deliverable
+    goal: the shape of the deliverable
+    required: false
+    brief_field: deliverable_format
+    choices: *deliverable_choices
+  - item_id: depth
+    goal: how big the research should be
+    required: false
+    skippable: false
+    brief_field: depth
+    choices: *depth_choices
+
+decision_support:
+  - item_id: decision
+    goal: the decision being made, and by when
+    required: true
+    brief_field: decision
+  - item_id: options
+    goal: the options on the table
+    required: true
+    brief_field: options
+    multi: true
+  - item_id: criteria
+    goal: the criteria that matter for the choice
+    required: true
+    brief_field: criteria
+    multi: true
+  - item_id: constraints
+    goal: hard constraints that rule an option out regardless of score
+    required: false
+    brief_field: constraints
+    multi: true
+  - *common
+
+landscape_brief:
+  - item_id: scope_boundary
+    goal: where the landscape starts and stops (segment, region)
+    required: true
+    brief_field: geography
+  - item_id: criteria
+    goal: what the map should show for each player
+    required: true
+    brief_field: criteria
+    multi: true
+  - item_id: known_players
+    goal: players the user already knows, so the research looks beyond them
+    required: false
+    brief_field: options
+    multi: true
+  - *common
+
+fact_verification:
+  - item_id: claims
+    goal: the claims to verify, as the user has seen them
+    required: true
+    brief_field: claims
+    multi: true
+  - item_id: claim_origin
+    goal: where the user saw the claims, to help find the primary source
+    required: false
+    brief_field: constraints
+    multi: true
+  - *common
+
+explainer:
+  - item_id: audience
+    goal: who the explanation is for and what they already know
+    required: true
+    brief_field: decision
+  - item_id: concepts
+    goal: the sub-concepts the explanation must cover
+    required: true
+    brief_field: concepts
+    multi: true
+  - item_id: criteria
+    goal: what would make the explanation good enough
+    required: false
+    brief_field: criteria
+    multi: true
+  - *common
+
+# A Research run on a question no specialised kind fits: the question is
+# the topic (from the first message); the interview settles first what the
+# answer must cover — the subject's own parts — then, only where it matters,
+# why, how recent, from where, and in what shape.
+general:
+  - item_id: criteria
+    goal: which parts of the topic the answer must cover (its sub-areas, players, products, regions)
+    required: true
+    brief_field: criteria
+    multi: true
+  - item_id: purpose
+    goal: what the answer will be used for
+    required: false
+    brief_field: purpose
+  - item_id: recency
+    goal: how recent the sources must be
+    required: false
+    brief_field: recency_days
+    choices: *recency_choices
+  - item_id: sources
+    goal: sources to prefer or avoid
+    required: false
+    brief_field: source_policy
+    choices: *source_choices
+  - item_id: context
+    goal: the user's own situation that affects the answer (budget, organisation); private, never searched for
+    required: false
+    brief_field: private_terms
+    multi: true
+    private: true
+  - item_id: deliverable
+    goal: the shape of the deliverable
+    required: false
+    brief_field: deliverable_format
+    choices: *deliverable_choices
+  - item_id: depth
+    goal: how big the research should be
+    required: false
+    skippable: false
+    brief_field: depth
+    choices: *depth_choices

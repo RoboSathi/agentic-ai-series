@@ -16,7 +16,7 @@ from typing import NamedTuple
 
 from agentic_commons.config import get_settings
 from agentic_commons.context.types import Chunk
-from agentic_commons.hallucination_protection.claims import MONEY, specifics
+from agentic_commons.hallucination_protection.claims import money_pattern, specifics
 from agentic_commons.hallucination_protection.states import StateModel
 from agentic_commons.money import Money, money_or_none
 
@@ -61,7 +61,7 @@ def numbers(text: str) -> set[str]:
 
 def amounts(text: str) -> set[Money]:
     """Every amount a text states, exactly."""
-    return {amount for value in MONEY.findall(text) if (amount := money_or_none(value))}
+    return {amount for value in money_pattern().findall(text) if (amount := money_or_none(value))}
 
 
 class DirectChecker:

@@ -62,7 +62,7 @@ async def post_json_with_poll(
             pending = response.json()
             request_id = pending.get("requestId") or pending.get("request_id")
             if not request_id:
-                raise ValueError(f"NVIDIA {error_label} guard returned 202 without requestId")
+                raise ValueError(f"hosted {error_label} guard returned 202 without requestId")
 
             base = base_url.rstrip("/")
             poll_url = (
@@ -93,18 +93,18 @@ async def post_json_with_poll(
                     data = poll.json()
                     if not isinstance(data, dict):
                         raise ValueError(
-                            f"NVIDIA {error_label} guard returned a non-object status response"
+                            f"hosted {error_label} guard returned a non-object status response"
                         )
                     return data
                 await asyncio.sleep(min(0.15, max(0.0, deadline - time.perf_counter())))
 
             raise TimeoutError(
-                f"NVIDIA {error_label} guard result remained pending past {timeout:.1f}s"
+                f"hosted {error_label} guard result remained pending past {timeout:.1f}s"
             )
 
         data = response.json()
         if not isinstance(data, dict):
-            raise ValueError(f"NVIDIA {error_label} guard returned a non-object response")
+            raise ValueError(f"hosted {error_label} guard returned a non-object response")
         return data
     finally:
         if owns_client:

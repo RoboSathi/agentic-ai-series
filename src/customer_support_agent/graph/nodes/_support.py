@@ -33,11 +33,10 @@ from agentic_commons.gatekeeper.mandate import MandateIssuer
 from agentic_commons.guardrails import ResponseGuardrail
 from agentic_commons.guardrails.response import NOT_EXECUTED_MARKER
 from agentic_commons.hallucination_protection import (
-    OBSERVATION_SEQUENCE,
-    STATE_CHANGING,
     DetectionLadder,
     GroundingReasoningDiagnoser,
-    split_sentences,
+    Observation,
+    tool_evidence,
 )
 from agentic_commons.llm.client import LLMClient
 from agentic_commons.llm.types import CompletionRequest, CompletionResult, Message
@@ -49,10 +48,11 @@ from agentic_commons.observability import (
     StageReporter,
     Tracer,
 )
+from agentic_commons.observability.llm_fields import llm_request_fields, llm_response_fields
+from agentic_commons.observability.loop_reporter import mark_step
 from agentic_commons.observability.types import EventKind
 from agentic_commons.resilience import (
     DeadLetterQueue,
-    ResilientCaller,
 )
 from agentic_commons.security import SecuritySuite
 from agentic_commons.security.auth.policy import AgentPolicy
@@ -75,7 +75,6 @@ from customer_support_agent.persistence.repositories import OrdersRepository
 from customer_support_agent.presentation.orders import (
     OrderMenu,
 )
-from customer_support_agent.presentation.reporting import llm_request_fields, llm_response_fields
 from customer_support_agent.prompts.policy import policy_text
 from customer_support_agent.prompts.system_prompt import (
     build_reply_instruction,
@@ -116,7 +115,6 @@ class NodeSupport:
     _selector: ToolRetrievalSelector | None
     _cascade: NollmScoringCascadeImpl | None
     _reporter: StageReporter | None
-    _resilient: ResilientCaller
     _dead_letter_queue: DeadLetterQueue | None
     _tracer: Tracer | None
     _slos: SLORegistry | None
@@ -224,10 +222,8 @@ class NodeSupport:
         """The transcript handed to the model this turn."""
         raise NotImplementedError
 
-    async def _call_model(
-        self, request: CompletionRequest, state: AgentState, key: str
-    ) -> CompletionResult:
-        """One model call, under timeout, retry and circuit breaker."""
+    async def _call_model(self, request: CompletionRequest, state: AgentState) -> CompletionResult:
+        """One model call, traced; its protection is the client's own (`create_llm_client`)."""
         raise NotImplementedError
 
     async def _invoke(
@@ -337,17 +333,9 @@ class NodeSupport:
         # read as *neutral* on "your order has been cancelled", and an earlier
         # read of the still-pending order was left to contradict it. A refusal
         # stays whole, so its marker is never parted from what was refused.
-        tools = [
-            Chunk(
-                content=fact,
-                kind="tool_result",
-                metadata={OBSERVATION_SEQUENCE: index, STATE_CHANGING: changed},
-            )
-            for index, (text, changed) in enumerate(self._observations(state))
-            for line in text.splitlines()
-            if line.strip()
-            for fact in _facts(line.strip())
-        ]
+        tools = tool_evidence(
+            [Observation(text, changed) for text, changed in self._observations(state)]
+        )
         # What the customer said, as the model saw it. A reply may echo it
         # ("I can't issue a $1 refund") but it proves nothing, so its tier
         # is configured support-only.
@@ -537,7 +525,7 @@ class NodeSupport:
         self._done(
             "llm_request",
             event_kind="model",
-            summary=f"LLM request · {purpose}",
+            summary=get_settings().observability.llm_request_heading.format(purpose=purpose),
             fields={
                 **llm_request_fields(request, model=self._llm.model),
                 "purpose": purpose,
@@ -552,13 +540,14 @@ class NodeSupport:
     ) -> None:
         """Expose the exact provider-neutral response and its accounting."""
         fields = {**llm_response_fields(result), "purpose": purpose}
+        headings = get_settings().observability
         self._done(
             "llm_response_received",
             event_kind="model",
             summary=(
-                f"LLM response · tool requested: {result.tool_calls[0].name}"
+                headings.llm_tool_requested_heading.format(tool=result.tool_calls[0].name)
                 if result.tool_calls
-                else f"LLM response · {purpose}"
+                else headings.llm_response_heading.format(purpose=purpose)
             ),
             fields=fields,
         )
@@ -643,15 +632,14 @@ class NodeSupport:
         is what makes "the model asked twice" visible. The wording is
         configuration, so it cannot drift from what the loop does.
         """
-        step = self._loop_step
-        if step is None or stage not in _LOOP_STAGES:
-            return summary, fields
-        settings = get_settings().observability
-        prefix = settings.loop_step_prefix.format(step=step)
-        return (prefix + summary if summary else prefix.rstrip(" ·")), {
-            "loop_step": settings.loop_step_detail.format(step=step, max=self._max_rounds),
-            **(fields or {}),
-        }
+        return mark_step(
+            stage,
+            summary,
+            fields,
+            step=self._loop_step,
+            max_steps=self._max_rounds,
+            stages=_LOOP_STAGES,
+        )
 
     def _reporter_blocked(
         self,
@@ -772,13 +760,6 @@ def _knowledge_evidence() -> tuple[Chunk, ...]:
         for path in sorted(rag.resolved_corpus_dir.glob(rag.corpus_glob))
         for index, section in enumerate(markdown_sections(path.read_text(encoding="utf-8")))
     )
-
-
-def _facts(line: str) -> list[str]:
-    """One observation line as the single facts NLI can read, one premise each."""
-    if line.startswith(NOT_EXECUTED_MARKER):
-        return [line]
-    return [sentence for sentence in split_sentences(line) if sentence.strip()]
 
 
 def _not_executed(action: dict[str, Any]) -> str:

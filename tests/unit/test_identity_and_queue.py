@@ -39,10 +39,10 @@ class TestANameIsNotADate:
     @pytest.mark.parametrize(
         "text, expected",
         [
-            ("It arrives on March 3", "march 3"),
-            ("It arrives on Mar 3", "mar 3"),
+            ("It arrives on March 3", "3 mar"),
+            ("It arrives on Mar 3", "3 mar"),
             ("Shipped 3 Nov", "3 nov"),
-            ("Due May 3", "may 3"),
+            ("Due May 3", "3 may"),
             ("It arrives in March", "march"),
         ],
     )

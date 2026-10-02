@@ -58,6 +58,8 @@ def _hitl_from(row: dict[str, Any]) -> HitlRequest:
     values = {key: value for key, value in row.items() if key != "requested_amount_cents"}
     values["requested_amount"] = Money.from_cents(int(row["requested_amount_cents"]))
     return HitlRequest.model_validate(values)
+
+
 _USER_COLUMNS = "user_id, user_code, created_at, name, email, phone"
 
 
@@ -143,8 +145,7 @@ class OrdersRepository:
             )
         else:
             result = self._pool.execute(
-                "UPDATE orders SET refund_status = ? "
-                "WHERE order_id = ? AND refund_status = ?",
+                "UPDATE orders SET refund_status = ? WHERE order_id = ? AND refund_status = ?",
                 (status, order_id, expected),
             )
         return result.affected > 0

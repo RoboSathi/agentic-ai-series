@@ -76,7 +76,7 @@ async def run() -> EpisodeOutput:
                 "cases": len(MALFORMED),
                 "repaired under auto_repair": repaired,
                 "raised rather than coerced": raised,
-                "constrained backend": "llamacpp_grammar (a real grammar); NIM honours only a hint",
+                "constrained backend": "grammar (a real grammar); a hosted catalogue honours only a hint",
             }
         }
     )

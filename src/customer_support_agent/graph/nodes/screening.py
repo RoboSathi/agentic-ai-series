@@ -9,6 +9,8 @@ quarantined, and the audit trail says why.
 from typing import Any
 
 from agentic_commons.basic_sanity import BasicSanityRequest
+from agentic_commons.resilience.dead_letter_queue import DeadLetterReason
+from agentic_commons.security import MessageScreener
 from customer_support_agent.basic_sanity import owned_order_id
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.graph.nodes._support import NodeSupport
@@ -50,30 +52,14 @@ class ScreeningNodes(NodeSupport):
         ordinary, not an attack — the stage that refuses things is
         `prompt_injection`, which runs alongside this one.
         """
-        spans = self._security.detect_pii(state.query)
-        redacted = self._security.redact(state.query) if spans else state.query
-        categories = sorted({span.category for span in spans})
-        self._report(
-            "pii_filtering",
-            event_kind="security",
-            summary="Removing personal data before the model call",
-        )
-        detected = bool(spans)
-        self._done(
-            "pii_filtering",
-            event_kind="security",
-            summary=(
-                f"REDACTED · {', '.join(categories)} · {len(spans)} match{'es' if len(spans) != 1 else ''}"
-                if detected
-                else "PASS · no PII detected"
-            ),
-            fields={"matches": len(spans), "categories": categories},
-        )
+        outcome = MessageScreener(self._security).redact(state.query, self._reporter)
         return {
-            "model_query": redacted,
+            "model_query": outcome.text,
             "decisions": [
                 *state.decisions,
-                f"pii: {', '.join(categories)} redacted" if categories else "pii: none found",
+                f"pii: {', '.join(outcome.categories)} redacted"
+                if outcome.categories
+                else "pii: none found",
             ],
         }
 
@@ -151,8 +137,7 @@ class ScreeningNodes(NodeSupport):
             fields=fields,
         )
         return {
-            "response": result.message
-            or "I couldn't safely continue with that request.",
+            "response": result.message or "I couldn't safely continue with that request.",
             "decisions": [
                 *state.decisions,
                 f"basic_sanity: blocked ({result.reason_code})",
@@ -169,7 +154,7 @@ class ScreeningNodes(NodeSupport):
         self,
         state: AgentState,
         *,
-        reason: str,
+        reason: DeadLetterReason,
         injection_detected: bool = False,
         injection_reason: str = "",
         moderation_flagged: bool = False,
@@ -244,175 +229,37 @@ class ScreeningNodes(NodeSupport):
         the trace shows the gap instead of showing a check that passed
         without looking at anything.
         """
-        self._report(
-            "prompt_injection_check",
-            event_kind="security",
-            summary="Checking untrusted input for injection",
+        outcome = await MessageScreener(self._security).injection(
+            _outbound(state),
+            self._reporter,
+            instructions=self._system_prompt(),
+            tools=self._registry.all_tools(),
         )
-        assessment = await self._security.prepare_untrusted_async(
-            self._system_prompt(), _outbound(state), self._registry.all_tools()
-        )
-        injection_checks = list(getattr(assessment, "checks", []))
-        jailbreak_check = next(
-            (check for check in injection_checks if check.get("name") == "NVIDIA NemoGuard JailbreakDetect"),
-            None,
-        )
-        deterministic_injection = any(
-            check.get("name") == "Deterministic prompt-injection scan"
-            and check.get("status") == "FAIL"
-            for check in injection_checks
-        )
-        injection_fields: dict[str, Any] = {
-            "deterministic": "MATCH" if deterministic_injection else "NO_MATCH"
-        }
-        if deterministic_injection:
-            injection_fields["reason"] = assessment.reason
-            self._reporter_blocked(
-                "prompt_injection_check",
-                summary="Prompt injection blocked · deterministic match",
-                event_kind="security",
-                fields=injection_fields,
-            )
-        elif jailbreak_check and jailbreak_check.get("status") == "FAIL":
-            injection_fields.update({
-                "model": jailbreak_check.get("model", "unknown"),
-                "score": jailbreak_check.get("score"),
-                "latency_ms": jailbreak_check.get("latency_ms"),
-                "reason": jailbreak_check.get("reason", "Hosted jailbreak guard flagged the input"),
-            })
-            self._reporter_blocked(
-                "prompt_injection_check",
-                summary="Prompt injection blocked · model detection",
-                event_kind="security",
-                fields=injection_fields,
-            )
-        elif jailbreak_check and jailbreak_check.get("status") == "SKIPPED":
-            injection_fields.update({
-                "model": jailbreak_check.get("model", "unknown"),
-                "latency_ms": jailbreak_check.get("latency_ms"),
-                "error_code": jailbreak_check.get("error_code"),
-                "http_status": jailbreak_check.get("http_status"),
-                "reason": jailbreak_check.get("reason", "Hosted jailbreak guard unavailable"),
-            })
-            self._reporter_warning(
-                "prompt_injection_check",
-                summary="Prompt injection model check unavailable",
-                event_kind="security",
-                fields=injection_fields,
-            )
-        elif jailbreak_check:
-            injection_fields.update({
-                "model": jailbreak_check.get("model", "unknown"),
-                "score": jailbreak_check.get("score"),
-                "latency_ms": jailbreak_check.get("latency_ms"),
-            })
-            self._done(
-                "prompt_injection_check",
-                summary="Prompt injection check passed · model verified",
-                event_kind="security",
-                fields=injection_fields,
-            )
-        else:
-            self._done(
-                "prompt_injection_check",
-                summary="Prompt injection check passed · deterministic scan",
-                event_kind="security",
-                fields=injection_fields,
-            )
-
-        if assessment.suspicious:
+        if outcome.blocked:
             return self._quarantine_security_request(
                 state,
                 reason="prompt_injection",
                 injection_detected=True,
-                injection_reason=assessment.reason,
+                injection_reason=outcome.reason,
             )
         return {
-            "decisions": [*state.decisions, f"injection: {assessment.reason}"],
+            "decisions": [*state.decisions, f"injection: {outcome.reason}"],
             "metadata": {
                 **state.metadata,
-                "allowed_actions": assessment.allowed_actions,
+                "allowed_actions": outcome.allowed_actions,
             },
         }
 
     async def content_moderation(self, state: AgentState) -> dict[str, Any]:
         """Screen the message against the content policy."""
-        self._report(
-            "content_moderation",
-            event_kind="security",
-            summary="Checking content policy",
-        )
-        moderation = await self._security.moderate_async(_outbound(state))
-        moderation_checks = list(getattr(moderation, "checks", []))
-        content_guard_check = next(
-            (check for check in moderation_checks if check.get("name") == "NVIDIA Nemotron Safety Guard 8B v3"),
-            None,
-        )
-        deterministic_content = bool(moderation.matched_terms)
-        moderation_fields: dict[str, Any] = {
-            "deterministic": "MATCH" if deterministic_content else "NO_MATCH"
-        }
-        if deterministic_content:
-            moderation_fields["reason"] = moderation.reason
-            self._reporter_blocked(
-                "content_moderation",
-                summary="Content safety blocked · deterministic match",
-                event_kind="security",
-                fields=moderation_fields,
-            )
-        elif content_guard_check and content_guard_check.get("status") == "FAIL":
-            moderation_fields.update({
-                "model": content_guard_check.get("model", "unknown"),
-                "categories": list(content_guard_check.get("categories", [])),
-                "latency_ms": content_guard_check.get("latency_ms"),
-                "reason": content_guard_check.get("reason", "Hosted content-safety guard flagged the input"),
-            })
-            self._reporter_blocked(
-                "content_moderation",
-                summary="Content safety blocked · model detection",
-                event_kind="security",
-                fields=moderation_fields,
-            )
-        elif content_guard_check and content_guard_check.get("status") == "SKIPPED":
-            moderation_fields.update({
-                "model": content_guard_check.get("model", "unknown"),
-                "latency_ms": content_guard_check.get("latency_ms"),
-                "error_code": content_guard_check.get("error_code"),
-                "http_status": content_guard_check.get("http_status"),
-                "reason": content_guard_check.get("reason", "Hosted content-safety guard unavailable"),
-            })
-            self._reporter_warning(
-                "content_moderation",
-                summary="Content safety model check unavailable",
-                event_kind="security",
-                fields=moderation_fields,
-            )
-        elif content_guard_check:
-            moderation_fields.update({
-                "model": content_guard_check.get("model", "unknown"),
-                "latency_ms": content_guard_check.get("latency_ms"),
-            })
-            self._done(
-                "content_moderation",
-                summary="Content safety check passed · model verified",
-                event_kind="security",
-                fields=moderation_fields,
-            )
-        else:
-            self._done(
-                "content_moderation",
-                summary="Content safety check passed · deterministic scan",
-                event_kind="security",
-                fields=moderation_fields,
-            )
-
-        if moderation.flagged:
+        outcome = await MessageScreener(self._security).moderation(_outbound(state), self._reporter)
+        if outcome.blocked:
             return self._quarantine_security_request(
                 state,
                 reason="content_moderation",
                 moderation_flagged=True,
-                moderation_reason=moderation.reason,
-                moderation_categories=list(moderation.categories),
+                moderation_reason=outcome.reason,
+                moderation_categories=outcome.categories,
             )
         return {
             "decisions": [*state.decisions],

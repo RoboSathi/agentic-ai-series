@@ -3,8 +3,9 @@
 import pytest
 
 from agentic_commons.audit import AuditEntry, NullAuditLedger, SqliteAuditLedger
+from agentic_commons.config import get_settings
 from agentic_commons.llm.cascade import CascadingLLMClient, ConfiguredEscalationPolicy
-from agentic_commons.llm.client import NvidiaNimClient, create_llm_client
+from agentic_commons.llm.client import HostedClient, create_llm_client, create_pinned_llm_client
 from agentic_commons.llm.embeddings import (
     HashingEmbeddingClient,
     cosine_similarity,
@@ -135,8 +136,9 @@ class TestLLMClient:
 
     def test_cost_is_computed_from_configured_rates(self) -> None:
         """Never a hard-coded price."""
-        client = create_llm_client()
-        assert isinstance(client, NvidiaNimClient)
+        settings = get_settings().llm
+        client = create_pinned_llm_client(settings.provider, settings.provider_settings().model)
+        assert isinstance(client, HostedClient)
         usage = TokenUsage(prompt_tokens=1000, completion_tokens=1000, total_tokens=2000)
         assert client.cost_for(usage) == pytest.approx(0.0008)
 

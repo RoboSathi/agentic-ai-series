@@ -48,12 +48,18 @@ class CompletionRequest(BaseModel):
         description="Requested output schema; honored only by backends that "
         "support grammar-constrained decoding (see guardrails).",
     )
+    # Provider-specific request fields beyond the standard ones, e.g. NIM's
+    # `chat_template_kwargs` to switch a reasoning model's thinking off. Set
+    # per role from config; a backend that does not know a field ignores it.
+    extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
 class CompletionResult(BaseModel):
     """One completion, plus the accounting the harness needs downstream."""
 
     content: str = ""
+    # The model's own reasoning, when the provider returns it beside the answer.
+    reasoning: str = ""
     tool_calls: list[ModelToolCall] | None = None
     model: str = ""
     finish_reason: str | None = None
@@ -61,6 +67,8 @@ class CompletionResult(BaseModel):
     cost_usd: float = 0.0
     tier: str = ""
     latency_ms: float = 0.0
+    # Attempts the model's resilience stack made for this answer (1: it worked first time).
+    attempts: int = 1
 
 
 class HealthCheckResult(BaseModel):

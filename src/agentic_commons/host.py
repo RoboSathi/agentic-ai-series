@@ -24,7 +24,8 @@ decision rather than an import.
 """
 
 import importlib
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from agentic_commons.commands.types import Command
@@ -81,6 +82,66 @@ class AgentHost(Protocol):
         ...
 
 
+# -- optional hooks --------------------------------------------------------------
+# An agent may offer any of these; the shell asks with `isinstance` and
+# behaves exactly as before when they are absent, so an agent that has
+# never heard of them (Customer Support) is unaffected.
+
+
+@runtime_checkable
+class GreetingHost(Protocol):
+    """An agent that says its own first words when the console opens."""
+
+    def greeting(self) -> str: ...
+
+
+@runtime_checkable
+class StatusHost(Protocol):
+    """An agent with live state worth a status block under the feed.
+
+    Called on the block's refresh tick with the console's session; returns
+    the lines always shown, then the lines shown when the operator expands
+    the block. Lines are Rich markup. Must be cheap and must not raise: it
+    reads state the agent already holds, it never computes it.
+    """
+
+    def status_lines(self, session_id: str) -> tuple[Sequence[str], Sequence[str]]: ...
+
+
+@dataclass(frozen=True)
+class HostAction:
+    """One button the console offers: what it says, and the command it runs when pressed."""
+
+    label: str
+    command: str
+    # Whether it may be pressed while a turn is running (a cancel can; a "finish" cannot).
+    during_turn: bool = False
+
+
+@runtime_checkable
+class ActionHost(Protocol):
+    """An agent with next steps worth a button beside the slash command (done, approve, cancel).
+
+    Called on the status block's refresh tick with the console's session. A press runs the
+    command exactly as if it had been typed. Must be cheap and must not raise.
+    """
+
+    def actions(self, session_id: str) -> Sequence[HostAction]: ...
+
+
+@runtime_checkable
+class CancellableHost(Protocol):
+    """An agent whose long-running turn can be cancelled by a key binding."""
+
+    def cancel_key(self) -> str:
+        """The key that cancels, e.g. `ctrl+x`."""
+        ...
+
+    def cancel(self) -> bool:
+        """Ask the running turn to stop; False when nothing was running."""
+        ...
+
+
 def load_spec(spec: str) -> Any:
     """Load the object named by a `module.path:attribute` string.
 
@@ -113,4 +174,14 @@ def resolve_host(spec: str) -> AgentHost:
     return host
 
 
-__all__ = ["SPEC_SEPARATOR", "AgentHost", "load_spec", "resolve_host"]
+__all__ = [
+    "SPEC_SEPARATOR",
+    "AgentHost",
+    "CancellableHost",
+    "GreetingHost",
+    "ActionHost",
+    "HostAction",
+    "StatusHost",
+    "load_spec",
+    "resolve_host",
+]

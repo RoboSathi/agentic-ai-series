@@ -21,9 +21,7 @@ class BusinessRuleResult(BaseModel):
 class DeterministicBusinessRules(Protocol):
     """Agent/domain-owned checks performed immediately before execution."""
 
-    def evaluate(
-        self, call: ToolCall, authority: AuthorityContext
-    ) -> BusinessRuleResult: ...
+    def evaluate(self, call: ToolCall, authority: AuthorityContext) -> BusinessRuleResult: ...
 
 
 class AllowAllBusinessRules:

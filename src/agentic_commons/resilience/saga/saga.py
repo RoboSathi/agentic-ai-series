@@ -51,9 +51,7 @@ class CompensatingSaga:
             self._logger.debug("Saga step committed", step=step.name)
         return SagaResult(succeeded=True, completed=[step.name for step in completed])
 
-    def _uncompensated(
-        self, completed: list[SagaStep], failed_step: str, error: str
-    ) -> SagaResult:
+    def _uncompensated(self, completed: list[SagaStep], failed_step: str, error: str) -> SagaResult:
         """A failure reported without unwinding, because the saga is disabled."""
         self._logger.warning(
             "Saga disabled — committed steps left in place",

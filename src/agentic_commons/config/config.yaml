@@ -82,13 +82,32 @@ logging:
   level: INFO
   console_enabled: true
   console_level: INFO
+  # Bright console colours by level (Rich's defaults are dark on a dark terminal), and the
+  # subsystem in front of each line. The file log is unaffected.
+  console_theme:
+    log.time: "bright_black"
+    logging.level.debug: "bright_black"
+    logging.level.info: "bold bright_cyan"
+    logging.level.warning: "bold bright_yellow"
+    logging.level.error: "bold bright_red"
+    logging.level.critical: "bold white on red"
+    log.message: "bright_white"
+    repr.number: "bold bright_magenta"
+    repr.str: "bright_green"
+    repr.url: "underline bright_blue"
+  console_format: "[bold bright_blue]%(name)s[/] %(message)s"
   file_enabled: true
   # The file log is the authoritative record, so it captures more than the
   # console: DEBUG here is what makes LLM payloads, call traces and
   # gatekeeper reasoning available after the fact without flooding the
   # screen someone is watching.
   file_level: DEBUG
+  # Every agent writes under its own folder here: logs/<agent id>/<subsystem>.log, so two agents
+  # never share a file. `agent.id` comes from the agent's overlay.
   dir: logs
+  # A sub-folder of the agent's own (logs/<agent id>/<run_label>/) for runs that are not the live
+  # agent, such as an offline profile; empty writes to the agent's folder.
+  run_label: ""
   # How a record's fields are drawn in the log files. `tree` is an
   # indented structure a person can follow; `json` is the parseable
   # object, for anything that reads these files rather than a human.
@@ -105,7 +124,7 @@ llm:
   enabled: true
   provider: nim            # nim | local — the default single-tier client
   max_tokens: 3000
-  # Write every request and response to logs/llm.log at DEBUG. The single
+  # Write every request and response to logs/<agent id>/llm.log at DEBUG. The single
   # most useful switch when the agent misbehaves: it shows what the model
   # was actually asked, which is rarely what you assume it was asked.
   # Off by default — payloads are verbose and may carry customer text.
@@ -114,8 +133,13 @@ llm:
   # thing: a truncated prompt hides the end of the system prompt and the
   # most recent turn, which is usually the part you are debugging.
   payload_max_chars: 0
+  # Message attributes a provider uses for the model's reasoning, shown as the
+  # THOUGHT of a reasoning loop. The first one present is used.
+  reasoning_fields: [reasoning_content, reasoning]
   providers:
     nim:
+      adapter: hosted
+      key_env_vars: [nvidia_api_key]
       base_url: https://integrate.api.nvidia.com/v1
       # NIM entitlements are per-account; this model is confirmed invokable
       # and does reliable multi-step tool calling for the refund agent.
@@ -128,11 +152,21 @@ llm:
       input_cost_per_1k_tokens: 0.0002
       output_cost_per_1k_tokens: 0.0006
     local:
+      adapter: grammar
+      key_env_vars: []
       base_url: http://localhost:8080/v1
       model: mistral-nemo-12b
       timeout_seconds: 120
       input_cost_per_1k_tokens: 0.0
       output_cost_per_1k_tokens: 0.0
+  # The default client's protection (`create_llm_client`): every attempt bounded and retried by
+  # the resilience stack; when the model fails, or has not answered after `hedge_after_seconds`,
+  # the backup starts beside it and the first answer wins. Slower, but the call gets an answer.
+  chain:
+    timeout_seconds: 60
+    hedge_after_seconds: 30
+    fallbacks:
+      - {provider: nim, model: nvidia/nemotron-3-ultra-550b-a55b}
   cascade:
     enabled: false
     tiers: [local, nim]    # cheapest sufficient tier first (E44)
@@ -140,8 +174,9 @@ llm:
     escalate_on_empty_content: true
     escalate_on_error: true
   embedding:
-    provider: nim          # nim | local
-    nim_model: nvidia/nemotron-3-embed-1b
+    backend: hosted        # hosted (the provider below) | hashing (local, no network)
+    provider: nim
+    model: nvidia/nemotron-3-embed-1b
     local_dimensions: 256
     # Asymmetric retrieval models embed questions and passages
     # differently. RAG indexes as `passage` and searches as `query`.
@@ -200,24 +235,85 @@ llm:
   # Summarises a session's conversation for a memory dream. BART fine-tuned
   # on SAMSum (chat dialogues). Local, like the intent BERT and NLI DeBERTa:
   # no key, no rate limit. ~1.6 GB, downloaded on first use.
+  # A local sentence-embedding model, off unless an agent names one (`make model-check`
+  # lists it only where it is used). Mean-pooled and normalised, like sentence-transformers.
+  local_embedder:
+    enabled: false
+    model: ""
+    local_model_dir: ""
+    download_if_missing: true
+    max_length: 128
+    prefixes: {query: "", passage: ""}
+  # Off in the platform: only an agent that summarises sessions (the support agent's memory
+  # dream) turns it on in its overlay.
   dialogue_summarizer:
-    enabled: true
+    enabled: false
     model: philschmid/bart-large-cnn-samsum
     local_model_dir: local_models/summarizer/bart-large-cnn-samsum
     download_if_missing: true
     max_input_tokens: 1024
     max_summary_tokens: 60
     num_beams: 4
+  # Silenced only while a local model loads. transformers 5.17's DeBERTa-v2 (the local NLI
+  # model) still decorates helpers with `torch.jit.script`, which torch 2.14 deprecates on
+  # Python 3.14: the library's code, not ours. Drop the entry once transformers moves off it.
+  suppressed_load_warnings:
+    - '`torch\.jit\.script` is (?:deprecated|not supported)'
   # `make llm-check` sends one real, minimal request to every hosted
   # endpoint: an account can list a model it is not entitled to invoke.
   check:
     prompt: Reply with the single word OK.
     max_tokens: 4
+    timeout_seconds: 20
+    # Each in-process model is loaded and run once on these.
+    local:
+      nli_premise: "The forecast for Pune on 2 October is light drizzle with a high of 32.5 °C."
+      nli_hypothesis: "It will drizzle in Pune on 2 October."
+      intent_text: "I want a refund for my order"
+      dialogue: "User: What is the weather in Pune?\nAssistant: Light drizzle, 26 °C.\nUser: And tomorrow?\nAssistant: Light drizzle again, up to 32.5 °C."
+    # `make model-check BENCH=1`: a judge-sized request, repeated, to each chat model.
+    benchmark:
+      samples: 3
+      prompt: >-
+        Score this report sentence against its evidence on a 0-1 scale and give a
+        one-paragraph rationale. Sentence: "The program costs 4 lakh a year and includes a
+        laptop." Evidence: "Annual fee: INR 4,00,000. An Apple MacBook is included in the
+        above course fee." Answer as JSON {"score": float, "rationale": str}.
+      max_tokens: 512
+      timeout_seconds: 120
+    # The tables' colours: bright, so they read on a dark terminal; each cell by what it is.
+    styles:
+      title: "bold bright_white"
+      border: "bright_blue"
+      header: "bold bright_cyan"
+      status:
+        ok: "bold bright_green"
+        failed: "bold bright_red"
+        skipped: "bright_black"
+        downloaded: "bold bright_cyan"
+        pending: "bold bright_yellow"
+      name: "bold bright_magenta"
+      model: "bright_cyan"
+      target: "bright_blue"
+      required: "bold bright_yellow"
+      optional: "bright_black"
+      detail: "bright_white"
+      failure: "bold bright_red"
+      fast: "bright_green"
+      medium: "bright_yellow"
+      slow: "bright_red"
+      fast_ms: 1500
+      slow_ms: 5000
+      bench_fast_seconds: 5
+      bench_slow_seconds: 15
   # The model's typesetting habits, undone as its text arrives. Nemotron
   # writes a narrow no-break space between a label and its number
   # ("order<U+202F>90019") and non-breaking hyphens in dates; they look like
   # ordinary spaces and hyphens on screen, but the NLI checker, the id and
   # amount matchers and JSON parsing all read them as something else.
+  # Named roles -> model (`llm/roles.py`). Empty here: which roles exist
+  # is an agent's vocabulary, declared in its own overlay.
+  roles: {}
   output_normalisation:
     enabled: true
     # Unicode categories whose characters become a plain space. Zs is every
@@ -229,6 +325,9 @@ llm:
     # Invisible characters removed: zero-width space, non-joiner, joiner,
     # word joiner, byte-order mark.
     remove: ["​", "‌", "‍", "⁠", "﻿"]
+    # Markup removed with the space before it: a browsing model's tool-result citations
+    # ("【0†L1-L9】"), whose digits read as figures to every check after it.
+    strip_patterns: ['[ \t]*【[^】]*】']
 
 
 persistence:
@@ -281,6 +380,18 @@ observability:
   # tool it asked for, and the result — not reason/act/observe.
   loop_step_prefix: "Step {step} · "
   loop_step_detail: "{step} of {max} (model call → tool → result)"
+  llm_request_heading: "LLM request · {purpose}"
+  llm_response_heading: "LLM response · {purpose}"
+  llm_tool_requested_heading: "LLM response · tool requested: {tool}"
+  # A model chain's backup cards (`llm/observer.py`). No heading names a model.
+  model_events:
+    backup_started: "{label} · {reason} · asking the backup model"
+    backup_answered: "{label} · the backup model answered"
+    reasons: {slow: "no answer yet", failed: "the call failed", weak: "an empty or cut-off answer"}
+    primary_label: Primary model
+    backup_label: Backup model
+  unparseable_arguments: "unparseable — the call will be refused"
+  invalid_amount: "{value} (not a valid amount)"
   slo_targets:
     task_success_rate: 0.95
     unauthorized_action_rate: 0.0
@@ -301,6 +412,19 @@ observability:
   # evaluator passes and human review are what actually add up.
 
 context:
+  # The `context_assembly` card (context/window.py), the same for every agent.
+  window:
+    started: Assembling the model context window
+    assembled: Context window assembled
+    withheld: Context assembly withheld
+    unhealthy: "Context health: {modes} — {action}"
+    removed: "{count} chunk(s) removed"
+    nothing_removed: flagged, nothing removed
+    finding_line: "{mode} · {source} · {rule}: {detail} → {action}"
+    routine_modes: [distraction]
+    not_acted_on: flagged
+    dropped_action: dropped
+    quiet_when_healthy: true
   token_budget: 3000
   chars_per_token: 4
   retrieval_mode: hybrid   # lexical | dense | hybrid | graph
@@ -493,10 +617,23 @@ guardrails:
   enabled: true
   mode: auto_repair
   max_repair_attempts: 2
-  constrained_backend: llamacpp_grammar
+  constrained_backend: grammar
 
 hallucination_protection:
   enforce_grounding: true
+  # What is said instead when nothing in an answer could be verified.
+  withheld_reply: "I couldn't verify all of the details in that response. Please try again."
+  # The lexical fallback's contradictions refute (true) or only leave a claim unverified.
+  uncalibrated_may_refute: true
+  # A claim a rule refuted (an id, amount or date in no evidence) is removed without asking
+  # the model to rewrite it (false), or rewritten once from the evidence first (true).
+  repair_direct_refutations: false
+  # A figure followed by one of these is a size ("$1.2 M"), never read as the amount "$1.20".
+  # Connectives that split a sentence into claims checked separately, and the fewest content
+  # words a claim needs to be checked at all.
+  claim_conjunctions: [and, but, however, although, while, because, since, so]
+  claim_min_content_tokens: 3
+  money_scales: [k, m, mn, mm, b, bn, t, tn, thousand, million, billion, trillion, lakh, lac, crore, cr]
   confidence_threshold: 0.7
   # Minimum NLI probability required to accept an entailment as grounded.
   # This is separate from the generic cascade confidence threshold so the
@@ -689,6 +826,23 @@ gatekeeper:
     per_action_amount_escalation_usd: {}
 
 security:
+  # What the screens of the person's message say on their cards (security/screening.py).
+  screening:
+    pii_started: Removing personal data before the model call
+    pii_redacted: "REDACTED · {categories} · {count} match(es)"
+    pii_clear: PASS · no PII detected
+    injection_started: Checking untrusted input for injection
+    injection_blocked_rule: Prompt injection blocked · deterministic match
+    injection_blocked_model: Prompt injection blocked · model detection
+    injection_unavailable: Prompt injection model check unavailable
+    injection_passed_model: Prompt injection check passed · model verified
+    injection_passed_rule: Prompt injection check passed · deterministic scan
+    moderation_started: Checking content policy
+    moderation_blocked_rule: Content safety blocked · deterministic match
+    moderation_blocked_model: Content safety blocked · model detection
+    moderation_unavailable: Content safety model check unavailable
+    moderation_passed_model: Content safety check passed · model verified
+    moderation_passed_rule: Content safety check passed · deterministic scan
   # RBAC (auth) stays on because the Gatekeeper's "who is asking?" question
   # depends on it. Whether each screening stage exists is a feature
   # (`features:`), not a flag here.
@@ -735,6 +889,10 @@ security:
       Classify only the latest user message. Return JSON and nothing else.
       Schema: {"User Safety":"safe"|"unsafe","Safety Categories":"comma-separated categories"}.
       Omit Safety Categories when the message is safe. Ordinary product-support requests are safe.
+    response_safety_key: User Safety
+    response_categories_key: Safety Categories
+    safe_word: safe
+    unsafe_word: unsafe
   guards:
     # Hosted model guards. These are optional defense-in-depth detectors;
     # the existing deterministic checks remain in place and the application
@@ -746,19 +904,36 @@ security:
     jailbreak:
       enabled: true
       provider: nvidia
+      key_env_vars: [nvidia_api_key, NVIDIA_API_KEY]
       base_url: https://ai.api.nvidia.com
       endpoint: /v1/security/nvidia/nemoguard-jailbreak-detect
       model: nvidia/nemoguard-jailbreak-detect
       timeout_seconds: 8
+      resilience_key: hosted-jailbreak
+      check_name: NemoGuard JailbreakDetect
+      flagged_reason: The jailbreak classifier flagged the input.
+      allowed_reason: The jailbreak classifier allowed the input.
+      missing_key_reason: "{env} is not configured"
     content_safety:
       enabled: true
       provider: nvidia
+      key_env_vars: [nvidia_api_key, NVIDIA_API_KEY]
       base_url: https://integrate.api.nvidia.com/v1
       endpoint: /chat/completions
       model: nvidia/nemotron-3.5-content-safety
       # nvidia/llama-3.1-nemotron-safety-guard-8b-v3
       timeout_seconds: 8
       max_tokens: 128
+      resilience_key: hosted-content-safety
+      check_name: Nemotron Content Safety
+      flagged_reason: The content-safety model flagged the input.
+      allowed_reason: The content-safety model classified the input as safe.
+      missing_key_reason: "{env} is not configured"
+    rule_checks:
+      injection: Deterministic prompt-injection scan
+      moderation: Deterministic blocked-term scan
+    hosted_flagged_reason: "hosted {guard} flagged the input"
+    fail_closed_reason: "hosted {guard} unavailable and security policy is configured to fail closed"
 
 resilience:
   circuit_breaker:
@@ -803,6 +978,19 @@ resilience:
         # 35 leaves headroom for its own window boundaries and clock skew.
         max_requests: 35
         hosts: [integrate.api.nvidia.com, ai.api.nvidia.com]
+      # The web gateway's search provider (web.tavily). Its own bucket, so
+      # web traffic never spends the model budget or the reverse.
+      tavily:
+        max_requests: 20
+        hosts: [api.tavily.com]
+        # Tavily's free tier is 1,000 calls a month; stop at 900 to keep a
+        # margin for other tools on the same key. A spent quota fails fast.
+        monthly_quota: 900
+      # DuckDuckGo (via `ddgs`) has no official API and throttles bursts;
+      # its provider spends this bucket explicitly (no HTTP host to match).
+      duckduckgo:
+        max_requests: 10
+        hosts: []
 
 evals:
   enabled: true
@@ -958,6 +1146,77 @@ tui:
   copy_toast_seconds: 2
   max_feed_lines: 0
   spinner_frames: "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+  # Only drawn when the running agent offers a status block (StatusHost).
+  status_refresh_ms: 500
+  status_collapsed_symbol: "▸"
+  status_expanded_symbol: "▾"
+  status_styles:
+    running: "bold green"
+    complete: "bold blue"
+    failed: "bold red"
+  status_expand_hint: "click to expand"
+  status_history_hint: "scroll down to follow"
+  choice_menu_hint: "↑/↓ then Enter to pick · or type your own answer"
+  # Event kinds whose `started` event draws a pending card at once (replaced in place by
+  # the finished card) instead of only the status line: a model call the person waits on.
+  pending_card_kinds: [model]
+  # A card title's colour by outcome (its `status`) — the one colour convention for every
+  # card, whatever stage or agent it comes from: running cyan, done green, warning yellow,
+  # failure red. The colour is in the title's own text, so focus and hover never repaint it.
+  outcome_colors:
+    started: "#4FC3F7"
+    completed: "#00FF87"
+    warning: "#FFCB6B"
+    waiting: "#FFCB6B"
+    failed: "#FF5370"
+    blocked: "#FF5370"
+  # An expanded card: section titles, `key = value` / `key: value` keys, and plain values.
+  # A value that says a state (PASS, FAIL, ...) takes that state's tone instead.
+  section_title_style: "bold #4FC3F7"
+  body_styles:
+    key: "bold #82AAFF"
+    separator: "#7F8C98"
+    value: "#EEFFFF"
+    muted: "#9E9E9E"
+  # The same state colours as the titles, for a card's lines and values.
+  tone_styles:
+    pass: "#00FF87"
+    fail: "#FF5370"
+    warn: "#FFCB6B"
+    dim: "#9E9E9E"
+  # Words that name a state, wherever a card shows them as a value -> their tone.
+  state_words:
+    PASS: pass
+    OK: pass
+    CLEAR: pass
+    ALLOW: pass
+    ALLOWED: pass
+    COMPLETED: pass
+    MATCH: fail
+    FAIL: fail
+    FAILED: fail
+    BLOCKED: fail
+    DENY: fail
+    DENIED: fail
+    ESCALATE: warn
+    WARNING: warn
+    REFERRED: warn
+    SKIPPED: dim
+    NO_MATCH: pass
+  response_styles:
+    h1: "bold #4FC3F7"
+    h2: "bold #C792EA"
+    bold: "bold #FFB454"
+    bullet: "#82AAFF"
+    citation: "#00FF87"
+    url: dim
+    body: white
+  # Extra colouring by pattern; each agent adds its own vocabulary in its overlay.
+  response_highlights:
+    - {pattern: '(?m)^\*\*Status:\*\* COMPLETE.*$', style: "bold green"}
+    - {pattern: '(?m)^\*\*Status:\*\* PARTIAL.*$', style: "bold yellow"}
+    - {pattern: '(?m)^\*\*Status:\*\* (?:FAILED|CANCELLED).*$', style: "bold red"}
+    - {pattern: '(?m)^(?:\*\*)?Sources?:?(?:\*\*)?:?', style: "bold #C792EA"}
 
   command_output:
     title_style: bold bright_cyan
@@ -969,3 +1228,52 @@ tui:
     max_column_width: 64
     prompt_style: bold bright_black
 
+# The web gateway (agentic_commons/web). `replay` is the default because
+# it is the only mode that cannot reach the network: a process that was
+# not told to go live does not go live. A replay miss is an error, never
+# a quiet fall-through to a real request.
+web:
+  mode: replay               # live | record | replay
+  fixtures_dir: data/web_fixtures
+  fixture_set: default
+  search:
+    # General searches: DuckDuckGo first (free, no key), Tavily when it
+    # fails or finds nothing. Time-bounded / news searches: Tavily first.
+    providers: [duckduckgo, tavily]
+    time_bounded_providers: [tavily, duckduckgo]
+    max_results: 5
+    # Live answers are reused from disk for this long: repeating a question
+    # costs no provider call.
+    cache_ttl_hours: 24
+    cache_dir: data/web_cache
+  fetch:
+    timeout_seconds: 20
+    max_attempts: 3
+    user_agent: "agentic-harness/0.1 (+https://robosathi.com)"
+    max_chars: 200000
+    # Below this much extracted text a page is treated as script-rendered.
+    min_text_chars: 200
+    js_markers: ["enable javascript", "requires javascript"]
+    reader_enabled: true
+    reader_url_template: "https://r.jina.ai/{url}"
+    date_meta_keys: [article:published_time, og:article:published_time, datepublished, date, dc.date, dcterms.created, pubdate, publish-date, article:modified_time]
+    date_json_keys: [datePublished, dateCreated, dateModified]
+  tavily:
+    base_url: https://api.tavily.com
+    endpoint: /search
+    search_depth: basic
+    # Provider summaries are never evidence; do not pay for them.
+    include_answer: false
+    timeout_seconds: 20
+    time_ranges: {1: day, 7: week, 31: month, 366: year}
+  duckduckgo:
+    backend: duckduckgo
+    region: wt-wt
+    safesearch: moderate
+    timeout_seconds: 20
+    time_limits: {1: d, 7: w, 31: m, 366: y}
+    rate_bucket: duckduckgo
+
+# Frozen artifacts (agentic_commons/artifacts), one directory per run.
+artifacts:
+  root: data/artifacts

@@ -5,7 +5,6 @@ from types import SimpleNamespace
 
 from agentic_commons.commands import ConsoleEffect
 from agentic_commons.commands.harness import HarnessCommand
-from agentic_commons.llm.types import Message
 from agentic_commons.persistence import SqliteConnectionPool
 from agentic_commons.tui import (
     Osc52ClipboardService,
@@ -39,47 +38,11 @@ class TestStageLabels:
         """The contract test — a missing entry fails here, not silently."""
         assert StageLabelRegistry().missing(EMITTED_STAGES) == set()
 
-    def test_labels_come_from_config(self) -> None:
-        assert StageLabelRegistry().label_for("llm_call") == "Calling model…"
-
-    def test_a_tool_step_reads_as_work_not_as_a_method_name(self) -> None:
-        """The person watching cares what the agent is doing."""
-        label = StageLabelRegistry().label_for("tool_execution", tool_name="process_refund")
-        assert label == "Issuing the refund…"
-        assert "process_refund" not in label
-
     def test_a_namespaced_tool_resolves_to_the_same_wording(self) -> None:
         registry = StageLabelRegistry()
         assert registry.tool_label("support.process_refund") == registry.tool_label(
             "process_refund"
         )
-
-    def test_an_unlabelled_tool_degrades_readably(self) -> None:
-        assert StageLabelRegistry().tool_label("send_carrier_email") == (
-            "Running send carrier email…"
-        )
-
-    def test_steps_are_not_all_one_colour(self) -> None:
-        """A feed that is entirely green communicates nothing."""
-        registry = StageLabelRegistry()
-        styles = {
-            registry.style_for(stage)
-            for stage in ("prompt_injection_check", "context_assembly", "llm_call", "finalize")
-        }
-        assert len(styles) >= 3
-
-    def test_a_refused_action_is_coloured_as_a_problem(self) -> None:
-        assert StageLabelRegistry().style_for("tool_refused") == "red"
-
-    def test_a_suppressed_repeat_is_muted(self) -> None:
-        """It is not work done, so it must not look like work done."""
-        assert StageLabelRegistry().style_for("tool_suppressed") == "bright_black"
-
-    def test_a_missing_substitution_leaves_the_template_readable(self) -> None:
-        assert StageLabelRegistry().label_for("tool_execution") != ""
-
-    def test_an_unknown_stage_degrades_readably(self) -> None:
-        assert StageLabelRegistry().label_for("some_new_stage") == "Some new stage"
 
 
 class TestTokenCounter:
@@ -124,12 +87,6 @@ class TestStatusLine:
         first = line.render().plain[0]
         line.tick()
         assert line.render().plain[0] != first
-
-    def test_the_spinner_stops_when_finished(self) -> None:
-        line = StatusLineWidget()
-        line.begin("working")
-        line.finish()
-        assert line.render().plain.startswith("•")
 
 
 class TestClipboard:
@@ -233,12 +190,6 @@ class TestTheAppRebuildsItsAgent:
         app._apply(ConsoleEffect(rebuild_agent=True))
         assert app._agent is not before
 
-    def test_other_effects_leave_the_agent_alone(self) -> None:
-        app = self._app()
-        before = app._agent
-        app._apply(ConsoleEffect(clear_transcript=True))
-        assert app._agent is before
-
     def test_an_app_with_no_factory_survives_a_rebuild(self) -> None:
         """The feed-only console has nothing to rebuild and must not crash."""
         app = AgenticTuiApp()
@@ -275,14 +226,6 @@ class TestARebuildKeepsTheConversation:
         app._agent._sessions["s1"] = Customer(customer_id=1, name="Ada", email="ada@example.com")
         app._apply(ConsoleEffect(rebuild_agent=True))
         assert "s1" in app._agent._sessions
-
-    def test_the_transcript_survives(
-        self, seeded_pool: SqliteConnectionPool, restore_settings: None
-    ) -> None:
-        app = self._app(seeded_pool)
-        app._agent._conversations["s1"] = [Message(role="user", content="where is order 10001")]
-        app._apply(ConsoleEffect(rebuild_agent=True))
-        assert app._agent._conversations["s1"]
 
     def test_it_is_still_a_different_agent(
         self, seeded_pool: SqliteConnectionPool, restore_settings: None

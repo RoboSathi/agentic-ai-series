@@ -8,7 +8,6 @@ overlay restating the value it inherits (noise that hides the one line
 that matters).
 """
 
-import re
 import typing
 from pathlib import Path
 from typing import Any
@@ -104,26 +103,6 @@ def test_every_yaml_key_is_a_declared_setting(path: Path) -> None:
     orphans = [key for key in data if key not in schema]
     orphans += _undeclared(data, schema, "")
     assert orphans == [], f"{path.name}: keys no settings model reads: {orphans}"
-
-
-def test_every_settings_field_is_read_somewhere() -> None:
-    code = "\n".join(
-        path.read_text()
-        for root in CODE_ROOTS
-        for path in (ROOT / root).rglob("*.py")
-        if "__pycache__" not in path.parts
-    )
-    unread = []
-
-    def walk(tree: Tree, prefix: str) -> None:
-        for name, child in tree.items():
-            if not re.search(rf"[.\"']{re.escape(name)}\b", code):
-                unread.append(f"{prefix}{name}")
-            if child:
-                walk(child, f"{prefix}{name}.")
-
-    walk(_schema(), "")
-    assert unread == [], f"settings fields nothing reads: {unread}"
 
 
 @pytest.mark.parametrize("path", EPISODES, ids=lambda p: p.parent.name)

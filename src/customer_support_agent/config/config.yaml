@@ -42,6 +42,9 @@ llm:
     # Fine-tuned on this agent's intents, so it is this agent's artifact.
     model: learn-abc/magicSupport-intent-classifier
     local_model_dir: local_models/intent_classifier/magicSupport-intent-classifier
+  # The memory dream (`make dream`) summarises each session with this local model.
+  dialogue_summarizer:
+    enabled: true
 
 memory:
   episodic:

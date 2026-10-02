@@ -22,8 +22,17 @@ RedactionMode = Literal["mask", "tokenize", "remove"]
 GuardrailMode = Literal["reject", "auto_repair", "constrained"]
 RetrievalMode = Literal["lexical", "dense", "hybrid", "graph"]
 ProvenanceKindName = Literal["verified_system_of_record", "agent_inference", "self_reported"]
-ProviderName = Literal["nim", "local"]
+# A key of `llm.providers`: which providers exist, and what each is called, is configuration.
+ProviderName = str
+# How a provider's endpoint is spoken to: `hosted` (OpenAI-compatible, structured output
+# validated after generation) or `grammar` (also sends `response_format.json_schema`).
+ProviderAdapter = Literal["hosted", "grammar"]
 SurfaceClassName = Literal["locked", "editable", "append_only", "human_controlled"]
+
+
+def _first_env(names: list[str]) -> str | None:
+    """The first of these bare environment variables that is set, or None."""
+    return next((os.environ[name] for name in names if os.environ.get(name)), None)
 
 
 class YamlBackedSettings(BaseSettings):
@@ -64,6 +73,7 @@ class AgentIdentitySettings(YamlBackedSettings):
 
     model_config = SettingsConfigDict(env_prefix="AGENT__")
 
+
 class LoggingSettings(YamlBackedSettings):
     """File and console logging (LLD §2)."""
 
@@ -74,10 +84,17 @@ class LoggingSettings(YamlBackedSettings):
     file_enabled: bool
     file_level: str
     dir: str
+    # Optional sub-folder under the agent's own, for runs that are not the live agent (an offline
+    # profile, an eval): its records stay out of the live logs. Empty: the agent's folder itself.
+    run_label: str = ""
     file_format: Literal["tree", "json"]
     payload_max_chars: int
     max_bytes: int
     backup_count: int
+    # The console's colours, as Rich theme entries (`logging.level.info`, `log.time`, ...), and
+    # its line format (`%(name)s` the subsystem). The file log stays plain text.
+    console_theme: dict[str, str] = Field(default_factory=dict)
+    console_format: str = "%(message)s"
 
     model_config = SettingsConfigDict(env_prefix="LOGGING__")
 
@@ -89,6 +106,10 @@ class LoggingSettings(YamlBackedSettings):
 class LLMProviderSettings(BaseModel):
     """One provider's connection and pricing parameters."""
 
+    adapter: ProviderAdapter
+    # Bare environment variables holding the provider's key, first present wins; empty for
+    # a provider that needs none. Keys are never config fields, so they never reach a dump.
+    key_env_vars: list[str] = Field(default_factory=list)
     base_url: str
     model: str
     timeout_seconds: float
@@ -120,8 +141,11 @@ class EmbeddingInputTypes(BaseModel):
 class EmbeddingSettings(BaseModel):
     """Embedding backend used by the NOLLM cascade, RAG and memory scoring."""
 
+    # `hosted`: `model` on the `llm.providers` entry named by `provider`; `hashing`: the
+    # deterministic local fallback (no network).
+    backend: Literal["hosted", "hashing"]
     provider: ProviderName
-    nim_model: str
+    model: str
     local_dimensions: int
     input_types: EmbeddingInputTypes
     truncate: str
@@ -164,8 +188,6 @@ class EncoderSettings(BaseModel):
         return self.enabled and bool(self.api_key)
 
 
-
-
 class IntentClassifierSettings(BaseModel):
     """Reusable model/provider settings for semantic intent classification.
 
@@ -180,6 +202,23 @@ class IntentClassifierSettings(BaseModel):
     local_model_dir: str
     download_if_missing: bool
     max_length: int
+
+    @property
+    def resolved_local_model_dir(self) -> Path:
+        return resolve_path(self.local_model_dir)
+
+
+class LocalEmbedderSettings(BaseModel):
+    """A local sentence-embedding model (mean-pooled encoder), for an agent that wants
+    similarity without a network call per text — the exemplar intent classifier."""
+
+    enabled: bool
+    model: str
+    local_model_dir: str
+    download_if_missing: bool
+    max_length: int = Field(ge=8)
+    # Text put before each input by purpose ("query: " for e5); empty for most models.
+    prefixes: dict[str, str]
 
     @property
     def resolved_local_model_dir(self) -> Path:
@@ -208,11 +247,61 @@ class DialogueSummarizerSettings(BaseModel):
         return resolve_path(self.local_model_dir)
 
 
+class LocalCheckSettings(BaseModel):
+    """The one tiny input each in-process model is run on by `make model-check`."""
+
+    nli_premise: str
+    nli_hypothesis: str
+    intent_text: str
+    dialogue: str
+
+
+class BenchmarkSettings(BaseModel):
+    """`make model-check BENCH=1`: repeated, judge-sized calls to each chat model."""
+
+    samples: int = Field(ge=1)
+    prompt: str
+    max_tokens: int = Field(ge=1)
+    timeout_seconds: float = Field(gt=0)
+
+
+class CheckStyleSettings(BaseModel):
+    """How `make model-check` colours its tables: each cell by what it is."""
+
+    title: str
+    border: str
+    header: str
+    # A probe's status (ok, failed, skipped, downloaded, pending) -> style.
+    status: dict[str, str]
+    name: str
+    model: str
+    target: str
+    required: str
+    optional: str
+    detail: str
+    failure: str
+    # Latency coloured against two bars: under `fast_ms` fast, over `slow_ms` slow.
+    fast: str
+    medium: str
+    slow: str
+    fast_ms: float
+    slow_ms: float
+    # The same bands for the benchmark's p50/p95, in seconds.
+    bench_fast_seconds: float
+    bench_slow_seconds: float
+
+
 class LLMCheckSettings(BaseModel):
     """The smallest real request `make llm-check` sends to each endpoint."""
 
     prompt: str
     max_tokens: int
+    # An endpoint that has not answered in this long has failed: the probe is cancelled (and the SDK's
+    # own retries with it), so one stalled model cannot hold the whole check for minutes.
+    timeout_seconds: float
+    local: LocalCheckSettings
+    benchmark: BenchmarkSettings
+    styles: CheckStyleSettings
 
 
 class OutputNormalisationSettings(BaseModel):
@@ -222,6 +311,41 @@ class OutputNormalisationSettings(BaseModel):
     space_categories: list[str]
     replacements: dict[str, str]
     remove: list[str]
+    # Regexes removed outright: model-specific markup with no meaning to a reader.
+    strip_patterns: list[str]
+
+
+class ModelRef(BaseModel):
+    """One model on one configured provider, and the request fields it is called with."""
+
+    provider: ProviderName
+    model: str
+    # Provider-specific request fields for this model only (`CompletionRequest.extra_body`).
+    extra_body: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def key(self) -> str:
+        """`provider:model` — what "the same model" means."""
+        return f"{self.provider}:{self.model}"
+
+
+class ModelChainSettings(BaseModel):
+    """How one model call is protected: its backups, each attempt's limit, when to hedge.
+
+    `fallbacks` are tried in order when the model before them fails or is slow. Each model's
+    attempts are bounded by `timeout_seconds` (unset: `resilience.timeout.default_seconds`)
+    and retried by the platform's resilience stack. With `hedge_after_seconds` set, a backup
+    starts *beside* a model that has not answered by then, and the first answer wins; unset,
+    a backup starts only when the model before it has failed.
+    """
+
+    fallbacks: list[ModelRef] = Field(default_factory=list)
+    timeout_seconds: float | None = Field(default=None, gt=0)
+    hedge_after_seconds: float | None = Field(default=None, gt=0)
+
+
+class RoleModelSettings(ModelRef, ModelChainSettings):
+    """Which model plays one named role, and how its calls are protected."""
 
 
 class LLMSettings(YamlBackedSettings):
@@ -233,14 +357,26 @@ class LLMSettings(YamlBackedSettings):
     max_tokens: int
     log_payloads: bool
     payload_max_chars: int
+    # Where a provider returns the model's reasoning beside its answer
+    # (`reasoning_content` on NIM). Read in order; the first present wins.
+    reasoning_fields: list[str] = Field(default_factory=list)
     providers: dict[str, LLMProviderSettings]
+    # The default client's protection (`create_llm_client`): backups, timeout, hedge.
+    chain: ModelChainSettings = Field(default_factory=ModelChainSettings)
     cascade: LLMCascadeSettings
     embedding: EmbeddingSettings
     encoders: EncoderSettings
     intent_classifier: IntentClassifierSettings
     dialogue_summarizer: DialogueSummarizerSettings
+    local_embedder: LocalEmbedderSettings
     check: LLMCheckSettings
     output_normalisation: OutputNormalisationSettings
+    # Warnings a third-party library raises while a local model loads, matched by message
+    # (a regex) and silenced for that load only: a dependency's own deprecation, not ours.
+    suppressed_load_warnings: list[str] = Field(default_factory=list)
+    # Role name -> model. Empty in the platform: role names are an agent's
+    # vocabulary (`RoleModelRouter`), declared in its own overlay.
+    roles: dict[str, RoleModelSettings]
 
     model_config = SettingsConfigDict(env_prefix="LLM__")
 
@@ -254,7 +390,7 @@ class LLMSettings(YamlBackedSettings):
         Keys are deliberately not fields: they never appear in model_dump()
         and so can never leak into a log line or settings dump.
         """
-        return os.environ.get("nvidia_api_key") if name == "nim" else None
+        return _first_env(self.providers[name].key_env_vars)
 
 
 class PersistenceSettings(YamlBackedSettings):
@@ -336,6 +472,17 @@ class ReviewQueueSettings(BaseModel):
     minutes_per_review: float
 
 
+class ModelEventWording(BaseModel):
+    """Card wording for a model chain's backup events."""
+
+    backup_started: str
+    backup_answered: str
+    # Why a backup started, in words, by `StartReason`.
+    reasons: dict[str, str]
+    primary_label: str
+    backup_label: str
+
+
 class ObservabilitySettings(YamlBackedSettings):
     """Tracing, SLOs, cost stack, queue math (LLD §6)."""
 
@@ -350,6 +497,18 @@ class ObservabilitySettings(YamlBackedSettings):
     # model call being made, `{max}` the cap on tool iterations.
     loop_step_prefix: str
     loop_step_detail: str
+    # The model-call cards' headings: `{purpose}` is why the call was made,
+    # `{tool}` the tool the model asked for.
+    llm_request_heading: str
+    llm_response_heading: str
+    llm_tool_requested_heading: str
+    # What a tool card shows when the model's arguments are not JSON.
+    unparseable_arguments: str
+    # An `amount` argument that is not money, as the card shows it.
+    invalid_amount: str
+    # What a model call's backup cards say (`ModelCallObserver`): `{label}` the role or
+    # client, `{reason}` slow/failed. Headings never name a model; the body does.
+    model_events: "ModelEventWording"
 
     model_config = SettingsConfigDict(env_prefix="OBSERVABILITY__")
 
@@ -379,6 +538,29 @@ class ContextFailureDetectionSettings(BaseModel):
     degradation_threshold: float
 
 
+class ContextWindowWording(BaseModel):
+    """What the `context_assembly` card says (`context/window.py`), for every agent."""
+
+    started: str
+    assembled: str
+    # Said (quietly) when an agent withholds context assembly.
+    withheld: str
+    # `{modes}` the failure modes found, `{action}` what mitigation did.
+    unhealthy: str
+    # `{count}` chunks dropped by mitigation.
+    removed: str
+    nothing_removed: str
+    # One finding: `{mode}`, `{source}`, `{rule}`, `{detail}`, `{action}`.
+    finding_line: str
+    # Failure modes that are retrieval noise the check already removed: no warning for them.
+    routine_modes: list[str]
+    # A finding's `action` when mitigation did nothing, and the prefix of one it dropped.
+    not_acted_on: str
+    dropped_action: str
+    # A clean window is logged and counted but draws no card of its own.
+    quiet_when_healthy: bool
+
+
 class ContextSettings(YamlBackedSettings):
     """Five-stage assembly pipeline, retrieval and strategies (LLD §7)."""
 
@@ -394,6 +576,7 @@ class ContextSettings(YamlBackedSettings):
     strategies: ContextStrategySettings
     reduce_keep_ratio: float
     failure_detection: ContextFailureDetectionSettings
+    window: ContextWindowWording
 
     model_config = SettingsConfigDict(env_prefix="CONTEXT__")
 
@@ -488,9 +671,7 @@ class MemoryRetrievalWeights(BaseModel):
     frequency: float
 
 
-MemoryPrincipalRole = Literal[
-    "customer", "agent", "system_of_record", "curator", "data_protection"
-]
+MemoryPrincipalRole = Literal["customer", "agent", "system_of_record", "curator", "data_protection"]
 
 
 class MemoryGovernanceSettings(BaseModel):
@@ -597,7 +778,7 @@ class GuardrailsSettings(YamlBackedSettings):
     enabled: bool
     mode: Literal["reject", "auto_repair", "constrained"]
     max_repair_attempts: int
-    constrained_backend: Literal["llamacpp_grammar", "nim_guided_json"]
+    constrained_backend: Literal["grammar", "guided_json"]
 
     model_config = SettingsConfigDict(env_prefix="GUARDRAILS__")
 
@@ -645,6 +826,18 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     _yaml_section = "hallucination_protection"
     enforce_grounding: bool
     confidence_threshold: float
+    # The reply when the gate refuses every sentence of an answer.
+    withheld_reply: str
+    # Whether an uncalibrated detector (the lexical fallback) may refute a claim, or only
+    # support it. Off: its contradictions leave the claim unverified.
+    uncalibrated_may_refute: bool
+    # Whether a claim refuted by a rule (an unsourced figure) still gets the bounded rewrite.
+    repair_direct_refutations: bool
+    # Words after a figure that make it a size, not an exact amount ("$1.2 M", "4 lakh").
+    money_scales: list[str]
+    # Connectives that split one sentence into separately checked claims.
+    claim_conjunctions: list[str]
+    claim_min_content_tokens: int = Field(ge=1)
     # Grounding-specific NLI threshold. Keep the generic confidence threshold
     # for compatibility with the rest of the evaluation configuration.
     nli_entailment_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
@@ -775,25 +968,46 @@ class PiiSettings(BaseModel):
 
 
 class SecurityGuardModelSettings(BaseModel):
-    """Hosted security-model endpoint settings; credentials stay in env vars."""
+    """Hosted security-model endpoint settings; credentials stay in env vars.
+
+    Everything that names the vendor or the model — the provider, the key's variable, the
+    check's name on a card, the verdict's wording — is here, so swapping the guard is a
+    config edit and the adapter never names who it calls.
+    """
 
     enabled: bool
-    provider: Literal["nvidia"]
+    provider: str
+    # Bare environment variables holding the key, first present wins.
+    key_env_vars: list[str]
     base_url: str
     endpoint: str
     model: str
     timeout_seconds: float
     max_tokens: int = 16
+    # The dependency name of this guard's retry/circuit-breaker stack.
+    resilience_key: str
+    # The check's name on a card, and what the verdict says (`{env}` the key's variables).
+    check_name: str
+    flagged_reason: str
+    allowed_reason: str
+    missing_key_reason: str
 
     @property
     def api_key(self) -> str:
-        """Return the existing NVIDIA credential from the bare environment."""
-        return os.environ.get("nvidia_api_key") or os.environ.get("NVIDIA_API_KEY", "")
+        """The credential from the first configured bare environment variable."""
+        return _first_env(self.key_env_vars) or ""
 
     @property
     def usable(self) -> bool:
         """Whether this hosted guard can be invoked."""
         return self.enabled and bool(self.api_key)
+
+
+class RuleCheckNames(BaseModel):
+    """The deterministic checks' names on a card: the phrase scan and the term scan."""
+
+    injection: str
+    moderation: str
 
 
 class SecurityGuardSettings(BaseModel):
@@ -803,6 +1017,11 @@ class SecurityGuardSettings(BaseModel):
     fail_open_on_unavailable: bool
     jailbreak: SecurityGuardModelSettings
     content_safety: SecurityGuardModelSettings
+    rule_checks: RuleCheckNames
+    # What an assessment says when a hosted guard flagged the text, or was unavailable and
+    # the policy fails closed (`{guard}` the guard's check name).
+    hosted_flagged_reason: str
+    fail_closed_reason: str
 
 
 class PromptInjectionSettings(BaseModel):
@@ -823,6 +1042,33 @@ class ContentModerationSettings(BaseModel):
 
     blocked_terms: list[str]
     system_prompt: str
+    # How the classifier's JSON answer is read: the keys `system_prompt` asks for, and the
+    # words that mean safe and unsafe. Agrees with the prompt, so both live here.
+    response_safety_key: str
+    response_categories_key: str
+    safe_word: str
+    unsafe_word: str
+
+
+class ScreeningMessages(BaseModel):
+    """What each screen's card says (`security/screening.py`), the same for every agent."""
+
+    pii_started: str
+    # `{categories}` the kinds redacted, `{count}` how many spans.
+    pii_redacted: str
+    pii_clear: str
+    injection_started: str
+    injection_blocked_rule: str
+    injection_blocked_model: str
+    injection_unavailable: str
+    injection_passed_model: str
+    injection_passed_rule: str
+    moderation_started: str
+    moderation_blocked_rule: str
+    moderation_blocked_model: str
+    moderation_unavailable: str
+    moderation_passed_model: str
+    moderation_passed_rule: str
 
 
 class SecuritySettings(YamlBackedSettings):
@@ -834,6 +1080,7 @@ class SecuritySettings(YamlBackedSettings):
     prompt_injection: PromptInjectionSettings
     content_moderation: ContentModerationSettings
     guards: SecurityGuardSettings
+    screening: ScreeningMessages
 
     model_config = SettingsConfigDict(env_prefix="SECURITY__")
 
@@ -872,6 +1119,9 @@ class RateLimitBucketSettings(BaseModel):
 
     max_requests: int
     hosts: list[str]
+    # Requests allowed per calendar month (UTC), across every process; None
+    # means no monthly cap. A free tier is a monthly quota, not a rate.
+    monthly_quota: int | None = None
 
 
 class RateLimitSettings(BaseModel):
@@ -1105,6 +1355,13 @@ class CommandSettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="COMMANDS__")
 
 
+class ResponseHighlight(BaseModel):
+    """One colouring rule for the final answer: a regex, and the style of what it matches."""
+
+    pattern: str
+    style: str
+
+
 class CommandOutputSettings(BaseModel):
     """How slash-command output is drawn (LLD §20)."""
 
@@ -1133,9 +1390,143 @@ class TuiSettings(YamlBackedSettings):
     copy_toast_seconds: float
     max_feed_lines: int
     spinner_frames: str
+    # The optional status block an agent may offer (`StatusHost`).
+    status_refresh_ms: int
+    status_collapsed_symbol: str
+    status_expanded_symbol: str
+    status_expand_hint: str
+    status_history_hint: str
+    # The live status line's colour by state: running, complete, failed.
+    status_styles: dict[str, str]
+    # Shown on a menu of fixed answers; free text can always be typed instead.
+    choice_menu_hint: str
+    # Event kinds whose `started` event draws a pending card, replaced in place when done.
+    pending_card_kinds: list[str]
+    # Title colour of a card by outcome (its `status`): started, completed, warning, ...
+    outcome_colors: dict[str, str]
+    # Style of a card's section titles, its keys and values (`key`, `separator`, `value`,
+    # `muted`), its lines by tone (pass, fail, warn, dim), and the words that name a state.
+    section_title_style: str
+    body_styles: dict[str, str]
+    tone_styles: dict[str, str]
+    state_words: dict[str, str]
+    # How the final answer's light Markdown is coloured (h1, h2, bold, bullet, citation, ...).
+    response_styles: dict[str, str]
+    # More of the answer coloured by pattern, in order: an agent's own vocabulary ("[must]",
+    # its slash commands, a next-step line). The first rule to claim a span wins.
+    response_highlights: list[ResponseHighlight]
     command_output: CommandOutputSettings
 
     model_config = SettingsConfigDict(env_prefix="TUI__")
+
+
+WebMode = Literal["live", "record", "replay"]
+
+
+class TavilySettings(BaseModel):
+    """The Tavily search API (`POST {base_url}{endpoint}`, bearer auth)."""
+
+    base_url: str
+    endpoint: str
+    search_depth: Literal["basic", "advanced"]
+    # Provider-written summaries are never evidence; asking for one only
+    # spends tokens on text the gateway will discard.
+    include_answer: bool
+    timeout_seconds: float
+    # Smallest `time_range` covering a request's `recent_days` (days → name).
+    time_ranges: dict[int, str]
+
+    @property
+    def api_key(self) -> str:
+        """From the bare `tavily_api_key` environment variable, never config."""
+        return os.environ.get("tavily_api_key", "")
+
+
+class DuckDuckGoSettings(BaseModel):
+    """DuckDuckGo through the `ddgs` package: no key, no official API, best effort."""
+
+    backend: str
+    region: str
+    safesearch: str
+    timeout_seconds: float
+    # Smallest `timelimit` covering a request's `recent_days` (days → d/w/m/y).
+    time_limits: dict[int, str]
+    # The rate-limit bucket it spends (it does not go through the HTTP transport).
+    rate_bucket: str
+
+
+SearchProviderName = Literal["tavily", "duckduckgo"]
+
+
+class WebSearchSettings(BaseModel):
+    """Which providers answer a search, in order, and how long answers are reused."""
+
+    # General searches: the first provider that answers with hits wins.
+    providers: list[SearchProviderName]
+    # Searches bounded in time or by topic (news) prefer these, in order.
+    time_bounded_providers: list[SearchProviderName]
+    max_results: int = Field(ge=1)
+    # Live answers are kept on disk and reused for this long (0: no cache).
+    cache_ttl_hours: float = Field(ge=0)
+    cache_dir: str
+
+    @property
+    def resolved_cache_dir(self) -> Path:
+        return resolve_path(self.cache_dir)
+
+
+class WebFetchSettings(BaseModel):
+    """Plain HTTP fetching, and the reader fallback for script-rendered pages."""
+
+    timeout_seconds: float
+    # Attempts per page through the fetch's resilience stack: a dead page costs at most
+    # `max_attempts` × `timeout_seconds` (plus backoff).
+    max_attempts: int = Field(ge=1)
+    user_agent: str
+    max_chars: int = Field(ge=1)
+    # Below this much extracted text a page is treated as script-rendered
+    # and re-read through the reader service.
+    min_text_chars: int = Field(ge=0)
+    js_markers: list[str]
+    reader_enabled: bool
+    # `{url}` is replaced by the page's URL (a Jina-Reader-style service).
+    reader_url_template: str
+    # Where a page declares its own publication date: `<meta>` names (in priority order)
+    # and JSON-LD keys. Search hits outside a news vertical carry no date.
+    date_meta_keys: list[str]
+    date_json_keys: list[str]
+
+
+class WebSettings(YamlBackedSettings):
+    """The web gateway: live, recording or replaying (spec §3.3)."""
+
+    _yaml_section = "web"
+    mode: WebMode
+    fixtures_dir: str
+    fixture_set: str
+    search: WebSearchSettings
+    fetch: WebFetchSettings
+    tavily: TavilySettings
+    duckduckgo: DuckDuckGoSettings
+
+    model_config = SettingsConfigDict(env_prefix="WEB__")
+
+    @property
+    def resolved_fixtures_dir(self) -> Path:
+        return resolve_path(self.fixtures_dir)
+
+
+class ArtifactSettings(YamlBackedSettings):
+    """Where frozen artifacts are archived, one directory per run."""
+
+    _yaml_section = "artifacts"
+    root: str
+
+    model_config = SettingsConfigDict(env_prefix="ARTIFACTS__")
+
+    @property
+    def resolved_root(self) -> Path:
+        return resolve_path(self.root)
 
 
 class AppConfig(BaseSettings):
@@ -1153,7 +1544,7 @@ class AppConfig(BaseSettings):
 
     # Each nested model fills its required fields from config.yaml via
     # YamlBackedSettings; mypy can't see that, hence the ignores.
-    agent: AgentIdentitySettings = Field(default_factory=lambda: AgentIdentitySettings())   # type: ignore[call-arg]
+    agent: AgentIdentitySettings = Field(default_factory=lambda: AgentIdentitySettings())  # type: ignore[call-arg]
     logging: LoggingSettings = Field(default_factory=lambda: LoggingSettings())  # type: ignore[call-arg]
     llm: LLMSettings = Field(default_factory=lambda: LLMSettings())  # type: ignore[call-arg]
     persistence: PersistenceSettings = Field(
@@ -1178,6 +1569,8 @@ class AppConfig(BaseSettings):
     tools: ToolsSettings = Field(default_factory=lambda: ToolsSettings())  # type: ignore[call-arg]
     tui: TuiSettings = Field(default_factory=lambda: TuiSettings())  # type: ignore[call-arg]
     commands: CommandSettings = Field(default_factory=lambda: CommandSettings())  # type: ignore[call-arg]
+    web: WebSettings = Field(default_factory=lambda: WebSettings())  # type: ignore[call-arg]
+    artifacts: ArtifactSettings = Field(default_factory=lambda: ArtifactSettings())  # type: ignore[call-arg]
     # Which capabilities this deployment was given. Declared by the agent
     # rather than the platform, and merged here by the same overlay chain
     # as everything else — so an episode narrows the posture by declaring

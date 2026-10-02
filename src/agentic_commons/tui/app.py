@@ -20,13 +20,20 @@ from textual import events
 from textual.actions import SkipAction
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Footer, Header, Input
+from textual.widgets import Button, Footer, Header, Input, OptionList
 
 from agentic_commons.commands import Command, CommandRegistry, ConsoleEffect
 from agentic_commons.commands.data import MemoryCommand
 from agentic_commons.config import get_settings
 from agentic_commons.durability import DurableAgent
-from agentic_commons.host import AgentHost, resolve_host
+from agentic_commons.host import (
+    ActionHost,
+    AgentHost,
+    CancellableHost,
+    GreetingHost,
+    StatusHost,
+    resolve_host,
+)
 from agentic_commons.logging import get_logger
 from agentic_commons.observability import InMemoryLiveStatusFeed, StageReporter
 from agentic_commons.observability.types import StatusEvent
@@ -34,7 +41,13 @@ from agentic_commons.tui.clipboard import Osc52ClipboardService
 from agentic_commons.tui.command_view import CommandView
 from agentic_commons.tui.labels import StageLabelRegistry
 from agentic_commons.tui.suggest import CommandSuggester
-from agentic_commons.tui.widgets import LiveStatusPanel, StatusLineWidget, TokenCounterWidget
+from agentic_commons.tui.widgets import (
+    ActionBar,
+    ChoiceMenu,
+    LiveStatusPanel,
+    StatusLineWidget,
+    TokenCounterWidget,
+)
 
 AgentFactory = Callable[[StageReporter], Any]
 # Used only when the console is opened with no host at all — a test, or a
@@ -79,41 +92,11 @@ class AgenticTuiApp(App[None]):
         text-style: bold;
     }
 
-    /* RUNNING */
-    .stage-started > CollapsibleTitle,
-    .stage-started > CollapsibleTitle:hover,
-    .stage-started > CollapsibleTitle:focus {
-        color: cyan;
-        background: transparent;
-    }
-
-    /* SUCCESS */
-    .stage-completed > CollapsibleTitle,
-    .stage-completed > CollapsibleTitle:hover,
-    .stage-completed > CollapsibleTitle:focus {
-        color: #00FF87;
-        background: transparent;
-    }
-
-    /* WARNING / WAITING */
-    .stage-warning > CollapsibleTitle,
-    .stage-warning > CollapsibleTitle:hover,
-    .stage-warning > CollapsibleTitle:focus,
-    .stage-waiting > CollapsibleTitle,
-    .stage-waiting > CollapsibleTitle:hover,
-    .stage-waiting > CollapsibleTitle:focus {
-        color: yellow;
-        background: transparent;
-    }
-
-    /* FAILURE / BLOCKED */
-    .stage-failed > CollapsibleTitle,
-    .stage-failed > CollapsibleTitle:hover,
-    .stage-failed > CollapsibleTitle:focus,
-    .stage-blocked > CollapsibleTitle,
-    .stage-blocked > CollapsibleTitle:hover,
-    .stage-blocked > CollapsibleTitle:focus {
-        color: red;
+    /* The title's colour is set per card from `tui.outcome_colors` / `tui.group_colors`
+       (an inline style, so hover and focus keep it); the CSS only keeps the title flat. */
+    .stage-event > CollapsibleTitle,
+    .stage-event > CollapsibleTitle:hover,
+    .stage-event > CollapsibleTitle:focus {
         background: transparent;
     }
 
@@ -121,6 +104,22 @@ class AgenticTuiApp(App[None]):
         padding: 0 1 1 3;
         color: $text-muted;
         height: auto;
+    }
+
+    #choices {
+        height: auto;
+        max-height: 8;
+        margin: 0 1;
+        border: round $secondary;
+    }
+
+    #actions {
+        height: auto;
+        margin: 0 1;
+    }
+
+    #actions Button {
+        margin-right: 1;
     }
 
     #query {
@@ -141,6 +140,7 @@ class AgenticTuiApp(App[None]):
     #tokens {
         height: 0;
     }
+
     """
 
     BINDINGS = [
@@ -154,7 +154,8 @@ class AgenticTuiApp(App[None]):
         Binding("pagedown", "page_down", "Page down", priority=True),
         Binding("ctrl+u", "page_up", "Page up", priority=True, show=False),
         Binding("ctrl+d", "page_down", "Page down", priority=True, show=False),
-        Binding("ctrl+g", "follow_latest", "Live", priority=True),
+        Binding("up", "menu_move(-1)", "Previous choice", show=False),
+        Binding("down", "menu_move(1)", "Next choice", show=False),
     ]
 
     def __init__(
@@ -182,6 +183,8 @@ class AgenticTuiApp(App[None]):
         self._copier = Osc52ClipboardService()
         self._panel = LiveStatusPanel(self._labels)
         self._status = StatusLineWidget()
+        self._menu = ChoiceMenu()
+        self._actions = ActionBar()
         self._tokens = TokenCounterWidget()
         self._commands = CommandRegistry()
         self._view = CommandView()
@@ -195,6 +198,12 @@ class AgenticTuiApp(App[None]):
         for command in (*(host.commands() if host else ()), *(commands or ())):
             self._commands.register(command)
         self._bind_live_commands()
+        # Optional host hooks: absent, the console is exactly what it was.
+        self._status_host = host if isinstance(host, StatusHost) else None
+        self._action_host = host if isinstance(host, ActionHost) else None
+        if isinstance(host, CancellableHost):
+            # Priority: the focused input would otherwise take the key for itself.
+            self._bindings.bind(host.cancel_key(), "cancel_run", "Cancel run", priority=True)
 
     def _bind_live_commands(self) -> None:
         """Point the commands that read live state at the agent on screen.
@@ -217,6 +226,8 @@ class AgenticTuiApp(App[None]):
         yield Header()
         yield self._panel
         yield self._status
+        yield self._actions
+        yield self._menu
         yield Input(
             placeholder=(
                 self._host.placeholder() if self._host else "Ask the agent…  (/help for commands)"
@@ -239,13 +250,45 @@ class AgenticTuiApp(App[None]):
             "Author = RoboSathi | robosathi.com",
             style="bold cyan",
         )
-
-        self._panel.note(
-            "Before I can look anything up, I need to verify your account.\n"
-            "Please share your 7-character user code.",
-            style="yellow",
-        )
+        self._panel.note(self._greeting(), style="yellow")
+        if self._status_host is not None or self._action_host is not None:
+            self.set_interval(get_settings().tui.status_refresh_ms / 1000, self._refresh_status)
         self._announce_resumable_runs()
+
+    def _greeting(self) -> str:
+        """The agent's own first words, when it offers them."""
+        if isinstance(self._host, GreetingHost):
+            return self._host.greeting()
+        return (
+            "Before I can look anything up, I need to verify your account.\n"
+            "Please share your 7-character user code."
+        )
+
+    def _refresh_status(self) -> None:
+        """Redraw the status block and the action buttons from state the host already holds."""
+        try:
+            if self._status_host is not None:
+                summary, detail = self._status_host.status_lines(self._session_id)
+                self._status.set_block(summary, detail)
+            if self._action_host is not None:
+                busy = self.query_one("#query", Input).disabled
+                self._actions.offer(self._action_host.actions(self._session_id), busy)
+        except Exception as exc:
+            self._journal.warning("Status block failed to render", error=str(exc))
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """A button runs its command exactly as if it had been typed."""
+        command = self._actions.command_for(event.button.id)
+        if command is not None:
+            self.run_worker(self._run_command(command), name="action", group="action")
+
+    def action_cancel_run(self) -> None:
+        """The host's cancel key: ask the running turn to stop."""
+        if isinstance(self._host, CancellableHost):
+            stopped = self._host.cancel()
+            self._panel.note(
+                "⏹ cancel requested" if stopped else "Nothing is running.", style="yellow"
+            )
 
     def _announce_resumable_runs(self) -> None:
         """Say, on opening, which runs the last process left unfinished.
@@ -263,19 +306,36 @@ class AgenticTuiApp(App[None]):
                 style="bold yellow",
             )
 
+    def action_menu_move(self, step: int) -> None:
+        self._menu.move(step)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Typing is a free-text answer: the menu steps aside."""
+        if event.value and self._menu.offered:
+            self._menu.dismiss()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        value = self._menu.value_at(event.option_index)
+        if value is not None and not self.query_one("#query", Input).disabled:
+            self._menu.dismiss()
+            self._start_turn(value)
+
     async def on_input_submitted(self, event: Input.Submitted) -> None:
-        query = event.value.strip()
+        query = event.value.strip() or self._menu.chosen() or ""
         if not query:
             return
         event.input.value = ""
+        self._menu.dismiss()
 
         if CommandRegistry.is_command(query):
             await self._run_command(query)
             return
 
-        # No request queue yet. Run the turn as a Textual worker so the UI event
-        # loop remains free to repaint the dashboard while the agent is running.
-        event.input.disabled = True
+        self._start_turn(query)
+
+    def _start_turn(self, query: str) -> None:
+        """Run a turn as a Textual worker, so the UI keeps repainting meanwhile."""
+        self.query_one("#query", Input).disabled = True
         self.run_worker(
             self._run(query),
             exclusive=True,
@@ -313,6 +373,8 @@ class AgenticTuiApp(App[None]):
         if effect.session_id and effect.session_id != self._session_id:
             self._session_id = effect.session_id
             self._panel.note(f"Session switched to {effect.session_id}", style="cyan")
+        if effect.agent_turn:
+            self._start_turn(effect.agent_turn)
 
     def _rebuild_agent(self) -> None:
         """Compose the agent again under the configuration as it now stands.
@@ -372,13 +434,11 @@ class AgenticTuiApp(App[None]):
                 session_id=self._session_id,
             )
 
-            self._panel.note("\nASSISTANT", style="bold green")
+            self._panel.note("ASSISTANT", style="bold green")
+            self._panel.response(state.response or "")
+            self._menu.offer(getattr(state, "choices", None) or [])
             self._panel.note(
-                state.response or "",
-                style="white",
-            )
-            self._panel.note(
-                f"\n──────── TURN {self._turn:02d} COMPLETE · "
+                f"──────── TURN {self._turn:02d} COMPLETE · "
                 f"{self._status.elapsed_seconds:.2f}s · "
                 f"{_compact(self._tokens.turn_tokens)} tokens ────────",
                 style="dim",
@@ -402,7 +462,12 @@ class AgenticTuiApp(App[None]):
             query_input.focus()
 
     def _on_status(self, event: StatusEvent) -> None:
-        """Render one semantic event and update the current-stage status."""
+        """Render one semantic event and update the current-stage status.
+
+        A started event names the stage on the status line; the panel draws a pending card
+        for it only when its kind is in `tui.pending_card_kinds`.
+        """
+        self._panel.show_status(event)
         if event.status == "started":
             self._status.update_stage(
                 self._labels.title_for(
@@ -410,15 +475,12 @@ class AgenticTuiApp(App[None]):
                     tool_name=str(event.fields.get("tool", event.detail or "")),
                 )
             )
-        else:
-            self._panel.show_status(event)
-
+        elif not self._follow_latest:
             # If a failure / warning / blocked event happens, leave the event
             # visible at once. Otherwise preserve the user's chosen history
             # position.
-            if not self._follow_latest:
-                self._history_pending += 1
-                self._status.set_history_pending(self._history_pending)
+            self._history_pending += 1
+            self._status.set_history_pending(self._history_pending)
 
         if event.tokens_delta:
             self._tokens.add(event.tokens_delta)
@@ -474,17 +536,20 @@ class AgenticTuiApp(App[None]):
         self._panel.scroll_page_up(animate=False)
 
     def action_page_down(self) -> None:
-        self._set_following(False)
         self._panel.scroll_page_down(animate=False)
-
-    def action_follow_latest(self) -> None:
-        self._set_following(True)
-        self._schedule_follow_latest()
+        self.call_after_refresh(self._follow_if_at_bottom)
 
     def on_mouse_scroll(self, event: object) -> None:
         # Textual dispatches mouse / trackpad scroll events through the app.
-        # Treat user wheel/trackpad interaction as an intentional history view.
+        # Treat user wheel/trackpad interaction as an intentional history view,
+        # and resume following when it reaches the bottom again.
         self._set_following(False)
+        self.call_after_refresh(self._follow_if_at_bottom)
+
+    def _follow_if_at_bottom(self) -> None:
+        """Reaching the end of the feed is the way back to live: no key to remember."""
+        if self._panel.scroll_y >= self._panel.max_scroll_y - 1:
+            self._set_following(True)
 
     def _set_following(self, following: bool) -> None:
         self._follow_latest = following

@@ -35,6 +35,14 @@ class RateLimitWaitExceededError(Exception):
     """
 
 
+class QuotaExhaustedError(Exception):
+    """Raised when a bucket's quota for the current period is spent.
+
+    Fails fast and is never retried: waiting cannot help before the period
+    rolls over, and a free-tier account that is overdrawn stops working.
+    """
+
+
 class NonIdempotentRetryError(Exception):
     """Raised when a retry is attempted without an idempotency key.
 
@@ -68,7 +76,8 @@ def external_api_error_fields(exc: Exception) -> dict[str, Any] | None:
         return None
 
     payload = body if isinstance(body, dict) else {}
-    nested = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+    error = payload.get("error")
+    nested: dict[str, Any] = error if isinstance(error, dict) else {}
 
     error_code = (
         nested.get("code")

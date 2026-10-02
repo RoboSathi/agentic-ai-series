@@ -65,6 +65,7 @@ from agentic_commons.observability import (
     SLORegistry,
     StageReporter,
 )
+from agentic_commons.observability.model_observer import StageReporterModelObserver
 from agentic_commons.observability.tracer import LocalTracer
 from agentic_commons.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agentic_commons.resilience import CompensatingSaga, DeadLetterQueue, SqliteIdempotencyGuard
@@ -197,8 +198,6 @@ def _order_chunk(order: Order) -> Chunk:
     )
 
 
-
-
 def _cumulative_ledger(
     platform_store: SqlitePlatformStore,
     agent_id: str,
@@ -286,11 +285,7 @@ def build_agent(
     # database: every agent writes its observability here and identifies its
     # records with agent_id.
     audit_needs_store = audit is None and settings.audit.enabled
-    observability_store = (
-        DuckDbObservabilityStore()
-        if (observing or audit_needs_store)
-        else None
-    )
+    observability_store = DuckDbObservabilityStore() if (observing or audit_needs_store) else None
 
     orders = OrdersRepository(connection)
     hitl = HitlQueueRepository(connection)
@@ -314,9 +309,7 @@ def build_agent(
         refund_policy=refund_policy,
         saga=CompensatingSaga(),
     )
-    cancellation = CancellationSaga(
-        orders, saga, idempotency=idempotency, saga=CompensatingSaga()
-    )
+    cancellation = CancellationSaga(orders, saga, idempotency=idempotency, saga=CompensatingSaga())
     tools = SupportTools(
         orders,
         hitl,
@@ -354,7 +347,9 @@ def build_agent(
     live_working_memory = (
         working_memory
         if working_memory is not None
-        else (WorkingMemoryStore(max_history=agent_settings.history_turns) if memory_enabled else None)
+        else (
+            WorkingMemoryStore(max_history=agent_settings.history_turns) if memory_enabled else None
+        )
     )
     memory_event_sink = DreamInbox(platform_store) if live_working_memory is not None else None
     ledger = audit or create_audit_ledger(store=observability_store, agent_id=agent_id)
@@ -434,7 +429,7 @@ def build_agent(
     )
 
     return CustomerSupportAgent(
-        llm=llm or create_llm_client(),
+        llm=llm or create_llm_client(observer=StageReporterModelObserver(lambda: reporter)),
         gatekeeper=governed,
         # Only a Gatekeeper escalates, so only a governed agent refers.
         referral=ReviewReferral(tools) if governed is not None else None,
@@ -460,9 +455,7 @@ def build_agent(
             authorizer=authorizer,
             pii=redactor,
             injection=PromptInjectionGuard() if features.is_on("prompt_injection") else None,
-            moderator=(
-                TermContentModerator() if features.is_on("content_moderation") else None
-            ),
+            moderator=(TermContentModerator() if features.is_on("content_moderation") else None),
         ),
         working_memory=live_working_memory,
         memory_event_sink=memory_event_sink,
@@ -572,9 +565,7 @@ def build_review_service(
     platform_store = SqlitePlatformStore(connection, agent_id=settings.agent.id)
     orders = OrdersRepository(connection)
     refunds = RefundLedgerRepository(connection)
-    observability_store = (
-        DuckDbObservabilityStore() if get_settings().audit.enabled else None
-    )
+    observability_store = DuckDbObservabilityStore() if get_settings().audit.enabled else None
     idempotency = SqliteIdempotencyGuard(platform_store)
     saga = RefundSaga(orders, refunds, idempotency=idempotency, saga=CompensatingSaga())
     return ReviewQueueService(
@@ -640,11 +631,7 @@ def build_dream_service(
 def build_lexical_index(pool: SqliteConnectionPool) -> LexicalRetriever:
     """A BM25 index over the order corpus, for identifier-shaped lookups."""
     orders = OrdersRepository(pool)
-    return LexicalRetriever(
-        [
-            _order_chunk(order) for order in orders.query()
-        ]
-    )
+    return LexicalRetriever([_order_chunk(order) for order in orders.query()])
 
 
 def database_path() -> str:

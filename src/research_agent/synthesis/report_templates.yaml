@@ -1,0 +1,21 @@
+# Report section templates per archetype. The synthesizer writes these
+# sections from the ledger; the sections after them are appended in code,
+# deterministically, for every archetype.
+decision_support:
+  sections: [Recommendation, Options compared, Trade-offs, Evidence by criterion]
+landscape_brief:
+  sections: [Overview, Players, Approaches and trends]
+fact_verification:
+  sections: [Verdicts, Evidence]
+explainer:
+  sections: [Summary, Concepts, Examples]
+general:
+  sections: [Findings, Details]
+qa:
+  sections: [Answer]
+
+# Appended by code (synthesis/synthesizer.py), never by the model.
+appended:
+  known_unknowns: Known unknowns
+  rejected_sources: Rejected sources
+  sources: Sources

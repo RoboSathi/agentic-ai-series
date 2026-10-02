@@ -1,0 +1,12 @@
+# Test-only overlay over the research agent's config: no network, no hosted model, no local
+# model download. Models are injected per test (`build_agent(clients=...)`); the web is a
+# replay store, so a search no test recorded raises instead of reaching the internet.
+logging:
+  run_label: tests
+
+web:
+  mode: replay
+
+research_agent:
+  audit:
+    entailment_model: lexical

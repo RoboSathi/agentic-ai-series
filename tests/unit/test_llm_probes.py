@@ -6,12 +6,13 @@ import pytest
 
 from agentic_commons.config import get_settings
 from agentic_commons.llm import probes
+from agentic_commons.llm.benchmark import BenchmarkResult, ChatModel, _summary, chat_models
+from agentic_commons.llm.local_probes import build_local_probes
 from agentic_commons.llm.probes import (
     ChatProbe,
     GuardProbe,
     SkippedProbe,
     build_probes,
-    local_models,
 )
 from agentic_commons.security.guard_types import GuardVerdict
 from tests.conftest import ScriptedLLM
@@ -81,6 +82,41 @@ class TestGuardProbe:
         assert (result.status, result.http_status, result.detail) == ("failed", 503, "down")
 
 
-def test_local_models_report_presence() -> None:
-    names = {model.name for model in local_models()}
-    assert "nli" in names
+def test_every_configured_local_model_gets_a_probe() -> None:
+    names = {probe.name for probe in build_local_probes()}
+    assert {"nli", "dialogue_summarizer"} <= names
+
+
+def test_each_distinct_role_model_is_probed_under_its_role_names() -> None:
+    settings = get_settings().model_copy(deep=True)
+    role = settings.llm.provider_settings()
+    settings.llm.roles = {
+        "planner": _role(role.model),
+        "writer": _role(role.model),
+        "judge": _role("another/model"),
+    }
+    names = {probe.name for probe in build_probes(settings)}
+    assert "roles: planner, writer" in names and "roles: judge" in names
+
+
+def test_chat_models_are_listed_once_with_every_use() -> None:
+    settings = get_settings().model_copy(deep=True)
+    settings.llm.roles = {"answerer": _role(settings.llm.provider_settings().model)}
+    models = {m.model: m.uses for m in chat_models(settings)}
+    assert "role:answerer" in models[settings.llm.provider_settings().model]
+
+
+def test_the_benchmark_summary_reports_median_and_throughput() -> None:
+    target = ChatModel(provider="nim", model="m", uses=["role:judge"])
+    result = _summary(target, 3, [1.0, 2.0, 4.0], tokens=70, errors=[])
+    assert isinstance(result, BenchmarkResult)
+    assert (result.p50_seconds, result.p95_seconds) == (2.0, 4.0)
+    assert result.completion_tokens_per_second == 10.0
+    failed = _summary(target, 2, [], tokens=0, errors=["timeout", "timeout"])
+    assert (failed.failures, failed.detail, failed.p50_seconds) == (2, "timeout", 0.0)
+
+
+def _role(model: str) -> Any:
+    from agentic_commons.config.settings import RoleModelSettings
+
+    return RoleModelSettings(provider="nim", model=model)

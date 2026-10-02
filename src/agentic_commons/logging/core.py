@@ -7,16 +7,20 @@ detail for the same event always lands here (PRD FR-56).
 
 import json
 import logging
+import re
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from rich.console import Console
 from rich.logging import RichHandler
 from rich.text import Text
+from rich.theme import Theme
 
 from agentic_commons.config import get_settings
 from agentic_commons.logging.trace_context import get_current_trace_id
+from agentic_commons.text_tree import value_lines
 
 Level = Literal["debug", "info", "warning", "error"]
 
@@ -45,7 +49,6 @@ _IDENTIFYING_FIELDS = (
     "label",
     "topic",
     "route",
-
     # Decision / model detail that explains the step.
     "reason",
     "question",
@@ -88,6 +91,13 @@ SUBSYSTEM_COLORS: dict[str, str] = {
     "gatekeeper": "bright_red",
     "hallucination_protection": "orange3",
     "customer_support_agent": "bright_green",
+    "research_agent": "light_goldenrod1",
+    "scheduler": "medium_purple1",
+    "budget": "salmon1",
+    "web": "deep_sky_blue1",
+    "ledger": "aquamarine1",
+    "artifacts": "wheat1",
+    "verification": "light_steel_blue",
     "design_patterns": "plum1",
     "episodes": "khaki1",
 }
@@ -97,30 +107,14 @@ SUBSYSTEM_COLORS: dict[str, str] = {
 class StructuredLogger(Protocol):
     """Emits structured events, optionally rebound to another subsystem."""
 
-    def bind(self, subsystem: str) -> "StructuredLogger":
-        ...
+    def bind(self, subsystem: str) -> "StructuredLogger": ...
 
     def event(
         self,
         level: Level,
         message: str,
         **fields: Any,
-    ) -> None:
-        ...
-
-
-# Drawing characters for the field tree. A record's structure is the
-# thing you are usually reading past in a log, so it is drawn rather
-# than punctuated: the eye follows a line down a page faster than it
-# counts braces.
-_BRANCH = "├─ "
-_LAST = "└─ "
-_PIPE = "│  "
-_GAP = "   "
-
-# Long values are wrapped rather than cut. Full payloads are the point of
-# these files — the screen is where things are summarised.
-_WRAP_AT = 100
+    ) -> None: ...
 
 
 class PlainFormatter(logging.Formatter):
@@ -138,7 +132,11 @@ class PlainFormatter(logging.Formatter):
     """
 
     def format(self, record: logging.LogRecord) -> str:
-        timestamp = datetime.fromtimestamp(record.created).astimezone().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        timestamp = (
+            datetime.fromtimestamp(record.created)
+            .astimezone()
+            .strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        )
         module = record.name.removeprefix("agentic.")
         level = record.levelname
         message = Text.from_markup(record.getMessage()).plain
@@ -156,7 +154,7 @@ class PlainFormatter(logging.Formatter):
         if _file_format() == "json":
             rendered = json.dumps(fields, indent=2, ensure_ascii=False, default=str)
             return [f"  {line}" for line in rendered.splitlines()]
-        return _tree(fields, prefix="  ")
+        return value_lines(fields, prefix="  ")
 
 
 def _file_format() -> str:
@@ -172,60 +170,6 @@ def _file_format() -> str:
         return str(get_settings().logging.file_format)
     except Exception:
         return "tree"
-
-
-def _tree(node: Any, prefix: str) -> list[str]:
-    """One value, drawn as an indented tree."""
-    if isinstance(node, dict):
-        return _branches(list(node.items()), prefix, labelled=True)
-    if isinstance(node, list):
-        return _branches(list(enumerate(node)), prefix, labelled=False)
-    return [f"{prefix}{line}" for line in _scalar_lines(node)]
-
-
-def _branches(items: list[Any], prefix: str, labelled: bool) -> list[str]:
-    """Each child of a mapping or sequence, with its connector."""
-    lines: list[str] = []
-    for index, (key, value) in enumerate(items):
-        last = index == len(items) - 1
-        connector = _LAST if last else _BRANCH
-        label = f"{key}" if labelled else f"[{key}]"
-        below = prefix + (_GAP if last else _PIPE)
-        if isinstance(value, (dict, list)) and value:
-            lines.append(f"{prefix}{connector}{label}:")
-            lines.extend(_tree(value, below))
-            continue
-        rendered = _scalar_lines(value)
-        lines.append(f"{prefix}{connector}{label}: {rendered[0]}")
-        lines.extend(f"{below}{line}" for line in rendered[1:])
-    return lines
-
-
-def _scalar_lines(value: Any) -> list[str]:
-    """A leaf value as one or more lines, never elided.
-
-    Embedded newlines are honoured, because a system prompt is a document
-    and reading it as one escaped string is how these files stopped being
-    worth opening.
-    """
-    if value is None:
-        return ["null"]
-    if isinstance(value, bool):
-        return ["true" if value else "false"]
-    if isinstance(value, (dict, list)):
-        return ["{}" if isinstance(value, dict) else "[]"]
-    text = str(value)
-    lines: list[str] = []
-    for raw in text.splitlines() or [""]:
-        lines.extend(_wrapped(raw))
-    return lines or [""]
-
-
-def _wrapped(line: str) -> list[str]:
-    """One line, folded at a readable width rather than cut."""
-    if len(line) <= _WRAP_AT:
-        return [line]
-    return [line[start : start + _WRAP_AT] for start in range(0, len(line), _WRAP_AT)]
 
 
 class RichLogger:
@@ -347,16 +291,10 @@ class RichLogger:
     ) -> None:
         """Trace a call at DEBUG — the file receives the full payload."""
 
-        all_args = ", ".join(
-            f"{name}={_payload(value)}"
-            for name, value in arguments.items()
-        )
+        all_args = ", ".join(f"{name}={_payload(value)}" for name, value in arguments.items())
 
         self._traced(
-            (
-                f"[bold {color}]CALLED[/bold {color}] "
-                f"[cyan]{func_name}[/cyan]({all_args})"
-            ),
+            (f"[bold {color}]CALLED[/bold {color}] [cyan]{func_name}[/cyan]({all_args})"),
             structured_fields={
                 "function": func_name,
                 "arguments": arguments,
@@ -430,9 +368,7 @@ class LoggerFactory:
         """Get or build the logger for one subsystem."""
 
         if subsystem not in cls._loggers:
-            cls._loggers[subsystem] = cls._build(
-                subsystem
-            )
+            cls._loggers[subsystem] = cls._build(subsystem)
 
         return RichLogger(
             cls._loggers[subsystem],
@@ -472,9 +408,7 @@ class LoggerFactory:
         """Drop cached loggers so config changes take effect."""
 
         for logger in cls._loggers.values():
-            for handler in list(
-                logger.handlers
-            ):
+            for handler in list(logger.handlers):
                 if handler in cls._subscribers:
                     logger.removeHandler(handler)
                     continue
@@ -491,9 +425,7 @@ class LoggerFactory:
     ) -> logging.Logger:
         settings = get_settings().logging
 
-        logger = logging.getLogger(
-            f"agentic.{subsystem}"
-        )
+        logger = logging.getLogger(f"agentic.{subsystem}")
 
         # Let DEBUG through the logger gate.
         # Each handler decides what it wants.
@@ -502,18 +434,10 @@ class LoggerFactory:
         logger.handlers.clear()
 
         if settings.console_enabled:
-            logger.addHandler(
-                cls._console_handler(
-                    settings.console_level
-                )
-            )
+            logger.addHandler(cls._console_handler(settings.console_level))
 
         if settings.file_enabled:
-            logger.addHandler(
-                cls._file_handler(
-                    subsystem
-                )
-            )
+            logger.addHandler(cls._file_handler(subsystem))
 
         # IMPORTANT:
         # A TUI trace subscriber may have been attached before a subsystem's
@@ -528,7 +452,9 @@ class LoggerFactory:
         cls,
         level: str,
     ) -> logging.Handler:
+        settings = get_settings().logging
         handler = RichHandler(
+            console=Console(theme=Theme(settings.console_theme)),
             markup=True,
             rich_tracebacks=True,
             show_time=True,
@@ -540,7 +466,7 @@ class LoggerFactory:
 
         handler.setFormatter(
             logging.Formatter(
-                "%(message)s",
+                settings.console_format,
                 datefmt="[%X]",
             )
         )
@@ -554,38 +480,43 @@ class LoggerFactory:
     ) -> logging.Handler:
         settings = get_settings().logging
 
-        log_dir: Path = settings.resolved_dir
-        log_dir.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
         handler = RotatingFileHandler(
-            log_dir / f"{subsystem}.log",
+            log_directory() / f"{subsystem}.log",
             maxBytes=settings.max_bytes,
             backupCount=settings.backup_count,
         )
 
-        handler.setLevel(
-            settings.file_level
-        )
+        handler.setLevel(settings.file_level)
 
-        handler.setFormatter(
-            PlainFormatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            )
-        )
+        handler.setFormatter(PlainFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
 
         return handler
+
+
+_UNSAFE_FOLDER_CHARS = re.compile(r"[^\w.-]+")
+
+
+def log_directory() -> Path:
+    """Where this process's log files go: `<logging.dir>/<agent id>[/<run_label>]`, created.
+
+    Each agent owns a folder, so two agents (or an agent and its offline eval runs, via
+    `logging.run_label`) never write to the same file. The platform does not name an agent:
+    the id is whatever the running agent's overlay declares.
+    """
+    settings = get_settings()
+    parts = [settings.agent.id, settings.logging.run_label]
+    folder = settings.logging.resolved_dir.joinpath(
+        *(_UNSAFE_FOLDER_CHARS.sub("_", part) for part in parts if part)
+    )
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
 
 
 def get_logger(
     subsystem: str,
 ) -> RichLogger:
     """The logger for one subsystem — standard entry point."""
-    return LoggerFactory.for_subsystem(
-        subsystem
-    )
+    return LoggerFactory.for_subsystem(subsystem)
 
 
 def _json_safe(value: Any) -> Any:
@@ -603,7 +534,9 @@ def _json_safe(value: Any) -> Any:
             pass
     if hasattr(value, "__dict__"):
         try:
-            return {str(k): _json_safe(v) for k, v in vars(value).items() if not str(k).startswith("_")}
+            return {
+                str(k): _json_safe(v) for k, v in vars(value).items() if not str(k).startswith("_")
+            }
         except Exception:
             pass
     return str(value)
@@ -622,13 +555,7 @@ def _payload(
 
     limit = get_settings().logging.payload_max_chars
 
-    if (
-        limit <= 0
-        or len(rendered) <= limit
-    ):
+    if limit <= 0 or len(rendered) <= limit:
         return rendered
 
-    return (
-        f"{rendered[:limit]}… "
-        f"[{len(rendered)} chars]"
-    )
+    return f"{rendered[:limit]}… [{len(rendered)} chars]"

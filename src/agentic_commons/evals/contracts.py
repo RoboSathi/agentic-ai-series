@@ -8,23 +8,18 @@ the shapes; an agent owns what goes inside the opaque `payload` and
 90001" without this package ever learning what an order is.
 """
 
-import hashlib
-import json
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
 from agentic_commons.evals.types import ScorerTier
 
+# Re-exported: the helper moved to the neutral `agentic_commons.hashing`.
+from agentic_commons.hashing import canonical_hash as canonical_hash
+
 GraderKind = Literal["oracle", "judge", "deepeval", "promptfoo"]
 Severity = Literal["hard", "soft"]
 StageName = Literal["generate", "oracle", "security", "judge", "deepeval"]
-
-
-def canonical_hash(value: Any) -> str:
-    """SHA-256 of a value's canonical JSON — stable across key order and runs."""
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(encoded.encode()).hexdigest()
 
 
 class GoldenCase(BaseModel):
@@ -188,3 +183,26 @@ class EvalPlugin(Protocol):
     def fingerprint_inputs(self) -> dict[str, str]:
         """Agent facts that change what a transcript would be (model id, …)."""
         ...
+
+
+# -- optional plugin hooks -----------------------------------------------------
+# Checked with `isinstance`; a plugin without them behaves as before.
+
+
+@runtime_checkable
+class JudgeClientPlugin(Protocol):
+    """A plugin that supplies the client its judge stage uses."""
+
+    def judge_client(self) -> Any: ...
+
+
+@runtime_checkable
+class NativeSecurityPlugin(Protocol):
+    """A plugin whose security suite is golden cases graded by its oracle.
+
+    The default security stage runs Promptfoo (a Node tool, over the
+    network). An agent whose attacks live in fixtures — seeded hostile
+    pages, say — runs them as an ordinary suite instead, offline.
+    """
+
+    def native_security_suite(self) -> str: ...

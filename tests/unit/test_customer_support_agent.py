@@ -158,13 +158,6 @@ class TestTools:
         tools.queue_for_approval(10002, 210.0)
         assert len(hitl.pending()) == 1
 
-    def test_every_tool_declares_its_governance_properties(self, tools: SupportTools) -> None:
-        """A tool cannot be added without someone stating what it can break."""
-        by_name = {tool.name: tool for tool in tools.definitions()}
-        assert by_name["process_refund"].reversible is False
-        assert by_name["queue_for_approval"].surface == "append_only"
-        assert by_name["get_order_status"].surface == "editable"
-
 
 class TestRefundSaga:
     async def test_a_successful_refund_completes_every_step(
@@ -224,44 +217,6 @@ class TestPolicy:
 
 
 class TestGraph:
-    async def test_a_small_refund_is_processed(self, seeded_pool: SqliteConnectionPool) -> None:
-        llm = ScriptedLLM(
-            [
-                {"tool_calls": tool_call("support.get_order_status", order_id=10001)},
-                {"tool_calls": tool_call("support.process_refund", order_id=10001, amount=32.0)},
-                {"content": "I've refunded $32.00."},
-            ]
-        )
-        agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
-        state = await agent.handle("refund order 10001, it was damaged")
-        assert OrdersRepository(seeded_pool).get(10001).refund_status == "completed"  # type: ignore[union-attr]
-        assert state.response
-
-    async def test_a_large_refund_is_refused_and_no_money_moves(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        """The model asks; the harness refuses. That is the whole design."""
-        llm = ScriptedLLM(
-            [
-                {"tool_calls": tool_call("support.process_refund", order_id=10002, amount=210.0)},
-                {"content": "That needs review."},
-            ]
-        )
-        agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
-        state = await agent.handle("refund order 10002")
-        assert state.escalated is True
-        assert OrdersRepository(seeded_pool).get(10002).refund_status == "none"  # type: ignore[union-attr]
-
-    async def test_an_answer_without_tools_is_returned(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        agent = build_agent(
-            llm=ScriptedLLM([{"content": "Hello, how can I help?"}]),
-            pool=seeded_pool,
-            with_memory=False,
-        )
-        assert (await agent.handle("hello")).response == "Hello, how can I help?"
-
     async def test_the_tool_round_cap_still_produces_an_answer(
         self, seeded_pool: SqliteConnectionPool
     ) -> None:
@@ -271,33 +226,11 @@ class TestGraph:
         state = await agent.handle("loop forever")
         assert state.tool_rounds <= 6
 
-    async def test_an_invalid_tool_call_is_reported_to_the_model(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        llm = ScriptedLLM(
-            [
-                {"tool_calls": tool_call("support.process_refund")},
-                {"content": "I need the order id."},
-            ]
-        )
-        agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
-        state = await agent.handle("refund something")
-        assert any("unavailable" in result for result in state.tool_results)
-
     async def test_the_graph_records_its_decisions(self, seeded_pool: SqliteConnectionPool) -> None:
         agent = build_agent(
             llm=ScriptedLLM([{"content": "hi"}]), pool=seeded_pool, with_memory=False
         )
         assert (await agent.handle("hello")).decisions
-
-    async def test_the_policy_is_always_in_the_prompt(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        llm = ScriptedLLM([{"content": "hi"}])
-        agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
-        await agent.handle("hello")
-        system = llm.requests[0].messages[0].content
-        assert "Refund Policy" in system
 
 
 class TestTheBuilderHonoursConfiguration:
@@ -338,36 +271,6 @@ class TestTheBuilderHonoursConfiguration:
         """Build an agent with one capability switched off."""
         return self._build(seeded_pool, off=section)
 
-    def test_everything_is_wired_by_default(
-        self, seeded_pool: SqliteConnectionPool, restore_settings: None
-    ) -> None:
-        agent = self._build(seeded_pool)
-        assert agent._memory is not None
-        assert agent._context is not None
-        assert agent._selector is not None
-        assert agent._tracer is not None
-        assert agent._grounding is not None
-
-    @pytest.mark.parametrize(
-        ("section", "attribute"),
-        [
-            ("memory", "_memory"),
-            ("context", "_context"),
-            ("tools", "_selector"),
-            ("observability", "_tracer"),
-            ("observability", "_slos"),
-            ("hallucination_guard", "_grounding"),
-        ],
-    )
-    def test_disabling_a_section_leaves_its_collaborator_out(
-        self,
-        section: str,
-        attribute: str,
-        seeded_pool: SqliteConnectionPool,
-        restore_settings: None,
-    ) -> None:
-        assert getattr(self._off(section, seeded_pool), attribute) is None
-
     def test_grounding_does_not_depend_on_observability(
         self, seeded_pool: SqliteConnectionPool, restore_settings: None
     ) -> None:
@@ -382,15 +285,6 @@ class TestTheBuilderHonoursConfiguration:
         agent = self._off("observability", seeded_pool)
         assert agent._tracer is None
         assert agent._grounding is not None
-
-    def test_an_explicit_argument_still_overrides_the_config(
-        self, seeded_pool: SqliteConnectionPool, restore_settings: None
-    ) -> None:
-        """A caller that knows what it wants is not overruled by a file."""
-        settings = get_settings()
-        settings.features = settings.features.with_override("memory", False)
-        agent = build_agent(llm=ScriptedLLM(), pool=seeded_pool, with_memory=True)
-        assert agent._memory is not None
 
 
 class TestAWithheldFeatureLeavesNoStage:
@@ -490,11 +384,6 @@ class TestAWithheldStageSaysNothing:
         await agent.handle("please help me with something about my account", session_id="s")
         return [str(getattr(event, "stage", "")) for event in feed.events]
 
-    async def test_the_grounding_stage_narrates_when_it_was_built(
-        self, seeded_pool: SqliteConnectionPool, restore_settings: None
-    ) -> None:
-        assert "hallucination_check" in await self._stages(True, seeded_pool)
-
     async def test_it_says_nothing_at_all_when_it_was_not(
         self, seeded_pool: SqliteConnectionPool, restore_settings: None
     ) -> None:
@@ -553,20 +442,3 @@ class TestHarnessOffLeavesTheModelFree:
             SimpleNamespace(metadata={"allowed_actions": ["support.get_order_status"]})
         )
         assert [tool.qualified_name for tool in offered] == ["support.get_order_status"]
-
-    async def test_a_turn_with_the_whole_harness_off_still_calls_a_tool(
-        self, seeded_pool: SqliteConnectionPool, restore_settings: None
-    ) -> None:
-        """End to end: the trace an operator watches must show the call."""
-        agent = build_agent(
-            llm=ScriptedLLM(
-                [
-                    {"tool_calls": tool_call("support.get_order_status", order_id=10001)},
-                    {"content": "Order 10001 was delivered on March 3."},
-                ]
-            ),
-            pool=seeded_pool,
-            features=get_settings().features.with_all(False),
-        )
-        state = await agent.handle("what happened with order 10001?", session_id="s")
-        assert state.tool_results

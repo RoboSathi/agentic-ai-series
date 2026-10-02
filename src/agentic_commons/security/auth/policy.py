@@ -86,8 +86,7 @@ class AgentPolicyRepository:
 
     def _ensure_schema(self) -> None:
         columns = {
-            str(row["name"])
-            for row in self._store.iter_rows("PRAGMA table_info(platform_agents)")
+            str(row["name"]) for row in self._store.iter_rows("PRAGMA table_info(platform_agents)")
         }
         missing = sorted(_REQUIRED_COLUMNS - columns)
         if missing:
@@ -160,8 +159,13 @@ class AgentPolicyRepository:
                 "INSERT INTO platform_agent_budgets (agent_id, action_class, "
                 "per_action_limit_cents, window_limit_cents, window_hours) VALUES (?, ?, ?, ?, ?)",
                 [
-                    (policy.agent_id, limit.action_class, limit.per_action.cents,
-                     limit.window.cents, limit.window_hours)
+                    (
+                        policy.agent_id,
+                        limit.action_class,
+                        limit.per_action.cents,
+                        limit.window.cents,
+                        limit.window_hours,
+                    )
                     for limit in sorted(policy.limits.values(), key=lambda item: item.action_class)
                 ],
             )

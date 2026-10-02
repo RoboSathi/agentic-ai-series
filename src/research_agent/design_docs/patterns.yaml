@@ -1,0 +1,59 @@
+# Where the research agent uses each pattern (read by `make patterns`).
+# `patterns` names catalogue patterns (design_patterns/catalogue.py);
+# `other` names the LLD and resilience patterns this agent applies.
+agent: research_agent
+patterns:
+  - pattern: router
+    where: scoping/gate.py · scope_gate node
+    notes: the gate routes the first message to Q&A (auto_freeze, no interview) or a Research kind, a reframe menu, or a refusal
+  - pattern: human_in_the_loop
+    where: graph/scoping_graph.py · await_user (durability/hitl.await_decision)
+    notes: the interview and rubric review pause the durable graph until the user answers; /approve freezes the contract
+  - pattern: planning
+    where: planning/planner.py + planning/dag_validation.py · plan_dag (with its validation)
+    notes: the planner decomposes the contract into a DAG of sub-questions, validated (acyclic, bounded, traced) before anything runs
+  - pattern: fan_out_fan_in
+    where: graph/run_graph.py · wave_start → research_node (Send per ready node) → wave_done
+    notes: each wave's ready nodes run concurrently under the scheduler's cap and join at the wave boundary
+  - pattern: react
+    where: research/worker.py · research_node
+    notes: a bounded act–observe loop per sub-question (search, fetch, read, follow up); next actions come from the plan and reflection, not free-form thoughts
+  - pattern: agentic_retrieval
+    where: research/worker.py + research/reflector.py
+    notes: the agent chooses what to search next from what it has found (reflection's follow-up queries), within the budget
+  - pattern: map_reduce
+    where: research/extractor.py (map) · synthesis/synthesizer.py (reduce)
+    notes: each fetched page maps to verbatim claims in the ledger; synthesis reduces the ledger to the report
+  - pattern: reflection
+    where: research/reflector.py · reflect_gap_analysis
+    notes: after each wave, gaps against the rubric become follow-up nodes or a stop decision
+  - pattern: evaluator_optimizer
+    where: graph/run_nodes.py · synthesize → independent_audit → gap_fill → wave_start
+    notes: an independent audit scores the report against the frozen rubric; must-pass gaps drive one bounded gap-fill round
+  - pattern: orchestrator_subagent
+    where: audit/independent.py · IndependentAuditor (agentic_commons.durability.IsolatedGraphRunner)
+    notes: the independent audit runs as an isolated sub-graph that receives only (contract, report, ledger_snapshot)
+  - pattern: memory_systems
+    where: archive/store.py · archive node
+    notes: each run leaves an episodic index row and a semantic fact; working memory carries session status; procedural is disabled by design
+other:
+  - pattern: strategy
+    where: research/stop_rules/ (one stop rule per archetype)
+  - pattern: adapter
+    where: agentic_commons/web/providers.py · TavilyProvider and DuckDuckGoProvider behind SearchProvider
+  - pattern: chain of responsibility
+    where: agentic_commons/web/router.py · SearchRouter (free provider first, metered fallback)
+  - pattern: factory
+    where: graph/builder.py (composition root)
+  - pattern: builder
+    where: scoping/brief.py · BriefBuilder
+  - pattern: observer
+    where: research/telemetry.py (StageReporter + AuditLedger) · WebGateway observer
+  - pattern: decorator
+    where: research_agent/evals/agent_under_test.py · RecordingLLMClient around every role client
+  - pattern: facade
+    where: agentic_commons MemoryFacade, used by archive/store.py
+  - pattern: retry + idempotency + circuit breaker
+    where: agentic_commons/web/gateway.py · live search and fetch through ResilientCaller
+  - pattern: bulkhead
+    where: agentic_commons/scheduling/scheduler.py · per-wave concurrency cap

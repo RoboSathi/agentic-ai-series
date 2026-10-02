@@ -61,8 +61,7 @@ class IntentNodes(NodeSupport):
             )
             return {
                 "response": (
-                    "I can help with your orders and refunds, "
-                    "but I can't help with that request."
+                    "I can help with your orders and refunds, but I can't help with that request."
                 ),
                 "decisions": [
                     *state.decisions,
@@ -253,7 +252,10 @@ class IntentNodes(NodeSupport):
             {tool.qualified_name},
         )
         self._add_action(
-            state, tool.name, params, str(invocation.get("evidence", text)),
+            state,
+            tool.name,
+            params,
+            str(invocation.get("evidence", text)),
             outcome=str(invocation.get("tool_status", TOOL_BLOCKED)),
         )
         base = self._halt(
@@ -283,7 +285,9 @@ class IntentNodes(NodeSupport):
         """Map intent to a graph capability route from trusted tool metadata."""
         if intent.name == "UNKNOWN":
             return "llm_fallback"
-        tools = [tool for name in intent.allowed_tools if (tool := self._registry.get(name)) is not None]
+        tools = [
+            tool for name in intent.allowed_tools if (tool := self._registry.get(name)) is not None
+        ]
         if len(tools) == 1 and not tools[0].side_effecting:
             return "deterministic_read"
         if any(tool.side_effecting for tool in tools):
@@ -354,7 +358,8 @@ class IntentNodes(NodeSupport):
 def _status_named(query: str) -> str | None:
     """The order state the customer named ("my delivered orders"), if exactly one."""
     named = [
-        status for status in get_args(OrderStatus)
+        status
+        for status in get_args(OrderStatus)
         if re.search(rf"\b{status}\b", query, re.IGNORECASE)
     ]
     return named[0] if len(named) == 1 else None

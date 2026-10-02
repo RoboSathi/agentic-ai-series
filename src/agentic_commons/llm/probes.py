@@ -10,21 +10,21 @@ hosted model to config and its probe appears; switch a section off and
 its probe reports `skipped`.
 """
 
+import asyncio
 import time
-from pathlib import Path
 from typing import Awaitable, Callable, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
-from agentic_commons.config import AppConfig, get_settings, resolve_path
+from agentic_commons.config import AppConfig, get_settings
 from agentic_commons.config.settings import ProviderName, SecurityGuardModelSettings
 from agentic_commons.llm.client import create_pinned_llm_client
-from agentic_commons.llm.embeddings import NimEmbeddingClient
+from agentic_commons.llm.embeddings import HOSTED, HostedEmbeddingClient
 from agentic_commons.llm.types import CompletionRequest, Message
 from agentic_commons.resilience import ResilientCaller
-from agentic_commons.security.content_moderation.nvidia import NvidiaHostedContentSafetyGuard
+from agentic_commons.security.content_moderation.hosted import HostedContentSafetyGuard
 from agentic_commons.security.guard_types import GuardVerdict
-from agentic_commons.security.prompt_injection.nvidia import NvidiaHostedJailbreakGuard
+from agentic_commons.security.prompt_injection.hosted import HostedJailbreakGuard
 
 ProbeStatus = Literal["ok", "failed", "skipped"]
 
@@ -59,6 +59,7 @@ class _TimedProbe:
         self._target = target
         self._model = model
         self._required = required
+        self._timeout = get_settings().llm.check.timeout_seconds
 
     def result(self, status: ProbeStatus, started: float, **fields: object) -> ProbeResult:
         return ProbeResult(
@@ -74,7 +75,10 @@ class _TimedProbe:
     async def timed(self, call: Callable[[], Awaitable[ProbeResult]]) -> ProbeResult:
         started = time.perf_counter()
         try:
-            return await call()
+            async with asyncio.timeout(self._timeout):
+                return await call()
+        except TimeoutError:
+            return self.result("failed", started, detail=f"no response within {self._timeout:g}s")
         except Exception as exc:
             return self.result("failed", started, http_status=_status_of(exc), detail=str(exc))
 
@@ -110,8 +114,8 @@ class EmbeddingProbe(_TimedProbe):
     def __init__(self, settings: AppConfig) -> None:
         super().__init__(
             "embeddings",
-            settings.llm.provider_settings("nim").base_url,
-            settings.llm.embedding.nim_model,
+            settings.llm.provider_settings(settings.llm.embedding.provider).base_url,
+            settings.llm.embedding.model,
             required=True,
         )
         self._text = settings.llm.check.prompt
@@ -121,7 +125,7 @@ class EmbeddingProbe(_TimedProbe):
 
     async def _call(self) -> ProbeResult:
         started = time.perf_counter()
-        client = NimEmbeddingClient()
+        client = HostedEmbeddingClient()
         vectors = await client.embed([self._text])
         if client.model_id != self._model:
             return self.result("failed", started, detail="fell back to the local embedder")
@@ -129,7 +133,7 @@ class EmbeddingProbe(_TimedProbe):
 
 
 GuardFactory = Callable[
-    [SecurityGuardModelSettings], NvidiaHostedContentSafetyGuard | NvidiaHostedJailbreakGuard
+    [SecurityGuardModelSettings], HostedContentSafetyGuard | HostedJailbreakGuard
 ]
 
 
@@ -174,37 +178,32 @@ class SkippedProbe:
         return self._result
 
 
-class LocalModel(BaseModel):
-    """A model that runs in-process: present on disk, or not."""
-
-    name: str
-    path: str
-    present: bool
-
-
 def build_probes(settings: AppConfig | None = None) -> list[EndpointProbe]:
     """Every hosted endpoint the configuration names, in a stable order."""
     config = settings or get_settings()
     return [
         _agent_chat_probe(config),
         _judge_probe(config),
+        *_role_probes(config),
         _embedding_probe(config),
         _guard_probe(config, "content_safety", "content_moderation", _content_safety_guard),
         _guard_probe(config, "jailbreak", "prompt_injection", _jailbreak_guard),
     ]
 
 
-def local_models(settings: AppConfig | None = None) -> list[LocalModel]:
-    """In-process models the harness loads from disk (unconfigured ones omitted)."""
-    config = settings or get_settings()
-    entries = {
-        "nli": config.llm.encoders.nli_local_model_dir,
-        "intent_classifier": config.llm.intent_classifier.local_model_dir,
-    }
+def _role_probes(config: AppConfig) -> list[EndpointProbe]:
+    """One probe per distinct model the running agent's roles name, labelled with its roles.
+
+    The roles are the agent's (its overlay declares them); a model already probed as the
+    platform's chat model or the eval judge is probed again here under its role names, so a
+    role whose model this account cannot invoke is visible as that role.
+    """
+    by_model: dict[tuple[ProviderName, str], list[str]] = {}
+    for role, spec in sorted(config.llm.roles.items()):
+        by_model.setdefault((spec.provider, spec.model), []).append(role)
     return [
-        LocalModel(name=name, path=configured, present=_has_files(resolve_path(configured)))
-        for name, configured in entries.items()
-        if configured
+        ChatProbe(f"roles: {', '.join(roles)}", provider, model, config.llm.enabled, config)
+        for (provider, model), roles in by_model.items()
     ]
 
 
@@ -221,9 +220,9 @@ def _judge_probe(config: AppConfig) -> EndpointProbe:
 
 def _embedding_probe(config: AppConfig) -> EndpointProbe:
     embedding = config.llm.embedding
-    if embedding.provider != "nim":
+    if embedding.backend != HOSTED:
         return SkippedProbe(
-            "embeddings", "local", embedding.nim_model, "embedding.provider is local"
+            "embeddings", embedding.backend, embedding.model, "embedding.backend is not hosted"
         )
     return EmbeddingProbe(config)
 
@@ -241,8 +240,8 @@ def _guard_probe(
     return GuardProbe(name, guard, required, factory, config.llm.check.prompt)
 
 
-def _content_safety_guard(settings: SecurityGuardModelSettings) -> NvidiaHostedContentSafetyGuard:
-    return NvidiaHostedContentSafetyGuard(
+def _content_safety_guard(settings: SecurityGuardModelSettings) -> HostedContentSafetyGuard:
+    return HostedContentSafetyGuard(
         base_url=settings.base_url,
         endpoint=settings.endpoint,
         timeout_seconds=settings.timeout_seconds,
@@ -252,18 +251,14 @@ def _content_safety_guard(settings: SecurityGuardModelSettings) -> NvidiaHostedC
     )
 
 
-def _jailbreak_guard(settings: SecurityGuardModelSettings) -> NvidiaHostedJailbreakGuard:
-    return NvidiaHostedJailbreakGuard(
+def _jailbreak_guard(settings: SecurityGuardModelSettings) -> HostedJailbreakGuard:
+    return HostedJailbreakGuard(
         base_url=settings.base_url,
         endpoint=settings.endpoint,
         timeout_seconds=settings.timeout_seconds,
         model=settings.model,
         resilient=ResilientCaller("probe-jailbreak"),
     )
-
-
-def _has_files(path: Path) -> bool:
-    return path.is_dir() and any(path.iterdir())
 
 
 def _status_of(exc: Exception) -> int | None:

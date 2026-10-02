@@ -17,8 +17,8 @@ NVIDIA guard model that fails closed.
 - `SecuritySuite` — one facade over every control (`suite.py`)
 - Auth: `Authorizer`, `AgentPolicy`, `AgentPolicyRepository`, `Principal`, `Permission` (`auth/`)
 - PII: `PIIFilterImpl` — detect, redact, minimise (`pii/`)
-- Injection: `PromptInjectionGuard`, `NvidiaHostedJailbreakGuard` (`prompt_injection/`)
-- Moderation: `TermContentModerator`, `NvidiaHostedContentSafetyGuard` (`content_moderation/`)
+- Injection: `PromptInjectionGuard`, `HostedJailbreakGuard` (`prompt_injection/`)
+- Moderation: `TermContentModerator`, `HostedContentSafetyGuard` (`content_moderation/`)
 - `post_json_with_poll` (`remote_http.py`) — hosted-guard HTTP, rate-limited
 
 ## Configuration

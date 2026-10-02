@@ -10,7 +10,7 @@ detector that misses one phrasing fails open; an authorization boundary
 that never grants the authority in the first place has nothing to miss.
 """
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from agentic_commons.config import get_settings
 from agentic_commons.logging import get_logger, logged
@@ -131,12 +131,8 @@ class PromptInjectionGuard:
         context = self.separate(instructions, data)
         allowed = self.scope_tools(context, tools)
         forbidden_surfaces_removed = len(allowed) <= len(tools)
-        reversible_ok = (
-            all(tool.reversible for tool in allowed)
-            if context.is_suspicious
-            else True
-        )
-        checks = [
+        reversible_ok = all(tool.reversible for tool in allowed) if context.is_suspicious else True
+        checks: list[dict[str, Any]] = [
             {
                 "name": "Instruction/data separation",
                 "status": "PASS",
@@ -146,8 +142,12 @@ class PromptInjectionGuard:
             {
                 "name": "Injection phrase scan",
                 "status": "FAIL" if context.is_suspicious else "PASS",
-                "reason_code": "INJECTION_PHRASES_FOUND" if context.is_suspicious else "NO_INJECTION_PHRASES",
-                "reason": "Known injection phrasing was detected." if context.is_suspicious else "No configured injection phrases were detected.",
+                "reason_code": "INJECTION_PHRASES_FOUND"
+                if context.is_suspicious
+                else "NO_INJECTION_PHRASES",
+                "reason": "Known injection phrasing was detected."
+                if context.is_suspicious
+                else "No configured injection phrases were detected.",
                 "observed": {"phrases": context.suspicious_phrases},
             },
             {
@@ -160,7 +160,9 @@ class PromptInjectionGuard:
                 "name": "Reversibility enforcement",
                 "status": "PASS" if reversible_ok else "FAIL",
                 "reason_code": "REVERSIBLE_ONLY" if context.is_suspicious else "NOT_APPLICABLE",
-                "reason": "Suspicious content can only retain reversible tools." if context.is_suspicious else "No additional reversibility restriction was required.",
+                "reason": "Suspicious content can only retain reversible tools."
+                if context.is_suspicious
+                else "No additional reversibility restriction was required.",
             },
         ]
         return InjectionAssessment(

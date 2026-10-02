@@ -9,6 +9,13 @@ Implementation is intentionally split into modules:
 This module is an import surface only; it contains no runtime logic.
 """
 
+from agentic_commons.control_loop.budget import (
+    SECONDS,
+    BudgetExhaustedError,
+    BudgetGuard,
+    CounterState,
+    Reservation,
+)
 from agentic_commons.control_loop.protocols import (
     CheckpointStore,
     LoopController,
@@ -36,7 +43,12 @@ from agentic_commons.control_loop.watchdogs import (
 )
 
 __all__ = [
+    "SECONDS",
     "AgentState",
+    "BudgetExhaustedError",
+    "BudgetGuard",
+    "CounterState",
+    "Reservation",
     "Checkpoint",
     "CheckpointStore",
     "CheckStatus",

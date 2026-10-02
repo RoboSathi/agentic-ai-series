@@ -37,6 +37,10 @@ class LocalDialogueSummarizer:
     def model_name(self) -> str:
         return self._artifact.model_name
 
+    def ensure_loaded_sync(self) -> None:
+        """Load now, in this thread (a probe or a console warming up before its event loop)."""
+        self._artifact.load_sync()
+
     async def summarize(self, dialogue: str) -> str | None:
         """One summary of the dialogue, or None when the model is unavailable."""
         if self._unavailable or not dialogue.strip():

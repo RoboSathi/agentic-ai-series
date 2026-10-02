@@ -85,7 +85,6 @@ from agentic_commons.observability import (
 )
 from agentic_commons.resilience import (
     DeadLetterQueue,
-    ResilientCaller,
 )
 from agentic_commons.security import SecuritySuite
 from agentic_commons.security.auth.policy import AgentPolicy
@@ -159,7 +158,6 @@ class CustomerSupportAgent(
         selector: ToolRetrievalSelector | None = None,
         cascade: NollmScoringCascadeImpl | None = None,
         reporter: StageReporter | None = None,
-        resilient: ResilientCaller | None = None,
         dead_letter_queue: DeadLetterQueue | None = None,
         tracer: Tracer | None = None,
         slos: SLORegistry | None = None,
@@ -209,7 +207,6 @@ class CustomerSupportAgent(
         # The model is a remote dependency like any other: bounded by a
         # timeout, retried under an idempotency key, and behind a breaker
         # so a provider outage fails fast instead of queueing.
-        self._resilient = resilient or ResilientCaller("llm")
         self._dead_letter_queue = dead_letter_queue
         self._tracer = tracer
         self._slos = slos
@@ -225,9 +222,9 @@ class CustomerSupportAgent(
         # Turns a Gatekeeper escalation into a queued review. Present only
         # with the Gatekeeper: without one nothing escalates.
         self._referral = referral
-        self._agent_policy = agent_policy
-        if self._agent_policy is None:
+        if agent_policy is None:
             raise ValueError("CustomerSupportAgent requires an AgentPolicy loaded from persistence")
+        self._agent_policy = agent_policy
         self._deliberation_markers = [m.casefold() for m in settings.deliberation_markers]
         self._max_rounds = settings.max_tool_iterations
         self._actor = self._agent_policy.agent_id

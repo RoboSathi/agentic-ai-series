@@ -21,6 +21,7 @@ from agentic_commons.llm.client import LLMClient
 from agentic_commons.llm.types import CompletionRequest, Message
 from agentic_commons.logging import get_logger
 from agentic_commons.tools import NamespacedToolRegistry
+from design_patterns.agentic._invoke import invoke_tool
 from design_patterns.types import PatternFamily, PatternRun, Step
 
 
@@ -94,5 +95,5 @@ class ReActPattern:
         call = self._registry.build_call(name, arguments)
         if call is None:
             return f"'{name}' is unavailable or its arguments were invalid."
-        result = await self._registry.invoke(call)
+        result = await invoke_tool(self._registry, call)
         return result.output if result.success else f"failed: {result.error}"

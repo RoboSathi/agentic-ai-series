@@ -10,18 +10,35 @@ from agentic_commons.security.auth.types import AccessDecision, Principal
 from agentic_commons.security.content_moderation import (
     ContentModerator,
     ContentSafetyGuard,
-    NvidiaHostedContentSafetyGuard,
+    HostedContentSafetyGuard,
 )
 from agentic_commons.security.content_moderation.types import ModerationVerdict
 from agentic_commons.security.pii.detector import PIIFilterImpl
 from agentic_commons.security.pii.types import PIISpan, RedactionMode
 from agentic_commons.security.prompt_injection import (
+    HostedJailbreakGuard,
     JailbreakGuard,
-    NvidiaHostedJailbreakGuard,
     PromptInjectionGuard,
 )
 from agentic_commons.security.prompt_injection.types import InjectionAssessment
 from agentic_commons.tools.types import ToolDefinition
+
+
+def check_names() -> tuple[str, str, str, str]:
+    """The checks' names on a card — (rule injection, rule moderation, jailbreak model,
+    content-safety model) — from `security.guards`, so a screen can find each verdict."""
+    guards = get_settings().security.guards
+    return (
+        guards.rule_checks.injection,
+        guards.rule_checks.moderation,
+        guards.jailbreak.check_name,
+        guards.content_safety.check_name,
+    )
+
+
+def _joined(earlier: str, reason: str) -> str:
+    """A reason added to what an assessment already said."""
+    return f"{earlier}; {reason}" if earlier else reason[:1].upper() + reason[1:]
 
 
 @instrument("security")
@@ -49,26 +66,26 @@ class SecuritySuite:
         self.moderator = moderator
         guard_settings = get_settings().security.guards
         self.jailbreak_guard = jailbreak_guard or (
-            NvidiaHostedJailbreakGuard(
+            HostedJailbreakGuard(
                 base_url=guard_settings.jailbreak.base_url,
                 endpoint=guard_settings.jailbreak.endpoint,
                 timeout_seconds=guard_settings.jailbreak.timeout_seconds,
                 model=guard_settings.jailbreak.model,
-                resilient=jailbreak_resilient or ResilientCaller("nvidia-jailbreak"),
+                resilient=jailbreak_resilient
+                or ResilientCaller(guard_settings.jailbreak.resilience_key),
             )
-            if injection is not None
-            and guard_settings.enabled
-            and guard_settings.jailbreak.enabled
+            if injection is not None and guard_settings.enabled and guard_settings.jailbreak.enabled
             else None
         )
         self.content_safety_guard = content_safety_guard or (
-            NvidiaHostedContentSafetyGuard(
+            HostedContentSafetyGuard(
                 base_url=guard_settings.content_safety.base_url,
                 endpoint=guard_settings.content_safety.endpoint,
                 timeout_seconds=guard_settings.content_safety.timeout_seconds,
                 model=guard_settings.content_safety.model,
                 max_tokens=guard_settings.content_safety.max_tokens,
-                resilient=content_safety_resilient or ResilientCaller("nvidia-content-safety"),
+                resilient=content_safety_resilient
+                or ResilientCaller(guard_settings.content_safety.resilience_key),
             )
             if moderator is not None
             and guard_settings.enabled
@@ -112,7 +129,7 @@ class SecuritySuite:
         verdict = self.moderator.moderate(text)
         verdict.checks.append(
             {
-                "name": "Deterministic blocked-term scan",
+                "name": get_settings().security.guards.rule_checks.moderation,
                 "status": "FAIL" if verdict.flagged else "PASS",
                 "reason_code": "BLOCKED_TERM_FOUND" if verdict.flagged else "NO_BLOCKED_TERMS",
                 "matched_terms": list(verdict.matched_terms),
@@ -130,7 +147,7 @@ class SecuritySuite:
         if assessment.suspicious:
             assessment.checks.append(
                 {
-                    "name": "Deterministic prompt-injection scan",
+                    "name": settings.rule_checks.injection,
                     "status": "FAIL",
                     "reason_code": "DETERMINISTIC_INJECTION_DETECTED",
                     "reason": assessment.reason,
@@ -146,8 +163,12 @@ class SecuritySuite:
         verdict = await guard.classify(data)
         assessment.checks.append(
             {
-                "name": "NVIDIA NemoGuard JailbreakDetect",
-                "status": "FAIL" if verdict.flagged else "SKIPPED" if not verdict.available else "PASS",
+                "name": settings.jailbreak.check_name,
+                "status": "FAIL"
+                if verdict.flagged
+                else "SKIPPED"
+                if not verdict.available
+                else "PASS",
                 "reason_code": (
                     "HOSTED_JAILBREAK_DETECTED"
                     if verdict.flagged
@@ -178,17 +199,15 @@ class SecuritySuite:
             marker = f"hosted:{verdict.model}"
             if marker not in assessment.phrases:
                 assessment.phrases.append(marker)
-            assessment.reason = (
-                f"{assessment.reason}; hosted jailbreak guard flagged the input"
-                if assessment.reason
-                else "Hosted jailbreak guard flagged the input"
+            assessment.reason = _joined(
+                assessment.reason,
+                settings.hosted_flagged_reason.format(guard=settings.jailbreak.check_name),
             )
         elif not verdict.available and not settings.fail_open_on_unavailable:
             assessment.suspicious = True
-            assessment.reason = (
-                f"{assessment.reason}; hosted jailbreak guard unavailable and security policy is configured to fail closed"
-                if assessment.reason
-                else "Hosted jailbreak guard unavailable and security policy is configured to fail closed"
+            assessment.reason = _joined(
+                assessment.reason,
+                settings.fail_closed_reason.format(guard=settings.jailbreak.check_name),
             )
         return assessment
 
@@ -206,8 +225,12 @@ class SecuritySuite:
         model_verdict = await guard.classify(text)
         verdict.checks.append(
             {
-                "name": "NVIDIA Nemotron Safety Guard 8B v3",
-                "status": "FAIL" if model_verdict.flagged else "SKIPPED" if not model_verdict.available else "PASS",
+                "name": settings.content_safety.check_name,
+                "status": "FAIL"
+                if model_verdict.flagged
+                else "SKIPPED"
+                if not model_verdict.available
+                else "PASS",
                 "reason_code": (
                     "HOSTED_CONTENT_SAFETY_DETECTED"
                     if model_verdict.flagged
@@ -239,18 +262,16 @@ class SecuritySuite:
             for category in model_verdict.categories:
                 if category not in verdict.categories:
                     verdict.categories.append(category)
-            verdict.reason = (
-                f"{verdict.reason}; hosted Nemotron Safety Guard flagged the content"
-                if verdict.reason
-                else "Hosted Nemotron Safety Guard flagged the content"
+            verdict.reason = _joined(
+                verdict.reason,
+                settings.hosted_flagged_reason.format(guard=settings.content_safety.check_name),
             )
         elif not model_verdict.available and not settings.fail_open_on_unavailable:
             verdict.flagged = True
             verdict.advisory_only = False
-            verdict.reason = (
-                f"{verdict.reason}; hosted content-safety guard unavailable and security policy is configured to fail closed"
-                if verdict.reason
-                else "Hosted content-safety guard unavailable and security policy is configured to fail closed"
+            verdict.reason = _joined(
+                verdict.reason,
+                settings.fail_closed_reason.format(guard=settings.content_safety.check_name),
             )
         return verdict
 

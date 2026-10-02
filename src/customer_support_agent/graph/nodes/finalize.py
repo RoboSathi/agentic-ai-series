@@ -150,11 +150,7 @@ class FinalizeNodes(NodeSupport):
         )
         self._report_llm_request(request, purpose="reply_revision")
         try:
-            result = await self._call_model(
-                request,
-                state,
-                f"{state.session_id}:finalize",
-            )
+            result = await self._call_model(request, state)
         except Exception as exc:
             error_fields = external_api_error_fields(exc)
             self._done_failed(
@@ -162,7 +158,7 @@ class FinalizeNodes(NodeSupport):
                 summary="LLM unavailable after retries",
                 event_kind="resilience",
                 fields={
-                    "dependency": self._resilient.name,
+                    "dependency": self._llm.model,
                     **(error_fields or {}),
                     **({"reason": str(exc)} if not error_fields else {}),
                 },
@@ -206,11 +202,7 @@ class FinalizeNodes(NodeSupport):
                 json_schema=CustomerResponse.model_json_schema(),
             )
             self._report_llm_request(request, purpose="hallucination_repair")
-            repaired_result = await self._call_model(
-                request,
-                state,
-                f"{state.session_id}:hallucination-repair",
-            )
+            repaired_result = await self._call_model(request, state)
             self._report_llm_response(repaired_result, purpose="hallucination_repair")
             repaired, _ = self._response_guardrail.validate_schema(repaired_result.content)
             return repaired or FALLBACK_REPLY
@@ -306,11 +298,7 @@ class FinalizeNodes(NodeSupport):
             for index in range(max(0, count)):
                 purpose = f"response_resample_{index + 1}"
                 self._report_llm_request(request, purpose=purpose)
-                result = await self._call_model(
-                    request,
-                    state,
-                    key=f"{state.session_id}:resample:{index}",
-                )
+                result = await self._call_model(request, state)
                 self._report_llm_response(result, purpose=purpose)
                 results.append(result)
             return [result.content for result in results if result.content]

@@ -37,9 +37,7 @@ class DuckDbObservabilityStore:
             ) from exc
 
         configured = (
-            db_path
-            if db_path is not None
-            else get_settings().observability.analytics_db_path
+            db_path if db_path is not None else get_settings().observability.analytics_db_path
         )
         self._db_path = str(configured)
         if self._db_path != ":memory:":
@@ -62,9 +60,7 @@ class DuckDbObservabilityStore:
             affected = cursor.rowcount if cursor.rowcount is not None else -1
             return ExecutionResult(rows=rows, affected=affected)
 
-    def execute_many(
-        self, query: str, seq_of_params: list[tuple[Any, ...]]
-    ) -> ExecutionResult:
+    def execute_many(self, query: str, seq_of_params: list[tuple[Any, ...]]) -> ExecutionResult:
         """Run one prepared statement against many rows."""
         with self._lock:
             cursor = self._connection.executemany(query, seq_of_params)

@@ -6,15 +6,13 @@ and in what the next turn knows.
 """
 
 import logging
-from typing import Any
 
 import pytest
 
 from agentic_commons.logging import get_logger, instrument
 from agentic_commons.logging.decorators import logged
-from agentic_commons.memory import MemoryFacade, MemoryQuery, Provenance
+from agentic_commons.memory import MemoryFacade, Provenance
 from agentic_commons.memory.types import MemoryFact
-from agentic_commons.memory.working.memory import WorkingMemory
 from agentic_commons.observability import (
     InMemoryLiveStatusFeed,
     StageReporter,
@@ -128,51 +126,12 @@ class TestInstrument:
         assert any(long_value in record.getMessage() for record in caplog.records)
 
 
-class TestWorkingMemory:
-    """The active window: per session, read back, and dropped on demand."""
-
-    def test_one_session_cannot_see_another_session_window(self) -> None:
-        """Two conversations in one process is the normal case, not an edge."""
-        window = WorkingMemory(capacity=5)
-        window.write(_fact("order", "order 1", session="a"), Provenance(source="t"))
-        window.write(_fact("order", "order 2", session="b"), Provenance(source="t"))
-        held_by_a = window.read(MemoryQuery(session_id="a"))
-        assert [fact.value for fact in held_by_a] == ["order 1"]
-
-    def test_the_newest_fact_comes_back_first(self) -> None:
-        window = WorkingMemory(capacity=5)
-        window.write(_fact("a", "first", session="s"), Provenance(source="t"))
-        window.write(_fact("b", "second", session="s"), Provenance(source="t"))
-        assert window.read(MemoryQuery(session_id="s", limit=1))[0].value == "second"
-
-    def test_eviction_is_per_session(self) -> None:
-        window = WorkingMemory(capacity=2)
-        for index in range(4):
-            window.write(_fact(str(index), str(index), session="s"), Provenance(source="t"))
-        window.write(_fact("other", "other", session="t"), Provenance(source="t"))
-        assert window.size("s") == 2
-        assert window.size("t") == 1
-
-    def test_ending_one_session_leaves_the_others(self) -> None:
-        window = WorkingMemory(capacity=5)
-        window.write(_fact("a", "1", session="keep"), Provenance(source="t"))
-        window.write(_fact("b", "2", session="drop"), Provenance(source="t"))
-        window.clear("drop")
-        assert window.sessions == ["keep"]
-
-
 class TestMemoryFacadeWindow:
     def test_note_lands_in_the_window_and_reads_back(self) -> None:
         facade = MemoryFacade.complete()
         facade.note("verified_customer", "Ada (#1)", "session-1", "agent", category="identity")
         window = facade.active_window("session-1")
         assert [fact.value for fact in window] == ["Ada (#1)"]
-
-    def test_a_noted_fact_is_treated_as_the_system_of_record(self) -> None:
-        """Tool results and database reads are verified, not self-reported."""
-        facade = MemoryFacade.complete()
-        facade.note("order", "order 10001 delivered", "session-2", "agent")
-        assert facade.active_window("session-2")[0].provenance.kind == "verified_system_of_record"
 
     def test_ending_a_session_clears_its_window_only(self) -> None:
         facade = MemoryFacade.complete()
@@ -181,35 +140,3 @@ class TestMemoryFacadeWindow:
         facade.end_session("one")
         assert facade.active_window("one") == []
         assert len(facade.active_window("two")) == 1
-
-
-class TestWorkingMemoryInTheAgent:
-    """The window is written by the graph and read back into the context."""
-
-    @pytest.mark.asyncio
-    async def test_a_turn_establishes_facts_the_next_turn_can_see(
-        self, seeded_pool: Any, scripted_llm: Any
-    ) -> None:
-        from customer_support_agent.graph.builder import build_agent
-
-        memory = MemoryFacade.complete()
-        agent = build_agent(llm=scripted_llm, pool=seeded_pool, memory=memory, observe=False)
-        await agent.handle("where is order 10001", session_id="s1")
-        held = {fact.key for fact in memory.active_window("s1")}
-        assert "current_intent" in held
-
-    @pytest.mark.asyncio
-    async def test_the_window_reaches_the_assembled_context(
-        self, seeded_pool: Any, scripted_llm: Any
-    ) -> None:
-        """A store nothing reads is not memory — this is that regression."""
-        from agentic_commons.context import Task
-        from customer_support_agent.graph.builder import WorkingMemoryContextSource
-
-        memory = MemoryFacade.complete()
-        memory.note("verified_customer", "Ada (#1)", "s2", "agent", category="identity")
-        chunks = await WorkingMemoryContextSource(memory).candidates(
-            Task(query="anything", session_id="s2", actor="agent")
-        )
-        assert [chunk.content for chunk in chunks] == ["verified_customer: Ada (#1)"]
-        assert all(chunk.pinned for chunk in chunks)

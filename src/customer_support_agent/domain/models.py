@@ -10,7 +10,6 @@ verbs live in `tools/`, the tables in `persistence/`, and the state of a
 turn in `graph/state.py`.
 """
 
-
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -33,6 +32,7 @@ REFUNDABLE_ORDER_STATUSES: frozenset[str] = frozenset({"delivered", "cancelled"}
 # An order can be cancelled only before it leaves the warehouse. Once it
 # has shipped, stopping it is a carrier recall this business does not do.
 CANCELLABLE_ORDER_STATUSES: frozenset[str] = frozenset({"pending"})
+
 
 class Order(BaseModel):
     """One customer order: what was bought, and where it has got to."""

@@ -105,6 +105,7 @@ class MemoryReporter(Protocol):
         event_kind: Any = ...,
         summary: str | None = None,
         fields: Any = None,
+        quiet: bool = False,
     ) -> None: ...
 
 

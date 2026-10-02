@@ -93,25 +93,49 @@ class _StrictLoader(yaml.SafeLoader):
     """
 
 
+# The tag YAML gives a merge key (`<<`).
+_MERGE_TAG = "tag:yaml.org,2002:merge"
+
+
 def _no_duplicate_keys(
     loader: yaml.SafeLoader, node: yaml.MappingNode, deep: bool = False
 ) -> dict[Any, Any]:
-    """Construct a mapping, raising if any key appears twice."""
+    """Construct a mapping, raising if any key appears twice.
+
+    YAML merge keys (`<<: *anchor`) are honoured: the anchor's keys come first and a key written
+    beside the merge overrides them — that is what a merge is for, not a duplicate. Two keys
+    written out in the same mapping are still an error.
+    """
     mapping: dict[Any, Any] = {}
+    explicit: list[tuple[yaml.Node, yaml.Node]] = []
     for key_node, value_node in node.value:
+        if key_node.tag == _MERGE_TAG:
+            mapping.update(_merged(loader, value_node))
+        else:
+            explicit.append((key_node, value_node))
+    written: set[Any] = set()
+    for key_node, value_node in explicit:
         key = loader.construct_object(key_node, deep=deep)
-        if key in mapping:
+        if key in written:
             raise ValueError(
                 f"Duplicate configuration key '{key}' at line {key_node.start_mark.line + 1}. "
                 "The later block would silently replace the earlier one."
             )
+        written.add(key)
         mapping[key] = loader.construct_object(value_node, deep=deep)
     return mapping
 
 
-_StrictLoader.add_constructor(
-    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicate_keys
-)
+def _merged(loader: yaml.SafeLoader, node: yaml.Node) -> dict[Any, Any]:
+    """What a merge key brings in: one anchored mapping, or a list of them (first wins)."""
+    sources = node.value if isinstance(node, yaml.SequenceNode) else [node]
+    merged: dict[Any, Any] = {}
+    for source in reversed(sources):
+        merged.update(loader.construct_object(source, deep=True))
+    return merged
+
+
+_StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicate_keys)
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:

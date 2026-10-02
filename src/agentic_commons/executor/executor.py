@@ -60,9 +60,7 @@ class ToolExecutorImpl:
         self._handler = handler
         self._idempotency = idempotency
         timeout = get_settings().resilience.timeout
-        self._timeout_enabled = (
-            timeout.enabled if timeout_seconds is None else timeout_seconds > 0
-        )
+        self._timeout_enabled = timeout.enabled if timeout_seconds is None else timeout_seconds > 0
         self._timeout_seconds = (
             timeout.default_seconds if timeout_seconds is None else float(timeout_seconds)
         )

@@ -19,7 +19,7 @@ from agentic_commons.hallucination_protection.checker import (
     GroundingReasoningDiagnoser,
     Resampler,
 )
-from agentic_commons.hallucination_protection.claims import split_sentences
+from agentic_commons.hallucination_protection.claims import sentence_pieces
 from agentic_commons.hallucination_protection.direct import (
     AMOUNT_MISMATCH,
     DETAIL_UNSOURCED,
@@ -144,12 +144,13 @@ class ResponseGuardrail:
         self._max_repairs = (
             settings.max_repair_attempts if max_repair_attempts is None else max_repair_attempts
         )
+        self._repair_direct = settings.repair_direct_refutations
         self._logger = get_logger("guardrails")
 
     def validate_schema(self, raw: str) -> tuple[str | None, dict[str, Any]]:
         """Validate a structured response envelope."""
         result = self._validator.validate(raw, CustomerResponse)
-        fields = {
+        fields: dict[str, Any] = {
             "schema_valid": result.valid,
             "validation_mode": result.mode,
             "validation_attempts": result.attempts,
@@ -219,7 +220,7 @@ class ResponseGuardrail:
                 last = await self._grounding.assess(candidate, evidence, resample=resample)
             if last.clean:
                 return self._passed(candidate, last, repaired, attempt)
-            if attempt >= self._max_repairs or revise is None or _decided_directly(last):
+            if attempt >= self._max_repairs or revise is None or self._final(last):
                 break
             revision = await revise(candidate, last.unsupported)
             if revision.strip() == candidate.strip():
@@ -231,6 +232,10 @@ class ResponseGuardrail:
             repaired = True
             candidate = revision
         return self._blocked(candidate, last, repaired, attempts_made)
+
+    def _final(self, last: GenerationAssessment) -> bool:
+        """Whether a rule refuted a claim and this agent does not rewrite past rules."""
+        return not self._repair_direct and _decided_directly(last)
 
     def _passed(
         self, candidate: str, last: GenerationAssessment, repaired: bool, attempt: int
@@ -268,7 +273,8 @@ class ResponseGuardrail:
             attempts=attempts,
         )
         return ResponseGuardrailResult(
-            response=_surviving_sentences(candidate, last.verdicts) or _WITHHELD,
+            response=_surviving_sentences(candidate, last.verdicts)
+            or get_settings().hallucination_protection.withheld_reply,
             # Not fully grounded when any claim was rejected, even if
             # sentences no claim refuted were kept.
             grounded=False,
@@ -316,7 +322,6 @@ class ResponseGuardrail:
 
 
 BLOCK_CODE = "HALLUCINATION_GUARD_BLOCK"
-_WITHHELD = "I couldn't verify all of the details in that response. Please try again."
 
 
 def _refuted(verdict: DetectionVerdict) -> bool:
@@ -456,8 +461,10 @@ def _surviving_sentences(response: str, verdicts: list[DetectionVerdict]) -> str
     not a sentence.
     """
     rejected = {verdict.sentence for verdict in verdicts if _refuted(verdict)}
-    return " ".join(
-        sentence.strip()
-        for index, sentence in enumerate(split_sentences(response))
+    kept = [
+        (sentence.strip(), separator)
+        for index, (sentence, separator) in enumerate(sentence_pieces(response))
         if index not in rejected and any(char.isalpha() for char in sentence)
-    )
+    ]
+    # Each kept sentence keeps the break that followed it, so a list stays a list.
+    return "".join(sentence + separator for sentence, separator in kept).strip()

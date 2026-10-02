@@ -13,14 +13,37 @@ quality graders run last.
 from pathlib import Path
 
 from agentic_commons.config import get_settings
-from agentic_commons.evals.contracts import EvalPlugin, GoldenCase, Grader, StageName
+from agentic_commons.evals.contracts import (
+    EvalPlugin,
+    GoldenCase,
+    Grader,
+    JudgeClientPlugin,
+    NativeSecurityPlugin,
+    StageName,
+)
 from agentic_commons.evals.graders import RubricJudge
 from agentic_commons.evals.pipeline.gate import FAIL, GateResult, evaluate_gate
 from agentic_commons.evals.pipeline.generate import GenerationStage
 from agentic_commons.evals.pipeline.grade import GradingStage
 from agentic_commons.evals.reporting import EvalReporter
 from agentic_commons.evals.store import DuckDbEvalStore, RunRecord
+from agentic_commons.llm.client import LLMClient
 from agentic_commons.logging import get_logger
+
+
+def judge_client(plugin: EvalPlugin) -> LLMClient | None:
+    """The plugin's own judge client, if it offers one (`JudgeClientPlugin`).
+
+    Optional: a plugin without the hook gets the configured judge model,
+    exactly as before. A plugin whose evals are deterministic end to end
+    (a replayed web, a reference model) supplies its own.
+    """
+    return plugin.judge_client() if isinstance(plugin, JudgeClientPlugin) else None
+
+
+def native_security_suite(plugin: EvalPlugin) -> str | None:
+    """The golden suite a plugin runs as its security suite, if it offers one."""
+    return plugin.native_security_suite() if isinstance(plugin, NativeSecurityPlugin) else None
 
 
 class NoRunError(LookupError):
@@ -92,7 +115,9 @@ class EvalPipeline:
         if stage == "oracle":
             return [self._plugin.oracle()]
         if stage == "judge":
-            return [RubricJudge(self._plugin.judge_rubric(run.suite))]
+            return [
+                RubricJudge(self._plugin.judge_rubric(run.suite), client=judge_client(self._plugin))
+            ]
         if stage == "deepeval":
             from agentic_commons.evals.adapters.deepeval_adapter import deepeval_graders
 

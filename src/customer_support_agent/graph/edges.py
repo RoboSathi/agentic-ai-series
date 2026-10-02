@@ -28,7 +28,6 @@ _STAGE_FEATURES = {
 }
 
 
-
 class GraphWiring(NodeSupport):
     def _build(self) -> Any:
         """Assemble the state graph from the stages this agent was given.
@@ -67,8 +66,7 @@ class GraphWiring(NodeSupport):
                 ("classify_intent", self.classify_intent),
                 ("assemble_context", self.assemble_context),
             )
-            if self._features.is_on(_STAGE_FEATURES[stage[0]])
-            and self._has_collaborator(stage[0])
+            if self._features.is_on(_STAGE_FEATURES[stage[0]]) and self._has_collaborator(stage[0])
         ]
         for name, node in front_door:
             graph.add_node(name, node)
