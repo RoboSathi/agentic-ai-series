@@ -422,8 +422,7 @@ observability:
   llm_tool_requested_heading: "LLM response · tool requested: {tool}"
   # A model chain's backup cards (`llm/observer.py`). No heading names a model.
   model_events:
-    backup_started: "{label} · {reason} · asking the backup model"
-    backup_answered: "{label} · the backup model answered"
+    backup_started: "{label} · {reason} · switching from ({primary}) → ({backup})"
     reasons: {slow: "no answer yet", failed: "the call failed", weak: "an empty or cut-off answer"}
     primary_label: Primary model
     backup_label: Backup model
@@ -1185,7 +1184,7 @@ tui:
     user: "bold"
     assistant: "bold green"
     # The `(12.3s · ↓ 4.2k tokens)` bracket and the TURN COMPLETE footer.
-    metrics: "bold magenta"
+    metrics: "orange3"
     command: "bold cyan"
     notice: "yellow"
     notice_strong: "bold yellow"
@@ -1206,7 +1205,7 @@ tui:
   # failure red. The colour is in the title's own text, so focus and hover never repaint it.
   outcome_colors:
     started: cyan
-    completed: green
+    completed: "#90EE90"
     warning: yellow
     waiting: yellow
     failed: red
@@ -1278,7 +1277,7 @@ web:
     # fails or finds nothing. Time-bounded / news searches: Tavily first.
     providers: [duckduckgo, tavily]
     time_bounded_providers: [tavily, duckduckgo]
-    max_results: 5
+    max_results: 8
     # Live answers are reused from disk for this long: repeating a question
     # costs no provider call.
     cache_ttl_hours: 24

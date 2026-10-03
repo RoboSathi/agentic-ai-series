@@ -129,7 +129,7 @@ class AgenticTuiApp(App[None]):
 
     #actions Button {
         margin-right: 1;
-        min-width: 16;
+        min-width: 4;
         text-style: bold;
     }
 

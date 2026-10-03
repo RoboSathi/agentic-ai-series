@@ -294,11 +294,6 @@ class ResearchAgent:
         if scope.phase == "REFRAME":
             options = self._settings.scoping.reframe_options
             return [Choice(label=option.label, value=option.mode) for option in options]
-        notes, names = self._settings.messages, self._settings.command_names
-        if scope.phase == "RUBRIC_REVIEW":
-            return [Choice(label=notes.approve_choice, value=f"/{names.approve}")]
-        if scope.phase == "INTERVIEW" and scope.proposed:
-            return [Choice(label=notes.done_choice, value=f"/{names.done}")]
         asked = checklist.item(scope.items, scope.asked_item_id)
         return list(asked.choices) if scope.phase == "INTERVIEW" and asked is not None else []
 

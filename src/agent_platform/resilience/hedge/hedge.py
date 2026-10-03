@@ -28,12 +28,9 @@ Option = Callable[[], Awaitable[T]]
 
 
 class HedgeListener(Protocol):
-    """Told when a backup option starts (and the failure that prompted it, if any), and which
-    option finally answered."""
+    """Told when a backup option starts and why it was started."""
 
     def started(self, index: int, reason: StartReason, error: BaseException | None) -> None: ...
-
-    def answered(self, index: int) -> None: ...
 
 
 class HedgedCall:
@@ -83,8 +80,6 @@ class HedgedCall:
                     index = running.pop(task)
                     error = task.exception()
                     if error is None:
-                        if listener is not None:
-                            listener.answered(index)
                         return index, task.result()
                     if not self._moves_on(error):
                         raise error

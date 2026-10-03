@@ -22,7 +22,12 @@ class StageReporterModelObserver:
 
     def backup_started(self, label: str, primary: str, backup: str, reason: str) -> None:
         words = get_settings().observability.model_events
-        summary = words.backup_started.format(label=label, reason=words.reasons.get(reason, reason))
+        summary = words.backup_started.format(
+            label=label,
+            primary=primary,
+            backup=backup,
+            reason=words.reasons.get(reason, reason),
+        )
         self._card(summary, primary, backup)
 
     def backup_answered(self, label: str, primary: str, backup: str) -> None:

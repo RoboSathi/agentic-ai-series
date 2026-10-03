@@ -605,7 +605,16 @@ class StageEventWidget(Collapsible):
             return "PASS · no PII detected"
 
         if stage == "content_moderation":
-            return "flagged" if fields.get("flagged") else "no issues detected"
+            if status == "blocked":
+                categories = fields.get("categories") or []
+                category_text = ", ".join(str(item) for item in categories)
+
+                if category_text:
+                    return f"flagged · categories: {category_text}"
+
+                return "flagged"
+
+            return "no issues detected"
 
         if stage == "intent_classification":
             intent = fields.get("intent") or self.event.detail or "classified"

@@ -126,11 +126,6 @@ class CascadingLLMClient(LLMClient):
         )
         self._observer.backup_started(self._label, primary, backup, cause)
 
-    def _answered(self, index: int) -> None:
-        if index:
-            self._observer.backup_answered(
-                self._label, self._tiers[0].model, self._tiers[index].model
-            )
 
     async def health_check(self) -> HealthCheckResult:
         """Healthy only if every tier is reachable."""
@@ -149,6 +144,3 @@ class _Listener:
 
     def started(self, index: int, reason: StartReason, error: BaseException | None) -> None:
         self._cascade._started(index, reason, error)
-
-    def answered(self, index: int) -> None:
-        self._cascade._answered(index)

@@ -14,16 +14,11 @@ class ModelCallObserver(Protocol):
 
     def backup_started(self, label: str, primary: str, backup: str, reason: str) -> None: ...
 
-    def backup_answered(self, label: str, primary: str, backup: str) -> None: ...
-
 
 class NullModelObserver:
     """Observes nothing: the default when an owner does not care."""
 
     def backup_started(self, label: str, primary: str, backup: str, reason: str) -> None:
-        return None
-
-    def backup_answered(self, label: str, primary: str, backup: str) -> None:
         return None
 
 

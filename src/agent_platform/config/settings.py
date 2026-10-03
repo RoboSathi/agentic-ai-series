@@ -501,7 +501,6 @@ class ModelEventWording(BaseModel):
     """Card wording for a model chain's backup events."""
 
     backup_started: str
-    backup_answered: str
     # Why a backup started, in words, by `StartReason`.
     reasons: dict[str, str]
     primary_label: str
