@@ -14,7 +14,7 @@ on this library carried a field about a YouTube series.
 
 from pydantic_settings import SettingsConfigDict
 
-from agentic_commons.config import YamlBackedSettings
+from agent_platform.config import YamlBackedSettings
 
 
 class EpisodeSettings(YamlBackedSettings):

@@ -6,9 +6,9 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button
 
-from agentic_commons.config import get_settings
-from agentic_commons.config.settings import ResponseHighlight
-from agentic_commons.tui.widgets import ActionBar, render_response
+from agent_platform.config import get_settings
+from agent_platform.config.settings import ResponseHighlight
+from agent_platform.tui.widgets import ActionBar, render_response
 
 
 @dataclass(frozen=True)

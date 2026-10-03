@@ -7,11 +7,11 @@ import httpx
 import httpx2
 import pytest
 
-from agentic_commons.config import get_settings
-from agentic_commons.config.settings import RateLimitBucketSettings, RateLimitSettings
-from agentic_commons.llm.http import create_http_client, create_sdk_http_client
-from agentic_commons.resilience import RateLimitWaitExceededError
-from agentic_commons.resilience.rate_limiter import (
+from agent_platform.config import get_settings
+from agent_platform.config.settings import RateLimitBucketSettings, RateLimitSettings
+from agent_platform.llm.http import create_http_client, create_sdk_http_client
+from agent_platform.resilience import RateLimitWaitExceededError
+from agent_platform.resilience.rate_limiter import (
     InMemoryRateWindowStore,
     RateLimitedHttpx2Transport,
     RateLimitedTransport,
@@ -219,7 +219,7 @@ class TestFactory:
         assert isinstance(sdk_client._transport, RateLimitedHttpx2Transport)
 
     def test_the_bucket_limit_is_configuration(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from agentic_commons.config import reload_settings
+        from agent_platform.config import reload_settings
 
         monkeypatch.setenv("RESILIENCE__RATE_LIMIT__BUCKETS__NVIDIA__MAX_REQUESTS", "17")
         reload_settings()
@@ -235,7 +235,7 @@ class TestFactory:
             reset_rate_limiter()
 
     def test_disabled_means_no_limiter(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from agentic_commons.config import reload_settings
+        from agent_platform.config import reload_settings
 
         monkeypatch.setenv("RESILIENCE__RATE_LIMIT__ENABLED", "false")
         reload_settings()

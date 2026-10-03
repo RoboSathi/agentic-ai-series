@@ -15,7 +15,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from agentic_commons.durability.hitl import await_decision
+from agent_platform.durability.hitl import await_decision
 from research_agent.graph.scoping_nodes import ScopingNodes
 from research_agent.graph.state import ScopingState
 

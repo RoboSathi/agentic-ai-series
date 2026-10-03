@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from agentic_commons.logging import instrument
+from agent_platform.logging import instrument
 from research_agent.domain.rubric import ItemOrigin, Rubric, RubricCheck, RubricItem
 from research_agent.domain.scope import ScopeBrief
 

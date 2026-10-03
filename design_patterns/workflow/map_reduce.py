@@ -16,8 +16,8 @@ thing you are calling.
 import asyncio
 from typing import Awaitable, Callable
 
-from agentic_commons.logging import get_logger
-from agentic_commons.resilience import ResourcePoolBulkhead
+from agent_platform.logging import get_logger
+from agent_platform.resilience import ResourcePoolBulkhead
 from design_patterns.types import PatternFamily, PatternRun, Step
 
 Mapper = Callable[[str], Awaitable[str]]

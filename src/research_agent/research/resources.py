@@ -12,10 +12,10 @@ from typing import Protocol
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.control_loop import BudgetGuard
-from agentic_commons.evidence import EvidenceLedger
-from agentic_commons.resilience import Bulkhead, ResourcePoolBulkhead
-from agentic_commons.web import FetchedPage, WebGateway
+from agent_platform.control_loop import BudgetGuard
+from agent_platform.evidence import EvidenceLedger
+from agent_platform.resilience import Bulkhead, ResourcePoolBulkhead
+from agent_platform.web import FetchedPage, WebGateway
 from research_agent.config.settings import ResearchSettings
 from research_agent.domain.rubric import Contract
 from research_agent.research.defenses import InjectionScreen, OutboundGuard

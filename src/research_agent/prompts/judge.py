@@ -6,7 +6,7 @@ independent audit's inputs, nothing from the conversation that produced them.
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.evidence import LedgerSnapshot
+from agent_platform.evidence import LedgerSnapshot
 from research_agent.domain.report import Report
 from research_agent.prompts.base import RolePrompt
 

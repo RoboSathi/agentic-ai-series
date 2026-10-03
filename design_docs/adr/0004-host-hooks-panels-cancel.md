@@ -2,7 +2,7 @@
 
 ## Context
 
-The shell (`agentic_commons/tui/app.py`) knows an agent only through the
+The shell (`agent_platform/tui/app.py`) knows an agent only through the
 `AgentHost` protocol. The research agent needs four things csa never did:
 its own greeting; a live side panel (the scoping checklist, then the run's
 budget meters); a key to cancel an autonomous run; and slash commands
@@ -11,7 +11,7 @@ budget meters); a key to cancel an autonomous run; and slash commands
 
 ## Decision
 
-Optional hooks, each its own `runtime_checkable` Protocol in `host.py`,
+Optional hooks, each its own `runtime_checkable` Protocol in `host/protocols.py`,
 checked with `isinstance`:
 
 - `GreetingHost.greeting()` — the TUI falls back to the old text.

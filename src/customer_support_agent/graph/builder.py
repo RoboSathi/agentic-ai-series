@@ -11,15 +11,15 @@ implementations of everything else — the wiring under test stays the
 wiring that ships.
 """
 
-from agentic_commons.audit import AuditLedger, create_audit_ledger
-from agentic_commons.basic_sanity import BasicSanityChecker
-from agentic_commons.config import (
+from agent_platform.audit import AuditLedger, create_audit_ledger
+from agent_platform.basic_sanity import BasicSanityChecker
+from agent_platform.config import (
     FeatureSet,
     active_features,
     get_settings,
     set_active_features,
 )
-from agentic_commons.context import (
+from agent_platform.context import (
     Chunk,
     CrossEncoderReranker,
     DenseRetriever,
@@ -30,57 +30,57 @@ from agentic_commons.context import (
     Task,
     WorkingMemoryContextSource,
 )
-from agentic_commons.context.failure import ContextFailureDetector
-from agentic_commons.durability import (
+from agent_platform.context.failure import ContextFailureDetector
+from agent_platform.durability import (
     RunRegistry,
     SqliteCheckpointer,
     create_checkpointer,
     model_types,
 )
-from agentic_commons.evals import NollmScoringCascadeImpl, create_scoring_cascade
-from agentic_commons.evals.entailment import create_entailment_model
-from agentic_commons.executor import ToolExecutorImpl
-from agentic_commons.gatekeeper import Gatekeeper, GatekeeperImpl
-from agentic_commons.gatekeeper.ledger import CumulativeLedger
-from agentic_commons.hallucination_protection import DetectionLadder
-from agentic_commons.llm.client import LLMClient, create_llm_client
-from agentic_commons.llm.encoders import create_reranker
-from agentic_commons.llm.local_summarizer import LocalDialogueSummarizer
-from agentic_commons.memory import (
+from agent_platform.evals import NollmScoringCascadeImpl, create_scoring_cascade
+from agent_platform.evals.entailment import create_entailment_model
+from agent_platform.executor import ToolExecutorImpl
+from agent_platform.gatekeeper import Gatekeeper, GatekeeperImpl
+from agent_platform.gatekeeper.ledger import CumulativeLedger
+from agent_platform.hallucination_protection import DetectionLadder
+from agent_platform.llm.client import LLMClient, create_llm_client
+from agent_platform.llm.encoders import create_reranker
+from agent_platform.llm.local_summarizer import LocalDialogueSummarizer
+from agent_platform.memory import (
     DreamInbox,
     EpisodicStore,
     MemoryFacade,
     SemanticStore,
     WorkingMemoryStore,
 )
-from agentic_commons.memory.consolidation import ConsolidationService, SessionSummarizer
-from agentic_commons.memory.context_source import MemoryRecallContextSource
-from agentic_commons.memory.semantic.rag import (
+from agent_platform.memory.consolidation import ConsolidationService, SessionSummarizer
+from agent_platform.memory.context_source import MemoryRecallContextSource
+from agent_platform.memory.semantic.rag import (
     KnowledgeBase,
     KnowledgeBaseContextSource,
     create_knowledge_base,
 )
-from agentic_commons.observability import (
+from agent_platform.observability import (
     DuckDbObservabilityStore,
     SLORegistry,
     StageReporter,
 )
-from agentic_commons.observability.model_observer import StageReporterModelObserver
-from agentic_commons.observability.tracer import LocalTracer
-from agentic_commons.persistence import SqliteConnectionPool, SqlitePlatformStore
-from agentic_commons.resilience import CompensatingSaga, DeadLetterQueue, SqliteIdempotencyGuard
-from agentic_commons.security import (
+from agent_platform.observability.model_observer import StageReporterModelObserver
+from agent_platform.observability.tracer import LocalTracer
+from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
+from agent_platform.resilience import CompensatingSaga, DeadLetterQueue, SqliteIdempotencyGuard
+from agent_platform.security import (
     Authorizer,
     PIIFilterImpl,
     PromptInjectionGuard,
     SecuritySuite,
     TermContentModerator,
 )
-from agentic_commons.security.auth.memory_authorizer import PolicyMemoryAuthorizer
-from agentic_commons.security.auth.policy import AgentPolicy, AgentPolicyRepository
-from agentic_commons.security.prompt_injection.detector import InstructionDataSeparator
-from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
-from agentic_commons.verification import ReadBackVerifier
+from agent_platform.security.auth.memory_authorizer import PolicyMemoryAuthorizer
+from agent_platform.security.auth.policy import AgentPolicy, AgentPolicyRepository
+from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
+from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
+from agent_platform.verification import ReadBackVerifier
 from customer_support_agent.basic_sanity.order_validator import OrderSanityCheck
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.identity import current_customer_id
@@ -325,7 +325,7 @@ def build_agent(
     authorizer = Authorizer(policy=agent_policy)
 
     # BasicSanity is the one feature whose *rules* are the agent's own.
-    # `agentic_commons` owns only the contract — `BasicSanityChecker`, a
+    # `agent_platform` owns only the contract — `BasicSanityChecker`, a
     # Protocol taking a request and returning findings — and never learns
     # what an order or a refund is. Customer Support supplies
     # `OrderSanityCheck`; another agent built on this platform declares

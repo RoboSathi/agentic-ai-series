@@ -11,8 +11,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field
 
-from agentic_commons.evals.contracts import GoldenCase
-from agentic_commons.evals.provenance import LabelBasis
+from agent_platform.evals.contracts import GoldenCase
+from agent_platform.evals.provenance import LabelBasis
 
 Outcome = Literal[
     "refunded", "queued_for_review", "refused", "answered", "clarification", "out_of_scope"

@@ -2,18 +2,18 @@
 
 import pytest
 
-from agentic_commons.audit import AuditEntry, NullAuditLedger, SqliteAuditLedger
-from agentic_commons.config import get_settings
-from agentic_commons.llm.cascade import CascadingLLMClient, ConfiguredEscalationPolicy
-from agentic_commons.llm.client import HostedClient, create_llm_client, create_pinned_llm_client
-from agentic_commons.llm.embeddings import (
+from agent_platform.audit import AuditEntry, NullAuditLedger, SqliteAuditLedger
+from agent_platform.config import get_settings
+from agent_platform.llm.cascade import CascadingLLMClient, ConfiguredEscalationPolicy
+from agent_platform.llm.client import HostedClient, create_llm_client, create_pinned_llm_client
+from agent_platform.llm.embeddings import (
     HashingEmbeddingClient,
     cosine_similarity,
     create_embedding_client,
     tokenize,
 )
-from agentic_commons.llm.types import CompletionRequest, CompletionResult, Message, TokenUsage
-from agentic_commons.persistence import IN_MEMORY, ExecutionResult, SqliteConnectionPool
+from agent_platform.llm.types import CompletionRequest, CompletionResult, Message, TokenUsage
+from agent_platform.persistence import IN_MEMORY, ExecutionResult, SqliteConnectionPool
 
 
 class TestAuditLedger:
@@ -152,7 +152,7 @@ class TestLLMClient:
 class TestCascade:
     @staticmethod
     def _settings():  # type: ignore[no-untyped-def]
-        from agentic_commons.config import get_settings
+        from agent_platform.config import get_settings
 
         return get_settings().llm.cascade
 
@@ -187,7 +187,7 @@ class TestCascade:
 
     def test_a_tool_call_alone_counts_as_an_answer(self) -> None:
         """An empty content field with a tool call is not an empty answer."""
-        from agentic_commons.llm.types import ModelToolCall
+        from agent_platform.llm.types import ModelToolCall
 
         policy = ConfiguredEscalationPolicy(self._settings())
         result = CompletionResult(content="", tool_calls=[ModelToolCall(name="x")])

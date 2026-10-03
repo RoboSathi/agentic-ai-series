@@ -14,16 +14,16 @@ import json
 import re
 from typing import Any
 
-from agentic_commons.money import money_or_none
-from agentic_commons.observability.tool_fields import (
+from agent_platform.observability.tool_fields import (
     control_loop_fields,
     display_tool_name,
     parse_arguments,
     tool_request_fields,
 )
-from agentic_commons.observability.tool_fields import (
+from agent_platform.observability.tool_fields import (
     tool_result_fields as platform_tool_result_fields,
 )
+from agent_platform.primitives.money import money_or_none
 
 # Re-exported: the support agent's graph reads every card helper from here.
 __all__ = [

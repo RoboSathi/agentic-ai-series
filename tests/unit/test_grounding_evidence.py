@@ -9,11 +9,11 @@ of them that makes a correct reply unverifiable fails here.
 from types import SimpleNamespace
 from typing import Any
 
-from agentic_commons.config import get_settings
-from agentic_commons.evals import create_scoring_cascade
-from agentic_commons.evals.entailment import EntailmentResult
-from agentic_commons.guardrails.response import ResponseGuardrail
-from agentic_commons.hallucination_protection import NOT_EXECUTED_MARKER, DetectionLadder
+from agent_platform.config import get_settings
+from agent_platform.evals import create_scoring_cascade
+from agent_platform.evals.entailment import EntailmentResult
+from agent_platform.guardrails.response import ResponseGuardrail
+from agent_platform.hallucination_protection import NOT_EXECUTED_MARKER, DetectionLadder
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 
@@ -178,7 +178,7 @@ class TestTheReportedRepliesAgainstTheRealCorpus:
 def _card(check: dict[str, Any]) -> str:
     from rich.text import Text
 
-    from agentic_commons.tui.widgets import _append_claim
+    from agent_platform.tui.widgets import _append_claim
 
     body = Text()
     _append_claim(body, check)
@@ -426,7 +426,7 @@ class TestAStateRecordIsNotSentToNli:
     async def test_the_card_quotes_the_line_that_decided_it(self) -> None:
         from rich.text import Text
 
-        from agentic_commons.tui.widgets import _append_claim
+        from agent_platform.tui.widgets import _append_claim
 
         guard = ResponseGuardrail(
             DetectionLadder(create_scoring_cascade(), entailment=_NeverReadsARecord())

@@ -20,7 +20,7 @@ staffing maths) and `/kb` (the knowledge index).
 
 ## Seams
 
-- The platform resolves the host from config; nothing in `agentic_commons` imports this package.
+- The platform resolves the host from config; nothing in `agent_platform` imports this package.
 
 ## Collaborators
 

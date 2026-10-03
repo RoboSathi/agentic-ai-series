@@ -4,15 +4,15 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from agentic_commons.memory import EpisodicStore, MemoryFacade
-from agentic_commons.memory.types import MemoryQuery
-from agentic_commons.security import (
+from agent_platform.memory import EpisodicStore, MemoryFacade
+from agent_platform.memory.types import MemoryQuery
+from agent_platform.security import (
     PIIFilterImpl,
     PromptInjectionGuard,
     SecuritySuite,
     TermContentModerator,
 )
-from agentic_commons.tools import ToolDefinition
+from agent_platform.tools import ToolDefinition
 
 
 class _Args(BaseModel):

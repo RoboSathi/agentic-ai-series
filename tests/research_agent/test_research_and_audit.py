@@ -7,10 +7,10 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.evidence import EvidenceCandidate, LedgerSnapshot
-from agentic_commons.hashing import text_hash
-from agentic_commons.verification.acceptance import CheckVerdict
-from agentic_commons.web import SearchHit
+from agent_platform.evidence import EvidenceCandidate, LedgerSnapshot
+from agent_platform.primitives.hashing import text_hash
+from agent_platform.verification.acceptance import CheckVerdict
+from agent_platform.web import SearchHit
 from research_agent.audit.independent import IndependentAuditor, _result
 from research_agent.config import get_agent_settings
 from research_agent.domain.plan import PlanDag, SubQuestion
@@ -150,7 +150,7 @@ class TestStopRules:
 
 class TestNoRawPageTextOutsideTheExtractor:
     def _ledger(self) -> LedgerSnapshot:
-        from agentic_commons.evidence import EvidenceEntry
+        from agent_platform.evidence import EvidenceEntry
 
         page = f"Orrin costs 95 USD. {MARKER}."
         entry = EvidenceEntry(

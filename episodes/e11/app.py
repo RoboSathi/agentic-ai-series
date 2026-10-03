@@ -13,8 +13,8 @@ correct behaviour. The provenance ledger makes that findable.
 Exit artifact: the provenance ledger and a judge calibration report.
 """
 
-from agentic_commons.evals import GoldenDatasetProvenanceLedger, JudgeCalibrator, LabelProvenance
-from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.evals import GoldenDatasetProvenanceLedger, JudgeCalibrator, LabelProvenance
+from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
 from episodes._shared import EpisodeOutput, main
 
 

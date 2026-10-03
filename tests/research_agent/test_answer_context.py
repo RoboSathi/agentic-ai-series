@@ -6,14 +6,14 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.context import (
+from agent_platform.context import (
     ContextWindow,
     FiveStagePipeline,
     StrategySelector,
     WorkingMemoryContextSource,
 )
-from agentic_commons.memory.working import WorkingMemoryStore
-from agentic_commons.observability import InMemoryLiveStatusFeed, StageReporter
+from agent_platform.memory.working import WorkingMemoryStore
+from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from research_agent.archive.store import RunIndexRow
 from research_agent.config import get_agent_settings
 from research_agent.context.earlier_runs import EarlierRunsSource

@@ -1,7 +1,7 @@
 """Configuration for the research agent.
 
 These settings live with the agent, not with the platform: the section is
-declared in this package's overlay and read here, so `agentic_commons`
+declared in this package's overlay and read here, so `agent_platform`
 never learns what a research run is. Every tunable the agent reads is a
 field here — nothing is a literal in the code that uses it.
 """
@@ -12,8 +12,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from pydantic_settings import SettingsConfigDict
 
-from agentic_commons.config.paths import resolve_path
-from agentic_commons.config.settings import YamlBackedSettings
+from agent_platform.config.paths import resolve_path
+from agent_platform.config.settings import YamlBackedSettings
 from research_agent.domain.budget import Budget
 from research_agent.domain.scope import Depth, Mode
 
@@ -558,7 +558,7 @@ class PanelSettings(BaseModel):
     stage_labels: dict[str, str]
     command_help: dict[str, str]
     history_headers: list[str]
-    # Every sentence a card or the status block says (`research_agent.narration`).
+    # Every sentence a card or the status block says (`research_agent.presentation.narration`).
     cards: dict[str, str]
     # Rejection and gap codes, in words.
     reasons: dict[str, str]

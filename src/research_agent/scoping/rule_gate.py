@@ -10,7 +10,7 @@ where cue words are least informative.
 
 import re
 
-from agentic_commons.logging import instrument
+from agent_platform.logging import instrument
 from research_agent.config.settings import ScopingSettings
 from research_agent.domain.scope import RESEARCH_ARCHETYPES, Archetype, GateVerdict
 

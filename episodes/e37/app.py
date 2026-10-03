@@ -9,8 +9,8 @@ violations. A budget of zero means any occurrence is a breach, which is
 the correct shape for a control that either holds or does not.
 """
 
-from agentic_commons.config import get_settings
-from agentic_commons.observability import SLORegistry
+from agent_platform.config import get_settings
+from agent_platform.observability import SLORegistry
 from episodes._shared import EpisodeOutput, main
 
 OBSERVATIONS = {

@@ -1,6 +1,6 @@
 """This agent, presented to the operator shell (LLD §20, §21).
 
-`agentic_commons` owns a console and a dashboard; it does not own a
+`agent_platform` owns a console and a dashboard; it does not own a
 customer, an order or a refund. So everything in the shell that has to
 say one of those words is gathered here, behind the platform's
 `AgentHost` protocol, and the platform composes it without ever naming
@@ -14,12 +14,12 @@ import asyncio
 from collections.abc import Mapping
 from typing import Any
 
-from agentic_commons.commands.knowledge import KnowledgeBaseCommand
-from agentic_commons.commands.types import Command
-from agentic_commons.config import FeatureSet, get_settings
-from agentic_commons.logging import get_logger
-from agentic_commons.memory.semantic.rag import KnowledgeBase
-from agentic_commons.observability import StageReporter
+from agent_platform.commands.knowledge import KnowledgeBaseCommand
+from agent_platform.commands.types import Command
+from agent_platform.config import FeatureSet, get_settings
+from agent_platform.logging import get_logger
+from agent_platform.memory.semantic.rag import KnowledgeBase
+from agent_platform.observability import StageReporter
 from customer_support_agent.console.commands import QueueCommand
 from customer_support_agent.intent.router import load_intent_classifier
 
@@ -92,7 +92,7 @@ class CustomerSupportHost:
 
     def commands(self) -> list[Command]:
         """The slash commands that read this agent's own tables and corpus."""
-        from agentic_commons.commands.data import DreamCommand
+        from agent_platform.commands.data import DreamCommand
         from customer_support_agent.graph.builder import build_dream_service
 
         return [
@@ -136,8 +136,8 @@ class CustomerSupportHost:
         the retention window are deleted — checkpoints hold what customers
         said, and are not kept longer than configured.
         """
-        from agentic_commons.durability import RunRegistry, create_checkpointer, purge_expired
-        from agentic_commons.persistence import SqliteConnectionPool, SqlitePlatformStore
+        from agent_platform.durability import RunRegistry, create_checkpointer, purge_expired
+        from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
         from customer_support_agent.config import get_agent_settings
 
         store = SqlitePlatformStore(
@@ -173,9 +173,9 @@ class CustomerSupportHost:
 
     @staticmethod
     def _opened_knowledge_base() -> KnowledgeBase:
-        from agentic_commons.evals import create_scoring_cascade
-        from agentic_commons.llm.encoders import create_reranker
-        from agentic_commons.memory.semantic.rag import create_knowledge_base
+        from agent_platform.evals import create_scoring_cascade
+        from agent_platform.llm.encoders import create_reranker
+        from agent_platform.memory.semantic.rag import create_knowledge_base
 
         return create_knowledge_base(reranker=create_reranker(fallback=create_scoring_cascade()))
 
@@ -186,7 +186,7 @@ class CustomerSupportHost:
         A model that cannot load does not stop the console: the claim
         checker latches to the lexical fallback and logs why.
         """
-        from agentic_commons.evals.entailment import preload_entailment_model
+        from agent_platform.evals.entailment import preload_entailment_model
 
         preload_entailment_model()
 

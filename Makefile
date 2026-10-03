@@ -4,7 +4,7 @@
 	eval-runs eval-sql _agent
 
 # -- agent registry -------------------------------------------------------------
-# The platform names no agent (`agentic_commons/config.yaml` ships
+# The platform names no agent (`agent_platform/config.yaml` ships
 # `overlays: []`), so the agent is named on the command line: agent-scoped
 # targets take it as their second goal — `make tui csa`, `make eval ra`.
 # Adding an agent is three lines here and nothing in the platform.
@@ -60,7 +60,7 @@ endif
 endif
 
 PYTHON := ./venv/bin/python
-EVALS := $(PYTHON) -m agentic_commons.evals
+EVALS := $(PYTHON) -m agent_platform.evals
 
 # Provider budget override for this invocation: `RPM=38 make eval csa`.
 # The configured default lives in resilience.rate_limit (config.yaml).
@@ -169,7 +169,7 @@ test:
 	./venv/bin/pytest tests/ --cov=src --cov-report=term-missing -q
 
 tui: _agent
-	$(PYTHON) -m agentic_commons.tui
+	$(PYTHON) -m agent_platform.tui
 
 # Run one episode: make episode E=05  (or E=48a). Configured episodes call
 # the live model — this is a recording-session tool, not a check.
@@ -185,11 +185,11 @@ MODEL_CHECK_AGENTS = $(or $(AGENT),$(AGENTS))
 # first step after `make install`: `make models`, or `make models ra`.
 models:
 	@$(foreach a,$(MODEL_CHECK_AGENTS),echo "$(BLUE)── $($(a)_NAME) ($(a)) ──$(NC)" && \
-		AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(PYTHON) -m agentic_commons.llm.local_probes && ) true
+		AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(PYTHON) -m agent_platform.llm.local_probes && ) true
 
 llm-check model-check:
 	@$(foreach a,$(MODEL_CHECK_AGENTS),echo "$(BLUE)── $($(a)_NAME) ($(a)) ──$(NC)" && \
-		AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(PYTHON) -m agentic_commons.llm.cli $(if $(BENCH),--bench) && ) true
+		AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(PYTHON) -m agent_platform.llm.cli $(if $(BENCH),--bench) && ) true
 
 data: _agent
 	@test -n "$($(AGENT)_DATA)" || (echo "$(YELLOW)'$(AGENT)' has no generated data$(NC)" && exit 2)

@@ -1,12 +1,12 @@
-"""`python -m agentic_commons.evals` and the Promptfoo provider entry points."""
+"""`python -m agent_platform.evals` and the Promptfoo provider entry points."""
 
 from typing import Any
 
 import pytest
 
-from agentic_commons.evals import cli
-from agentic_commons.evals.adapters import promptfoo_agent_provider, promptfoo_judge_provider
-from agentic_commons.evals.store import DuckDbEvalStore
+from agent_platform.evals import cli
+from agent_platform.evals.adapters import promptfoo_agent_provider, promptfoo_judge_provider
+from agent_platform.evals.store import DuckDbEvalStore
 from tests.conftest import ScriptedLLM
 from tests.unit.test_eval_framework import FakeAgent, FakeGrader, FakePlugin
 

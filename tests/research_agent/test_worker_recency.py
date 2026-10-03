@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from agentic_commons.control_loop import BudgetGuard
-from agentic_commons.evidence import EvidenceLedger, NonEmptySpanValidator
-from agentic_commons.web import FetchedPage, SearchHit, SearchRequest, SearchResponse
+from agent_platform.control_loop import BudgetGuard
+from agent_platform.evidence import EvidenceLedger, NonEmptySpanValidator
+from agent_platform.web import FetchedPage, SearchHit, SearchRequest, SearchResponse
 from research_agent.config import get_agent_settings
 from research_agent.domain.budget import Budget
 from research_agent.domain.evidence import ClaimCandidate

@@ -17,7 +17,7 @@ import re
 
 from pydantic import BaseModel
 
-from agentic_commons.logging import get_logger, instrument, logged
+from agent_platform.logging import get_logger, instrument, logged
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.identity import Customer
 from customer_support_agent.domain.models import User

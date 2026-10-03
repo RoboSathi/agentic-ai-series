@@ -8,9 +8,9 @@ quarantined, and the audit trail says why.
 
 from typing import Any
 
-from agentic_commons.basic_sanity import BasicSanityRequest
-from agentic_commons.resilience.dead_letter_queue import DeadLetterReason
-from agentic_commons.security import MessageScreener
+from agent_platform.basic_sanity import BasicSanityRequest
+from agent_platform.resilience.dead_letter_queue import DeadLetterReason
+from agent_platform.security import MessageScreener
 from customer_support_agent.basic_sanity import owned_order_id
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.graph.nodes._support import NodeSupport

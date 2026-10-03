@@ -18,7 +18,7 @@ from contextvars import ContextVar
 
 from pydantic import BaseModel
 
-from agentic_commons.logging import get_logger
+from agent_platform.logging import get_logger
 
 _logger = get_logger("customer_support_agent")
 

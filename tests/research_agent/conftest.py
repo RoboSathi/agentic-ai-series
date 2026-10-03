@@ -18,9 +18,9 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.artifacts import DirectoryArtifactStore
-from agentic_commons.audit import SqliteAuditLedger
-from agentic_commons.config import (
+from agent_platform.artifacts import DirectoryArtifactStore
+from agent_platform.audit import SqliteAuditLedger
+from agent_platform.config import (
     REPO_ROOT,
     FeatureSet,
     clear_overlays,
@@ -29,12 +29,12 @@ from agentic_commons.config import (
     set_active_features,
     use_overlay,
 )
-from agentic_commons.durability import create_checkpointer, model_types
-from agentic_commons.llm.client import LLMClient
-from agentic_commons.memory import EpisodicStore
-from agentic_commons.observability import InMemoryLiveStatusFeed, StageReporter
-from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
-from agentic_commons.web import FixtureStore, WebGateway
+from agent_platform.durability import create_checkpointer, model_types
+from agent_platform.llm.client import LLMClient
+from agent_platform.memory import EpisodicStore
+from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
+from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.web import FixtureStore, WebGateway
 from research_agent.config import reload_agent_settings
 from research_agent.graph import build_agent
 from research_agent.graph.agent import ResearchAgent

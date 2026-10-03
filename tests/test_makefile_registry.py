@@ -11,7 +11,7 @@ import subprocess
 
 import pytest
 
-from agentic_commons.config import REPO_ROOT
+from agent_platform.config import REPO_ROOT
 
 pytestmark = pytest.mark.skipif(shutil.which("make") is None, reason="make is not installed")
 
@@ -94,7 +94,7 @@ class TestProfiles:
 
 class TestTargetsKeepTheirBehaviour:
     def test_tui_runs_the_console(self) -> None:
-        assert "-m agentic_commons.tui" in _make("tui", "csa").stdout
+        assert "-m agent_platform.tui" in _make("tui", "csa").stdout
 
     def test_eval_options_still_pass_through(self) -> None:
         out = _make("eval", "csa", "FRESH=1", "LIMIT=2", "CASE=c1", "TAG=t").stdout

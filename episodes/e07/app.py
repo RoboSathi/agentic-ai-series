@@ -9,8 +9,8 @@ Exit artifact: the depth map — every pattern pointed at the episode that
 builds it out in full, which is the map the rest of the series hangs off.
 """
 
-from agentic_commons.context import DenseRetriever, HybridRetriever, LexicalRetriever
-from agentic_commons.evals import create_scoring_cascade
+from agent_platform.context import DenseRetriever, HybridRetriever, LexicalRetriever
+from agent_platform.evals import create_scoring_cascade
 from design_patterns import AgenticRetrievalPattern, OrchestratorSubagentPattern, depth_map
 from episodes._shared import EpisodeOutput, OfflineLLM, main
 from episodes.dummy_data import knowledge_chunks

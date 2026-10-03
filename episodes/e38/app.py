@@ -11,8 +11,8 @@ without bound.
 Which reframes "escalate when unsure" as a budget, not a safety net.
 """
 
-from agentic_commons.observability import LittlesLawQueueModel
-from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.observability import LittlesLawQueueModel
+from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
 from customer_support_agent.persistence import HitlQueueRepository, OrdersRepository
 from customer_support_agent.persistence.repositories import RefundLedgerRepository
 from customer_support_agent.persistence.schema import ensure_schema

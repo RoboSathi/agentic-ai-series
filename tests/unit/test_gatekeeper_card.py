@@ -8,7 +8,7 @@ logic read them.
 
 from types import SimpleNamespace
 
-from agentic_commons.gatekeeper.types import AuthorityDecision, CheckReport
+from agent_platform.gatekeeper.types import AuthorityDecision, CheckReport
 from customer_support_agent.presentation.reporting import gatekeeper_fields
 
 _REMOVED = {

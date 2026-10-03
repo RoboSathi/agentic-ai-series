@@ -19,15 +19,15 @@ import time
 from pathlib import Path
 from typing import Any
 
-from agentic_commons.audit import SqliteAuditLedger
-from agentic_commons.durability import create_checkpointer, model_types
-from agentic_commons.evals.contracts import GoldenCase, ToolCallRecord, Transcript, UsageRecord
-from agentic_commons.llm.client import LLMClient, create_llm_client
-from agentic_commons.llm.recording import RecordingLLMClient
-from agentic_commons.memory import EpisodicStore
-from agentic_commons.observability import InMemoryLiveStatusFeed, StageReporter
-from agentic_commons.observability.types import StatusEvent
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.audit import SqliteAuditLedger
+from agent_platform.durability import create_checkpointer, model_types
+from agent_platform.evals.contracts import GoldenCase, ToolCallRecord, Transcript, UsageRecord
+from agent_platform.llm.client import LLMClient, create_llm_client
+from agent_platform.llm.recording import RecordingLLMClient
+from agent_platform.memory import EpisodicStore
+from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
+from agent_platform.observability.types import StatusEvent
+from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.config.settings import CsaEvalSettings, get_agent_settings
 from customer_support_agent.domain.identity import Customer, set_current_customer
 from customer_support_agent.evals.dataset.schema import CsaCasePayload

@@ -13,8 +13,8 @@ the refund rules apply.
 
 import pytest
 
-from agentic_commons.llm.types import CompletionResult, HealthCheckResult, TokenUsage
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.llm.types import CompletionResult, HealthCheckResult, TokenUsage
+from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.domain.identity import set_current_customer
 from customer_support_agent.graph import build_agent
 from customer_support_agent.persistence import OrdersRepository

@@ -16,7 +16,7 @@ from typing import Callable
 
 from pydantic import BaseModel
 
-from agentic_commons.guardrails import GuardrailViolationError, PydanticValidator
+from agent_platform.guardrails import GuardrailViolationError, PydanticValidator
 from episodes._shared import EpisodeOutput, main
 
 

@@ -1,7 +1,7 @@
 """This agent's own pre-flight checks on a request.
 
 `basic_sanity` is the seam where an agent's business logic meets the
-platform: `agentic_commons` owns only the contract, and this is the
+platform: `agent_platform` owns only the contract, and this is the
 implementation Customer Support injects into it.
 """
 

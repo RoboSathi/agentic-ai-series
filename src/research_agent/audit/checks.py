@@ -13,10 +13,10 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from agentic_commons.evals.entailment import EntailmentModel
-from agentic_commons.evidence import EvidenceEntry
-from agentic_commons.hallucination_protection import plain_text
-from agentic_commons.verification.acceptance import AcceptanceCheckRegistry, CheckOutcome, CheckSpec
+from agent_platform.evals.entailment import EntailmentModel
+from agent_platform.evidence import EvidenceEntry
+from agent_platform.hallucination_protection import plain_text
+from agent_platform.verification.acceptance import AcceptanceCheckRegistry, CheckOutcome, CheckSpec
 from research_agent.audit.context import CheckContext, distinct_hosts, host
 from research_agent.research.defenses import is_primary
 

@@ -13,11 +13,11 @@ from typing import Annotated, TypedDict
 
 from langchain_core.runnables import RunnableConfig
 
-from agentic_commons.control_loop import BudgetGuard
-from agentic_commons.control_loop.watchdogs import ToolControlLoop
-from agentic_commons.hallucination_protection import Observation
-from agentic_commons.llm.types import Message
-from agentic_commons.observability.loop_reporter import LoopReporter
+from agent_platform.control_loop import BudgetGuard
+from agent_platform.control_loop.watchdogs import ToolControlLoop
+from agent_platform.hallucination_protection import Observation
+from agent_platform.llm.types import Message
+from agent_platform.observability.loop_reporter import LoopReporter
 from research_agent.context.session import SessionContext
 
 # Budget counters of one answer, beside `TOKENS` (research_agent.domain.budget).

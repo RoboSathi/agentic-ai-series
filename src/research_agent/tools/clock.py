@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.tools.types import ToolResult
+from agent_platform.tools.types import ToolResult
 from research_agent.config.settings import AnswerSettings
 
 

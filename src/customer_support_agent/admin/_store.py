@@ -1,7 +1,7 @@
 """This agent's platform store, opened the one way every admin command opens it."""
 
-from agentic_commons.config import get_settings
-from agentic_commons.persistence import SqliteConnectionPool, SqlitePlatformStore
+from agent_platform.config import get_settings
+from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
 from customer_support_agent.config import get_agent_settings
 
 

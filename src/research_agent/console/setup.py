@@ -5,7 +5,7 @@ interview turn; a missing search key only narrows search to DuckDuckGo,
 so it is a warning the greeting repeats, not a stop.
 """
 
-from agentic_commons.config.settings import AppConfig
+from agent_platform.config.settings import AppConfig
 from research_agent.config.settings import ResearchAgentSettings
 
 _TAVILY = "tavily"

@@ -13,10 +13,10 @@ the result with something independent of the model that wrote it. Single
 pass, no iteration. Naming it honestly is the point — a viewer who sees
 "loop" and finds a lookup has learned something false.
 
-Generic trajectory watchdogs come from `agentic_commons.control_loop`.
+Generic trajectory watchdogs come from `agent_platform.control_loop`.
 """
 
-from agentic_commons.control_loop import (
+from agent_platform.control_loop import (
     ControlCheck,
     ControlLoopReport,
     DuplicateActionDetector,

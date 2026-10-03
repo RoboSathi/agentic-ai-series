@@ -8,9 +8,9 @@ Three properties, checked against the running system: it is observable,
 it is bounded, and it is reversible.
 """
 
-from agentic_commons.config import get_settings
-from agentic_commons.observability import CostAggregatorImpl, LittlesLawQueueModel, SLORegistry
-from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.config import get_settings
+from agent_platform.observability import CostAggregatorImpl, LittlesLawQueueModel, SLORegistry
+from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
 from customer_support_agent.persistence import HitlQueueRepository, OrdersRepository
 from customer_support_agent.persistence.repositories import RefundLedgerRepository
 from customer_support_agent.persistence.schema import ensure_schema

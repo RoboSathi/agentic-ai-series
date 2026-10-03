@@ -1,7 +1,7 @@
 """Configuration for the customer support agent.
 
 These settings live with the agent, not with the platform. `AppConfig`
-used to own them, which meant `agentic_commons` could not load without
+used to own them, which meant `agent_platform` could not load without
 this agent's config file present — a shared library that depends on one
 of its consumers.
 
@@ -16,9 +16,9 @@ from typing import Literal
 from pydantic import BaseModel
 from pydantic_settings import SettingsConfigDict
 
-from agentic_commons.config import get_settings
-from agentic_commons.config.paths import resolve_path
-from agentic_commons.config.settings import YamlBackedSettings
+from agent_platform.config import get_settings
+from agent_platform.config.paths import resolve_path
+from agent_platform.config.settings import YamlBackedSettings
 
 
 class IntentSettings(BaseModel):

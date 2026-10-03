@@ -15,7 +15,7 @@ from typing import Annotated, Any, Literal, TypedDict
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.evidence import LedgerSnapshot
+from agent_platform.evidence import LedgerSnapshot
 from research_agent.audit.independent import AuditResult
 from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.report import Report, RunStatus

@@ -15,7 +15,7 @@ The `reason ⇄ act` cycle is the **Tool-Use Loop**, bounded by
 call rather than a natural-language thought, and the harness — not the
 model — decides whether that call happens.
 
-Every node calls into `agentic_commons` and owns no platform logic of its
+Every node calls into `agent_platform` and owns no platform logic of its
 own. That is the invariant this package exists to hold: the running
 product is a *composition*, and a second LLM client or a second auth check
 appearing here would be the duplication regression found and fixed once
@@ -37,16 +37,16 @@ without patching a single import.
 import uuid
 from typing import Any
 
-from agentic_commons.audit import AuditLedger, NullAuditLedger
-from agentic_commons.basic_sanity import BasicSanityChecker
-from agentic_commons.config import FeatureSet, get_settings
-from agentic_commons.context import (
+from agent_platform.audit import AuditLedger, NullAuditLedger
+from agent_platform.basic_sanity import BasicSanityChecker
+from agent_platform.config import FeatureSet, get_settings
+from agent_platform.context import (
     ContextFailureDetector,
     FiveStagePipeline,
     StrategySelector,
 )
-from agentic_commons.control_loop import ToolControlLoop
-from agentic_commons.durability import (
+from agent_platform.control_loop import ToolControlLoop
+from agent_platform.durability import (
     CheckpointInfo,
     DurableGraphRunner,
     ResumeResult,
@@ -54,19 +54,19 @@ from agentic_commons.durability import (
     RunRegistry,
     SqliteCheckpointer,
 )
-from agentic_commons.evals import NollmScoringCascadeImpl
-from agentic_commons.executor import (
+from agent_platform.evals import NollmScoringCascadeImpl
+from agent_platform.executor import (
     ToolExecutionHandler,
     ToolExecutor,
 )
-from agentic_commons.gatekeeper import Gatekeeper
-from agentic_commons.gatekeeper.mandate import MandateIssuer
-from agentic_commons.guardrails import ResponseGuardrail
-from agentic_commons.hallucination_protection import DetectionLadder, GroundingReasoningDiagnoser
-from agentic_commons.llm.client import LLMClient
-from agentic_commons.llm.types import Message, TokenUsage
-from agentic_commons.logging import get_logger
-from agentic_commons.memory import (
+from agent_platform.gatekeeper import Gatekeeper
+from agent_platform.gatekeeper.mandate import MandateIssuer
+from agent_platform.guardrails import ResponseGuardrail
+from agent_platform.hallucination_protection import DetectionLadder, GroundingReasoningDiagnoser
+from agent_platform.llm.client import LLMClient
+from agent_platform.llm.types import Message, TokenUsage
+from agent_platform.logging import get_logger
+from agent_platform.memory import (
     MemoryAction,
     MemoryCommand,
     MemoryEvent,
@@ -78,18 +78,18 @@ from agentic_commons.memory import (
     WorkingMemoryStore,
     WriteResult,
 )
-from agentic_commons.observability import (
+from agent_platform.observability import (
     SLORegistry,
     StageReporter,
     Tracer,
 )
-from agentic_commons.resilience import (
+from agent_platform.resilience import (
     DeadLetterQueue,
 )
-from agentic_commons.security import SecuritySuite
-from agentic_commons.security.auth.policy import AgentPolicy
-from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
-from agentic_commons.verification import EffectVerifier
+from agent_platform.security import SecuritySuite
+from agent_platform.security.auth.policy import AgentPolicy
+from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
+from agent_platform.verification import EffectVerifier
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.control_loop import IndependentScorer, OutputQualityGate
 from customer_support_agent.domain.identity import (

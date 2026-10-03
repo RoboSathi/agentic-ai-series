@@ -17,13 +17,13 @@ only one of them would be tested.
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.audit import AuditEntry, AuditLedger, NullAuditLedger
-from agentic_commons.gatekeeper.types import AuthorityContext
-from agentic_commons.hallucination_protection import TrustCalibrationTracker, TrustReport
-from agentic_commons.logging import get_logger, logged
-from agentic_commons.money import Money
-from agentic_commons.observability.types import utc_now
-from agentic_commons.resilience import SagaResult
+from agent_platform.audit import AuditEntry, AuditLedger, NullAuditLedger
+from agent_platform.gatekeeper.types import AuthorityContext
+from agent_platform.hallucination_protection import TrustCalibrationTracker, TrustReport
+from agent_platform.logging import get_logger, logged
+from agent_platform.observability.types import utc_now
+from agent_platform.primitives.money import Money
+from agent_platform.resilience import SagaResult
 from customer_support_agent.domain.models import HitlRequest, Order
 from customer_support_agent.persistence.repositories import HitlQueueRepository, OrdersRepository
 from customer_support_agent.resilience.cancellation_saga import CancellationSaga

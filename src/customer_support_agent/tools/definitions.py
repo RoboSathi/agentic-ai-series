@@ -11,10 +11,10 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, Field, WithJsonSchema
 
-from agentic_commons.executor import ToolExecutionHandler
-from agentic_commons.logging import get_logger, instrument
-from agentic_commons.resilience import SagaResult
-from agentic_commons.tools import ToolCall, ToolDefinition, ToolResult
+from agent_platform.executor import ToolExecutionHandler
+from agent_platform.logging import get_logger, instrument
+from agent_platform.resilience import SagaResult
+from agent_platform.tools import ToolCall, ToolDefinition, ToolResult
 from customer_support_agent.domain.cancellation_policy import CancellationPolicy
 from customer_support_agent.domain.identity import current_customer_id
 from customer_support_agent.domain.models import HitlRequest, Order, OrderStatus, ReviewAction

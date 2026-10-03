@@ -4,8 +4,8 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.evidence import LedgerSnapshot
-from agentic_commons.verification.acceptance import CheckSpec, CheckVerdict
+from agent_platform.evidence import LedgerSnapshot
+from agent_platform.verification.acceptance import CheckSpec, CheckVerdict
 from research_agent.audit.independent import LlmJudge, _result
 from research_agent.domain.report import Report
 

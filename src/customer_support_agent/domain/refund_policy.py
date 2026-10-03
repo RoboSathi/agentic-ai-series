@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from agentic_commons.money import InvalidAmountError, Money
+from agent_platform.primitives.money import InvalidAmountError, Money
 from customer_support_agent.domain.models import Order
 from customer_support_agent.persistence.repositories import OrdersRepository
 

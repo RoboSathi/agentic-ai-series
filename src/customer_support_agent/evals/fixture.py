@@ -17,8 +17,8 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from agentic_commons.config import get_settings
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.config import get_settings
+from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.config.settings import CsaEvalSettings, get_agent_settings
 from customer_support_agent.gatekeeper.business_rules import REFUND_ACTION_CLASS
 from customer_support_agent.persistence.repositories import RefundLedgerRepository

@@ -14,12 +14,12 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.config import get_settings
-from agentic_commons.evals import create_scoring_cascade
-from agentic_commons.guardrails.response import ResponseGuardrail
-from agentic_commons.hallucination_protection import DetectionLadder
-from agentic_commons.hallucination_protection.claims import specifics
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.config import get_settings
+from agent_platform.evals import create_scoring_cascade
+from agent_platform.guardrails.response import ResponseGuardrail
+from agent_platform.hallucination_protection import DetectionLadder
+from agent_platform.hallucination_protection.claims import specifics
+from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.console.commands import QueueCommand
 from customer_support_agent.graph.nodes._support import NodeSupport

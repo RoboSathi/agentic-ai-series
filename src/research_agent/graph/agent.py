@@ -18,15 +18,15 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
-from agentic_commons.durability import (
+from agent_platform.durability import (
     SUMMARY,
     DurableGraphRunner,
     ResumableRunError,
     RunOutcome,
     RunRegistry,
 )
-from agentic_commons.logging import get_logger
-from agentic_commons.memory import MemoryFacade
+from agent_platform.logging import get_logger
+from agent_platform.memory import MemoryFacade
 from research_agent.archive.store import ResearchArchive
 from research_agent.config.settings import ResearchAgentSettings
 from research_agent.domain.report import COVERAGE_AND_LIMITS, Report, SessionPhase

@@ -3,7 +3,7 @@
 Two checks, on the answer's own sentences:
 
     the platform's response guardrail   each claim against the tool results it may be grounded
-                                        on (`agentic_commons.guardrails.ResponseGuardrail`, wired
+                                        on (`agent_platform.guardrails.ResponseGuardrail`, wired
                                         as the support agent wires it): retrieval then NLI, a
                                         figure or date no tool returned, one bounded rewrite of
                                         what it refuted, then the refuted sentences removed
@@ -21,11 +21,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.config import get_settings
-from agentic_commons.context.types import Chunk
-from agentic_commons.guardrails.response import ResponseGuardrail, ResponseGuardrailResult
-from agentic_commons.hallucination_protection import sentence_pieces
-from agentic_commons.logging import instrument
+from agent_platform.config import get_settings
+from agent_platform.context.types import Chunk
+from agent_platform.guardrails.response import ResponseGuardrail, ResponseGuardrailResult
+from agent_platform.hallucination_protection import sentence_pieces
+from agent_platform.logging import instrument
 from research_agent.config.settings import AnswerGroundingSettings, AnswerMessages
 
 Revise = Callable[[str, list[str]], Awaitable[str]]

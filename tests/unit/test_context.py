@@ -1,6 +1,6 @@
 """Context assembly, strategies, retrieval and failure detection (LLD §7)."""
 
-from agentic_commons.context import (
+from agent_platform.context import (
     AssembledContext,
     CacheStrategy,
     Chunk,
@@ -20,7 +20,7 @@ from agentic_commons.context import (
     Task,
     is_identifier_query,
 )
-from agentic_commons.evals import create_scoring_cascade
+from agent_platform.evals import create_scoring_cascade
 
 _CORPUS = [
     Chunk(content="Order ORD-10042 shipped on March 3 by express courier.", source="orders"),

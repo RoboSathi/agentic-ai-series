@@ -11,8 +11,8 @@ never get fixed. The differential diagnosis is the same surface symptom
 against two fixtures: evidence present, evidence absent.
 """
 
-from agentic_commons.context import Chunk
-from agentic_commons.hallucination_protection import GroundingReasoningDiagnoser
+from agent_platform.context import Chunk
+from agent_platform.hallucination_protection import GroundingReasoningDiagnoser
 from episodes._shared import EpisodeOutput, main
 
 CLAIM = "order 55 was refunded $80.00"

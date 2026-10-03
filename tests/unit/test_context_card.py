@@ -9,12 +9,12 @@ support agent's node adds only its own task metadata and grounding sources.
 from types import SimpleNamespace
 from typing import Any
 
-from agentic_commons.context import ContextWindow, Task
-from agentic_commons.context.types import AssembledContext, Chunk, ContextFinding
-from agentic_commons.llm.types import CompletionRequest, Message
-from agentic_commons.observability import InMemoryLiveStatusFeed, StageReporter
-from agentic_commons.observability.llm_fields import llm_request_fields
-from agentic_commons.observability.types import StatusEvent
+from agent_platform.context import ContextWindow, Task
+from agent_platform.context.types import AssembledContext, Chunk, ContextFinding
+from agent_platform.llm.types import CompletionRequest, Message
+from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
+from agent_platform.observability.llm_fields import llm_request_fields
+from agent_platform.observability.types import StatusEvent
 from customer_support_agent.graph.nodes.context import ContextNodes
 from customer_support_agent.graph.state import AgentState
 

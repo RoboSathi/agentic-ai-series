@@ -3,27 +3,27 @@
 import os
 from pathlib import Path
 
-from agentic_commons.config import (
+from agent_platform.config import (
     clear_overlays,
     config_sources,
     get_settings,
     reload_settings,
     use_overlay,
 )
-from agentic_commons.config.paths import REPO_ROOT, resolve_path
-from agentic_commons.config.toggles import ConfigFeatureToggle
+from agent_platform.config.paths import REPO_ROOT, resolve_path
+from agent_platform.config.toggles import ConfigFeatureToggle
 
 
 class TestPaths:
     def test_repo_root_contains_the_source_tree(self) -> None:
-        assert (REPO_ROOT / "src" / "agentic_commons").is_dir()
+        assert (REPO_ROOT / "src" / "agent_platform").is_dir()
 
     def test_paths_resolve_against_the_repo_not_the_cwd(self, tmp_path: Path) -> None:
         """The failure this guards: running from any other directory."""
         original = os.getcwd()
         os.chdir(tmp_path)
         try:
-            assert resolve_path("src/agentic_commons").is_dir()
+            assert resolve_path("src/agent_platform").is_dir()
         finally:
             os.chdir(original)
 

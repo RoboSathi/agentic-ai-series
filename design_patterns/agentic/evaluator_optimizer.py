@@ -14,10 +14,10 @@ Reach for it when quality is measurable by something other than the thing
 producing it. When it is not, no amount of looping helps.
 """
 
-from agentic_commons.evals import Claim, NollmScoringCascadeImpl
-from agentic_commons.llm.client import LLMClient
-from agentic_commons.llm.types import CompletionRequest, Message
-from agentic_commons.logging import get_logger
+from agent_platform.evals import Claim, NollmScoringCascadeImpl
+from agent_platform.llm.client import LLMClient
+from agent_platform.llm.types import CompletionRequest, Message
+from agent_platform.logging import get_logger
 from design_patterns.types import PatternFamily, PatternRun, Step
 
 _IMPROVE = (

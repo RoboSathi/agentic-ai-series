@@ -1,7 +1,7 @@
 # PRD — Agentic AI Systems Platform (`agentic-harness-core`)
 
 **Status:** Draft v1 — build spec for coding-agent execution
-**Scope:** Whole platform — `agentic_commons` shared library, `customer_support_agent`
+**Scope:** Whole platform — `agent_platform` shared library, `customer_support_agent`
 running project, `episodes/` per-episode demos, `design_patterns/` WF/AG reference
 library — as required to support all 48 episodes of *The Agentic AI Systems
 Masterclass*.
@@ -61,7 +61,7 @@ composed into one coherent, testable system.
 - **G3 — Composable, deep modules.** Every concern (logging, LLM adapters,
   guardrails, memory, security, resilience, tools, context, config) is its
   own module with a narrow interface; `customer_support_agent` *composes*
-  `agentic_commons`, never duplicates it.
+  `agent_platform`, never duplicates it.
 - **G4 — Full audit lineage.** Every consequential decision is
   attributable to a versioned (model, policy, data, authority) tuple —
   regulator-ready, not an afterthought.
@@ -134,11 +134,11 @@ before marking a module "done."
 |---|---|---|---|
 | FR-11 | Typed `ToolCall` interface, composed by every pattern | `tools` | E01, E05 |
 | FR-12 | Tool registry with namespacing and retrieval-based selection (NOLLM cascade reused) | `tools` | E22 |
-| FR-13 | Docker-container execution isolation, selected by blast-radius budget (full process/OS/container/microVM/remote ladder documented; only the Docker tier is in scope for implementation) | `agentic_commons/sandbox` — **parked, TODO** | E34 |
+| FR-13 | Docker-container execution isolation, selected by blast-radius budget (full process/OS/container/microVM/remote ladder documented; only the Docker tier is in scope for implementation) | `agent_platform/sandbox` — **parked, TODO** | E34 |
 
 ### 7.4 Control loop
 
-`agentic_commons/control_loop` merges what earlier planning treated as
+`agent_platform/control_loop` merges what earlier planning treated as
 two subsystems (`loop_engineering` and `state_management`) into one
 package — both govern the same trajectory object, and both are
 **parked/TODO** this phase. `customer_support_agent/control_loop/`
@@ -148,17 +148,17 @@ checkpointer directly as a tracked interim state.
 
 | Req | Description | Module | Episodes |
 |---|---|---|---|
-| FR-14 | ReAct loop (`react_step()`) as the atomic trajectory unit | `agentic_commons/control_loop` — **parked, TODO** | E05 |
-| FR-15 | `LoopController` with six-layer watchdog stack (step count, wall-clock, token budget, cost budget, duplicate-action, semantic-stagnation) | `agentic_commons/control_loop` — **parked, TODO** | E20 |
+| FR-14 | ReAct loop (`react_step()`) as the atomic trajectory unit | `agent_platform/control_loop` — **parked, TODO** | E05 |
+| FR-15 | `LoopController` with six-layer watchdog stack (step count, wall-clock, token budget, cost budget, duplicate-action, semantic-stagnation) | `agent_platform/control_loop` — **parked, TODO** | E20 |
 | FR-16 | Planner + Reflector + Evaluator composition, each independently swappable | `customer_support_agent/control_loop`, `evals` | E06 |
-| FR-17 | Orchestrator-subagent decomposition with bounded subagent context | `agentic_commons/multi_agent` — **stub only, design parked** | E07, E17, E40–E43 |
+| FR-17 | Orchestrator-subagent decomposition with bounded subagent context | `agent_platform/multi_agent` — **stub only, design parked** | E07, E17, E40–E43 |
 
 ### 7.5 State management
 
 | Req | Description | Module | Episodes |
 |---|---|---|---|
-| FR-18 | Explicit FSM: IDLE → PLANNING → ACTING → WAITING_TOOL → WAITING_HUMAN → DONE → FAILED, illegal transitions rejected | `agentic_commons/control_loop` — **parked, TODO** | E23 |
-| FR-19 | Checkpoint = `(state, transition history, durable facts)`, replayable after crash without duplicating side effects | `agentic_commons/control_loop`, `persistence` — **parked, TODO** | E23 |
+| FR-18 | Explicit FSM: IDLE → PLANNING → ACTING → WAITING_TOOL → WAITING_HUMAN → DONE → FAILED, illegal transitions rejected | `agent_platform/control_loop` — **parked, TODO** | E23 |
+| FR-19 | Checkpoint = `(state, transition history, durable facts)`, replayable after crash without duplicating side effects | `agent_platform/control_loop`, `persistence` — **parked, TODO** | E23 |
 | FR-20 | Circuit Breaker modeled as its own FSM (Closed → Open → Half-Open), reusing E23's state-table discipline | `resilience/circuit_breaker` | E23, E35 |
 
 ### 7.6 Error handling / resilience
@@ -219,9 +219,9 @@ requirements, not a separate module's.
 
 | Req | Description | Module | Episodes |
 |---|---|---|---|
-| FR-49 | Series-reliability compounding calculator for agent chains (`P(success) = Π P_i`) | `agentic_commons/multi_agent` — **stub only, design parked** | E40 |
-| FR-50 | Configurable topology: supervisor / hierarchy / peer network / swarm | `agentic_commons/multi_agent` — **stub only, design parked** | E41 |
-| FR-51 | MCP (agent-to-tool) and A2A (agent-to-agent) protocol support with correlation IDs and idempotent delivery | `agentic_commons/multi_agent`, `resilience/pub_sub` — **stub only, design parked** | E42 |
+| FR-49 | Series-reliability compounding calculator for agent chains (`P(success) = Π P_i`) | `agent_platform/multi_agent` — **stub only, design parked** | E40 |
+| FR-50 | Configurable topology: supervisor / hierarchy / peer network / swarm | `agent_platform/multi_agent` — **stub only, design parked** | E41 |
+| FR-51 | MCP (agent-to-tool) and A2A (agent-to-agent) protocol support with correlation IDs and idempotent delivery | `agent_platform/multi_agent`, `resilience/pub_sub` — **stub only, design parked** | E42 |
 | FR-52 | Cost stack tracked per request: input/output tokens, tool calls, retrieval, evaluator calls, human review, orchestration, infra | `observability` | E44 |
 | FR-53 | Model cascading (cheapest sufficient tier first) reusing the NOLLM cascade discipline | `llm` | E44 |
 
@@ -229,7 +229,7 @@ requirements, not a separate module's.
 
 | Req | Description | Module | Episodes |
 |---|---|---|---|
-| FR-54 | DSPy signature/module/optimizer compilation path as an alternative to hand-written prompt strings, versioned as a procedural-memory artifact | `agentic_commons/prompt_compilation` — **parked, TODO** | E21 |
+| FR-54 | DSPy signature/module/optimizer compilation path as an alternative to hand-written prompt strings, versioned as a procedural-memory artifact | `agent_platform/prompt_compilation` — **parked, TODO** | E21 |
 
 ### 7.12 Platform / developer experience
 
@@ -297,13 +297,13 @@ which phase) is `Program_Design.md` §4.
 - **New-package placement**: `sandbox`, `control_loop` (merging the
   earlier `loop_engineering`/`state_management` split),
   `multi_agent`, and `prompt_compilation` all land as top-level
-  `agentic_commons/` packages — **parked (interfaces defined, no
+  `agent_platform/` packages — **parked (interfaces defined, no
   implementation) this phase**, except `multi_agent`, which is a
   **stub only** (folder exists, design not yet started).
   `customer_support_agent/control_loop/` composes
-  `agentic_commons/control_loop` (thin wiring) rather than
+  `agent_platform/control_loop` (thin wiring) rather than
   duplicating its logic.
-- **Economics**: no `agentic_commons/economics` package. Cost-stack
+- **Economics**: no `agent_platform/economics` package. Cost-stack
   aggregation is a normal part of `observability`; TCO/ROI/Amdahl
   analysis (E44–E46) is treated as narrative/analytical content over
   data `observability` already emits, not a distinct code surface.

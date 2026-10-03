@@ -15,7 +15,7 @@ Three requirements, from a live review of the agent's replies:
 
 import pytest
 
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.domain import Order
 from customer_support_agent.dummy_data.generate_dummy_data import refund_status_for
 from customer_support_agent.intent.router import CustomerSupportIntentRouter

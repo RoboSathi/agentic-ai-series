@@ -1,4 +1,4 @@
-from agentic_commons.intent import IntentDisposition
+from agent_platform.intent import IntentDisposition
 from customer_support_agent.intent.router import CustomerSupportIntentRouter
 
 

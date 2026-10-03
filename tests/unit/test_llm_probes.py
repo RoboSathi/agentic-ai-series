@@ -4,17 +4,17 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.config import get_settings
-from agentic_commons.llm import probes
-from agentic_commons.llm.benchmark import BenchmarkResult, ChatModel, _summary, chat_models
-from agentic_commons.llm.local_probes import build_local_probes
-from agentic_commons.llm.probes import (
+from agent_platform.config import get_settings
+from agent_platform.llm import probes
+from agent_platform.llm.benchmark import BenchmarkResult, ChatModel, _summary, chat_models
+from agent_platform.llm.local_probes import build_local_probes
+from agent_platform.llm.probes import (
     ChatProbe,
     GuardProbe,
     SkippedProbe,
     build_probes,
 )
-from agentic_commons.security.guard_types import GuardVerdict
+from agent_platform.security.guard_types import GuardVerdict
 from tests.conftest import ScriptedLLM
 
 
@@ -117,6 +117,6 @@ def test_the_benchmark_summary_reports_median_and_throughput() -> None:
 
 
 def _role(model: str) -> Any:
-    from agentic_commons.config.settings import RoleModelSettings
+    from agent_platform.config.settings import RoleModelSettings
 
     return RoleModelSettings(provider="nim", model=model)

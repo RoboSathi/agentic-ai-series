@@ -28,10 +28,10 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel
 
-from agentic_commons.config import get_settings
-from agentic_commons.logging import get_logger
-from agentic_commons.persistence import SqliteConnectionPool, SqlitePlatformStore
-from agentic_commons.security.auth.policy import AgentPolicyRepository
+from agent_platform.config import get_settings
+from agent_platform.logging import get_logger
+from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
+from agent_platform.security.auth.policy import AgentPolicyRepository
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.models import REFUNDABLE_ORDER_STATUSES
 from customer_support_agent.dummy_data import DUMMY_DATA_DIR

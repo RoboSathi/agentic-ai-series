@@ -1,9 +1,9 @@
 import pytest
 from pydantic import BaseModel
 
-from agentic_commons.context.types import Chunk
-from agentic_commons.guardrails import PydanticValidator
-from agentic_commons.guardrails.response import ResponseGuardrail
+from agent_platform.context.types import Chunk
+from agent_platform.guardrails import PydanticValidator
+from agent_platform.guardrails.response import ResponseGuardrail
 
 
 class _Schema(BaseModel):
@@ -20,7 +20,7 @@ def test_pydantic_validator_rejects_wrong_shape():
 async def test_response_guardrail_passes_grounded_response():
     class FakeDetection:
         async def assess(self, text, evidence, resample=None):
-            from agentic_commons.hallucination_protection.types import (
+            from agent_platform.hallucination_protection.types import (
                 DetectionVerdict,
                 GenerationAssessment,
             )

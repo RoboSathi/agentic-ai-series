@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.config import get_settings
-from agentic_commons.evals.contracts import (
+from agent_platform.config import get_settings
+from agent_platform.evals.contracts import (
     GoldenCase,
     GraderKind,
     QualityMetricSpec,
@@ -17,21 +17,21 @@ from agentic_commons.evals.contracts import (
     Transcript,
     UsageRecord,
 )
-from agentic_commons.evals.fingerprint import compute_fingerprint
-from agentic_commons.evals.graders import JudgeResponseError, RubricJudge, parse_verdict
-from agentic_commons.evals.pipeline.gate import (
+from agent_platform.evals.fingerprint import compute_fingerprint
+from agent_platform.evals.graders import JudgeResponseError, RubricJudge, parse_verdict
+from agent_platform.evals.pipeline.gate import (
     FAIL,
     INCOMPLETE,
     PASS,
     evaluate_gate,
     soft_threshold,
 )
-from agentic_commons.evals.pipeline.generate import GenerationStage
-from agentic_commons.evals.pipeline.grade import GradingStage, grader_fingerprint
-from agentic_commons.evals.pipeline.orchestrator import EvalPipeline, NoRunError
-from agentic_commons.evals.plugin import EvalPluginNotConfiguredError, resolve_eval_plugin
-from agentic_commons.evals.reporting import wilson_interval
-from agentic_commons.evals.store import DuckDbEvalStore
+from agent_platform.evals.pipeline.generate import GenerationStage
+from agent_platform.evals.pipeline.grade import GradingStage, grader_fingerprint
+from agent_platform.evals.pipeline.orchestrator import EvalPipeline, NoRunError
+from agent_platform.evals.plugin import EvalPluginNotConfiguredError, resolve_eval_plugin
+from agent_platform.evals.reporting import wilson_interval
+from agent_platform.evals.store import DuckDbEvalStore
 from tests.conftest import ScriptedLLM
 
 SUITE = "golden"
@@ -404,7 +404,7 @@ class TestPlugin:
 
     def test_a_spec_that_is_not_a_plugin_is_refused(self) -> None:
         with pytest.raises(TypeError):
-            resolve_eval_plugin("agentic_commons.config:get_settings")
+            resolve_eval_plugin("agent_platform.config:get_settings")
 
 
 def _score_rows(store: DuckDbEvalStore, run_id: str) -> list[dict[str, Any]]:

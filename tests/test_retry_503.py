@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from agentic_commons.resilience import ExponentialBackoffRetry
+from agent_platform.resilience import ExponentialBackoffRetry
 
 
 @pytest.mark.asyncio

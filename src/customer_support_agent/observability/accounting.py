@@ -18,9 +18,9 @@ the honest measure the harness actually observes.
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.llm.types import TokenUsage
-from agentic_commons.logging import get_logger, instrument
-from agentic_commons.observability import SLORegistry
+from agent_platform.llm.types import TokenUsage
+from agent_platform.logging import get_logger, instrument
+from agent_platform.observability import SLORegistry
 
 # The SLOs this agent is in a position to observe, and what each means
 # here. Named as constants so a metric can never be recorded under a

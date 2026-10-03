@@ -9,9 +9,9 @@ to pending: the customer keeps an order they paid for rather than
 losing both the order and the money.
 """
 
-from agentic_commons.logging import instrument
-from agentic_commons.money import Money
-from agentic_commons.resilience import (
+from agent_platform.logging import instrument
+from agent_platform.primitives.money import Money
+from agent_platform.resilience import (
     CompensatingSaga,
     IdempotencyGuard,
     Saga,

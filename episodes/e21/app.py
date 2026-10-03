@@ -12,9 +12,9 @@ artifacts in E14 — rather than a new kind of thing.
 contract and the procedural-memory link it lands in.
 """
 
-from agentic_commons.memory import MemoryFact, ProceduralStore, Provenance
-from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
-from agentic_commons.prompt_compilation import CompiledModule, Example, Optimizer, Signature
+from agent_platform.memory import MemoryFact, ProceduralStore, Provenance
+from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.prompt_compilation import CompiledModule, Example, Optimizer, Signature
 from episodes._shared import EpisodeOutput, main
 
 

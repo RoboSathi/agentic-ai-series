@@ -1,6 +1,6 @@
 """The platform must not know which agent is running on it.
 
-`agentic_commons` is the shared library every agent composes. The moment
+`agent_platform` is the shared library every agent composes. The moment
 it names one of them, a second agent cannot be built without editing the
 platform — which is the coupling these tests exist to keep out, and which
 was real: the TUI and half the console commands imported the refund agent
@@ -15,7 +15,7 @@ import pathlib
 
 import pytest
 
-COMMONS = pathlib.Path(__file__).resolve().parents[2] / "src" / "agentic_commons"
+COMMONS = pathlib.Path(__file__).resolve().parents[2] / "src" / "agent_platform"
 
 # Agents this platform must be able to run without knowing their names.
 FORBIDDEN_NAMES = ("customer_support_agent",)
@@ -26,7 +26,7 @@ def _python_files() -> list[pathlib.Path]:
 
 
 class TestTheePlatformNamesNoAgent:
-    """`agentic_commons` composes agents; it never imports one."""
+    """`agent_platform` composes agents; it never imports one."""
 
     @pytest.mark.parametrize("name", FORBIDDEN_NAMES)
     def test_no_module_imports_a_specific_agent(self, name: str) -> None:
@@ -37,7 +37,7 @@ class TestTheePlatformNamesNoAgent:
             if f"import {name}" in line or f"from {name}" in line
         ]
         assert offenders == [], (
-            f"agentic_commons imports '{name}' at: {', '.join(offenders)}. "
+            f"agent_platform imports '{name}' at: {', '.join(offenders)}. "
             "An agent reaches the platform by injection, never the other way round."
         )
 
@@ -49,7 +49,7 @@ class TestTheePlatformNamesNoAgent:
             if name in path.read_text()
         ]
         assert offenders == [], (
-            f"agentic_commons config names '{name}' in: {', '.join(offenders)}. "
+            f"agent_platform config names '{name}' in: {', '.join(offenders)}. "
             "An agent's overlay declares the agent; the platform default does not."
         )
 
@@ -61,7 +61,7 @@ class TestTheePlatformNamesNoAgent:
             for path in sorted(COMMONS.rglob("*.md"))
             if name in path.read_text()
         ]
-        assert offenders == [], f"agentic_commons documents name '{name}' in: {offenders}"
+        assert offenders == [], f"agent_platform documents name '{name}' in: {offenders}"
 
 
 # Offline eval tools: optional extras, never on an agent's request path.
@@ -93,7 +93,7 @@ class TestEvalToolsAreNotRuntimeDependencies:
 
         probe = (
             "import sys; sys.modules['deepeval'] = None; "
-            "import customer_support_agent.graph, agentic_commons.evals, agentic_commons.tui.app"
+            "import customer_support_agent.graph, agent_platform.evals, agent_platform.tui.app"
         )
         completed = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
         assert completed.returncode == 0, completed.stderr
@@ -103,7 +103,7 @@ class TestParkedPackagesAreRealBoundaries:
     """A parked package still has to import, or it is not a boundary."""
 
     def test_mcp_imports_and_exports_its_contracts(self) -> None:
-        import agentic_commons.mcp as mcp
+        import agent_platform.mcp as mcp
 
         assert set(mcp.__all__) == {
             "McpServerSpec",
@@ -123,18 +123,18 @@ class TestParkedPackagesAreRealBoundaries:
         structurally a `tools.ToolSource` and yields plain
         `ToolDefinition`s.
         """
-        from agentic_commons.mcp import McpToolSource
-        from agentic_commons.tools import ToolSource
+        from agent_platform.mcp import McpToolSource
+        from agent_platform.tools import ToolSource
 
         assert set(dir(ToolSource)) <= set(dir(McpToolSource))
 
     def test_multi_agent_is_still_deliberately_empty(self) -> None:
-        import agentic_commons.multi_agent as multi_agent
+        import agent_platform.multi_agent as multi_agent
 
         assert multi_agent.__all__ == []
 
     def test_sandbox_and_prompt_compilation_import(self) -> None:
-        import agentic_commons.prompt_compilation as prompt_compilation
-        import agentic_commons.sandbox as sandbox
+        import agent_platform.prompt_compilation as prompt_compilation
+        import agent_platform.sandbox as sandbox
 
         assert sandbox.__all__ and prompt_compilation.__all__

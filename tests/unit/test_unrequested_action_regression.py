@@ -20,10 +20,10 @@ Four distinct defects, each tested below:
 
 import pytest
 
-from agentic_commons.config import get_settings
-from agentic_commons.evals import create_scoring_cascade
-from agentic_commons.persistence import SqliteConnectionPool
-from agentic_commons.tools import NamespacedToolRegistry, ToolCall, ToolRetrievalSelector
+from agent_platform.config import get_settings
+from agent_platform.evals import create_scoring_cascade
+from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.tools import NamespacedToolRegistry, ToolCall, ToolRetrievalSelector
 from customer_support_agent.control_loop import (
     DuplicateActionDetector,
     ToolControlLoop,

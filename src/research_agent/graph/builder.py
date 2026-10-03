@@ -18,11 +18,11 @@ from typing import Any
 
 import yaml
 
-from agentic_commons.artifacts import DirectoryArtifactStore
-from agentic_commons.audit import AuditLedger, create_audit_ledger
-from agentic_commons.config import FeatureSet, active_features, get_settings, set_active_features
-from agentic_commons.config.paths import resolve_path
-from agentic_commons.context import (
+from agent_platform.artifacts import DirectoryArtifactStore
+from agent_platform.audit import AuditLedger, create_audit_ledger
+from agent_platform.config import FeatureSet, active_features, get_settings, set_active_features
+from agent_platform.config.paths import resolve_path
+from agent_platform.context import (
     CandidateSource,
     ContextFailureDetector,
     ContextWindow,
@@ -31,50 +31,50 @@ from agentic_commons.context import (
     StrategySelector,
     WorkingMemoryContextSource,
 )
-from agentic_commons.control_loop import BudgetGuard
-from agentic_commons.control_loop.types import ControlLoopReport
-from agentic_commons.durability import (
+from agent_platform.control_loop import BudgetGuard
+from agent_platform.control_loop.types import ControlLoopReport
+from agent_platform.durability import (
     DurableGraphRunner,
     RunRegistry,
     create_checkpointer,
     model_types,
 )
-from agentic_commons.durability.checkpointer import SqliteCheckpointer
-from agentic_commons.evals.entailment import (
+from agent_platform.durability.checkpointer import SqliteCheckpointer
+from agent_platform.evals.entailment import (
     EntailmentModel,
     LexicalEntailmentModel,
     create_entailment_model,
 )
-from agentic_commons.evals.scoring import create_scoring_cascade
-from agentic_commons.evidence import EvidenceLedger, NonEmptySpanValidator, VerbatimSpanValidator
-from agentic_commons.guardrails.guards import PydanticValidator
-from agentic_commons.guardrails.response import ResponseGuardrail
-from agentic_commons.hallucination_protection.checker import DetectionLadder
-from agentic_commons.intent.exemplar import ExemplarIntentClassifier
-from agentic_commons.llm.embeddings import EmbeddingClient, create_embedding_client
-from agentic_commons.llm.encoders import create_reranker
-from agentic_commons.llm.http import create_http_client
-from agentic_commons.llm.local_embeddings import LocalSentenceEmbedder
-from agentic_commons.llm.observer import ModelCallObserver
-from agentic_commons.llm.roles import RoleModelRouter
-from agentic_commons.logging import get_logger
-from agentic_commons.memory import EpisodicStore, MemoryFacade, SemanticStore, WorkingMemoryStore
-from agentic_commons.observability import StageReporter
-from agentic_commons.observability.model_observer import StageReporterModelObserver
-from agentic_commons.observability.store import DuckDbObservabilityStore
-from agentic_commons.observability.types import utc_now
-from agentic_commons.persistence import SqliteConnectionPool, SqlitePlatformStore
-from agentic_commons.resilience import ResilientCaller, ResourcePoolBulkhead
-from agentic_commons.security import (
+from agent_platform.evals.scoring import create_scoring_cascade
+from agent_platform.evidence import EvidenceLedger, NonEmptySpanValidator, VerbatimSpanValidator
+from agent_platform.guardrails.guards import PydanticValidator
+from agent_platform.guardrails.response import ResponseGuardrail
+from agent_platform.hallucination_protection.checker import DetectionLadder
+from agent_platform.intent.exemplar import ExemplarIntentClassifier
+from agent_platform.llm.embeddings import EmbeddingClient, create_embedding_client
+from agent_platform.llm.encoders import create_reranker
+from agent_platform.llm.http import create_http_client
+from agent_platform.llm.local_embeddings import LocalSentenceEmbedder
+from agent_platform.llm.observer import ModelCallObserver
+from agent_platform.llm.roles import RoleModelRouter
+from agent_platform.logging import get_logger
+from agent_platform.memory import EpisodicStore, MemoryFacade, SemanticStore, WorkingMemoryStore
+from agent_platform.observability import StageReporter
+from agent_platform.observability.model_observer import StageReporterModelObserver
+from agent_platform.observability.store import DuckDbObservabilityStore
+from agent_platform.observability.types import utc_now
+from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
+from agent_platform.resilience import ResilientCaller, ResourcePoolBulkhead
+from agent_platform.security import (
     MessageScreener,
     PromptInjectionGuard,
     SecuritySuite,
     TermContentModerator,
 )
-from agentic_commons.security.pii import PIIFilterImpl
-from agentic_commons.security.prompt_injection.detector import InstructionDataSeparator
-from agentic_commons.security.prompt_injection.hosted import HostedJailbreakGuard
-from agentic_commons.web import WebGateway, create_web_gateway
+from agent_platform.security.pii import PIIFilterImpl
+from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
+from agent_platform.security.prompt_injection.hosted import HostedJailbreakGuard
+from agent_platform.web import WebGateway, create_web_gateway
 from research_agent.archive.store import ResearchArchive
 from research_agent.audit.checks import build_registry
 from research_agent.audit.context import CheckContext
@@ -94,6 +94,7 @@ from research_agent.graph.state import StateTypes
 from research_agent.guardrails.answer_grounding import AnswerGrounding
 from research_agent.guardrails.input_screen import InputScreen
 from research_agent.intent import ResearchIntentRouter
+from research_agent.llm.structured import RoleClients, StructuredCaller
 from research_agent.planning.planner import Planner
 from research_agent.research.cards import cap_reached_card
 from research_agent.research.defenses import InjectionScreen, OutboundGuard
@@ -111,7 +112,6 @@ from research_agent.scoping.encoder_gate import EncoderGateClassifier, IntentBac
 from research_agent.scoping.gate import ArchetypeClassifier, LlmArchetypeClassifier
 from research_agent.scoping.rule_gate import RuleGate
 from research_agent.scoping.termination import TerminationPolicy
-from research_agent.structured import RoleClients, StructuredCaller
 from research_agent.synthesis.citation_guard import CitationGuard
 from research_agent.synthesis.synthesizer import Synthesizer
 from research_agent.tools import build_answer_registry

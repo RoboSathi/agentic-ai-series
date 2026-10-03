@@ -11,11 +11,11 @@ check below either passes or names what failed.
 
 import inspect
 
-from agentic_commons.audit import AuditLedger
-from agentic_commons.evals import NollmScoringCascade
-from agentic_commons.llm.client import LLMClient
-from agentic_commons.memory import MemoryStore
-from agentic_commons.tools import ToolRegistry
+from agent_platform.audit import AuditLedger
+from agent_platform.evals import NollmScoringCascade
+from agent_platform.llm.client import LLMClient
+from agent_platform.memory import MemoryStore
+from agent_platform.tools import ToolRegistry
 from customer_support_agent.graph.agent import CustomerSupportAgent
 from episodes._shared import EpisodeOutput, main
 

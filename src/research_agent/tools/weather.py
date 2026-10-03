@@ -9,8 +9,8 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, Field
 
-from agentic_commons.logging import describe_error, logged
-from agentic_commons.tools.types import ToolResult
+from agent_platform.logging import describe_error, logged
+from agent_platform.tools.types import ToolResult
 from research_agent.config.settings import AnswerSettings
 from research_agent.tools import URLS_KEY
 

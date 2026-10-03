@@ -12,8 +12,8 @@ a timeout, a retry under an idempotency key, and a circuit breaker.
 
 from typing import Any
 
-from agentic_commons.llm.types import CompletionRequest, CompletionResult, Message
-from agentic_commons.resilience import (
+from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
+from agent_platform.resilience import (
     external_api_error_fields,
 )
 from customer_support_agent.graph.nodes._support import NodeSupport

@@ -9,8 +9,8 @@ The canonical worked example is the circuit breaker: three states, four
 legal transitions, and an explicit table. Every other transition raises.
 """
 
-from agentic_commons.control_loop import Checkpoint, Transition
-from agentic_commons.resilience import CircuitBreakerImpl, CircuitBreakerOpenError
+from agent_platform.control_loop import Checkpoint, Transition
+from agent_platform.resilience import CircuitBreakerImpl, CircuitBreakerOpenError
 from episodes._shared import EpisodeOutput, main
 
 LEGAL = {

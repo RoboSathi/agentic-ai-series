@@ -1,4 +1,4 @@
-# The research agent's overlay on the platform defaults (agentic_commons).
+# The research agent's overlay on the platform defaults (agent_platform).
 # Loaded when AGENTIC_OVERLAYS names this file (`make tui ra`), or by
 # default when this package is imported and nothing else was named.
 #

@@ -10,7 +10,7 @@ import re
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.evidence import LedgerSnapshot
+from agent_platform.evidence import LedgerSnapshot
 from research_agent.domain.report import Report, ReportSection
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")

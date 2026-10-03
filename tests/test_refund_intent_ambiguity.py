@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from agentic_commons.intent import IntentCandidate
+from agent_platform.intent import IntentCandidate
 from customer_support_agent.intent.router import CustomerSupportIntentRouter
 
 

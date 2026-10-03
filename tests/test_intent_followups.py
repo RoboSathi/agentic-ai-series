@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from agentic_commons.intent import IntentCandidate, IntentDisposition
+from agent_platform.intent import IntentCandidate, IntentDisposition
 from customer_support_agent.intent.router import CustomerSupportIntentRouter, Intent
 
 

@@ -17,7 +17,7 @@ signal the shape has stopped fitting.
 
 from typing import Awaitable, Callable, Protocol, runtime_checkable
 
-from agentic_commons.logging import get_logger
+from agent_platform.logging import get_logger
 from design_patterns.types import PatternFamily, PatternRun, Step
 
 Handler = Callable[[str], Awaitable[str]]

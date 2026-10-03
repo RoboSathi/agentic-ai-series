@@ -21,7 +21,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from agentic_commons.memory.working import WorkingMemory
+from agent_platform.memory.working import WorkingMemory
 from customer_support_agent.config import get_agent_settings
 
 # Working memory stores the reference as prose ("order 10301") because a

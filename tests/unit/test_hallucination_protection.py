@@ -5,11 +5,11 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.context import Chunk
-from agentic_commons.evals import NOLLM_TIERS, Claim, create_scoring_cascade
-from agentic_commons.evals.entailment import EntailmentResult, LexicalEntailmentModel
-from agentic_commons.guardrails.response import ResponseGuardrail
-from agentic_commons.hallucination_protection import (
+from agent_platform.context import Chunk
+from agent_platform.evals import NOLLM_TIERS, Claim, create_scoring_cascade
+from agent_platform.evals.entailment import EntailmentResult, LexicalEntailmentModel
+from agent_platform.guardrails.response import ResponseGuardrail
+from agent_platform.hallucination_protection import (
     ClaimDecomposer,
     DetectionLadder,
     GroundingReasoningDiagnoser,
@@ -83,7 +83,7 @@ class TestDetectionLadder:
         composition root, and `hallucination_guard: false` reaches here
         as a guardrail with no detector to consult.
         """
-        from agentic_commons.guardrails.response import ResponseGuardrail
+        from agent_platform.guardrails.response import ResponseGuardrail
 
         result = await ResponseGuardrail(grounding=None).enforce("I refunded $500", _EVIDENCE)
         assert result.grounded and not result.escalated

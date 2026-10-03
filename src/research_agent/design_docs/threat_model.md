@@ -27,7 +27,7 @@ context, the integrity of the report, the budget.
 | T7 | **Self-grading** — the writer approves its own report | reference model approves reports it wrote | the judge role must resolve to a different model (checked at start-up) | ablation `same_model_judge` misses planted `tradeoffs_omitted` |
 | T8 | **Silent incompleteness** — an unmet criterion is passed off as covered | — | Coverage & Limits is built in code from verdicts; the audit flags unmet-but-unflagged items; a report with no findings cannot be COMPLETE | `unmet_must_pass_in_limits`; planted `false_coverage`, `missed_item` |
 | T9 | **Scope drift / runaway cost** | — | the contract is frozen and hashed at approval and re-verified at the end; hard budgets; a replay miss raises instead of improvising | `contract_hash_unchanged`, `budget_exhaustion_partial`, `replay_miss_raises` |
-| T11 | **Runaway spend on a metered API** | — | monthly quota per provider in the shared rate-limit store (Tavily 900/month), fail-fast and never retried; free provider first; 24h search cache; small per-run budgets | `tests/agentic_commons/test_quota_and_search_routing.py`; ADR ra-0018 |
+| T11 | **Runaway spend on a metered API** | — | monthly quota per provider in the shared rate-limit store (Tavily 900/month), fail-fast and never retried; free provider first; 24h search cache; small per-run budgets | `tests/agent_platform/test_quota_and_search_routing.py`; ADR ra-0018 |
 | T10 | **Stale sources** outside the approved window | 2019 turbine market page | hits outside `recency_days` are never read (recorded as rejected); the recency item audits what was cited | `lb-recent-players` |
 
 ## The three content-defence layers

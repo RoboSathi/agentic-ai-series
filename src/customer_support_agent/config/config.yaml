@@ -103,19 +103,19 @@ evals:
     - src/customer_support_agent/evals/eval_manifest.yaml
   plugin: customer_support_agent.evals.plugin:CsaEvalPlugin
   fingerprint:
-    source_roots: [src/agentic_commons, src/customer_support_agent]
+    source_roots: [src/agent_platform, src/customer_support_agent]
     # Lists replace wholesale, so the platform's exclusions are restated.
     # The dataset is not here on purpose: it is hashed per case instead.
     exclude_paths:
-      - src/agentic_commons/evals/store
-      - src/agentic_commons/evals/pipeline
-      - src/agentic_commons/evals/reporting
-      - src/agentic_commons/evals/graders
-      - src/agentic_commons/evals/adapters
-      - src/agentic_commons/evals/__main__.py
-      - src/agentic_commons/evals/cli.py
-      - src/agentic_commons/tui
-      - src/agentic_commons/commands
+      - src/agent_platform/evals/store
+      - src/agent_platform/evals/pipeline
+      - src/agent_platform/evals/reporting
+      - src/agent_platform/evals/graders
+      - src/agent_platform/evals/adapters
+      - src/agent_platform/evals/__main__.py
+      - src/agent_platform/evals/cli.py
+      - src/agent_platform/tui
+      - src/agent_platform/commands
       - src/customer_support_agent/console
       - src/customer_support_agent/evals/dataset
       - src/customer_support_agent/evals/oracle
@@ -354,7 +354,7 @@ customer_support_agent:
   console_reviewer: console_operator
   dummy_data_generator_path: src/customer_support_agent/dummy_data/generator.yaml
   # This agent's evals: the golden set, the fixture it runs against, and
-  # what its graders read. Run with `make eval` (see agentic_commons.evals).
+  # what its graders read. Run with `make eval` (see agent_platform.evals).
   evals:
     dataset_path: src/customer_support_agent/evals/dataset/golden_cases.yaml
     fixture_seed_path: src/customer_support_agent/evals/dataset/fixtures/eval_seed.sql

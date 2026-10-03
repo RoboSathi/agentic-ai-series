@@ -13,8 +13,8 @@ that; it can never widen it.
 import pytest
 from pydantic import BaseModel
 
-from agentic_commons.persistence import SqliteConnectionPool
-from agentic_commons.tools import NamespacedToolRegistry, ToolDefinition
+from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.tools import NamespacedToolRegistry, ToolDefinition
 from customer_support_agent.graph import build_agent
 from customer_support_agent.intent.router import CustomerSupportIntentRouter
 from tests.conftest import ScriptedLLM

@@ -9,10 +9,10 @@
 
 A **monolith repo, modular-monolith runtime**: one deployable process
 (`customer_support_agent` running inside the Textual TUI shell) that
-composes a shared library (`agentic_commons`) of narrow, independently
+composes a shared library (`agent_platform`) of narrow, independently
 testable subsystems. Orchestration inside the running example is
 **LangGraph**; the shared library deliberately does *not* re-implement
-state management LangGraph already provides — `agentic_commons/control_loop`
+state management LangGraph already provides — `agent_platform/control_loop`
 (parked/TODO this phase — see §3, §8) supplies the FSM *vocabulary and
 invariants* (legal-transition checking, checkpoint shape) plus the
 `LoopController` watchdog stack, that LangGraph's checkpointer and node
@@ -37,7 +37,7 @@ flowchart TB
 
     subgraph Runtime["agentic-harness-core runtime (single process)"]
         CSA[customer_support_agent<br/>LangGraph app]
-        AC[agentic_commons<br/>shared library]
+        AC[agent_platform<br/>shared library]
         CSA -->|composes| AC
     end
 
@@ -60,7 +60,7 @@ flowchart TB
 
 ## 3. Component map
 
-Every box below is a real `agentic_commons/<name>` package unless marked
+Every box below is a real `agent_platform/<name>` package unless marked
 otherwise. `customer_support_agent` composes these; it owns no duplicate
 logic. Four packages are **parked** (interfaces defined in `LLD.md`,
 implementation deferred to a later phase) and one (`multi_agent`) is a
@@ -167,7 +167,7 @@ sequenceDiagram
   returned success" and "the world changed" are different claims. An
   unverified result never becomes authoritative, so no customer-facing
   statement can rest on an action that did not land.
-- **The platform names no agent.** `agentic_commons` reaches its running
+- **The platform names no agent.** `agent_platform` reaches its running
   product through `AgentHost`, resolved from configuration. An agent
   composes the platform; the platform never imports an agent.
 - **No action is un-audited.** `observability` and `audit` are invoked on

@@ -11,12 +11,12 @@ that something happened.
 from collections.abc import Mapping
 from typing import Any
 
-from agentic_commons.audit import AuditEntry, AuditLedger
-from agentic_commons.audit.types import Decision
-from agentic_commons.config import get_settings
-from agentic_commons.logging import get_logger
-from agentic_commons.observability import StageReporter
-from agentic_commons.observability.types import StatusKind
+from agent_platform.audit import AuditEntry, AuditLedger
+from agent_platform.audit.types import Decision
+from agent_platform.config import get_settings
+from agent_platform.logging import get_logger
+from agent_platform.observability import StageReporter
+from agent_platform.observability.types import StatusKind
 
 ACTOR = "research_agent"
 

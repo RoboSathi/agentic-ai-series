@@ -15,9 +15,9 @@ before any action, and you lose the ability to react to what you find.
 
 from typing import Awaitable, Callable
 
-from agentic_commons.llm.client import LLMClient
-from agentic_commons.llm.types import CompletionRequest, Message
-from agentic_commons.logging import get_logger
+from agent_platform.llm.client import LLMClient
+from agent_platform.llm.types import CompletionRequest, Message
+from agent_platform.logging import get_logger
 from design_patterns.types import PatternFamily, PatternRun, Step
 
 # Executes one planned step, given the step and what came before it.

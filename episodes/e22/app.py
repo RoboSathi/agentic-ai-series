@@ -12,7 +12,7 @@ live, which is the same mechanism an operator has, and the agent is
 rebuilt so the composition root re-reads it.
 """
 
-from agentic_commons.config import is_enabled, set_enabled
+from agent_platform.config import is_enabled, set_enabled
 from customer_support_agent.graph import build_agent
 from episodes._shared import EpisodeRun
 

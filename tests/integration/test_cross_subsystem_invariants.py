@@ -8,8 +8,8 @@ break silently during a refactor.
 
 import inspect
 
-from agentic_commons.money import Money
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.primitives.money import Money
 from customer_support_agent.graph import build_agent
 from customer_support_agent.graph.agent import CustomerSupportAgent
 from customer_support_agent.persistence import OrdersRepository
@@ -48,7 +48,7 @@ class TestNoMalformedOutputReachesAnExecutor:
 
 class TestEveryRetryIsIdempotent:
     async def test_a_repeated_refund_pays_once(self, seeded_pool: SqliteConnectionPool) -> None:
-        from agentic_commons.resilience import SqliteIdempotencyGuard
+        from agent_platform.resilience import SqliteIdempotencyGuard
         from customer_support_agent.persistence import RefundLedgerRepository
         from customer_support_agent.resilience import RefundSaga
 
@@ -63,7 +63,7 @@ class TestEveryRetryIsIdempotent:
 
     def test_the_retry_policy_cannot_run_unkeyed(self) -> None:
         """Structural, not advisory."""
-        from agentic_commons.resilience import ExponentialBackoffRetry
+        from agent_platform.resilience import ExponentialBackoffRetry
 
         signature = inspect.signature(ExponentialBackoffRetry.execute)
         assert signature.parameters["idempotency_key"].default is inspect.Parameter.empty
@@ -82,6 +82,6 @@ class TestEpisodesComposeRatherThanDuplicate:
 
 
 def _raw_call(name: str, arguments: str):  # type: ignore[no-untyped-def]
-    from agentic_commons.llm.types import ModelToolCall
+    from agent_platform.llm.types import ModelToolCall
 
     return [ModelToolCall(id=name, name=name, arguments=arguments)]

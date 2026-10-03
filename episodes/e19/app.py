@@ -11,7 +11,7 @@ Hybrid exists because real traffic is a mixture, and picking one mode
 globally means being wrong for whichever half does not fit.
 """
 
-from agentic_commons.context import (
+from agent_platform.context import (
     Chunk,
     CrossEncoderReranker,
     DenseRetriever,
@@ -20,7 +20,7 @@ from agentic_commons.context import (
     LexicalRetriever,
     is_identifier_query,
 )
-from agentic_commons.evals import create_scoring_cascade
+from agent_platform.evals import create_scoring_cascade
 from episodes._shared import EpisodeOutput, main
 from episodes.dummy_data import knowledge_chunks
 

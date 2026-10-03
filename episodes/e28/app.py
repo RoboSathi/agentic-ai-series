@@ -15,8 +15,8 @@ harness validates the result either way.
 
 from pydantic import BaseModel
 
-from agentic_commons.config import get_settings
-from agentic_commons.guardrails import PydanticValidator
+from agent_platform.config import get_settings
+from agent_platform.guardrails import PydanticValidator
 from episodes._shared import EpisodeOutput, main
 
 

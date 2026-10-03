@@ -26,7 +26,7 @@ subject ("what about 10010?").
 
 ## Collaborators
 
-- `agentic_commons.intent`.
+- `agent_platform.intent`.
 
 ## Episodes
 

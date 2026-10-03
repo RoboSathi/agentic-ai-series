@@ -23,8 +23,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from agentic_commons.llm.client import LLMClient, create_llm_client
-from agentic_commons.llm.types import (
+from agent_platform.llm.client import LLMClient, create_llm_client
+from agent_platform.llm.types import (
     CompletionRequest,
     CompletionResult,
     HealthCheckResult,

@@ -11,7 +11,7 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.verification.acceptance import CheckVerdict
+from agent_platform.verification.acceptance import CheckVerdict
 
 
 class StopInput(BaseModel):

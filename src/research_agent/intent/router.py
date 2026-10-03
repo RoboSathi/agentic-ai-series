@@ -20,13 +20,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.intent.types import IntentCandidate
-from agentic_commons.logging import get_logger, instrument
+from agent_platform.intent.types import IntentCandidate
+from agent_platform.logging import get_logger, instrument
 from research_agent.config.settings import IntentRouterSettings, ScopingSettings
+from research_agent.llm.structured import StructuredCaller
 from research_agent.prompts import intent as intent_prompt
 from research_agent.scoping.encoder_gate import IntentBackend
 from research_agent.scoping.rule_gate import RuleGate
-from research_agent.structured import StructuredCaller
 
 Label = Literal["answer", "research", "refuse"]
 Source = Literal["rule", "encoder", "llm", "default"]

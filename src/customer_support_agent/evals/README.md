@@ -32,7 +32,7 @@ threshold is its manifest entry (`eval_manifest.yaml`, `suite: golden`).
 
 ## Seams
 
-- Run through the platform: `make eval`, `make eval-generate`, `make eval-oracle`, … (see `agentic_commons/evals/README.md`).
+- Run through the platform: `make eval`, `make eval-generate`, `make eval-oracle`, … (see `agent_platform/evals/README.md`).
 
 ## Collaborators
 

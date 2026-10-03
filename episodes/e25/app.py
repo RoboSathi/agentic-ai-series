@@ -9,9 +9,9 @@ the fabricated number is the one that gets acted on. So a generation is
 decomposed into atomic claims and each is resolved separately.
 """
 
-from agentic_commons.context import Chunk
-from agentic_commons.evals import create_scoring_cascade
-from agentic_commons.hallucination_protection import ClaimDecomposer, DetectionLadder
+from agent_platform.context import Chunk
+from agent_platform.evals import create_scoring_cascade
+from agent_platform.hallucination_protection import ClaimDecomposer, DetectionLadder
 from episodes._shared import EpisodeOutput, main
 
 EVIDENCE = [

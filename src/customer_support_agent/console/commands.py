@@ -2,7 +2,7 @@
 
 `/queue` reads this agent's review queue and speaks this
 agent's vocabulary, so it belongs to this agent. It used to live in
-`agentic_commons/commands/`, which meant the platform's console could
+`agent_platform/commands/`, which meant the platform's console could
 not be opened without a refund database behind it.
 
 These are operator views, deliberately *not* scoped to an authenticated
@@ -16,12 +16,12 @@ they are dispatched before a message ever becomes a conversation turn.
 from collections.abc import Callable
 from typing import Any, get_args
 
-from agentic_commons.commands import CommandError, CommandResult
-from agentic_commons.commands._pool import PoolBackedCommand
-from agentic_commons.config import get_settings
-from agentic_commons.durability import DurableAgent
-from agentic_commons.observability.queue import LittlesLawQueueModel
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.commands import CommandError, CommandResult
+from agent_platform.commands._pool import PoolBackedCommand
+from agent_platform.config import get_settings
+from agent_platform.durability import DurableAgent
+from agent_platform.observability.queue import LittlesLawQueueModel
+from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.models import OrderStatus
 from customer_support_agent.graph.nodes.review_wait import review_wait_key

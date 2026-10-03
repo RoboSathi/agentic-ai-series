@@ -10,14 +10,14 @@ is why the harness validates arguments before execution and why a
 Gatekeeper exists at all — both are answers to a question a workflow
 never has to ask.
 
-Composes `agentic_commons.tools`: the registry owns what exists and
+Composes `agent_platform.tools`: the registry owns what exists and
 validates the call; this pattern owns only the loop shape.
 """
 
-from agentic_commons.llm.client import LLMClient
-from agentic_commons.llm.types import CompletionRequest, Message
-from agentic_commons.logging import get_logger
-from agentic_commons.tools import NamespacedToolRegistry
+from agent_platform.llm.client import LLMClient
+from agent_platform.llm.types import CompletionRequest, Message
+from agent_platform.logging import get_logger
+from agent_platform.tools import NamespacedToolRegistry
 from design_patterns.agentic._invoke import invoke_tool
 from design_patterns.types import PatternFamily, PatternRun, Step
 

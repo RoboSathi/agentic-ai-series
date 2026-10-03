@@ -9,11 +9,11 @@ builds — the tool's own sentences, the knowledge article, the policy rule
 
 import pytest
 
-from agentic_commons.context.types import Chunk
-from agentic_commons.evals import create_scoring_cascade
-from agentic_commons.evals.entailment import EntailmentResult
-from agentic_commons.guardrails.response import ResponseGuardrail
-from agentic_commons.hallucination_protection import (
+from agent_platform.context.types import Chunk
+from agent_platform.evals import create_scoring_cascade
+from agent_platform.evals.entailment import EntailmentResult
+from agent_platform.guardrails.response import ResponseGuardrail
+from agent_platform.hallucination_protection import (
     ClaimClassifier,
     ClaimDecomposer,
     DetectionLadder,

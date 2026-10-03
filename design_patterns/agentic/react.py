@@ -17,10 +17,10 @@ problem, and the fact that it is crude is the point — a bound you can
 state is worth more than a heuristic you cannot.
 """
 
-from agentic_commons.llm.client import LLMClient
-from agentic_commons.llm.types import CompletionRequest, Message
-from agentic_commons.logging import get_logger
-from agentic_commons.tools import NamespacedToolRegistry
+from agent_platform.llm.client import LLMClient
+from agent_platform.llm.types import CompletionRequest, Message
+from agent_platform.logging import get_logger
+from agent_platform.tools import NamespacedToolRegistry
 from design_patterns.agentic._invoke import invoke_tool
 from design_patterns.types import PatternFamily, PatternRun, Step
 

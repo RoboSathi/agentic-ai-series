@@ -11,7 +11,7 @@ is why reaching for embeddings first is both slower and worse.
 import tempfile
 from pathlib import Path
 
-from agentic_commons.memory import (
+from agent_platform.memory import (
     EpisodicStore,
     MemoryFact,
     MemoryQuery,
@@ -19,7 +19,7 @@ from agentic_commons.memory import (
     Provenance,
     SemanticStore,
 )
-from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
 from episodes._shared import EpisodeOutput, main
 
 

@@ -27,8 +27,8 @@ import pytest
 from rich.console import Console
 
 import episodes
-from agentic_commons.config import REPO_ROOT, get_settings
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.config import REPO_ROOT, get_settings
+from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.graph import build_agent
 from episodes._shared import CONFIG_FILENAME, EpisodeOutput, EpisodeRun, EpisodeSettings
 from tests.conftest import ScriptedLLM

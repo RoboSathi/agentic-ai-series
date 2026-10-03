@@ -9,12 +9,12 @@ waiting: whatever happens, the user gets a reply that says what happened.
 from datetime import datetime
 from typing import Any
 
-from agentic_commons.control_loop import BudgetGuard
-from agentic_commons.control_loop.types import ControlLoopReport
-from agentic_commons.control_loop.watchdogs import ToolControlLoop
-from agentic_commons.logging import describe_error, get_logger, instrument
-from agentic_commons.observability.loop_reporter import LoopReporter
-from agentic_commons.tools.registry import NamespacedToolRegistry
+from agent_platform.control_loop import BudgetGuard
+from agent_platform.control_loop.types import ControlLoopReport
+from agent_platform.control_loop.watchdogs import ToolControlLoop
+from agent_platform.logging import describe_error, get_logger, instrument
+from agent_platform.observability.loop_reporter import LoopReporter
+from agent_platform.tools.registry import NamespacedToolRegistry
 from research_agent.config.settings import AnswerSettings
 from research_agent.context.session import AnswerContext, SessionContext
 from research_agent.domain.budget import TOKENS
@@ -22,10 +22,10 @@ from research_agent.graph.answer_graph import build_answer_graph
 from research_agent.graph.answer_nodes import LOOP_STAGES, AnswerNodes
 from research_agent.graph.answer_state import STEPS, TOOL_CALLS, TURN_KEY, Turn, initial_state
 from research_agent.guardrails.answer_grounding import AnswerGrounding
+from research_agent.llm.structured import StructuredCaller
 from research_agent.prompts import answer as prompt
 from research_agent.research.cards import cap_reached_card
 from research_agent.research.telemetry import RunTelemetry
-from research_agent.structured import StructuredCaller
 
 
 @instrument("research_agent")

@@ -1,6 +1,6 @@
 """BasicSanity: the platform's contract, the agent's rules (LLD §21).
 
-The split is the point. `agentic_commons` owns `BasicSanityChecker` — a
+The split is the point. `agent_platform` owns `BasicSanityChecker` — a
 request in, findings out — and knows nothing about orders or refunds.
 Customer Support supplies `OrderSanityCheck`. Another agent declares the
 same feature and injects its own checker, changing nothing in the
@@ -11,13 +11,13 @@ has.
 
 from typing import Any
 
-from agentic_commons.basic_sanity import (
+from agent_platform.basic_sanity import (
     BasicSanityChecker,
     BasicSanityRequest,
     BasicSanityResult,
 )
-from agentic_commons.config import get_settings
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.config import get_settings
+from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.basic_sanity.order_validator import OrderSanityCheck
 from customer_support_agent.graph import build_agent
 from customer_support_agent.persistence.repositories import OrdersRepository

@@ -1,7 +1,7 @@
 """What each scoping card says: a heading and titled sections of lines.
 
 Pure functions from the facts a node already holds to `(heading, sections)`;
-no state, no I/O. The wording is configuration (`research_agent.narration`),
+no state, no I/O. The wording is configuration (`research_agent.presentation.narration`),
 so a card is a choice of facts, not a sentence written in code. A section
 with nothing to say is left out rather than shown empty.
 """
@@ -12,7 +12,7 @@ from typing import Any
 from research_agent.domain.rubric import Rubric, RubricItem
 from research_agent.domain.scope import CoverageItem, GateVerdict, ScopeBrief
 from research_agent.intent.router import IntentRoute
-from research_agent.narration import Line, bullets, describe, say, title_of, toned
+from research_agent.presentation.narration import Line, bullets, describe, say, title_of, toned
 
 Card = tuple[str, dict[str, Any]]
 

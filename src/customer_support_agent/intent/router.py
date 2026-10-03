@@ -19,16 +19,16 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from agentic_commons.config import get_settings
-from agentic_commons.intent import (
+from agent_platform.config import get_settings
+from agent_platform.intent import (
     IntentAssessment,
     IntentCandidate,
     IntentClassifierInterface,
     IntentDisposition,
     create_intent_classifier,
 )
-from agentic_commons.logging import get_logger
-from agentic_commons.observability import traced
+from agent_platform.logging import get_logger
+from agent_platform.observability import traced
 from customer_support_agent.config import get_agent_settings
 
 
@@ -531,7 +531,7 @@ def load_intent_classifier() -> Any:
     — the router falls back to its deterministic phrase rules — rather
     than stopping whatever is starting it.
     """
-    from agentic_commons.intent import create_intent_classifier
+    from agent_platform.intent import create_intent_classifier
 
     try:
         classifier = create_intent_classifier()

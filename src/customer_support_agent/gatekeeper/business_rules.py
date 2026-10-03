@@ -2,10 +2,10 @@
 
 from typing import Any
 
-from agentic_commons.gatekeeper.contracts import BusinessRuleResult, DeterministicBusinessRules
-from agentic_commons.gatekeeper.types import AuthorityContext, CheckReport
-from agentic_commons.security.auth.policy import AgentPolicy
-from agentic_commons.tools.types import ToolCall
+from agent_platform.gatekeeper.contracts import BusinessRuleResult, DeterministicBusinessRules
+from agent_platform.gatekeeper.types import AuthorityContext, CheckReport
+from agent_platform.security.auth.policy import AgentPolicy
+from agent_platform.tools.types import ToolCall
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.cancellation_policy import CancellationPolicy
 from customer_support_agent.domain.refund_policy import RefundPolicy, RefundValidationResult

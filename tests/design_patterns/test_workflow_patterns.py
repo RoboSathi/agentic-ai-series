@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 
-from agentic_commons.context import Chunk, LexicalRetriever
+from agent_platform.context import Chunk, LexicalRetriever
 from design_patterns import (
     BranchPattern,
     FanOutFanInPattern,
@@ -141,7 +141,7 @@ class TestMapReduce:
 
     async def test_concurrency_is_bounded(self) -> None:
         """Mapping a thousand items must not issue a thousand calls at once."""
-        from agentic_commons.resilience import ResourcePoolBulkhead
+        from agent_platform.resilience import ResourcePoolBulkhead
 
         peak = {"now": 0, "max": 0}
 

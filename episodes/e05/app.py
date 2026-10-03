@@ -9,7 +9,7 @@ Exit artifact: a trajectory of thought/action/observation triples.
 
 from pydantic import BaseModel
 
-from agentic_commons.tools import NamespacedToolRegistry, ToolDefinition, ToolResult
+from agent_platform.tools import NamespacedToolRegistry, ToolDefinition, ToolResult
 from design_patterns import ReActPattern, ToolUsePattern
 from episodes._shared import EpisodeOutput, OfflineLLM, main
 
@@ -49,7 +49,7 @@ async def run() -> EpisodeOutput:
     """Contrast one completion with a ReAct trajectory on the same task."""
     import json
 
-    from agentic_commons.llm.types import ModelToolCall
+    from agent_platform.llm.types import ModelToolCall
 
     output = EpisodeOutput(
         episode="E05",
@@ -76,7 +76,7 @@ async def run() -> EpisodeOutput:
             self._at = 0
 
         async def complete(self, request):  # type: ignore[no-untyped-def]
-            from agentic_commons.llm.types import CompletionResult, TokenUsage
+            from agent_platform.llm.types import CompletionResult, TokenUsage
 
             content, calls = self._turns[min(self._at, len(self._turns) - 1)]
             self._at += 1

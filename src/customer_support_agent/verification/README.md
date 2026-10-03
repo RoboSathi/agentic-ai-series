@@ -18,7 +18,7 @@ No section of its own.
 
 ## Collaborators
 
-- `agentic_commons.verification`, `persistence.RefundLedgerRepository`.
+- `agent_platform.verification`, `persistence.RefundLedgerRepository`.
 
 ## Episodes
 

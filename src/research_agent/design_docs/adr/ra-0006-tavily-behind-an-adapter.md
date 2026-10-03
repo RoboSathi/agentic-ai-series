@@ -6,7 +6,7 @@ Search is the agent's most replaceable dependency and its most expensive to test
 
 ## Decision
 
-`agentic_commons.web.TavilyProvider` implements the `SearchProvider` Protocol behind `WebGateway`; the agent sees `SearchRequest → SearchResponse` only. The key is a bare lowercase env var (`tavily_api_key`). Live calls go through the platform `ResilientCaller` (bulkhead → breaker → retry → timeout) and the host-bucketed rate limiter. The adapter tolerates missing optional fields and keeps the provider's `answer` as `provider_summary` — display only (ra-0013).
+`agent_platform.web.TavilyProvider` implements the `SearchProvider` Protocol behind `WebGateway`; the agent sees `SearchRequest → SearchResponse` only. The key is a bare lowercase env var (`tavily_api_key`). Live calls go through the platform `ResilientCaller` (bulkhead → breaker → retry → timeout) and the host-bucketed rate limiter. The adapter tolerates missing optional fields and keeps the provider's `answer` as `provider_summary` — display only (ra-0013).
 
 ## Consequences
 

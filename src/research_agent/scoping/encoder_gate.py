@@ -19,8 +19,8 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
-from agentic_commons.intent.types import IntentCandidate
-from agentic_commons.logging import get_logger, instrument
+from agent_platform.intent.types import IntentCandidate
+from agent_platform.logging import get_logger, instrument
 from research_agent.config.settings import EncoderGateSettings
 from research_agent.domain.scope import QA, RESEARCH_ARCHETYPES, GateVerdict, Mode
 from research_agent.scoping.gate import LlmArchetypeClassifier

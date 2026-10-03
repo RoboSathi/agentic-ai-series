@@ -7,7 +7,7 @@ section read by `CustomerSupportAgentSettings`.
 
 ## Vocabulary
 
-- **overlay** — this file, merged over `agentic_commons/config/config.yaml` (named by `AGENTIC_OVERLAYS`)
+- **overlay** — this file, merged over `agent_platform/config/config.yaml` (named by `AGENTIC_OVERLAYS`)
 - **features** — this agent's harness posture — declared here, in full, as `CLAUDE.md` requires
 
 ## Public interface

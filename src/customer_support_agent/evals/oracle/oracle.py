@@ -7,7 +7,7 @@ ratio, and a hard failure here is a regression, not a matter of taste.
 
 import re
 
-from agentic_commons.evals.contracts import (
+from agent_platform.evals.contracts import (
     GoldenCase,
     GraderKind,
     Score,

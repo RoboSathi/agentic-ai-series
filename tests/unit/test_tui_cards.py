@@ -8,10 +8,10 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.widgets._collapsible import CollapsibleTitle
 
-from agentic_commons.config import get_settings
-from agentic_commons.observability.types import StatusEvent
-from agentic_commons.tui.app import AgenticTuiApp
-from agentic_commons.tui.widgets import (
+from agent_platform.config import get_settings
+from agent_platform.observability.types import StatusEvent
+from agent_platform.tui.app import AgenticTuiApp
+from agent_platform.tui.widgets import (
     LiveStatusPanel,
     StageEventWidget,
     StatusLineWidget,

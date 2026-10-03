@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from agentic_commons.llm.types import Message
+from agent_platform.llm.types import Message
 
 # The first line of every system prompt names the role, so a transcript
 # (or the fixture model) can tell which role a request belongs to.

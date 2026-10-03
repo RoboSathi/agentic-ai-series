@@ -9,7 +9,7 @@ sufficient tier first, escalating only when the cheap tier's answer will
 not do.
 """
 
-from agentic_commons.observability import CostAggregatorImpl
+from agent_platform.observability import CostAggregatorImpl
 from episodes._shared import EpisodeOutput, main
 
 # (request, tier, cost, succeeded)

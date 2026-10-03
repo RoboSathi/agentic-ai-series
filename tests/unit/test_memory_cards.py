@@ -10,10 +10,10 @@ turn summary instead.
 from types import SimpleNamespace
 from typing import Any
 
-from agentic_commons.memory.facade import _event_fields, _recall_fields
-from agentic_commons.memory.types import MemoryFact, Provenance, RecallReport, ScoredFact
-from agentic_commons.memory.working import WorkingMemoryStore
-from agentic_commons.observability import InMemoryLiveStatusFeed, StageReporter
+from agent_platform.memory.facade import _event_fields, _recall_fields
+from agent_platform.memory.types import MemoryFact, Provenance, RecallReport, ScoredFact
+from agent_platform.memory.working import WorkingMemoryStore
+from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from customer_support_agent.graph.agent import CustomerSupportAgent
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState

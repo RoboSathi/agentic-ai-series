@@ -8,23 +8,23 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, Field
 
-from agentic_commons.audit.ledger import NullAuditLedger
-from agentic_commons.evals.entailment import LexicalEntailmentModel
-from agentic_commons.evals.scoring import create_scoring_cascade
-from agentic_commons.guardrails.guards import PydanticValidator
-from agentic_commons.guardrails.response import ResponseGuardrail
-from agentic_commons.hallucination_protection import DetectionLadder
-from agentic_commons.llm.client import LLMClient
-from agentic_commons.llm.types import ModelToolCall
-from agentic_commons.observability import InMemoryLiveStatusFeed, StageReporter
-from agentic_commons.observability.types import StatusEvent
-from agentic_commons.tools.registry import NamespacedToolRegistry
-from agentic_commons.tools.types import ToolDefinition, ToolResult
+from agent_platform.audit.ledger import NullAuditLedger
+from agent_platform.evals.entailment import LexicalEntailmentModel
+from agent_platform.evals.scoring import create_scoring_cascade
+from agent_platform.guardrails.guards import PydanticValidator
+from agent_platform.guardrails.response import ResponseGuardrail
+from agent_platform.hallucination_protection import DetectionLadder
+from agent_platform.llm.client import LLMClient
+from agent_platform.llm.types import ModelToolCall
+from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
+from agent_platform.observability.types import StatusEvent
+from agent_platform.tools.registry import NamespacedToolRegistry
+from agent_platform.tools.types import ToolDefinition, ToolResult
 from research_agent.config import get_agent_settings
 from research_agent.graph.answerer import DirectAnswerer
 from research_agent.guardrails.answer_grounding import AnswerGrounding
+from research_agent.llm.structured import StructuredCaller
 from research_agent.research.telemetry import RunTelemetry
-from research_agent.structured import StructuredCaller
 from research_agent.tools import URLS_KEY
 from tests.conftest import ScriptedLLM
 

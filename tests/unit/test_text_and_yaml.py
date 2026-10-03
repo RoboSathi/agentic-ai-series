@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from agentic_commons.config.yaml_config import _read_yaml
-from agentic_commons.context.excerpt import relevant_excerpt
-from agentic_commons.text_tree import value_lines
+from agent_platform.config.yaml_config import _read_yaml
+from agent_platform.context.excerpt import relevant_excerpt
+from agent_platform.presentation.text_tree import value_lines
 
 
 class TestValueTree:

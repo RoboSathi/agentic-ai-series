@@ -1,7 +1,7 @@
 """Customer Support's implementation of the generic BasicSanity contract.
 
 This module deliberately owns Customer Support domain knowledge. It knows
-about orders, customers and refund state; ``agentic_commons`` does not.
+about orders, customers and refund state; ``agent_platform`` does not.
 
 The checker runs before the LLM and only performs deterministic work. When an
 explicit order id is present, it looks up the customer's own order and can
@@ -13,14 +13,14 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
-from agentic_commons.basic_sanity import (
+from agent_platform.basic_sanity import (
     BasicSanityChecker,
     BasicSanityFinding,
     BasicSanityRequest,
     BasicSanityResult,
 )
-from agentic_commons.logging import get_logger
-from agentic_commons.money import Money, money_or_none
+from agent_platform.logging import get_logger
+from agent_platform.primitives.money import Money, money_or_none
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.cancellation_policy import CancellationPolicy
 from customer_support_agent.domain.models import Order

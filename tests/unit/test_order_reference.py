@@ -12,8 +12,8 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.memory.working import WorkingMemory
-from agentic_commons.money import Money
+from agent_platform.memory.working import WorkingMemory
+from agent_platform.primitives.money import Money
 from customer_support_agent.basic_sanity.order_validator import OrderSanityCheck
 from customer_support_agent.domain.order_reference import (
     ORDER_UNDER_DISCUSSION,

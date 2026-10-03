@@ -7,10 +7,10 @@ claim no tool result supports does not reach the customer.
 
 from typing import Any
 
-from agentic_commons.guardrails import CustomerResponse
-from agentic_commons.hallucination_protection.checker import Resampler
-from agentic_commons.llm.types import CompletionRequest, Message
-from agentic_commons.resilience import (
+from agent_platform.guardrails import CustomerResponse
+from agent_platform.hallucination_protection.checker import Resampler
+from agent_platform.llm.types import CompletionRequest, Message
+from agent_platform.resilience import (
     external_api_error_fields,
 )
 from customer_support_agent.graph.nodes._support import NodeSupport

@@ -14,8 +14,8 @@ was added because a weak model asked for the same order's status twice
 and then queued the same refund twice.
 """
 
-from agentic_commons.control_loop import LoopVerdict, Trajectory
-from agentic_commons.tools import ToolCall
+from agent_platform.control_loop import LoopVerdict, Trajectory
+from agent_platform.tools import ToolCall
 from customer_support_agent.control_loop import DuplicateActionDetector, action_fingerprint
 from episodes._shared import EpisodeOutput, main
 

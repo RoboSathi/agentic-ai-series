@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agentic_commons.memory import (
+from agent_platform.memory import (
     CompositeRetrievalScorer,
     EpisodicStore,
     MemoryFacade,
@@ -16,9 +16,9 @@ from agentic_commons.memory import (
     SemanticStore,
     WorkingMemory,
 )
-from agentic_commons.memory.write_pipeline import MemoryWritePipelineImpl
-from agentic_commons.observability.types import utc_now
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.memory.write_pipeline import MemoryWritePipelineImpl
+from agent_platform.observability.types import utc_now
+from agent_platform.persistence import SqliteConnectionPool
 
 
 @pytest.fixture
@@ -249,7 +249,7 @@ class TestWritePipeline:
         restore_settings: None,
     ) -> None:
         """Settings are read at construction, so raise the bar first."""
-        from agentic_commons.config import get_settings
+        from agent_platform.config import get_settings
 
         get_settings().memory.write_pipeline.discard_threshold = 0.9
         strict = MemoryWritePipelineImpl(

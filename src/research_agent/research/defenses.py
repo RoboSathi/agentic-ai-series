@@ -23,10 +23,10 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.logging import instrument
-from agentic_commons.security.guard_types import GuardVerdict
-from agentic_commons.security.prompt_injection.detector import InstructionDataSeparator
-from agentic_commons.web import SearchHit
+from agent_platform.logging import instrument
+from agent_platform.security.guard_types import GuardVerdict
+from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
+from agent_platform.web import SearchHit
 from research_agent.config.settings import ResearchSettings
 from research_agent.domain.scope import ScopeBrief
 

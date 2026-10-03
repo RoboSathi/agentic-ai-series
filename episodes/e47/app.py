@@ -8,7 +8,7 @@ parked package with a stated reason is an engineering position; the same
 package with no note is an oversight nobody has noticed yet.
 """
 
-from agentic_commons import control_loop, multi_agent, prompt_compilation, sandbox
+from agent_platform import control_loop, multi_agent, prompt_compilation, sandbox
 from episodes._shared import EpisodeOutput, main
 
 PARKED = [

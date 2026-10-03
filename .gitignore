@@ -12,8 +12,8 @@ venv/
 .DS_Store
 .idea
 logs/*
-src/agentic_commons/data/*
-src/agentic_commons/config/local.yaml
+src/agent_platform/data/*
+src/agent_platform/config/local.yaml
 src/customer_support_agent/dummy_data/*.db
 src/customer_support_agent/dummy_data/episodic/
 

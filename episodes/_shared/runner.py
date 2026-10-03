@@ -26,9 +26,9 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from agentic_commons.commands import Command
-from agentic_commons.config import reload_settings, use_overlay
-from agentic_commons.tui.app import AgenticTuiApp
+from agent_platform.commands import Command
+from agent_platform.config import reload_settings, use_overlay
+from agent_platform.tui.app import AgenticTuiApp
 from customer_support_agent.graph import AgentState, build_agent
 from customer_support_agent.graph.agent import CustomerSupportAgent
 from episodes._shared.settings import EpisodeSettings

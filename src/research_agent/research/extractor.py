@@ -14,16 +14,16 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.context.excerpt import relevant_excerpt
-from agentic_commons.logging import instrument
-from agentic_commons.security.prompt_injection.detector import InstructionDataSeparator
-from agentic_commons.web import FetchedPage
+from agent_platform.context.excerpt import relevant_excerpt
+from agent_platform.logging import instrument
+from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
+from agent_platform.web import FetchedPage
 from research_agent.domain.evidence import ClaimCandidate
+from research_agent.llm.structured import StructuredCaller
 from research_agent.prompts import extractor as extractor_prompt
 from research_agent.prompts import researcher as researcher_prompt
 from research_agent.prompts.extractor import ExtractedClaim
 from research_agent.research.defenses import delimit
-from research_agent.structured import StructuredCaller
 
 
 class PageReading(BaseModel):

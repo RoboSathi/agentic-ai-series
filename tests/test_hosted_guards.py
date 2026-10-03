@@ -3,9 +3,9 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from agentic_commons.resilience import ExponentialBackoffRetry, ResilientCaller
-from agentic_commons.security.content_moderation.hosted import HostedContentSafetyGuard
-from agentic_commons.security.prompt_injection.hosted import HostedJailbreakGuard
+from agent_platform.resilience import ExponentialBackoffRetry, ResilientCaller
+from agent_platform.security.content_moderation.hosted import HostedContentSafetyGuard
+from agent_platform.security.prompt_injection.hosted import HostedJailbreakGuard
 
 
 class FakeResponse:

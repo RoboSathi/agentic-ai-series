@@ -15,9 +15,9 @@ And it is *flagged*, not discarded. A refused write is evidence.
 import tempfile
 from pathlib import Path
 
-from agentic_commons.memory import EpisodicStore, ProceduralStore, SemanticStore
-from agentic_commons.memory.write_pipeline import MemoryWritePipelineImpl
-from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.memory import EpisodicStore, ProceduralStore, SemanticStore
+from agent_platform.memory.write_pipeline import MemoryWritePipelineImpl
+from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
 from episodes._shared import EpisodeOutput, main
 
 

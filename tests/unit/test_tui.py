@@ -3,17 +3,17 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from agentic_commons.commands import ConsoleEffect
-from agentic_commons.commands.harness import HarnessCommand
-from agentic_commons.persistence import SqliteConnectionPool
-from agentic_commons.tui import (
+from agent_platform.commands import ConsoleEffect
+from agent_platform.commands.harness import HarnessCommand
+from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.tui import (
     Osc52ClipboardService,
     StageLabelRegistry,
     StatusLineWidget,
     TokenCounterWidget,
 )
-from agentic_commons.tui.app import AgenticTuiApp
-from agentic_commons.tui.widgets import _compact, _elapsed
+from agent_platform.tui.app import AgenticTuiApp
+from agent_platform.tui.widgets import _compact, _elapsed
 from customer_support_agent.domain.identity import Customer
 from customer_support_agent.graph import build_agent
 from tests.conftest import ScriptedLLM
@@ -124,7 +124,7 @@ class TestLayout:
         from textual.containers import VerticalScroll
         from textual.widgets import Input
 
-        from agentic_commons.tui.app import AgenticTuiApp
+        from agent_platform.tui.app import AgenticTuiApp
 
         app = AgenticTuiApp()
         async with app.run_test(size=(78, 26)):
@@ -136,7 +136,7 @@ class TestLayout:
         """Between the transcript and the chat bar, as in Claude Code."""
         from textual.widgets import Input
 
-        from agentic_commons.tui.app import AgenticTuiApp
+        from agent_platform.tui.app import AgenticTuiApp
 
         app = AgenticTuiApp()
         async with app.run_test(size=(78, 26)):
@@ -147,14 +147,14 @@ class TestLayout:
 
     async def test_nothing_is_docked(self) -> None:
         """Three docked widgets once landed in the same place."""
-        from agentic_commons.tui.app import AgenticTuiApp
+        from agent_platform.tui.app import AgenticTuiApp
 
         assert "dock:" not in AgenticTuiApp.CSS.replace(" ", "")
 
     async def test_the_transcript_takes_the_remaining_height(self) -> None:
         from textual.containers import VerticalScroll
 
-        from agentic_commons.tui.app import AgenticTuiApp
+        from agent_platform.tui.app import AgenticTuiApp
 
         app = AgenticTuiApp()
         async with app.run_test(size=(78, 26)):
@@ -162,7 +162,7 @@ class TestLayout:
 
     async def test_one_session_spans_the_whole_window(self) -> None:
         """Keying per turn would give every message its own conversation."""
-        from agentic_commons.tui.app import AgenticTuiApp
+        from agent_platform.tui.app import AgenticTuiApp
 
         app = AgenticTuiApp()
         first = app._session_id
@@ -250,8 +250,8 @@ class TestEveryKeptCommandIsWired:
     KEPT = ("/help", "/config", "/audit", "/memory", "/eval", "/kb", "/queue", "/harness", "/clear")
 
     def _app(self, pool: object) -> AgenticTuiApp:
-        from agentic_commons.commands.knowledge import KnowledgeBaseCommand
-        from agentic_commons.memory import WorkingMemoryStore
+        from agent_platform.commands.knowledge import KnowledgeBaseCommand
+        from agent_platform.memory import WorkingMemoryStore
         from customer_support_agent.console.commands import QueueCommand
 
         agent = SimpleNamespace(working_memory=WorkingMemoryStore(), handle=None)
