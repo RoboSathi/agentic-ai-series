@@ -23,9 +23,9 @@ from research_agent.graph.answer_nodes import LOOP_STAGES, AnswerNodes
 from research_agent.graph.answer_state import STEPS, TOOL_CALLS, TURN_KEY, Turn, initial_state
 from research_agent.guardrails.answer_grounding import AnswerGrounding
 from research_agent.llm.structured import StructuredCaller
+from research_agent.observability.telemetry import RunTelemetry
 from research_agent.prompts import answer as prompt
 from research_agent.research.cards import cap_reached_card
-from research_agent.research.telemetry import RunTelemetry
 
 
 @instrument("research_agent")

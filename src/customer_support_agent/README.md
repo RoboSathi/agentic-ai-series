@@ -7,7 +7,7 @@ than duplicating it; everything here is this business's vocabulary and
 rules. Business rules live in code (`domain/refund_policy.py`), never only
 in the prompt.
 
-Run it with `make tui`; seed its data with `make dummy-data`; evaluate it
+Run it with `make agent`; seed its data with `make dummy-data`; evaluate it
 with `make eval` (see [evals](evals/README.md)).
 
 ## Modules

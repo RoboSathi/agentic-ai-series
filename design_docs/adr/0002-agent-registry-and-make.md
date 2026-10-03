@@ -12,7 +12,7 @@ believing you ran the other's.
 A registry at the top of the Makefile: `AGENTS := csa ra` and, per agent,
 `<name>_PKG`, `<name>_OVERLAY`, `<name>_DATA`, `<name>_RUNS`. Agent-scoped
 targets take the agent as their **second goal** (the no-op-goal trick the
-file already used for `refund-limit`): `make tui ra`, `make eval csa`,
+file already used for `refund-limit`): `make agent ra`, `make eval csa`,
 `make eval-diff ra A=… B=…`. The name alone sets `AGENTIC_OVERLAYS`.
 
 - A missing, unknown or doubled name prints usage and exits 2.
@@ -29,14 +29,14 @@ file already used for `refund-limit`): `make tui ra`, `make eval csa`,
 
 ## Consequences
 
-- `make tui csa` and `make eval-oracle csa` run exactly the commands
-  `make tui` / `make eval-oracle` ran before (`tests/test_makefile_registry.py`).
+- `make agent csa` and `make eval-oracle csa` run exactly the commands
+  `make agent` / `make eval-oracle` ran before (`tests/test_makefile_registry.py`).
 - Adding an agent is four registry lines; nothing in the platform changes.
-- Muscle memory breaks once: `make tui` now asks which agent.
+- Muscle memory breaks once: `make agent` now asks which agent.
 
 ## Alternatives rejected
 
-- **`AGENT=ra make tui`.** Forgettable, and a stale shell variable silently
+- **`AGENT=ra make agent`.** Forgettable, and a stale shell variable silently
   picks the agent.
 - **Default to csa.** Exactly the silent mis-selection the change exists to
   remove.

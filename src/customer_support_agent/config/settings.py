@@ -13,7 +13,7 @@ The values still come from the same merged YAML: the agent's
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import SettingsConfigDict
 
 from agent_platform.config import get_settings
@@ -115,6 +115,51 @@ class OrderReferenceSettings(BaseModel):
     id_shape: str
 
 
+class AuthMessages(BaseModel):
+    """What a customer reads while proving who they are (`{length}` = code length)."""
+
+    ask_for_code: str
+    unknown_code: str
+
+
+class CsaMessages(BaseModel):
+    """Fixed wording this agent says itself, rather than a model."""
+
+    auth: AuthMessages
+    # A turn the operator cancelled (`{step}` = the node it resumes at).
+    cancelled: str
+
+
+class OrderTableSettings(BaseModel):
+    """How a customer's orders read: the table's columns and the words for each state."""
+
+    headers: list[str] = Field(min_length=7, max_length=7)
+    # How much of a product name one row shows before it is elided.
+    item_width: int = Field(ge=1)
+    ellipsis: str
+    status_words: dict[str, str]
+    refund_words: dict[str, str]
+    # What the refund column says when none was requested (list, and one order's detail).
+    no_refund: str
+    no_refund_detail: str
+
+
+class ConsoleActionSettings(BaseModel):
+    """One console button: its label and Textual variant (`{node}` = where a resume starts)."""
+
+    label: str
+    variant: str = "default"
+
+
+class ConsoleSettings(BaseModel):
+    """This agent's operator-console controls."""
+
+    # The key that cancels the turn in flight.
+    cancel_key: str
+    cancel: ConsoleActionSettings
+    resume: ConsoleActionSettings
+
+
 class CustomerSupportAgentSettings(YamlBackedSettings):
     """The running product's own wiring values (LLD §21)."""
 
@@ -137,6 +182,9 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     user_code_length: int
     user_code_alphabet: str
     user_code_placeholder: str
+    messages: CsaMessages
+    console: ConsoleSettings
+    order_table: OrderTableSettings
     demo_user_code: str
     policy_path: str
     grounding_facts: dict[str, str]

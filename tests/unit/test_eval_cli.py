@@ -78,7 +78,7 @@ class TestPromptfooProviders:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         llm = ScriptedLLM([{"content": '{"pass": true, "score": 1, "reason": "ok"}'}])
-        monkeypatch.setattr(promptfoo_judge_provider, "create_pinned_llm_client", lambda *_: llm)
+        monkeypatch.setattr(promptfoo_judge_provider, "create_judge_client", lambda *_: llm)
         result: dict[str, Any] = promptfoo_judge_provider.call_api("grade this", {}, {})
         assert '"pass": true' in result["output"]
         assert llm.requests[0].messages[0].content == "grade this"

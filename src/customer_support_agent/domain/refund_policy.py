@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from agent_platform.primitives.money import InvalidAmountError, Money
 from customer_support_agent.domain.models import Order
-from customer_support_agent.persistence.repositories import OrdersRepository
+from customer_support_agent.domain.ports import OrderLookup
 
 RefundAction = Literal["request", "process_refund", "queue_for_approval"]
 
@@ -31,7 +31,7 @@ class RefundValidationResult(BaseModel):
 class RefundPolicy:
     """Authoritative, reusable refund business rules for this agent."""
 
-    def __init__(self, orders: OrdersRepository, direct_limit: Money | None = None) -> None:
+    def __init__(self, orders: OrderLookup, direct_limit: Money | None = None) -> None:
         self._orders = orders
         # The most this agent may refund without a person — from its
         # persisted AgentPolicy. None: not known here — the queue is not

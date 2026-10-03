@@ -327,7 +327,7 @@ class TestAnAbstentionIsNotAHallucination:
             )
         )
         assert result.escalated is True
-        assert result.reason_code == "TOOL_EVIDENCE_REFUND_STATE_MISMATCH"
+        assert result.reason_code == "TOOL_EVIDENCE_RECORD_STATE_MISMATCH"
 
     def test_a_negated_claim_is_not_read_as_an_assertion(self) -> None:
         """ "No refund has been processed" carries the settled wording and denies it."""

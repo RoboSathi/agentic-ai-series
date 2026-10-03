@@ -111,6 +111,9 @@ class HostAction:
     command: str
     # Whether it may be pressed while a turn is running (a cancel can; a "finish" cannot).
     during_turn: bool = False
+    # How it is drawn: Textual's button variants (`default`, `primary`, `success`,
+    # `warning`, `error`), so a finishing step reads differently from a stop.
+    variant: str = "default"
 
 
 @runtime_checkable
@@ -122,6 +125,18 @@ class ActionHost(Protocol):
     """
 
     def actions(self, session_id: str) -> Sequence[HostAction]: ...
+
+
+@runtime_checkable
+class SubjectHost(Protocol):
+    """An agent that can say who has proved who they are in a console session.
+
+    The answer is the opaque `subject_id` the agent's records carry, or None
+    while nobody is verified. Console commands that read people's records
+    show only that subject's (`ConsoleScope`).
+    """
+
+    def verified_subject(self, session_id: str) -> str | None: ...
 
 
 @runtime_checkable
@@ -144,4 +159,5 @@ __all__ = [
     "GreetingHost",
     "HostAction",
     "StatusHost",
+    "SubjectHost",
 ]

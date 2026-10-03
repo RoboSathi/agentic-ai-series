@@ -14,9 +14,11 @@ from customer_support_agent.domain.identity import (
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
+from customer_support_agent.presentation.auth import ask_for_code, unknown_code
 from customer_support_agent.presentation.orders import (
     build_menu,
     customer_orders,
+    describe_customer,
     render_order_detail,
     render_order_list,
     resolve_selection,
@@ -99,18 +101,25 @@ class AuthenticationNodes(NodeSupport):
                 )
             return {
                 **masked,
-                "response": result.message,
+                "response": unknown_code() if result.code_attempted else ask_for_code(),
                 "decisions": [
                     *state.decisions,
                     "auth: rejected" if result.code_attempted else "auth: awaiting code",
                 ],
                 "metadata": {**state.metadata, "halted": "unauthenticated"},
             }
-        assert result.customer is not None
+        assert result.customer is not None and result.user is not None
+        # The read-back lists the customer's orders: they verified in order
+        # to talk about one, and the list is the menu a bare "2" resolves in.
+        orders = (
+            customer_orders(self._orders, result.customer.customer_id)
+            if self._orders is not None
+            else []
+        )
+        menu = build_menu(orders)
         if state.session_id:
             self._sessions[state.session_id] = result.customer
-            if result.menu is not None:
-                self._menus[state.session_id] = result.menu
+            self._menus[state.session_id] = menu
         set_current_customer(result.customer)
         self._done(
             "authentication",
@@ -119,7 +128,7 @@ class AuthenticationNodes(NodeSupport):
                 "verified": True,
                 "method": "customer_code",
                 "customer_id": result.customer.customer_id,
-                "orders": result.menu.size if result.menu is not None else 0,
+                "orders": menu.size,
             },
         )
         self._note(
@@ -130,7 +139,7 @@ class AuthenticationNodes(NodeSupport):
         )
         return {
             **masked,
-            "response": result.message,
+            "response": describe_customer(result.user, orders),
             "customer_id": result.customer.customer_id,
             "decisions": [*state.decisions, f"auth: verified #{result.customer.customer_id}"],
             # The verified read-back *is* the answer to "here is my code".
@@ -142,10 +151,7 @@ class AuthenticationNodes(NodeSupport):
                 # On screen that saves them a round trip; replayed into
                 # every later prompt it is the single largest thing the
                 # model reads, and about none of what it is asked.
-                "memory_response": summarise_verification(
-                    result.customer.name,
-                    result.menu.size if result.menu is not None else 0,
-                ),
+                "memory_response": summarise_verification(result.customer.name, menu.size),
             },
         }
 
@@ -167,9 +173,11 @@ class AuthenticationNodes(NodeSupport):
         this agent's harness is set to.
         """
         carried = self._carry_order_reference(state)
-        menu = self._menus.get(state.session_id)
-        if menu is None or self._orders is None or state.customer_id is None:
+        if self._orders is None or state.customer_id is None:
             return carried
+        # The list is answered from the record whether or not one was shown
+        # before: a customer verified upstream has no menu yet, and "show
+        # orders" sent to the model came back as prose about their orders.
         if asks_for_the_list(state.query):
             orders = customer_orders(self._orders, state.customer_id)
             self._menus[state.session_id] = build_menu(orders)
@@ -188,7 +196,8 @@ class AuthenticationNodes(NodeSupport):
                 "menu: listed",
                 remembered_as=summarise_order_list(orders),
             )
-        order_id = resolve_selection(state.query, menu)
+        menu = self._menus.get(state.session_id)
+        order_id = resolve_selection(state.query, menu) if menu is not None else None
         if order_id is None:
             return carried
         self._report(

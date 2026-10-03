@@ -14,7 +14,6 @@ heard of.
 
 from collections.abc import Sequence
 from typing import Any, Callable
-from uuid import uuid4
 
 from textual import events
 from textual.actions import SkipAction
@@ -22,7 +21,15 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Button, Footer, Header, Input, OptionList
 
-from agent_platform.commands import Command, CommandRegistry, ConsoleEffect
+from agent_platform.commands import (
+    PREFIX,
+    Command,
+    CommandRegistry,
+    ConsoleEffect,
+    ConsoleScope,
+    ResumeCommand,
+    ScopedCommand,
+)
 from agent_platform.commands.data import MemoryCommand
 from agent_platform.config import get_settings
 from agent_platform.durability import DurableAgent
@@ -32,9 +39,10 @@ from agent_platform.host import (
     CancellableHost,
     GreetingHost,
     StatusHost,
+    SubjectHost,
     resolve_host,
 )
-from agent_platform.logging import get_logger
+from agent_platform.logging import bound_channel, get_logger, new_session_id
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.types import StatusEvent
 from agent_platform.tui.clipboard import Osc52ClipboardService
@@ -47,6 +55,7 @@ from agent_platform.tui.widgets import (
     LiveStatusPanel,
     StatusLineWidget,
     TokenCounterWidget,
+    palette,
 )
 
 AgentFactory = Callable[[StageReporter], Any]
@@ -120,6 +129,17 @@ class AgenticTuiApp(App[None]):
 
     #actions Button {
         margin-right: 1;
+        min-width: 16;
+        text-style: bold;
+    }
+
+    #actions Button:hover {
+        text-style: bold reverse;
+    }
+
+    #actions Button:disabled {
+        opacity: 50%;
+        text-style: none;
     }
 
     #query {
@@ -189,14 +209,28 @@ class AgenticTuiApp(App[None]):
         self._commands = CommandRegistry()
         self._view = CommandView()
         self._turn = 0
-        self._session_id = f"tui-{uuid4().hex[:8]}"
+        identity = get_settings().agent
+        self._session_id = new_session_id(
+            identity.id, identity.session_separator, identity.session_hex_chars
+        )
         self._follow_latest = True
         self._history_pending = 0
         self._journal = get_logger("tui")
 
+        # Whose records a command may show: this session's verified subject,
+        # when the agent can say who that is. Read live, so a session switch
+        # moves every scoped command with it.
+        self._scope = ConsoleScope(
+            lambda: self._session_id,
+            host.verified_subject if isinstance(host, SubjectHost) else None,
+        )
         # The agent's own commands, then anything this caller added.
         for command in (*(host.commands() if host else ()), *(commands or ())):
-            self._commands.register(command)
+            self._register_command(command)
+        # The registry's own defaults (`/memory` among them) are scoped too.
+        for command in self._commands.all_commands():
+            if isinstance(command, ScopedCommand):
+                command.bind_scope(self._scope)
         self._bind_live_commands()
         # Optional host hooks: absent, the console is exactly what it was.
         self._status_host = host if isinstance(host, StatusHost) else None
@@ -215,12 +249,17 @@ class AgenticTuiApp(App[None]):
         """
         memory = getattr(self._agent, "working_memory", None)
         if memory is not None:
-            self._commands.register(
-                MemoryCommand(
-                    working_memory=memory,
-                    session_id=self._session_id,
-                )
+            self._register_command(
+                MemoryCommand(working_memory=memory, session_id=self._session_id)
             )
+        if isinstance(self._agent, DurableAgent):
+            self._register_command(ResumeCommand(lambda: self._agent))
+
+    def _register_command(self, command: Command) -> None:
+        """Register a command, handing it the console's scope if it narrows by one."""
+        if isinstance(command, ScopedCommand):
+            command.bind_scope(self._scope)
+        self._commands.register(command)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -248,21 +287,22 @@ class AgenticTuiApp(App[None]):
         self._status.bind_tokens(self._tokens)
         self._panel.note(
             "Author = RoboSathi | robosathi.com",
-            style="bold cyan",
+            style=palette("banner"),
         )
-        self._panel.note(self._greeting(), style="yellow")
+        greeting = self._greeting()
+        if greeting:
+            self._panel.note(greeting, style=palette("notice"))
         if self._status_host is not None or self._action_host is not None:
             self.set_interval(get_settings().tui.status_refresh_ms / 1000, self._refresh_status)
         self._announce_resumable_runs()
 
     def _greeting(self) -> str:
-        """The agent's own first words, when it offers them."""
-        if isinstance(self._host, GreetingHost):
-            return self._host.greeting()
-        return (
-            "Before I can look anything up, I need to verify your account.\n"
-            "Please share your 7-character user code."
-        )
+        """The agent's own first words, when it offers them; nothing otherwise.
+
+        The platform has no words of its own to open with: what an agent
+        asks first (a code, a question) is the agent's to say.
+        """
+        return self._host.greeting() if isinstance(self._host, GreetingHost) else ""
 
     def _refresh_status(self) -> None:
         """Redraw the status block and the action buttons from state the host already holds."""
@@ -287,7 +327,8 @@ class AgenticTuiApp(App[None]):
         if isinstance(self._host, CancellableHost):
             stopped = self._host.cancel()
             self._panel.note(
-                "⏹ cancel requested" if stopped else "Nothing is running.", style="yellow"
+                "⏹ cancel requested" if stopped else "Nothing is running.",
+                style=palette("notice"),
             )
 
     def _announce_resumable_runs(self) -> None:
@@ -302,8 +343,9 @@ class AgenticTuiApp(App[None]):
         pending = self._agent.runs.resumable(get_settings().commands.default_limit)
         if pending:
             self._panel.note(
-                f"↻ {len(pending)} run(s) are waiting on a reviewer or can be resumed — /queue lists the reviews",
-                style="bold yellow",
+                f"↻ {len(pending)} run(s) are waiting on a reviewer or can be resumed — "
+                "/queue lists the reviews, /resume <thread> continues a stopped run",
+                style=palette("notice_strong"),
             )
 
     def action_menu_move(self, step: int) -> None:
@@ -343,17 +385,30 @@ class AgenticTuiApp(App[None]):
         )
 
     async def _run_command(self, line: str) -> None:
-        self._panel.note(
-            line,
-            style="bold bright_cyan",
-        )
-        result = await self._commands.dispatch(line)
+        """Run a slash command; one that becomes a turn is shown once, by the turn.
+
+        A conversational command (one that declares `forwards_turn`) is sent to
+        the agent as a turn, and the turn's banner already prints `USER /<command> …`.
+        Echoing the line and the command's title as well put it on screen three
+        times.
+        """
+        forwarded = self._forwards_turn(line)
+        if not forwarded:
+            self._panel.note(line, style=palette("command"))
+        with bound_channel(get_settings().tui.channel):
+            result = await self._commands.dispatch(line)
         self._apply(result.effect)
 
-        if not result.effect.clear_transcript:
+        if not (result.effect.clear_transcript or result.effect.agent_turn):
             self._panel.show_lines(self._view.render(result))
 
         self._schedule_follow_latest()
+
+    def _forwards_turn(self, line: str) -> bool:
+        """Whether the command named in this line declares that it becomes a turn."""
+        words = line.strip().removeprefix(PREFIX).split()
+        command = self._commands.get(words[0]) if words else None
+        return bool(getattr(command, "forwards_turn", False))
 
     def _apply(self, effect: ConsoleEffect) -> None:
         """Do the things only the console can do.
@@ -372,7 +427,7 @@ class AgenticTuiApp(App[None]):
             self._rebuild_agent()
         if effect.session_id and effect.session_id != self._session_id:
             self._session_id = effect.session_id
-            self._panel.note(f"Session switched to {effect.session_id}", style="cyan")
+            self._panel.note(f"Session switched to {effect.session_id}", style=palette("info"))
         if effect.agent_turn:
             self._start_turn(effect.agent_turn)
 
@@ -408,11 +463,11 @@ class AgenticTuiApp(App[None]):
 
         self._panel.note(
             f"\n══════════════ TURN {self._turn:02d} ══════════════",
-            style="bold cyan",
+            style=palette("banner"),
         )
         self._panel.note(
             f"USER  {query}",
-            style="bold white",
+            style=palette("user"),
         )
 
         self._schedule_follow_latest()
@@ -421,7 +476,7 @@ class AgenticTuiApp(App[None]):
         if self._agent is None:
             self._panel.note(
                 "No agent wired; dashboard feed only.",
-                style="yellow",
+                style=palette("notice"),
             )
             self._status.fail()
             self.query_one("#query", Input).disabled = False
@@ -429,19 +484,17 @@ class AgenticTuiApp(App[None]):
             return
 
         try:
-            state = await self._agent.handle(
-                query,
-                session_id=self._session_id,
-            )
+            with bound_channel(get_settings().tui.channel):
+                state = await self._agent.handle(query, session_id=self._session_id)
 
-            self._panel.note("ASSISTANT", style="bold green")
+            self._panel.note("ASSISTANT", style=palette("assistant"))
             self._panel.response(state.response or "")
             self._menu.offer(getattr(state, "choices", None) or [])
             self._panel.note(
                 f"──────── TURN {self._turn:02d} COMPLETE · "
                 f"{self._status.elapsed_seconds:.2f}s · "
                 f"{_compact(self._tokens.turn_tokens)} tokens ────────",
-                style="dim",
+                style=palette("metrics"),
             )
             self._status.finish()
             self._schedule_follow_latest()
@@ -451,7 +504,7 @@ class AgenticTuiApp(App[None]):
             detail = str(exc) or type(exc).__name__
             self._panel.note(
                 f"\n✗ RUN FAILED: {detail}",
-                style="red",
+                style=palette("error"),
             )
             self._status.fail()
             self._schedule_follow_latest()
@@ -495,7 +548,7 @@ class AgenticTuiApp(App[None]):
         path = self._copier.copy(self._panel.as_text())
         self._panel.note(
             f"Feed written to {path}",
-            style="cyan",
+            style=palette("info"),
         )
         self._schedule_follow_latest()
 

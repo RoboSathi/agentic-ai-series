@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS {_TABLE} (
     attempts      INTEGER NOT NULL,
     waiting_on    TEXT NOT NULL,
     started_at    TEXT NOT NULL,
-    updated_at    TEXT NOT NULL
+    updated_at    TEXT NOT NULL,
+    trace_id      TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_{_TABLE}_status ON {_TABLE} (agent_id, status);
 CREATE INDEX IF NOT EXISTS idx_{_TABLE}_session ON {_TABLE} (agent_id, session_id, updated_at);
@@ -39,8 +40,10 @@ CREATE INDEX IF NOT EXISTS idx_{_TABLE}_session ON {_TABLE} (agent_id, session_i
 
 _COLUMNS = (
     "thread_id, agent_id, session_id, subject_id, status, preview, next_node, "
-    "checkpoint_id, error, attempts, waiting_on, started_at, updated_at"
+    "checkpoint_id, error, attempts, waiting_on, started_at, updated_at, trace_id"
 )
+# Columns added after the table first shipped, with the definition that adds them.
+_ADDED_COLUMNS = {"trace_id": "TEXT NOT NULL DEFAULT ''"}
 
 
 class RunRegistry:
@@ -50,9 +53,21 @@ class RunRegistry:
         self._store = store
         self._agent_id = store.agent_id
         self._store.execute_script(_SCHEMA)
+        self._add_missing_columns()
 
-    def start(self, thread_id: str, session_id: str, subject_id: str, preview: str) -> RunRecord:
-        """Register a new run as running."""
+    def _add_missing_columns(self) -> None:
+        """Bring a table created by an earlier release up to the current columns."""
+        present = {
+            str(row["name"]) for row in self._store.iter_rows(f"PRAGMA table_info({_TABLE})")
+        }
+        for column, definition in _ADDED_COLUMNS.items():
+            if column not in present:
+                self._store.execute(f"ALTER TABLE {_TABLE} ADD COLUMN {column} {definition}")
+
+    def start(
+        self, thread_id: str, session_id: str, subject_id: str, preview: str, trace_id: str = ""
+    ) -> RunRecord:
+        """Register a new run as running, with the trace its log lines carry."""
         record = RunRecord(
             thread_id=thread_id,
             agent_id=self._agent_id,
@@ -60,10 +75,11 @@ class RunRegistry:
             subject_id=subject_id,
             preview=preview,
             attempts=1,
+            trace_id=trace_id,
         )
         self._store.execute(
             f"INSERT OR REPLACE INTO {_TABLE} ({_COLUMNS}) VALUES "
-            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             _row(record),
         )
         return record
@@ -165,6 +181,15 @@ class RunRegistry:
             )
         return orphans
 
+    def latest_in_session(self, session_id: str) -> RunRecord | None:
+        """A session's most recent run, however it ended — what a console offers to resume."""
+        row = self._store.query_one(
+            f"SELECT {_COLUMNS} FROM {_TABLE} WHERE agent_id = ? AND session_id = ? "
+            "ORDER BY updated_at DESC",
+            (self._agent_id, session_id),
+        )
+        return _record(row) if row else None
+
     def latest_completed(self, session_id: str) -> RunRecord | None:
         """The last finished run of a session — where its conversation stands."""
         row = self._store.query_one(
@@ -212,6 +237,7 @@ def _row(record: RunRecord) -> tuple[object, ...]:
         record.waiting_on,
         record.started_at.isoformat(),
         record.updated_at.isoformat(),
+        record.trace_id,
     )
 
 

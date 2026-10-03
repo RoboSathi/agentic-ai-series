@@ -17,9 +17,10 @@ from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.report import COVERAGE_AND_LIMITS, LimitEntry, Report, ReportSection
 from research_agent.domain.rubric import Contract, Rubric
 from research_agent.domain.scope import ScopeBrief, SourcePolicy
+from research_agent.domain.sources import is_primary
 from research_agent.planning.dag_validation import validate_plan
 from research_agent.prompts import planner, reflector, synthesizer
-from research_agent.research.defenses import OutboundGuard, apply_source_policy, is_primary
+from research_agent.research.defenses import OutboundGuard, apply_source_policy
 from research_agent.research.stop_rules import StopInput, stop_rule_for
 
 MARKER = "UNIQUE-RAW-PAGE-SENTENCE-7f3a"

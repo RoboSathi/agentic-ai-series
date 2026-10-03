@@ -1,7 +1,7 @@
 """Running one episode: the real agent, configured down (LLD §22).
 
 An episode is not a different program from the product. It is the same
-`build_agent()` the capstone runs and the same terminal app `make tui`
+`build_agent()` the capstone runs and the same terminal app `make agent`
 opens, with a `config.yaml` next to it that decides which subsystems are
 live — which is the series' whole claim about harnesses, demonstrated
 rather than described. Turn memory off in `e30/config.yaml` and the

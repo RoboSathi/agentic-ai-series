@@ -79,7 +79,6 @@ class MessageSettings(BaseModel):
     new_scope: str
     history_empty: str
     unknown_run: str
-    plan_failed: str
     # `{error}`: why a scoping step failed (the session is left ready for a new question).
     scope_failed: str
     # What working memory keeps of a delivered run: `{run_id}`, `{status}`, `{topic}`.
@@ -183,7 +182,7 @@ class PlanningSettings(BaseModel):
 
 
 class MatchingSettings(BaseModel):
-    """Deterministic term matching (research/matching.py)."""
+    """Deterministic term matching (domain/matching.py)."""
 
     token_pattern: str
     stem_chars: int = Field(ge=1)
@@ -550,6 +549,8 @@ class ActionSpec(BaseModel):
     argument: str = ""
     # May be pressed while a turn is running (cancel); the others wait for the turn to end.
     during_turn: bool = False
+    # Textual button variant: how the button is drawn (success, primary, error, ...).
+    variant: str = "default"
 
 
 class PanelSettings(BaseModel):

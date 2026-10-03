@@ -48,7 +48,7 @@ other:
   - pattern: builder
     where: scoping/brief.py · BriefBuilder
   - pattern: observer
-    where: research/telemetry.py (StageReporter + AuditLedger) · WebGateway observer
+    where: observability/telemetry.py (StageReporter + AuditLedger) · WebGateway observer
   - pattern: decorator
     where: research_agent/evals/agent_under_test.py · RecordingLLMClient around every role client
   - pattern: facade

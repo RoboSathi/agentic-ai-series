@@ -12,7 +12,7 @@ then `approved`, then `completed`, or it is `denied` after it was asked
 for — so a claim about where the refund stands is judged against it, in
 both directions, and the record line is never sent to NLI.
 
-The vocabulary is configuration (`hallucination_protection.refund_states`):
+The vocabulary is configuration (`hallucination_protection.record_states`):
 what the statuses are, and which words mean which. The platform owns the
 reading; the agent owns the words.
 """
@@ -39,12 +39,12 @@ class StateFinding(NamedTuple):
 
 
 class StateModel:
-    """Judges a claim about where a refund stands against the refund's recorded status."""
+    """Judges a claim about where a record stands against its recorded status (configured)."""
 
     def __init__(self) -> None:
         settings = get_settings().hallucination_protection
-        states = settings.refund_states
-        self._line = re.compile(settings.refund_state_pattern, re.IGNORECASE)
+        states = settings.record_states
+        self._line = re.compile(settings.record_state_pattern, re.IGNORECASE)
         self._ladder = [status.casefold() for status in states.ladder]
         self._branches = {k.casefold(): v.casefold() for k, v in states.branches.items()}
         self._settled_from = states.settled_from.casefold()
@@ -54,9 +54,16 @@ class StateModel:
         }
         self._identifier = re.compile(settings.record_identifier_pattern, re.IGNORECASE)
         self._context = re.compile(states.context_pattern, re.IGNORECASE)
+        # What the record's status is the status *of*, as a rationale names it.
+        self._subject = states.subject
         self._phrases = [
             (re.compile(phrase.pattern, re.IGNORECASE), phrase) for phrase in states.phrases
         ]
+
+    @property
+    def subject(self) -> str:
+        """What the recorded status is the status of ("refund")."""
+        return self._subject
 
     def judge(self, claim: str, record: list[Chunk]) -> StateFinding | None:
         """Whether the record's current status makes this claim true, or None to defer.
@@ -146,8 +153,8 @@ class StateModel:
         sequence = chunk.metadata.get(_OBSERVATION_SEQUENCE)
         return sequence if isinstance(sequence, int) else -1
 
-    @staticmethod
     def _rationale(
+        self,
         status: str,
         matched: list[tuple[re.Pattern[str], StatePhraseSettings]],
         truths: list[bool],
@@ -155,4 +162,5 @@ class StateModel:
     ) -> str:
         said = ", ".join(sorted({phrase.reaches for _, phrase in matched}))
         verb = "holds" if (not any(truths) if negated else all(truths)) else "does not hold"
-        return f"refund status is {status}, so a claim of {said}{' (denied)' if negated else ''} {verb}"
+        denied = " (denied)" if negated else ""
+        return f"{self._subject} status is {status}, so a claim of {said}{denied} {verb}"

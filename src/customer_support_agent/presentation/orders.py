@@ -14,23 +14,10 @@ paying for a completion to read a table aloud is waste.
 
 from pydantic import BaseModel
 
+from agent_platform.presentation import Align, box_table
+from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.models import Order, User
 from customer_support_agent.persistence.repositories import OrdersRepository
-
-# How an order's state reads to a customer.
-_STATUS_WORDS = {
-    "pending": "being prepared",
-    "shipped": "on its way",
-    "delivered": "delivered",
-    "cancelled": "cancelled",
-}
-_REFUND_WORDS = {
-    "none": "",
-    "pending_review": "refund awaiting review",
-    "approved": "refund approved",
-    "denied": "refund declined",
-    "completed": "refunded in full",
-}
 
 
 class OrderMenu(BaseModel):
@@ -140,7 +127,7 @@ def render_order_detail(order: Order, include_refund: bool = False) -> str:
         f"Order {order.order_id}",
         f"  Item   : {order.description}",
         f"  Placed : {order.timestamp[:10]}",
-        f"  Status : {_STATUS_WORDS.get(order.order_status, order.order_status)}",
+        f"  Status : {_status_word(order)}",
     ]
     if order.quantity > 1:
         lines.append(f"  Each   : {order.unit_price}")
@@ -152,8 +139,10 @@ def render_order_detail(order: Order, include_refund: bool = False) -> str:
     if order.tracking_number and order.carrier:
         lines.append(f"  Track  : {order.carrier} {order.tracking_number}")
     if include_refund:
-        refund = _REFUND_WORDS.get(order.refund_status, order.refund_status)
-        lines.append(f"  Refund : {refund or 'none requested'}")
+        words = get_agent_settings().order_table
+        lines.append(
+            f"  Refund : {words.refund_words.get(order.refund_status) or words.no_refund_detail}"
+        )
     return "\n".join(lines)
 
 
@@ -189,28 +178,41 @@ def customer_orders(orders_repository: OrdersRepository, customer_id: int) -> li
     return sorted(found, key=lambda order: order.timestamp, reverse=True)
 
 
-# How much of a product name one menu row shows before it is elided.
-_ITEM_WIDTH = 34
+# Column alignment: numbers and money right, words left.
+_ALIGN: tuple[Align, ...] = ("right", "left", "left", "left", "left", "left", "right")
 
 
 def _menu_lines(orders: list[Order]) -> list[str]:
-    """One aligned row per order: id, date, order status, refund status, total.
+    """One box table, one row per order: position, id, date, item, status, refund, total.
 
-    The list is rendered deterministically so the customer sees the same
-    authoritative refund state that the database returned. This function is
-    shared by the post-authentication greeting and an explicit "show orders"
-    request, so both surfaces stay consistent.
+    Rendered from the record so the customer sees the same authoritative
+    refund state the database returned. Shared by the verified greeting and
+    an explicit "show orders", so both read the same.
     """
-    return [
-        f"  {position:>2}. Order {order.order_id}  {order.timestamp[:10]}  "
-        f"{_shorten(order.description):<34} "
-        f"{_STATUS_WORDS.get(order.order_status, order.order_status):<14} "
-        f"{('Refund: ' + _REFUND_WORDS.get(order.refund_status, order.refund_status) if _REFUND_WORDS.get(order.refund_status, order.refund_status) else 'Refund: none'): <25} "
-        f"{str(order.amount):>10}"
+    table = get_agent_settings().order_table
+    rows = [
+        [
+            str(position),
+            str(order.order_id),
+            order.timestamp[:10],
+            _shorten(order.description),
+            _status_word(order),
+            table.refund_words.get(order.refund_status) or table.no_refund,
+            str(order.amount),
+        ]
         for position, order in enumerate(orders, start=1)
     ]
+    return box_table(table.headers, rows, _ALIGN)
+
+
+def _status_word(order: Order) -> str:
+    """An order's state in the customer's words (configured), else the raw status."""
+    return get_agent_settings().order_table.status_words.get(order.order_status, order.order_status)
 
 
 def _shorten(text: str) -> str:
     """Keep one order to one line, whatever it is called."""
-    return text if len(text) <= _ITEM_WIDTH else text[: _ITEM_WIDTH - 1] + "…"
+    table = get_agent_settings().order_table
+    if len(text) <= table.item_width:
+        return text
+    return text[: table.item_width - len(table.ellipsis)] + table.ellipsis

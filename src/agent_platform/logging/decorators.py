@@ -20,7 +20,7 @@ import typing
 from typing import Any, Callable, TypeVar, cast
 
 from agent_platform.config import is_enabled
-from agent_platform.logging.core import SUBSYSTEM_COLORS, get_logger
+from agent_platform.logging.core import get_logger, subsystem_color
 
 T = TypeVar("T")
 C = TypeVar("C")
@@ -40,7 +40,6 @@ def logged(
         toggle_path: dotted feature path (e.g. "security.pii"). When given
             and disabled, the wrapped call is skipped entirely.
     """
-    color = SUBSYSTEM_COLORS.get(subsystem, "white")
 
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         # Resolved once, at decoration: a positional argument's *name* is
@@ -55,10 +54,10 @@ def logged(
             """Log the call, or report that the toggle skipped it."""
             logger = get_logger(subsystem)
             if toggle_path is not None and not is_enabled(toggle_path):
-                logger.log_skipped(func.__qualname__, color, toggle_path)
+                logger.log_skipped(func.__qualname__, subsystem_color(subsystem), toggle_path)
                 return logger, -1.0, {}
             bound = _bind(parameters, args, kwargs)
-            logger.log_called(func.__qualname__, color, bound, kwargs)
+            logger.log_called(func.__qualname__, subsystem_color(subsystem), bound, kwargs)
             return logger, time.perf_counter(), bound
 
         if inspect.iscoroutinefunction(func):
@@ -73,7 +72,11 @@ def logged(
                     return _placeholder_for(func)
                 result = await func(*args, **kwargs)
                 logger.log_returned(
-                    func.__qualname__, color, result, (time.perf_counter() - start) * 1000, bound
+                    func.__qualname__,
+                    subsystem_color(subsystem),
+                    result,
+                    (time.perf_counter() - start) * 1000,
+                    bound,
                 )
                 return result
 
@@ -87,7 +90,11 @@ def logged(
                 return _placeholder_for(func)
             result = func(*args, **kwargs)
             logger.log_returned(
-                func.__qualname__, color, result, (time.perf_counter() - start) * 1000, bound
+                func.__qualname__,
+                subsystem_color(subsystem),
+                result,
+                (time.perf_counter() - start) * 1000,
+                bound,
             )
             return result
 

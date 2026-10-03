@@ -16,7 +16,7 @@ import textwrap
 import time
 from collections.abc import Mapping, Sequence
 from functools import cache
-from typing import Any
+from typing import Any, cast
 
 from rich.text import Text
 from textual.containers import Horizontal, VerticalScroll
@@ -24,6 +24,7 @@ from textual.content import Content
 from textual.reactive import reactive
 from textual.widgets import Button, Collapsible, OptionList, Static
 from textual.widgets._collapsible import CollapsibleTitle
+from textual.widgets.button import ButtonVariant
 from textual.widgets.option_list import Option
 
 from agent_platform.config import get_settings
@@ -43,21 +44,8 @@ STATUS_MARKS = {
     "blocked": "✗",
 }
 
-SUMMARY_ACCENT_STYLES = {
-    "intent": "magenta",
-    "decision": "magenta",
-    "security": "yellow",
-    "context": "blue",
-    "memory": "blue",
-    "model": "blue",
-    "tool_request": "blue",
-    "tool_result": "blue",
-    "gatekeeper": "white",
-    "resilience": "yellow",
-    "control_loop": "blue",
-    "grounding": "blue",
-    "escalation": "yellow",
-}
+# Where an agent's own subject fields sit in the card order.
+_SUBJECT_SLOT = "__subject_fields__"
 
 # Common field ordering for expanded cards.  Any other safe semantic fields
 # follow alphabetically.
@@ -81,8 +69,8 @@ FIELD_PRIORITY = (
     "question",
     "intent",
     "topic",
-    "order_id",
-    "customer_id",
+    # An agent's subject fields (`agent.subject_fields`) are ranked here.
+    _SUBJECT_SLOT,
     "amount",
     "requested_amount",
     "allowed_amount",
@@ -110,7 +98,6 @@ FIELD_PRIORITY = (
     "tool",
     "qualified_tool",
     "result",
-    "refund_status",
     "status",
     "verified",
     "method",
@@ -178,8 +165,6 @@ FIELD_PRIORITY = (
 )
 
 FIELD_LABELS = {
-    "order_id": "order",
-    "customer_id": "customer",
     "policy_version": "policy",
     "requested_amount": "requested",
     "allowed_amount": "allowed",
@@ -203,10 +188,11 @@ AMOUNT_FIELDS = {
 
 # How a claim's verdict is marked on a card; the tally wording comes with
 # the guardrail result, so title, log and card agree.
+# The middle value is the claim's tone (`tui.tone_styles`), not a colour.
 _CLAIM_MARKS = {
-    "supported": ("✓", "green", "supported"),
-    "undetermined": ("?", "yellow", "unverified"),
-    "refuted": ("✗", "red", "contradicted"),
+    "supported": ("✓", "pass", "supported"),
+    "undetermined": ("?", "warn", "unverified"),
+    "refuted": ("✗", "fail", "contradicted"),
 }
 # The NLI result each verdict is decided by, and its display name.
 _DECIDING_LABEL = {"supported": "entailment", "refuted": "contradiction"}
@@ -396,10 +382,10 @@ class StatusLineWidget(Static):
         marker = (
             settings.status_expanded_symbol if self._expanded else settings.status_collapsed_symbol
         )
-        text = Text(f"{marker} ", style="bold")
+        text = Text(f"{marker} ", style=palette("marker"))
         text.append_text(headline)
         if not self._expanded:
-            text.append(f"  {settings.status_expand_hint}", style="dim")
+            text.append(f"  {settings.status_expand_hint}", style=palette("muted"))
         return text
 
     def _render_headline(self) -> Text:
@@ -424,19 +410,19 @@ class StatusLineWidget(Static):
             line.append(
                 f"  ({_elapsed(self.elapsed_seconds)} · "
                 f"↓ {_compact(self._tokens.turn_tokens)} tokens)",
-                style="dim",
+                style=palette("metrics"),
             )
         elif self._started_at:
             line.append(
                 f"  ({_elapsed(self.elapsed_seconds)})",
-                style="dim",
+                style=palette("metrics"),
             )
 
         if not self._following:
-            line.append("  · HISTORY", style="yellow")
+            line.append("  · HISTORY", style=palette("history"))
             if self._history_pending:
-                line.append(f" · +{self._history_pending} new", style="yellow")
-            line.append(f" · {get_settings().tui.status_history_hint}", style="dim yellow")
+                line.append(f" · +{self._history_pending} new", style=palette("history"))
+            line.append(f" · {get_settings().tui.status_history_hint}", style=palette("history"))
 
         return line
 
@@ -525,7 +511,7 @@ class StageEventWidget(Collapsible):
             if rendered_fields:
                 body.append("\n")
             body.append("  ")
-            _append_pair(body, FIELD_LABELS.get(name, name), " = ", _format_value(name, value))
+            _append_pair(body, _label(name), " = ", _format_value(name, value))
             rendered_fields = True
 
         # The summary is already shown in the collapsed title.
@@ -535,7 +521,7 @@ class StageEventWidget(Collapsible):
             if self.event.summary:
                 body.append(
                     self.event.summary,
-                    style="bold",
+                    style=palette("emphasis"),
                 )
             elif self.event.detail:
                 body.append("detail = ")
@@ -553,7 +539,7 @@ class StageEventWidget(Collapsible):
         if not body:
             body.append(
                 "No additional semantic detail.",
-                style="dim",
+                style=palette("muted"),
             )
 
         return body
@@ -566,7 +552,7 @@ class StageEventWidget(Collapsible):
         you still have to go to the log files for.
         """
         styles = get_settings().tui.body_styles
-        body.append(f"  {FIELD_LABELS.get(name, name)}:", style=styles["key"])
+        body.append(f"  {_label(name)}:", style=styles["key"])
         for line in _block_lines(value):
             body.append("\n    ")
             _append_line(body, line, "")
@@ -594,11 +580,12 @@ class StageEventWidget(Collapsible):
                 return f"out of scope · {fields['topic']}"
 
         if stage == "authentication":
-            return "customer verified" if fields.get("verified") else "verification required"
+            return "identity verified" if fields.get("verified") else "verification required"
 
         if stage == "basic_sanity":
-            if fields.get("reason_code") == "ORDER_REFERENCE_NOT_PRESENT":
-                return "order reference not provided · validation deferred"
+            summary = get_settings().tui.reason_summaries.get(str(fields.get("reason_code")))
+            if summary:
+                return summary
             return "checks passed" if fields.get("passed") else "blocked"
 
         if stage == "prompt_injection_check":
@@ -670,25 +657,21 @@ class StageEventWidget(Collapsible):
                 if isinstance(first, Mapping):
                     tool = first.get("tool") or first.get("name")
                     arguments = first.get("arguments")
-                    order_id = None
-                    amount = None
+                    parsed: Any = arguments
                     if isinstance(arguments, str):
                         try:
                             parsed = json.loads(arguments)
                         except (TypeError, ValueError, json.JSONDecodeError):
                             parsed = {}
-                        if isinstance(parsed, Mapping):
-                            order_id = parsed.get("order_id")
-                            amount = parsed.get("amount")
-                    elif isinstance(arguments, Mapping):
-                        order_id = arguments.get("order_id")
-                        amount = arguments.get("amount")
+                    given = parsed if isinstance(parsed, Mapping) else {}
+                    subject = _subject_part(given)
+                    amount = given.get("amount")
                     parts = [
                         "tool requested",
                         self._labels.tool_label(str(tool)) if tool else "tool",
                     ]
-                    if order_id is not None:
-                        parts.append(f"order {order_id}")
+                    if subject:
+                        parts.append(subject)
                     if amount is not None:
                         parts.append(_format_value("amount", amount))
                     return " · ".join(parts)
@@ -731,15 +714,15 @@ class StageEventWidget(Collapsible):
         if stage == "gatekeeper_evaluation":
             verdict = fields.get("decision") or fields.get("verdict")
             action = fields.get("action")
-            order_id = fields.get("order_id")
+            subject = _subject_part(fields)
             amount = _first_present(fields, AMOUNT_FIELDS)
             parts = []
             if verdict:
                 parts.append(str(verdict).upper())
             if action:
                 parts.append(self._labels.tool_label(str(action)))
-            if order_id is not None:
-                parts.append(f"order {order_id}")
+            if subject:
+                parts.append(subject)
             if amount is not None:
                 parts.append(_format_value("amount", amount))
             checks = fields.get("checks")
@@ -827,18 +810,18 @@ class StageEventWidget(Collapsible):
         for name in names:
             value = fields.get(name)
             if value is not None:
-                parts.append(f"{FIELD_LABELS.get(name, name)}={_format_value(name, value)}")
+                parts.append(f"{_label(name)}={_format_value(name, value)}")
         return " · ".join(parts)
 
     def _tool_summary(self, fields: Mapping[str, Any]) -> str:
         tool = fields.get("tool") or fields.get("action")
         tool_name = self._labels.tool_label(str(tool)) if tool else "tool"
         result = fields.get("result")
-        order_id = fields.get("order_id")
+        subject = _subject_part(fields)
         amount = _first_present(fields, AMOUNT_FIELDS)
         parts = [tool_name]
-        if order_id is not None:
-            parts.append(f"order {order_id}")
+        if subject:
+            parts.append(subject)
         if amount is not None:
             parts.append(_format_value("amount", amount))
         if result and str(result) not in {"success", "ok", "completed"}:
@@ -850,7 +833,7 @@ class StageEventWidget(Collapsible):
         fields: Mapping[str, Any],
     ) -> list[tuple[str, Any]]:
         visible = [(name, value) for name, value in fields.items() if name not in MUTED_FIELDS]
-        rank = {name: index for index, name in enumerate(FIELD_PRIORITY)}
+        rank = {name: index for index, name in enumerate(_field_priority())}
         return sorted(
             visible,
             key=lambda item: (rank.get(item[0], len(rank)), item[0]),
@@ -898,7 +881,7 @@ def _append_narrative(body: Text, event: StatusEvent) -> None:
         body.append("\n  ")
         _append_pair(body, "took", " ", _format_value(NARRATIVE_TIMING_FIELD, took))
     if not body:
-        body.append(event.summary or "", style="bold")
+        body.append(event.summary or "", style=palette("emphasis"))
 
 
 def _append_line(body: Text, text: str, tone_style: str) -> None:
@@ -960,21 +943,26 @@ def _append_grounding(body: Text, fields: Mapping[str, Any]) -> None:
     what was it checked against, and what decided each sentence.
     """
     escalated = bool(fields.get("escalated"))
-    _append_row(body, "result", str(fields.get("outcome") or ""), "red" if escalated else "green")
+    _append_row(
+        body, "result", str(fields.get("outcome") or ""), _tone("fail" if escalated else "pass")
+    )
     checks = [c for c in fields.get("claim_checks") or [] if isinstance(c, Mapping)]
     if checks:
         unverified = any(c.get("verdict") == "undetermined" for c in checks)
         note = " (unverified does not block)" if unverified else ""
-        _append_row(body, "claims", str(fields.get("tally") or "") + note, "bright_white")
+        _append_row(body, "claims", str(fields.get("tally") or "") + note, palette("emphasis"))
     _append_row(
-        body, "checked against", str(fields.get("evidence_searched") or "no evidence"), "dim"
+        body,
+        "checked against",
+        str(fields.get("evidence_searched") or "no evidence"),
+        palette("muted"),
     )
     provenance = [str(line) for line in fields.get("provenance_checks") or []]
     if provenance:
-        _append_row(body, "ids & amounts", "  ".join(provenance), "dim")
+        _append_row(body, "ids & amounts", "  ".join(provenance), palette("muted"))
     checker = next((c for c in checks if c.get("decided_by") != "deterministic_provenance"), None)
     if checker is not None:
-        _append_row(body, "checker", _checker_line(checker), "dim")
+        _append_row(body, "checker", _checker_line(checker), palette("muted"))
     for check in checks:
         _append_claim(body, check)
 
@@ -982,7 +970,7 @@ def _append_grounding(body: Text, fields: Mapping[str, Any]) -> None:
 def _append_row(body: Text, label: str, value: str, style: str) -> None:
     if body:
         body.append("\n")
-    body.append(f"  {label:<16}", style="bright_white")
+    body.append(f"  {label:<16}", style=palette("emphasis"))
     body.append(value, style=style)
 
 
@@ -1008,9 +996,10 @@ def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
     how the claim was checked is in `guardrails.log`.
     """
     verdict = str(check.get("verdict") or _UNDETERMINED)
-    mark, style, _ = _CLAIM_MARKS.get(verdict, ("?", "yellow", verdict))
+    mark, tone, _ = _CLAIM_MARKS.get(verdict, ("?", "warn", verdict))
+    style = _tone(tone)
     body.append(f"\n\n  {mark} ", style=style)
-    body.append(str(check.get("claim") or ""), style="bright_white")
+    body.append(str(check.get("claim") or ""), style=palette("emphasis"))
     evidence = [item for item in check.get("evidence") or [] if isinstance(item, Mapping)]
     if verdict == _UNDETERMINED:
         _append_unverified(body, evidence, style)
@@ -1028,7 +1017,7 @@ def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
         f"\n      {lead} [{_title(item.get('tier'))}]{f' ({basis})' if basis else ''}: ",
         style=style,
     )
-    body.append(f'"{_excerpt(item)}"', style="dim")
+    body.append(f'"{_excerpt(item)}"', style=palette("muted"))
 
 
 def _append_unverified(body: Text, evidence: list[Mapping[str, Any]], style: str) -> None:
@@ -1044,7 +1033,7 @@ def _append_unverified(body: Text, evidence: list[Mapping[str, Any]], style: str
         f"{_NLI_NAMES.get(label, label)} ({float(best.get('nli_score') or 0):.2f}): ",
         style=style,
     )
-    body.append(f'"{_excerpt(best)}"', style="dim")
+    body.append(f'"{_excerpt(best)}"', style=palette("muted"))
 
 
 def _was_scored(item: Mapping[str, Any]) -> bool:
@@ -1299,7 +1288,10 @@ class ActionBar(Horizontal):
         for index, action in enumerate(actions):
             button_id = f"action-{self._generation}-{index}"
             commands[button_id] = action.command
-            button = Button(action.label, id=button_id, compact=True)
+            # Full-size, bordered and coloured by variant: a compact button has no
+            # border or fill and read as plain text nobody thought to click.
+            variant = cast(ButtonVariant, getattr(action, "variant", "default"))
+            button = Button(action.label, id=button_id, variant=variant)
             button.disabled = busy and not action.during_turn
             buttons.append(button)
         self.remove_children()
@@ -1488,11 +1480,45 @@ def _decision_summary(
     return " · ".join(parts)
 
 
+def palette(role: str) -> str:
+    """The configured style for one console role (`tui.palette`): banner, metrics, muted, ..."""
+    return get_settings().tui.palette[role]
+
+
+def _tone(name: str) -> str:
+    """A state's style (`tui.tone_styles`): pass, fail, warn, dim."""
+    return get_settings().tui.tone_styles[name]
+
+
+def _field_priority() -> tuple[str, ...]:
+    """The card field order, with this agent's subject fields in their slot."""
+    subjects = tuple(subject.field for subject in get_settings().agent.subject_fields)
+    index = FIELD_PRIORITY.index(_SUBJECT_SLOT)
+    return FIELD_PRIORITY[:index] + subjects + FIELD_PRIORITY[index + 1 :]
+
+
+def _label(name: str) -> str:
+    """A field's name as a card shows it: an agent's subject label, else the platform's."""
+    for subject in get_settings().agent.subject_fields:
+        if subject.field == name:
+            return subject.label
+    return FIELD_LABELS.get(name, name)
+
+
+def _subject_part(fields: Mapping[str, Any]) -> str:
+    """What an action is about, for a one-line summary ("order 10042"), or ''."""
+    for subject in get_settings().agent.subject_fields:
+        value = fields.get(subject.field)
+        if subject.summarise and value is not None:
+            return f"{subject.label} {value}"
+    return ""
+
+
 def _first_present(
     fields: Mapping[str, Any],
     names: set[str],
 ) -> Any | None:
-    for name in FIELD_PRIORITY:
+    for name in _field_priority():
         if name in names and name in fields:
             return fields[name]
     return None

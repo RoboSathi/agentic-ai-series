@@ -16,7 +16,7 @@ from agent_platform.logging import logged
 from agent_platform.tools.types import ToolResult
 from agent_platform.web import SearchRequest, WebGateway
 from research_agent.config.settings import AnswerSettings
-from research_agent.research.defenses import InjectionScreen
+from research_agent.guardrails.injection import InjectionScreen
 from research_agent.tools import URLS_KEY
 
 _BLANK_RUNS = re.compile(r"\n\s*\n+")

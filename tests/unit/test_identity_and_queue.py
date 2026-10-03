@@ -129,6 +129,9 @@ class _Agent:
     async def checkpoint_history(self, thread_id: str) -> list[Any]:
         return []
 
+    def cancel(self) -> bool:
+        return False
+
 
 def _service(outcome: ReviewOutcome) -> Any:
     async def approve(request_id: int, reviewer: str) -> ReviewOutcome:

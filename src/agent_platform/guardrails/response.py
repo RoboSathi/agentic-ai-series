@@ -21,16 +21,10 @@ from agent_platform.hallucination_protection.checker import (
 )
 from agent_platform.hallucination_protection.claims import sentence_pieces
 from agent_platform.hallucination_protection.direct import (
-    AMOUNT_MISMATCH,
-    DETAIL_UNSOURCED,
-    NO_RECORD,
-    NOT_EXECUTED,
     NOT_EXECUTED_MARKER,
-    ORDER_MISMATCH,
-    REFUND_STATE_MISMATCH,
     amounts,
     numbers,
-    order_ids,
+    record_ids,
 )
 from agent_platform.hallucination_protection.resolver import DIRECT_TIER, RESTATEMENT_MODEL
 from agent_platform.hallucination_protection.types import DetectionVerdict, GenerationAssessment
@@ -90,7 +84,8 @@ class ResponseGuardrailResult(BaseModel):
         `hallucination_scope` each say part of this; the card says it once.
         """
         if self.escalated:
-            why = _BLOCK_REASONS.get(self.reason_code, self.reason_code)
+            # Why, in the words a card shows (`guardrails.block_reasons`, by finding code).
+            why = get_settings().guardrails.block_reasons.get(self.reason_code, self.reason_code)
             return f"BLOCKED · {why} · escalated to human review"
         if self.repaired:
             return f"PASSED after {self.repair_attempts} rewrite(s) · rewritten reply sent"
@@ -359,17 +354,6 @@ _VERDICT_NAMES = {
 # The detector name prefix of the word-overlap fallback, which is not NLI.
 _LEXICAL = "lexical"
 
-# Why a reply was blocked, in the words a card shows.
-_BLOCK_REASONS = {
-    NO_RECORD: "states an outcome no tool result shows",
-    ORDER_MISMATCH: "names an order number found in no evidence",
-    AMOUNT_MISMATCH: "states an amount found in no evidence",
-    REFUND_STATE_MISMATCH: "says the refund is settled; the record disagrees",
-    NOT_EXECUTED: "claims a refund the tool call never executed",
-    DETAIL_UNSOURCED: "states a date or number found in no evidence",
-    BLOCK_CODE: "a claim is contradicted by the evidence",
-}
-
 # Evidence tiers, in the words a card shows.
 _TIER_NAMES = {
     "tool_result": "tool result",
@@ -414,10 +398,11 @@ def _claim_check(verdict: DetectionVerdict) -> dict[str, Any]:
 
 
 def _provenance_report(response: str, evidence: list[Chunk]) -> list[str]:
-    """Each order number and amount the reply states, and which tier (if any) has it."""
+    """Each record id and amount the reply states, and which tier (if any) has it."""
+    label = get_settings().hallucination_protection.record_identifier_label
     orders = [
-        _found(f"order {order_id}", [c for c in evidence if order_id in numbers(c.content)])
-        for order_id in sorted(order_ids(response))
+        _found(f"{label} {record_id}", [c for c in evidence if record_id in numbers(c.content)])
+        for record_id in sorted(record_ids(response))
     ]
     stated = [
         _found(str(amount), [c for c in evidence if amount in amounts(c.content)])

@@ -63,7 +63,7 @@ class VersionManifest:
             ComponentVersion(
                 component="prompt",
                 version=settings.audit.prompt_version,
-                source="customer_support_agent/prompts",
+                source=settings.audit.prompt_source,
             ),
             ComponentVersion(
                 component="tool_schema",
@@ -75,7 +75,7 @@ class VersionManifest:
                 version=settings.audit.policy_version,
                 # The one exception, and the reason this field exists.
                 canaryable=False,
-                source="gatekeeper + customer_policy.md",
+                source=settings.audit.policy_source,
             ),
             ComponentVersion(
                 component="evaluator",

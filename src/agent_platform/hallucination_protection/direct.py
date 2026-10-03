@@ -25,9 +25,9 @@ from agent_platform.primitives.money import Money, money_or_none
 NOT_EXECUTED_MARKER = "NOT EXECUTED"
 
 NO_RECORD = "BUSINESS_CLAIM_WITHOUT_TOOL_EVIDENCE"
-ORDER_MISMATCH = "TOOL_EVIDENCE_ORDER_MISMATCH"
+IDENTIFIER_MISMATCH = "TOOL_EVIDENCE_IDENTIFIER_MISMATCH"
 AMOUNT_MISMATCH = "TOOL_EVIDENCE_AMOUNT_MISMATCH"
-REFUND_STATE_MISMATCH = "TOOL_EVIDENCE_REFUND_STATE_MISMATCH"
+RECORD_STATE_MISMATCH = "TOOL_EVIDENCE_RECORD_STATE_MISMATCH"
 NOT_EXECUTED = "TOOL_EVIDENCE_NOT_EXECUTED"
 DETAIL_UNSOURCED = "CLAIM_DETAIL_UNSOURCED"
 
@@ -40,12 +40,17 @@ class DirectFinding(NamedTuple):
     chunk: Chunk | None = None
 
 
-def order_ids(text: str) -> set[str]:
-    """The digits of every order reference a text names."""
+def record_ids(text: str) -> set[str]:
+    """The digits of every record reference a text names."""
     pattern = re.compile(
         get_settings().hallucination_protection.record_identifier_pattern, re.IGNORECASE
     )
     return {digits for found in pattern.findall(text) for digits in re.findall(r"\d+", found)}
+
+
+def _label() -> str:
+    """What a record id is called (`hallucination_protection.record_identifier_label`)."""
+    return get_settings().hallucination_protection.record_identifier_label
 
 
 def numbers(text: str) -> set[str]:
@@ -117,12 +122,12 @@ class DirectChecker:
         """
         if not self._refusal.search(claim):
             return None
-        named = order_ids(claim)
+        named = record_ids(claim)
         for chunk in record:
             if NOT_EXECUTED_MARKER in chunk.content and (
                 not named or named & numbers(chunk.content)
             ):
-                return "the tool call for this order was not executed", chunk
+                return f"the tool call for this {_label()} was not executed", chunk
         return None
 
     def unsourced_detail(self, claim: str, evidence: list[Chunk]) -> DirectFinding | None:
@@ -143,11 +148,11 @@ class DirectChecker:
 
     def _unsourced(self, claim: str, text: str) -> DirectFinding | None:
         """An order number or an amount the record never mentions."""
-        missing_orders = sorted(order_ids(claim) - numbers(text))
-        if missing_orders:
+        missing_ids = sorted(record_ids(claim) - numbers(text))
+        if missing_ids:
             return DirectFinding(
-                ORDER_MISMATCH,
-                f"Order reference(s) {missing_orders} appear in the reply but in no tool result.",
+                IDENTIFIER_MISMATCH,
+                f"{_label().capitalize()} reference(s) {missing_ids} appear in the reply but in no tool result.",
             )
         missing_amounts = [str(a) for a in sorted(amounts(claim) - amounts(text))]
         if missing_amounts:
@@ -171,12 +176,12 @@ class DirectChecker:
             return (
                 None
                 if finding.holds
-                else DirectFinding(REFUND_STATE_MISMATCH, finding.rationale, finding.chunk)
+                else DirectFinding(RECORD_STATE_MISMATCH, finding.rationale, finding.chunk)
             )
         if NOT_EXECUTED_MARKER in text and self._states.asserts_settled(claim):
             return DirectFinding(
                 NOT_EXECUTED,
-                "The reply says a refund happened, but the only refund evidence is a call that "
-                "was not executed.",
+                f"The reply says a {self._states.subject} happened, but the only "
+                f"{self._states.subject} evidence is a call that was not executed.",
             )
         return None

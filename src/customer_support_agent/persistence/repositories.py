@@ -274,6 +274,10 @@ class HitlQueueRepository:
         """Everything still awaiting a human decision."""
         return self.query(status="pending")
 
+    def pending_for_user(self, user_id: int) -> list[HitlRequest]:
+        """One customer's requests still awaiting a human decision."""
+        return self.query(user_id=user_id, status="pending")
+
     def pending_for_order(self, order_id: int) -> HitlRequest | None:
         """An existing pending request for an order, if there is one.
 

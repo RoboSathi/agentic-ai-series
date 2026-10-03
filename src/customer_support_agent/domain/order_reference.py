@@ -18,11 +18,11 @@ about one order and acts on another.
 """
 
 import re
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Sequence
+from typing import Protocol
 
 from agent_platform.memory.working import WorkingMemory
-from customer_support_agent.config import get_agent_settings
+from customer_support_agent.domain.ports import OrderLookup
 
 # Working memory stores the reference as prose ("order 10301") because a
 # person reads that pane. Reading it back is this module's problem.
@@ -35,6 +35,19 @@ ORDER_UNDER_DISCUSSION = "order_under_discussion"
 
 # Whether an order is this customer's own: (order id, customer id).
 OwnsOrder = Callable[[int, int], bool]
+
+
+class OrderReferenceRules(Protocol):
+    """How a customer's words are read as naming an order (configured by the agent)."""
+
+    @property
+    def anchored_patterns(self) -> Sequence[str]: ...
+
+    @property
+    def compact_patterns(self) -> Sequence[str]: ...
+
+    @property
+    def id_shape(self) -> str: ...
 
 
 class OrderReferenceResolver:
@@ -52,20 +65,24 @@ class OrderReferenceResolver:
     order the customer had stopped talking about.
     """
 
-    def __init__(self, owns: OwnsOrder | None = None) -> None:
-        settings = get_agent_settings().order_reference
+    def __init__(self, rules: OrderReferenceRules, owns: OwnsOrder | None = None) -> None:
         self._named = [
             re.compile(pattern, re.IGNORECASE)
-            for pattern in (*settings.anchored_patterns, *settings.compact_patterns)
+            for pattern in (*rules.anchored_patterns, *rules.compact_patterns)
         ]
-        self._shape = re.compile(settings.id_shape)
+        self._shape = re.compile(rules.id_shape)
         self._owns = owns
 
     @classmethod
-    def from_orders(cls, orders: Any) -> "OrderReferenceResolver":
-        """A resolver that checks ownership against an orders repository."""
+    def from_orders(
+        cls, rules: OrderReferenceRules, orders: OrderLookup
+    ) -> "OrderReferenceResolver":
+        """A resolver that checks ownership against the customer's own orders."""
         return cls(
-            lambda order_id, customer_id: orders.get_for_customer(order_id, customer_id) is not None
+            rules,
+            lambda order_id, customer_id: (
+                orders.get_for_customer(order_id, customer_id) is not None
+            ),
         )
 
     def resolve(

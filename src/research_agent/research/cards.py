@@ -18,6 +18,7 @@ from research_agent.audit.verdict import DEFAULT_WEIGHT, AuditVerdict
 from research_agent.domain.plan import SubQuestion
 from research_agent.domain.report import Report
 from research_agent.domain.rubric import Rubric
+from research_agent.domain.sources import host_of
 from research_agent.presentation.narration import (
     Line,
     bullets,
@@ -28,7 +29,6 @@ from research_agent.presentation.narration import (
     title_of,
     toned,
 )
-from research_agent.synthesis.reader_view import host_of
 
 Card = tuple[str, dict[str, Any]]
 

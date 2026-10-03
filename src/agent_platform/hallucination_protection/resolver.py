@@ -112,7 +112,7 @@ class GroundingResolver:
         self._direct = DirectChecker()
         # A state record ("Order N refund status: X") is read by the state
         # model. NLI cannot: it took `pending_review` to contradict "submitted".
-        self._state_line = re.compile(settings.refund_state_pattern, re.IGNORECASE)
+        self._state_line = re.compile(settings.record_state_pattern, re.IGNORECASE)
         self._graded_kinds = frozenset(kind for tier in self._tiers for kind in tier.kinds)
         self._record_kinds = frozenset(
             kind for tier in self._tiers if "record" in tier.claims for kind in tier.kinds

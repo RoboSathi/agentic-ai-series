@@ -141,6 +141,7 @@ class ResearchHost:
                     part for part in (f"/{getattr(names, spec.command)}", spec.argument) if part
                 ),
                 spec.during_turn,
+                spec.variant,
             )
             for spec in settings.tui.actions.get(phase, [])
         ]

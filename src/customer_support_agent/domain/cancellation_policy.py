@@ -11,8 +11,8 @@ from typing import Any
 
 from agent_platform.primitives.money import InvalidAmountError, Money
 from customer_support_agent.domain.models import Order
+from customer_support_agent.domain.ports import OrderLookup
 from customer_support_agent.domain.refund_policy import RefundValidationResult
-from customer_support_agent.persistence.repositories import OrdersRepository
 
 _CANCELLED = "cancelled"
 # Asked to cancel an order that already is, the customer is really asking
@@ -31,7 +31,7 @@ _REFUND_STATE_AFTER_CANCEL: dict[str, str] = {
 class CancellationPolicy:
     """Ownership, state and amount rules for cancel-and-refund."""
 
-    def __init__(self, orders: OrdersRepository) -> None:
+    def __init__(self, orders: OrderLookup) -> None:
         self._orders = orders
 
     def validate(

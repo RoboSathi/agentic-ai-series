@@ -40,7 +40,7 @@ agent's `design_docs/patterns.yaml`. Do not edit by hand.
 | chain of responsibility | ra | agent_platform/web/router.py · SearchRouter (free provider first, metered fallback) |
 | factory | ra | graph/builder.py (composition root) |
 | builder | ra | scoping/brief.py · BriefBuilder |
-| observer | ra | research/telemetry.py (StageReporter + AuditLedger) · WebGateway observer |
+| observer | ra | observability/telemetry.py (StageReporter + AuditLedger) · WebGateway observer |
 | decorator | ra | research_agent/evals/agent_under_test.py · RecordingLLMClient around every role client |
 | facade | ra | agent_platform MemoryFacade, used by archive/store.py |
 | retry + idempotency + circuit breaker | ra | agent_platform/web/gateway.py · live search and fetch through ResilientCaller |

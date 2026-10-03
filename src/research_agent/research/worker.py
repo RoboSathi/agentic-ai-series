@@ -29,13 +29,13 @@ from research_agent.config import get_agent_settings
 from research_agent.domain.budget import FETCHES, SEARCHES
 from research_agent.domain.evidence import ClaimCandidate
 from research_agent.domain.plan import SubQuestion
+from research_agent.domain.sources import host_of, window_verdict
 from research_agent.llm.structured import OutputTruncatedError
 from research_agent.presentation.narration import say
 from research_agent.research import cards
-from research_agent.research.defenses import apply_source_policy, rank_by_kind, window_verdict
+from research_agent.research.defenses import apply_source_policy, rank_by_kind
 from research_agent.research.resources import RunResources
 from research_agent.research.spans import canonical_span, nearest_match
-from research_agent.synthesis.reader_view import host_of
 
 # The rejection code of a page the model could not read (its answer was cut off or invalid).
 UNREADABLE = "unreadable"

@@ -86,7 +86,7 @@ evals:
     level: integration
 
   - component: resilience.saga
-    input_distribution: refund flows with failures injected at each step
+    input_distribution: multi-step sagas with failures injected at each step
     expected_properties:
       - every committed step is compensated on failure
     scorer: deterministic_rule

@@ -73,7 +73,7 @@ lives in `research_agent` (pattern composition, research vocabulary).
    seeded hostile pages that must run offline. Resolution: optional plugin
    hook `native_security_suite()` (see §1). csa still uses Promptfoo.
 7. **No model credentials in this environment** (`nvidia_api_key` unset)
-   and the spec requires `make tui ra` to run the whole flow in replay and
+   and the spec requires `make agent ra` to run the whole flow in replay and
    evals to be deterministic. Resolution: `research_agent.model_backend:
    fixture | routed`. `fixture` is a deterministic reference model over
    the synthetic fixture world (it reads the same prompts a real model
@@ -107,7 +107,7 @@ lives in `research_agent` (pattern composition, research vocabulary).
 |---|---|---|
 | 0 | Discovery, this plan | plan committed |
 | 0.5 | Baseline repair (formatting, types, stale tests) | `make verify` green on unchanged behaviour |
-| 1 | Makefile agent registry + stub `research_agent` (config, `ResearchHost`) | `make tui ra` boots; `make tui csa` / `make eval-oracle csa` unchanged |
+| 1 | Makefile agent registry + stub `research_agent` (config, `ResearchHost`) | `make agent ra` boots; `make agent csa` / `make eval-oracle csa` unchanged |
 | 2 | Commons mechanisms, one at a time with tests; then the ra walking skeleton (every node a stub that reports through `StageReporter`) | verify green |
 | 3 | Scoping: gate, checklists, interviewer, hybrid termination, `/done`, `/waive`, challenge check, checklist panel | verify green |
 | 4 | Rubric: templates, generator, editor, freeze + hash | verify green |

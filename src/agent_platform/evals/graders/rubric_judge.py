@@ -27,7 +27,8 @@ from agent_platform.evals.contracts import (
     canonical_hash,
 )
 from agent_platform.evals.judge import extract_json
-from agent_platform.llm.client import LLMClient, create_pinned_llm_client
+from agent_platform.evals.judge_client import create_judge_client
+from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import CompletionRequest, Message
 
 _PROMPT = Path(__file__).resolve().parent / "prompts" / "rubric_judge.md"
@@ -80,9 +81,7 @@ class RubricJudge:
     ) -> None:
         self._settings = settings or get_settings().evals.judge
         self._rubric = rubric
-        self._client = client or create_pinned_llm_client(
-            self._settings.provider, self._settings.model
-        )
+        self._client = client or create_judge_client(self._settings)
         self._template = _PROMPT.read_text()
         self.version = canonical_hash(
             [rubric.model_dump(), self._settings.model_dump(), self._template]

@@ -15,14 +15,58 @@ import pathlib
 
 import pytest
 
-COMMONS = pathlib.Path(__file__).resolve().parents[2] / "src" / "agent_platform"
+SRC = pathlib.Path(__file__).resolve().parents[2] / "src"
+COMMONS = SRC / "agent_platform"
 
-# Agents this platform must be able to run without knowing their names.
-FORBIDDEN_NAMES = ("customer_support_agent",)
+# Agents this platform must be able to run without knowing their names:
+# every package beside it, found rather than listed, so a new agent is
+# covered the day it is added.
+FORBIDDEN_NAMES = tuple(
+    sorted(
+        path.parent.name for path in SRC.glob("*/__init__.py") if path.parent.name != COMMONS.name
+    )
+)
+# Words that belong to one agent's business. The platform ships mechanisms;
+# a default that says "refund" has decided what every agent does.
+DOMAIN_WORDS = ("refund",)
 
 
 def _python_files() -> list[pathlib.Path]:
     return sorted(p for p in COMMONS.rglob("*.py") if "__pycache__" not in p.parts)
+
+
+def _code_strings(path: pathlib.Path) -> list[tuple[int, str]]:
+    """Every identifier and non-docstring string constant in a module, with its line."""
+    import ast
+
+    tree = ast.parse(path.read_text())
+    docstrings = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+    }
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if id(node) not in docstrings:
+                found.append((node.lineno, node.value))
+        elif isinstance(node, ast.Name):
+            found.append((node.lineno, node.id))
+        elif isinstance(node, ast.Attribute):
+            found.append((node.lineno, node.attr))
+    return found
+
+
+def _yaml_strings(value: object) -> list[str]:
+    """Every string key and value in a parsed YAML tree."""
+    if isinstance(value, dict):
+        return [s for key, item in value.items() for s in [str(key), *_yaml_strings(item)]]
+    if isinstance(value, list):
+        return [s for item in value for s in _yaml_strings(item)]
+    return [value] if isinstance(value, str) else []
 
 
 class TestTheePlatformNamesNoAgent:
@@ -40,6 +84,30 @@ class TestTheePlatformNamesNoAgent:
             f"agent_platform imports '{name}' at: {', '.join(offenders)}. "
             "An agent reaches the platform by injection, never the other way round."
         )
+
+    @pytest.mark.parametrize("name", FORBIDDEN_NAMES)
+    def test_no_code_names_a_specific_agent(self, name: str) -> None:
+        """Not in an identifier or a string the code uses; a docstring may teach by example."""
+        offenders = [
+            f"{path.relative_to(COMMONS)}:{line}"
+            for path in _python_files()
+            for line, text in _code_strings(path)
+            if name in text
+        ]
+        assert offenders == [], f"agent_platform code names '{name}' at: {', '.join(offenders)}"
+
+    @pytest.mark.parametrize("word", DOMAIN_WORDS)
+    def test_no_platform_default_speaks_an_agents_business(self, word: str) -> None:
+        """Comments may explain; a configured value is behaviour, and the agent's to set."""
+        import yaml
+
+        offenders = [
+            f"{path.relative_to(COMMONS)}: {value}"
+            for path in sorted(COMMONS.rglob("*.yaml"))
+            for value in _yaml_strings(yaml.safe_load(path.read_text()))
+            if word in value.casefold()
+        ]
+        assert offenders == [], f"platform defaults say '{word}': {offenders}"
 
     @pytest.mark.parametrize("name", FORBIDDEN_NAMES)
     def test_no_config_file_names_a_specific_agent(self, name: str) -> None:

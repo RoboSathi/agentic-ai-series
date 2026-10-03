@@ -4,6 +4,10 @@ agent:
   # The operator shell runs whatever host this names. The platform never
   # names an agent; the agent names itself.
   host: customer_support_agent.console:CustomerSupportHost
+  # What this agent acts on, as cards name it.
+  subject_fields:
+    - {field: order_id, label: order, summarise: true}
+    - {field: customer_id, label: customer}
 
 # This agent's harness. Overrides the platform defaults; an episode
 # overlay overrides these in turn. Everything on: a support agent that
@@ -29,6 +33,12 @@ features:
     enabled: true
     rerank: true
     failure_detection: true
+
+logging:
+  # This agent's own subsystem, coloured on the console beside the platform's.
+  subsystem_colors:
+    customer_support_agent: bright_green
+
 # Nine things version independently (E39). These name *this* agent's
 # artifacts; the platform ships neutral placeholders.
 audit:
@@ -36,6 +46,8 @@ audit:
   data_version: dummy-data-v1
   prompt_version: support-prompt-v1
   tool_schema_version: support-tools-v1
+  prompt_source: customer_support_agent/prompts
+  policy_source: gatekeeper + customer_policy.md
 
 llm:
   intent_classifier:
@@ -45,6 +57,10 @@ llm:
   # The memory dream (`make dream`) summarises each session with this local model.
   dialogue_summarizer:
     enabled: true
+  # The local-model probe (`make model-check`) runs the intent classifier on a line of this agent's.
+  check:
+    local:
+      intent_text: "I want a refund for my order"
 
 memory:
   episodic:
@@ -66,6 +82,7 @@ memory:
     classification_hints:
       # This agent's domain vocabulary for the deterministic first tier.
       order_fact: ["order", "tracking", "delivered", "shipment"]
+      policy_limit: ["refund limit", "spending limit", "my limit is", "cap is now", "threshold is now"]
 
 security:
   pii:
@@ -87,10 +104,74 @@ security:
 persistence:
   db_path: src/customer_support_agent/dummy_data/agentic.db
 
+guardrails:
+  # The guardrail card's block reasons, in this agent's words.
+  block_reasons:
+    TOOL_EVIDENCE_IDENTIFIER_MISMATCH: names an order number found in no evidence
+    TOOL_EVIDENCE_RECORD_STATE_MISMATCH: says the refund is settled; the record disagrees
+    TOOL_EVIDENCE_NOT_EXECUTED: claims a refund the tool call never executed
+
 hallucination_protection:
   # This agent's ids are five-digit order numbers (the same shape the
   # evals use). A record about another order cannot refute a claim.
   refute_identifier_pattern: '\b\d{5}\b'
+  # This agent's records: order ids, refund outcomes, and the refund state machine.
+  # A claim naming one of these is about this case and needs a record.
+  record_identifier_pattern: '\border\s*#?\s*\d{3,}\b'
+  record_identifier_label: order
+  # An outcome stated as done. With a promise marker it is a promise.
+  outcome_pattern: '\b(?:refunded|queued|approved|processed|issued|completed|submitted|denied|rejected|cancelled|canceled|delivered|shipped|pending|on\s+its\s+way|human\s+review|request\s+created)\b'
+  record_state_pattern: 'refund(?:_|\s+)status\s*[:=]\s*(\w+)'
+  # The refund state machine. A state record ("Order N refund status: X") is
+  # not something an NLI model can read: it contradicted "has been submitted"
+  # against `pending_review`. So it is read here, in both directions, and is
+  # never sent to NLI. `ladder` runs earliest first and each status implies
+  # the earlier ones happened; `branches` names a status off the ladder and
+  # how far it got before it stopped. An *event* phrase ("submitted",
+  # "refunded") is true once the refund has reached its status; a *state*
+  # phrase (`exact`: "pending review", "denied") is true only while it is
+  # there. Event phrases win when both appear ("was queued for human review"
+  # is history). A claim is judged only if it also talks about a refund
+  # (`context_pattern`), so "your order has been processed" is left alone.
+  record_states:
+    subject: refund
+    ladder: [none, pending_review, approved, completed]
+    branches: {denied: pending_review}
+    # From this status on, money has moved or been authorised.
+    settled_from: approved
+    # Record wording that states a status without the status line.
+    observed_as:
+      none:
+        - no refund has been requested
+      pending_review:
+        - queued for human review
+        - awaiting a decision
+        - awaiting human review
+        - sent for review
+    context_pattern: '(?:\b(?:refund|request|review|amount|money|payment|funds)|\$\s?\d)'
+    phrases:
+      - reaches: pending_review
+        pattern: '\b(?:requested|submitted|received|queued|initiated|started|created|sent\s+for\s+review)\b'
+      - reaches: pending_review
+        exact: true
+        pattern: '\b(?:pending|awaiting|under\s+review|in\s+review|human\s+review|manual\s+review)\b'
+      - reaches: approved
+        pattern: '\bapproved\b'
+      - reaches: completed
+        pattern: '\b(?:refunded|completed|processed|issued|paid|on\s+its\s+way|sent\s+back|paid\s+back|credited|reimbursed|returned)\b'
+      - reaches: denied
+        exact: true
+        pattern: '\b(?:denied|declined|rejected)\b'
+  # Where a refund goes is a rule stated once in the knowledge article; the
+  # outcome around it is a fact about this case. Split, each is checked by
+  # what can ground it.
+  rule_phrases:
+    - pattern: '\s*\bto\s+(?:your|the)\s+original\s+payment\s+method\b'
+      statement: A refund goes back to the original payment method
+    # The amount of a refund is a rule (policy: always the full order total), not a
+    # fact about this case: carve it out, so "$21.35 was returned" is the outcome.
+    - pattern: '\s*\b(?:the\s+)?full\s+(?:order\s+)?(?:amount|total)\s+of\b'
+      statement: A refund is always for the full order total
 
 gatekeeper:
   mandate:
@@ -349,6 +430,36 @@ customer_support_agent:
   # What history, memory and logs keep in place of a typed login code. The
   # code is a credential: it is checked once and never replayed to the model.
   user_code_placeholder: "[customer code]"
+  # Fixed wording the agent says itself. `{length}` is user_code_length.
+  messages:
+    auth:
+      ask_for_code: "Before I can look anything up, I need to verify your account.\nPlease share your {length}-character user code."
+      unknown_code: "I couldn't find an account with that code. Please check it and try again — it's the {length}-character code from your order confirmation email."
+    cancelled: "Stopped before {step}; everything done so far is saved. Press Resume to continue from there."
+  # The console's run controls: cancel the turn in flight, then resume it from its last
+  # completed step (state persistence, idempotent replay, breaker state across a resume).
+  console:
+    cancel_key: ctrl+x
+    cancel: {label: "■ Stop Agent", variant: error}
+    resume: {label: "↻ Resume Agent from {node}", variant: primary}
+  # The order list, rendered from the record (never by the model) as a box table. The words are
+  # what a customer reads for each state; `tui.response_highlights` colours them.
+  order_table:
+    headers: ["#", Order, Placed, Item, Status, Refund, Total]
+    item_width: 34
+    ellipsis: "…"
+    status_words:
+      pending: being prepared
+      shipped: on its way
+      delivered: delivered
+      cancelled: cancelled
+    refund_words:
+      pending_review: awaiting review
+      approved: approved
+      denied: declined
+      completed: refunded in full
+    no_refund: none
+    no_refund_detail: none requested
   demo_user_code: 2HEDZTV
   policy_path: src/customer_support_agent/prompts/customer_policy.md
   console_reviewer: console_operator
@@ -370,3 +481,21 @@ customer_support_agent:
     order_reference_pattern: '\b\d{5}\b'
     money_pattern: '\$\s?(\d[\d,]*(?:\.\d{1,2})?)'
     prompt_leak_ngram: 8
+
+tui:
+  # The order table, coloured by state. Anchored to a table cell (`│ word │`), so the same word in
+  # a sentence is left alone. Named terminal colours, so they read on a light or a dark theme.
+  response_highlights:
+    - {pattern: '^[┌├└][─┬┼┴┐┤┘]+$', style: "bright_black"}
+    - {pattern: '^│ # │.*$', style: "bold"}
+    - {pattern: '(?<=│ )delivered(?= +│)', style: "green"}
+    - {pattern: '(?<=│ )on its way(?= +│)', style: "cyan"}
+    - {pattern: '(?<=│ )being prepared(?= +│)', style: "yellow"}
+    - {pattern: '(?<=│ )cancelled(?= +│)', style: "red"}
+    - {pattern: '(?<=│ )awaiting review(?= +│)', style: "bold yellow"}
+    - {pattern: '(?<=│ )(?:approved|refunded in full)(?= +│)', style: "bold green"}
+    - {pattern: '(?<=│ )declined(?= +│)', style: "bold red"}
+    - {pattern: '(?<=│ )none(?= +│)', style: "bright_black"}
+  # One-line card summaries for this agent's own reason codes.
+  reason_summaries:
+    ORDER_REFERENCE_NOT_PRESENT: order reference not provided · validation deferred

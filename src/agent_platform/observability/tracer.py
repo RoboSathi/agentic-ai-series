@@ -10,7 +10,12 @@ from contextlib import contextmanager
 from typing import Any, Iterator, Protocol, runtime_checkable
 
 from agent_platform.config import get_settings
-from agent_platform.logging import get_logger, set_current_trace_id
+from agent_platform.logging import (
+    get_current_trace_id,
+    get_logger,
+    new_trace_id,
+    set_current_trace_id,
+)
 from agent_platform.observability.store import DuckDbObservabilityStore
 from agent_platform.observability.types import Span, utc_now
 from agent_platform.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
@@ -118,8 +123,12 @@ class LocalTracer:
         self._subscribers.append(subscriber)
 
     def start_span(self, name: str, parent: Span | None = None, **fields: Any) -> Span:
-        """Open a span, inheriting the parent's trace id when there is one."""
-        trace_id = parent.trace_id if parent else uuid.uuid4().hex
+        """Open a span, inheriting the parent's trace id, else the turn's, else a new one.
+
+        A root span adopts the trace the turn bound, so its spans, the log
+        lines and the LangSmith run share one id.
+        """
+        trace_id = parent.trace_id if parent else (get_current_trace_id() or new_trace_id())
         set_current_trace_id(trace_id)
         span = Span(
             agent_id=fields.pop("agent_id", self._agent_id),

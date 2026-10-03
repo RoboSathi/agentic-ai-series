@@ -9,7 +9,7 @@ from datetime import date
 
 import pytest
 
-from research_agent.research.defenses import parse_published, window_verdict, within_window
+from research_agent.domain.sources import parse_published, window_verdict, within_window
 
 AS_OF = date(2026, 10, 1)
 

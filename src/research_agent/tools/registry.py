@@ -6,8 +6,8 @@ from agent_platform.tools.registry import NamespacedToolRegistry
 from agent_platform.tools.types import ToolDefinition
 from agent_platform.web import WebGateway
 from research_agent.config.settings import AnswerSettings
+from research_agent.guardrails.injection import InjectionScreen
 from research_agent.prompts import answer as prompt
-from research_agent.research.defenses import InjectionScreen
 from research_agent.tools.clock import Clock, DateTimeArgs
 from research_agent.tools.weather import OpenMeteoWeather, WeatherArgs
 from research_agent.tools.web import FetchArgs, FetchUrl, SearchArgs, WebSearch

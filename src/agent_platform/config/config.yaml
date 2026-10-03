@@ -35,6 +35,9 @@ agent:
   # `module.path:attribute` naming the AgentHost the operator shell runs.
   # An agent declares its own; the platform never names one.
   host: ""
+  # Session ids are `<agent id>-<8 hex>`, so a log line names its agent wherever it ends up.
+  session_separator: "-"
+  session_hex_chars: 8
 
 # The harness: the controls you can remove and still get an agent that
 # runs — just a worse or more dangerous one. Everything absent from this
@@ -96,6 +99,34 @@ logging:
     repr.str: "bright_green"
     repr.url: "underline bright_blue"
   console_format: "[bold bright_blue]%(name)s[/] %(message)s"
+  # The colour of each subsystem's CALLED/RETURNED traces on the console. An agent's overlay adds
+  # its own subsystem; anything unlisted uses the default.
+  subsystem_default_color: white
+  subsystem_colors:
+    config: grey58
+    logging: grey78
+    tui: bright_magenta
+    llm: bright_blue
+    persistence: blue
+    observability: cyan
+    audit: green
+    evals: spring_green2
+    guardrails: magenta
+    resilience: yellow
+    security: red
+    memory: dodger_blue1
+    context: turquoise2
+    tools: white
+    gatekeeper: bright_red
+    hallucination_protection: orange3
+    scheduler: medium_purple1
+    budget: salmon1
+    web: deep_sky_blue1
+    ledger: aquamarine1
+    artifacts: wheat1
+    verification: light_steel_blue
+    design_patterns: plum1
+    episodes: khaki1
   file_enabled: true
   # The file log is the authoritative record, so it captures more than the
   # console: DEBUG here is what makes LLM payloads, call traces and
@@ -147,7 +178,6 @@ llm:
       # chain-of-thought instead of answering.) It does NOT honor
       # guided_json/response_format — see guardrails.constrained_backend.
       model: nvidia/nemotron-3-super-120b-a12b
-      # meta/llama-3.2-11b-vision-instruct, nvidia/nemotron-3-super-120b-a12b, nvidia/nemotron-3-ultra-550b-a55b
       timeout_seconds: 60
       input_cost_per_1k_tokens: 0.0002
       output_cost_per_1k_tokens: 0.0006
@@ -165,8 +195,11 @@ llm:
   chain:
     timeout_seconds: 60
     hedge_after_seconds: 30
+    # The strongest model first (about 2x slower than gpt-oss-20b at the median, 6.0s vs 2.8s,
+    # measured 2026-10-01), then the fast cross-family model if it too fails or stalls.
     fallbacks:
       - {provider: nim, model: nvidia/nemotron-3-ultra-550b-a55b}
+      - {provider: nim, model: openai/gpt-oss-20b}
   cascade:
     enabled: false
     tiers: [local, nim]    # cheapest sufficient tier first (E44)
@@ -269,7 +302,7 @@ llm:
     local:
       nli_premise: "The forecast for Pune on 2 October is light drizzle with a high of 32.5 °C."
       nli_hypothesis: "It will drizzle in Pune on 2 October."
-      intent_text: "I want a refund for my order"
+      intent_text: "I have a question about my account"
       dialogue: "User: What is the weather in Pune?\nAssistant: Light drizzle, 26 °C.\nUser: And tomorrow?\nAssistant: Light drizzle again, up to 32.5 °C."
     # `make model-check BENCH=1`: a judge-sized request, repeated, to each chat model.
     benchmark:
@@ -356,6 +389,8 @@ durability:
   encryption:
     key_env: LANGGRAPH_AES_KEY
     required: false
+  # A cancelled run keeps its checkpoints and resumes from the last completed node.
+  cancel_reason: cancelled by the operator
 
 audit:
   enabled: true
@@ -369,6 +404,8 @@ audit:
   data_version: unversioned
   prompt_version: unversioned
   tool_schema_version: unversioned
+  prompt_source: unnamed
+  policy_source: unnamed
 
 observability:
   enabled: true
@@ -522,7 +559,7 @@ memory:
     # Deterministic first-tier classification: phrase -> category. Cheap,
     # auditable, and reached for before any model (the NOLLM discipline).
     classification_hints:
-      policy_limit: ["refund limit", "spending limit", "my limit is", "cap is now", "threshold is now"]
+      policy_limit: ["spending limit", "my limit is", "cap is now", "threshold is now"]
       permission_grant: ["i am authorized", "grant me", "give me access", "i have permission"]
       role_assignment: ["i am an admin", "i am a supervisor", "my role is"]
       authority_delegation: ["on behalf of", "acting for", "delegated to me"]
@@ -618,6 +655,16 @@ guardrails:
   mode: auto_repair
   max_repair_attempts: 2
   constrained_backend: grammar
+  # Why a reply was blocked, by finding code, as the guardrail card says it. An agent's overlay
+  # rewords these in its own vocabulary.
+  block_reasons:
+    BUSINESS_CLAIM_WITHOUT_TOOL_EVIDENCE: states an outcome no tool result shows
+    TOOL_EVIDENCE_IDENTIFIER_MISMATCH: names an identifier found in no evidence
+    TOOL_EVIDENCE_AMOUNT_MISMATCH: states an amount found in no evidence
+    TOOL_EVIDENCE_RECORD_STATE_MISMATCH: states a status the record disagrees with
+    TOOL_EVIDENCE_NOT_EXECUTED: claims an action the tool call never executed
+    CLAIM_DETAIL_UNSOURCED: states a date or number found in no evidence
+    HALLUCINATION_GUARD_BLOCK: a claim is contradicted by the evidence
 
 hallucination_protection:
   enforce_grounding: true
@@ -683,65 +730,30 @@ hallucination_protection:
     - '(?:i[''’]?m|i\s+am|we[''’]?re)\s+(?:\w+\s+)?(?:happy|glad|pleased|sorry|here)\b'
     - '(?:happy|glad|pleased)\s+to\b'
     - '(?:let\s+me\s+know|feel\s+free|is\s+there\s+anything|anything\s+else|no\s+problem|of\s+course|certainly|sure)\b'
-  # A claim naming one of these is about this case and needs a record.
-  record_identifier_pattern: '\border\s*#?\s*\d{3,}\b'
-  # An outcome stated as done. With a promise marker it is a promise.
-  outcome_pattern: '\b(?:refunded|queued|approved|processed|issued|completed|submitted|denied|rejected|cancelled|canceled|delivered|shipped|pending|on\s+its\s+way|human\s+review|request\s+created)\b'
+  # A claim naming one of these is about this case and needs a record; an outcome stated as done
+  # (with a promise marker, a promise). Business vocabulary: the agent's overlay names its ids and
+  # outcomes. `(?!)` never matches, so a platform default classifies nothing as a record claim.
+  record_identifier_pattern: '(?!)'
+  record_identifier_label: record
+  outcome_pattern: '(?!)'
   promissory_pattern: '\b(?:will|would|shall|going\s+to|once|if|when|may|might|could|should|can|get|gets|getting)\b|[''’]ll\b'
   # A claim that the agent could not, or did not, act. The record of a call it
   # refused is what grounds it, so it is supported by a NOT EXECUTED entry
   # for the order it names rather than by asking NLI to read a structured line.
   refusal_pattern: '\b(?:unable|cannot|can[''’]?t|couldn[''’]?t|could\s+not|not\s+able|won[''’]t\s+be\s+able|wasn[''’]t|was\s+not|hasn[''’]t|has\s+not|haven[''’]t|have\s+not|declined|refused|denied|rejected)\b'
-  refund_state_pattern: 'refund(?:_|\s+)status\s*[:=]\s*(\w+)'
-  # The refund state machine. A state record ("Order N refund status: X") is
-  # not something an NLI model can read: it contradicted "has been submitted"
-  # against `pending_review`. So it is read here, in both directions, and is
-  # never sent to NLI. `ladder` runs earliest first and each status implies
-  # the earlier ones happened; `branches` names a status off the ladder and
-  # how far it got before it stopped. An *event* phrase ("submitted",
-  # "refunded") is true once the refund has reached its status; a *state*
-  # phrase (`exact`: "pending review", "denied") is true only while it is
-  # there. Event phrases win when both appear ("was queued for human review"
-  # is history). A claim is judged only if it also talks about a refund
-  # (`context_pattern`), so "your order has been processed" is left alone.
-  refund_states:
-    ladder: [none, pending_review, approved, completed]
-    branches: {denied: pending_review}
-    # From this status on, money has moved or been authorised.
-    settled_from: approved
-    # Record wording that states a status without the status line.
-    observed_as:
-      none:
-        - no refund has been requested
-      pending_review:
-        - queued for human review
-        - awaiting a decision
-        - awaiting human review
-        - sent for review
-    context_pattern: '(?:\b(?:refund|request|review|amount|money|payment|funds)|\$\s?\d)'
-    phrases:
-      - reaches: pending_review
-        pattern: '\b(?:requested|submitted|received|queued|initiated|started|created|sent\s+for\s+review)\b'
-      - reaches: pending_review
-        exact: true
-        pattern: '\b(?:pending|awaiting|under\s+review|in\s+review|human\s+review|manual\s+review)\b'
-      - reaches: approved
-        pattern: '\bapproved\b'
-      - reaches: completed
-        pattern: '\b(?:refunded|completed|processed|issued|paid|on\s+its\s+way|sent\s+back|paid\s+back|credited|reimbursed|returned)\b'
-      - reaches: denied
-        exact: true
-        pattern: '\b(?:denied|declined|rejected)\b'
-  # Where a refund goes is a rule stated once in the knowledge article; the
-  # outcome around it is a fact about this case. Split, each is checked by
-  # what can ground it.
-  rule_phrases:
-    - pattern: '\s*\bto\s+(?:your|the)\s+original\s+payment\s+method\b'
-      statement: A refund goes back to the original payment method
-    # The amount of a refund is a rule (policy: always the full order total), not a
-    # fact about this case: carve it out, so "$21.35 was returned" is the outcome.
-    - pattern: '\s*\b(?:the\s+)?full\s+(?:order\s+)?(?:amount|total)\s+of\b'
-      statement: A refund is always for the full order total
+  # A record's state machine (the agent's overlay supplies one, e.g. a refund's): a state record
+  # is read here in both directions and never sent to NLI. Empty: no state claim is judged.
+  record_state_pattern: '(?!)'
+  record_states:
+    subject: record
+    ladder: []
+    branches: {}
+    settled_from: ""
+    observed_as: {}
+    context_pattern: '(?!)'
+    phrases: []
+  # A phrase carved out of an outcome and checked as the rule it states (the agent's overlay).
+  rule_phrases: []
   # A rule claim covered this much by one rule of its tier is a restatement.
   rule_restatement_coverage: 0.7
   # At most one generative repair. If the model repeats an unsupported
@@ -815,15 +827,6 @@ gatekeeper:
     # action -> surface class. Empty here, filled by the agent. An
     # unmapped action defaults to human-controlled, which fails safe.
     surfaces: {}
-  automation:
-    enabled: true
-    # Sheridan 1-10. Levels <= human_approval_below require a human.
-    human_approval_below: 5
-    # Sheridan level per action, and the amount forcing a human. Empty
-    # here: these are the agent's actions. An unconfigured action sits at
-    # the approval floor rather than defaulting to autonomous.
-    levels: {}
-    per_action_amount_escalation_usd: {}
 
 security:
   # What the screens of the person's message say on their cards (security/screening.py).
@@ -921,7 +924,6 @@ security:
       base_url: https://integrate.api.nvidia.com/v1
       endpoint: /chat/completions
       model: nvidia/nemotron-3.5-content-safety
-      # nvidia/llama-3.1-nemotron-safety-guard-8b-v3
       timeout_seconds: 8
       max_tokens: 128
       resilience_key: hosted-content-safety
@@ -1022,12 +1024,17 @@ evals:
       - "refused"
       - "unable"
   judge:
-    # A different vendor's model from the agent's, so the judge is not
-    # grading its own habits. Verified invokable by `make llm-check`
-    # (mistral-large and llama-3.1-nemotron-70b are listed for this
-    # account but answer 404).
+    # The strongest model on the account grades. Trade-off, chosen knowingly (2026-10-03): it is
+    # the same family (Nemotron) as the agent's own model, so the judge is no longer
+    # vendor-independent and may share the agent's habits; gpt-oss-20b, a different family, is
+    # its backup. Verified invokable by `make llm-check` (mistral-large and
+    # llama-3.1-nemotron-70b are listed for this account but answer 404).
     provider: nim
-    model: openai/gpt-oss-20b
+    model: nvidia/nemotron-3-ultra-550b-a55b
+    timeout_seconds: 120
+    hedge_after_seconds: 45
+    fallbacks:
+      - {provider: nim, model: openai/gpt-oss-20b}
     temperature: 0.0
     # A reasoning model: its hidden reasoning spends from this budget
     # before the JSON verdict, so a tight cap returns an empty answer.
@@ -1134,8 +1141,23 @@ commands:
   tree_preview_chars: 100  # where a value is elided on one line of a memory tree
   memory_tree_events_per_session: 5  # events listed per session before "… N more"
   recent_window: 20        # how many recent records the summaries look back over
+  # A scoped command (`/memory`, an agent's `/queue`) shows only the session's verified subject.
+  verify_first: Nobody is verified in this session yet. Verify first, then ask again.
+  not_your_records: This console shows only the verified account's own records.
+
+# Plain-text renderers (`presentation/`): the same lines print from `make` and draw in the TUI.
+presentation:
+  box:
+    horizontal: "─"
+    vertical: "│"
+    top: ["┌", "┬", "┐"]
+    middle: ["├", "┼", "┤"]
+    bottom: ["└", "┴", "┘"]
+  cell_padding: 1
 
 tui:
+  # Every turn and command from this console is logged with `channel: tui`.
+  channel: tui
   refresh_interval_ms: 100
   show_token_count: true
   copy_method: osc52
@@ -1150,10 +1172,29 @@ tui:
   status_refresh_ms: 500
   status_collapsed_symbol: "▸"
   status_expanded_symbol: "▾"
+  # Named terminal colours throughout, never hex: the terminal maps each to its own theme, so
+  # the same palette reads on a light background and a dark one. Body text is `default` (the
+  # terminal's own foreground); `white` disappears on a light background.
   status_styles:
-    running: "bold green"
-    complete: "bold blue"
+    running: "bold cyan"
+    complete: "bold green"
     failed: "bold red"
+  # One style per console role.
+  palette:
+    banner: "bold cyan"
+    user: "bold"
+    assistant: "bold green"
+    # The `(12.3s · ↓ 4.2k tokens)` bracket and the TURN COMPLETE footer.
+    metrics: "bold magenta"
+    command: "bold cyan"
+    notice: "yellow"
+    notice_strong: "bold yellow"
+    info: "cyan"
+    error: "bold red"
+    emphasis: "bold"
+    marker: "bold"
+    muted: "bright_black"
+    history: "yellow"
   status_expand_hint: "click to expand"
   status_history_hint: "scroll down to follow"
   choice_menu_hint: "↑/↓ then Enter to pick · or type your own answer"
@@ -1164,26 +1205,26 @@ tui:
   # card, whatever stage or agent it comes from: running cyan, done green, warning yellow,
   # failure red. The colour is in the title's own text, so focus and hover never repaint it.
   outcome_colors:
-    started: "#4FC3F7"
-    completed: "#00FF87"
-    warning: "#FFCB6B"
-    waiting: "#FFCB6B"
-    failed: "#FF5370"
-    blocked: "#FF5370"
+    started: cyan
+    completed: green
+    warning: yellow
+    waiting: yellow
+    failed: red
+    blocked: red
   # An expanded card: section titles, `key = value` / `key: value` keys, and plain values.
   # A value that says a state (PASS, FAIL, ...) takes that state's tone instead.
-  section_title_style: "bold #4FC3F7"
+  section_title_style: "bold cyan"
   body_styles:
-    key: "bold #82AAFF"
-    separator: "#7F8C98"
-    value: "#EEFFFF"
-    muted: "#9E9E9E"
+    key: "bold cyan"
+    separator: bright_black
+    value: default
+    muted: bright_black
   # The same state colours as the titles, for a card's lines and values.
   tone_styles:
-    pass: "#00FF87"
-    fail: "#FF5370"
-    warn: "#FFCB6B"
-    dim: "#9E9E9E"
+    pass: green
+    fail: red
+    warn: yellow
+    dim: bright_black
   # Words that name a state, wherever a card shows them as a value -> their tone.
   state_words:
     PASS: pass
@@ -1204,29 +1245,25 @@ tui:
     SKIPPED: dim
     NO_MATCH: pass
   response_styles:
-    h1: "bold #4FC3F7"
-    h2: "bold #C792EA"
-    bold: "bold #FFB454"
-    bullet: "#82AAFF"
-    citation: "#00FF87"
-    url: dim
-    body: white
-  # Extra colouring by pattern; each agent adds its own vocabulary in its overlay.
-  response_highlights:
-    - {pattern: '(?m)^\*\*Status:\*\* COMPLETE.*$', style: "bold green"}
-    - {pattern: '(?m)^\*\*Status:\*\* PARTIAL.*$', style: "bold yellow"}
-    - {pattern: '(?m)^\*\*Status:\*\* (?:FAILED|CANCELLED).*$', style: "bold red"}
-    - {pattern: '(?m)^(?:\*\*)?Sources?:?(?:\*\*)?:?', style: "bold #C792EA"}
+    h1: "bold cyan"
+    h2: "bold magenta"
+    bold: "bold yellow"
+    bullet: cyan
+    citation: green
+    url: "underline blue"
+    body: default
+  # Extra colouring by pattern: agent vocabulary, so each agent's overlay supplies its own.
+  response_highlights: []
 
   command_output:
-    title_style: bold bright_cyan
-    header_style: bold bright_black
-    row_style: white
-    note_style: dim
+    title_style: bold cyan
+    header_style: bold
+    row_style: default
+    note_style: bright_black
     error_style: red
     column_gap: 2
     max_column_width: 64
-    prompt_style: bold bright_black
+    prompt_style: bold magenta
 
 # The web gateway (agent_platform/web). `replay` is the default because
 # it is the only mode that cannot reach the network: a process that was

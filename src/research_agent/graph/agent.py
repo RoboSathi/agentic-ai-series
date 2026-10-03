@@ -18,6 +18,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
+from agent_platform.config import get_settings
 from agent_platform.durability import (
     SUMMARY,
     DurableGraphRunner,
@@ -25,7 +26,7 @@ from agent_platform.durability import (
     RunOutcome,
     RunRegistry,
 )
-from agent_platform.logging import get_logger
+from agent_platform.logging import bound_log_context, get_logger, new_trace_id
 from agent_platform.memory import MemoryFacade
 from research_agent.archive.store import ResearchArchive
 from research_agent.config.settings import ResearchAgentSettings
@@ -38,8 +39,8 @@ from research_agent.graph.run_nodes import RunNodes
 from research_agent.graph.state import ScopingState
 from research_agent.guardrails.input_screen import InputScreen
 from research_agent.intent import ResearchIntentRouter
+from research_agent.observability.telemetry import RunTelemetry
 from research_agent.research.resources import RunResources
-from research_agent.research.telemetry import RunTelemetry
 from research_agent.scoping import checklist
 from research_agent.synthesis.reader_view import render_reader_view
 
@@ -125,6 +126,13 @@ class ResearchAgent:
         return self._sessions.setdefault(session_id, SessionRecord())
 
     async def handle(self, query: str, session_id: str) -> TurnResult:
+        """One turn, under a trace of its own that every log line it causes carries."""
+        with bound_log_context(
+            agent=get_settings().agent.id, session=session_id, trace_id=new_trace_id()
+        ):
+            return await self._handle(query, session_id)
+
+    async def _handle(self, query: str, session_id: str) -> TurnResult:
         record = self.session(session_id)
         verb = _verb(query)
         names = self._settings.command_names

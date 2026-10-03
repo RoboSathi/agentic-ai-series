@@ -29,6 +29,7 @@ class _Agent:
 
 class _Forward:
     name, summary, usage = "go", "forward a turn", "/go"
+    forwards_turn = True
 
     async def run(self, args: list[str]) -> CommandResult:
         return CommandResult(effect=ConsoleEffect(agent_turn="/go now"))
@@ -97,12 +98,25 @@ class TestOptionalHooks:
                 if host.agent.turns:
                     break
             assert host.agent.turns == ["/go now"]
+            # Shown once, by the turn it became: no echo of the line, no command title.
+            feed = app._panel.as_text().splitlines()
+            assert [line for line in feed if line.strip() in {"/go", "/go now"}] == []
+            assert sum("USER  /go now" in line for line in feed) == 1
 
     async def test_a_host_without_hooks_keeps_the_old_console(self) -> None:
         app = AgenticTuiApp()
         async with app.run_test(size=(80, 24)) as pilot:
             await pilot.pause()
             assert app._status_host is None
-            assert "verify your account" in app._panel.as_text()
+            # The platform has no opening words of its own: what to ask first is the agent's.
+            assert "verify your account" not in app._panel.as_text()
             app._refresh_status()
             app.action_cancel_run()
+
+
+def test_the_support_agent_opens_by_asking_who_is_speaking() -> None:
+    """Its greeting, not the platform's: verification is this agent's first step."""
+    from customer_support_agent.console import CustomerSupportHost
+
+    greeting = CustomerSupportHost().greeting()
+    assert "verify your account" in greeting and "7-character" in greeting

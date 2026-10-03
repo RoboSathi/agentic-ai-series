@@ -507,7 +507,7 @@ def build_agent(
         # Only built when the Gatekeeper is: a scope with nothing to
         # check it is a record nobody reads.
         mandate_issuer=EstablishedOrderScope(orders) if governed is not None else None,
-        authenticator=CustomerAuthenticator(UsersRepository(connection), orders),
+        authenticator=CustomerAuthenticator(UsersRepository(connection)),
         orders=orders,
         basic_sanity=sanity_checker,
         agent_policy=agent_policy,

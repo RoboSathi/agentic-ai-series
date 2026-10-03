@@ -27,7 +27,8 @@ from agent_platform.evals.contracts import (
     canonical_hash,
 )
 from agent_platform.evals.judge import extract_json
-from agent_platform.llm.client import LLMClient, create_pinned_llm_client
+from agent_platform.evals.judge_client import create_judge_client
+from agent_platform.llm.client import LLMClient
 from agent_platform.llm.recording import RecordingLLMClient
 from agent_platform.llm.types import CompletionRequest, Message
 
@@ -56,7 +57,7 @@ class DeepEvalGrader:
         judge = get_settings().evals.judge
         self._settings = get_settings().evals.deepeval
         self._spec = spec
-        self._client = client or create_pinned_llm_client(judge.provider, judge.model)
+        self._client = client or create_judge_client(judge)
         self._evidence_cap = judge.max_evidence_chars
         self.name = f"deepeval.{spec.name}"
         self.version = canonical_hash(

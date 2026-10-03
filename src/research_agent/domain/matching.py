@@ -11,15 +11,33 @@ be reproduced by hand.
 """
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Protocol
 
-from research_agent.config.settings import MatchingSettings
+
+class MatchingRules(Protocol):
+    """How terms are compared (configured by the agent, `matching:`)."""
+
+    @property
+    def token_pattern(self) -> str: ...
+
+    @property
+    def stem_chars(self) -> int: ...
+
+    @property
+    def min_token_chars(self) -> int: ...
+
+    @property
+    def stopwords(self) -> Sequence[str]: ...
+
+    @property
+    def synonyms(self) -> Mapping[str, Sequence[str]]: ...
 
 
 class TermMatcher:
     """Stem-prefix term matching with stop words and synonyms."""
 
-    def __init__(self, settings: MatchingSettings) -> None:
+    def __init__(self, settings: MatchingRules) -> None:
         self._token = re.compile(settings.token_pattern, re.IGNORECASE)
         self._stem = settings.stem_chars
         self._min = settings.min_token_chars

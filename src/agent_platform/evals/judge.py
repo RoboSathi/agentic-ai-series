@@ -14,8 +14,9 @@ from typing import Any, Protocol, runtime_checkable
 from pydantic import BaseModel, Field
 
 from agent_platform.config import get_settings
+from agent_platform.evals.judge_client import create_judge_client
 from agent_platform.evals.types import Claim, Verdict
-from agent_platform.llm.client import LLMClient, create_pinned_llm_client
+from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import CompletionRequest, Message
 from agent_platform.logging import get_logger
 
@@ -49,7 +50,7 @@ class LlmJudge:
 
     def __init__(self, client: LLMClient | None = None) -> None:
         settings = get_settings().evals.judge
-        self._client = client or create_pinned_llm_client(settings.provider, settings.model)
+        self._client = client or create_judge_client(settings)
         self._temperature = settings.temperature
         self._max_tokens = settings.max_tokens
         self._template = _PROMPT_FILE.read_text()

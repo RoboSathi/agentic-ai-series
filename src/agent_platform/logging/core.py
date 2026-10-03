@@ -19,7 +19,7 @@ from rich.text import Text
 from rich.theme import Theme
 
 from agent_platform.config import get_settings
-from agent_platform.logging.trace_context import get_current_trace_id
+from agent_platform.logging.trace_context import log_context_fields
 from agent_platform.presentation.text_tree import value_lines
 
 Level = Literal["debug", "info", "warning", "error"]
@@ -33,74 +33,15 @@ _LEVEL_TO_INT: dict[Level, int] = {
     "error": logging.ERROR,
 }
 
-# Fields that identify an object well enough to name it on screen, in
-# the order they are tried.
-#
-# Everything else about the object remains in the file log.
-_IDENTIFYING_FIELDS = (
-    # Common business identifiers / decisions.
-    "name",
-    "action",
-    "order_id",
-    "customer_id",
-    "key",
-    "query",
-    "verdict",
-    "label",
-    "topic",
-    "route",
-    # Decision / model detail that explains the step.
-    "reason",
-    "question",
-    "decision",
-    "amount",
-    "requested_amount",
-    "allowed_amount",
-    "threshold",
-    "policy_version",
-    "finish_reason",
-    "model",
-    "total_tokens",
-    "prompt_tokens",
-    "completion_tokens",
-    "tool_calls",
-    "allowed_tools",
-    "offered_actions",
-    "surface",
-    "reversible",
-    "requires_authority_rank",
-    "steps",
-    "score",
-)
 
-SUBSYSTEM_COLORS: dict[str, str] = {
-    "config": "grey58",
-    "logging": "grey78",
-    "tui": "bright_magenta",
-    "llm": "bright_blue",
-    "persistence": "blue",
-    "observability": "cyan",
-    "audit": "green",
-    "evals": "spring_green2",
-    "guardrails": "magenta",
-    "resilience": "yellow",
-    "security": "red",
-    "memory": "dodger_blue1",
-    "context": "turquoise2",
-    "tools": "white",
-    "gatekeeper": "bright_red",
-    "hallucination_protection": "orange3",
-    "customer_support_agent": "bright_green",
-    "research_agent": "light_goldenrod1",
-    "scheduler": "medium_purple1",
-    "budget": "salmon1",
-    "web": "deep_sky_blue1",
-    "ledger": "aquamarine1",
-    "artifacts": "wheat1",
-    "verification": "light_steel_blue",
-    "design_patterns": "plum1",
-    "episodes": "khaki1",
-}
+def subsystem_color(subsystem: str) -> str:
+    """The console colour a subsystem's call traces are drawn in (`logging.subsystem_colors`).
+
+    Configured, not listed here: an agent's overlay adds its own subsystem,
+    so the platform never has to name one.
+    """
+    settings = get_settings().logging
+    return settings.subsystem_colors.get(subsystem, settings.subsystem_default_color)
 
 
 @runtime_checkable
@@ -202,13 +143,7 @@ class RichLogger:
     ) -> None:
         """Log one structured event."""
 
-        trace_id = get_current_trace_id()
-
-        if trace_id:
-            fields = {
-                "trace_id": trace_id,
-                **fields,
-            }
+        fields = {**log_context_fields(), **fields}
 
         self._logger.log(
             _LEVEL_TO_INT[level],
@@ -267,13 +202,7 @@ class RichLogger:
     ) -> None:
         """Log at ERROR with the active traceback attached."""
 
-        trace_id = get_current_trace_id()
-
-        if trace_id:
-            fields = {
-                "trace_id": trace_id,
-                **fields,
-            }
+        fields = {**log_context_fields(), **fields}
 
         self._logger.exception(
             msg,
@@ -349,7 +278,8 @@ class RichLogger:
     ) -> None:
         """One call-trace record with machine-readable file details."""
 
-        self._logger.debug(message, extra={_STRUCTURED_FIELDS: structured_fields or {}})
+        fields = {**log_context_fields(), **(structured_fields or {})}
+        self._logger.debug(message, extra={_STRUCTURED_FIELDS: fields})
 
 
 class LoggerFactory:

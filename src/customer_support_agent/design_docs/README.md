@@ -10,7 +10,7 @@ top-level [`design_docs/`](../../../design_docs/README.md).
 
 ```
 make data csa       # rebuild the agent database (KEEP_MEMORY=1 keeps memory)
-make tui csa        # the operator console
+make agent csa        # the operator console
 make eval csa       # generate → oracle → security (Promptfoo) → judge → deepeval
 ```
 

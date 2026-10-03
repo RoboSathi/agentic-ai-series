@@ -137,7 +137,7 @@ class PromptInjectionGuard:
                 "name": "Instruction/data separation",
                 "status": "PASS",
                 "reason_code": "CONTEXT_SEPARATED",
-                "reason": "Untrusted customer content was kept in the delimited data channel.",
+                "reason": "Untrusted user content was kept in the delimited data channel.",
             },
             {
                 "name": "Injection phrase scan",

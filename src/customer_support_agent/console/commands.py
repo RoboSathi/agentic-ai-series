@@ -5,12 +5,14 @@ agent's vocabulary, so it belongs to this agent. It used to live in
 `agent_platform/commands/`, which meant the platform's console could
 not be opened without a refund database behind it.
 
-These are operator views, deliberately *not* scoped to an authenticated
-customer the way the agent's tools are. An operator inspecting the
-database is a different principal from a customer asking about their own
-account, and conflating the two would either cripple the console or
-widen what the agent can reach. The agent has no route to any of them:
-they are dispatched before a message ever becomes a conversation turn.
+Scoped like the agent's tools: in a console session, `/queue` shows,
+approves and denies only the requests of the customer verified in that
+session (`ConsoleScope`), and says "verify first" while nobody is. A
+request id that is someone else's gets the same answer as one that does
+not exist, so the command cannot be used to learn which requests exist.
+Built without a scope (a script, a test), it is the whole queue. The agent
+has no route to any of this: commands are dispatched before a message ever
+becomes a conversation turn.
 """
 
 from collections.abc import Callable
@@ -18,6 +20,7 @@ from typing import Any, get_args
 
 from agent_platform.commands import CommandError, CommandResult
 from agent_platform.commands._pool import PoolBackedCommand
+from agent_platform.commands.scope import ConsoleScope
 from agent_platform.config import get_settings
 from agent_platform.durability import DurableAgent
 from agent_platform.observability.queue import LittlesLawQueueModel
@@ -68,11 +71,33 @@ class QueueCommand(PoolBackedCommand):
     ) -> None:
         super().__init__(pool)
         self._agent = agent
+        self._scope: ConsoleScope | None = None
+
+    def bind_scope(self, scope: ConsoleScope) -> None:
+        """Show and decide only the console session's verified customer's requests."""
+        self._scope = scope
 
     async def run(self, args: list[str]) -> CommandResult:
+        if self._scope is not None and self._scope.scoped and self._scope.subject() is None:
+            return CommandResult(title="Review queue", ok=False).line(
+                get_settings().commands.verify_first
+            )
         if args and args[0].casefold() in (_APPROVE, _DENY):
             return await self._decide(args)
         return self._overview(args)
+
+    def _customer(self) -> int | None:
+        """The verified customer this console is scoped to, or None when unscoped."""
+        subject = self._scope.subject() if self._scope is not None else None
+        return int(subject) if subject is not None else None
+
+    def _is_theirs(self, request_id: int) -> bool:
+        """Whether a request belongs to the scoped customer (always, when unscoped)."""
+        customer = self._customer()
+        if customer is None:
+            return True
+        request = HitlQueueRepository(self.pool).get(request_id)
+        return request is not None and request.user_id == customer
 
     async def _decide(self, args: list[str]) -> CommandResult:
         """Apply a reviewer's decision, then resume the turn that was waiting on it.
@@ -87,6 +112,13 @@ class QueueCommand(PoolBackedCommand):
         if len(args) < 2 or not args[1].isdigit():
             raise CommandError(f"Usage: {self.usage}")
         request_id = int(args[1])
+        if not self._is_theirs(request_id):
+            # The answer an unknown id gets: another customer's request is not
+            # confirmed to exist.
+            return CommandResult(title=f"Review request {request_id} — not_found").line(
+                f"Request {request_id} is not pending (already decided, or not found). "
+                "/queue lists what is waiting."
+            )
         reviewer = get_agent_settings().console_reviewer
         service = build_review_service(self.pool)
         if args[0].casefold() == _APPROVE:
@@ -116,15 +148,24 @@ class QueueCommand(PoolBackedCommand):
         return result.line(f"ASSISTANT → {resumed.response}")
 
     def _overview(self, args: list[str]) -> CommandResult:
-        pending = HitlQueueRepository(self.pool).pending()
+        customer = self._customer()
+        queue = HitlQueueRepository(self.pool)
+        pending = queue.pending() if customer is None else queue.pending_for_user(customer)
         result = CommandResult(title=f"Review queue — {len(pending)} pending")
         if pending:
-            result.headers = ["id", "order", "customer", "amount", "raised"]
+            # Scoped to one customer, a customer column says the same thing every row.
+            result.headers = [
+                "id",
+                "order",
+                *(["customer"] if customer is None else []),
+                "amount",
+                "raised",
+            ]
             for request in pending[: get_settings().commands.recent_window]:
                 result.row(
                     str(request.id),
                     str(request.order_id),
-                    str(request.user_id),
+                    *([str(request.user_id)] if customer is None else []),
                     str(request.requested_amount),
                     request.created_at[:16],
                 )

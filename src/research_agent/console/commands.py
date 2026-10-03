@@ -21,6 +21,8 @@ class ForwardedCommand:
     """A conversational act: validated here, handled by the agent's graph."""
 
     group = "Research"
+    # The console shows it once, as the turn it becomes, not also as a command.
+    forwards_turn = True
 
     def __init__(self, name: str, summary: str, usage: str, needs_args: bool = False) -> None:
         self.name = name

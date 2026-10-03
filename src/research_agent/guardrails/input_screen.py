@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from agent_platform.logging import get_logger, instrument
 from agent_platform.security import MessageScreener
-from research_agent.research.telemetry import RunTelemetry
+from research_agent.observability.telemetry import RunTelemetry
 
 
 class ScreenResult(BaseModel):

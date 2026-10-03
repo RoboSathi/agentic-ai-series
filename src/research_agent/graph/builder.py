@@ -82,6 +82,7 @@ from research_agent.audit.independent import IndependentAuditor, LlmJudge
 from research_agent.config import ResearchAgentSettings, get_agent_settings
 from research_agent.context.earlier_runs import EarlierRunsSource
 from research_agent.context.session import AnswerContext
+from research_agent.domain.matching import TermMatcher
 from research_agent.domain.report import COVERAGE_AND_LIMITS
 from research_agent.domain.rubric import Contract
 from research_agent.graph.agent import ResearchAgent
@@ -92,18 +93,18 @@ from research_agent.graph.scoping_graph import build_scoping_graph
 from research_agent.graph.scoping_nodes import ScopingNodes, ScopingParts
 from research_agent.graph.state import StateTypes
 from research_agent.guardrails.answer_grounding import AnswerGrounding
+from research_agent.guardrails.injection import InjectionScreen
 from research_agent.guardrails.input_screen import InputScreen
 from research_agent.intent import ResearchIntentRouter
 from research_agent.llm.structured import RoleClients, StructuredCaller
+from research_agent.observability.telemetry import RunTelemetry
 from research_agent.planning.planner import Planner
 from research_agent.research.cards import cap_reached_card
-from research_agent.research.defenses import InjectionScreen, OutboundGuard
+from research_agent.research.defenses import OutboundGuard
 from research_agent.research.extractor import QuarantinedExtractor, UnquarantinedReader
-from research_agent.research.matching import TermMatcher
 from research_agent.research.reflector import GapAnalyzer, Reflector
 from research_agent.research.resources import RunResources
 from research_agent.research.stop_rules import stop_rule_for
-from research_agent.research.telemetry import RunTelemetry
 from research_agent.rubric.editor import RubricEditor
 from research_agent.rubric.generator import RubricGenerator
 from research_agent.scoping.brief import BriefBuilder

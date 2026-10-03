@@ -16,16 +16,25 @@ import pytest
 
 from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.graph import build_agent
-from customer_support_agent.persistence.repositories import UsersRepository
+from customer_support_agent.persistence.repositories import OrdersRepository, UsersRepository
+from customer_support_agent.presentation.auth import unknown_code
+from customer_support_agent.presentation.orders import customer_orders, describe_customer
 from customer_support_agent.security.authentication import CustomerAuthenticator
 from tests.conftest import CUSTOMER_CODE, ScriptedLLM
 
 
 @pytest.fixture
 def authenticator(seeded_pool: SqliteConnectionPool) -> CustomerAuthenticator:
-    from customer_support_agent.persistence.repositories import OrdersRepository
+    return CustomerAuthenticator(UsersRepository(seeded_pool))
 
-    return CustomerAuthenticator(UsersRepository(seeded_pool), OrdersRepository(seeded_pool))
+
+def _read_back(authenticator: CustomerAuthenticator, pool: SqliteConnectionPool) -> str:
+    """The verified greeting the authentication node renders for this code."""
+    result = authenticator.authenticate(CUSTOMER_CODE)
+    assert result.user is not None
+    return describe_customer(
+        result.user, customer_orders(OrdersRepository(pool), result.user.user_id)
+    )
 
 
 class TestAuthentication:
@@ -59,26 +68,32 @@ class TestAuthentication:
     ) -> None:
         """Distinguishing them tells an attacker which codes exist."""
         wrong = authenticator.authenticate("ZZZ9ZZZ")
-        assert wrong.code_attempted is True
-        assert "couldn't find" in wrong.message
+        malformed = authenticator.authenticate("AB12")
+        assert wrong.code_attempted is True and wrong.user is None
+        assert "couldn't find" in unknown_code()
+        assert malformed.code_attempted is False
 
-    def test_the_read_back_is_a_fixed_format(self, authenticator: CustomerAuthenticator) -> None:
-        """Rendered here, not by a model: these are the customer's own records."""
-        message = authenticator.authenticate(CUSTOMER_CODE).message
+    def test_the_read_back_is_a_fixed_format(
+        self, authenticator: CustomerAuthenticator, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        """Rendered from the record, not by a model: these are the customer's own records."""
+        message = _read_back(authenticator, seeded_pool)
         assert "Ada Lovelace" in message
         assert "Account" in message and "orders" in message
 
-    def test_the_read_back_masks_the_email(self, authenticator: CustomerAuthenticator) -> None:
+    def test_the_read_back_masks_the_email(
+        self, authenticator: CustomerAuthenticator, seeded_pool: SqliteConnectionPool
+    ) -> None:
         """A support transcript is not a place to restate a full address."""
-        message = authenticator.authenticate(CUSTOMER_CODE).message
+        message = _read_back(authenticator, seeded_pool)
         assert "ada@example.com" not in message and "@example.com" in message
 
     def test_the_read_back_lists_the_customers_own_orders(
-        self, authenticator: CustomerAuthenticator
+        self, authenticator: CustomerAuthenticator, seeded_pool: SqliteConnectionPool
     ) -> None:
         """Listed, not counted — they verified in order to talk about one."""
-        message = authenticator.authenticate(CUSTOMER_CODE).message
-        assert "Order 10001" in message and "Order 10002" in message
+        message = _read_back(authenticator, seeded_pool)
+        assert "10001" in message and "10002" in message
 
 
 class TestTheConversationFlow:

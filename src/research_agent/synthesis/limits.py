@@ -13,7 +13,7 @@ from agent_platform.verification.acceptance import CheckVerdict
 from research_agent.domain.plan import PlanDag
 from research_agent.domain.report import COVERAGE_AND_LIMITS, LimitEntry, ReportSection
 from research_agent.domain.rubric import Contract
-from research_agent.research.resources import RunTrace
+from research_agent.domain.trace import RunTrace
 
 
 def unmet_must_pass(verdicts: Iterable[CheckVerdict]) -> list[CheckVerdict]:

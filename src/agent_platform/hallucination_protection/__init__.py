@@ -16,11 +16,11 @@ from agent_platform.hallucination_protection.claims import (
 )
 from agent_platform.hallucination_protection.direct import (
     AMOUNT_MISMATCH,
+    IDENTIFIER_MISMATCH,
     NO_RECORD,
     NOT_EXECUTED,
     NOT_EXECUTED_MARKER,
-    ORDER_MISMATCH,
-    REFUND_STATE_MISMATCH,
+    RECORD_STATE_MISMATCH,
 )
 from agent_platform.hallucination_protection.evidence import (
     TOOL_RESULT_KIND,
@@ -51,8 +51,8 @@ __all__ = [
     "NO_RECORD",
     "OBSERVATION_SEQUENCE",
     "STATE_CHANGING",
-    "ORDER_MISMATCH",
-    "REFUND_STATE_MISMATCH",
+    "IDENTIFIER_MISMATCH",
+    "RECORD_STATE_MISMATCH",
     "AtomicClaim",
     "ClaimClass",
     "ClaimClassifier",

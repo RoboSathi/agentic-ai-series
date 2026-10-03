@@ -35,6 +35,7 @@ without patching a single import.
 """
 
 import uuid
+from contextlib import AbstractContextManager
 from typing import Any
 
 from agent_platform.audit import AuditLedger, NullAuditLedger
@@ -65,7 +66,7 @@ from agent_platform.guardrails import ResponseGuardrail
 from agent_platform.hallucination_protection import DetectionLadder, GroundingReasoningDiagnoser
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import Message, TokenUsage
-from agent_platform.logging import get_logger
+from agent_platform.logging import bound_log_context, get_logger, new_trace_id
 from agent_platform.memory import (
     MemoryAction,
     MemoryCommand,
@@ -94,8 +95,8 @@ from customer_support_agent.config import get_agent_settings
 from customer_support_agent.control_loop import IndependentScorer, OutputQualityGate
 from customer_support_agent.domain.identity import (
     Customer,
+    bound_customer,
     current_customer,
-    set_current_customer,
 )
 from customer_support_agent.domain.order_reference import OrderReferenceResolver
 from customer_support_agent.graph.edges import GraphWiring
@@ -128,6 +129,7 @@ _WAITING_OUTCOME = "waiting for human review"
 _FAILED_OUTCOME = "failed — resumable"
 _RESUMED_OUTCOME = "resumed and answered"
 _REVIEWED_OUTCOME = "review decision delivered"
+_CANCELLED_OUTCOME = "cancelled — resumable"
 
 
 class CustomerSupportAgent(
@@ -244,10 +246,11 @@ class CustomerSupportAgent(
         # Which order the customer is talking about, resolved once a turn
         # from what they said and what the record holds. One resolver, so
         # the path that answers and the path that acts cannot drift.
+        rules = get_agent_settings().order_reference
         self._order_reference = (
-            OrderReferenceResolver.from_orders(orders)
+            OrderReferenceResolver.from_orders(rules, orders)
             if orders is not None
-            else OrderReferenceResolver()
+            else OrderReferenceResolver(rules)
         )
         self._basic_sanity = basic_sanity
         # Who each session has proved itself to be. Authentication is per
@@ -274,12 +277,19 @@ class CustomerSupportAgent(
         self._checkpointer = checkpointer
         self._runs = runs
         self._loop_step: int | None = None
+        # The durable thread running now, so the console can cancel it.
+        self._active_thread: str | None = None
         self._graph = self._build()
         self._runner = (
             DurableGraphRunner(self._graph, checkpointer, runs)
             if checkpointer is not None and runs is not None
             else None
         )
+
+    def verified_subject(self, session_id: str) -> str | None:
+        """Who has proved who they are in this session, as the records' `subject_id`."""
+        customer = self._sessions.get(session_id)
+        return str(customer.customer_id) if customer is not None else None
 
     def adopt_conversation(self, previous: "CustomerSupportAgent") -> None:
         """Take over the conversation a previous build was holding.
@@ -342,7 +352,15 @@ class CustomerSupportAgent(
         # invisible to `act`, and every lookup would silently scope to
         # nobody.
         customer = customer or self._sessions.get(session_id) or current_customer()
-        set_current_customer(customer)
+        # One turn, one trace: every line any subsystem logs for this turn
+        # carries it, with the agent, the session and the caller's channel.
+        with bound_customer(customer), self._turn_log_context(session_id):
+            return await self._handle_bound(query, session_id, customer)
+
+    async def _handle_bound(
+        self, query: str, session_id: str, customer: Customer | None
+    ) -> AgentState:
+        """One turn, with the customer already bound for exactly its duration."""
         self._control_loop = ToolControlLoop()
         self._loop_step = None
         await self._recover_conversation(session_id)
@@ -364,6 +382,8 @@ class CustomerSupportAgent(
         except Exception:
             self._end_turn("failed", _FAILED_OUTCOME, session_id, run_status="failed_resumable")
             raise
+        if outcome is not None and outcome.status == "cancelled":
+            return self._stopped(state, outcome)
         # Inside the turn's bracket, so its memory writes are counted in the
         # summary card rather than trailing it.
         self._complete_turn(state)
@@ -384,15 +404,42 @@ class CustomerSupportAgent(
         """Run one turn — as its own checkpointed thread when durable."""
         if self._runner is None:
             return AgentState.model_validate(await self._graph.ainvoke(initial)), None
-        outcome = await self._runner.start(
-            thread_id,
-            initial,
-            session_id=initial.session_id,
-            subject_id=str(initial.customer_id or ""),
-            preview=self._security.redact(initial.query),
-            reporter=self._reporter,
-        )
+        self._active_thread = thread_id
+        try:
+            outcome = await self._runner.start(
+                thread_id,
+                initial,
+                session_id=initial.session_id,
+                subject_id=str(initial.customer_id or ""),
+                preview=self._security.redact(initial.query),
+                reporter=self._reporter,
+            )
+        finally:
+            self._active_thread = None
         return AgentState.model_validate(outcome.values), outcome
+
+    @property
+    def running(self) -> bool:
+        """Whether a durable turn is in flight (what a Cancel button stops)."""
+        return self._active_thread is not None
+
+    def cancel(self) -> bool:
+        """Stop the turn in flight; its checkpoints stay, so it can be resumed."""
+        thread = self._active_thread
+        return bool(self._runner is not None and thread and self._runner.cancel(thread))
+
+    def _stopped(self, state: AgentState, outcome: RunOutcome) -> AgentState:
+        """A cancelled turn: say where it stopped; nothing is remembered as answered."""
+        step = outcome.next_nodes[0] if outcome.next_nodes else ""
+        reply = get_agent_settings().messages.cancelled.format(step=step or "the end")
+        self._end_turn(
+            "warning",
+            _CANCELLED_OUTCOME,
+            state.session_id,
+            run_status=outcome.status,
+            checkpoints=outcome.checkpoints,
+        )
+        return state.model_copy(update={"response": reply})
 
     def _begin_turn(self, thread_id: str, session_id: str) -> None:
         if self._reporter is not None:
@@ -451,8 +498,24 @@ class CustomerSupportAgent(
         record = self._runs.get(thread_id)
         waiting = record is not None and record.status == "interrupted"
         prior = AgentState.model_validate(await self._runner.values(thread_id))
-        self._rebind(prior)
+        customer = self._rebind(prior)
+        with bound_customer(customer), self._turn_log_context(prior.session_id):
+            return await self._resume_bound(thread_id, decision, prior, waiting)
+
+    @staticmethod
+    def _turn_log_context(session_id: str) -> AbstractContextManager[None]:
+        """A fresh trace for one turn (a resume is a turn of its own)."""
+        return bound_log_context(
+            agent=get_settings().agent.id, session=session_id, trace_id=new_trace_id()
+        )
+
+    async def _resume_bound(
+        self, thread_id: str, decision: Any | None, prior: AgentState, waiting: bool
+    ) -> ResumeResult:
+        """The resumed run, with its customer bound for exactly its duration."""
+        assert self._runner is not None
         self._begin_turn(thread_id, prior.session_id)
+        self._active_thread = thread_id
         try:
             outcome = await self._runner.resume(thread_id, decision, self._reporter)
         except Exception:
@@ -464,7 +527,17 @@ class CustomerSupportAgent(
                 resumed=True,
             )
             raise
+        finally:
+            self._active_thread = None
         state = AgentState.model_validate(outcome.values)
+        if outcome.status == "cancelled":
+            stopped = self._stopped(state, outcome)
+            return ResumeResult(
+                thread_id=thread_id,
+                session_id=stopped.session_id,
+                status=outcome.status,
+                response=stopped.response,
+            )
         if waiting:
             reply = str(state.metadata.get("follow_up") or "")
             self._note_follow_up(state.session_id, reply)
@@ -484,20 +557,25 @@ class CustomerSupportAgent(
             thread_id=thread_id, session_id=state.session_id, status=outcome.status, response=reply
         )
 
-    def _rebind(self, prior: AgentState) -> None:
-        """Restore the customer and the conversation a checkpointed run belongs to."""
+    def _rebind(self, prior: AgentState) -> Customer | None:
+        """Restore the conversation a checkpointed run belongs to; return its customer.
+
+        The caller binds the customer for the resumed run only. Binding it
+        here, in the caller's own context, outlived the resume and handed
+        the next session an identity it never proved.
+        """
         customer = self._sessions.get(prior.session_id)
         if customer is None and prior.customer_id is not None and self._authenticator is not None:
             customer = self._authenticator.customer_for(prior.customer_id)
             if customer is not None:
                 self._sessions[prior.session_id] = customer
-        set_current_customer(customer)
         self._control_loop = ToolControlLoop()
         if (
             self._working_memory is not None
             and not self._working_memory.get(prior.session_id).history
         ):
             self._working_memory.restore(prior.session_id, prior.working_memory)
+        return customer
 
     def _remember_turn(self, state: AgentState) -> None:
         """Offer this turn to long-term memory, through governance.

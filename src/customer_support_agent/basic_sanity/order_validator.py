@@ -27,8 +27,8 @@ from customer_support_agent.domain.models import Order
 from customer_support_agent.domain.order_reference import (
     OrderReferenceResolver,
 )
+from customer_support_agent.domain.ports import OrderLookup
 from customer_support_agent.domain.refund_policy import RefundPolicy
-from customer_support_agent.persistence.repositories import OrdersRepository
 
 # The finding that proves an order exists and belongs to this customer. A
 # request about that order may still be refused, but the order it names is
@@ -52,7 +52,7 @@ class OrderSanityCheck(BasicSanityChecker):
 
     def __init__(
         self,
-        orders: OrdersRepository,
+        orders: OrderLookup,
         *,
         refund_policy: RefundPolicy | None = None,
         cancellation_policy: CancellationPolicy | None = None,
@@ -63,7 +63,9 @@ class OrderSanityCheck(BasicSanityChecker):
         # The one reader of which order a message names. BasicSanity used to
         # carry its own, and two readers that disagree are how an agent
         # validates one order and acts on another.
-        self._references = references or OrderReferenceResolver.from_orders(orders)
+        self._references = references or OrderReferenceResolver.from_orders(
+            get_agent_settings().order_reference, orders
+        )
         self._refund_policy = refund_policy or RefundPolicy(orders)
         self._cancellation_policy = cancellation_policy or CancellationPolicy(orders)
         self._cancel_markers = _markers(_configured_phrases(CANCEL_OPERATION))

@@ -18,8 +18,8 @@ from research_agent.domain.evidence import ClaimCandidate
 from research_agent.domain.plan import SubQuestion
 from research_agent.domain.rubric import Contract, Rubric
 from research_agent.domain.scope import ScopeBrief
+from research_agent.guardrails.injection import InjectionScreen
 from research_agent.presentation.narration import say
-from research_agent.research.defenses import InjectionScreen
 from research_agent.research.extractor import PageReading
 from research_agent.research.resources import RunResources
 from research_agent.research.worker import ResearcherWorker

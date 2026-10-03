@@ -24,7 +24,7 @@ from research_agent.config import get_agent_settings
 from research_agent.graph.answerer import DirectAnswerer
 from research_agent.guardrails.answer_grounding import AnswerGrounding
 from research_agent.llm.structured import StructuredCaller
-from research_agent.research.telemetry import RunTelemetry
+from research_agent.observability.telemetry import RunTelemetry
 from research_agent.tools import URLS_KEY
 from tests.conftest import ScriptedLLM
 

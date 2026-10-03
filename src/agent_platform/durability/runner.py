@@ -18,6 +18,7 @@ is replayed, not paid again. A model call is simply made again; the
 resume card says so, because that is a real cost.
 """
 
+import asyncio
 from datetime import timedelta
 from typing import Any
 
@@ -34,7 +35,7 @@ from agent_platform.durability.types import (
     ResumableRunError,
     RunOutcome,
 )
-from agent_platform.logging import get_logger
+from agent_platform.logging import get_current_trace_id, get_logger
 from agent_platform.observability.status_feed import StageReporter
 from agent_platform.observability.types import utc_now
 
@@ -65,6 +66,11 @@ class DurableGraphRunner:
         self._registry = registry
         self._settings = settings or get_settings().durability
         self._logger = get_logger("persistence")
+        # The graph invocation in flight per thread, and the threads an
+        # operator asked to stop: only a cancellation asked for here is a
+        # clean stop. Any other (process shutdown) still propagates.
+        self._active: dict[str, asyncio.Future[Any]] = {}
+        self._cancel_requested: set[str] = set()
 
     @property
     def registry(self) -> RunRegistry:
@@ -82,7 +88,11 @@ class DurableGraphRunner:
     ) -> RunOutcome:
         """Run a new thread from its initial state."""
         self._registry.start(
-            thread_id, session_id, subject_id, preview[: self._settings.preview_chars]
+            thread_id,
+            session_id,
+            subject_id,
+            preview[: self._settings.preview_chars],
+            trace_id=get_current_trace_id() or "",
         )
         return await self._invoke(thread_id, payload, reporter)
 
@@ -108,19 +118,15 @@ class DurableGraphRunner:
             checkpoint=record.checkpoint_id,
             node=record.next_node,
             attempt=record.attempts + 1,
+            resumed_from_trace=record.trace_id,
         )
         if reporter is not None:
-            waited = record.status == "interrupted"
             reporter.completed(
                 "run_resumed",
                 event_kind="system",
-                summary=(
-                    "Decision received — continuing the paused turn"
-                    if waited
-                    else f"Retrying from {record.next_node or 'the last step'}"
-                ),
+                summary=_resume_summary(record.status, record.next_node),
                 fields={
-                    "why": "a decision arrived" if waited else "the last attempt failed",
+                    "why": _RESUME_WHY[record.status],
                     "continues_at": record.next_node or "—",
                     "attempt": record.attempts + 1,
                     "previous_error": record.error or None,
@@ -155,15 +161,75 @@ class DurableGraphRunner:
         """Delete completed threads older than the retention window."""
         return purge_expired(self._checkpointer, self._registry, self._settings)
 
+    def cancel(self, thread_id: str) -> bool:
+        """Stop a running thread at once; it keeps every checkpoint it wrote.
+
+        False when the thread is not running in this process. The node in
+        flight is abandoned and runs again on resume — a side effect it had
+        already committed replays from its idempotency record.
+        """
+        running = self._active.get(thread_id)
+        if running is None or running.done():
+            return False
+        self._cancel_requested.add(thread_id)
+        running.cancel()
+        return True
+
     async def _invoke(
         self, thread_id: str, payload: Any, reporter: StageReporter | None
     ) -> RunOutcome:
         config = _config(thread_id)
+        running = asyncio.ensure_future(
+            self._graph.ainvoke(payload, config, durability=self._settings.mode)
+        )
+        self._active[thread_id] = running
         try:
-            await self._graph.ainvoke(payload, config, durability=self._settings.mode)
+            await running
+        except asyncio.CancelledError:
+            outcome = await self._cancelled(thread_id, reporter)
+            if thread_id not in self._cancel_requested:
+                raise
+            return outcome
         except Exception as exc:
             raise await self._fail(thread_id, exc, reporter) from exc
+        finally:
+            self._active.pop(thread_id, None)
+            self._cancel_requested.discard(thread_id)
         return await self._settle(thread_id, reporter)
+
+    async def _cancelled(self, thread_id: str, reporter: StageReporter | None) -> RunOutcome:
+        """Record a stopped run as resumable from its last completed node."""
+        snapshot = await self._graph.aget_state(_config(thread_id))
+        outcome = RunOutcome(
+            thread_id=thread_id,
+            status="cancelled",
+            values=dict(snapshot.values or {}),
+            next_nodes=list(snapshot.next),
+            checkpoint_id=str(snapshot.config["configurable"].get("checkpoint_id", "")),
+            checkpoints=self._count(thread_id),
+        )
+        node = outcome.next_nodes[0] if outcome.next_nodes else ""
+        self._registry.mark(
+            thread_id,
+            "cancelled",
+            next_node=",".join(outcome.next_nodes),
+            checkpoint_id=outcome.checkpoint_id,
+            error=self._settings.cancel_reason,
+        )
+        self._logger.warning("Run cancelled; state checkpointed", thread=thread_id, node=node)
+        if reporter is not None:
+            reporter.warning(
+                "run_cancelled",
+                event_kind="system",
+                summary=f"Cancelled before {node or 'the end'} — resumable",
+                fields={
+                    "continues_at": node or "—",
+                    "checkpoints": outcome.checkpoints,
+                    "state": "saved — nothing already done will be repeated",
+                    "thread": thread_id,
+                },
+            )
+        return outcome
 
     async def _settle(self, thread_id: str, reporter: StageReporter | None) -> RunOutcome:
         """Read where the run stopped and record it."""
@@ -255,6 +321,24 @@ def purge_expired(
     if expired:
         get_logger("persistence").info("Expired threads purged", count=len(expired))
     return len(expired)
+
+
+# Why a run is being resumed, by how it stopped.
+_RESUME_WHY = {
+    "interrupted": "a decision arrived",
+    "failed_resumable": "the last attempt failed",
+    "cancelled": "the operator cancelled it",
+}
+
+
+def _resume_summary(status: str, next_node: str) -> str:
+    """The resume card's one line, by how the run stopped."""
+    step = next_node or "the last step"
+    if status == "interrupted":
+        return "Decision received — continuing the paused turn"
+    if status == "cancelled":
+        return f"Resuming after cancel from {step}"
+    return f"Retrying from {step}"
 
 
 def _config(thread_id: str) -> RunnableConfig:

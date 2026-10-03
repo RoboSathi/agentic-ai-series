@@ -59,6 +59,15 @@ class YamlBackedSettings(BaseSettings):
         return deep_merge(load_section(cls._yaml_section), data)
 
 
+class SubjectFieldSettings(BaseModel):
+    """A field naming what an agent acts on (`order_id` → "order"), shown on cards."""
+
+    field: str
+    label: str
+    # Whether a one-line card summary names it ("tool requested · order 10042").
+    summarise: bool = False
+
+
 class AgentIdentitySettings(YamlBackedSettings):
     """Identity stamped onto shared platform observability records."""
 
@@ -70,6 +79,13 @@ class AgentIdentitySettings(YamlBackedSettings):
     # platform defaults on purpose: the platform must not name an agent, so
     # an agent declares its own host in its own overlay.
     host: str = ""
+    # The fields that name what this agent acts on. Agent vocabulary, so the
+    # platform default lists none and each agent's overlay lists its own.
+    subject_fields: list[SubjectFieldSettings] = Field(default_factory=list)
+    # A session id is `<agent id><separator><hex chars>`: named for the agent
+    # that owns the conversation, never for the screen that opened it.
+    session_separator: str
+    session_hex_chars: int
 
     model_config = SettingsConfigDict(env_prefix="AGENT__")
 
@@ -95,6 +111,9 @@ class LoggingSettings(YamlBackedSettings):
     # its line format (`%(name)s` the subsystem). The file log stays plain text.
     console_theme: dict[str, str] = Field(default_factory=dict)
     console_format: str = "%(message)s"
+    # Console colour of each subsystem's call traces; an agent's overlay adds its own.
+    subsystem_colors: dict[str, str] = Field(default_factory=dict)
+    subsystem_default_color: str
 
     model_config = SettingsConfigDict(env_prefix="LOGGING__")
 
@@ -432,6 +451,8 @@ class DurabilitySettings(YamlBackedSettings):
     # How much of a run's query the run registry keeps for display.
     preview_chars: int
     encryption: CheckpointEncryptionSettings
+    # Recorded as the error of a run an operator cancelled.
+    cancel_reason: str
 
     model_config = SettingsConfigDict(env_prefix="DURABILITY__")
 
@@ -461,6 +482,10 @@ class AuditSettings(YamlBackedSettings):
     data_version: str
     prompt_version: str
     tool_schema_version: str
+    # Where the versioned prompt and policy live, as `/versions` reports them.
+    # The agent names its own; the platform default names none.
+    prompt_source: str
+    policy_source: str
 
     model_config = SettingsConfigDict(env_prefix="AUDIT__")
 
@@ -779,6 +804,8 @@ class GuardrailsSettings(YamlBackedSettings):
     mode: Literal["reject", "auto_repair", "constrained"]
     max_repair_attempts: int
     constrained_backend: Literal["grammar", "guided_json"]
+    # Why a reply was blocked, by finding code, in the words a card shows.
+    block_reasons: dict[str, str] = Field(default_factory=dict)
 
     model_config = SettingsConfigDict(env_prefix="GUARDRAILS__")
 
@@ -809,9 +836,11 @@ class StatePhraseSettings(BaseModel):
     exact: bool = False
 
 
-class RefundStatesSettings(BaseModel):
-    """The refund state machine a state claim is judged against."""
+class RecordStatesSettings(BaseModel):
+    """The state machine a state claim is judged against (an agent's record, e.g. a refund)."""
 
+    # What the status is the status of, as a rationale says it ("refund").
+    subject: str
     ladder: list[str]
     branches: dict[str, str]
     settled_from: str
@@ -866,13 +895,15 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     # shape and one worked default.
     conversational_openers: list[str]
     record_identifier_pattern: str
+    # What a record id is called in a finding or a provenance line ("order 10042").
+    record_identifier_label: str
     outcome_pattern: str
     promissory_pattern: str
     # Settled-refund wording, the record field that settles it, and the
     # record wording that says it is still waiting on a person.
     refusal_pattern: str
-    refund_state_pattern: str
-    refund_states: RefundStatesSettings
+    record_state_pattern: str
+    record_states: RecordStatesSettings
     # A phrase carved out of an outcome and checked as the rule it states.
     rule_phrases: list[RulePhraseSettings]
     # A rule claim whose content is this fraction restated by one rule of
@@ -922,15 +953,6 @@ class SurfacePolicySettings(BaseModel):
     surfaces: dict[str, SurfaceClassName]
 
 
-class AutomationSettings(BaseModel):
-    """Sheridan automation level per action class (E03)."""
-
-    enabled: bool
-    human_approval_below: int
-    levels: dict[str, int]
-    per_action_amount_escalation_usd: dict[str, float]
-
-
 class GatekeeperSettings(YamlBackedSettings):
     """The always-invoked mediation point (LLD §11).
 
@@ -946,7 +968,6 @@ class GatekeeperSettings(YamlBackedSettings):
     tier2: Tier2Settings
     mandate: MandateSettings
     surface_policy: SurfacePolicySettings
-    automation: AutomationSettings
 
     model_config = SettingsConfigDict(env_prefix="GATEKEEPER__")
 
@@ -1179,16 +1200,15 @@ class NliSettings(BaseModel):
     negation_markers: list[str]
 
 
-class JudgeSettings(BaseModel):
-    """The LLM judge: which model grades, and how it samples (E11).
+class JudgeSettings(ModelRef, ModelChainSettings):
+    """The LLM judge: which model grades, its backups, and how it samples (E11).
 
     The judge's model is its own setting, deliberately not the agent's: a
     model grading its own output is the self-preference bias a judge
-    exists to avoid.
+    exists to avoid. Its backups and protection are a model chain like any
+    role's (`ModelChainBuilder`), so a stalled judge call gets an answer.
     """
 
-    provider: ProviderName
-    model: str
     temperature: float
     max_tokens: int
     # Cap on the evidence text a rubric judge is shown (0 = all of it).
@@ -1340,6 +1360,27 @@ class ToolsSettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="TOOLS__")
 
 
+class BoxGlyphSettings(BaseModel):
+    """The characters a box-drawn table is drawn with: corners and joins, top to bottom."""
+
+    horizontal: str
+    vertical: str
+    top: list[str] = Field(min_length=3, max_length=3)
+    middle: list[str] = Field(min_length=3, max_length=3)
+    bottom: list[str] = Field(min_length=3, max_length=3)
+
+
+class PresentationSettings(YamlBackedSettings):
+    """Plain-text renderers shared by `make` output and the TUI."""
+
+    _yaml_section = "presentation"
+    box: BoxGlyphSettings
+    # Spaces either side of a cell's text.
+    cell_padding: int = Field(ge=0)
+
+    model_config = SettingsConfigDict(env_prefix="PRESENTATION__")
+
+
 class CommandSettings(YamlBackedSettings):
     """Console slash commands (LLD §20)."""
 
@@ -1351,6 +1392,10 @@ class CommandSettings(YamlBackedSettings):
     tree_preview_chars: int
     memory_tree_events_per_session: int
     recent_window: int
+    # What a scoped command says when the session has nobody verified, and
+    # when asked for someone else's records (`ConsoleScope`).
+    verify_first: str
+    not_your_records: str
 
     model_config = SettingsConfigDict(env_prefix="COMMANDS__")
 
@@ -1379,7 +1424,13 @@ class TuiSettings(YamlBackedSettings):
     """Live status feed (LLD §20)."""
 
     _yaml_section = "tui"
+    # The channel this console's turns are logged under.
+    channel: str
+    # One style per console role (banner, user, assistant, metrics, notice, muted, ...).
+    palette: dict[str, str]
     refresh_interval_ms: int
+    # A stage's one-line summary for an agent's own reason code (BasicSanity's, say).
+    reason_summaries: dict[str, str] = Field(default_factory=dict)
     show_token_count: bool
     copy_method: Literal["osc52", "file"]
     # Commands that put text on the system clipboard, tried in order; the
@@ -1569,6 +1620,9 @@ class AppConfig(BaseSettings):
     tools: ToolsSettings = Field(default_factory=lambda: ToolsSettings())  # type: ignore[call-arg]
     tui: TuiSettings = Field(default_factory=lambda: TuiSettings())  # type: ignore[call-arg]
     commands: CommandSettings = Field(default_factory=lambda: CommandSettings())  # type: ignore[call-arg]
+    presentation: PresentationSettings = Field(
+        default_factory=lambda: PresentationSettings()  # type: ignore[call-arg]
+    )
     web: WebSettings = Field(default_factory=lambda: WebSettings())  # type: ignore[call-arg]
     artifacts: ArtifactSettings = Field(default_factory=lambda: ArtifactSettings())  # type: ignore[call-arg]
     # Which capabilities this deployment was given. Declared by the agent

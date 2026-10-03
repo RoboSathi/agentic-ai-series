@@ -35,9 +35,9 @@ from research_agent.graph.answer_state import STEPS, TOOL_CALLS, AnswerState, Tu
 from research_agent.graph.points import as_points
 from research_agent.guardrails.answer_grounding import AnswerGrounding, GroundingOutcome
 from research_agent.llm.structured import ModelCallTimeoutError, StructuredCaller
+from research_agent.observability.telemetry import RunTelemetry
 from research_agent.presentation.narration import clip
 from research_agent.prompts import answer as prompt
-from research_agent.research.telemetry import RunTelemetry
 from research_agent.tools import URLS_KEY
 
 # The loop's cards, in the order a step emits them.

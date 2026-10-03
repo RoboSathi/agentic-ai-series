@@ -29,9 +29,9 @@ from research_agent.domain.report import (
 )
 from research_agent.domain.rubric import Contract
 from research_agent.domain.scope import Depth
+from research_agent.domain.trace import RunTrace
 from research_agent.llm.structured import StructuredCaller
 from research_agent.prompts import synthesizer as prompt
-from research_agent.research.resources import RunTrace
 from research_agent.synthesis.citation_check import (
     CitationCheck,
     cited_ids,

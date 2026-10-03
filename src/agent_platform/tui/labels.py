@@ -69,6 +69,7 @@ _DISPLAY_NAMES = {
     "finalize": "FINALIZE",
     "run_failed_resumable": "RUN FAILED · RESUMABLE",
     "run_resumed": "RESUMED",
+    "run_cancelled": "RUN CANCELLED · RESUMABLE",
     "run_interrupted": "WAITING",
     "review_decision": "REVIEW DECISION",
     "turn_summary": "TURN SUMMARY",

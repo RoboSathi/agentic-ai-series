@@ -21,7 +21,7 @@ from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.report import Report, RunStatus
 from research_agent.domain.rubric import Contract, Rubric
 from research_agent.domain.scope import Archetype, CoverageItem, Mode, ScopeBrief
-from research_agent.research.resources import RunTrace
+from research_agent.domain.trace import RunTrace
 from research_agent.research.worker import NodeResult
 
 ScopePhase = Literal["GATE", "REFRAME", "QA", "INTERVIEW", "RUBRIC_REVIEW", "APPROVED", "REFUSED"]

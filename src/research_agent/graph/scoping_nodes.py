@@ -19,8 +19,8 @@ from research_agent.domain.scope import GENERAL, GateVerdict, Mode, ScopeBrief, 
 from research_agent.graph import cards
 from research_agent.graph.state import ScopingState
 from research_agent.llm.structured import StructuredCaller
+from research_agent.observability.telemetry import RunTelemetry
 from research_agent.prompts import interviewer as interviewer_prompt
-from research_agent.research.telemetry import RunTelemetry
 from research_agent.rubric.editor import RubricEditError, RubricEditor, render
 from research_agent.rubric.freeze import freeze_contract
 from research_agent.rubric.generator import RubricGenerator

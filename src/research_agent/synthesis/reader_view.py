@@ -23,14 +23,10 @@ from urllib.parse import urlparse
 
 from research_agent.config.settings import ReaderViewWording
 from research_agent.domain.report import Citation, Report
+from research_agent.domain.sources import host_of
 
 _ADJACENT = r"(?:\s*{c})+"
 _LEAD = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
-
-
-def host_of(url: str) -> str:
-    host = (urlparse(url).hostname or url).casefold()
-    return host.removeprefix("www.")
 
 
 def label_for(url: str, labels: Mapping[str, Sequence[str]]) -> str:

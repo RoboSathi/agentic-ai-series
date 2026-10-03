@@ -8,7 +8,7 @@ instead of Promptfoo's default (a separate OpenAI account).
 from typing import Any
 
 from agent_platform.config import get_settings
-from agent_platform.llm.client import create_pinned_llm_client
+from agent_platform.evals.judge_client import create_judge_client
 from agent_platform.llm.types import CompletionRequest, Message
 
 
@@ -17,7 +17,7 @@ def call_api(prompt: str, options: dict[str, Any], context: dict[str, Any]) -> d
     import asyncio
 
     judge = get_settings().evals.judge
-    client = create_pinned_llm_client(judge.provider, judge.model)
+    client = create_judge_client(judge)
     try:
         result = asyncio.run(
             client.complete(

@@ -18,7 +18,7 @@ from agent_platform.evidence import EvidenceEntry
 from agent_platform.hallucination_protection import plain_text
 from agent_platform.verification.acceptance import AcceptanceCheckRegistry, CheckOutcome, CheckSpec
 from research_agent.audit.context import CheckContext, distinct_hosts, host
-from research_agent.research.defenses import is_primary
+from research_agent.domain.sources import is_primary
 
 Check = Callable[[CheckSpec, CheckContext], Awaitable[CheckOutcome]]
 # A figure in a claim ("6,200", "410"): how two sources are seen to disagree.

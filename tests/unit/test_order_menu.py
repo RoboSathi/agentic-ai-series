@@ -28,7 +28,6 @@ from customer_support_agent.presentation.orders import (
     render_order_list,
     resolve_selection,
 )
-from customer_support_agent.security.authentication import CustomerAuthenticator
 from tests.conftest import CUSTOMER_CODE, ScriptedLLM
 
 
@@ -80,8 +79,9 @@ class TestRendering:
     def test_the_list_numbers_every_order(self, seeded_pool: SqliteConnectionPool) -> None:
         orders = customer_orders(OrdersRepository(seeded_pool), 1)
         rendered = render_order_list(orders)
-        assert all(f"Order {order.order_id}" in rendered for order in orders)
-        assert "1." in rendered and "2." in rendered
+        rows = [line for line in rendered.splitlines() if line.startswith("│ ") and "#" not in line]
+        assert [row.split("│")[2].strip() for row in rows] == [str(o.order_id) for o in orders]
+        assert [row.split("│")[1].strip() for row in rows] == ["1", "2"]
 
     def test_the_list_shows_status_in_plain_words(self, seeded_pool: SqliteConnectionPool) -> None:
         rendered = render_order_list(customer_orders(OrdersRepository(seeded_pool), 1))
@@ -129,14 +129,15 @@ class TestRendering:
         assert [order.order_id for order in orders] == [10002, 10001]
 
 
-class TestTheConversationNeedsNoModel:
-    @pytest.fixture
-    def agent(self, seeded_pool: SqliteConnectionPool):  # type: ignore[no-untyped-def]
-        llm = CountingLLM()
-        built = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
-        set_current_customer(None)
-        return built, llm
+@pytest.fixture
+def agent(seeded_pool: SqliteConnectionPool):  # type: ignore[no-untyped-def]
+    llm = CountingLLM()
+    built = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
+    set_current_customer(None)
+    return built, llm
 
+
+class TestTheConversationNeedsNoModel:
     async def test_verifying_lists_the_orders(self, agent) -> None:  # type: ignore[no-untyped-def]
         built, llm = agent
         state = await built.handle(f"my code is {CUSTOMER_CODE}", session_id="s")
@@ -167,19 +168,16 @@ class TestTheConversationNeedsNoModel:
         assert "$45.00" not in state.response
 
 
-class TestTheAuthenticatorSuppliesTheMenu:
-    def test_authentication_returns_a_menu(self, seeded_pool: SqliteConnectionPool) -> None:
-        authenticator = CustomerAuthenticator(
-            UsersRepository(seeded_pool), OrdersRepository(seeded_pool)
-        )
-        result = authenticator.authenticate(CUSTOMER_CODE)
-        assert result.menu is not None and result.menu.size == 2
+class TestVerificationSuppliesTheMenu:
+    async def test_verifying_builds_the_menu(self, agent) -> None:  # type: ignore[no-untyped-def]
+        built, _ = agent
+        await built.handle(CUSTOMER_CODE, session_id="m")
+        assert built._menus["m"].size == 2
 
-    def test_a_failed_attempt_carries_no_menu(self, seeded_pool: SqliteConnectionPool) -> None:
-        authenticator = CustomerAuthenticator(
-            UsersRepository(seeded_pool), OrdersRepository(seeded_pool)
-        )
-        assert authenticator.authenticate("ZZZ9ZZZ").menu is None
+    async def test_a_failed_attempt_builds_no_menu(self, agent) -> None:  # type: ignore[no-untyped-def]
+        built, _ = agent
+        await built.handle("ZZZ9ZZZ", session_id="m")
+        assert "m" not in built._menus
 
     def test_the_menu_matches_what_was_shown(self, seeded_pool: SqliteConnectionPool) -> None:
         orders = customer_orders(OrdersRepository(seeded_pool), 1)

@@ -14,6 +14,8 @@ This mirrors `logging.trace_context`: ambient request state that flows
 through every layer without being threaded through every signature.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 
 from pydantic import BaseModel
@@ -38,6 +40,22 @@ _CURRENT_CUSTOMER: ContextVar[Customer | None] = ContextVar("current_customer", 
 def set_current_customer(customer: Customer | None) -> None:
     """Bind the customer this request is for."""
     _CURRENT_CUSTOMER.set(customer)
+
+
+@contextmanager
+def bound_customer(customer: Customer | None) -> Iterator[None]:
+    """Bind the customer for one request, and restore what was bound before on exit.
+
+    A bare `set_current_customer` in the caller's own context outlives the
+    request: a review approved from the console bound that customer into the
+    console's context, and the next session's first turn found them already
+    "verified" without a code. Bound here, a request's identity ends with it.
+    """
+    token = _CURRENT_CUSTOMER.set(customer)
+    try:
+        yield
+    finally:
+        _CURRENT_CUSTOMER.reset(token)
 
 
 def current_customer() -> Customer | None:
