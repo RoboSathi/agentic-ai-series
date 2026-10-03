@@ -2,7 +2,7 @@
 
 ## Context
 
-`make tui ra` defaulted to the offline demo (replayed Kelvari fixtures and
+`make agent ra` defaulted to the offline demo (replayed Kelvari fixtures and
 the reference model), so the console could only research a synthetic
 world. The user has Tavily and NVIDIA keys on free tiers (Tavily: 1,000
 calls a month) and wants a real research agent.
@@ -11,7 +11,7 @@ calls a month) and wants a real research agent.
 
 - The agent's config is **live**: `web.mode: live`, `model_backend:
   routed`, every role on NVIDIA NIM. `config/profiles/demo.yaml` is the
-  offline posture; `make tui ra PROFILE=demo` runs it. Tests and every
+  offline posture; `make agent ra PROFILE=demo` runs it. Tests and every
   `make eval* ra` / `make data ra` pin the demo profile (evals stay
   fixtures-only, ra-0009; the plugin refuses a live posture).
 - **Two search providers behind a router** (commons `web/router.py`):

@@ -11,7 +11,7 @@ Only measurement distinguishes them, and the measurement is cheap: for
 each reviewed item, was the agent right, and did the human accept it?
 """
 
-from agentic_commons.hallucination_protection import TrustCalibrationTracker
+from agent_platform.hallucination_protection import TrustCalibrationTracker
 from episodes._shared import EpisodeOutput, main
 
 # (agent_correct, human_accepted) for twenty reviewed items.

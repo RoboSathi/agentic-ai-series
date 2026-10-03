@@ -5,13 +5,13 @@ import re
 
 import pytest
 
-from agentic_commons.evals.entailment import LexicalEntailmentModel
-from agentic_commons.evidence import EvidenceEntry, LedgerSnapshot
-from agentic_commons.guardrails.guards import PydanticValidator
-from agentic_commons.llm.client import LLMClient
+from agent_platform.evals.entailment import LexicalEntailmentModel
+from agent_platform.evidence import EvidenceEntry, LedgerSnapshot
+from agent_platform.guardrails.guards import PydanticValidator
+from agent_platform.llm.client import LLMClient
 from research_agent.domain.report import Report, ReportSection
+from research_agent.llm.structured import StructuredCaller
 from research_agent.prompts.base import payload_of, role_of
-from research_agent.structured import StructuredCaller
 from research_agent.synthesis.citation_guard import CitationGuard
 from tests.conftest import ScriptedLLM
 

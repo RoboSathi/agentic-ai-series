@@ -12,52 +12,52 @@ import re
 from functools import cache
 from typing import Any
 
-from agentic_commons.audit import AuditLedger
-from agentic_commons.basic_sanity import BasicSanityChecker
-from agentic_commons.config import FeatureSet, get_settings
-from agentic_commons.context import (
+from agent_platform.audit import AuditLedger
+from agent_platform.basic_sanity import BasicSanityChecker
+from agent_platform.config import FeatureSet, get_settings
+from agent_platform.context import (
     ContextFailureDetector,
     FiveStagePipeline,
     StrategySelector,
 )
-from agentic_commons.context.types import Chunk
-from agentic_commons.control_loop import ToolControlLoop
-from agentic_commons.durability import DurableGraphRunner, RunRegistry, SqliteCheckpointer
-from agentic_commons.evals import NollmScoringCascadeImpl
-from agentic_commons.executor import (
+from agent_platform.context.types import Chunk
+from agent_platform.control_loop import ToolControlLoop
+from agent_platform.durability import DurableGraphRunner, RunRegistry, SqliteCheckpointer
+from agent_platform.evals import NollmScoringCascadeImpl
+from agent_platform.executor import (
     ToolExecutionHandler,
     ToolExecutor,
 )
-from agentic_commons.gatekeeper import Gatekeeper
-from agentic_commons.gatekeeper.mandate import MandateIssuer
-from agentic_commons.guardrails import ResponseGuardrail
-from agentic_commons.guardrails.response import NOT_EXECUTED_MARKER
-from agentic_commons.hallucination_protection import (
+from agent_platform.gatekeeper import Gatekeeper
+from agent_platform.gatekeeper.mandate import MandateIssuer
+from agent_platform.guardrails import ResponseGuardrail
+from agent_platform.guardrails.response import NOT_EXECUTED_MARKER
+from agent_platform.hallucination_protection import (
     DetectionLadder,
     GroundingReasoningDiagnoser,
     Observation,
     tool_evidence,
 )
-from agentic_commons.llm.client import LLMClient
-from agentic_commons.llm.types import CompletionRequest, CompletionResult, Message
-from agentic_commons.memory import MemoryFacade, WorkingMemoryStore
-from agentic_commons.memory.semantic.rag import KNOWLEDGE_SOURCE_PREFIX, markdown_sections
-from agentic_commons.money import money_or_none
-from agentic_commons.observability import (
+from agent_platform.llm.client import LLMClient
+from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
+from agent_platform.memory import MemoryFacade, WorkingMemoryStore
+from agent_platform.memory.semantic.rag import KNOWLEDGE_SOURCE_PREFIX, markdown_sections
+from agent_platform.observability import (
     SLORegistry,
     StageReporter,
     Tracer,
 )
-from agentic_commons.observability.llm_fields import llm_request_fields, llm_response_fields
-from agentic_commons.observability.loop_reporter import mark_step
-from agentic_commons.observability.types import EventKind
-from agentic_commons.resilience import (
+from agent_platform.observability.llm_fields import llm_request_fields, llm_response_fields
+from agent_platform.observability.loop_reporter import mark_step
+from agent_platform.observability.types import EventKind
+from agent_platform.primitives.money import money_or_none
+from agent_platform.resilience import (
     DeadLetterQueue,
 )
-from agentic_commons.security import SecuritySuite
-from agentic_commons.security.auth.policy import AgentPolicy
-from agentic_commons.tools import NamespacedToolRegistry, ToolRetrievalSelector
-from agentic_commons.verification import EffectVerifier
+from agent_platform.security import SecuritySuite
+from agent_platform.security.auth.policy import AgentPolicy
+from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
+from agent_platform.verification import EffectVerifier
 from customer_support_agent.config.settings import get_agent_settings
 from customer_support_agent.control_loop import OutputQualityGate
 from customer_support_agent.domain.identity import (

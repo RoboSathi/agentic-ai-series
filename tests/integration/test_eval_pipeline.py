@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from agentic_commons.config import get_settings
-from agentic_commons.evals.pipeline.orchestrator import EvalPipeline
-from agentic_commons.evals.store import DuckDbEvalStore
-from agentic_commons.llm.types import CompletionRequest, CompletionResult
+from agent_platform.config import get_settings
+from agent_platform.evals.pipeline.orchestrator import EvalPipeline
+from agent_platform.evals.store import DuckDbEvalStore
+from agent_platform.llm.types import CompletionRequest, CompletionResult
 from customer_support_agent.dummy_data import generate_dummy_data as dummy
 from customer_support_agent.evals.agent_under_test import CsaAgentUnderTest
 from customer_support_agent.evals.plugin import CsaEvalPlugin

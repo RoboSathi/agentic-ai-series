@@ -11,7 +11,7 @@ Redaction mode matters: masking is irreversible, tokenizing is stable so
 records still join, removal destroys the shape of the text.
 """
 
-from agentic_commons.security import PIIFilterImpl
+from agent_platform.security import PIIFilterImpl
 from episodes._shared import EpisodeOutput, main
 
 TEXT = (

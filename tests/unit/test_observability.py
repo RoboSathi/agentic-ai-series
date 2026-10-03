@@ -2,7 +2,7 @@
 
 import pytest
 
-from agentic_commons.observability import (
+from agent_platform.observability import (
     CostAggregatorImpl,
     InMemoryLiveStatusFeed,
     LittlesLawQueueModel,
@@ -13,8 +13,8 @@ from agentic_commons.observability import (
     StageReporter,
     StatusEvent,
 )
-from agentic_commons.observability.types import CostStack, utc_now
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.observability.types import CostStack, utc_now
+from agent_platform.persistence import SqliteConnectionPool
 
 
 class TestStatusFeed:

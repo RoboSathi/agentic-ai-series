@@ -52,7 +52,7 @@ A single behaviour-preserving repair commit, before any feature work:
      `registry.invoke`; the teaching layer now has its own
      `_invoke.invoke_tool` (patterns are shown without the Gatekeeper on
      purpose).
-6. **Dead module removed**: `agentic_commons/gatekeeper/automation.py`
+6. **Dead module removed**: `agent_platform/gatekeeper/automation.py`
    imported `AutomationAssessment`, which commit 633fc9e deleted along
    with the Sheridan decision; nothing in `src/` imported it.
 

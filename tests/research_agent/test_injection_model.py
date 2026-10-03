@@ -2,9 +2,9 @@
 
 import pytest
 
-from agentic_commons.security.guard_types import GuardVerdict
-from agentic_commons.security.prompt_injection.detector import InstructionDataSeparator
-from research_agent.research.defenses import InjectionScreen
+from agent_platform.security.guard_types import GuardVerdict
+from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
+from research_agent.guardrails.injection import InjectionScreen
 
 BENIGN = (
     "The reporter said he was surprised. " * 40

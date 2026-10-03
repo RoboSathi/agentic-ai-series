@@ -9,9 +9,9 @@ real class in this repo, and the "not yet" rows are stated rather than
 quietly omitted.
 """
 
-from agentic_commons.gatekeeper import CumulativeLedger, GatekeeperImpl, SurfaceClassifier
-from agentic_commons.memory.write_pipeline import MemoryWritePipelineImpl
-from agentic_commons.security import Authorizer, PIIFilterImpl, PromptInjectionGuard
+from agent_platform.gatekeeper import CumulativeLedger, GatekeeperImpl, SurfaceClassifier
+from agent_platform.memory.write_pipeline import MemoryWritePipelineImpl
+from agent_platform.security import Authorizer, PIIFilterImpl, PromptInjectionGuard
 from episodes._shared import EpisodeOutput, main
 
 MAPPING = [

@@ -28,7 +28,7 @@ dependencies = [
     # rather than the OpenAI protocol, so they need their own client.
     "httpx>=0.27",
     # The OpenAI SDK's own HTTP stack. Declared directly because the rate
-    # limiter wraps its transport (agentic_commons/llm/http.py).
+    # limiter wraps its transport (agent_platform/llm/http.py).
     "httpx2>=2.0",
     # Vector search for semantic-memory RAG. Declared directly: it was
     # only present transitively, which is one upstream release from gone.

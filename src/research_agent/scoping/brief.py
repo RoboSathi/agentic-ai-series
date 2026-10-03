@@ -12,7 +12,7 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from agentic_commons.logging import instrument
+from agent_platform.logging import instrument
 from research_agent.config.settings import DepthProfile, ScopingSettings
 from research_agent.domain.budget import Budget
 from research_agent.domain.scope import (

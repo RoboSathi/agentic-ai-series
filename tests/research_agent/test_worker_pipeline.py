@@ -5,21 +5,21 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.control_loop import BudgetGuard
-from agentic_commons.evidence import EvidenceLedger, VerbatimSpanValidator
-from agentic_commons.hashing import text_hash
-from agentic_commons.security.guard_types import GuardVerdict
-from agentic_commons.security.prompt_injection.detector import InstructionDataSeparator
-from agentic_commons.web import FetchedPage, SearchHit, SearchRequest, SearchResponse
-from agentic_commons.web.types import WebUnavailableError
+from agent_platform.control_loop import BudgetGuard
+from agent_platform.evidence import EvidenceLedger, VerbatimSpanValidator
+from agent_platform.primitives.hashing import text_hash
+from agent_platform.security.guard_types import GuardVerdict
+from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
+from agent_platform.web import FetchedPage, SearchHit, SearchRequest, SearchResponse
+from agent_platform.web.types import WebUnavailableError
 from research_agent.config import get_agent_settings
 from research_agent.domain.budget import Budget
 from research_agent.domain.evidence import ClaimCandidate
 from research_agent.domain.plan import SubQuestion
 from research_agent.domain.rubric import Contract, Rubric
 from research_agent.domain.scope import ScopeBrief
-from research_agent.narration import say
-from research_agent.research.defenses import InjectionScreen
+from research_agent.guardrails.injection import InjectionScreen
+from research_agent.presentation.narration import say
 from research_agent.research.extractor import PageReading
 from research_agent.research.resources import RunResources
 from research_agent.research.worker import ResearcherWorker

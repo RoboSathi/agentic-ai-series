@@ -7,19 +7,20 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.evidence import EvidenceCandidate, LedgerSnapshot
-from agentic_commons.hashing import text_hash
-from agentic_commons.verification.acceptance import CheckVerdict
-from agentic_commons.web import SearchHit
+from agent_platform.evidence import EvidenceCandidate, LedgerSnapshot
+from agent_platform.primitives.hashing import text_hash
+from agent_platform.verification.acceptance import CheckVerdict
+from agent_platform.web import SearchHit
 from research_agent.audit.independent import IndependentAuditor, _result
 from research_agent.config import get_agent_settings
 from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.report import COVERAGE_AND_LIMITS, LimitEntry, Report, ReportSection
 from research_agent.domain.rubric import Contract, Rubric
 from research_agent.domain.scope import ScopeBrief, SourcePolicy
+from research_agent.domain.sources import is_primary
 from research_agent.planning.dag_validation import validate_plan
 from research_agent.prompts import planner, reflector, synthesizer
-from research_agent.research.defenses import OutboundGuard, apply_source_policy, is_primary
+from research_agent.research.defenses import OutboundGuard, apply_source_policy
 from research_agent.research.stop_rules import StopInput, stop_rule_for
 
 MARKER = "UNIQUE-RAW-PAGE-SENTENCE-7f3a"
@@ -150,7 +151,7 @@ class TestStopRules:
 
 class TestNoRawPageTextOutsideTheExtractor:
     def _ledger(self) -> LedgerSnapshot:
-        from agentic_commons.evidence import EvidenceEntry
+        from agent_platform.evidence import EvidenceEntry
 
         page = f"Orrin costs 95 USD. {MARKER}."
         entry = EvidenceEntry(

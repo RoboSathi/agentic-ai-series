@@ -19,7 +19,7 @@ an authority rank, and every call passes the Gatekeeper first.
 
 ## Collaborators
 
-- `agentic_commons.tools`, `gatekeeper`, `executor`; `domain.RefundPolicy`; `resilience.RefundSaga`.
+- `agent_platform.tools`, `gatekeeper`, `executor`; `domain.RefundPolicy`; `resilience.RefundSaga`.
 
 ## Episodes
 

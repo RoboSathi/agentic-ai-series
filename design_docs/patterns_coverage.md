@@ -18,7 +18,7 @@ agent's `design_docs/patterns.yaml`. Do not edit by hand.
 | planning | AG | E06 | control_loop/quality_gate.py · PlanLookup | planning/planner.py + planning/dag_validation.py · plan_dag (with its validation) |
 | reflection | AG | E06 | control_loop/quality_gate.py · GroundedCritic | research/reflector.py · reflect_gap_analysis |
 | evaluator_optimizer | AG | E06 | control_loop/quality_gate.py · OutputQualityGate (critique, at most one repair, IndependentScorer) | graph/run_nodes.py · synthesize → independent_audit → gap_fill → wave_start |
-| orchestrator_subagent | AG | E41 | — | audit/independent.py · IndependentAuditor (agentic_commons.durability.IsolatedGraphRunner) |
+| orchestrator_subagent | AG | E41 | — | audit/independent.py · IndependentAuditor (agent_platform.durability.IsolatedGraphRunner) |
 | agentic_retrieval | AG | E19 | — | research/worker.py + research/reflector.py |
 | memory_systems | AG | E13 | graph/builder.py · MemoryFacade over the four CoALA stores; admin/dream.py consolidation | archive/store.py · archive node |
 
@@ -34,14 +34,14 @@ agent's `design_docs/patterns.yaml`. Do not edit by hand.
 | retry + idempotency + circuit breaker + timeout | csa | graph/nodes/reason.py · the model call through ResilientCaller |
 | strategy | csa | control_loop/quality_gate.py · Planner / Reflector / Evaluator protocols |
 | factory | csa | graph/builder.py (composition root) |
-| facade | csa | agentic_commons MemoryFacade |
+| facade | csa | agent_platform MemoryFacade |
 | strategy | ra | research/stop_rules/ (one stop rule per archetype) |
-| adapter | ra | agentic_commons/web/providers.py · TavilyProvider and DuckDuckGoProvider behind SearchProvider |
-| chain of responsibility | ra | agentic_commons/web/router.py · SearchRouter (free provider first, metered fallback) |
+| adapter | ra | agent_platform/web/providers.py · TavilyProvider and DuckDuckGoProvider behind SearchProvider |
+| chain of responsibility | ra | agent_platform/web/router.py · SearchRouter (free provider first, metered fallback) |
 | factory | ra | graph/builder.py (composition root) |
 | builder | ra | scoping/brief.py · BriefBuilder |
-| observer | ra | research/telemetry.py (StageReporter + AuditLedger) · WebGateway observer |
+| observer | ra | observability/telemetry.py (StageReporter + AuditLedger) · WebGateway observer |
 | decorator | ra | research_agent/evals/agent_under_test.py · RecordingLLMClient around every role client |
-| facade | ra | agentic_commons MemoryFacade, used by archive/store.py |
-| retry + idempotency + circuit breaker | ra | agentic_commons/web/gateway.py · live search and fetch through ResilientCaller |
-| bulkhead | ra | agentic_commons/scheduling/scheduler.py · per-wave concurrency cap |
+| facade | ra | agent_platform MemoryFacade, used by archive/store.py |
+| retry + idempotency + circuit breaker | ra | agent_platform/web/gateway.py · live search and fetch through ResilientCaller |
+| bulkhead | ra | agent_platform/scheduling/scheduler.py · per-wave concurrency cap |

@@ -9,7 +9,7 @@ cascade, shared by evals, retrieval, tool selection and hallucination
 detection — four consumers, one number.
 """
 
-from agentic_commons.evals import TIER_ORDER, Claim, create_scoring_cascade
+from agent_platform.evals import TIER_ORDER, Claim, create_scoring_cascade
 from episodes._shared import EpisodeOutput, main
 
 CLAIMS = [

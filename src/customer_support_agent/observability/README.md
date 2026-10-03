@@ -18,7 +18,7 @@ The targets live in `observability.slo_targets` (platform).
 
 ## Collaborators
 
-- `agentic_commons.observability.SLORegistry`.
+- `agent_platform.observability.SLORegistry`.
 
 ## Episodes
 

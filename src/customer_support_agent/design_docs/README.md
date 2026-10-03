@@ -1,7 +1,7 @@
 # Customer Support Agent — design notes
 
 The series' recurring running project: a customer-support refund agent
-that **composes** `agentic_commons` rather than duplicating it. This page
+that **composes** `agent_platform` rather than duplicating it. This page
 records what can be verified from the code as it stands; it adds no
 decisions after the fact. The series' original PRD/HLD/LLD live in the
 top-level [`design_docs/`](../../../design_docs/README.md).
@@ -10,7 +10,7 @@ top-level [`design_docs/`](../../../design_docs/README.md).
 
 ```
 make data csa       # rebuild the agent database (KEEP_MEMORY=1 keeps memory)
-make tui csa        # the operator console
+make agent csa        # the operator console
 make eval csa       # generate → oracle → security (Promptfoo) → judge → deepeval
 ```
 

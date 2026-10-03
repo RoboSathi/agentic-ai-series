@@ -1,7 +1,7 @@
 """Running one episode: the real agent, configured down (LLD §22).
 
 An episode is not a different program from the product. It is the same
-`build_agent()` the capstone runs and the same terminal app `make tui`
+`build_agent()` the capstone runs and the same terminal app `make agent`
 opens, with a `config.yaml` next to it that decides which subsystems are
 live — which is the series' whole claim about harnesses, demonstrated
 rather than described. Turn memory off in `e30/config.yaml` and the
@@ -26,9 +26,9 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from agentic_commons.commands import Command
-from agentic_commons.config import reload_settings, use_overlay
-from agentic_commons.tui.app import AgenticTuiApp
+from agent_platform.commands import Command
+from agent_platform.config import reload_settings, use_overlay
+from agent_platform.tui.app import AgenticTuiApp
 from customer_support_agent.graph import AgentState, build_agent
 from customer_support_agent.graph.agent import CustomerSupportAgent
 from episodes._shared.settings import EpisodeSettings

@@ -11,9 +11,9 @@ import argparse
 from collections.abc import Sequence
 from datetime import datetime, timezone
 
-from agentic_commons.logging import get_logger
-from agentic_commons.money import InvalidAmountError, Money
-from agentic_commons.security.auth.policy import AgentPolicy, AgentPolicyRepository
+from agent_platform.logging import get_logger
+from agent_platform.primitives.money import InvalidAmountError, Money
+from agent_platform.security.auth.policy import AgentPolicy, AgentPolicyRepository
 from customer_support_agent.admin._store import agent_store
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.gatekeeper.business_rules import REFUND_ACTION_CLASS

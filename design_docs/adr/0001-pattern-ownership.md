@@ -6,7 +6,7 @@ The series teaches sixteen WF/AG patterns (`design_patterns/catalogue.py`)
 plus the LLD and resilience patterns. The research agent composes several
 of them — a planner, a ReAct-style worker, reflection, an
 evaluator-optimizer loop around an independent audit — and the obvious
-temptation is to "promote" each into `agentic_commons` so the next agent
+temptation is to "promote" each into `agent_platform` so the next agent
 can reuse it. The customer-support agent composes a different set
 (tool-use loop, router, quality gate). The two compositions look alike in
 a diagram and share almost no code.
@@ -15,7 +15,7 @@ a diagram and share almost no code.
 
 Pattern **composition** lives inside the agent's own graph. Only
 domain-free **mechanisms** — things with no opinion about what the agent
-is for — go in `agentic_commons`: a DAG scheduler, a budget guard, an
+is for — go in `agent_platform`: a DAG scheduler, a budget guard, an
 isolated sub-graph runner, a role router, an evidence ledger, a web
 gateway, an acceptance-check registry.
 

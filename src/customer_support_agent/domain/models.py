@@ -2,7 +2,7 @@
 
 The domain vocabulary is deliberately narrow: an Order, a User, and a
 request waiting on a human. Everything else — authority, memory,
-context, resilience — belongs to `agentic_commons` and arrives by
+context, resilience — belongs to `agent_platform` and arrives by
 injection.
 
 Nothing here reaches a database or a model. These are the nouns; the
@@ -14,8 +14,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.money import Money
-from agentic_commons.observability.types import utc_now
+from agent_platform.observability.types import utc_now
+from agent_platform.primitives.money import Money
 
 OrderStatus = Literal["pending", "shipped", "delivered", "cancelled"]
 RefundStatus = Literal["none", "pending_review", "approved", "denied", "completed"]

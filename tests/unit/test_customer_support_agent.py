@@ -5,9 +5,9 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.config import get_settings, set_enabled
-from agentic_commons.money import Money
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.config import get_settings, set_enabled
+from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.primitives.money import Money
 from customer_support_agent.graph import build_agent
 from customer_support_agent.persistence import (
     HitlQueueRepository,
@@ -200,7 +200,7 @@ class TestRefundSaga:
         refunds: RefundLedgerRepository,
         seeded_pool: SqliteConnectionPool,
     ) -> None:
-        from agentic_commons.resilience import SqliteIdempotencyGuard
+        from agent_platform.resilience import SqliteIdempotencyGuard
 
         saga = RefundSaga(orders, refunds, idempotency=SqliteIdempotencyGuard(seeded_pool))
         order = orders.get(10001)
@@ -372,7 +372,7 @@ class TestAWithheldStageSaysNothing:
             self.events.append(event)
 
     async def _stages(self, on: bool, pool: SqliteConnectionPool) -> list[str]:
-        from agentic_commons.observability import StageReporter
+        from agent_platform.observability import StageReporter
 
         feed = self._Feed()
         agent = build_agent(

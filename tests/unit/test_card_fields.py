@@ -9,7 +9,7 @@ on the PII card (one boolean twice, and a config constant).
 
 from types import SimpleNamespace
 
-from agentic_commons.observability.llm_fields import llm_response_fields
+from agent_platform.observability.llm_fields import llm_response_fields
 from customer_support_agent.presentation.reporting import tool_result_fields
 
 

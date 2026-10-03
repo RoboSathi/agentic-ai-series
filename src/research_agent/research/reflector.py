@@ -13,16 +13,16 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.logging import instrument
-from agentic_commons.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
+from agent_platform.logging import instrument
+from agent_platform.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
 from research_agent.audit.checks import COVERAGE_CHECKS
 from research_agent.audit.context import CheckContext
 from research_agent.domain.plan import SubQuestion
 from research_agent.domain.scope import Archetype
+from research_agent.llm.structured import StructuredCaller
 from research_agent.prompts import reflector as prompt
 from research_agent.prompts.base import RolePrompt
 from research_agent.research.stop_rules import StopDecision, StopInput, StopRule
-from research_agent.structured import StructuredCaller
 
 
 class Reflection(BaseModel):

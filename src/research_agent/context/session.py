@@ -18,12 +18,12 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.config import get_settings
-from agentic_commons.context import ContextWindow, Task
-from agentic_commons.llm.types import Message
-from agentic_commons.logging import instrument
-from agentic_commons.memory import MemoryFacade
-from agentic_commons.observability import StageReporter
+from agent_platform.config import get_settings
+from agent_platform.context import ContextWindow, Task
+from agent_platform.llm.types import Message
+from agent_platform.logging import instrument
+from agent_platform.memory import MemoryFacade
+from agent_platform.observability import StageReporter
 from research_agent.config.settings import AnswerContextSettings, AnswerMessages
 from research_agent.context.earlier_runs import EarlierRunsSource
 

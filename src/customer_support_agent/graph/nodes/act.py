@@ -13,18 +13,18 @@ no budget is committed, because no budget was consulted.
 
 from typing import Any
 
-from agentic_commons.audit import AuditEntry
-from agentic_commons.executor import (
+from agent_platform.audit import AuditEntry
+from agent_platform.executor import (
     ApprovedToolCall,
     ExecutionOutcome,
 )
-from agentic_commons.gatekeeper import AuthorityContext
-from agentic_commons.gatekeeper.mandate import MandateSet
-from agentic_commons.llm.types import Message
-from agentic_commons.logging.trace_context import get_current_trace_id
-from agentic_commons.observability.types import utc_now
-from agentic_commons.tools.types import ToolResult
-from agentic_commons.verification import VerificationReport
+from agent_platform.gatekeeper import AuthorityContext
+from agent_platform.gatekeeper.mandate import MandateSet
+from agent_platform.llm.types import Message
+from agent_platform.logging.trace_context import get_current_trace_id
+from agent_platform.observability.types import utc_now
+from agent_platform.tools.types import ToolResult
+from agent_platform.verification import VerificationReport
 from customer_support_agent.graph.nodes._support import (
     TOOL_BLOCKED,
     TOOL_COMPLETED,

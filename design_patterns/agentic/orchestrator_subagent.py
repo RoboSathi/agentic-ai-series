@@ -17,8 +17,8 @@ topology choices are E41's. This is deliberately the shape only.
 import asyncio
 from typing import Awaitable, Callable
 
-from agentic_commons.logging import get_logger
-from agentic_commons.resilience import ResourcePoolBulkhead
+from agent_platform.logging import get_logger
+from agent_platform.resilience import ResourcePoolBulkhead
 from design_patterns.types import PatternFamily, PatternRun, Step
 
 # A subagent: given one bounded sub-task, returns its result. It is given

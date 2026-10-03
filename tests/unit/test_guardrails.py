@@ -3,8 +3,8 @@
 import pytest
 from pydantic import BaseModel
 
-from agentic_commons.config import set_enabled
-from agentic_commons.guardrails import (
+from agent_platform.config import set_enabled
+from agent_platform.guardrails import (
     GuardrailViolationError,
     LlmConstrainedGenerator,
     PydanticValidator,

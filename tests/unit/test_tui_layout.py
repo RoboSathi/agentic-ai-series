@@ -5,8 +5,8 @@ Claude), and say only about this turn: a session-wide memory statistic
 ("recall without embeddings 100%") told a reader nothing they could act on.
 """
 
-from agentic_commons.tui.app import AgenticTuiApp
-from agentic_commons.tui.widgets import StatusLineWidget
+from agent_platform.tui.app import AgenticTuiApp
+from agent_platform.tui.widgets import StatusLineWidget
 
 
 class TestTheStatusLineIsAboveTheInput:

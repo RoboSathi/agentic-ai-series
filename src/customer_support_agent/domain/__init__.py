@@ -2,6 +2,7 @@
 
 from customer_support_agent.domain.identity import (
     Customer,
+    bound_customer,
     current_customer,
     current_customer_id,
     set_current_customer,
@@ -24,6 +25,7 @@ __all__ = [
     "ORDER_UNDER_DISCUSSION",
     "REFUNDABLE_ORDER_STATUSES",
     "Customer",
+    "bound_customer",
     "HitlRequest",
     "HitlStatus",
     "Order",

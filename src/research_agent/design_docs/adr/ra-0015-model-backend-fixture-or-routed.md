@@ -4,7 +4,7 @@
 
 ## Context
 
-The build brief requires `make tui ra` to run the whole flow in replay mode and evals to be deterministic, but this environment has no model credentials and hosted models are not deterministic.
+The build brief requires `make agent ra` to run the whole flow in replay mode and evals to be deterministic, but this environment has no model credentials and hosted models are not deterministic.
 
 ## Decision
 

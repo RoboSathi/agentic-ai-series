@@ -3,8 +3,8 @@ card that names who judged and how the score was reached."""
 
 import pytest
 
-from agentic_commons.control_loop import BudgetGuard
-from agentic_commons.verification.acceptance import CheckVerdict
+from agent_platform.control_loop import BudgetGuard
+from agent_platform.verification.acceptance import CheckVerdict
 from research_agent.audit.verdict import decide
 from research_agent.config import get_agent_settings
 from research_agent.domain.rubric import Rubric, RubricCheck, RubricItem

@@ -23,11 +23,11 @@ from typing import Any
 
 from langgraph.types import Send
 
-from agentic_commons.config import FeatureSet
-from agentic_commons.control_loop import BudgetGuard
-from agentic_commons.logging import describe_error
-from agentic_commons.scheduling import AsyncDagScheduler, TaskGraph
-from agentic_commons.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
+from agent_platform.config import FeatureSet
+from agent_platform.control_loop import BudgetGuard
+from agent_platform.logging import describe_error
+from agent_platform.scheduling import AsyncDagScheduler, TaskGraph
+from agent_platform.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
 from research_agent.archive.store import ResearchArchive
 from research_agent.audit.context import CheckContext
 from research_agent.audit.independent import AuditResult, IndependentAuditor
@@ -36,9 +36,9 @@ from research_agent.domain.budget import GAP_FILL_ROUNDS, ROUNDS, SEARCHES
 from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.report import LimitEntry, Report, RunStatus
 from research_agent.graph.state import RunState
-from research_agent.narration import clip, say
 from research_agent.planning.ids import renumber
 from research_agent.planning.planner import Planner, PlanRejectedError
+from research_agent.presentation.narration import clip, say
 from research_agent.research import cards
 from research_agent.research.reflector import GapAnalyzer, Reflector
 from research_agent.research.resources import RunResources

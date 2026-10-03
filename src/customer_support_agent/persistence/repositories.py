@@ -8,10 +8,10 @@ rather than the table's.
 
 from typing import Any
 
-from agentic_commons.logging import get_logger, logged
-from agentic_commons.money import Money
-from agentic_commons.observability.types import utc_now
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.logging import get_logger, logged
+from agent_platform.observability.types import utc_now
+from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.primitives.money import Money
 from customer_support_agent.domain.models import (
     HitlRequest,
     HitlStatus,
@@ -273,6 +273,10 @@ class HitlQueueRepository:
     def pending(self) -> list[HitlRequest]:
         """Everything still awaiting a human decision."""
         return self.query(status="pending")
+
+    def pending_for_user(self, user_id: int) -> list[HitlRequest]:
+        """One customer's requests still awaiting a human decision."""
+        return self.query(user_id=user_id, status="pending")
 
     def pending_for_order(self, order_id: int) -> HitlRequest | None:
         """An existing pending request for an order, if there is one.

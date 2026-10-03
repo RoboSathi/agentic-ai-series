@@ -1,7 +1,7 @@
 """The WF/AG pattern library (LLD §22).
 
 Sixteen reference implementations, independent of the running product, so
-a pattern can be read in isolation. Each composes `agentic_commons` —
+a pattern can be read in isolation. Each composes `agent_platform` —
 none reimplements a registry, a retriever or a memory store.
 
 `catalogue.py` is the decision record: which pattern, when, and which

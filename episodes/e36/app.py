@@ -11,9 +11,9 @@ And PII is redacted before persistence, because a trace outlives the
 request that produced it.
 """
 
-from agentic_commons.observability import LocalTracer
-from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
-from agentic_commons.security import PIIFilterImpl
+from agent_platform.observability import LocalTracer
+from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.security import PIIFilterImpl
 from episodes._shared import EpisodeOutput, main
 
 

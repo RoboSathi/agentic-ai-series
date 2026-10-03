@@ -14,16 +14,16 @@ verbatim copy from here meant the model read the same eight lines twice.
 
 from typing import Any
 
-from agentic_commons.config import get_settings
-from agentic_commons.context import Context, ContextWindow, Task
-from agentic_commons.context.types import (
+from agent_platform.config import get_settings
+from agent_platform.context import Context, ContextWindow, Task
+from agent_platform.context.types import (
     AssembledContext,
     Chunk,
     is_provenance_header,
 )
-from agentic_commons.context.window import CONTEXT_STAGE
-from agentic_commons.memory.context_source import SOURCE_PREFIX as MEMORY_SOURCE_PREFIX
-from agentic_commons.memory.context_source import SUBJECT_ID
+from agent_platform.context.window import CONTEXT_STAGE
+from agent_platform.memory.context_source import SOURCE_PREFIX as MEMORY_SOURCE_PREFIX
+from agent_platform.memory.context_source import SUBJECT_ID
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.graph.nodes._support import GROUNDING_EVIDENCE, NodeSupport
 from customer_support_agent.graph.state import AgentState

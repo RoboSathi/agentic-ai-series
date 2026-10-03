@@ -10,21 +10,21 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.audit import NullAuditLedger, SqliteAuditLedger
-from agentic_commons.config import get_settings
-from agentic_commons.executor import ApprovedToolCall
-from agentic_commons.gatekeeper import (
+from agent_platform.audit import NullAuditLedger, SqliteAuditLedger
+from agent_platform.config import get_settings
+from agent_platform.executor import ApprovedToolCall
+from agent_platform.gatekeeper import (
     AuthorityContext,
     AuthorityHierarchyResolver,
     GatekeeperImpl,
 )
-from agentic_commons.gatekeeper.ledger import CumulativeLedger
-from agentic_commons.gatekeeper.mandate import MandateSet
-from agentic_commons.gatekeeper.types import LedgerEntry
-from agentic_commons.money import Money
-from agentic_commons.persistence import SqliteConnectionPool
-from agentic_commons.security import Authorizer
-from agentic_commons.tools import ToolCall
+from agent_platform.gatekeeper.ledger import CumulativeLedger
+from agent_platform.gatekeeper.mandate import MandateSet
+from agent_platform.gatekeeper.types import LedgerEntry
+from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.primitives.money import Money
+from agent_platform.security import Authorizer
+from agent_platform.tools import ToolCall
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.gatekeeper.mandates import EstablishedOrderScope
 from customer_support_agent.graph import build_agent

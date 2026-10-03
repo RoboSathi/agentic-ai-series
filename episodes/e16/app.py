@@ -17,16 +17,16 @@ import tempfile
 from datetime import timedelta
 from pathlib import Path
 
-from agentic_commons.memory import (
+from agent_platform.memory import (
     EpisodicStore,
     MemoryFact,
     MemoryQuery,
     Provenance,
     SemanticStore,
 )
-from agentic_commons.memory.facade import MemoryFacade
-from agentic_commons.observability.types import utc_now
-from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.memory.facade import MemoryFacade
+from agent_platform.observability.types import utc_now
+from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
 from episodes._shared import EpisodeOutput, main
 
 

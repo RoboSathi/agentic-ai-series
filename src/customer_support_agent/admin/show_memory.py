@@ -9,9 +9,9 @@ from collections.abc import Sequence
 
 from rich.console import Console
 
-from agentic_commons.config import get_settings
-from agentic_commons.memory.inspect import snapshot_tree, take_snapshot
-from agentic_commons.text_tree import tree_lines
+from agent_platform.config import get_settings
+from agent_platform.memory.inspect import snapshot_tree, take_snapshot
+from agent_platform.presentation.text_tree import tree_lines
 from customer_support_agent.admin._store import agent_store
 
 

@@ -11,7 +11,7 @@ signal to move to a router with a classifier — or to an agent.
 
 from typing import Awaitable, Callable
 
-from agentic_commons.logging import get_logger
+from agent_platform.logging import get_logger
 from design_patterns.types import PatternFamily, PatternRun, Step
 
 Predicate = Callable[[str], bool]

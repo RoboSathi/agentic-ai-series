@@ -24,10 +24,10 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
-from agentic_commons.durability.isolated import IsolatedGraphRunner
-from agentic_commons.evidence import LedgerSnapshot
-from agentic_commons.logging import describe_error, get_logger, instrument
-from agentic_commons.verification.acceptance import (
+from agent_platform.durability.isolated import IsolatedGraphRunner
+from agent_platform.evidence import LedgerSnapshot
+from agent_platform.logging import describe_error, get_logger, instrument
+from agent_platform.verification.acceptance import (
     AcceptanceCheckRegistry,
     CheckKind,
     CheckOutcome,
@@ -37,9 +37,9 @@ from agentic_commons.verification.acceptance import (
 from research_agent.audit.context import CheckContext
 from research_agent.domain.report import Report
 from research_agent.domain.rubric import Contract
-from research_agent.narration import say
+from research_agent.llm.structured import StructuredCaller
+from research_agent.presentation.narration import say
 from research_agent.prompts import judge as judge_prompt
-from research_agent.structured import StructuredCaller
 
 INPUTS = frozenset({"contract", "report", "ledger"})
 ContextFactory = Callable[[Contract, LedgerSnapshot, Report | None], CheckContext]

@@ -19,14 +19,14 @@ import re
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.evals.entailment import EntailmentModel
-from agentic_commons.evidence import LedgerSnapshot
-from agentic_commons.logging import instrument
+from agent_platform.evals.entailment import EntailmentModel
+from agent_platform.evidence import LedgerSnapshot
+from agent_platform.logging import instrument
 from research_agent.audit.checks import sentence_entailed
 from research_agent.audit.context import sentences
 from research_agent.domain.report import Report, ReportSection
+from research_agent.llm.structured import StructuredCaller
 from research_agent.prompts import extractor as prompt
-from research_agent.structured import StructuredCaller
 
 # A line left with nothing but a list marker once its sentence was removed.
 _BARE_MARKER = re.compile(r"^\s*(?:[-*•]|\d+[.)])?\s*$")

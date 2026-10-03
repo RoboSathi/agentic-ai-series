@@ -10,11 +10,11 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.audit import SqliteAuditLedger
-from agentic_commons.gatekeeper import GatekeeperImpl
-from agentic_commons.gatekeeper.ledger import CumulativeLedger
-from agentic_commons.persistence import SqliteConnectionPool
-from agentic_commons.security import Authorizer
+from agent_platform.audit import SqliteAuditLedger
+from agent_platform.gatekeeper import GatekeeperImpl
+from agent_platform.gatekeeper.ledger import CumulativeLedger
+from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.security import Authorizer
 from customer_support_agent.graph import build_agent
 from customer_support_agent.persistence import OrdersRepository
 from tests.conftest import ScriptedLLM, tool_call

@@ -24,7 +24,7 @@ as **domain-free mechanisms**, each with unit tests:
 | `llm/roles.py` | `RoleModelRouter` + distinct-model check |
 | `durability/isolated.py`, `durability/hitl.py` | `IsolatedGraphRunner` (declared inputs only), `await_decision` |
 | `verification/acceptance.py` | `AcceptanceCheckRegistry` of named checks by kind |
-| `hashing.py` | `canonical_hash` moved from `evals.contracts` (re-exported there) |
+| `primitives/hashing.py` | `canonical_hash` moved from `evals.contracts` (re-exported there) |
 
 Existing modules were **reused** wherever they fit: `DurableGraphRunner`,
 `RunRegistry`, `InstructionDataSeparator`, `EntailmentModel`,
@@ -32,7 +32,7 @@ Existing modules were **reused** wherever they fit: `DurableGraphRunner`,
 memory stores behind `MemoryFacade`, `AuditLedger`, `StageReporter`, the
 eval pipeline and `FeatureSet`.
 
-**The vocabulary guard.** `tests/agentic_commons/test_roles_and_boundary.py`
+**The vocabulary guard.** `tests/agent_platform/test_roles_and_boundary.py`
 bans `archetype`, `research` and `brief` everywhere in commons
 (one pre-existing English "brief" is allow-listed by file), and bans
 `rubric` in every module added for ra. `rubric` and `report` predate ra in

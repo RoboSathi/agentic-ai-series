@@ -9,7 +9,7 @@ folder is free to regenerate.
 import json
 from pathlib import Path
 
-from agentic_commons.context import Chunk
+from agent_platform.context import Chunk
 
 DUMMY_DATA_DIR = Path(__file__).resolve().parent
 KNOWLEDGE_BASE = DUMMY_DATA_DIR / "knowledge_base.json"

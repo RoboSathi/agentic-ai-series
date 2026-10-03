@@ -13,8 +13,8 @@ Four gaps closed here:
 
 import pytest
 
-from agentic_commons.money import Money
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.primitives.money import Money
 from customer_support_agent.domain import Customer, set_current_customer
 from customer_support_agent.graph import build_agent
 from customer_support_agent.persistence import (
@@ -131,7 +131,7 @@ class TestTheEscalationPathDrains:
         self, tools: SupportTools, seeded_pool: SqliteConnectionPool
     ) -> None:
         """The point of escalation is that a person took responsibility."""
-        from agentic_commons.audit import SqliteAuditLedger
+        from agent_platform.audit import SqliteAuditLedger
 
         audit = SqliteAuditLedger(seeded_pool)
         orders = OrdersRepository(seeded_pool)
@@ -150,9 +150,9 @@ class TestSubsystemsAreActuallyWired:
     async def test_the_model_call_runs_through_the_resilience_stack(self) -> None:
         """The model is a remote dependency like any other: the default client is the
         platform's protected chain — each model behind its own resilience stack, with a backup."""
-        from agentic_commons.llm.cascade import CascadingLLMClient
-        from agentic_commons.llm.client import create_llm_client
-        from agentic_commons.llm.resilient import ResilientLLMClient
+        from agent_platform.llm.cascade import CascadingLLMClient
+        from agent_platform.llm.client import create_llm_client
+        from agent_platform.llm.resilient import ResilientLLMClient
 
         client = create_llm_client()
         assert isinstance(client, CascadingLLMClient)

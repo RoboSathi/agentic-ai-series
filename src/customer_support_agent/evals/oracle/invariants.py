@@ -15,8 +15,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from agentic_commons.evals.contracts import GoldenCase, Severity, Transcript
-from agentic_commons.money import Money
+from agent_platform.evals.contracts import GoldenCase, Severity, Transcript
+from agent_platform.primitives.money import Money
 from customer_support_agent.evals.dataset.schema import CsaExpectation, SideEffectClass
 from customer_support_agent.evals.fixture import FixtureFacts, FixtureUser
 

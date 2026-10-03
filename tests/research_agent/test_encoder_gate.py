@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from agentic_commons.intent.types import IntentCandidate
+from agent_platform.intent.types import IntentCandidate
 from research_agent.config import get_agent_settings
 from research_agent.domain.scope import GateVerdict, Mode
 from research_agent.scoping.encoder_gate import LABELS, EncoderGateClassifier

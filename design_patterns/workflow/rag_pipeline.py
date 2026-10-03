@@ -13,8 +13,8 @@ Reach for it when every request needs the same kind of grounding.
 
 from typing import Awaitable, Callable, Protocol, runtime_checkable
 
-from agentic_commons.context import Chunk
-from agentic_commons.logging import get_logger
+from agent_platform.context import Chunk
+from agent_platform.logging import get_logger
 from design_patterns.types import PatternFamily, PatternRun, Step
 
 Generate = Callable[[str, list[Chunk]], Awaitable[str]]

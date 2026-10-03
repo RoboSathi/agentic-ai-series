@@ -2,7 +2,7 @@
 
 import pytest
 
-from agentic_commons.evals import (
+from agent_platform.evals import (
     Claim,
     ComponentEvalRunner,
     DeterministicRuleScorer,
@@ -18,8 +18,8 @@ from agentic_commons.evals import (
     Verdict,
     load_manifest,
 )
-from agentic_commons.evals.judge import LlmJudge
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.evals.judge import LlmJudge
+from agent_platform.persistence import SqliteConnectionPool
 
 
 class TestExactAssertion:
@@ -125,7 +125,7 @@ class TestCascade:
         assert cascade.tier_counts["exact_assertion"] == 1
 
     async def test_a_disabled_tier_is_skipped(self, restore_settings: None) -> None:
-        from agentic_commons.config import get_settings
+        from agent_platform.config import get_settings
 
         get_settings().evals.cascade.exact_assertion = False
         cascade = NollmScoringCascadeImpl()
@@ -135,7 +135,7 @@ class TestCascade:
 
 class TestJudge:
     def test_no_judge_is_built_when_the_tier_is_off(self, restore_settings: None) -> None:
-        from agentic_commons.config import get_settings
+        from agent_platform.config import get_settings
 
         get_settings().evals.cascade.calibrated_llm_judge = False
         assert LlmJudge.create_if_enabled() is None

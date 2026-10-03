@@ -8,9 +8,9 @@ replies too). Recall into context adds only what working memory cannot know.
 
 from typing import Any
 
-from agentic_commons.context.types import Task
-from agentic_commons.memory.context_source import SUBJECT_ID, MemoryRecallContextSource
-from agentic_commons.memory.types import MemoryFact, Provenance, ScoredFact
+from agent_platform.context.types import Task
+from agent_platform.memory.context_source import SUBJECT_ID, MemoryRecallContextSource
+from agent_platform.memory.types import MemoryFact, Provenance, ScoredFact
 
 _SESSION = "tui-current"
 

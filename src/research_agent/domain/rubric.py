@@ -12,9 +12,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agentic_commons.hashing import canonical_hash
-from agentic_commons.observability.types import utc_now
-from agentic_commons.verification.acceptance import CheckKind, CheckSpec
+from agent_platform.observability.types import utc_now
+from agent_platform.primitives.hashing import canonical_hash
+from agent_platform.verification.acceptance import CheckKind, CheckSpec
 from research_agent.domain.budget import Budget
 from research_agent.domain.scope import ScopeBrief
 

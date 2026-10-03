@@ -12,8 +12,8 @@ machine output the model produced instead was handed to the customer,
 because the leak check only recognised the one JSON shape seen first.
 """
 
-from agentic_commons.config import get_settings
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.config import get_settings
+from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.graph import build_agent
 from customer_support_agent.intent.router import CustomerSupportIntentRouter

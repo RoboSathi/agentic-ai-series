@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.config import (
+from agent_platform.config import (
     REPO_ROOT,
     clear_overlays,
     get_settings,
@@ -28,16 +28,16 @@ from agentic_commons.config import (
     set_active_features,
     use_overlay,
 )
-from agentic_commons.llm.client import LLMClient
-from agentic_commons.llm.types import (
+from agent_platform.llm.client import LLMClient
+from agent_platform.llm.types import (
     CompletionRequest,
     CompletionResult,
     HealthCheckResult,
     ModelToolCall,
     TokenUsage,
 )
-from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
-from agentic_commons.resilience.rate_limiter import reset_rate_limiter
+from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.resilience.rate_limiter import reset_rate_limiter
 from customer_support_agent.config.settings import reload_agent_settings
 from customer_support_agent.domain.identity import Customer, set_current_customer
 from customer_support_agent.domain.models import Order, User
@@ -175,12 +175,10 @@ def offline_nli_model() -> Iterator[None]:
     replaces that one seam with the deterministic, offline lexical model.
     A test that needs a real cross-encoder injects one.
     """
-    from agentic_commons.evals.entailment import LexicalEntailmentModel
+    from agent_platform.evals.entailment import LexicalEntailmentModel
 
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(
-            "agentic_commons.llm.local_nli.shared_local_nli_model", LexicalEntailmentModel
-        )
+        patch.setattr("agent_platform.llm.local_nli.shared_local_nli_model", LexicalEntailmentModel)
         yield
 
 
@@ -330,8 +328,8 @@ def agent_policy(seeded_pool: SqliteConnectionPool) -> Any:
     `unconfigured` default that denies everything — which passes a
     "refused" assertion for entirely the wrong reason.
     """
-    from agentic_commons.persistence import SqlitePlatformStore
-    from agentic_commons.security.auth.policy import AgentPolicyRepository
+    from agent_platform.persistence import SqlitePlatformStore
+    from agent_platform.security.auth.policy import AgentPolicyRepository
 
     agent_id = get_settings().agent.id
     store = SqlitePlatformStore(seeded_pool, agent_id=agent_id)

@@ -9,7 +9,7 @@ relevant, offload bulk, and only then reduce — because reduction is the
 only one of the four that destroys information outright.
 """
 
-from agentic_commons.context import (
+from agent_platform.context import (
     AssembledContext,
     CacheStrategy,
     Chunk,

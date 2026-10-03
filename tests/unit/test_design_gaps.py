@@ -11,19 +11,19 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.config.versions import AUTHORITY_COMPONENT, VersionManifest
-from agentic_commons.evals.entailment import LexicalEntailmentModel, create_entailment_model
-from agentic_commons.llm.encoders import (
+from agent_platform.config.versions import AUTHORITY_COMPONENT, VersionManifest
+from agent_platform.evals.entailment import LexicalEntailmentModel, create_entailment_model
+from agent_platform.llm.encoders import (
     HostedCrossEncoderRanker,
     HostedNliModel,
     HuggingFaceEncoderClient,
     LabelScore,
 )
-from agentic_commons.memory import MemoryFacade
-from agentic_commons.observability.postmortem import Postmortem, PostmortemRegister
-from agentic_commons.persistence import SqliteConnectionPool
-from agentic_commons.security import PIIFilterImpl
-from agentic_commons.tools import NamespacedToolRegistry, ToolDefinition
+from agent_platform.memory import MemoryFacade
+from agent_platform.observability.postmortem import Postmortem, PostmortemRegister
+from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.security import PIIFilterImpl
+from agent_platform.tools import NamespacedToolRegistry, ToolDefinition
 from customer_support_agent.control_loop import (
     GroundedCritic,
     IndependentScorer,
@@ -152,7 +152,7 @@ class TestTurnAccounting:
     """FR-45: eight SLOs were configured and two were observed."""
 
     def test_every_configured_slo_is_observed(self) -> None:
-        from agentic_commons.observability import SLORegistry
+        from agent_platform.observability import SLORegistry
 
         slos = SLORegistry()
         TurnAccountant(slos=slos).settle(
@@ -184,7 +184,7 @@ class TestTurnAccounting:
         assert slos.status("tool_failure_rate").observed == pytest.approx(0.5)
 
     def test_an_unanswered_turn_counts_against_task_success(self) -> None:
-        from agentic_commons.observability import SLORegistry
+        from agent_platform.observability import SLORegistry
 
         slos = SLORegistry()
         TurnAccountant(slos=slos).settle(TurnOutcome(session_id="s", answered=False))
@@ -228,7 +228,7 @@ class TestDeliberation:
 
     @pytest.mark.asyncio
     async def test_the_evaluator_is_independent_of_the_generator(self) -> None:
-        from agentic_commons.evals import create_scoring_cascade
+        from agent_platform.evals import create_scoring_cascade
 
         loop = OutputQualityGate(evaluator=IndependentScorer(create_scoring_cascade()))
         assert await loop.score("Order 10001 was delivered", ["Order 10001 was delivered"]) > 0.0
@@ -306,8 +306,8 @@ class TestRetrievalOverTheOrderCorpus:
     async def test_the_customers_orders_reach_the_window(
         self, seeded_pool: SqliteConnectionPool
     ) -> None:
-        from agentic_commons.context import Task
-        from agentic_commons.evals import create_scoring_cascade
+        from agent_platform.context import Task
+        from agent_platform.evals import create_scoring_cascade
         from customer_support_agent.domain.identity import Customer, set_current_customer
         from customer_support_agent.graph.builder import OrderCorpusContextSource
         from customer_support_agent.persistence.repositories import OrdersRepository
@@ -322,8 +322,8 @@ class TestRetrievalOverTheOrderCorpus:
         self, seeded_pool: SqliteConnectionPool
     ) -> None:
         """A retriever over every customer's orders is one bug from a leak."""
-        from agentic_commons.context import Task
-        from agentic_commons.evals import create_scoring_cascade
+        from agent_platform.context import Task
+        from agent_platform.evals import create_scoring_cascade
         from customer_support_agent.domain.identity import Customer, set_current_customer
         from customer_support_agent.graph.builder import OrderCorpusContextSource
         from customer_support_agent.persistence.repositories import OrdersRepository
@@ -337,8 +337,8 @@ class TestRetrievalOverTheOrderCorpus:
     async def test_an_unauthenticated_request_retrieves_nothing(
         self, seeded_pool: SqliteConnectionPool
     ) -> None:
-        from agentic_commons.context import Task
-        from agentic_commons.evals import create_scoring_cascade
+        from agent_platform.context import Task
+        from agent_platform.evals import create_scoring_cascade
         from customer_support_agent.domain.identity import set_current_customer
         from customer_support_agent.graph.builder import OrderCorpusContextSource
         from customer_support_agent.persistence.repositories import OrdersRepository
@@ -352,7 +352,7 @@ class TestWindowHygiene:
     """FR-5: the same fact reaching the window twice is a failure mode."""
 
     def test_a_near_duplicate_is_dropped_before_it_costs_budget(self) -> None:
-        from agentic_commons.context import Chunk, FiveStagePipeline
+        from agent_platform.context import Chunk, FiveStagePipeline
 
         pipeline = FiveStagePipeline()
         kept, dropped = pipeline.fit_to_budget(
@@ -366,7 +366,7 @@ class TestWindowHygiene:
 
     def test_a_pinned_chunk_is_never_dropped_as_a_duplicate(self) -> None:
         """The policy does not compete, so it cannot lose to a copy of itself."""
-        from agentic_commons.context import Chunk, FiveStagePipeline
+        from agent_platform.context import Chunk, FiveStagePipeline
 
         kept, _ = FiveStagePipeline().fit_to_budget(
             [

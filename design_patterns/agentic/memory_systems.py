@@ -12,12 +12,12 @@ as the record survives. So writes go through the pipeline that classifies
 and authorises them; this pattern composes that rather than calling a
 store directly.
 
-Composes `agentic_commons.memory`: the four CoALA stores, the write
+Composes `agent_platform.memory`: the four CoALA stores, the write
 pipeline and the composite retrieval scorer already exist.
 """
 
-from agentic_commons.logging import get_logger
-from agentic_commons.memory import MemoryFacade, MemoryQuery, ProvenanceKind
+from agent_platform.logging import get_logger
+from agent_platform.memory import MemoryFacade, MemoryQuery, ProvenanceKind
 from design_patterns.types import PatternFamily, PatternRun, Step
 
 

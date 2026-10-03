@@ -12,11 +12,11 @@ a live model would make them measure its mood instead.
 import pytest
 from pydantic import BaseModel
 
-from agentic_commons.context import Chunk, DenseRetriever, HybridRetriever, LexicalRetriever
-from agentic_commons.evals import create_scoring_cascade
-from agentic_commons.memory import EpisodicStore, MemoryFacade, SemanticStore
-from agentic_commons.persistence import SqliteConnectionPool
-from agentic_commons.tools import NamespacedToolRegistry, ToolDefinition, ToolResult
+from agent_platform.context import Chunk, DenseRetriever, HybridRetriever, LexicalRetriever
+from agent_platform.evals import create_scoring_cascade
+from agent_platform.memory import EpisodicStore, MemoryFacade, SemanticStore
+from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.tools import NamespacedToolRegistry, ToolDefinition, ToolResult
 from design_patterns import (
     AgenticRetrievalPattern,
     EvaluatorOptimizerPattern,
@@ -340,6 +340,6 @@ class TestMemorySystems:
 
 
 def _raw(name: str, arguments: str):  # type: ignore[no-untyped-def]
-    from agentic_commons.llm.types import ModelToolCall
+    from agent_platform.llm.types import ModelToolCall
 
     return ModelToolCall(id=name, name=name, arguments=arguments)

@@ -2,13 +2,13 @@
 
 import pytest
 
-from agentic_commons.config import get_settings
-from agentic_commons.config.features import (
+from agent_platform.config import get_settings
+from agent_platform.config.features import (
     FeatureSet,
     active_features,
     set_active_features,
 )
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.graph import build_agent
 from tests.conftest import ScriptedLLM
 
@@ -152,7 +152,7 @@ class TestTwoAgentsInOneProcess:
 
     Components used to read `get_settings()` themselves — a process-wide
     singleton — so the first agent composed decided the posture for every
-    other agent in the process. Two deployments of `agentic_commons` could
+    other agent in the process. Two deployments of `agent_platform` could
     not differ. Now the feature set is a value handed to a composition
     root, so they can.
     """

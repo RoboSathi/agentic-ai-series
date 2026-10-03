@@ -19,25 +19,25 @@ from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
-from agentic_commons.context.types import Chunk
-from agentic_commons.hallucination_protection import Observation, tool_evidence
-from agentic_commons.llm.embeddings import tokenize
-from agentic_commons.llm.types import CompletionRequest, CompletionResult, Message, ModelToolCall
-from agentic_commons.logging import describe_error, get_logger, instrument
-from agentic_commons.observability.llm_fields import llm_request_fields, llm_response_fields
-from agentic_commons.observability.tool_fields import display_tool_name, tool_request_fields
-from agentic_commons.tools.registry import NamespacedToolRegistry
-from agentic_commons.tools.types import ToolResult
+from agent_platform.context.types import Chunk
+from agent_platform.hallucination_protection import Observation, tool_evidence
+from agent_platform.llm.embeddings import tokenize
+from agent_platform.llm.types import CompletionRequest, CompletionResult, Message, ModelToolCall
+from agent_platform.logging import describe_error, get_logger, instrument
+from agent_platform.observability.llm_fields import llm_request_fields, llm_response_fields
+from agent_platform.observability.tool_fields import display_tool_name, tool_request_fields
+from agent_platform.tools.registry import NamespacedToolRegistry
+from agent_platform.tools.types import ToolResult
 from research_agent.config import get_agent_settings
 from research_agent.config.settings import AnswerSettings
 from research_agent.domain.budget import TOKENS
 from research_agent.graph.answer_state import STEPS, TOOL_CALLS, AnswerState, Turn, turn_of
 from research_agent.graph.points import as_points
 from research_agent.guardrails.answer_grounding import AnswerGrounding, GroundingOutcome
-from research_agent.narration import clip
+from research_agent.llm.structured import ModelCallTimeoutError, StructuredCaller
+from research_agent.observability.telemetry import RunTelemetry
+from research_agent.presentation.narration import clip
 from research_agent.prompts import answer as prompt
-from research_agent.research.telemetry import RunTelemetry
-from research_agent.structured import ModelCallTimeoutError, StructuredCaller
 from research_agent.tools import URLS_KEY
 
 # The loop's cards, in the order a step emits them.

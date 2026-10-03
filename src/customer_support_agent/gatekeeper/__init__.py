@@ -1,6 +1,6 @@
 """The deterministic rules the platform Gatekeeper calls into.
 
-`agentic_commons` owns the reference monitor and the check sequence; it
+`agent_platform` owns the reference monitor and the check sequence; it
 does not know what an order is. This is where that knowledge lives.
 """
 

@@ -16,11 +16,11 @@ worth refusing: the demo data's largest order is under $500, and an
 unsupervised $500 refund does not frighten anybody.
 """
 
-from agentic_commons.config import YamlBackedSettings
-from agentic_commons.logging import get_logger
-from agentic_commons.money import Money
-from agentic_commons.observability.types import utc_now
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.config import YamlBackedSettings
+from agent_platform.logging import get_logger
+from agent_platform.primitives.money import Money
+from agent_platform.observability.types import utc_now
+from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.models import Order
 from customer_support_agent.persistence.repositories import OrdersRepository, UsersRepository

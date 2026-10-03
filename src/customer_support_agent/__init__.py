@@ -2,7 +2,7 @@
 
 Importing this package declares its configuration layer.
 
-That declaration used to live the other way round: `agentic_commons`'
+That declaration used to live the other way round: `agent_platform`'
 own `config.yaml` listed this agent's overlay, which meant the platform
 could not be read without this agent installed, and that every future
 agent would inherit this one's vocabulary. The dependency has to point

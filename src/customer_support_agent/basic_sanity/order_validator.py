@@ -1,7 +1,7 @@
 """Customer Support's implementation of the generic BasicSanity contract.
 
 This module deliberately owns Customer Support domain knowledge. It knows
-about orders, customers and refund state; ``agentic_commons`` does not.
+about orders, customers and refund state; ``agent_platform`` does not.
 
 The checker runs before the LLM and only performs deterministic work. When an
 explicit order id is present, it looks up the customer's own order and can
@@ -13,22 +13,22 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
-from agentic_commons.basic_sanity import (
+from agent_platform.basic_sanity import (
     BasicSanityChecker,
     BasicSanityFinding,
     BasicSanityRequest,
     BasicSanityResult,
 )
-from agentic_commons.logging import get_logger
-from agentic_commons.money import Money, money_or_none
+from agent_platform.logging import get_logger
+from agent_platform.primitives.money import Money, money_or_none
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.cancellation_policy import CancellationPolicy
 from customer_support_agent.domain.models import Order
 from customer_support_agent.domain.order_reference import (
     OrderReferenceResolver,
 )
+from customer_support_agent.domain.ports import OrderLookup
 from customer_support_agent.domain.refund_policy import RefundPolicy
-from customer_support_agent.persistence.repositories import OrdersRepository
 
 # The finding that proves an order exists and belongs to this customer. A
 # request about that order may still be refused, but the order it names is
@@ -52,7 +52,7 @@ class OrderSanityCheck(BasicSanityChecker):
 
     def __init__(
         self,
-        orders: OrdersRepository,
+        orders: OrderLookup,
         *,
         refund_policy: RefundPolicy | None = None,
         cancellation_policy: CancellationPolicy | None = None,
@@ -63,7 +63,9 @@ class OrderSanityCheck(BasicSanityChecker):
         # The one reader of which order a message names. BasicSanity used to
         # carry its own, and two readers that disagree are how an agent
         # validates one order and acts on another.
-        self._references = references or OrderReferenceResolver.from_orders(orders)
+        self._references = references or OrderReferenceResolver.from_orders(
+            get_agent_settings().order_reference, orders
+        )
         self._refund_policy = refund_policy or RefundPolicy(orders)
         self._cancellation_policy = cancellation_policy or CancellationPolicy(orders)
         self._cancel_markers = _markers(_configured_phrases(CANCEL_OPERATION))

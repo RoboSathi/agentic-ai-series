@@ -1,12 +1,12 @@
-.PHONY: gen-key help install clean lint type-check format test verify tui episode llm-check model-check models data refund-limit \
+.PHONY: gen-key help install clean lint type-check format test verify agent episode llm-check model-check models data refund-limit \
 	clean-memory show-memory dream runs patterns \
 	eval eval-generate eval-oracle eval-security eval-judge eval-deepeval eval-report eval-diff \
 	eval-runs eval-sql _agent
 
 # -- agent registry -------------------------------------------------------------
-# The platform names no agent (`agentic_commons/config.yaml` ships
+# The platform names no agent (`agent_platform/config.yaml` ships
 # `overlays: []`), so the agent is named on the command line: agent-scoped
-# targets take it as their second goal — `make tui csa`, `make eval ra`.
+# targets take it as their second goal — `make agent csa`, `make eval ra`.
 # Adding an agent is three lines here and nothing in the platform.
 AGENTS := csa ra
 
@@ -28,7 +28,7 @@ ra_OFFLINE_PROFILE :=
 ra_EVALS :=
 
 # Targets whose second goal names the agent they act on.
-AGENT_SCOPED := tui data runs model-check llm-check models eval eval-generate eval-oracle eval-security eval-judge \
+AGENT_SCOPED := agent data runs model-check llm-check models eval eval-generate eval-oracle eval-security eval-judge \
 	eval-deepeval eval-report eval-diff eval-runs eval-sql
 
 ifneq ($(filter $(firstword $(MAKECMDGOALS)),$(AGENT_SCOPED)),)
@@ -43,7 +43,7 @@ endif
 ifeq ($(words $(AGENT_ARGS)) $(words $(AGENT)),1 1)
 export AGENTIC_OVERLAYS := $($(AGENT)_OVERLAY)
 # A profile is a named posture of the agent's own config:
-# `make tui csa PROFILE=<name>` (src/<pkg>/config/profiles/). Evals and
+# `make agent csa PROFILE=<name>` (src/<pkg>/config/profiles/). Evals and
 # `make data` always use the agent's offline profile, whatever was typed.
 ifneq ($(filter data eval eval-%,$(firstword $(MAKECMDGOALS))),)
 override PROFILE := $($(AGENT)_OFFLINE_PROFILE)
@@ -60,7 +60,7 @@ endif
 endif
 
 PYTHON := ./venv/bin/python
-EVALS := $(PYTHON) -m agentic_commons.evals
+EVALS := $(PYTHON) -m agent_platform.evals
 
 # Provider budget override for this invocation: `RPM=38 make eval csa`.
 # The configured default lives in resilience.rate_limit (config.yaml).
@@ -98,7 +98,7 @@ help:
 	@echo "  make verify               All gates: lint, format, types, tests (80% coverage), both composition roots"
 	@echo ""
 	@echo "$(GREEN)Run$(NC) (agent name required):"
-	@echo "  make tui <agent>          The operator console (make tui csa; make tui ra)"
+	@echo "  make agent <agent>        The operator console (make agent csa; make agent ra)"
 	@echo "  make data <agent>         csa: rebuild the agent DB (KEEP_MEMORY=1); ra: build + validate the fixture world"
 	@echo "  make runs ra              List archived research runs"
 	@echo "  make episode E=05         One episode (calls the live model)"
@@ -168,8 +168,8 @@ format:
 test:
 	./venv/bin/pytest tests/ --cov=src --cov-report=term-missing -q
 
-tui: _agent
-	$(PYTHON) -m agentic_commons.tui
+agent: _agent
+	$(PYTHON) -m agent_platform.tui
 
 # Run one episode: make episode E=05  (or E=48a). Configured episodes call
 # the live model — this is a recording-session tool, not a check.
@@ -185,11 +185,11 @@ MODEL_CHECK_AGENTS = $(or $(AGENT),$(AGENTS))
 # first step after `make install`: `make models`, or `make models ra`.
 models:
 	@$(foreach a,$(MODEL_CHECK_AGENTS),echo "$(BLUE)── $($(a)_NAME) ($(a)) ──$(NC)" && \
-		AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(PYTHON) -m agentic_commons.llm.local_probes && ) true
+		AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(PYTHON) -m agent_platform.llm.local_probes && ) true
 
 llm-check model-check:
 	@$(foreach a,$(MODEL_CHECK_AGENTS),echo "$(BLUE)── $($(a)_NAME) ($(a)) ──$(NC)" && \
-		AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(PYTHON) -m agentic_commons.llm.cli $(if $(BENCH),--bench) && ) true
+		AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(PYTHON) -m agent_platform.llm.cli $(if $(BENCH),--bench) && ) true
 
 data: _agent
 	@test -n "$($(AGENT)_DATA)" || (echo "$(YELLOW)'$(AGENT)' has no generated data$(NC)" && exit 2)

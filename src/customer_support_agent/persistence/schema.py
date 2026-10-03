@@ -7,7 +7,7 @@ in the test fixture is always the one that drifts.
 
 from pathlib import Path
 
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.persistence import SqliteConnectionPool
 
 _SCHEMA_FILE = Path(__file__).resolve().parent / "schema.sql"
 

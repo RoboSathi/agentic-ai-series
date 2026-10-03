@@ -11,8 +11,8 @@ turn.
 from collections.abc import Callable
 from typing import Any
 
-from agentic_commons.commands import CommandResult, ConsoleEffect
-from agentic_commons.commands.types import CommandError
+from agent_platform.commands import CommandResult, ConsoleEffect
+from agent_platform.commands.types import CommandError
 
 AgentRef = Callable[[], Any]
 
@@ -21,6 +21,8 @@ class ForwardedCommand:
     """A conversational act: validated here, handled by the agent's graph."""
 
     group = "Research"
+    # The console shows it once, as the turn it becomes, not also as a command.
+    forwards_turn = True
 
     def __init__(self, name: str, summary: str, usage: str, needs_args: bool = False) -> None:
         self.name = name

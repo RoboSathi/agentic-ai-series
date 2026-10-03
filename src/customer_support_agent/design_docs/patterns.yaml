@@ -39,4 +39,4 @@ other:
   - pattern: factory
     where: graph/builder.py (composition root)
   - pattern: facade
-    where: agentic_commons MemoryFacade
+    where: agent_platform MemoryFacade

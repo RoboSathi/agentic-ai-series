@@ -13,8 +13,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.context import Context
-from agentic_commons.memory import WorkingMemory
+from agent_platform.context import Context
+from agent_platform.memory import WorkingMemory
 
 
 class AgentState(BaseModel):

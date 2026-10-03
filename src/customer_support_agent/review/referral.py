@@ -14,8 +14,8 @@ withheld there is no escalation, so the same request simply pays. That
 difference is the harness.
 """
 
-from agentic_commons.logging import get_logger, instrument
-from agentic_commons.tools import ToolCall, ToolResult
+from agent_platform.logging import get_logger, instrument
+from agent_platform.tools import ToolCall, ToolResult
 from customer_support_agent.tools.definitions import SupportTools
 
 _REFUND = "process_refund"

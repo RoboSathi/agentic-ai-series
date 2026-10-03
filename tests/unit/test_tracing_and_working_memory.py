@@ -9,11 +9,11 @@ import logging
 
 import pytest
 
-from agentic_commons.logging import get_logger, instrument
-from agentic_commons.logging.decorators import logged
-from agentic_commons.memory import MemoryFacade, Provenance
-from agentic_commons.memory.types import MemoryFact
-from agentic_commons.observability import (
+from agent_platform.logging import get_logger, instrument
+from agent_platform.logging.decorators import logged
+from agent_platform.memory import MemoryFacade, Provenance
+from agent_platform.memory.types import MemoryFact
+from agent_platform.observability import (
     InMemoryLiveStatusFeed,
     StageReporter,
     traced,

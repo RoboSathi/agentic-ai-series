@@ -12,7 +12,7 @@ import re
 from functools import cache
 from typing import Any
 
-from agentic_commons.evals.contracts import GoldenCase, Transcript
+from agent_platform.evals.contracts import GoldenCase, Transcript
 from customer_support_agent.config.settings import get_agent_settings
 from customer_support_agent.evals.fixture import EvalFixture
 from customer_support_agent.evals.oracle import CsaOracle

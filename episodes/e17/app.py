@@ -9,7 +9,7 @@ token checkpoints against a short-window baseline, so a drop is caught
 rather than assumed from a published benchmark.
 """
 
-from agentic_commons.context import AssembledContext, Chunk, ContextFailureDetector
+from agent_platform.context import AssembledContext, Chunk, ContextFailureDetector
 from episodes._shared import EpisodeOutput, main
 
 MODES = {

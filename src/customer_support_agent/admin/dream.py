@@ -8,7 +8,7 @@ import argparse
 import asyncio
 from collections.abc import Sequence
 
-from agentic_commons.memory.consolidation import change_tree_lines
+from agent_platform.memory.consolidation import change_tree_lines
 from customer_support_agent.admin.show_memory import memory_lines, print_lines
 from customer_support_agent.graph.builder import build_dream_service
 

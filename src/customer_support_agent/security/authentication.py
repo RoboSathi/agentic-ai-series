@@ -11,23 +11,22 @@ not, and a deterministic check is faster, cheaper, and cannot be talked
 into a different answer. The details read back are a fixed format for the
 same reason: a model asked to render a customer's own record is a model
 that can get it subtly wrong.
+
+This module decides *who*; it never says anything. The words a customer
+reads — the prompt for a code, the verified read-back — are rendered by
+the graph's authentication node from `presentation`, so security does not
+depend on how a greeting looks.
 """
 
 import re
 
 from pydantic import BaseModel
 
-from agentic_commons.logging import get_logger, instrument, logged
+from agent_platform.logging import get_logger, instrument, logged
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.identity import Customer
 from customer_support_agent.domain.models import User
-from customer_support_agent.persistence.repositories import OrdersRepository, UsersRepository
-from customer_support_agent.presentation.orders import (
-    OrderMenu,
-    build_menu,
-    customer_orders,
-    describe_customer,
-)
+from customer_support_agent.persistence.repositories import UsersRepository
 
 
 class AuthResult(BaseModel):
@@ -35,21 +34,18 @@ class AuthResult(BaseModel):
 
     authenticated: bool
     customer: Customer | None = None
-    message: str = ""
+    # The account row behind `customer`, for the verified read-back.
+    user: User | None = None
     code_attempted: bool = False
-    # The order list shown alongside the greeting, so a later bare "2"
-    # can be resolved back to an order.
-    menu: OrderMenu | None = None
 
 
 @instrument("customer_support_agent")
 class CustomerAuthenticator:
     """Turns a typed code into an authenticated customer, or a prompt."""
 
-    def __init__(self, users: UsersRepository, orders: OrdersRepository) -> None:
+    def __init__(self, users: UsersRepository) -> None:
         settings = get_agent_settings()
         self._users = users
-        self._orders = orders
         self._length = settings.user_code_length
         self._alphabet = settings.user_code_alphabet
         self._placeholder = settings.user_code_placeholder
@@ -101,43 +97,17 @@ class CustomerAuthenticator:
         """Try to authenticate from whatever the customer just typed."""
         code = self.extract_code(message)
         if code is None:
-            return AuthResult(
-                authenticated=False,
-                message=self._ask_for_code(),
-                code_attempted=False,
-            )
+            return AuthResult(authenticated=False, code_attempted=False)
         user = self._users.get_by_code(code)
         if user is None:
-            # The same message whether the code is malformed or simply
-            # wrong: distinguishing them tells an attacker which codes
-            # exist.
+            # One outcome whether the code is malformed or simply wrong:
+            # distinguishing them tells an attacker which codes exist.
             self._logger.warning("Authentication failed", code_length=len(code))
-            return AuthResult(
-                authenticated=False,
-                message=(
-                    "I couldn't find an account with that code. Please check it and "
-                    "try again — it's the "
-                    f"{self._length}-character code from your order confirmation email."
-                ),
-                code_attempted=True,
-            )
-        orders = customer_orders(self._orders, user.user_id)
-        self._logger.info("Customer authenticated", customer_id=user.user_id, orders=len(orders))
+            return AuthResult(authenticated=False, code_attempted=True)
+        self._logger.info("Customer authenticated", customer_id=user.user_id)
         return AuthResult(
             authenticated=True,
             customer=Customer(customer_id=user.user_id, name=user.name, email=user.email),
-            message=describe_customer(user, orders),
+            user=user,
             code_attempted=True,
-            menu=build_menu(orders),
-        )
-
-    def describe(self, user: User) -> str:
-        """The fixed-format read-back, including the customer's orders."""
-        return describe_customer(user, customer_orders(self._orders, user.user_id))
-
-    def _ask_for_code(self) -> str:
-        """The prompt shown until a code arrives."""
-        return (
-            "Before I can look anything up, I need to verify your account.\n"
-            f"Please share your {self._length}-character user code."
         )

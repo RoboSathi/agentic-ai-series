@@ -4,9 +4,9 @@ import warnings
 
 import pytest
 
-from agentic_commons.config import get_settings
-from agentic_commons.llm import cli
-from agentic_commons.llm.local_models import _library_warnings_silenced
+from agent_platform.config import get_settings
+from agent_platform.llm import cli
+from agent_platform.llm.local_models import _library_warnings_silenced
 
 
 def test_latency_is_coloured_by_its_band() -> None:

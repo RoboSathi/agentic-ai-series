@@ -9,10 +9,10 @@ Every audit entry already carries three of the four, which is what makes
 "why did it behave differently last Tuesday?" answerable at all.
 """
 
-from agentic_commons.audit import AuditEntry, SqliteAuditLedger
-from agentic_commons.config import get_settings
-from agentic_commons.memory import MemoryFact, ProceduralStore, Provenance
-from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.audit import AuditEntry, SqliteAuditLedger
+from agent_platform.config import get_settings
+from agent_platform.memory import MemoryFact, ProceduralStore, Provenance
+from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
 from episodes._shared import EpisodeOutput, main
 
 

@@ -8,10 +8,10 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.widgets._collapsible import CollapsibleTitle
 
-from agentic_commons.config import get_settings
-from agentic_commons.observability.types import StatusEvent
-from agentic_commons.tui.app import AgenticTuiApp
-from agentic_commons.tui.widgets import (
+from agent_platform.config import get_settings
+from agent_platform.observability.types import StatusEvent
+from agent_platform.tui.app import AgenticTuiApp
+from agent_platform.tui.widgets import (
     LiveStatusPanel,
     StageEventWidget,
     StatusLineWidget,
@@ -46,10 +46,6 @@ def _title_colour(widget: StageEventWidget) -> str:
     return f"#{style.color.triplet.hex[1:]}".upper() if style.color.triplet else style.color.name
 
 
-def _expected(status: str) -> str:
-    return get_settings().tui.outcome_colors[status].upper()
-
-
 @pytest.mark.asyncio
 async def test_a_focused_title_keeps_its_outcome_colour() -> None:
     app = _Feed()
@@ -58,10 +54,16 @@ async def test_a_focused_title_keeps_its_outcome_colour() -> None:
         panel.show_status(_event("thought", "completed"))
         panel.show_status(_event("budget_tick", "warning"))
         await pilot.pause()
+        # Named terminal colours are drawn through the terminal's theme, so the
+        # check is relative: focus keeps the colour, and each state has its own.
+        drawn = {}
         for widget in app.query(StageEventWidget):
+            before = _title_colour(widget)
             await pilot.click(widget.query_one(CollapsibleTitle))
             await pilot.pause()
-            assert _title_colour(widget) == _expected(widget.event.status)
+            assert _title_colour(widget) == before
+            drawn[widget.event.status] = before
+        assert drawn["completed"] != drawn["warning"]
 
 
 @pytest.mark.asyncio

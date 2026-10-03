@@ -16,12 +16,12 @@ import pytest
 import yaml
 from pydantic import BaseModel
 
-from agentic_commons.config.settings import AppConfig
-from agentic_commons.config.yaml_config import deep_merge
+from agent_platform.config.settings import AppConfig
+from agent_platform.config.yaml_config import deep_merge
 from customer_support_agent.config.settings import CustomerSupportAgentSettings
 
 ROOT = Path(__file__).resolve().parents[2]
-PLATFORM = ROOT / "src" / "agentic_commons" / "config" / "config.yaml"
+PLATFORM = ROOT / "src" / "agent_platform" / "config" / "config.yaml"
 AGENT = ROOT / "src" / "customer_support_agent" / "config" / "config.yaml"
 EPISODES = sorted((ROOT / "episodes").glob("*/config.yaml"))
 AGENT_SECTION = "customer_support_agent"

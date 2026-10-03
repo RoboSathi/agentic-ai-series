@@ -1,6 +1,6 @@
 # Design docs — platform-wide
 
-This folder holds only what is true of the **platform** (`src/agentic_commons`)
+This folder holds only what is true of the **platform** (`src/agent_platform`)
 and of the monolith as a whole. Each agent's own design lives inside its
 package:
 
@@ -41,7 +41,7 @@ belongs in them.
   the agent's prefix) in its own `design_docs/adr/`.
 - **Dependencies point from agent to platform, never back.** Commons holds
   no agent vocabulary (enforced for ra's words by
-  `tests/agentic_commons/test_roles_and_boundary.py`).
+  `tests/agent_platform/test_roles_and_boundary.py`).
 - **Agent docs describe the code as it exists.** csa's folder records only
   what can be verified from its code; nothing is invented after the fact.
 - **`patterns_coverage.md` is generated** — edit the agents'

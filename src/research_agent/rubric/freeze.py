@@ -9,7 +9,7 @@ do" is a detectable event rather than a matter of reading two transcripts.
 import uuid
 from datetime import datetime
 
-from agentic_commons.artifacts import FrozenArtifact
+from agent_platform.artifacts import FrozenArtifact
 from research_agent.domain.rubric import Contract, Rubric
 from research_agent.domain.scope import ScopeBrief
 

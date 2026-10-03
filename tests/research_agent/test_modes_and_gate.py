@@ -2,7 +2,7 @@
 
 import pytest
 
-from agentic_commons.config import get_settings
+from agent_platform.config import get_settings
 from research_agent.config import get_agent_settings
 from research_agent.console.setup import missing_model_key, search_warning
 from research_agent.domain.budget import Budget
@@ -134,7 +134,7 @@ def test_budgets_stay_inside_the_free_tiers(ra_config: None) -> None:
     """The shipped live defaults, not the offline overlay the tests run on."""
     import yaml
 
-    from agentic_commons.config import REPO_ROOT
+    from agent_platform.config import REPO_ROOT
 
     raw = yaml.safe_load((REPO_ROOT / "src/research_agent/config/config.yaml").read_text())
     agent = raw["research_agent"]

@@ -12,7 +12,7 @@ whole join only once rather than once per branch.
 import asyncio
 from typing import Awaitable, Callable
 
-from agentic_commons.logging import get_logger
+from agent_platform.logging import get_logger
 from design_patterns.types import PatternFamily, PatternRun, Step
 
 Branch = Callable[[str], Awaitable[str]]

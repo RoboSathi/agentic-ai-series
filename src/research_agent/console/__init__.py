@@ -13,10 +13,10 @@ from typing import Any
 
 from rich.markup import escape
 
-from agentic_commons.commands.types import Command
-from agentic_commons.config import FeatureSet, get_settings
-from agentic_commons.host import HostAction
-from agentic_commons.observability import StageReporter
+from agent_platform.commands.types import Command
+from agent_platform.config import FeatureSet, get_settings
+from agent_platform.host import HostAction
+from agent_platform.observability import StageReporter
 from research_agent.config import get_agent_settings
 from research_agent.console.commands import (
     CancelCommand,
@@ -26,7 +26,7 @@ from research_agent.console.commands import (
 )
 from research_agent.console.greeting import build_greeting
 from research_agent.console.setup import missing_model_key, search_warning
-from research_agent.narration import say, title_of
+from research_agent.presentation.narration import say, title_of
 
 
 class ResearchHost:
@@ -60,7 +60,7 @@ class ResearchHost:
         fds_to_keep`) and every claim after that is judged by the lexical fallback. A model that
         cannot load still does not stop the console: the checker logs why and falls back.
         """
-        from agentic_commons.evals.entailment import preload_entailment_model
+        from agent_platform.evals.entailment import preload_entailment_model
         from research_agent.graph.builder import intent_embedder
 
         if nli:
@@ -141,6 +141,7 @@ class ResearchHost:
                     part for part in (f"/{getattr(names, spec.command)}", spec.argument) if part
                 ),
                 spec.during_turn,
+                spec.variant,
             )
             for spec in settings.tui.actions.get(phase, [])
         ]

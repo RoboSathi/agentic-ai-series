@@ -10,7 +10,7 @@ right answer is to cancel — which is a real outcome and should be
 reachable by the same model that justifies building.
 """
 
-from agentic_commons.observability import LittlesLawQueueModel
+from agent_platform.observability import LittlesLawQueueModel
 from episodes._shared import EpisodeOutput, main
 
 VOLUME_PER_MONTH = 20_000

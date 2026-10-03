@@ -10,12 +10,12 @@ Each one passes a per-call permission check and is stopped by a different
 question — which is the argument for having four.
 """
 
-from agentic_commons.audit import SqliteAuditLedger
-from agentic_commons.gatekeeper import AuthorityContext, GatekeeperImpl
-from agentic_commons.gatekeeper.ledger import CumulativeLedger
-from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
-from agentic_commons.security import Authorizer
-from agentic_commons.tools import ToolCall
+from agent_platform.audit import SqliteAuditLedger
+from agent_platform.gatekeeper import AuthorityContext, GatekeeperImpl
+from agent_platform.gatekeeper.ledger import CumulativeLedger
+from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.security import Authorizer
+from agent_platform.tools import ToolCall
 from episodes._shared import EpisodeOutput, main
 
 

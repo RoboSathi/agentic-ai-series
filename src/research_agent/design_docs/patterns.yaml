@@ -31,7 +31,7 @@ patterns:
     where: graph/run_nodes.py · synthesize → independent_audit → gap_fill → wave_start
     notes: an independent audit scores the report against the frozen rubric; must-pass gaps drive one bounded gap-fill round
   - pattern: orchestrator_subagent
-    where: audit/independent.py · IndependentAuditor (agentic_commons.durability.IsolatedGraphRunner)
+    where: audit/independent.py · IndependentAuditor (agent_platform.durability.IsolatedGraphRunner)
     notes: the independent audit runs as an isolated sub-graph that receives only (contract, report, ledger_snapshot)
   - pattern: memory_systems
     where: archive/store.py · archive node
@@ -40,20 +40,20 @@ other:
   - pattern: strategy
     where: research/stop_rules/ (one stop rule per archetype)
   - pattern: adapter
-    where: agentic_commons/web/providers.py · TavilyProvider and DuckDuckGoProvider behind SearchProvider
+    where: agent_platform/web/providers.py · TavilyProvider and DuckDuckGoProvider behind SearchProvider
   - pattern: chain of responsibility
-    where: agentic_commons/web/router.py · SearchRouter (free provider first, metered fallback)
+    where: agent_platform/web/router.py · SearchRouter (free provider first, metered fallback)
   - pattern: factory
     where: graph/builder.py (composition root)
   - pattern: builder
     where: scoping/brief.py · BriefBuilder
   - pattern: observer
-    where: research/telemetry.py (StageReporter + AuditLedger) · WebGateway observer
+    where: observability/telemetry.py (StageReporter + AuditLedger) · WebGateway observer
   - pattern: decorator
     where: research_agent/evals/agent_under_test.py · RecordingLLMClient around every role client
   - pattern: facade
-    where: agentic_commons MemoryFacade, used by archive/store.py
+    where: agent_platform MemoryFacade, used by archive/store.py
   - pattern: retry + idempotency + circuit breaker
-    where: agentic_commons/web/gateway.py · live search and fetch through ResilientCaller
+    where: agent_platform/web/gateway.py · live search and fetch through ResilientCaller
   - pattern: bulkhead
-    where: agentic_commons/scheduling/scheduler.py · per-wave concurrency cap
+    where: agent_platform/scheduling/scheduler.py · per-wave concurrency cap

@@ -1,7 +1,7 @@
 """Configuration for the research agent.
 
 These settings live with the agent, not with the platform: the section is
-declared in this package's overlay and read here, so `agentic_commons`
+declared in this package's overlay and read here, so `agent_platform`
 never learns what a research run is. Every tunable the agent reads is a
 field here — nothing is a literal in the code that uses it.
 """
@@ -12,8 +12,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from pydantic_settings import SettingsConfigDict
 
-from agentic_commons.config.paths import resolve_path
-from agentic_commons.config.settings import YamlBackedSettings
+from agent_platform.config.paths import resolve_path
+from agent_platform.config.settings import YamlBackedSettings
 from research_agent.domain.budget import Budget
 from research_agent.domain.scope import Depth, Mode
 
@@ -79,7 +79,6 @@ class MessageSettings(BaseModel):
     new_scope: str
     history_empty: str
     unknown_run: str
-    plan_failed: str
     # `{error}`: why a scoping step failed (the session is left ready for a new question).
     scope_failed: str
     # What working memory keeps of a delivered run: `{run_id}`, `{status}`, `{topic}`.
@@ -183,7 +182,7 @@ class PlanningSettings(BaseModel):
 
 
 class MatchingSettings(BaseModel):
-    """Deterministic term matching (research/matching.py)."""
+    """Deterministic term matching (domain/matching.py)."""
 
     token_pattern: str
     stem_chars: int = Field(ge=1)
@@ -550,6 +549,8 @@ class ActionSpec(BaseModel):
     argument: str = ""
     # May be pressed while a turn is running (cancel); the others wait for the turn to end.
     during_turn: bool = False
+    # Textual button variant: how the button is drawn (success, primary, error, ...).
+    variant: str = "default"
 
 
 class PanelSettings(BaseModel):
@@ -558,7 +559,7 @@ class PanelSettings(BaseModel):
     stage_labels: dict[str, str]
     command_help: dict[str, str]
     history_headers: list[str]
-    # Every sentence a card or the status block says (`research_agent.narration`).
+    # Every sentence a card or the status block says (`research_agent.presentation.narration`).
     cards: dict[str, str]
     # Rejection and gap codes, in words.
     reasons: dict[str, str]

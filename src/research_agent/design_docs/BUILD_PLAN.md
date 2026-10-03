@@ -22,7 +22,7 @@ lives in `research_agent` (pattern composition, research vocabulary).
 | Authority ranking | `gatekeeper.authority_hierarchy` already ranks `untrusted_content` last | **reuse** the configured hierarchy; ra tags every fetched span with the bottom rank. |
 | NLI | `evals/entailment.py` `EntailmentModel`, `create_entailment_model()` (local DeBERTa → hosted → lexical); `hallucination_protection.DetectionLadder` wraps it with retrieval over chunks | **reuse** `EntailmentModel` for claim→span support (the span is already *the* evidence, so the ladder's retrieval stage adds nothing). |
 | Structured output | `guardrails/guards.py` `PydanticValidator.validate_or_raise` | **reuse** for every ra LLM role (one `StructuredCall` helper in ra). |
-| Canonical hash | `evals/contracts.py::canonical_hash` | **extend**: moved to `agentic_commons/hashing.py` (neutral layer) and re-exported from `evals.contracts` so nothing else changes. The artifact store must not depend on the eval package. |
+| Canonical hash | `evals/contracts.py::canonical_hash` | **extend**: moved to `agent_platform/primitives/hashing.py` (neutral layer) and re-exported from `evals.contracts` so nothing else changes. The artifact store must not depend on the eval package. |
 | Resilience | `resilience/` `ResilientCaller` (bulkhead → breaker → retry → timeout), `CircuitBreakerImpl`, `rate_limiter` (host-bucketed httpx transport via `llm/http.py::create_http_client`) | **reuse**. Web calls go through one `ResilientCaller` per provider and the rate-limited httpx client. **extend** platform config: `tavily` bucket in `resilience.rate_limit.buckets`. |
 | Idempotent fetch | `resilience/idempotency` (SQLite, per-agent) | **reuse the idea, not the table**: the fetch cache is URL-keyed inside `WebGateway`; a replayed fetch never repeats. |
 | Web access | none | **new** `web/` package: `WebGateway` (`search()`, `fetch()`, modes live/record/replay), `SearchProvider` + `TavilyProvider`, `Fetcher` + reader fallback, `FixtureStore`. |
@@ -33,7 +33,7 @@ lives in `research_agent` (pattern composition, research vocabulary).
 | Memory | `memory/` four stores + `MemoryFacade` (working/episodic/semantic/procedural; absent store = not built) | **reuse**: working = live run state (`note`), episodic = run index (`record_event`), semantic = archived artifacts (`submit` create), procedural = **not built** (`memory.procedural: false`). |
 | Audit | `audit/` `AuditLedger` (`AuditEntry` allow/deny/escalate) | **reuse**; every transaction (contract frozen, search, fetch, gate decisions, security rejections, final status, toggle snapshot) is one entry. |
 | Stage feed | `observability.StageReporter` | **reuse**; ra stage keys labelled via `AgentHost.stage_labels()`. |
-| Shell | `host.py` `AgentHost`, `tui/app.py` | **extend** with optional hooks (`greeting`, `side_panels`, `cancel`) and `ConsoleEffect.agent_turn` (a slash command that is a conversational act is forwarded to `handle()`). csa implements none of them and is unaffected. |
+| Shell | `host/protocols.py` `AgentHost`, `tui/app.py` | **extend** with optional hooks (`greeting`, `side_panels`, `cancel`) and `ConsoleEffect.agent_turn` (a slash command that is a conversational act is forwarded to `handle()`). csa implements none of them and is unaffected. |
 | Eval pipeline | `evals/` plugin seam, stages, store, reporter, `RubricJudge` | **reuse**; **extend** two optional plugin hooks: `native_security_suite()` (run the security suite as native golden cases instead of Promptfoo) and `judge_client()` (the plugin may supply the judge's client — ra supplies a deterministic one in fixture mode). |
 | Feature toggles | `config/features.py` `FeatureSet` — a generic tree; agents declare their own keys | **reuse** unchanged: ra declares its eight keys in its own overlay. |
 | Logging colours | `logging/core.py` `SUBSYSTEM_COLORS` | **extend** with `scheduler, budget, web, ledger, artifacts, research_agent` (an agent logger name, registered the same way `customer_support_agent` already is). |
@@ -54,7 +54,7 @@ lives in `research_agent` (pattern composition, research vocabulary).
    typing only; every such edit is listed in ADR 0005.
 3. **`tests/` already exists** (the spec expected none). Conventions
    followed: `tests/unit/…`, `tests/integration/…`, `ScriptedLLM` in
-   `tests/conftest.py`. New tests go in `tests/agentic_commons/…` and
+   `tests/conftest.py`. New tests go in `tests/agent_platform/…` and
    `tests/research_agent/…` as the spec asks; both are ordinary packages
    under the same conftest.
 4. **Banned words already in commons.** `rubric` appears in the eval
@@ -73,7 +73,7 @@ lives in `research_agent` (pattern composition, research vocabulary).
    seeded hostile pages that must run offline. Resolution: optional plugin
    hook `native_security_suite()` (see §1). csa still uses Promptfoo.
 7. **No model credentials in this environment** (`nvidia_api_key` unset)
-   and the spec requires `make tui ra` to run the whole flow in replay and
+   and the spec requires `make agent ra` to run the whole flow in replay and
    evals to be deterministic. Resolution: `research_agent.model_backend:
    fixture | routed`. `fixture` is a deterministic reference model over
    the synthetic fixture world (it reads the same prompts a real model
@@ -107,7 +107,7 @@ lives in `research_agent` (pattern composition, research vocabulary).
 |---|---|---|
 | 0 | Discovery, this plan | plan committed |
 | 0.5 | Baseline repair (formatting, types, stale tests) | `make verify` green on unchanged behaviour |
-| 1 | Makefile agent registry + stub `research_agent` (config, `ResearchHost`) | `make tui ra` boots; `make tui csa` / `make eval-oracle csa` unchanged |
+| 1 | Makefile agent registry + stub `research_agent` (config, `ResearchHost`) | `make agent ra` boots; `make agent csa` / `make eval-oracle csa` unchanged |
 | 2 | Commons mechanisms, one at a time with tests; then the ra walking skeleton (every node a stub that reports through `StageReporter`) | verify green |
 | 3 | Scoping: gate, checklists, interviewer, hybrid termination, `/done`, `/waive`, challenge check, checklist panel | verify green |
 | 4 | Rubric: templates, generator, editor, freeze + hash | verify green |

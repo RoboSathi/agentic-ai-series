@@ -12,19 +12,19 @@ afternoon, which is not a test.
 
 import pytest
 
-from agentic_commons.commands import (
+from agent_platform.commands import (
     CommandError,
     CommandRegistry,
     CommandResult,
     CommandRow,
 )
-from agentic_commons.commands.harness import HarnessCommand
-from agentic_commons.commands.inspection import AuditCommand, ConfigCommand
-from agentic_commons.commands.system import ClearCommand
-from agentic_commons.config import active_features, get_settings, set_active_features
-from agentic_commons.persistence import SqliteConnectionPool
-from agentic_commons.tui.command_view import CommandView
-from agentic_commons.tui.suggest import CommandSuggester
+from agent_platform.commands.harness import HarnessCommand
+from agent_platform.commands.inspection import AuditCommand, ConfigCommand
+from agent_platform.commands.system import ClearCommand
+from agent_platform.config import active_features, get_settings, set_active_features
+from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.tui.command_view import CommandView
+from agent_platform.tui.suggest import CommandSuggester
 from customer_support_agent.console.commands import QueueCommand
 
 # A key value that must never be rendered, whatever variable holds it.

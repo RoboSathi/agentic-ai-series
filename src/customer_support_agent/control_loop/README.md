@@ -22,7 +22,7 @@ most one repair, and scores the result independently of the model that wrote it.
 
 ## Collaborators
 
-- `agentic_commons.control_loop`, `evals` scoring cascade.
+- `agent_platform.control_loop`, `evals` scoring cascade.
 
 ## Episodes
 

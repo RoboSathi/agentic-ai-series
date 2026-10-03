@@ -13,8 +13,8 @@ two refunds. With one it is the same refund, answered twice — and the
 number at the end of the run is the whole argument.
 """
 
-from agentic_commons.money import Money
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.primitives.money import Money
+from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.domain.identity import current_customer
 from customer_support_agent.persistence.repositories import RefundLedgerRepository
 from episodes._shared import EpisodeRun

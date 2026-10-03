@@ -4,8 +4,8 @@ import asyncio
 
 import pytest
 
-from agentic_commons.persistence import SqliteConnectionPool
-from agentic_commons.resilience import (
+from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.resilience import (
     AsyncTimeoutGuard,
     BulkheadFullError,
     CircuitBreakerImpl,

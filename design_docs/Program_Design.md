@@ -11,7 +11,7 @@ build in phases; secondarily Karan and collaborators as reference.
 ```
 agentic-harness-core/
 ├── src/
-│   ├── agentic_commons/
+│   ├── agent_platform/
 │   │   ├── config/
 │   │   ├── logging/
 │   │   ├── llm/
@@ -30,7 +30,9 @@ agentic-harness-core/
 │   │   │   ├── circuit_breaker/  ├── retry/  ├── timeout/  ├── bulkhead/
 │   │   │   ├── saga/  ├── idempotency/  └── pub_sub/
 │   │   ├── verification/            # effect read-back — see LLD §24
-│   │   ├── host.py                  # AgentHost: how an agent reaches the shell
+│   │   ├── host/                    # AgentHost protocols + loader: how an agent reaches the shell
+│   │   ├── primitives/              # money, hashing: layer-0 value types
+│   │   ├── presentation/            # text_tree, text_table: plain-text renderers
 │   │   ├── sandbox/                 # [new — parked, TODO]
 │   │   ├── control_loop/            # [new — parked, TODO; merges the earlier loop_engineering + state_management split]
 │   │   ├── mcp/                     # [new — parked, interface-only; see LLD §16.1]
@@ -41,7 +43,7 @@ agentic-harness-core/
 │   │   ├── tui/                     # live status feed only this phase — DB browser/memory inspector/audit view deferred
 │   │   └── data/                    # seed/fixture data, not runtime state
 │   └── customer_support_agent/
-│       │   # Each folder pairs with the agentic_commons package it
+│       │   # Each folder pairs with the agent_platform package it
 │       │   # composes, so the mapping is visible in the tree rather
 │       │   # than only in the imports. `core/` is gone: it had become
 │       │   # fifteen unrelated concerns and a 2,814-line graph.py.
@@ -82,7 +84,7 @@ agentic-harness-core/
 ├── PRD.md / HLD.md / LLD.md / Program_Design.md
 ```
 
-**Rule:** `tests/unit/` mirrors `src/` 1:1 — every `src/agentic_commons/x/y.py`
+**Rule:** `tests/unit/` mirrors `src/` 1:1 — every `src/agent_platform/x/y.py`
 has a `tests/unit/test_x_y.py`. This makes coverage gaps and orphaned files
 (both caught once already) trivially greppable.
 
@@ -126,7 +128,7 @@ series is a naming bug).
 | **Output Quality Gate** | Plan lookup → deterministic critique → at most one repair → independent score. A single pass, not a loop; named `quality_gate` after being called a "deliberation loop" it never was. |
 | **Action Mandate** | A deterministic record that *this* subject may take *this* action on *this* target, up to *this* much, in *this* round. Issued from what the person supplied and the authoritative record, never from model output. Scopes a write to a record the person established; it does not judge whether they asked for it, which is language work the model does. |
 | **Effect Verification** | Reading the changed thing back after a side effect and reconciling it against what the action claimed. "The executor returned success" and "the money moved" are different claims; an unverified result never becomes authoritative. |
-| **AgentHost** | How an agent reaches the operator shell — title, commands, stage labels, session rows, and how to build it. Named in the agent's own config (`agent.host`) and resolved, never imported, so `agentic_commons` names no agent. |
+| **AgentHost** | How an agent reaches the operator shell — title, commands, stage labels, session rows, and how to build it. Named in the agent's own config (`agent.host`) and resolved, never imported, so `agent_platform` names no agent. |
 
 ## 3. Design process (mandatory order — do not skip ahead)
 
@@ -143,7 +145,7 @@ series is a naming bug).
      assertion-focus per test (no "test everything in one giant test").
    - **What gets mocked**: only true I/O boundaries (LLM HTTP calls, DB
      connections, filesystem, external APIs). Never mock a sibling
-     `agentic_commons` module in a unit test that exists to prove the
+     `agent_platform` module in a unit test that exists to prove the
      integration between them — that belongs in `tests/integration/`.
    - **Which behaviors are under test**: derived directly from the
      interface's docstring contract in `LLD.md`, not from the
@@ -173,17 +175,17 @@ episode's own exit artifact demonstrably working end-to-end via
 | **4 — Harness contract** | `context` (5-stage pipeline only, not yet RAG), `evals` (Eval Pyramid + NOLLM cascade) | E08-E11 | Eval manifest checked in; NOLLM cascade is the one implementation four future callers will depend on |
 | **5 — Gatekeeper hardening** | Full `gatekeeper` (Surface Classes, Tier-1/2, ledger), `security/auth` (RBAC/PoLP) | E09, E10(v6), E12 | Four E12 live attacks pass as permanent regression tests |
 | **6 — Memory** | `memory` (all 4 stores), write pipeline, poisoning defenses, `context` RAG/consolidation | E13-E19 | E16 false-recall test passes (Memory Inspector TUI panel itself remains deferred — see Phase 1b below) |
-| **7 — Control loop** | `agentic_commons/control_loop` built for real (unparks it): `AgentFSM` + `LoopControllerImpl` merged package; `customer_support_agent/control_loop/` migrates off direct LangGraph-checkpointer wiring onto this package | E05, E20, E23 | Six induced-loop fixtures each aborted at the correct layer; crash-recovery restores a legal state without duplicating a side effect |
-| **8 — Prompt compilation** | `agentic_commons/prompt_compilation` built for real (unparks it) | E21 | One production prompt re-implemented as a compiled module with a regression-tested eval score |
+| **7 — Control loop** | `agent_platform/control_loop` built for real (unparks it): `AgentFSM` + `LoopControllerImpl` merged package; `customer_support_agent/control_loop/` migrates off direct LangGraph-checkpointer wiring onto this package | E05, E20, E23 | Six induced-loop fixtures each aborted at the correct layer; crash-recovery restores a legal state without duplicating a side effect |
+| **8 — Prompt compilation** | `agent_platform/prompt_compilation` built for real (unparks it) | E21 | One production prompt re-implemented as a compiled module with a regression-tested eval score |
 | **9 — Tool registry at scale** | `tools` retrieval-based selection | E22 | 50-tool degradation/recovery demo passes numerically |
 | **10 — Output guarantees** | `guardrails` (Pydantic + Outlines/LMQL) | E24, E28-E29 | Constrained-decoding path shows flat latency vs. retry-loop tail latency, measured |
 | **11 — Hallucination protection** | `hallucination_protection` | E25-E27 | Grounding-vs-reasoning diagnoser correctly routes both fixtures |
 | **12 — Security** | `security/pii`, `security/prompt_injection`, `security/content_moderation` | E30-E33 | E31's OWASP control-mapping table passes as an actual test suite |
-| **13 — Sandbox execution** | `agentic_commons/sandbox` built for real (unparks it) — Docker-container tier only | E34 | `docker_container` tier exercised against a real container round-trip |
+| **13 — Sandbox execution** | `agent_platform/sandbox` built for real (unparks it) — Docker-container tier only | E34 | `docker_container` tier exercised against a real container round-trip |
 | **14 — Resilience** | `resilience` (all 7 patterns) | E35 | Bulkhead isolation and saga compensating-rollback both pass as regression tests |
 | **15 — Observability & SRE** | `observability` (tracing, SLOs, cost-stack aggregation, queue math), `audit` | E36-E39 | Full trace reconstructs causal order; Little's Law worked example passes; E37 scores the harness's own maturity from real evidence |
 | **15b — TUI panels** *(next-phase TODO, timing flexible relative to 16-18)* | `DbBrowserPanel`, `MemoryInspectorPanel`, `AuditTrailPanel`, `FeatureTogglePanel` | E01 onward (deferred) | All four panels populate against a real seeded DB + completed trace |
-| **16 — Multi-agent** | `agentic_commons/multi_agent` — **design starts here**, not before: run the interview-style process (§3) to establish ubiquitous language and interfaces before any implementation | E40-E43 | Series-reliability calculator matches E40's table; live-refactor-and-remove test passes |
+| **16 — Multi-agent** | `agent_platform/multi_agent` — **design starts here**, not before: run the interview-style process (§3) to establish ubiquitous language and interfaces before any implementation | E40-E43 | Series-reliability calculator matches E40's table; live-refactor-and-remove test passes |
 | **17 — Capstone hardening** | Full attack suite across all subsystems; E44-E46 economics analysis delivered as episode content/reporting over Phase 15's cost-stack data, not new code | E44-E48c | Every attack listed in E48b passes; system demonstrably survives model/tool/policy/schema/context-window/traffic changes (E48c) |
 
 Phases 3-18 are not strictly serial where dependency graphs (HLD §8)
@@ -241,7 +243,7 @@ jobs:
 
 ## 7. Known failure patterns (from prior remediation passes — do not repeat)
 
-- Episode code silently duplicating `agentic_commons` (own LLM client,
+- Episode code silently duplicating `agent_platform` (own LLM client,
   own auth checks, print-based logging) instead of composing it.
 - Orphaned/dead files left behind after refactors.
 - A Protocol declared but not actually implemented by its concrete
@@ -268,7 +270,7 @@ jobs:
 
 Episode numbering (48-episode v10), new-package placement (`sandbox`,
 `control_loop`, `multi_agent`, `prompt_compilation` as parked/stub
-`agentic_commons/` packages), the removal of `economics` as a package,
+`agent_platform/` packages), the removal of `economics` as a package,
 and current-phase TUI scope are all resolved — see `PRD.md` §11 and
 this document's §1/§4. One item remains genuinely open and should not
 be silently defaulted:

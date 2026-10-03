@@ -4,14 +4,14 @@ One repair attempt, then stop. A planner that cannot produce a valid plan
 twice is not going to on the fifth try, and every retry is spent budget.
 """
 
-from agentic_commons.logging import get_logger, instrument
+from agent_platform.logging import get_logger, instrument
 from research_agent.domain.plan import PlanDag, PlanValidation, SubQuestion
 from research_agent.domain.rubric import Contract
+from research_agent.llm.structured import StructuredCaller
 from research_agent.planning.dag_validation import validate_plan
 from research_agent.planning.ids import renumber
 from research_agent.prompts import planner as prompt
 from research_agent.prompts.base import RolePrompt
-from research_agent.structured import StructuredCaller
 
 
 class PlanRejectedError(RuntimeError):

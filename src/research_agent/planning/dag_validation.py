@@ -9,7 +9,7 @@ A plan that serves no acceptance criterion is research for its own sake,
 which is the open-ended search this agent exists not to do.
 """
 
-from agentic_commons.scheduling import InvalidTaskGraphError, TaskGraph
+from agent_platform.scheduling import InvalidTaskGraphError, TaskGraph
 from research_agent.domain.plan import PlanDag, PlanValidation
 from research_agent.domain.rubric import Rubric
 

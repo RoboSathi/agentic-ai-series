@@ -1,5 +1,5 @@
-# The research agent's overlay on the platform defaults (agentic_commons).
-# Loaded when AGENTIC_OVERLAYS names this file (`make tui ra`), or by
+# The research agent's overlay on the platform defaults (agent_platform).
+# Loaded when AGENTIC_OVERLAYS names this file (`make agent ra`), or by
 # default when this package is imported and nothing else was named.
 #
 # Live web search (DuckDuckGo, then Tavily) and the models `llm.roles` names, sized to stay
@@ -57,22 +57,29 @@ features:
   hallucination_guard: false
   gatekeeper: false
 
+logging:
+  # This agent's own subsystem, coloured on the console beside the platform's.
+  subsystem_colors:
+    research_agent: light_goldenrod1
+
 audit:
   policy_version: research-contract-v1
   data_version: live-web-v1
   prompt_version: research-prompts-v1
   tool_schema_version: research-tools-v1
+  prompt_source: research_agent/prompts
+  policy_source: research contract (audit)
 
 # The research roles' default model and its protection: nemotron-super, backed up by
-# gpt-oss-20b (fast) and then nemotron-ultra (slow, but it answers).
+# nemotron-ultra (strongest, slower) and then gpt-oss-20b (fast, a different family).
 x-super-chain: &super_chain
   provider: nim
   model: nvidia/nemotron-3-super-120b-a12b
   timeout_seconds: 60
   hedge_after_seconds: 25
   fallbacks:
-    - {provider: nim, model: openai/gpt-oss-20b}
     - {provider: nim, model: nvidia/nemotron-3-ultra-550b-a55b}
+    - { provider: nim, model: openai/gpt-oss-20b }
 
 llm:
   # Role -> model. `judge` must differ from `synthesizer` while
@@ -127,16 +134,16 @@ llm:
 # The answer's colours beyond light Markdown: what each criterion is, what to do next.
 tui:
   response_highlights:
-    - {pattern: '^→ Next:.*$', style: "bold #00FF87"}
-    - {pattern: '\[must\]', style: "bold #FFB454"}
-    - {pattern: '\[soft\]', style: "#82AAFF"}
-    - {pattern: '^R\d+\b', style: "bold #C792EA"}
-    - {pattern: '(?<![\w/])/(?:research|qa|done|approve|rubric|waive|cancel|show|history|help)\b', style: "bold #4FC3F7"}
+    - {pattern: '^→ Next:.*$', style: "bold green"}
+    - {pattern: '\[must\]', style: "bold yellow"}
+    - {pattern: '\[soft\]', style: "blue"}
+    - {pattern: '^R\d+\b', style: "bold magenta"}
+    - {pattern: '(?<![\w/])/(?:research|qa|done|approve|rubric|waive|cancel|show|history|help)\b', style: "bold cyan"}
     - {pattern: '^\(I removed details[^)]*\)$', style: "dim italic"}
     - {pattern: '^\*\*Status:\*\* COMPLETE.*$', style: "bold green"}
     - {pattern: '^\*\*Status:\*\* PARTIAL.*$', style: "bold yellow"}
     - {pattern: '^\*\*Status:\*\* (?:FAILED|CANCELLED).*$', style: "bold red"}
-    - {pattern: '^(?:\*\*)?Sources?:?(?:\*\*)?:?', style: "bold #C792EA"}
+    - {pattern: '^(?:\*\*)?Sources?:?(?:\*\*)?:?', style: "bold magenta"}
 
 # What grounds a claim in a research answer. The platform's tiers are the support agent's
 # (a tool result grounds only a fact about the case); here every factual claim in an answer
@@ -259,7 +266,6 @@ research_agent:
     new_scope: Ask a new question to start another scope.
     history_empty: No archived runs yet.
     unknown_run: "No archived run '{run_id}'."
-    plan_failed: "The plan could not be validated: {problems}"
     run_note: "Research run {run_id} finished {status}, on: {topic}. It can be opened with /show {run_id}."
     scope_failed: "Could not continue: {error}. Nothing was lost; ask again, or start over with /research <question>."
     brief_ready: "The Scope Brief is ready (no acceptance criteria: the rubric is withheld). /approve starts the run."
@@ -380,7 +386,7 @@ research_agent:
       concurrency: 2
 
   planning:
-    max_queries_per_node: 1
+    max_queries_per_node: 2
     node_id_prefix: Q
 
   # Deterministic coverage matching: stop rules, gap analysis, audit checks.
@@ -659,7 +665,7 @@ research_agent:
     run_id_prefix: run
     history_limit: 20
     list_headers: [run, status, archetype, topic, unmet, intact]
-    list_empty: No archived research runs yet — finish a run in `make tui ra`.
+    list_empty: No archived research runs yet — finish a run in `make agent ra`.
 
   cancel:
     key: ctrl+x
@@ -684,9 +690,6 @@ research_agent:
       worker_search: SEARCH
       worker_fetch: FETCH
       content_defense: CONTENT DEFENCE
-      extract_claims: EXTRACT CLAIMS
-      ledger_append: LEDGER
-      span_rejected: SPAN REJECTED
       reflect_gap_analysis: REFLECT
       budget_tick: BUDGET
       page_result: PAGE
@@ -712,28 +715,28 @@ research_agent:
     quiet_budget_counters: [rounds, gap_fill_rounds]
     actions:
       SCOPING:
-        - {label: "Done interviewing", command: done}
+        - {label: "✓ Done interviewing", command: done, variant: success}
       RUBRIC_REVIEW:
-        - {label: "Approve and run", command: approve}
+        - {label: "▶ Approve and run", command: approve, variant: primary}
       RUNNING:
-        - {label: "Cancel run", command: cancel, during_turn: true}
+        - {label: "■ Stop Agent", command: cancel, during_turn: true, variant: error}
     phase_colors:
-      SCOPING: "bold #C792EA"
-      RUBRIC_REVIEW: "bold #C792EA"
+      SCOPING: "bold magenta"
+      RUBRIC_REVIEW: "bold magenta"
       RUNNING: "bold green"
-      AUDITING: "bold #FFB454"
-      DELIVERED: "bold #4FC3F7"
+      AUDITING: "bold yellow"
+      DELIVERED: "bold cyan"
       CANCELLED: "bold red"
       FAILED: "bold red"
     status_line_styles:
-      coverage: "#FFCB6B"
-      evidence: "#4FC3F7"
-      budget: "#9E9E9E"
+      coverage: "yellow"
+      evidence: "cyan"
+      budget: "bright_black"
     # A checklist item's status in the status line's expander (covered, waived, open).
     checklist_styles:
-      covered: "#00FF87"
-      waived: "#FFCB6B"
-      open: "#EEFFFF"
+      covered: "green"
+      waived: "yellow"
+      open: "default"
     # Rejection and gap codes, in words.
     reasons:
       recency: results older than the approved time window
@@ -830,8 +833,6 @@ research_agent:
       llm.section.response: Response
       llm.section.finish: Finish reason
       llm.empty: (empty)
-      llm.timeout_retry: "{role} did not respond within {seconds}s · retrying"
-      llm.timeout_final: "{role} did not respond within {seconds}s · giving up"
       llm.error: "{role} call failed · {error}"
       llm.cut_off: "Cut off at the output limit before the answer was written (a reasoning model may have spent the limit thinking)."
       batch.heading: "Research round {round} · batch {batch} · {count} sub-question(s) in parallel"

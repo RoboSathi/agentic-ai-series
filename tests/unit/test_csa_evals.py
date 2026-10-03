@@ -5,10 +5,10 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.evals.contracts import GoldenCase, ToolCallRecord, Transcript
-from agentic_commons.money import Money
-from agentic_commons.observability.types import StatusEvent
-from agentic_commons.persistence import SqliteConnectionPool
+from agent_platform.evals.contracts import GoldenCase, ToolCallRecord, Transcript
+from agent_platform.observability.types import StatusEvent
+from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.primitives.money import Money
 from customer_support_agent.config.settings import get_agent_settings
 from customer_support_agent.domain.refund_policy import RefundPolicy
 from customer_support_agent.evals.agent_under_test import (

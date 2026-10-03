@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.evidence import LedgerSnapshot
+from agent_platform.evidence import LedgerSnapshot
 from research_agent.domain.rubric import Contract
 from research_agent.prompts.base import RolePrompt
 from research_agent.prompts.planner import brief_view, rubric_view

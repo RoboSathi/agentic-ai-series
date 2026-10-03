@@ -18,7 +18,7 @@ from typing import Any
 
 from langgraph.types import interrupt
 
-from agentic_commons.durability import SUMMARY, WAITING_ON
+from agent_platform.durability import SUMMARY, WAITING_ON
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 

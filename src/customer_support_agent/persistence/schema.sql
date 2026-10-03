@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS orders (
     timestamp TEXT NOT NULL,
     order_status TEXT NOT NULL,
     refund_status TEXT NOT NULL,
-    -- Money is integer cents, never REAL (see agentic_commons.money).
+    -- Money is integer cents, never REAL (see agent_platform.primitives.money).
     amount_cents INTEGER NOT NULL,
     -- What was bought. `amount_cents` stays the order total; unit price
     -- times quantity is what makes it up.

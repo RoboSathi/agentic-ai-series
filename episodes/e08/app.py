@@ -12,13 +12,13 @@ interface, it is a class, not a contract.
 
 from typing import Any
 
-from agentic_commons.audit import AuditLedger, NullAuditLedger, SqliteAuditLedger
-from agentic_commons.evals import NollmScoringCascade
-from agentic_commons.llm.client import LLMClient
-from agentic_commons.memory import MemoryStore
-from agentic_commons.observability import LiveStatusFeed
-from agentic_commons.persistence import Repository
-from agentic_commons.tools import ToolRegistry
+from agent_platform.audit import AuditLedger, NullAuditLedger, SqliteAuditLedger
+from agent_platform.evals import NollmScoringCascade
+from agent_platform.llm.client import LLMClient
+from agent_platform.memory import MemoryStore
+from agent_platform.observability import LiveStatusFeed
+from agent_platform.persistence import Repository
+from agent_platform.tools import ToolRegistry
 from episodes._shared import EpisodeOutput, main
 
 CONTRACTS: list[tuple[str, Any, str]] = [

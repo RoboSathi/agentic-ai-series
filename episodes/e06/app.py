@@ -10,7 +10,7 @@ because nothing in the loop is external to the model. Evaluator-optimizer
 fixes that by scoring against something the generator does not control.
 """
 
-from agentic_commons.evals import create_scoring_cascade
+from agent_platform.evals import create_scoring_cascade
 from design_patterns import EvaluatorOptimizerPattern, PlanningPattern, ReflectionPattern
 from episodes._shared import EpisodeOutput, OfflineLLM, main
 

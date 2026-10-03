@@ -1,6 +1,6 @@
 """Which order a write may act on.
 
-`agentic_commons` owns the shape of a scope and the check that a write is
+`agent_platform` owns the shape of a scope and the check that a write is
 covered by one. It does not own what counts as an established target —
 that is this agent's vocabulary, and it lives here.
 
@@ -29,8 +29,8 @@ the wrong money would move. With it, the target is always one they named.
 
 from collections.abc import Mapping
 
-from agentic_commons.gatekeeper.mandate import ActionMandate
-from agentic_commons.logging import get_logger, instrument
+from agent_platform.gatekeeper.mandate import ActionMandate
+from agent_platform.logging import get_logger, instrument
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.persistence import OrdersRepository
 

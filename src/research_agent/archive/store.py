@@ -14,10 +14,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from agentic_commons.artifacts import DirectoryArtifactStore, FrozenArtifact
-from agentic_commons.logging import instrument
-from agentic_commons.memory import MemoryFacade
-from agentic_commons.memory.types import MemoryCommand, MemoryPrincipal
+from agent_platform.artifacts import DirectoryArtifactStore, FrozenArtifact
+from agent_platform.logging import instrument
+from agent_platform.memory import MemoryFacade
+from agent_platform.memory.types import MemoryCommand, MemoryPrincipal
 from research_agent.archive.render import render_brief, render_report, render_rubric
 from research_agent.domain.report import Report
 from research_agent.domain.rubric import Contract

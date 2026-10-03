@@ -11,7 +11,7 @@ exists because that case needs real controls.
 
 from typing import Awaitable, Callable
 
-from agentic_commons.logging import get_logger
+from agent_platform.logging import get_logger
 from design_patterns.types import PatternFamily, PatternRun, Step
 
 Iteration = Callable[[str, int], Awaitable[str]]

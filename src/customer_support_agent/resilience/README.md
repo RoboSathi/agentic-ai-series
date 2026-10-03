@@ -18,7 +18,7 @@ The platform's `resilience.saga` and `idempotency`.
 
 ## Collaborators
 
-- `agentic_commons.resilience`, `persistence.RefundLedgerRepository`.
+- `agent_platform.resilience`, `persistence.RefundLedgerRepository`.
 
 ## Episodes
 

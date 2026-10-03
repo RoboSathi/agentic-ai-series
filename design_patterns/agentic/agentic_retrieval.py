@@ -10,14 +10,14 @@ When every request needs the same grounding, this is a pipeline with
 extra steps and more ways to go wrong.
 
 The retrieval mechanics themselves (chunking, hybrid search, reranking)
-are E19's subject; `agentic_commons.context` already implements them and
+are E19's subject; `agent_platform.context` already implements them and
 this pattern composes that rather than re-deriving it.
 """
 
-from agentic_commons.context import Chunk, HybridRetriever
-from agentic_commons.llm.client import LLMClient
-from agentic_commons.llm.types import CompletionRequest, Message
-from agentic_commons.logging import get_logger
+from agent_platform.context import Chunk, HybridRetriever
+from agent_platform.llm.client import LLMClient
+from agent_platform.llm.types import CompletionRequest, Message
+from agent_platform.logging import get_logger
 from design_patterns.types import PatternFamily, PatternRun, Step
 
 _DECIDE = (

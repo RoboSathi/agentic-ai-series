@@ -12,13 +12,13 @@ from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import urlparse
 
-from agentic_commons.evals.entailment import EntailmentModel
-from agentic_commons.evidence import EvidenceEntry, LedgerSnapshot
-from agentic_commons.verification.acceptance import CheckOutcome, CheckSpec
+from agent_platform.evals.entailment import EntailmentModel
+from agent_platform.evidence import EvidenceEntry, LedgerSnapshot
+from agent_platform.verification.acceptance import CheckOutcome, CheckSpec
+from research_agent.domain.matching import TermMatcher
 from research_agent.domain.report import COVERAGE_AND_LIMITS, Report
 from research_agent.domain.rubric import Contract
-from research_agent.research.defenses import within_window
-from research_agent.research.matching import TermMatcher
+from research_agent.domain.sources import within_window
 
 
 class Judge(Protocol):

@@ -4,8 +4,8 @@ from typing import Any
 
 import pytest
 
-from agentic_commons.intent.types import IntentCandidate
-from agentic_commons.security.screening import ScreenOutcome
+from agent_platform.intent.types import IntentCandidate
+from agent_platform.security.screening import ScreenOutcome
 from research_agent.config import get_agent_settings
 from research_agent.graph.cards import intent_card
 from research_agent.guardrails.input_screen import InputScreen
@@ -127,7 +127,7 @@ class _Screener:
         self.moderated = False
 
     def redact(self, text: str, reporter: Any) -> Any:
-        from agentic_commons.security.screening import PiiOutcome
+        from agent_platform.security.screening import PiiOutcome
 
         return PiiOutcome(text=text.replace("jane@example.com", "[REDACTED]"))
 

@@ -12,7 +12,7 @@
   **Test strategy**.
 - `[new]` marks a package not present in the uploaded walking-skeleton
   code — the interface is still normative; the coding agent creates the
-  package under `agentic_commons/<name>/`.
+  package under `agent_platform/<name>/`.
 - All concrete classes take their dependencies via constructor injection;
   no subsystem imports a concrete implementation of another subsystem's
   interface directly.
@@ -220,7 +220,7 @@ human-review queue math (Little's Law), and cost-stack aggregation.
 > examples over data this module already emits), not a distinct
 > engineering surface. `observability` is the single place cost is
 > tracked in code; `CostAggregator` below is that surface. No
-> `agentic_commons/economics/` package is created.
+> `agent_platform/economics/` package is created.
 
 **Interfaces**
 
@@ -816,7 +816,7 @@ credential-gated integration tests).
 
 **Purpose.** Combines what earlier drafts of this document split into
 two packages — the FSM discipline (E23) and the `LoopController`
-watchdog stack (E20/E05) — into one `agentic_commons/control_loop/`
+watchdog stack (E20/E05) — into one `agent_platform/control_loop/`
 package. This is a deliberate merge, not a rename: both disciplines
 govern the same trajectory object (an FSM transition *is* what a loop
 step does), so one package owns "is this loop allowed to keep running,
@@ -940,7 +940,7 @@ selection (E41), compounding-reliability economics (E40), and MCP/A2A
 communication (E42) — with removal/coordination-cost discipline (E43).
 
 **Status.** Explicitly **not designed yet**. This phase creates an
-empty `agentic_commons/multi_agent/` package (folder, `__init__.py`,
+empty `agent_platform/multi_agent/` package (folder, `__init__.py`,
 no other content) so the module boundary exists in the repo layout and
 nothing downstream needs to be restructured when the real design
 lands. No interfaces are normative yet — do not implement against
@@ -948,7 +948,7 @@ guesses here; when this module's phase opens, follow the interview-style
 design process in `Program_Design.md` §3 before writing any interface.
 
 **Test strategy.** A single import-smoke test (`import
-agentic_commons.multi_agent` succeeds) is the only test this phase.
+agent_platform.multi_agent` succeeds) is the only test this phase.
 
 ---
 
@@ -1241,7 +1241,7 @@ violated once (E01/E02 duplication) and fixed; regression-tested going
 forward.
 
 **Structure.** `core/` no longer exists. Each folder pairs with the
-`agentic_commons` package it composes, so the mapping is visible in the
+`agent_platform` package it composes, so the mapping is visible in the
 tree; see `Program_Design.md` §1 for the full listing.
 
 - `graph/` — the LangGraph app. `state.py` (AgentState), `edges.py`
@@ -1264,8 +1264,8 @@ tree; see `Program_Design.md` §1 for the full listing.
 - `verification/` — what a write claimed, and how to read it back (§24).
 - `console/` — this agent's slash commands and its `AgentHost`.
 - `control_loop/` — thin composition layer: calls
-  `agentic_commons.control_loop`'s `LoopControllerImpl` and `AgentFSM`
-  when that package is built (see `agentic_commons/control_loop`,
+  `agent_platform.control_loop`'s `LoopControllerImpl` and `AgentFSM`
+  when that package is built (see `agent_platform/control_loop`,
   currently parked/TODO). Until then this folder wires LangGraph's own
   checkpointer directly — a tracked, explicit interim state, not a
   silent duplication of the future package's logic.
@@ -1276,7 +1276,7 @@ tree; see `Program_Design.md` §1 for the full listing.
   shipped logic.
 
 **LLD patterns applied.** Facade (the graph presents one entry point to
-`episodes/`/`tui`); everywhere a concrete `agentic_commons` class would
+`episodes/`/`tui`); everywhere a concrete `agent_platform` class would
 otherwise be imported directly, it's injected via the graph's
 construction function instead (`build_graph(llm, gatekeeper, memory,
 loop_controller, ...) -> StateGraph`).
@@ -1362,5 +1362,5 @@ verification.
 | No `MemoryStore` Protocol without a real implementation | mypy --strict, CI-gated |
 | No side-effecting result becomes authoritative without a verification report | `tests/integration/test_effect_verification.py` |
 | No write executes outside the established target's scope | `tests/unit/test_gatekeeper.py::TestWritesAreScopedToTheEstablishedOrder` |
-| `agentic_commons` names no specific agent | `tests/unit/test_platform_boundary.py` |
+| `agent_platform` names no specific agent | `tests/unit/test_platform_boundary.py` |
 | Coverage ≥ 80% on every merged module | CI-gated, no exceptions without sign-off |

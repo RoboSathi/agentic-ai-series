@@ -3,8 +3,8 @@
 import pytest
 from pydantic import BaseModel, Field
 
-from agentic_commons.evals import create_scoring_cascade
-from agentic_commons.tools import (
+from agent_platform.evals import create_scoring_cascade
+from agent_platform.tools import (
     NamespacedToolRegistry,
     ToolDefinition,
     ToolResult,

@@ -32,9 +32,9 @@ override it (ADR ra-0017).
 ## Running it
 
 ```
-make tui ra                 # LIVE: real web + NVIDIA models (needs nvidia_api_key;
+make agent ra                 # LIVE: real web + NVIDIA models (needs nvidia_api_key;
                             #   tavily_api_key optional — DuckDuckGo is used first)
-make tui ra PROFILE=demo    # offline demo over the synthetic Kelvari world
+make agent ra PROFILE=demo    # offline demo over the synthetic Kelvari world
 make runs ra                # archived runs (re-verifies every artifact's hash)
 make eval ra                # evals: always offline (demo profile), deterministic
 make data ra                # record + validate the fixture world (offline)

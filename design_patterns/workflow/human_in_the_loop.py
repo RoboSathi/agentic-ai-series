@@ -18,8 +18,8 @@ faster than it drains grows without bound rather than getting slower.
 
 from typing import Awaitable, Callable
 
-from agentic_commons.logging import get_logger
-from agentic_commons.observability import LittlesLawQueueModel
+from agent_platform.logging import get_logger
+from agent_platform.observability import LittlesLawQueueModel
 from design_patterns.types import PatternFamily, PatternRun, Step
 
 Prepare = Callable[[str], Awaitable[str]]

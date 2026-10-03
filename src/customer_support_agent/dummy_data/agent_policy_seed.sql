@@ -28,7 +28,7 @@ INSERT INTO platform_agent_permissions (agent_id, permission) VALUES
 -- keyed by action class so an agent with three budgeted actions, or none,
 -- needs no change to the shared schema.
 --
--- Amounts are integer cents (never REAL — see agentic_commons.money).
+-- Amounts are integer cents (never REAL — see agent_platform.primitives.money).
 -- This row is the one place the refund limit lives. Nothing the model
 -- sees states it; `make refund-limit <amount>` changes it.
 -- per_action — above this one refund (or cancellation) escalates to a human.

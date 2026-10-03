@@ -9,8 +9,8 @@ from typing import Any
 
 import yaml
 
-from agentic_commons.config import get_settings
-from agentic_commons.evals.contracts import (
+from agent_platform.config import get_settings
+from agent_platform.evals.contracts import (
     AgentUnderTest,
     GoldenCase,
     Grader,
@@ -53,7 +53,7 @@ class CsaEvalPlugin:
 
     def prepare(self) -> None:
         """Build the fixture and warm native models, before any event loop."""
-        from agentic_commons.evals.entailment import preload_entailment_model
+        from agent_platform.evals.entailment import preload_entailment_model
         from customer_support_agent.intent.router import load_intent_classifier
 
         self._fixture.ensure_built()
@@ -85,7 +85,7 @@ class CsaEvalPlugin:
 
 
 def _yaml(path: Path) -> dict[str, Any]:
-    from agentic_commons.config import resolve_path
+    from agent_platform.config import resolve_path
 
     loaded = yaml.safe_load(resolve_path(str(path)).read_text())
     return loaded if isinstance(loaded, dict) else {}

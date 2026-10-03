@@ -11,7 +11,7 @@ spreadsheet. A component absent from it has no regression signal, and the
 manifest is what makes that absence visible.
 """
 
-from agentic_commons.evals import ComponentEvalRunner, EvalCase, load_manifest
+from agent_platform.evals import ComponentEvalRunner, EvalCase, load_manifest
 from episodes._shared import EpisodeOutput, main
 
 LEVELS = {

@@ -9,13 +9,13 @@ the standard of Anthropic, OpenAI, or Google, not tutorial-grade scaffolding.
 ## What this repo is
 
 - A monolith containing:
-  - `src/agentic_commons/` — the shared technical platform library used from
+  - `src/agent_platform/` — the shared technical platform library used from
     Episode 1 onward (logging, LLM adapters, persistence, memory, security,
     resilience, observability, audit, guardrails, hallucination protection,
     gatekeeper, tools, config, evals, and the terminal UI).
   - `src/customer_support_agent/` — the series' single recurring running
     project (a customer-support refund agent), which **composes**
-    `agentic_commons` rather than duplicating it. This grows incrementally
+    `agent_platform` rather than duplicating it. This grows incrementally
     across episodes through to the capstone.
   - `episodes/` — per-episode folders (e01, e02, ...), each a minimal working
     `app.py` that exercises the harness at that episode's stage of maturity.
@@ -38,7 +38,7 @@ the standard of Anthropic, OpenAI, or Google, not tutorial-grade scaffolding.
   hypothetical future needs that aren't in the current episode's scope.
 - **Resilience patterns**: circuit breaker, retry, timeout, saga, idempotency,
   bulkhead, and pub-sub all need real implementations in
-  `agentic_commons/resilience/`, not just folders. Ground correctness in the
+  `agent_platform/resilience/`, not just folders. Ground correctness in the
   same references the series teaches from (Nygard, *Release It!*).
 - **LLD patterns**: strategy, adapter, factory, builder, observer, facade,
   decorator — apply where they genuinely fit, not for their own sake.
@@ -64,14 +64,14 @@ building anything non-trivial.
 ## Stack
 
 - **LLM providers**: NVIDIA NIM (OpenAI-compatible endpoint) as the cloud
-  provider. Both go through `agentic_commons/llm/` adapters — no
+  provider. Both go through `agent_platform/llm/` adapters — no
   direct SDK calls from business logic.
 - **Observability**: LangSmith for LLM call tracing, plus the repo's own
   `observability/` + `audit/` modules for structured logs and the audit
   trail.
 - **Orchestration**:LangGraph; Prefer LangGraph's built-in state management over hand-rolled state machines.
 - **Terminal UI**: Rich + Textual, one unified app
-  (`agentic_commons/tui/app.py`) with panels/tabs for live trace, DB browser,
+  (`agent_platform/tui/app.py`) with panels/tabs for live trace, DB browser,
   memory inspector, and audit view — in the spirit of Claude Code / opencode.
   The TUI is a *consumer* of `observability`/`persistence`/`memory`/`audit`,
   never a second source of truth. File logging is required independently of
@@ -81,9 +81,9 @@ building anything non-trivial.
   as plain lowercase env vars by convention.
 - **Memory**: all four CoALA classes are first-class and real, never
   stubbed — `working/`, `episodic/`, `semantic/`, `procedural/` under
-  `agentic_commons/memory/`.
+  `agent_platform/memory/`.
 - **Feature toggles**: each agent declares its capabilities in a
-  `features:` block in its *own* `config.yaml`; `agentic_commons` ships
+  `features:` block in its *own* `config.yaml`; `agent_platform` ships
   defaults and the `FeatureSet` mechanism (`config/features.py`) and
   never learns which agent is asking. Nine are toggleable —
   `basic_sanity`, `prompt_injection`, `content_moderation`, `pii`,
@@ -127,7 +127,7 @@ building anything non-trivial.
 
 These were found and fixed in past remediation passes. Watch for regressions:
 
-- Episode code silently duplicating `agentic_commons` (own LLM client, own
+- Episode code silently duplicating `agent_platform` (own LLM client, own
   auth checks, print-based logging) instead of composing it.
 - Orphaned/dead files left behind after refactors (check for unreferenced
   modules before merging).

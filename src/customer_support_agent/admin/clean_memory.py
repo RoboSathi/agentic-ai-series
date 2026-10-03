@@ -5,9 +5,9 @@ inbox. Checkpoints stay, so paused runs can resume; orders, refunds,
 reviews, audit, policy and the knowledge index are not memory.
 """
 
-from agentic_commons.config import get_settings
-from agentic_commons.memory.reset import clear_long_term_memory
-from agentic_commons.text_tree import TreeNode, tree_lines
+from agent_platform.config import get_settings
+from agent_platform.memory.reset import clear_long_term_memory
+from agent_platform.presentation.text_tree import TreeNode, tree_lines
 from customer_support_agent.admin._store import agent_store
 from customer_support_agent.admin.show_memory import print_lines
 

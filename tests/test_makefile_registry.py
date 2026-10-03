@@ -11,7 +11,7 @@ import subprocess
 
 import pytest
 
-from agentic_commons.config import REPO_ROOT
+from agent_platform.config import REPO_ROOT
 
 pytestmark = pytest.mark.skipif(shutil.which("make") is None, reason="make is not installed")
 
@@ -53,20 +53,20 @@ def _exported(*goals: str) -> str:
 class TestTheAgentIsNamed:
     @pytest.mark.parametrize(("agent", "overlay"), [("csa", CSA_OVERLAY), ("ra", RA_OVERLAY)])
     def test_the_name_chooses_the_overlay(self, agent: str, overlay: str) -> None:
-        assert _exported("tui", agent) == overlay
+        assert _exported("agent", agent) == overlay
 
-    @pytest.mark.parametrize("target", ["tui", "eval", "eval-oracle", "eval-runs", "data"])
+    @pytest.mark.parametrize("target", ["agent", "eval", "eval-oracle", "eval-runs", "data"])
     def test_a_missing_name_is_a_usage_error(self, target: str) -> None:
         result = _make(target, dry=False)
         assert result.returncode != 0
         assert "Usage" in result.stdout
 
     def test_an_unknown_name_is_an_error(self) -> None:
-        result = _make("tui", "xyz", dry=False)
+        result = _make("agent", "xyz", dry=False)
         assert result.returncode != 0 and "Unknown agent" in result.stdout
 
     def test_two_names_are_an_error(self) -> None:
-        result = _make("tui", "csa", "ra", dry=False)
+        result = _make("agent", "csa", "ra", dry=False)
         assert result.returncode != 0 and "exactly one agent" in result.stdout
 
     def test_nothing_is_exported_without_a_name(self) -> None:
@@ -75,7 +75,7 @@ class TestTheAgentIsNamed:
 
 class TestProfiles:
     def test_the_console_runs_the_agents_own_overlay(self) -> None:
-        assert _exported("tui", "ra") == RA_OVERLAY
+        assert _exported("agent", "ra") == RA_OVERLAY
 
     @pytest.mark.parametrize(
         ("target", "said"), [("eval", "no eval suite"), ("data", "no generated data")]
@@ -88,13 +88,13 @@ class TestProfiles:
         assert _exported("eval-oracle", "csa") == CSA_OVERLAY
 
     def test_an_unknown_profile_is_an_error(self) -> None:
-        result = _make("tui", "ra", "PROFILE=nope", dry=False)
+        result = _make("agent", "ra", "PROFILE=nope", dry=False)
         assert result.returncode != 0 and "No profile" in result.stdout
 
 
 class TestTargetsKeepTheirBehaviour:
-    def test_tui_runs_the_console(self) -> None:
-        assert "-m agentic_commons.tui" in _make("tui", "csa").stdout
+    def test_agent_runs_the_console(self) -> None:
+        assert "-m agent_platform.tui" in _make("agent", "csa").stdout
 
     def test_eval_options_still_pass_through(self) -> None:
         out = _make("eval", "csa", "FRESH=1", "LIMIT=2", "CASE=c1", "TAG=t").stdout

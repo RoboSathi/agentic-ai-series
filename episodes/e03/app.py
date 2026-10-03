@@ -9,7 +9,7 @@ The demonstration: one action, three amounts, three different answers,
 all from the same configured policy.
 """
 
-from agentic_commons.gatekeeper import SHERIDAN_LEVELS, AutomationLevelPolicy
+from agent_platform.gatekeeper import SHERIDAN_LEVELS, AutomationLevelPolicy
 from customer_support_agent.admin.refund_limit import current_refund_limit
 from episodes._shared import EpisodeOutput, main
 

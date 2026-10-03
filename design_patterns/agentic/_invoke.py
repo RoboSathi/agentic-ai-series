@@ -10,9 +10,9 @@ result the model can see and recover from.
 
 import inspect
 
-from agentic_commons.logging import get_logger
-from agentic_commons.tools import NamespacedToolRegistry
-from agentic_commons.tools.types import ToolCall, ToolResult
+from agent_platform.logging import get_logger
+from agent_platform.tools import NamespacedToolRegistry
+from agent_platform.tools.types import ToolCall, ToolResult
 
 
 async def invoke_tool(registry: NamespacedToolRegistry, call: ToolCall) -> ToolResult:

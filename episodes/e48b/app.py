@@ -7,15 +7,15 @@ a different control — which is the argument for having several.
 An attack that is only *described* is not defended. These run.
 """
 
-from agentic_commons.audit import SqliteAuditLedger
-from agentic_commons.gatekeeper import AuthorityContext, GatekeeperImpl
-from agentic_commons.gatekeeper.ledger import CumulativeLedger
-from agentic_commons.memory import EpisodicStore, ProceduralStore, SemanticStore
-from agentic_commons.memory.write_pipeline import MemoryWritePipelineImpl
-from agentic_commons.money import Money
-from agentic_commons.persistence import IN_MEMORY, SqliteConnectionPool
-from agentic_commons.security import Authorizer
-from agentic_commons.tools import ToolCall
+from agent_platform.audit import SqliteAuditLedger
+from agent_platform.gatekeeper import AuthorityContext, GatekeeperImpl
+from agent_platform.gatekeeper.ledger import CumulativeLedger
+from agent_platform.memory import EpisodicStore, ProceduralStore, SemanticStore
+from agent_platform.memory.write_pipeline import MemoryWritePipelineImpl
+from agent_platform.primitives.money import Money
+from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.security import Authorizer
+from agent_platform.tools import ToolCall
 from customer_support_agent.domain.identity import Customer, set_current_customer
 from customer_support_agent.domain.models import Order, User
 from customer_support_agent.persistence import OrdersRepository

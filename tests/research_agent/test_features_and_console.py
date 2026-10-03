@@ -2,9 +2,9 @@
 
 import pytest
 
-from agentic_commons.commands import CommandResult
-from agentic_commons.commands.types import CommandError
-from agentic_commons.host import CancellableHost, GreetingHost, StatusHost
+from agent_platform.commands import CommandResult
+from agent_platform.commands.types import CommandError
+from agent_platform.host import CancellableHost, GreetingHost, StatusHost
 from research_agent.config import get_agent_settings
 from research_agent.console import ResearchHost
 

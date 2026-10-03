@@ -13,7 +13,7 @@ one of the invariants the oracle holds every run to.
 
 from typing import Any
 
-from agentic_commons.logging import get_logger, instrument
+from agent_platform.logging import get_logger, instrument
 from research_agent.config.settings import MessageSettings
 from research_agent.domain.rubric import Rubric, RubricCheck, RubricItem
 

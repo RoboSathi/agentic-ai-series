@@ -7,7 +7,7 @@ the turn summary is where a person reads what memory did.
 
 from typing import Any
 
-from agentic_commons.observability import InMemoryLiveStatusFeed, StageReporter
+from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 
 
 def _turn() -> tuple[InMemoryLiveStatusFeed, StageReporter]:

@@ -1,6 +1,6 @@
 """This agent, presented to the operator shell (LLD §20, §21).
 
-`agentic_commons` owns a console and a dashboard; it does not own a
+`agent_platform` owns a console and a dashboard; it does not own a
 customer, an order or a refund. So everything in the shell that has to
 say one of those words is gathered here, behind the platform's
 `AgentHost` protocol, and the platform composes it without ever naming
@@ -11,15 +11,18 @@ The one place that names this agent is its own `config.yaml`
 """
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
-from agentic_commons.commands.knowledge import KnowledgeBaseCommand
-from agentic_commons.commands.types import Command
-from agentic_commons.config import FeatureSet, get_settings
-from agentic_commons.logging import get_logger
-from agentic_commons.memory.semantic.rag import KnowledgeBase
-from agentic_commons.observability import StageReporter
+from agent_platform.commands.knowledge import KnowledgeBaseCommand
+from agent_platform.commands.runs import CancelCommand
+from agent_platform.commands.types import Command
+from agent_platform.config import FeatureSet, get_settings
+from agent_platform.host import HostAction
+from agent_platform.logging import get_logger
+from agent_platform.memory.semantic.rag import KnowledgeBase
+from agent_platform.observability import StageReporter
+from customer_support_agent.config import get_agent_settings
 from customer_support_agent.console.commands import QueueCommand
 from customer_support_agent.intent.router import load_intent_classifier
 
@@ -31,6 +34,10 @@ _STAGE_LABELS = {
     "order_status_check": "ORDER STATUS",
     "refund_eligibility_check": "REFUND ELIGIBILITY",
 }
+
+# A stopped run the console offers to resume; one waiting on a reviewer resumes
+# through `/queue approve|deny` instead.
+_RESUMABLE_HERE = ("cancelled", "failed_resumable")
 
 _TITLE = "Customer Support Agent"
 _PLACEHOLDER = "Ask the support agent…  (/help for commands)"
@@ -44,6 +51,12 @@ class CustomerSupportHost:
 
     def placeholder(self) -> str:
         return _PLACEHOLDER
+
+    def greeting(self) -> str:
+        """The first thing a conversation needs: who is speaking."""
+        from customer_support_agent.presentation.auth import ask_for_code
+
+        return ask_for_code()
 
     def prepare(self) -> None:
         """Load the intent classifier before the event loop opens.
@@ -80,6 +93,35 @@ class CustomerSupportHost:
         )
         return self._agent
 
+    # -- run controls: cancel the turn in flight, resume a stopped one -------------------
+
+    def cancel_key(self) -> str:
+        return get_agent_settings().console.cancel_key
+
+    def cancel(self) -> bool:
+        agent = self.agent
+        return bool(agent is not None and agent.cancel())
+
+    def actions(self, session_id: str) -> Sequence[HostAction]:
+        """Cancel while a turn runs; Resume when this session's last run stopped part-way."""
+        agent = self.agent
+        if agent is None:
+            return []
+        console = get_agent_settings().console
+        if agent.running:
+            return [HostAction(console.cancel.label, "/cancel", True, console.cancel.variant)]
+        last = agent.runs.latest_in_session(session_id)
+        if last is None or last.status not in _RESUMABLE_HERE:
+            return []
+        node = last.next_node.split(",")[0] or "the last step"
+        label = console.resume.label.format(node=node)
+        return [HostAction(label, f"/resume {last.thread_id}", False, console.resume.variant)]
+
+    def verified_subject(self, session_id: str) -> str | None:
+        """Who is verified in a console session; the console's commands show only theirs."""
+        agent = self.agent
+        return agent.verified_subject(session_id) if agent is not None else None
+
     @property
     def agent(self) -> Any:
         """The agent this host last built — what `/queue` resumes through."""
@@ -92,11 +134,12 @@ class CustomerSupportHost:
 
     def commands(self) -> list[Command]:
         """The slash commands that read this agent's own tables and corpus."""
-        from agentic_commons.commands.data import DreamCommand
+        from agent_platform.commands.data import DreamCommand
         from customer_support_agent.graph.builder import build_dream_service
 
         return [
             QueueCommand(agent=lambda: self.agent),
+            CancelCommand(lambda: self.agent),
             KnowledgeBaseCommand(lambda: self.knowledge_base),
             DreamCommand(build_dream_service),
         ]
@@ -136,8 +179,8 @@ class CustomerSupportHost:
         the retention window are deleted — checkpoints hold what customers
         said, and are not kept longer than configured.
         """
-        from agentic_commons.durability import RunRegistry, create_checkpointer, purge_expired
-        from agentic_commons.persistence import SqliteConnectionPool, SqlitePlatformStore
+        from agent_platform.durability import RunRegistry, create_checkpointer, purge_expired
+        from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
         from customer_support_agent.config import get_agent_settings
 
         store = SqlitePlatformStore(
@@ -173,9 +216,9 @@ class CustomerSupportHost:
 
     @staticmethod
     def _opened_knowledge_base() -> KnowledgeBase:
-        from agentic_commons.evals import create_scoring_cascade
-        from agentic_commons.llm.encoders import create_reranker
-        from agentic_commons.memory.semantic.rag import create_knowledge_base
+        from agent_platform.evals import create_scoring_cascade
+        from agent_platform.llm.encoders import create_reranker
+        from agent_platform.memory.semantic.rag import create_knowledge_base
 
         return create_knowledge_base(reranker=create_reranker(fallback=create_scoring_cascade()))
 
@@ -186,7 +229,7 @@ class CustomerSupportHost:
         A model that cannot load does not stop the console: the claim
         checker latches to the lexical fallback and logs why.
         """
-        from agentic_commons.evals.entailment import preload_entailment_model
+        from agent_platform.evals.entailment import preload_entailment_model
 
         preload_entailment_model()
 

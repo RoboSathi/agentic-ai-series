@@ -16,7 +16,7 @@ read from the message by the same parser the Brief uses.
 import re
 from typing import Protocol, runtime_checkable
 
-from agentic_commons.logging import get_logger, instrument
+from agent_platform.logging import get_logger, instrument
 from research_agent.config.settings import ReframeOption, ScopingSettings
 from research_agent.domain.scope import (
     GENERAL,
@@ -25,9 +25,9 @@ from research_agent.domain.scope import (
     GateVerdict,
     Mode,
 )
+from research_agent.llm.structured import StructuredCaller
 from research_agent.prompts import gate as gate_prompt
 from research_agent.scoping.window import TimeWindowParser
-from research_agent.structured import StructuredCaller
 
 _WORD_EDGE = r"(?<![\w&]){}(?![\w&])"
 

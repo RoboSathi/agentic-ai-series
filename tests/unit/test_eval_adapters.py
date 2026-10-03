@@ -7,19 +7,19 @@ from typing import Any
 import pytest
 import yaml
 
-from agentic_commons.commands.evals import EvalCommand
-from agentic_commons.evals.adapters.deepeval_adapter import DeepEvalGrader, deepeval_graders
-from agentic_commons.evals.adapters.promptfoo import (
+from agent_platform.commands.evals import EvalCommand
+from agent_platform.evals.adapters.deepeval_adapter import DeepEvalGrader, deepeval_graders
+from agent_platform.evals.adapters.promptfoo import (
     AGENT_PROVIDER,
     JUDGE_PROVIDER,
     PromptfooSuite,
     latest_per_case,
     suite_hash,
 )
-from agentic_commons.evals.adapters.promptfoo_agent_provider import case_from_vars
-from agentic_commons.evals.contracts import GoldenCase, QualityMetricSpec, Transcript
-from agentic_commons.evals.pipeline.gate import FAIL, evaluate_gate
-from agentic_commons.evals.store import DuckDbEvalStore
+from agent_platform.evals.adapters.promptfoo_agent_provider import case_from_vars
+from agent_platform.evals.contracts import GoldenCase, QualityMetricSpec, Transcript
+from agent_platform.evals.pipeline.gate import FAIL, evaluate_gate
+from agent_platform.evals.store import DuckDbEvalStore
 from customer_support_agent.evals.plugin import CsaEvalPlugin
 from customer_support_agent.evals.security import assertions
 from tests.conftest import ScriptedLLM
@@ -134,7 +134,7 @@ class TestPromptfoo:
             )
         )
         run = suite._new_run("f" * 64, {}, "d", "", False)
-        from agentic_commons.evals.store import StageRecord
+        from agent_platform.evals.store import StageRecord
 
         stage = StageRecord.begin(run.run_id, "security", "d")
         store.start_stage(stage)
@@ -250,7 +250,7 @@ class TestEvalCommand:
         from tests.unit.test_eval_framework import FakeGrader, FakePlugin, _cases
 
         store = DuckDbEvalStore(":memory:")
-        from agentic_commons.evals.pipeline.orchestrator import EvalPipeline
+        from agent_platform.evals.pipeline.orchestrator import EvalPipeline
 
         pipeline = EvalPipeline(FakePlugin(grader=FakeGrader(fail={"c1"})), store)  # type: ignore[arg-type]
         run = await pipeline.generate("golden", _cases())
@@ -264,7 +264,7 @@ class TestEvalCommand:
         assert runs.rows[0].style == "red"
 
     async def test_an_unknown_action_is_an_error(self) -> None:
-        from agentic_commons.commands.types import CommandError
+        from agent_platform.commands.types import CommandError
 
         with pytest.raises(CommandError):
             await EvalCommand(DuckDbEvalStore(":memory:")).run(["nonsense"])
