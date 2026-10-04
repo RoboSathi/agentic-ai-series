@@ -109,6 +109,11 @@ def seeded_pool(pool: SqliteConnectionPool) -> SqliteConnectionPool:
     Fixed values, not generated ones: a test that asserts "$32 is
     auto-approved" needs a $32 order to exist by construction.
     """
+    return seed_known_orders(pool)
+
+
+def seed_known_orders(pool: SqliteConnectionPool) -> SqliteConnectionPool:
+    """The `seeded_pool` data, onto any pool (one that counts its queries, say)."""
     ensure_schema(pool)
     from customer_support_agent.persistence.repositories import OrdersRepository, UsersRepository
 

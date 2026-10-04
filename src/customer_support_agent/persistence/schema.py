@@ -19,11 +19,15 @@ _SCHEMA_FILE = Path(__file__).resolve().parent / "schema.sql"
 _REPLY_REVIEW_COLUMN = "detail"
 _OLD_QUEUE = "hitl_queue_before_reply_reviews"
 _QUEUE_COLUMNS = "id, order_id, user_id, requested_amount_cents, action, status, created_at"
+# Order columns added after databases were already built. `CREATE TABLE IF NOT
+# EXISTS` leaves an existing table as it was, so each is added in place, once.
+_ADDED_ORDER_COLUMNS = {"carrier_note": "TEXT", "refund_settles_at": "TEXT"}
 
 
 def ensure_schema(pool: SqliteConnectionPool) -> None:
-    """Create the domain tables from the single source of truth, upgrading an older queue."""
+    """Create the domain tables from the single source of truth, upgrading older tables."""
     schema = _SCHEMA_FILE.read_text()
+    _add_missing_order_columns(pool)
     if not _queue_predates_reply_reviews(pool):
         pool.execute_script(schema)
         return
@@ -47,3 +51,13 @@ def ensure_schema(pool: SqliteConnectionPool) -> None:
 def _queue_predates_reply_reviews(pool: SqliteConnectionPool) -> bool:
     columns = {row["name"] for row in pool.iter_rows("PRAGMA table_info(hitl_queue)")}
     return bool(columns) and _REPLY_REVIEW_COLUMN not in columns
+
+
+def _add_missing_order_columns(pool: SqliteConnectionPool) -> None:
+    """Add any order column this version declares and an older `orders` table lacks."""
+    present = {row["name"] for row in pool.iter_rows("PRAGMA table_info(orders)")}
+    if not present:
+        return
+    for column, declaration in _ADDED_ORDER_COLUMNS.items():
+        if column not in present:
+            pool.execute(f"ALTER TABLE orders ADD COLUMN {column} {declaration}")

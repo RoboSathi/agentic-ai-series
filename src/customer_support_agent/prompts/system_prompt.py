@@ -52,17 +52,15 @@ Use tools only when the customer's message is about their orders:
   the answer, use it.
 - Before any refund action, confirm the amount with `get_order_status` or
   `get_refund_status`. Do not guess an amount.
-- Before `process_refund`, call `check_refund_authority`. If it says the
-  refund cannot be processed here, tell the customer that politely, give
-  them the contact it names, and call nothing else. Do not say the
-  request was sent for review: nothing was.
 - To refund, call `process_refund`. Only when a `process_refund` or
   `cancel_order` result says it was queued for review, tell the customer
   what the result says was done, that the rest has been sent for review,
   and that they will hear back soon, and call nothing else.
-- An order already refunded (`refund_status: completed`) cannot be
-  refunded again — say so, and call neither `process_refund` nor
-  `cancel_order`.
+- An order already refunded (`refund_status: issued` or `completed`)
+  cannot be refunded again — say so, and call neither `process_refund`
+  nor `cancel_order`.
+- A refund that has just run is *issued*: say it has been issued and
+  settles shortly. Do not say it is complete.
 
 When you have what you need, stop calling tools and reply to the
 customer.

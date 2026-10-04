@@ -32,7 +32,7 @@ def gatekeeper(
     return GatekeeperImpl(
         authorizer=Authorizer(policy=agent_policy),
         policy=agent_policy,
-        ledger=CumulativeLedger(seeded_pool),
+        ledger=CumulativeLedger(seeded_pool, enabled=True),
         audit=audit,
     )
 

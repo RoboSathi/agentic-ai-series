@@ -3,7 +3,10 @@
 `CustomerSupportHost` implements the platform's `AgentHost`: the console's
 title, how to build the agent, the stage labels only this agent emits, and
 its own slash commands — `/queue` (human review: list, approve, deny,
-staffing maths) and `/kb` (the knowledge index).
+staffing maths), `/void` (list issued refunds, or void one before it
+settles), `/settle` (settle one, or `all`, now) and `/kb` (the knowledge
+index). As a `HousekeepingHost` it settles refunds whose void window has
+closed, every `settlement.sweep_interval_seconds`.
 
 ## Vocabulary
 
@@ -11,8 +14,8 @@ staffing maths) and `/kb` (the knowledge index).
 
 ## Public interface
 
-- `CustomerSupportHost` — `prepare` (warms the intent classifier and NLI model before the event loop, syncs the knowledge base, recovers orphaned runs), `build`, `commands`, `stage_labels`
-- `QueueCommand` (`commands.py`)
+- `CustomerSupportHost` — `prepare` (warms the intent classifier and NLI model before the event loop, syncs the knowledge base, recovers orphaned runs), `build`, `commands`, `stage_labels`, `housekeeping`
+- `QueueCommand`, `VoidCommand`, `SettleCommand` (`commands.py`)
 
 ## Configuration
 
@@ -24,7 +27,7 @@ staffing maths) and `/kb` (the knowledge index).
 
 ## Collaborators
 
-- `graph.build_agent`, `review.ReviewQueueService`, `memory` (knowledge base).
+- `graph.build_agent`, `graph.build_settlement_service`, `review.ReviewQueueService`, `memory` (knowledge base).
 
 ## Episodes
 

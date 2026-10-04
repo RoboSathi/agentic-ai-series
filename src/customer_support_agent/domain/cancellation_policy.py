@@ -21,6 +21,7 @@ _CANCELLED = "cancelled"
 _ALREADY_CANCELLED = "Order {order_id} is already cancelled"
 _REFUND_STATE_AFTER_CANCEL: dict[str, str] = {
     "completed": ", and its {amount} refund has been completed.",
+    "issued": ", and its {amount} refund has been issued and is waiting to settle.",
     "approved": ", and its {amount} refund has been approved.",
     "pending_review": ", and its {amount} refund is awaiting review.",
     "denied": "; its {amount} refund was declined by a reviewer.",

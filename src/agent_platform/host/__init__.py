@@ -7,6 +7,7 @@ from agent_platform.host.protocols import (
     CancellableHost,
     GreetingHost,
     HostAction,
+    HousekeepingHost,
     StatusHost,
     SubjectHost,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "CancellableHost",
     "GreetingHost",
     "HostAction",
+    "HousekeepingHost",
     "StatusHost",
     "SubjectHost",
     "load_spec",

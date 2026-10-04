@@ -1,7 +1,7 @@
 -- Schema for the customer support agent's database.
 --
 -- order_status:  pending / shipped / delivered / cancelled
--- refund_status: none / pending_review / approved / denied / completed
+-- refund_status: none / pending_review / approved / denied / issued / completed
 -- hitl_queue.status: pending / approved / denied
 -- hitl_queue.action: refund / cancel_and_refund / reply
 --
@@ -52,7 +52,12 @@ CREATE TABLE IF NOT EXISTS orders (
     tracking_number TEXT,
     estimated_delivery_date TEXT,
     delivered_at TEXT,
-    current_location TEXT
+    current_location TEXT,
+    -- The carrier's own note on the delivery: third-party text the agent
+    -- reads and is never instructed by.
+    carrier_note TEXT,
+    -- When an `issued` refund settles; NULL in every other refund state.
+    refund_settles_at TEXT
 );
 
 -- Every order lookup is scoped to the authenticated customer, so the

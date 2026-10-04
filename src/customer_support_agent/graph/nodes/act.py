@@ -6,9 +6,10 @@ authoritative fact the reply may be grounded on.
 
 `_execute_ungoverned` is the path taken when the Gatekeeper has been
 withheld. It exists to be *seen*: the same refund that was escalated a
-moment ago simply happens. The audit entry is still written, because an
-ungoverned execution must leave a record rather than leaving nothing, and
-no budget is committed, because no budget was consulted.
+moment ago simply happens. Only the authority decision is gone — the call
+still runs through the Executor, the audit entry is still written (its
+standing is UNGOVERNED), and no budget is committed, because no budget was
+consulted.
 """
 
 from typing import Any
@@ -22,7 +23,6 @@ from agent_platform.gatekeeper import AuthorityContext, AuthorityDecision
 from agent_platform.gatekeeper.mandate import MandateSet
 from agent_platform.llm.types import Message
 from agent_platform.logging.trace_context import get_current_trace_id
-from agent_platform.observability.types import utc_now
 from agent_platform.tools.types import ToolResult
 from agent_platform.verification import VerificationReport
 from customer_support_agent.graph.loop_decision import ITERATION_LIMIT, after_act_step
@@ -209,61 +209,34 @@ class ToolUseNodes(NodeSupport):
         authority: AuthorityContext,
         control_fields: dict[str, Any],
     ) -> tuple[str, str, str, dict[str, Any]]:
-        """Run a tool with nothing standing between the model and execution.
+        """Run a tool with no authority decision in front of it.
 
         Reachable only where the `gatekeeper` feature has been withheld,
-        which is what an episode does to show the difference. Two things
-        still hold: the audit entry is written, so the trail shows that an
-        unauthorized execution happened rather than showing nothing at
-        all; and no budget is committed, because no budget was consulted.
+        which is what an episode does to show the difference. Only the
+        decision is missing: the call still goes through the Executor, so
+        it keeps its idempotency key and its deadline, and the audit entry
+        is still written, with the standing UNGOVERNED, so the trail shows
+        an execution nobody ruled on rather than showing nothing at all.
+        No budget is committed, because no budget was consulted.
         """
-        # No report. A stage that was not built has nothing to say, and a
-        # GATEKEEPER line reading "no gatekeeper" is the screen describing
-        # a control that is not there — the absence is the demonstration,
-        # so the trace should show a gap where the check used to be. The
-        # audit entry below still records the ungoverned execution.
+        # No GATEKEEPER card. A stage that was not built has nothing to
+        # say; the absence is the demonstration. The audit row records it.
         approved = ApprovedToolCall.ungoverned(call, authority)
         self._audit.record(
             AuditEntry(
-                trace_id=str(authority.request_context.get("metadata", {}).get("trace_id", "")),
+                trace_id=get_current_trace_id() or "",
                 actor=authority.actor,
                 action=call.action,
-                authority_context=authority.model_dump(mode="json"),
+                authority_context={
+                    **authority.model_dump(mode="json"),
+                    "standing": approved.decision.standing,
+                },
                 decision="allow",
                 rationale=approved.decision.reason,
             )
         )
-        # Straight to the agent's domain adapter, with no execution
-        # boundary around it: no idempotency key, so asking twice really
-        # does refund twice, and no timeout, so a slow tool holds the turn
-        # open. Those are the Executor's guarantees, and this is what the
-        # absence of them looks like.
-        outcome = await self._execute_directly(call)
+        outcome = await self._executor.execute(approved)
         return await self._after_execution(call, outcome, control_fields, decision_fields={})
-
-    async def _execute_directly(self, call: Any) -> ExecutionOutcome:
-        """Run one tool with nothing wrapped around it.
-
-        Shaped as an `ExecutionOutcome` so the reporting path downstream
-        cannot tell the difference — what changed is that no idempotency
-        key was taken and no deadline applied, not how the result reads.
-        `replayed` is False by construction here: replay is exactly the
-        thing an idempotency guard provides, and there is none.
-        """
-        started = utc_now()
-        if self._handler is None:
-            result = ToolResult(
-                success=False, error="No tool handler is wired for direct execution"
-            )
-        else:
-            result = await self._handler.execute(call)
-        return ExecutionOutcome(
-            result=result,
-            status="completed" if result.success else "failed",
-            replayed=False,
-            started_at=started,
-            ended_at=utc_now(),
-        )
 
     async def _invoke(
         self, name: str, arguments: str, state: AgentState, offered: set[str]
@@ -306,8 +279,9 @@ class ToolUseNodes(NodeSupport):
             # What this customer actually asked for, this turn. Issued
             # from the request and the record before the model was
             # consulted, so a proposal is checked against the ask rather
-            # than against its own plausibility.
-            mandates=self._mandates_for(state),
+            # than against its own plausibility. Only a write is scoped, so
+            # only a write has mandates issued for it.
+            mandates=self._mandates_for(state) if call.side_effecting else None,
             turn=state.tool_rounds,
         )
 

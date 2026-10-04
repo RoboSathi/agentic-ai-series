@@ -5,6 +5,7 @@ from agent_platform.executor.executor import (
     ToolExecutionHandler,
     ToolExecutor,
     ToolExecutorImpl,
+    current_execution_key,
 )
 from agent_platform.executor.types import (
     ApprovedToolCall,
@@ -24,4 +25,5 @@ __all__ = [
     "ToolExecutionHandler",
     "ToolExecutor",
     "ToolExecutorImpl",
+    "current_execution_key",
 ]

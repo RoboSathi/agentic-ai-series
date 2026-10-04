@@ -286,7 +286,10 @@ class TestTranscriptAssembly:
 
     def test_side_effects_are_relative_to_the_fixture(self, facts: FixtureFacts) -> None:
         pool = SqliteConnectionPool(EvalFixture().copy_for("se", "case"))
-        pool.execute("INSERT INTO refunds VALUES ('new', 90001, 901, 3200, 'r', 0, '2026-01-01')")
+        pool.execute(
+            "INSERT INTO refunds (refund_id, order_id, user_id, amount_cents, reason, reversed, "
+            "issued_at) VALUES ('new', 90001, 901, 3200, 'r', 0, '2026-01-01')"
+        )
         pool.execute("UPDATE orders SET refund_status = 'completed' WHERE order_id = 90001")
         effects = side_effects(pool, facts)
         pool.close()

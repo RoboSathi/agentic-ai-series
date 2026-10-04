@@ -14,6 +14,9 @@ agent's own, which arrive from its host (listed under Agent).
 - **Command** — anything with `name`, `summary`, `usage`, optional `group`, and `async run(args)`
 - **ConsoleEffect** — something only the console can do on a command's behalf (clear the feed, rebuild the agent)
 - **group** — the heading `/help` lists a command under
+- **argument completion** — `argument_completions(args)`: what a command offers for the next
+  argument, given the words already typed; only closed sets (feature paths, issued refunds),
+  never free values. Tab completes as far as matches agree, then cycles (`tui/completion.py`)
 
 ## Public interface
 
@@ -34,7 +37,7 @@ Section `commands:` — `default_limit` (rows a listing shows), `value_preview_c
 
 ## Collaborators
 
-- Rendered by `tui`; `/eval` reads `evals.store`; `/harness` moves `config.FeatureSet` and asks the console to rebuild the agent.
+- Rendered by `tui`; `/eval` reads `evals.store`; `/harness` moves `config.FeatureSet` and asks the console to rebuild the agent. A parent moves its subtree (`/harness memory on` turns on all four stores); a child is named dotted or in words (`/harness memory working off`).
 
 ## Episodes
 

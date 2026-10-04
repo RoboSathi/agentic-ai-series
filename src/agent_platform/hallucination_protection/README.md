@@ -39,11 +39,21 @@ reply time.
 A read the turn has since overtaken is taken out first: an observation whose tool is
 side-effecting (`state_changing`) makes every *earlier* read that names the same order stale, so
 "No refund has been requested" cannot contradict a reply written after the refund was referred.
-A read about another order, or in a turn that wrote nothing, stands.
+A later *re-read* through the same tool (same `source`) overtakes an earlier read of the same
+subject too, so a settlement sweep between two reads leaves only the second. Subjects are the
+agent's `refute_identifier_pattern` matches, not bare numbers, so a shared year or amount is not
+a shared order. A refused call observed nothing and overtakes nothing; a source-less read is no
+tool's re-read. A read about another order, or in a turn that neither wrote nor re-read, stands.
 
-Within one observation an entailing sentence outvotes a contradicting sibling: an observation is one
-consistent record, so a "contradiction" inside it is the model's, not the record's. Across
-observations the latest wins. When the state model or the record of a refused call decides a claim,
+What stands is one consistent world, so within a tier **any entailment outvotes any
+contradiction**: the evidence cannot both entail and contradict a claim, and when NLI says it
+does the contradiction is about another attribute ("the refund for order 10842 has been
+approved" against "order 10842 was cancelled"). A contradiction stands only when nothing current
+in the tier entails the claim. Neither call order nor closeness decides — "the latest
+observation wins" let a later refund read overrule an earlier order read it said nothing about.
+Support, like refutation, must be about what the claim names: evidence naming only other
+identifiers cannot support. Refund-state claims meet the deterministic state model before any
+NLI. When the state model or the record of a refused call decides a claim,
 the card says what was read; the other words in the sentence are not checked.
 
 A refutation from any tier that may refute stands; otherwise the first tier
@@ -51,8 +61,7 @@ to support gets the credit; otherwise the claim is undetermined, and its rationa
 prompt and memory support only. The customer's own words are in no tier. A
 fact about the case with no record at all is refuted as unsourced.
 
-Within a tier the latest observation decides, and within one observation the
-sentence closest to the claim. A rule that restates the claim in nearly its
+Within a tier the surest result decides, support first (above). A rule that restates the claim in nearly its
 own words (`rule_restatement_coverage`) supports it directly: NLI on an
 *instruction* against the statement it dictates is not reliable.
 

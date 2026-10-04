@@ -2,11 +2,15 @@
 
 Cancelling an unshipped order is one more step in front of a refund:
 stop the order, then pay it back. It is not a second payment path — the
-refund steps are the `RefundSaga`'s own, reused, so the ledger write,
-the compare-and-swap on the refund state and the notification behave
-exactly as they do for any refund. If paying fails, the order goes back
-to pending: the customer keeps an order they paid for rather than
-losing both the order and the money.
+refund steps are the `RefundSaga`'s own, reused, so the ledger write and
+the conditional issue behave exactly as they do for any refund, and the
+refund settles the same way. If paying fails, the order goes back to
+pending: the customer keeps an order they paid for rather than losing both
+the order and the money.
+
+Both steps are compare-and-swaps — the cancellation on the order state the
+caller saw, the refund on the state, total and refundability — so there is
+no separate re-read of the order before starting.
 """
 
 from agent_platform.logging import instrument
@@ -19,12 +23,17 @@ from agent_platform.resilience import (
     SagaStep,
     SagaWorkflow,
 )
-from customer_support_agent.domain.cancellation_policy import CancellationPolicy
 from customer_support_agent.domain.models import Order, OrderStatus
 from customer_support_agent.persistence.repositories import OrdersRepository
 from customer_support_agent.resilience.refund_saga import RefundRequest, RefundSaga
 
 _CANCELLED: OrderStatus = "cancelled"
+_CANCELLATION_KEY = "cancel:{order_id}:{cents}"
+
+
+def cancellation_key(order_id: int, amount: Money) -> str:
+    """The idempotency key a cancel-and-refund of this order runs under."""
+    return _CANCELLATION_KEY.format(order_id=order_id, cents=amount.cents)
 
 
 @instrument("customer_support_agent")
@@ -36,13 +45,11 @@ class CancellationSaga(SagaWorkflow[RefundRequest]):
         orders: OrdersRepository,
         refund: RefundSaga,
         idempotency: IdempotencyGuard | None = None,
-        policy: CancellationPolicy | None = None,
         saga: Saga | None = None,
     ) -> None:
         super().__init__(saga or CompensatingSaga(), idempotency)
         self._orders = orders
         self._refund = refund
-        self._policy = policy or CancellationPolicy(orders)
 
     async def cancel(self, order: Order, amount: Money, reason: str) -> SagaResult:
         """Cancel and refund, unwinding whatever committed if a step fails."""
@@ -50,16 +57,7 @@ class CancellationSaga(SagaWorkflow[RefundRequest]):
 
     def idempotency_key(self, request: RefundRequest) -> str:
         """Distinct from a plain refund's key, so the two never replay each other."""
-        return f"cancel:{request.order.order_id}:{request.amount.cents}"
-
-    def precondition(self, request: RefundRequest) -> str | None:
-        """Re-check the cancellation rules against a fresh read."""
-        validation = self._policy.validate(
-            order_id=request.order.order_id,
-            customer_id=request.order.user_id,
-            amount=request.amount,
-        )
-        return None if validation.allowed else validation.reason
+        return cancellation_key(request.order.order_id, request.amount)
 
     def steps(self, request: RefundRequest) -> list[SagaStep]:
         """Cancel first, then the refund saga's own steps."""

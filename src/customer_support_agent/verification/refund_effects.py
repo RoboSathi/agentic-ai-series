@@ -55,7 +55,8 @@ class RefundEffectSource:
                 action=action,
                 target=f"order:{order_id}",
                 expected={
-                    "refund_status": "completed",
+                    # Issued, not settled: settlement comes later (or a void).
+                    "refund_status": "issued",
                     # The money, not the status. An order marked refunded
                     # with nothing in the ledger is the failure this check
                     # exists to catch. Compared as integer cents: exact.
@@ -70,7 +71,7 @@ class RefundEffectSource:
                 target=f"order:{order_id}",
                 expected={
                     "order_status": "cancelled",
-                    "refund_status": "completed",
+                    "refund_status": "issued",
                     "settled_cents": int(result.data.get("amount_cents", 0)),
                 },
             )
@@ -85,7 +86,8 @@ class RefundEffectSource:
     def observed(self, effect: IntendedEffect) -> dict[str, Any]:
         """What the system of record says about that order, right now."""
         order_id = int(effect.target.split(":", maxsplit=1)[1])
-        order = self._orders.get(order_id)
+        # Never this turn's earlier read: the point is to doubt the write.
+        order = self._orders.fresh(order_id)
         if order is None:
             return {}
         return {

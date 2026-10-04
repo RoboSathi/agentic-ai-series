@@ -59,6 +59,7 @@ class ApprovedToolCall(BaseModel):
                 reason="Executed without authorization: the gatekeeper feature is switched off.",
                 reason_code="GATEKEEPER_DISABLED",
                 question="ungoverned",
+                standing="UNGOVERNED",
             ),
             authority=authority,
         )

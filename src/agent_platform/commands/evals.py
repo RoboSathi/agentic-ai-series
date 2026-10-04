@@ -29,8 +29,9 @@ class EvalCommand:
     def __init__(self, store: DuckDbEvalStore | None = None) -> None:
         self._store = store
 
-    def argument_completions(self) -> list[str]:
-        return list(_SUBCOMMANDS)
+    def argument_completions(self, args: list[str]) -> list[str]:
+        """The subcommands, in first position only."""
+        return [] if args else list(_SUBCOMMANDS)
 
     async def run(self, args: list[str]) -> CommandResult:
         action, rest = (args[0], args[1:]) if args else ("runs", [])

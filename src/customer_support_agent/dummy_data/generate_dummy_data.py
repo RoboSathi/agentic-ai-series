@@ -24,6 +24,7 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from functools import cache
 from pathlib import Path
+from typing import Any
 
 import yaml
 from pydantic import BaseModel
@@ -51,6 +52,15 @@ class CatalogueItem(BaseModel):
     sku: str
     low: float
     high: float
+
+
+class CarrierNoteSpec(BaseModel):
+    """Courier notes on delivered orders, and the one that tries to instruct the agent."""
+
+    seed_offset: int
+    rate: float
+    notes: list[str]
+    instruction: str
 
 
 class GeneratorSpec(BaseModel):
@@ -82,6 +92,7 @@ class GeneratorSpec(BaseModel):
     catalogue: list[CatalogueItem]
     carriers: list[str]
     transit_locations: list[str]
+    carrier_notes: CarrierNoteSpec
 
 
 @cache
@@ -156,23 +167,32 @@ def _weighted_choice(rng: random.Random, weights: dict[str, float]) -> str:
     return rng.choices(list(weights), weights=list(weights.values()), k=1)[0]
 
 
-def _user_lines(rng: random.Random, now: datetime, spec: GeneratorSpec) -> list[str]:
+def _user_lines(
+    rng: random.Random, now: datetime, spec: GeneratorSpec
+) -> tuple[list[str], dict[str, int]]:
+    """The users' INSERTs, and each user's id by code."""
     lines = ["-- Users"]
     taken: set[str] = set()
+    ids_by_code: dict[str, int] = {}
     for index, user_id in enumerate(_user_ids(spec), start=1):
         created_at = (now - timedelta(days=rng.randint(*spec.user_created_days_ago))).isoformat()
         name = f"{rng.choice(spec.first_names)} {rng.choice(spec.last_names)}"
         email = spec.email_template.format(index=index)
         phone = f"{spec.phone_prefix}{rng.randint(*spec.phone_digits)}"
+        code = _user_code(rng, taken)
+        ids_by_code[code] = user_id
         lines.append(
             "INSERT INTO users (user_id, user_code, created_at, name, email, phone) VALUES "
-            f"({user_id}, {_sql_str(_user_code(rng, taken))}, {_sql_str(created_at)}, "
+            f"({user_id}, {_sql_str(code)}, {_sql_str(created_at)}, "
             f"{_sql_str(name)}, {_sql_str(email)}, {_sql_str(phone)});"
         )
-    return lines
+    return lines, ids_by_code
 
 
-def _order_line(rng: random.Random, now: datetime, spec: GeneratorSpec, order_id: int) -> str:
+def _order_row(
+    rng: random.Random, now: datetime, spec: GeneratorSpec, order_id: int
+) -> dict[str, Any]:
+    """One order's column values, drawn in the generator's fixed order."""
     user_id = rng.choice(_user_ids(spec))
     timestamp = (now - timedelta(days=rng.randint(*spec.order_placed_days_ago))).isoformat()
     order_status = _weighted_choice(rng, spec.order_status_weights)
@@ -187,17 +207,68 @@ def _order_line(rng: random.Random, now: datetime, spec: GeneratorSpec, order_id
     unit_price_cents = rng.randint(round(item.low * per_major), round(item.high * per_major))
     amount_cents = unit_price_cents * quantity
     carrier, tracking, eta, delivered_at, location = _whereabouts(rng, order_status, timestamp, now)
-    return (
-        "INSERT INTO orders "
-        "(order_id, user_id, timestamp, order_status, refund_status, amount_cents, "
-        "product_name, product_sku, quantity, unit_price_cents, currency, "
-        "carrier, tracking_number, estimated_delivery_date, delivered_at, current_location) "
-        f"VALUES ({order_id}, {user_id}, {_sql_str(timestamp)}, {_sql_str(order_status)}, "
-        f"{_sql_str(refund_status)}, {amount_cents}, {_sql_str(item.name)}, {_sql_str(item.sku)}, "
-        f"{quantity}, {unit_price_cents}, {_sql_str(spec.currency)}, {_sql_null(carrier)}, "
-        f"{_sql_null(tracking)}, {_sql_null(eta)}, {_sql_null(delivered_at)}, "
-        f"{_sql_null(location)});"
-    )
+    return {
+        "order_id": order_id,
+        "user_id": user_id,
+        "timestamp": timestamp,
+        "order_status": order_status,
+        "refund_status": refund_status,
+        "amount_cents": amount_cents,
+        "product_name": item.name,
+        "product_sku": item.sku,
+        "quantity": quantity,
+        "unit_price_cents": unit_price_cents,
+        "currency": spec.currency,
+        "carrier": carrier,
+        "tracking_number": tracking,
+        "estimated_delivery_date": eta,
+        "delivered_at": delivered_at,
+        "current_location": location,
+        "carrier_note": None,
+    }
+
+
+def _order_line(row: dict[str, Any]) -> str:
+    """An order row as an INSERT, every value quoted for its type."""
+    values = ", ".join(_sql_value(value) for value in row.values())
+    return f"INSERT INTO orders ({', '.join(row)}) VALUES ({values});"
+
+
+def _sql_value(value: Any) -> str:
+    """Inline SQL for one column value: NULL, a number, or a quoted string."""
+    if value is None:
+        return "NULL"
+    if isinstance(value, int):
+        return str(value)
+    return _sql_str(str(value))
+
+
+def _add_carrier_notes(
+    rows: list[dict[str, Any]], spec: GeneratorSpec, demo_user: int | None
+) -> None:
+    """Give some delivered orders a courier note, and the demo customer the instructing one.
+
+    Its own random stream, so the orders drawn before it are unchanged. The
+    instructing note goes on the demo customer's first delivered, refundable
+    order and names their next refundable order: a refund every validity
+    check would allow, that the customer never asked for.
+    """
+    notes = spec.carrier_notes
+    rng = random.Random(spec.random_seed + notes.seed_offset)
+    for row in rows:
+        if row["order_status"] == "delivered" and rng.random() < notes.rate:
+            row["carrier_note"] = rng.choice(notes.notes)
+    refundable = [
+        row
+        for row in rows
+        if row["user_id"] == demo_user
+        and row["order_status"] in REFUNDABLE_ORDER_STATUSES
+        and row["refund_status"] == "none"
+    ]
+    host = next((row for row in refundable if row["order_status"] == "delivered"), None)
+    target = next((row for row in refundable if row is not host), None)
+    if host is not None and target is not None:
+        host["carrier_note"] = notes.instruction.format(order_id=target["order_id"])
 
 
 def _user_ids(spec: GeneratorSpec) -> list[int]:
@@ -209,10 +280,12 @@ def generate_seed_sql() -> str:
     spec = generator_spec()
     rng = random.Random(spec.random_seed)
     now = datetime.now(timezone.utc)
-    lines = [_HEADER, "", *_user_lines(rng, now, spec), "", "-- Orders"]
-    lines += [
-        _order_line(rng, now, spec, spec.first_order_id + offset) for offset in range(spec.orders)
+    user_lines, ids_by_code = _user_lines(rng, now, spec)
+    rows = [
+        _order_row(rng, now, spec, spec.first_order_id + offset) for offset in range(spec.orders)
     ]
+    _add_carrier_notes(rows, spec, ids_by_code.get(get_agent_settings().demo_user_code))
+    lines = [_HEADER, "", *user_lines, "", "-- Orders", *(_order_line(row) for row in rows)]
     return "\n".join(lines) + "\n"
 
 

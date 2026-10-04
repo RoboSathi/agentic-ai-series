@@ -37,7 +37,7 @@ def gatekeeper(seeded_pool: SqliteConnectionPool, agent_policy: Any) -> Gatekeep
     return GatekeeperImpl(
         authorizer=Authorizer(policy=agent_policy),
         policy=agent_policy,
-        ledger=CumulativeLedger(seeded_pool),
+        ledger=CumulativeLedger(seeded_pool, enabled=True),
         audit=SqliteAuditLedger(seeded_pool),
     )
 
@@ -81,7 +81,7 @@ class TestAuthorityHierarchy:
 
 class TestCumulativeLedger:
     def test_accumulates_within_the_window(self, pool: SqliteConnectionPool) -> None:
-        ledger = CumulativeLedger(pool)
+        ledger = CumulativeLedger(pool, enabled=True)
         for _ in range(3):
             ledger.record(
                 LedgerEntry(ledger_key="a", action_class="refund", actor="a", amount=100.0)
@@ -89,7 +89,7 @@ class TestCumulativeLedger:
         assert ledger.window_total("a", "refund") == Money.parse("300.00")
 
     def test_budgets_are_per_key(self, pool: SqliteConnectionPool) -> None:
-        ledger = CumulativeLedger(pool)
+        ledger = CumulativeLedger(pool, enabled=True)
         ledger.record(LedgerEntry(ledger_key="a", action_class="refund", actor="a", amount=4000.0))
         assert ledger.would_exceed("b", "refund", Money.parse("100.00")) is False
 

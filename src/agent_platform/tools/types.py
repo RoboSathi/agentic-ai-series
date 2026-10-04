@@ -36,6 +36,10 @@ class ToolDefinition(BaseModel):
     surface: SurfaceClass = "editable"
     reversible: bool = True
     side_effecting: bool = False
+    # The effect can be undone for a while after it runs (a refund before it
+    # settles). The Gatekeeper then rules VOIDABLE rather than VALID; what
+    # the window is and how a void undoes it are the agent's.
+    voidable: bool = False
     requires_authority_rank: int = 5
     required_permission: str | None = None
 
@@ -67,6 +71,7 @@ class ToolCall(BaseModel):
     surface: SurfaceClass = "editable"
     reversible: bool = True
     side_effecting: bool = False
+    voidable: bool = False
     requires_authority_rank: int = 5
     required_permission: str | None = None
     call_id: str = ""

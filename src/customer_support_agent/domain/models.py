@@ -18,7 +18,9 @@ from agent_platform.observability.types import utc_now
 from agent_platform.primitives.money import Money
 
 OrderStatus = Literal["pending", "shipped", "delivered", "cancelled"]
-RefundStatus = Literal["none", "pending_review", "approved", "denied", "completed"]
+# `issued`: paid, but not yet settled — still voidable until the batch closes
+# (the payments sense of void: undo before settlement, refund after it).
+RefundStatus = Literal["none", "pending_review", "approved", "denied", "issued", "completed"]
 HitlStatus = Literal["pending", "approved", "denied"]
 # What a reviewer's approval will do. A cancellation that moves money is
 # reviewed as one decision, so approving it cancels *and* refunds. A reply
@@ -32,6 +34,8 @@ REPLY_REVIEW: ReviewAction = "reply"
 # data generator applies the same rule so the fixtures cannot contradict
 # the policy the agent is asked to enforce.
 REFUNDABLE_ORDER_STATUSES: frozenset[str] = frozenset({"delivered", "cancelled"})
+# A refund in either state has paid out; it cannot be refunded again.
+PAID_REFUND_STATUSES: frozenset[str] = frozenset({"issued", "completed"})
 # An order can be cancelled only before it leaves the warehouse. Once it
 # has shipped, stopping it is a carrier recall this business does not do.
 CANCELLABLE_ORDER_STATUSES: frozenset[str] = frozenset({"pending"})
@@ -64,6 +68,11 @@ class Order(BaseModel):
     estimated_delivery_date: str | None = None
     delivered_at: str | None = None
     current_location: str | None = None
+    # What the carrier wrote about the delivery. Third-party text: the agent
+    # reads it to answer "where is my parcel?", and it can instruct nothing.
+    carrier_note: str | None = None
+    # When an issued refund settles (ISO 8601, UTC); None unless `issued`.
+    refund_settles_at: str | None = None
 
     @property
     def is_trackable(self) -> bool:
@@ -104,7 +113,7 @@ class Order(BaseModel):
     @property
     def already_refunded(self) -> bool:
         """Whether this order has been refunded and cannot be refunded again."""
-        return self.refund_status == "completed"
+        return self.refund_status in PAID_REFUND_STATUSES
 
     @property
     def is_refund_eligible(self) -> bool:

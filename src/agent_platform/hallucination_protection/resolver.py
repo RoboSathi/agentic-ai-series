@@ -25,7 +25,12 @@ from agent_platform.evals.entailment import (
     create_entailment_model,
 )
 from agent_platform.hallucination_protection.claims import ClaimClassifier
-from agent_platform.hallucination_protection.direct import DirectChecker, DirectFinding, numbers
+from agent_platform.hallucination_protection.direct import (
+    NOT_EXECUTED_MARKER,
+    DirectChecker,
+    DirectFinding,
+    numbers,
+)
 from agent_platform.hallucination_protection.types import (
     ClaimClass,
     DetectionVerdict,
@@ -35,7 +40,8 @@ from agent_platform.llm.embeddings import tokenize
 from agent_platform.logging import instrument
 
 # `Chunk.metadata` key for the order in which an observation was made this
-# turn. Same-tier evidence that disagrees is settled by the later one.
+# turn. Only staleness reads it: a later observation of the same thing
+# overtakes an earlier one, and after that the order means nothing.
 OBSERVATION_SEQUENCE = "observation_sequence"
 # `Chunk.metadata` key marking an observation that changed something (a
 # write). A read taken before a write of the same thing describes a world
@@ -54,13 +60,6 @@ ENTAILMENT_LABEL = "entailment"
 _DECIDING_LABELS = frozenset({ENTAILMENT_LABEL, "contradiction"})
 # The NLI model's third label, as a reader should meet it: not a failure.
 _LABEL_NAMES = {"unknown": "neutral"}
-
-
-def _outvotes(item: tuple[EntailmentResult, Chunk], held: tuple[EntailmentResult, Chunk]) -> bool:
-    """Whether a decisive result should speak for its observation instead of the one held."""
-    if item[0].label != held[0].label:
-        return item[0].label == "entailment"
-    return item[0].score > held[0].score
 
 
 class _TierOutcome:
@@ -250,27 +249,45 @@ class GroundingResolver:
         "No refund has been requested for order 10169" was true when it was
         read and false once the refund was referred, and nothing the later
         observation says needs to contradict it for that to be so. A read
-        is overtaken when a *later* write names the same order; a read
-        about another order, or in a turn that wrote nothing, stands.
+        is overtaken by a *later* observation of the same subject that
+        either changed it (a write) or looked at it again through the same
+        tool (a re-read, after a settlement sweep moved it, say). A read
+        about another subject, or in a turn that neither wrote nor re-read,
+        stands; so does any read a refused call came after, since a refused
+        call observed nothing — and what stands is one world, which `_deciding` relies on.
         """
-        writes = [
-            (sequence, numbers(chunk.content))
+        later = [
+            (sequence, chunk.source, bool(chunk.metadata.get(STATE_CHANGING)), named)
             for chunk in evidence
-            if chunk.metadata.get(STATE_CHANGING)
-            and isinstance(sequence := chunk.metadata.get(OBSERVATION_SEQUENCE), int)
+            if isinstance(sequence := chunk.metadata.get(OBSERVATION_SEQUENCE), int)
+            and not chunk.content.startswith(NOT_EXECUTED_MARKER)
+            and (named := self._subjects(chunk.content))
         ]
 
         def overtaken(chunk: Chunk) -> bool:
             sequence = chunk.metadata.get(OBSERVATION_SEQUENCE)
-            return (
-                not chunk.metadata.get(STATE_CHANGING)
-                and isinstance(sequence, int)
-                and any(
-                    later > sequence and named & numbers(chunk.content) for later, named in writes
-                )
+            if chunk.metadata.get(STATE_CHANGING) or not isinstance(sequence, int):
+                return False
+            mine = self._subjects(chunk.content)
+            return any(
+                seen > sequence and (wrote or self._reread(source, chunk.source)) and named & mine
+                for seen, source, wrote, named in later
             )
 
         return [chunk for chunk in evidence if not overtaken(chunk)]
+
+    @staticmethod
+    def _reread(later: str, earlier: str) -> bool:
+        """Whether two observations came through the same tool. An unnamed source is no tool."""
+        return bool(earlier) and later == earlier
+
+    def _subjects(self, text: str) -> set[str]:
+        """What a text is about: the agent's identifiers if it names a pattern, else its numbers.
+
+        Bare numbers also catch dates and amounts, so two reads of different
+        orders placed the same year would otherwise be one subject.
+        """
+        return set(self._identifier.findall(text)) if self._identifier else numbers(text)
 
     def _is_state_record(self, chunk: Chunk) -> bool:
         """Whether this is a line of the record's state, which only the state model reads."""
@@ -327,53 +344,45 @@ class GroundingResolver:
         tier: GroundingTierSettings,
         judged: list[tuple[EntailmentResult, Chunk]],
     ) -> tuple[EntailmentResult, Chunk] | None:
-        """The one decisive result that speaks for the tier: the latest observation, then the closest.
+        """The one decisive result that speaks for the tier: any support, else a refutation.
 
-        Two reads of one order, before and after it was cancelled, disagree
-        about "your order has been cancelled" — and the later is the world.
-        Within one observation the sentence most like the claim decides,
-        so a sibling sentence about something else can neither erase a
-        true contradiction nor manufacture one.
+        A tier's evidence, once `_current` has removed what the turn
+        overtook, is one consistent body — the record as it now stands, or
+        the rulebook — so it cannot both entail a claim and contradict it.
+        When the model says it does, the contradiction is about another
+        attribute: "the refund for order 10842 has been approved" against
+        "order 10842 was cancelled". So a contradiction stands only when
+        nothing the tier holds entails the claim. Neither order nor
+        closeness decides it; the first rule let a later read of the refund
+        overrule an earlier read of the order it said nothing about.
+
+        A false support is no cheaper than a false refutation, so support
+        must come from evidence about what the claim names, and a claim
+        about a record's state has already met the deterministic state
+        check before any model is asked.
         """
         decisive = [
             item
             for item in judged
             if item[0].label in _DECIDING_LABELS
             and self._is_decisive(item[0])
-            and (
-                item[0].label == "entailment"
-                or (tier.may_refute and self._may_refute(claim, item[1]))
-            )
+            and self._may_decide(claim, tier, item)
         ]
-        return max(self._one_voice_per_observation(decisive), key=self._recency, default=None)
+        supports = [item for item in decisive if item[0].label == ENTAILMENT_LABEL]
+        return max(supports or decisive, key=self._strength, default=None)
+
+    def _may_decide(
+        self, claim: str, tier: GroundingTierSettings, item: tuple[EntailmentResult, Chunk]
+    ) -> bool:
+        """Whether this result may speak: support about this subject, refutation where allowed."""
+        if item[0].label == ENTAILMENT_LABEL:
+            return not self._names_only_others(claim, item[1])
+        return tier.may_refute and self._may_refute(claim, item[1])
 
     @staticmethod
-    def _one_voice_per_observation(
-        decisive: list[tuple[EntailmentResult, Chunk]],
-    ) -> list[tuple[EntailmentResult, Chunk]]:
-        """An observation is one consistent record, so any sentence that entails it supports it.
-
-        Its sentences cannot really disagree; when a model says they do, the
-        contradiction is the model's, about a sentence that is not about
-        what the claim is about. So within one observation an entailing
-        sentence outvotes a contradicting sibling, whichever sentence is
-        closer to the claim. A contradiction stands only when nothing in its
-        observation entails the claim. Evidence with no observation (a rule,
-        a passage) is its own voice.
-        """
-        voices: dict[object, tuple[EntailmentResult, Chunk]] = {}
-        for index, item in enumerate(decisive):
-            sequence = item[1].metadata.get(OBSERVATION_SEQUENCE)
-            key: object = sequence if isinstance(sequence, int) else ("alone", index)
-            held = voices.get(key)
-            if held is None or _outvotes(item, held):
-                voices[key] = item
-        return list(voices.values())
-
-    @staticmethod
-    def _recency(item: tuple[EntailmentResult, Chunk]) -> tuple[int, float]:
-        sequence = item[1].metadata.get(OBSERVATION_SEQUENCE)
-        return (sequence if isinstance(sequence, int) else -1, item[1].score)
+    def _strength(item: tuple[EntailmentResult, Chunk]) -> tuple[float, float]:
+        """The surest result first, and the closer evidence between two equally sure."""
+        return (item[0].score, item[1].score)
 
     def _restated(self, claim: str, chunks: list[Chunk]) -> tuple[EntailmentResult, Chunk] | None:
         """A rule that says the claim in nearly its own words.
@@ -418,6 +427,20 @@ class GroundingResolver:
             return True
         named = set(self._identifier.findall(claim))
         return not named or bool(named & set(self._identifier.findall(chunk.content)))
+
+    def _names_only_others(self, claim: str, chunk: Chunk) -> bool:
+        """Whether evidence names subjects, none of them the claim's.
+
+        "Order 10843 has been cancelled" says nothing about order 10842,
+        whatever a model makes of it. Evidence naming nothing (a carrier's
+        note, split from the sentence that named its order) may still
+        support.
+        """
+        if self._identifier is None:
+            return False
+        named = set(self._identifier.findall(claim))
+        theirs = set(self._identifier.findall(chunk.content))
+        return bool(named and theirs and not named & theirs)
 
     def _is_decisive(self, result: EntailmentResult) -> bool:
         """Whether a result settles the claim, judged on its own scale.

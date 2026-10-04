@@ -11,7 +11,7 @@ The model can propose; only an `ApprovedToolCall` reaches this module.
 
 ## Public interface
 
-- `ToolExecutor` (Protocol), `ToolExecutorImpl` (`executor.py`)
+- `ToolExecutor` (Protocol), `ToolExecutorImpl`, `current_execution_key()` (`executor.py`) — the key the current call runs under, for a handler whose effect can later be undone (a void releases it)
 - `ToolExecutionHandler`, `ExecutionAuditHook`, `ExecutionAuditEvent`, `ExecutionPhase`, `ExecutionStatus` (`types.py`)
 
 ## Configuration
@@ -36,4 +36,6 @@ Run with `./venv/bin/pytest tests/unit/test_gatekeeper.py -q` (or `make test` fo
 
 ## Status and limits
 
-Always on.
+Always on — including with the Gatekeeper withheld: `/harness gatekeeper off` removes
+the authority decision, not idempotency, the deadline or the audit entry. Such a call
+carries `ApprovedToolCall.ungoverned` (standing `UNGOVERNED`).

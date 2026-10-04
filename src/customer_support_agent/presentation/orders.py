@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from agent_platform.context.types import Chunk
 from agent_platform.presentation import Align, box_table
 from customer_support_agent.config import get_agent_settings
+from customer_support_agent.config.settings import OrderDetailPhrases
 from customer_support_agent.domain.models import Order, User
 from customer_support_agent.persistence.repositories import OrdersRepository
 
@@ -93,10 +94,44 @@ ORDER_RECORD_SOURCE = "order_record:{order_id}"
 def order_sentence(order: Order) -> str:
     """One order as a sentence: what context shows the model, and what a record states."""
     return (
-        f"Order {order.order_id} placed {order.timestamp[:10]}: {order.description}, "
-        f"{order.order_status}, {order.whereabouts}, {order.amount}, "
-        f"refund {order.refund_status}"
+        f"{order_state_sentence(order, placed=True)}, {order.amount}, refund {order.refund_status}"
     )
+
+
+def order_state_sentence(order: Order, placed: bool = False) -> str:
+    """Which order this is and where it has got to, as a sentence NLI can read.
+
+    The grounding check compares a claim with one sentence at a time, and a
+    comma list of status words is not one: "Order N: item, shipped, in
+    transit" read as *contradicting* "your order has already shipped".
+    """
+    wording = get_agent_settings().order_sentences
+    return f"{_order_subject(order, placed)} {_order_state(order, wording.details)}"
+
+
+def _order_subject(order: Order, placed: bool) -> str:
+    """The order by number, with what was bought when the record names it."""
+    wording = get_agent_settings().order_sentences
+    template = wording.subject_with_item if order.product_name else wording.subject
+    subject = template.format(order_id=order.order_id, description=order.description)
+    return (
+        wording.placed.format(subject=subject, placed=order.timestamp[:10]) if placed else subject
+    )
+
+
+def _order_state(order: Order, details: OrderDetailPhrases) -> str:
+    """The state clause for this order's status, with only the details the record holds."""
+    states = get_agent_settings().order_sentences.states.model_dump()
+    return str(states[order.order_status]).format(
+        location=_detail(details.location, order.current_location),
+        due=_detail(details.due, (order.estimated_delivery_date or "")[:10]),
+        delivered=_detail(details.delivered, (order.delivered_at or "")[:10]),
+    )
+
+
+def _detail(phrase: str, value: str | None) -> str:
+    """One optional phrase, or nothing when the record holds no value for it."""
+    return phrase.format(value=value) if value else ""
 
 
 def order_record(orders: OrdersRepository, order_id: int, customer_id: int | None) -> Chunk | None:
@@ -130,8 +165,8 @@ def describe_orders(orders: list[Order]) -> str:
     if not orders:
         return render_order_list(orders)
     return "\n".join(
-        f"Order {order.order_id}, placed {order.timestamp[:10]}: {order.description}, "
-        f"{order.order_status}, refund {order.refund_status}, total {order.amount}"
+        f"{order_state_sentence(order, placed=True)}, refund {order.refund_status}, "
+        f"total {order.amount}"
         for order in orders
     )
 

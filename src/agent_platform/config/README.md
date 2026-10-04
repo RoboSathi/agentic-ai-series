@@ -19,6 +19,7 @@ agent is given.
 - `use_overlay(path)` / `clear_overlays()` / `config_sources()` — the overlay chain
 - `FeatureSet`, `active_features`, `set_active_features` (`features.py`)
 - `resolve_path` / `REPO_ROOT` — paths resolve against the repo, never the shell's CWD
+- `load_environment` (`environment.py`) — the repo's `.env` fills the process environment once (an exported variable wins); `AppConfig` does not parse it, so a bare key there (`PII_VAULT_KEY`, `nvidia_api_key`) is never an "extra input"
 - `VersionManifest` (`versions.py`) — the independently versioned components (E39)
 
 ## Configuration

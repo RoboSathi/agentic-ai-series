@@ -14,7 +14,7 @@ which were skipped because of short-circuiting.
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from agent_platform.gatekeeper.mandate import MandateSet
 from agent_platform.observability.types import utc_now
@@ -22,6 +22,21 @@ from agent_platform.primitives.money import Money
 
 Verdict = Literal["allow", "deny", "escalate"]
 CheckStatus = Literal["PASS", "FAIL", "ESCALATE", "SKIPPED"]
+# Where an action stands in agency terms: what the principal may do about it.
+#   VOID        refused, and nobody can adopt it: the agent had no authority at all.
+#   RATIFIABLE  beyond the agent's own bounds; a person with authority may adopt it.
+#   RATIFIED    a person adopted a RATIFIABLE action, and it ran on their authority.
+#   VOIDABLE    within authority and executed, but undoable until its window closes.
+#   VALID       within authority and executed, for good.
+#   UNGOVERNED  executed with the Gatekeeper withheld: nobody ruled on it.
+Standing = Literal["VOID", "RATIFIABLE", "RATIFIED", "VOIDABLE", "VALID", "UNGOVERNED"]
+# The standing a verdict implies when nothing more is known. An allow is
+# VALID unless the Gatekeeper knows the action is voidable.
+_STANDING_OF_VERDICT: dict[str, Standing] = {
+    "allow": "VALID",
+    "deny": "VOID",
+    "escalate": "RATIFIABLE",
+}
 
 
 class AuthorityContext(BaseModel):
@@ -75,6 +90,14 @@ class AuthorityDecision(BaseModel):
     checks: list[CheckReport] = Field(default_factory=list)
     advisory: AdvisoryFlag | None = None
     decided_at: datetime = Field(default_factory=utc_now)
+    # Derived from the verdict when not given (see `_STANDING_OF_VERDICT`).
+    standing: Standing | None = None
+
+    @model_validator(mode="after")
+    def _derive_standing(self) -> "AuthorityDecision":
+        if self.standing is None:
+            self.standing = _STANDING_OF_VERDICT[self.verdict]
+        return self
 
     @property
     def allowed(self) -> bool:

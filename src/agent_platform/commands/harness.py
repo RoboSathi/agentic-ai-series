@@ -2,6 +2,7 @@
 
 from agent_platform.commands.types import CommandError, CommandResult, ConsoleEffect
 from agent_platform.config import active_features, set_active_features
+from agent_platform.config.features import SEPARATOR
 
 
 class HarnessCommand:
@@ -25,7 +26,9 @@ class HarnessCommand:
     Every form is a hot reload. Nothing is re-read from disk and nothing
     is remembered — `off` withholds every feature, `on` grants every
     feature, and a named path moves exactly one. A restart returns to
-    whatever the agent's config declared.
+    whatever the agent's config declared. A parent moves its children
+    with it; a child is named dotted (`memory.working`) or in words
+    (`memory working`).
 
     All of them rebuild the agent: the composition root decides what to
     wire, so an agent already running was built under the old answer.
@@ -34,18 +37,25 @@ class HarnessCommand:
     group = "Control"
     name = "harness"
     summary = "Turn the whole harness, or one feature, off and on"
-    usage = "/harness [on|off] | /harness <feature> [on|off]"
+    usage = "/harness [on|off] | /harness <feature> [<child>] on|off"
 
-    def argument_completions(self) -> list[str]:
-        """Every feature path, plus the two words that move one."""
-        return [*active_features().paths(), "on", "off"]
+    def argument_completions(self, args: list[str]) -> list[str]:
+        """A feature path or a bulk on/off; then a parent's children, then the switch."""
+        switches = ["on", "off"]
+        features = active_features()
+        if not args:
+            return [*features.paths(), *switches]
+        if args[-1] in switches:
+            return []
+        children = [p for p in features.child(args[0]).paths() if SEPARATOR not in p]
+        return [*children, *switches] if len(args) == 1 else switches
 
     async def run(self, args: list[str]) -> CommandResult:
         if not args:
             return self._report()
         if len(args) == 1:
             return self._bulk(args[0])
-        return self._one(args[0], args[1])
+        return self._one(SEPARATOR.join(args[:-1]), args[-1])
 
     def _bulk(self, word: str) -> CommandResult:
         """Move every feature at once — the E01 gesture."""

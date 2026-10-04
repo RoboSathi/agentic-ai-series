@@ -120,12 +120,16 @@ class TestTools:
         tools.queue_for_approval(10002, 210.0)
         assert "pending" in tools.get_refund_status(10002).output
 
-    async def test_a_refund_moves_the_order_to_completed(
+    async def test_a_refund_moves_the_order_to_issued(
         self, tools: SupportTools, orders: OrdersRepository
     ) -> None:
+        """Issued, not completed: it settles later, and until then it can be voided."""
         result = await tools.process_refund(10001, 32.0, "damaged")
         assert result.success
-        assert orders.get(10001).refund_status == "completed"  # type: ignore[union-attr]
+        order = orders.get(10001)
+        assert order is not None
+        assert order.refund_status == "issued"
+        assert order.refund_settles_at is not None
 
     async def test_an_already_refunded_order_cannot_be_refunded_again(
         self, tools: SupportTools
@@ -159,6 +163,13 @@ class TestTools:
         assert len(hitl.pending()) == 1
 
 
+class _BrokenLedger(RefundLedgerRepository):
+    """A ledger whose write fails: the payment step of the saga cannot commit."""
+
+    def record(self, *args: object, **kwargs: object) -> None:
+        raise RuntimeError("ledger unavailable")
+
+
 class TestRefundSaga:
     async def test_a_successful_refund_completes_every_step(
         self, orders: OrdersRepository, refunds: RefundLedgerRepository
@@ -166,33 +177,41 @@ class TestRefundSaga:
         saga = RefundSaga(orders, refunds)
         result = await saga.issue(orders.get(10001), 32.0, "damaged")  # type: ignore[arg-type]
         assert result.succeeded
-        assert result.completed == ["mark_order_refunded", "record_payment", "notify_customer"]
+        assert result.completed == ["mark_refund_issued", "record_payment"]
 
     async def test_a_failure_rolls_the_order_status_back(
-        self, orders: OrdersRepository, refunds: RefundLedgerRepository
+        self, orders: OrdersRepository, seeded_pool: SqliteConnectionPool
     ) -> None:
-        """Money moved with the order still unrefunded is the failure this prevents."""
-
-        async def broken_notifier(user_id: str, message: str) -> None:
-            raise RuntimeError("notification service down")
-
-        saga = RefundSaga(orders, refunds, notifier=broken_notifier)
+        """An order marked refunded with no payment recorded is the failure this prevents."""
         order = orders.get(10001)
         assert order is not None
-        result = await saga.issue(order, 32.0, "damaged")
+        result = await RefundSaga(orders, _BrokenLedger(seeded_pool)).issue(order, 32.0, "x")
+        assert result.succeeded is False
+        restored = orders.get(10001)
+        assert restored is not None
+        assert restored.refund_status == "none"
+        assert restored.refund_settles_at is None
+
+    async def test_a_stale_order_is_not_refunded(
+        self, orders: OrdersRepository, refunds: RefundLedgerRepository
+    ) -> None:
+        """The issue is one conditional write: a snapshot that no longer holds pays nothing."""
+        stale = orders.get(10001)
+        assert stale is not None
+        orders.set_refund_status(10001, "completed")
+        result = await RefundSaga(orders, refunds).issue(stale, 32.0, "x")
+        assert result.succeeded is False
+        assert refunds.total_for_user(1) == Money.zero()
+
+    async def test_a_partial_amount_is_not_issued(
+        self, orders: OrdersRepository, refunds: RefundLedgerRepository
+    ) -> None:
+        """The full total is part of the conditional write, not only of the tool's check."""
+        order = orders.get(10001)
+        assert order is not None
+        result = await RefundSaga(orders, refunds).issue(order, 1.0, "x")
         assert result.succeeded is False
         assert orders.get(10001).refund_status == "none"  # type: ignore[union-attr]
-
-    async def test_a_failure_reverses_the_recorded_payment(
-        self, orders: OrdersRepository, refunds: RefundLedgerRepository
-    ) -> None:
-        async def broken_notifier(user_id: str, message: str) -> None:
-            raise RuntimeError("down")
-
-        order = orders.get(10001)
-        assert order is not None
-        await RefundSaga(orders, refunds, notifier=broken_notifier).issue(order, 32.0, "x")
-        assert refunds.total_for_user(1) == Money.zero()
 
     async def test_the_same_refund_is_not_issued_twice(
         self,

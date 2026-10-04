@@ -32,9 +32,11 @@ INSERT INTO platform_agent_permissions (agent_id, permission) VALUES
 -- This row is the one place the refund limit lives. Nothing the model
 -- sees states it; `make refund-limit <amount>` changes it.
 -- per_action — above this one refund (or cancellation) escalates to a human.
--- window     — the running total over window_hours: the structuring defence
---              (E02). Many individually-permitted refunds are not many
---              permitted actions; they are one unpermitted large one.
+-- window     — required by the shared schema, and not enforced for this agent:
+--              `gatekeeper.ledger.enabled` is false in its config. A refund is
+--              always an order's full total, so it cannot be split, and an
+--              agent-wide rolling window was never reached in use. The
+--              structuring defence itself (E02) is the platform's, unchanged.
 DELETE FROM platform_agent_budgets WHERE agent_id = '__AGENT_ID__';
 
 INSERT INTO platform_agent_budgets (

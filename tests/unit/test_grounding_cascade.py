@@ -12,7 +12,7 @@ import pytest
 from agent_platform.context.types import Chunk
 from agent_platform.evals import create_scoring_cascade
 from agent_platform.evals.entailment import EntailmentResult
-from agent_platform.guardrails.response import ResponseGuardrail
+from agent_platform.guardrails.response import ResponseGuardrail, ResponseGuardrailResult
 from agent_platform.hallucination_protection import (
     ClaimClassifier,
     ClaimDecomposer,
@@ -308,10 +308,11 @@ def _scripted_guard() -> ResponseGuardrail:
     return ResponseGuardrail(DetectionLadder(create_scoring_cascade(), entailment=_Scripted()))
 
 
-def _seen(text: str, sequence: int, *, wrote: bool = False) -> Chunk:
+def _seen(text: str, sequence: int, *, wrote: bool = False, source: str = "") -> Chunk:
     return Chunk(
         content=text,
         kind="tool_result",
+        source=source,
         metadata={"observation_sequence": sequence, "state_changing": wrote},
     )
 
@@ -433,3 +434,115 @@ class TestAnObservationIsOneConsistentRecord:
     async def test_a_contradiction_with_no_entailing_sibling_still_refutes(self) -> None:
         result = await self._guard().enforce(self._CLAIM, [_seen(self._CONTRADICTS, 0)])
         assert result.escalated
+
+
+class _ByPremise:
+    """A model with a fixed opinion on each premise, neutral on any it was not given."""
+
+    model_name = "stub-nli"
+
+    def __init__(self, labels: dict[str, str]) -> None:
+        self._labels = labels
+
+    async def entails(self, premise: str, hypothesis: str) -> EntailmentResult:
+        label = self._labels.get(premise, "unknown")
+        return EntailmentResult(
+            label=label,
+            entailed=label == "entailment",
+            score=0.99,
+            calibrated=True,
+            model="stub-nli",
+        )
+
+
+def _judged_by(labels: dict[str, str]) -> ResponseGuardrail:
+    return ResponseGuardrail(
+        DetectionLadder(create_scoring_cascade(), entailment=_ByPremise(labels))
+    )
+
+
+def _all_supported(result: ResponseGuardrailResult) -> bool:
+    return not result.escalated and result.claims > 0 and result.supported == result.claims
+
+
+class TestTheCurrentEvidenceIsOneConsistentWorld:
+    """Order 10842: cancelled, its refund approved — and "was cancelled" was blocked.
+
+    The order read entailed the claim; the refund read, taken later and about
+    another attribute, "contradicted" it at 0.99, and the later read won.
+    Reads that nothing has overtaken describe one world, so they cannot
+    disagree about it: a contradiction stands only when no current evidence
+    entails the claim.
+    """
+
+    _CLAIM = "Order 10842 (Bluetooth Speaker) was cancelled."
+    _ORDER = "Order 10842 (Bluetooth Speaker) has been cancelled, so it is not on its way"
+    _REFUND = "The refund for order 10842 has been approved."
+
+    async def test_a_later_read_of_another_attribute_cannot_refute(self) -> None:
+        guard = _judged_by({self._ORDER: "entailment", self._REFUND: "contradiction"})
+        evidence = [
+            _seen(self._ORDER, 0, source="get_order_status"),
+            _seen(self._REFUND, 1, source="get_refund_status"),
+        ]
+        assert _all_supported(await guard.enforce(self._CLAIM, evidence))
+
+    async def test_the_order_of_the_reads_does_not_matter(self) -> None:
+        guard = _judged_by({self._ORDER: "entailment", self._REFUND: "contradiction"})
+        evidence = [
+            _seen(self._REFUND, 0, source="get_refund_status"),
+            _seen(self._ORDER, 1, source="get_order_status"),
+        ]
+        assert _all_supported(await guard.enforce(self._CLAIM, evidence))
+
+    async def test_a_claim_nothing_entails_is_still_refuted(self) -> None:
+        guard = _judged_by({self._ORDER: "contradiction", self._REFUND: "contradiction"})
+        evidence = [
+            _seen(self._ORDER, 0, source="get_order_status"),
+            _seen(self._REFUND, 1, source="get_refund_status"),
+        ]
+        assert (await guard.enforce(self._CLAIM, evidence)).escalated
+
+    async def test_a_later_read_from_the_same_tool_overtakes_the_earlier(self) -> None:
+        """Re-read after the state moved: the stale read may no longer support."""
+        before = "Order 10842 (Bluetooth Speaker) is waiting to be cancelled"
+        after = "Order 10842 (Bluetooth Speaker) has been delivered"
+        guard = _judged_by({before: "entailment", after: "contradiction"})
+        evidence = [
+            _seen(before, 0, source="get_order_status"),
+            _seen(after, 1, source="get_order_status"),
+        ]
+        assert (await guard.enforce(self._CLAIM, evidence)).escalated
+
+    async def test_reads_of_unknown_origin_never_overtake_each_other(self) -> None:
+        """An unnamed source is no tool, so two such reads are not a re-read."""
+        after = "Order 10842 (Bluetooth Speaker) has been delivered"
+        guard = _judged_by({self._ORDER: "entailment", after: "contradiction"})
+        evidence = [_seen(self._ORDER, 0), _seen(after, 1)]
+        assert _all_supported(await guard.enforce(self._CLAIM, evidence))
+
+    async def test_a_refused_re_read_overtakes_nothing(self) -> None:
+        """A call that was refused observed nothing, so the earlier read still stands."""
+        refused = "NOT EXECUTED get_order_status(order_id=10842): budget exhausted"
+        guard = _judged_by({self._ORDER: "entailment"})
+        evidence = [
+            _seen(self._ORDER, 0, source="get_order_status"),
+            _seen(refused, 1, source="get_order_status"),
+        ]
+        assert _all_supported(await guard.enforce(self._CLAIM, evidence))
+
+    async def test_a_later_read_of_another_order_overtakes_nothing(self) -> None:
+        other = "Order 10843 (Desk Lamp) has been delivered"
+        guard = _judged_by({self._ORDER: "entailment", other: "contradiction"})
+        evidence = [
+            _seen(self._ORDER, 0, source="get_order_status"),
+            _seen(other, 1, source="get_order_status"),
+        ]
+        assert _all_supported(await guard.enforce(self._CLAIM, evidence))
+
+    async def test_another_orders_record_cannot_support(self) -> None:
+        """Entailment must be about what the claim names, as a refutation must."""
+        other = "Order 10843 (Bluetooth Speaker) has been cancelled"
+        guard = _judged_by({other: "entailment"})
+        result = await guard.enforce(self._CLAIM, [_seen(other, 0, source="get_order_status")])
+        assert result.supported == 0, result.claim_checks
