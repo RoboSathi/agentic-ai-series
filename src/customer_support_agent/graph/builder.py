@@ -101,10 +101,11 @@ from customer_support_agent.persistence.repositories import (
     RefundLedgerRepository,
     UsersRepository,
 )
+from customer_support_agent.persistence.schema import ensure_schema
 from customer_support_agent.resilience.cancellation_saga import CancellationSaga
 from customer_support_agent.resilience.refund_saga import RefundSaga
 from customer_support_agent.review.queue import ReviewQueueService
-from customer_support_agent.review.referral import ReviewReferral
+from customer_support_agent.review.referral import ReplyReferral, ReviewReferral
 from customer_support_agent.security.authentication import CustomerAuthenticator
 from customer_support_agent.tools.definitions import CustomerSupportToolHandler, SupportTools
 from customer_support_agent.verification import RefundEffectSource
@@ -273,6 +274,8 @@ def build_agent(
     set_active_features(features)
     agent_id = settings.agent.id
     connection = pool or SqliteConnectionPool(agent_settings.resolved_db_path)
+    # Idempotent; upgrades a database built before reply reviews shared the queue.
+    ensure_schema(connection)
     platform_store = SqlitePlatformStore(connection, agent_id=agent_id)
     policy_repo = AgentPolicyRepository(platform_store)
     agent_policy = policy_repo.get()
@@ -433,6 +436,8 @@ def build_agent(
         gatekeeper=governed,
         # Only a Gatekeeper escalates, so only a governed agent refers.
         referral=ReviewReferral(tools) if governed is not None else None,
+        # Only the hallucination check cuts a reply, so only a checked agent refers one.
+        reply_referral=ReplyReferral(hitl) if features.is_on("hallucination_guard") else None,
         audit=ledger,
         features=features,
         registry=registry,

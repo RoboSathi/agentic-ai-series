@@ -7,13 +7,13 @@ A node's failure blocks its dependents and nothing else.
 """
 
 from agent_platform.scheduling.graph import TaskGraph, find_cycle
-from agent_platform.scheduling.scheduler import AsyncDagScheduler, WaveObserver, Worker
+from agent_platform.scheduling.scheduler import AsyncDagScheduler, BatchObserver, Worker
 from agent_platform.scheduling.types import (
+    BatchSummary,
     InvalidTaskGraphError,
     OutcomeStatus,
     TaskNode,
     TaskOutcome,
-    WaveSummary,
 )
 
 __all__ = [
@@ -23,8 +23,8 @@ __all__ = [
     "TaskGraph",
     "TaskNode",
     "TaskOutcome",
-    "WaveObserver",
-    "WaveSummary",
+    "BatchObserver",
+    "BatchSummary",
     "Worker",
     "find_cycle",
 ]

@@ -6,6 +6,10 @@
 `reason` ends the loop by answering; `act` hands the results back. A budget decides every other
 exit: when the last step, the tool-call cap, the token cap or the clock is reached the model is
 asked once more *without tools*, so it answers from what it has instead of being cut off mid-search.
+A model that still asks for a tool on that last step is asked again, then — still nothing — once
+from the observations alone, so an answer the tools found is never dropped for an empty reply.
+A search for an undated question carries a note when it is pinned to a past year or finds only
+old results (`research/recency.py`): no date named means the latest.
 `ground` is the HALLUCINATION CHECK: the answer is checked against what the tools returned, and only if that
 check refutes a claim is the model asked once to REVISE it. Every step is a card on the live feed,
 numbered "Step N", and every payload is in the log and the audit trail.
@@ -36,9 +40,10 @@ from research_agent.graph.points import as_points
 from research_agent.guardrails.answer_grounding import AnswerGrounding, GroundingOutcome
 from research_agent.llm.structured import ModelCallTimeoutError, StructuredCaller
 from research_agent.observability.telemetry import RunTelemetry
-from research_agent.presentation.narration import clip
+from research_agent.presentation.narration import clip, role_title
 from research_agent.prompts import answer as prompt
-from research_agent.tools import URLS_KEY
+from research_agent.research.recency import RecencyGuard
+from research_agent.tools import PUBLISHED_KEY, QUERY_KEY, URLS_KEY
 
 # The loop's cards, in the order a step emits them.
 THOUGHT, ACTION, OBSERVATION, REVISE, ANSWER = (
@@ -66,8 +71,10 @@ class AnswerNodes:
         settings: AnswerSettings,
         telemetry: RunTelemetry,
         grounding: AnswerGrounding | None = None,
+        recency: RecencyGuard | None = None,
     ) -> None:
         self._grounding = grounding
+        self._recency = recency
         self._caller = caller
         self._registry = registry
         self._settings = settings
@@ -86,20 +93,68 @@ class AnswerNodes:
         if limit == "seconds":
             # Too little time left for a model call: answer with what there is.
             return {"stop": limit}
-        tools = None if limit else self._registry.to_openai_tools()
+        if limit:
+            return await self._final(turn, state, limit)
         try:
-            result = await self._think(turn, state["messages"], tools)
+            result = await self._think(turn, state["messages"], self._registry.to_openai_tools())
         except Exception as exc:
             return self._failed(turn, exc)
-        wanted = (
-            (result.tool_calls or [])[: int(turn.budget.remaining(TOOL_CALLS))] if tools else []
-        )
+        wanted = (result.tool_calls or [])[: int(turn.budget.remaining(TOOL_CALLS))]
         if wanted:
             return {
                 "messages": [Message(role="assistant", content=result.content, tool_calls=wanted)]
             }
+        return {"text": result.content.strip(), "stop": ""}
+
+    async def _final(self, turn: Turn, state: AnswerState, limit: str) -> dict[str, Any]:
+        """The last step: an answer now, from what the tools returned — never an empty reply.
+
+        A model offered no tools may still ask for one (it wants one more page to settle a
+        figure). That reply has no text, and taking it as the answer threw away everything the
+        tools had found. It is asked again, told it is the last step, and then — if it still
+        asks for a tool — once more from the observations alone, with no tool history to resume.
+        """
+        messages = [*state["messages"], Message(role="user", content=prompt.FINAL_STEP)]
+        try:
+            text = await self._final_text(turn, messages)
+            if not text and state["observations"]:
+                text = await self._from_observations(turn, state["observations"])
+        except Exception as exc:
+            return self._failed(turn, exc)
         used = turn.spent(TOOL_CALLS) > 0
-        return {"text": result.content.strip(), "stop": limit if limit and used else ""}
+        return {"text": text, "stop": limit if used else ""}
+
+    async def _final_text(self, turn: Turn, messages: list[Message]) -> str:
+        """Up to `final_attempts` tries for a text reply with no tools offered."""
+        for attempt in range(1, self._settings.final_attempts + 1):
+            if self._time_left(turn) < self._settings.min_call_seconds:
+                return ""
+            result = await self._think(turn, messages, None)
+            if result.content.strip():
+                return result.content.strip()
+            self._logger.warning(
+                "Last step gave no answer text",
+                attempt=attempt,
+                asked_for_tools=[call.name for call in result.tool_calls or []],
+                question=turn.question,
+            )
+        return ""
+
+    async def _from_observations(self, turn: Turn, observations: list[Observation]) -> str:
+        """The answer from what the tools returned, in a fresh conversation with nothing to resume."""
+        if self._time_left(turn) < self._settings.min_call_seconds:
+            return ""
+        payload = {
+            "question": turn.question,
+            "today": turn.asked_at.strftime(self._settings.date_format),
+            "observations": [{"source": item.source, "text": item.text} for item in observations],
+        }
+        messages = [
+            Message(role="system", content=prompt.FROM_OBSERVATIONS),
+            Message(role="user", content=json.dumps(payload, ensure_ascii=False)),
+        ]
+        result = await self._think(turn, messages, None)
+        return result.content.strip()
 
     async def _think(
         self, turn: Turn, messages: list[Message], tools: list[dict[str, Any]] | None
@@ -191,7 +246,7 @@ class AnswerNodes:
 
     def _waiting(self) -> str:
         """The pending THOUGHT card's heading, shown while the model call is in flight."""
-        return self._notes.thought_waiting.format(role=self._settings.role)
+        return self._notes.thought_waiting.format(role=role_title(self._settings.role))
 
     def _failed(self, turn: Turn, exc: Exception) -> dict[str, Any]:
         if isinstance(exc, ModelCallTimeoutError):
@@ -238,6 +293,9 @@ class AnswerNodes:
         )
         result = await self._execute(call, turn)
         text = result.output if result.success else result.error or self._notes.empty
+        note = self._recency_note(turn, result)
+        if note:
+            text = f"{text}\n\n{note}"
         self._observe(turn, name, text, result)
         self._telemetry.audit(
             "answer.tool",
@@ -250,6 +308,18 @@ class AnswerNodes:
         # Only what a tool actually returned can ground a claim; an error or a refusal cannot.
         seen = [Observation(text, source=urls[0] if urls else call.name)] if result.success else []
         return Message(role="tool", content=text, tool_call_id=call.id), urls, seen
+
+    def _recency_note(self, turn: Turn, result: ToolResult) -> str:
+        """A search pinned to the past, or with only old results, for an undated question."""
+        query = result.data.get(QUERY_KEY)
+        if self._recency is None or not result.success or not isinstance(query, str):
+            return ""
+        today = turn.asked_at.date()
+        published = [str(value) for value in result.data.get(PUBLISHED_KEY, [])]
+        verdict = self._recency.check(turn.question, query, published, today)
+        return self._recency.note(
+            verdict, today, turn.asked_at.strftime(self._settings.date_format)
+        )
 
     async def _execute(self, call: ModelToolCall, turn: Turn) -> ToolResult:
         """The tool, after the watchdog: an unknown tool or bad arguments are said, not raised."""
@@ -369,7 +439,8 @@ class AnswerNodes:
             if outcome.clean
             else self._notes.ungrounded_heading.format(removed=len(outcome.removed), tally=tally)
         )
-        status = "completed" if outcome.clean else "warning"
+        # Coloured by what was shown: the answer (done), less a detail (warning), or nothing of it.
+        status = "completed" if outcome.clean else "blocked" if outcome.withheld else "warning"
         self._emit(
             turn,
             HALLUCINATION_CHECK,

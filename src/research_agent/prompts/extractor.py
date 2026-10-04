@@ -7,9 +7,11 @@ page persuades the extractor of, nothing but candidates can come out —
 and each candidate's span is then checked verbatim against the page.
 """
 
+from datetime import date
+
 from pydantic import BaseModel, Field
 
-from research_agent.prompts.base import RolePrompt
+from research_agent.prompts.base import RolePrompt, dated
 
 ROLE = "extractor"
 
@@ -71,15 +73,18 @@ class ExtractorAnswer(BaseModel):
     claims: list[ExtractedClaim] = Field(default_factory=list)
 
 
-def build(question: str, url: str, delimited_text: str, max_claims: int) -> RolePrompt:
+def build(question: str, url: str, delimited_text: str, max_claims: int, today: date) -> RolePrompt:
     return RolePrompt(
         role=ROLE,
         instructions=INSTRUCTIONS,
-        payload={
-            "task": "extract",
-            "question": question,
-            "url": url,
-            "page": delimited_text,
-            "max_claims": max_claims,
-        },
+        payload=dated(
+            {
+                "task": "extract",
+                "question": question,
+                "url": url,
+                "page": delimited_text,
+                "max_claims": max_claims,
+            },
+            today,
+        ),
     )

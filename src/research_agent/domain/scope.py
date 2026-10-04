@@ -6,6 +6,7 @@ audit — is derived from it and checked against it, so it is typed and
 immutable rather than a paragraph of chat history.
 """
 
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -13,20 +14,18 @@ from pydantic import BaseModel, ConfigDict, Field
 from research_agent.domain.budget import Budget
 
 Archetype = Literal[
-    "decision_support", "landscape_brief", "fact_verification", "explainer", "general", "qa"
+    "decision_support", "landscape_brief", "fact_verification", "explainer", "general"
 ]
-# What the user chooses between: a quick cited answer, or a scoped research run.
-Mode = Literal["qa", "research"]
 ItemStatus = Literal["open", "covered", "waived"]
 # How big a run and its report are: each size is a profile in config (`agent.depths`).
 Depth = Literal["small", "medium", "large"]
 DEFAULT_DEPTH: Depth = "small"
-GateDecision = Literal["scopable", "needs_reframe", "refuse"]
-# What decided a gate verdict: a pattern, the fine-tuned encoder, or the model.
-GateSource = Literal["rule", "encoder", "llm"]
+KindDecision = Literal["scopable", "refuse"]
+# What decided a research kind: a pattern, the encoder, or the model.
+KindSource = Literal["rule", "encoder", "llm"]
 UnknownReason = Literal["waived", "closed_early", "turn_cap"]
 
-# The kinds a Research run can take; `general` when no specialised one fits.
+# The kinds a research run can take; `general` when no specialised one fits.
 RESEARCH_ARCHETYPES: tuple[Archetype, ...] = (
     "decision_support",
     "landscape_brief",
@@ -34,9 +33,6 @@ RESEARCH_ARCHETYPES: tuple[Archetype, ...] = (
     "explainer",
     "general",
 )
-# Every kind, including `qa` — the Q&A mode's fast path (no interview).
-ARCHETYPES: tuple[Archetype, ...] = (*RESEARCH_ARCHETYPES, "qa")
-QA: Archetype = "qa"
 GENERAL: Archetype = "general"
 
 
@@ -72,15 +68,14 @@ class CoverageItem(BaseModel):
     multi: bool = False
 
 
-class GateVerdict(BaseModel):
-    """The scopability gate's decision on a first message."""
+class KindVerdict(BaseModel):
+    """The research kind a `/research` question was read as (or a refusal)."""
 
-    decision: GateDecision
-    mode: Mode = "research"
+    decision: KindDecision
     archetype: Archetype | None = None
     topic: str = ""
     reason: str = ""
-    source: GateSource = "llm"
+    source: KindSource = "llm"
     # The model that decided, when one did (encoder checkpoint or LLM).
     source_model: str = ""
     # A time window stated in the message ("in the last 1 month" -> 30).
@@ -129,6 +124,11 @@ class ScopeBrief(BaseModel):
     constraints: tuple[str, ...] = ()
     source_policy: SourcePolicy = Field(default_factory=SourcePolicy)
     recency_days: int | None = None
+    # The span of events the research covers, resolved in code from a window the user stated
+    # ("the last 20 years" on 2026-10-04 → 2006-10-04 … 2026-10-04): never left to a model,
+    # which would count back from its training-era "now".
+    period_start: date | None = None
+    period_end: date | None = None
     geography: str = ""
     depth: Depth = DEFAULT_DEPTH
     deliverable_format: str = ""

@@ -20,7 +20,12 @@ from agent_platform.security.prompt_injection import (
     JailbreakGuard,
     PromptInjectionGuard,
 )
-from agent_platform.security.screening import MessageScreener, PiiOutcome, ScreenOutcome
+from agent_platform.security.screening import (
+    MessageScreener,
+    PiiOutcome,
+    ScreenOutcome,
+    ScreenSubject,
+)
 from agent_platform.security.suite import SecuritySuite
 
 __all__ = [
@@ -37,6 +42,7 @@ __all__ = [
     "MessageScreener",
     "PiiOutcome",
     "ScreenOutcome",
+    "ScreenSubject",
     "HostedContentSafetyGuard",
     "HostedJailbreakGuard",
     "PromptInjectionGuard",

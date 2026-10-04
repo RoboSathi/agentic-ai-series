@@ -3,9 +3,13 @@
 import re
 from datetime import datetime, timezone
 
+import pytest
+
 from research_agent.config import get_agent_settings
 from research_agent.domain.report import Citation, Report, ReportSection
 from research_agent.synthesis.reader_view import render_reader_view, split_findings
+
+pytestmark = pytest.mark.usefixtures("ra_config")
 
 PBS = "https://www.pbs.org/newshour/world/contradicting-trump-pope-leo-says-ai-safety-concerns-not-fake-news"
 PRN = "https://www.prnewswire.com/news-releases/omega-healthcare-receives-geekwire-and-uipath-ai-breakthrough-award-302893014.html"

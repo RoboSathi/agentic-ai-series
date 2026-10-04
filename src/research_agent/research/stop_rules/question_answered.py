@@ -1,6 +1,6 @@
-"""general and qa: stop once every coverage check passes (at least one cited finding).
+"""general: stop once every coverage check passes (at least one cited finding).
 
-Neither kind has subjects to tick off one by one, so "done" is the rubric's
+The kind has no subjects to tick off one by one, so "done" is the rubric's
 own coverage checks: findings exist, from enough domains, on every stated
 criterion. The round cap stops a question that cannot be answered.
 """

@@ -137,7 +137,7 @@ async def test_a_quote_with_straight_quotes_is_admitted_and_stored_as_the_pages_
     assert stored == "said \u201cAI going rogue\u201d is not \u2018fake news\u2019"
     (card,) = rec.of("page_result")
     assert card[1] == say("page.heading", host="a.example", kept=1)
-    assert say("page.section.kept") in card[2]
+    assert _section("evidence") in card[2]
 
 
 @pytest.mark.asyncio
@@ -150,8 +150,8 @@ async def test_a_changed_number_is_still_rejected_and_the_card_says_how_close_it
     result = await worker.run(NODE)
     assert result.entries == [] and resources.trace.span_rejections == 1
     (card,) = rec.of("page_result")
-    assert card[3] == "warning" and say("page.section.kept") not in card[2]
-    (refused,) = card[2][say("page.section.rejected")]
+    assert card[3] == "warning" and _section("evidence") not in card[2]
+    refused = next(line for line in card[2][_section("decision")] if isinstance(line, dict))
     assert get_agent_settings().tui.reasons["SPAN_NOT_VERBATIM"] in refused["text"]
     assert "of the span is on the page" in refused["text"]
 
@@ -162,7 +162,7 @@ async def test_a_page_with_no_claims_says_so_instead_of_vanishing() -> None:
     worker, _, _, rec = _setup({url: "A long page about nothing in particular."}, {})
     await worker.run(NODE)
     (card,) = rec.of("page_result")
-    assert card[3] == "warning" and card[2][say("page.section.note")] == [say("page.nothing")]
+    assert card[3] == "warning" and say("page.nothing") in card[2][_section("decision")]
 
 
 @pytest.mark.asyncio
@@ -254,3 +254,10 @@ async def test_the_search_card_shows_provider_window_and_each_hits_date() -> Non
     assert say("search.provider", provider="tavily") in details
     assert say("search.window", window="news, 30d") in details
     assert card[2][say("search.section.results")] == ["a.example · Tue, 29 Sep 2026"]
+
+
+def _section(key: str) -> str:
+    """A step card section's title (`observability.step_card.sections`)."""
+    from agent_platform.config import get_settings
+
+    return get_settings().observability.step_card.sections[key]

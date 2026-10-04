@@ -1,7 +1,7 @@
 """The support agent's Cancel → Resume, as the console's buttons drive it.
 
 A turn cancelled while the model is answering stops at once, says where it
-stopped, and is offered back as "Resume from <node>"; resumed, it finishes
+stopped, and is offered back as "Resume Agent from <node>"; resumed, it finishes
 from that node with the customer bound again.
 """
 
@@ -64,9 +64,10 @@ class TestCancelThenResume:
 
     async def test_the_console_offers_to_resume_it(self, seeded_pool: SqliteConnectionPool) -> None:
         agent, _, _ = await _cancelled_turn(seeded_pool)
-        [action] = _host(agent).actions("s")
-        assert action.label.startswith("↻ Resume from") and action.command.startswith("/resume ")
-        assert action.variant == "primary"
+        resume, abort = _host(agent).actions("s")
+        assert resume.label.startswith("↻ Resume Agent from")
+        assert resume.command.startswith("/resume ") and resume.variant == "primary"
+        assert abort.command.startswith("/abort ") and abort.label.startswith("✕ Abort")
 
     async def test_resuming_finishes_the_turn_for_the_same_customer(
         self, seeded_pool: SqliteConnectionPool
@@ -79,3 +80,42 @@ class TestCancelThenResume:
         assert agent.runs.get(last.thread_id).status == "completed"
         assert _host(agent).actions("s") == []
         assert current_customer() is None
+
+    async def test_the_stop_message_says_how_far_the_turn_got(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        """Where it stopped, then the turn's progress as a tree, then Resume on its own line."""
+        _, _, state = await _cancelled_turn(seeded_pool)
+        lines = state.response.splitlines()
+        assert lines[0].startswith("Stopped before ") and lines[0].split()[2].isupper()
+        assert any(line.startswith("├─ request:") for line in lines)
+        assert lines[-1].startswith("Everything done so far is saved. Choose ↻ Resume")
+        assert "✕ Abort" in lines[-1]
+
+    async def test_resume_runs_as_a_console_turn_not_as_command_output(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        from agent_platform.commands.runs import ResumeCommand
+
+        agent, _, _ = await _cancelled_turn(seeded_pool)
+        last = agent.runs.latest_in_session("s")
+        result = await ResumeCommand(lambda: agent).run([last.thread_id[:8]])
+        assert result.effect.resume_thread == last.thread_id
+        assert result.lines == [] and "Resumed" not in result.title
+
+    async def test_abort_closes_the_run_keeps_its_record_and_frees_the_console(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        from agent_platform.commands.runs import AbortCommand
+        from agent_platform.config import get_settings
+
+        agent, _, _ = await _cancelled_turn(seeded_pool)
+        last = agent.runs.latest_in_session("s")
+        result = await AbortCommand(lambda: agent).run([last.thread_id[:8]])
+        assert result.lines == [get_settings().durability.stop_report.aborted]
+        record = agent.runs.get(last.thread_id)
+        assert record.status == "aborted" and record.checkpoint_id
+        assert _host(agent).actions("s") == []
+        assert agent.runs.resumable(10) == []
+        again = await AbortCommand(lambda: agent).run([last.thread_id[:8]])
+        assert again.lines == [get_settings().durability.stop_report.nothing_to_abort]

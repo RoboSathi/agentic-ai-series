@@ -85,6 +85,7 @@ def build_local_probes(settings: AppConfig | None = None) -> list[LocalProbe]:
             _intent_probe(config),
             _embedder_probe(config),
             _summarizer_probe(config),
+            _presidio_probe(config),
         )
         if probe is not None
     ]
@@ -171,6 +172,37 @@ def _summarizer_probe(config: AppConfig) -> LocalProbe | None:
 
     return LocalModelProbe(
         "dialogue_summarizer", settings.model, path, summarizer.ensure_loaded_sync, infer
+    )
+
+
+def _presidio_probe(config: AppConfig) -> LocalProbe | None:
+    pii = config.security.pii
+    if pii.engine != "presidio":
+        return None
+    from agent_platform.security.pii.detector import PatternPIIDetector
+    from agent_platform.security.pii.presidio import (
+        PresidioPIIDetector,
+        shared_presidio_analyzer,
+    )
+
+    detector = PresidioPIIDetector(fallback=PatternPIIDetector())
+    text = config.llm.check.local.intent_text
+
+    def load() -> None:
+        if shared_presidio_analyzer() is None:
+            raise RuntimeError("Presidio did not load (see the pii log)")
+
+    async def infer() -> str:
+        found = detector.detect(text)
+        return ", ".join(span.category for span in found) or "no PII"
+
+    settings = pii.presidio
+    return LocalModelProbe(
+        "pii_presidio",
+        f"{settings.model}-{settings.version}",
+        settings.local_model_dir,
+        load,
+        infer,
     )
 
 

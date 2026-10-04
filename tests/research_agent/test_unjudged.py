@@ -1,5 +1,6 @@
 """When the judge (and every backup) fails, the criterion is unverified — never a crashed run."""
 
+from datetime import date
 from typing import Any
 
 import pytest
@@ -21,7 +22,9 @@ class _DownCaller:
 
 
 async def test_a_failed_judge_returns_an_unscored_outcome_not_an_exception() -> None:
-    outcome = await LlmJudge(_DownCaller()).judge(SPEC, REPORT, LedgerSnapshot(entries=()))  # type: ignore[arg-type]
+    outcome = await LlmJudge(_DownCaller()).judge(  # type: ignore[arg-type]
+        SPEC, REPORT, LedgerSnapshot(entries=()), date(2026, 10, 4)
+    )
     assert outcome.applicable is False and outcome.score == 0.0
     assert "did not answer" in outcome.detail
 

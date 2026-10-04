@@ -13,6 +13,7 @@ from agent_platform.config.settings import WebMode, WebSettings
 from agent_platform.llm.http import create_http_client
 from agent_platform.resilience import ExponentialBackoffRetry, ResilientCaller
 from agent_platform.resilience.rate_limiter import get_rate_limiter
+from agent_platform.web.augment import SearchAugmentPolicy
 from agent_platform.web.cache import SearchCache
 from agent_platform.web.fetcher import FallbackFetcher, HttpFetcher, ReaderFetcher
 from agent_platform.web.fixtures import FixtureStore
@@ -66,4 +67,11 @@ def create_search_router(settings: WebSettings, client: httpx.AsyncClient) -> Se
         },
         settings.search.providers,
         settings.search.time_bounded_providers,
+        _augment_policy(settings),
     )
+
+
+def _augment_policy(settings: WebSettings) -> SearchAugmentPolicy | None:
+    """The weak-answer merge, paced by the metered provider's monthly quota — or None (off)."""
+    augment = settings.search.augment
+    return SearchAugmentPolicy(augment, get_rate_limiter()) if augment.enabled else None

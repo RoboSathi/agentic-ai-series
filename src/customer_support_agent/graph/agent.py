@@ -55,6 +55,7 @@ from agent_platform.durability import (
     RunRegistry,
     SqliteCheckpointer,
 )
+from agent_platform.durability.stop_report import stop_report
 from agent_platform.evals import NollmScoringCascadeImpl
 from agent_platform.executor import (
     ToolExecutionHandler,
@@ -116,7 +117,7 @@ from customer_support_agent.persistence.repositories import OrdersRepository
 from customer_support_agent.presentation.orders import (
     OrderMenu,
 )
-from customer_support_agent.review.referral import ReviewReferral
+from customer_support_agent.review.referral import ReplyReferral, ReviewReferral
 from customer_support_agent.security.authentication import CustomerAuthenticator
 from customer_support_agent.tools.definitions import SupportTools
 
@@ -176,6 +177,7 @@ class CustomerSupportAgent(
         verifier: EffectVerifier | None = None,
         mandate_issuer: MandateIssuer | None = None,
         referral: ReviewReferral | None = None,
+        reply_referral: ReplyReferral | None = None,
         checkpointer: SqliteCheckpointer | None = None,
         runs: RunRegistry | None = None,
         long_term_memory: MemoryFacade | None = None,
@@ -224,6 +226,9 @@ class CustomerSupportAgent(
         # Turns a Gatekeeper escalation into a queued review. Present only
         # with the Gatekeeper: without one nothing escalates.
         self._referral = referral
+        # Queues a reply the hallucination check cut, for a person to judge.
+        # Present only with the check: without one nothing is cut.
+        self._reply_referral = reply_referral
         if agent_policy is None:
             raise ValueError("CustomerSupportAgent requires an AgentPolicy loaded from persistence")
         self._agent_policy = agent_policy
@@ -429,9 +434,9 @@ class CustomerSupportAgent(
         return bool(self._runner is not None and thread and self._runner.cancel(thread))
 
     def _stopped(self, state: AgentState, outcome: RunOutcome) -> AgentState:
-        """A cancelled turn: say where it stopped; nothing is remembered as answered."""
+        """A cancelled turn: where it stopped, how far it got, and the two ways on."""
         step = outcome.next_nodes[0] if outcome.next_nodes else ""
-        reply = get_agent_settings().messages.cancelled.format(step=step or "the end")
+        reply = stop_report(step, self.describe_progress(state.model_dump()))
         self._end_turn(
             "warning",
             _CANCELLED_OUTCOME,
@@ -440,6 +445,36 @@ class CustomerSupportAgent(
             checkpoints=outcome.checkpoints,
         )
         return state.model_copy(update={"response": reply})
+
+    def describe_progress(self, values: dict[str, Any]) -> dict[str, Any]:
+        """How far a turn got: what was asked, who is verified, what was decided, which tools ran."""
+        state = AgentState.model_validate(values)
+        words = get_agent_settings().messages.cancelled
+        labels = words.labels
+        tools = [
+            f"{item.get('name')} → {item.get('outcome', '')}"
+            for item in state.working_memory.current_turn
+            if isinstance(item, dict) and item.get("kind") == "action"
+        ]
+        return {
+            labels["request"]: self._security.redact(state.query) or words.none,
+            labels["customer"]: f"#{state.customer_id}" if state.customer_id else words.unverified,
+            labels["decided"]: state.decisions or words.none,
+            labels["tools"]: tools or words.none,
+        }
+
+    async def abort(self, thread_id: str) -> ResumeResult:
+        """End a stopped turn for good: its record is kept, nothing is remembered as answered."""
+        if self._runner is None:
+            raise RuntimeError("This agent was built without durable execution")
+        outcome = await self._runner.abort(thread_id, self._reporter)
+        session = str(outcome.values.get("session_id", ""))
+        return ResumeResult(
+            thread_id=thread_id,
+            session_id=session,
+            status=outcome.status,
+            response=get_settings().durability.stop_report.aborted,
+        )
 
     def _begin_turn(self, thread_id: str, session_id: str) -> None:
         if self._reporter is not None:
@@ -631,6 +666,10 @@ class CustomerSupportAgent(
                 require_pattern=True,
             )
         )
+
+    def deliver_follow_up(self, session_id: str, reply: str) -> None:
+        """Add a reviewer's decision to the conversation it answers (a reply review)."""
+        self._note_follow_up(session_id, reply)
 
     def _note_follow_up(self, session_id: str, reply: str) -> None:
         """Add a reviewer-driven reply to the conversation it answers."""

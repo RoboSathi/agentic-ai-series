@@ -4,9 +4,9 @@ These names are used as written in code, logs, stage labels and docs.
 
 | term | meaning | in code |
 |---|---|---|
-| **Mode** | what the user chooses between: **Q&A** (a quick cited answer, no interview) or **Research** (the full, audited flow) | `domain/scope.py::Mode` |
-| **Archetype** | the kind of run: Research kinds `decision_support`, `landscape_brief`, `fact_verification`, `explainer`, `general`; plus `qa` for Q&A | `domain/scope.py::Archetype` |
-| **Gate** | the first-message classifier: `scopable(mode, archetype)`, `needs_reframe` (no question at all → a numbered menu of the modes) or `refuse`; reads any time window | `scoping/gate.py` (`ArchetypeClassifier` Protocol) |
+| **Direct answer** | a plain question, answered in one turn by a ReAct loop over read-only tools and checked against what they returned | `graph/answerer.py` |
+| **Research kind** (Archetype) | the kind of `/research` run: `decision_support`, `landscape_brief`, `fact_verification`, `explainer`, `general`; picks the checklist, rubric, stop rule and report | `domain/scope.py::Archetype`, `scoping/kind.py` (`KindClassifier` Protocol) |
+| **Latest by default** | a question that names no date asks for what is current; a search pinned to a past year, or with only old results, carries a note the model reads | `research/recency.py` |
 | **Time window** | "in the last 1 month" → 30 days: the Brief's `recency_days`, sent to the search providers and enforced by the worker | `scoping/window.py` |
 | **Profile** | a named posture of the agent's config: live (default) or `demo` (offline Kelvari) | `config/profiles/` |
 | **Search quota** | a provider's monthly request allowance, counted across processes (Tavily: 900) | `agent_platform` rate limiter |
@@ -18,7 +18,7 @@ These names are used as written in code, logs, stage labels and docs.
 | **Budget** | the run's hard caps: searches, fetches, tokens, seconds, rounds, DAG nodes, gap-fill rounds, concurrency | `domain/budget.py`, enforced by `agent_platform.control_loop.BudgetGuard` |
 | **Plan DAG** / **sub-question** | the planner's decomposition; every node traces to at least one Rubric Item | `domain/plan.py` |
 | **Round** | one plan → research → reflect cycle | `RunState.round` |
-| **Wave** | one set of concurrently-runnable DAG nodes (a LangGraph superstep) | `graph/run_graph.py` |
+| **Batch** | one set of concurrently-runnable DAG nodes (a LangGraph superstep) | `graph/run_graph.py` |
 | **Evidence Ledger** | run-scoped, append-only: claim → source URL → verbatim span → page hash → retrieved-at | `agent_platform.evidence.EvidenceLedger` |
 | **Verbatim-span rule** | a span is admitted only if it is a substring of the page text this run fetched, whose hash it records | `agent_platform.evidence.VerbatimSpanValidator` |
 | **Gap** | a Rubric Item the ledger (or report) does not yet satisfy | `research/reflector.py::GapAnalyzer` |

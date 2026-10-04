@@ -18,6 +18,7 @@ from customer_support_agent.domain.models import (
     Order,
     OrderStatus,
     RefundStatus,
+    ReplyReview,
     User,
 )
 
@@ -55,8 +56,13 @@ def _order_values(order: Order) -> tuple[Any, ...]:
 
 
 def _hitl_from(row: dict[str, Any]) -> HitlRequest:
-    values = {key: value for key, value in row.items() if key != "requested_amount_cents"}
-    values["requested_amount"] = Money.from_cents(int(row["requested_amount_cents"]))
+    values = {
+        key: value for key, value in row.items() if key not in {"requested_amount_cents", "detail"}
+    }
+    cents = row["requested_amount_cents"]
+    values["requested_amount"] = None if cents is None else Money.from_cents(int(cents))
+    detail = row.get("detail")
+    values["detail"] = None if detail is None else ReplyReview.model_validate_json(detail)
     return HitlRequest.model_validate(values)
 
 
@@ -247,16 +253,17 @@ class HitlQueueRepository:
     def save(self, entity: HitlRequest) -> None:
         """Enqueue a request for human review."""
         self._pool.execute(
-            "INSERT INTO hitl_queue "
-            "(order_id, user_id, requested_amount_cents, action, status, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO hitl_queue (order_id, user_id, requested_amount_cents, action, "
+            "status, created_at, session_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 entity.order_id,
                 entity.user_id,
-                entity.requested_amount.cents,
+                None if entity.requested_amount is None else entity.requested_amount.cents,
                 entity.action,
                 entity.status,
                 entity.created_at,
+                entity.session_id,
+                None if entity.detail is None else entity.detail.model_dump_json(),
             ),
         )
 
@@ -282,9 +289,10 @@ class HitlQueueRepository:
         """An existing pending request for an order, if there is one.
 
         Checked before enqueuing so a customer who asks twice does not
-        produce two queue entries and two refunds for one order.
+        produce two queue entries and two refunds for one order. A reply
+        review that names the order is not a request about its money.
         """
-        matches = self.query(order_id=order_id, status="pending")
+        matches = [r for r in self.query(order_id=order_id, status="pending") if not r.is_reply]
         return matches[0] if matches else None
 
     @logged("customer_support_agent")

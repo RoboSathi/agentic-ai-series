@@ -22,6 +22,9 @@ class GuardVerdict(BaseModel):
     endpoint: str = ""
     api_called: bool = False
     latency_ms: float | None = None
+    # The classifier's reply, verbatim: what the card, the log and the quarantine entry show,
+    # so a flag can always be traced to what the model actually said.
+    output: str = ""
     raw: Any = None
 
     @property

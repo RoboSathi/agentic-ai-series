@@ -28,7 +28,7 @@ ra_OFFLINE_PROFILE :=
 ra_EVALS :=
 
 # Targets whose second goal names the agent they act on.
-AGENT_SCOPED := agent data runs model-check llm-check models eval eval-generate eval-oracle eval-security eval-judge \
+AGENT_SCOPED := agent data runs dlq pii-reveal model-check llm-check models eval eval-generate eval-oracle eval-security eval-judge \
 	eval-deepeval eval-report eval-diff eval-runs eval-sql
 
 ifneq ($(filter $(firstword $(MAKECMDGOALS)),$(AGENT_SCOPED)),)
@@ -101,6 +101,8 @@ help:
 	@echo "  make agent <agent>        The operator console (make agent csa; make agent ra)"
 	@echo "  make data <agent>         csa: rebuild the agent DB (KEEP_MEMORY=1); ra: build + validate the fixture world"
 	@echo "  make runs ra              List archived research runs"
+	@echo "  make dlq <agent> [STATUS=…|ID=…] [ACTION=claim|resolve|discard ID=… NOTE=…]   Quarantined messages (same as /dlq)"
+	@echo "  make pii-reveal <agent> T=<token> WHY=<reason>   What a PII token stood for (audited; needs PII_VAULT_KEY)"
 	@echo "  make episode E=05         One episode (calls the live model)"
 	@echo "  make model-check [agent]  Probe every hosted model and run every local model, per agent (BENCH=1 times them; alias: llm-check)"
 	@echo "  make models [agent]       Download (if missing) and run each agent's local models (run by make install)"
@@ -199,6 +201,17 @@ runs: _agent
 	@test -n "$($(AGENT)_RUNS)" || (echo "$(YELLOW)'$(AGENT)' keeps no archived runs$(NC)" && exit 2)
 	@$(PYTHON) -m $($(AGENT)_RUNS) list
 
+# The messages a security screen quarantined: `make dlq ra`, `make dlq csa STATUS=all LIMIT=50`,
+# `make dlq csa ID=7`, `make dlq csa ACTION=resolve ID=7 NOTE="false positive"`. Same as /dlq.
+dlq: _agent
+	@$(PYTHON) -m agent_platform.commands.dlq_cli $(if $(ACTION),$(ACTION) $(ID) $(NOTE),$(if $(ID),$(ID),$(or $(STATUS),pending) $(LIMIT)))
+
+# What a PII redaction token stood for, for audit: `make pii-reveal csa T=3f9a1c2b7e10 WHY="ticket 42"`.
+# Every reveal is written to the audit trail first; it needs the vault key (PII_VAULT_KEY).
+pii-reveal: _agent
+	@test -n "$(T)" -a -n "$(WHY)" || (echo "$(YELLOW)Usage: make pii-reveal <agent> T=<token> WHY=<reason>$(NC)" && exit 2)
+	@$(PYTHON) -m agent_platform.security.pii.reveal "$(T)" --why "$(WHY)"
+
 patterns:
 	@$(PYTHON) -m design_patterns.coverage $(foreach a,$(AGENTS),--agent $(a)=$($(a)_PKG)) --markdown design_docs/patterns_coverage.md
 
@@ -259,10 +272,12 @@ eval-runs: _agent
 eval-sql: _agent
 	$(EVALS) sql $(SQL)
 
-# A fresh 32-byte checkpoint key (durability.encryption). Put the line in .env, or export it,
-# to stop the "Checkpoints are stored UNENCRYPTED" warning:  make gen-key >> .env
+# Fresh 32-byte keys: the checkpoint key (durability.encryption) and the PII vault key
+# (security.pii.vault), which also keys the redaction tokens. Put the lines in .env, or export
+# them:  make gen-key >> .env
 gen-key:
 	@echo "LANGGRAPH_AES_KEY=$$(openssl rand -hex 16)"
+	@echo "PII_VAULT_KEY=$$(openssl rand -hex 16)"
 
 # Quick verification (for CI/CD).
 #

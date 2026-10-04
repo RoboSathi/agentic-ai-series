@@ -27,15 +27,15 @@ class CommandView:
         lines: list[Text] = []
         if result.title:
             style = self._style.error_style if not result.ok else self._style.title_style
-            lines.append(Text(result.title, style=style))
+            lines.append(Text.styled(result.title, style))
         lines.extend(self._table(result))
         body_style = self._style.error_style if not result.ok else self._style.note_style
-        lines.extend(Text(line, style=body_style) for line in result.lines)
+        lines.extend(Text.styled(line, body_style) for line in result.lines)
         return lines
 
     def echo(self, line: str) -> Text:
         """The command the operator typed, echoed back into the feed."""
-        return Text(line, style=self._style.prompt_style)
+        return Text.styled(line, self._style.prompt_style)
 
     def _table(self, result: CommandResult) -> list[Text]:
         """The rows as aligned columns, with an underlined header.
@@ -53,10 +53,10 @@ class CommandView:
         lines: list[Text] = []
         if result.headers:
             header = gap.join(self._cell(h, w) for h, w in zip(result.headers, widths))
-            lines.append(Text(header, style=self._style.header_style))
+            lines.append(Text.styled(header, self._style.header_style))
         for row in result.rows:
             body = gap.join(self._cell(c, w) for c, w in zip(row.cells, widths))
-            lines.append(Text(body, style=row.style or self._style.row_style))
+            lines.append(Text.styled(body, row.style or self._style.row_style))
         return lines
 
     def _widths(self, grid: list[list[str]]) -> list[int]:

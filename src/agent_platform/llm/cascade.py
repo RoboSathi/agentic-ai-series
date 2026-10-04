@@ -126,7 +126,6 @@ class CascadingLLMClient(LLMClient):
         )
         self._observer.backup_started(self._label, primary, backup, cause)
 
-
     async def health_check(self) -> HealthCheckResult:
         """Healthy only if every tier is reachable."""
         for tier in self._tiers:

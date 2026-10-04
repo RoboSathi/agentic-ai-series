@@ -26,10 +26,11 @@ from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
 from agent_platform.logging import describe_error, get_logger
 from agent_platform.observability import StageReporter
+from agent_platform.observability.step_card import ModelCall
 from agent_platform.presentation.text_tree import value_lines
 from agent_platform.resilience import AsyncTimeoutGuard
 from research_agent.domain.budget import TOKENS
-from research_agent.presentation.narration import say, title_of, toned
+from research_agent.presentation.narration import role_title, say, toned
 from research_agent.prompts.base import RolePrompt
 
 T = TypeVar("T", bound=BaseModel)
@@ -105,19 +106,43 @@ class StructuredCaller:
         failing that the provider's default. A call cut off at its cap is retried with a larger
         one (the reasoning model may have spent the cap thinking) before it is given up on.
         """
+        result = await self._complete(prompt, schema, max_tokens, quiet=False)
+        return self._validated(result, schema)
+
+    async def call_traced(
+        self, prompt: RolePrompt, schema: type[T], max_tokens: int | None = None
+    ) -> tuple[T, ModelCall]:
+        """`call`, for a step that draws the call inside its own card (`StepCard`).
+
+        The call is logged and counted as ever, but draws no LLM CALL card of its own: one
+        step, one card. What it contributed — the model that answered, its reasoning, its
+        answer — comes back for the step to show.
+        """
+        started = time.perf_counter()
+        result = await self._complete(prompt, schema, max_tokens, quiet=True)
+        primary = self._clients.model_key(prompt.role).split(":", maxsplit=1)[-1]
+        call = ModelCall.of(prompt.role, result, time.perf_counter() - started, primary=primary)
+        return self._validated(result, schema), call
+
+    async def _complete(
+        self, prompt: RolePrompt, schema: type[T], max_tokens: int | None, *, quiet: bool
+    ) -> CompletionResult:
         client = self._clients.client_for(prompt.role)
         cap = max_tokens if max_tokens is not None else self._role_max_tokens.get(prompt.role)
-        result = await self._attempt(client, prompt, schema, cap)
+        result = await self._attempt(client, prompt, schema, cap, quiet)
         for _ in range(self._retries):
             if result.finish_reason != TRUNCATED or cap is None:
                 break
             cap = int(cap * self._retry_factor)
-            result = await self._attempt(client, prompt, schema, cap)
+            result = await self._attempt(client, prompt, schema, cap, quiet)
         if result.finish_reason == TRUNCATED:
             raise OutputTruncatedError(
                 f"'{prompt.role}' output was cut off at its token limit "
                 f"({result.usage.completion_tokens} tokens), so the JSON is incomplete"
             )
+        return result
+
+    def _validated(self, result: CompletionResult, schema: type[T]) -> T:
         return schema.model_validate(self._validator.validate_or_raise(result.content, schema))
 
     async def chat(
@@ -153,7 +178,12 @@ class StructuredCaller:
             raise ModelCallTimeoutError(role, timeout or 0.0) from exc
 
     async def _attempt(
-        self, client: LLMClient, prompt: RolePrompt, schema: type[T], cap: int | None
+        self,
+        client: LLMClient,
+        prompt: RolePrompt,
+        schema: type[T],
+        cap: int | None,
+        quiet: bool = False,
     ) -> CompletionResult:
         """One structured model call, charged to the budget and the role's meter."""
         request = CompletionRequest(
@@ -161,7 +191,7 @@ class StructuredCaller:
             json_schema=schema.model_json_schema(),
             max_tokens=cap,
         )
-        return await self._send(client, prompt.role, request, True)
+        return await self._send(client, prompt.role, request, True, quiet=quiet)
 
     async def _send(
         self,
@@ -208,7 +238,7 @@ class StructuredCaller:
                 LLM_STAGE,
                 "failed",
                 event_kind="narrative",
-                summary=say("llm.error", role=title_of(role), error=error),
+                summary=say("llm.error", role=role_title(role), error=error),
             )
 
     def _report(
@@ -231,7 +261,7 @@ class StructuredCaller:
                 event_kind="narrative",
                 summary=say(
                     "llm.heading",
-                    role=title_of(role),
+                    role=role_title(role),
                     tokens=f"{tokens:,}",
                     seconds=f"{elapsed:.1f}",
                 ),

@@ -34,12 +34,12 @@ def _tool(name: str, surface: str = "editable", reversible: bool = True) -> Tool
 class TestPII:
     def test_detects_the_configured_categories(self, security_on: None) -> None:
         found = PIIFilterImpl().detect("mail ada@example.com or call 555-123-4567")
-        assert {span.category for span in found} == {"email", "phone"}
+        assert {span.category for span in found} == {"EMAIL_ADDRESS", "PHONE_NUMBER"}
 
     def test_a_card_number_wins_over_an_overlapping_phone_match(self, security_on: None) -> None:
         """A partial match would leave the rest of the card in the clear."""
         found = PIIFilterImpl().detect("card 4111 1111 1111 1111")
-        assert [span.category for span in found] == ["credit_card"]
+        assert [span.category for span in found] == ["CREDIT_CARD"]
 
     def test_masking_removes_the_value(self, security_on: None) -> None:
         redacted = PIIFilterImpl().redact("mail ada@example.com")

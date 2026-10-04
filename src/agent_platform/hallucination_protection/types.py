@@ -48,6 +48,8 @@ class EvidenceCheck(BaseModel):
     nli_score: float
     # Whether this result was strong enough to settle the claim on its own.
     decisive: bool
+    # Where the line came from (`Chunk.source`): a page's URL, a tool's name, an article.
+    source: str = ""
 
 
 class DetectionVerdict(BaseModel):

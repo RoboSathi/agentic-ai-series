@@ -7,6 +7,11 @@ A time-bounded or news search uses `time_bounded_providers` instead,
 because that is where Tavily's time ranges and news vertical earn their
 cost. Each provider has its own resilience stack, so one provider's
 outage opens only its own breaker.
+
+A general search the free provider answers *weakly* (few hits, or hits
+that barely mention the query) also asks the metered one and merges the
+two, within a monthly allowance (`augment.py`). A strong answer costs
+nothing metered.
 """
 
 from collections.abc import Sequence
@@ -14,6 +19,7 @@ from dataclasses import dataclass
 
 from agent_platform.logging import get_logger
 from agent_platform.resilience import QuotaExhaustedError, ResilientCaller
+from agent_platform.web.augment import SearchAugmentPolicy
 from agent_platform.web.providers import SearchProvider
 from agent_platform.web.types import SearchRequest, SearchResponse, WebUnavailableError
 
@@ -36,8 +42,10 @@ class SearchRouter:
         providers: dict[str, RoutedProvider],
         general: Sequence[str],
         time_bounded: Sequence[str],
+        augment: SearchAugmentPolicy | None = None,
     ) -> None:
         self._providers = providers
+        self._augment = augment
         self._general = [name for name in general if name in providers]
         self._time_bounded = [name for name in time_bounded if name in providers]
         self._logger = get_logger("web")
@@ -60,11 +68,38 @@ class SearchRouter:
                 self._logger.info("Search provider failed; trying the next", provider=name)
                 continue
             if response.hits:
-                return response
+                return await self._augmented(name, request, response)
             empty = empty or response
         if empty is not None:
             return empty
         raise _exhausted(failures)
+
+    async def _augmented(
+        self, answered_by: str, request: SearchRequest, response: SearchResponse
+    ) -> SearchResponse:
+        """A weak general answer, merged with the metered provider's when the allowance permits."""
+        policy = self._augment
+        if (
+            policy is None
+            or request.time_bounded
+            or answered_by == policy.provider
+            or policy.provider not in self._providers
+        ):
+            return response
+        measured = policy.weakness(response)
+        if not measured.weak:
+            policy.log(request, measured, "strong")
+            return response
+        if not policy.allowed():
+            policy.log(request, measured, "allowance spent")
+            return response
+        try:
+            extra = await self._ask(self._providers[policy.provider], request)
+        except Exception as exc:
+            self._logger.info("Augmenting search failed", provider=policy.provider, error=str(exc))
+            return response
+        policy.log(request, measured, f"merged with {policy.provider}")
+        return policy.merge(response, extra)
 
     @staticmethod
     async def _ask(routed: RoutedProvider, request: SearchRequest) -> SearchResponse:

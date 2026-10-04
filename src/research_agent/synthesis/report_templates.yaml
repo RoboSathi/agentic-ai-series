@@ -11,8 +11,6 @@ explainer:
   sections: [Summary, Concepts, Examples]
 general:
   sections: [Findings, Details]
-qa:
-  sections: [Answer]
 
 # Appended by code (synthesis/synthesizer.py), never by the model.
 appended:

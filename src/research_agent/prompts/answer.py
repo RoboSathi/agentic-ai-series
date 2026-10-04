@@ -18,6 +18,10 @@ Today is {today}.
 - State only facts that appear in the tool results. Never invent names, figures,
   results or background that they do not contain. Quote figures exactly as the
   sources give them; do not round, convert or recompute them.
+- When the question names no date, edition, season or period, it asks for the latest: what
+  is current as of today. Never add a year, season or edition from your own knowledge to a
+  search query; search for the latest, and when results cover different editions or dates,
+  answer from the most recent. Say which edition or date your figures are for.
 - For something live (a match, a price, a headline) say what its status is and
   the time the source shows for it. A source that shows it in progress means it
   is in progress: do not call it finished.
@@ -43,6 +47,24 @@ WEATHER_DESCRIPTION = (
 DATETIME_DESCRIPTION = (
     "The current date and time in an IANA timezone, for example Asia/Kolkata or UTC."
 )
+
+# Added to the conversation for the last step, when a budget forbids another tool call: the
+# model must answer now, from what the tools already returned.
+FINAL_STEP = """
+You have no tool calls left. Answer the question now from the tool results above. Do not ask for
+another search or page. If the sources disagree, give each figure and name the source that
+gives it. Reply with the answer text only.
+""".strip()
+
+# A model that still asked for a tool on its final step is asked once more, from the observations
+# alone, with no tool history to continue: the question, today's date and what the tools returned.
+FROM_OBSERVATIONS = """
+Answer the question from the tool results given in `observations` only; they are everything
+that was found. Write a few "- " points, one fact per point, quoting figures exactly as the
+results give them and saying which edition or date they are for. If the results disagree, give
+each figure and name its source. If they do not answer the question, say so plainly. End with a
+"Sources" line listing the URLs you relied on. Reply with the answer text only.
+""".strip()
 
 # Asked of the model when the grounding check refuted claims in its answer. It is handed the
 # answer, the refuted claims, and the evidence lines that bear on them — nothing else.

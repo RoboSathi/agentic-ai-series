@@ -35,7 +35,7 @@ class TaskGraph:
         return self._nodes[node_id]
 
     def ready(self, finished: Mapping[str, OutcomeStatus]) -> list[str]:
-        """Unfinished nodes whose every dependency is done — the next wave."""
+        """Unfinished nodes whose every dependency is done — the next batch."""
         return [
             node_id
             for node_id, node in self._nodes.items()
@@ -52,8 +52,8 @@ class TaskGraph:
             and any(finished.get(dep) in _POISONED for dep in node.depends_on)
         ]
 
-    def waves(self) -> list[list[str]]:
-        """The static wave decomposition, assuming every node succeeds."""
+    def batches(self) -> list[list[str]]:
+        """The static batch decomposition, assuming every node succeeds."""
         finished: dict[str, OutcomeStatus] = {}
         layers: list[list[str]] = []
         while len(finished) < len(self._nodes):

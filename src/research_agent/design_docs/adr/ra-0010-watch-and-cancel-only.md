@@ -6,7 +6,7 @@ Once the contract is approved the run is autonomous. Mid-run steering would make
 
 ## Decision
 
-The user can **watch** (live stage view and side panel: waves, budget meters, rejected sources, audit verdicts) and **cancel** (the host's cancel key, `ctrl+x`, or `/cancel`). Cancel is cooperative: workers check before every search/fetch, the wave router between waves. The run ends `CANCELLED`, its checkpoint kept.
+The user can **watch** (live stage view and side panel: batches, budget meters, rejected sources, audit verdicts) and **cancel** (the host's cancel key, `ctrl+x`, or `/cancel`). Cancel is cooperative: workers check before every search/fetch, the batch router between batches. The run ends `CANCELLED`, its checkpoint kept.
 
 ## Consequences
 

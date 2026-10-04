@@ -106,3 +106,26 @@ class TestTheCurrentStatusIsTheLatestOne:
         assert finding is not None
         assert finding.chunk.content == "Order 10665 refund status: pending_review."
         assert "pending_review" in finding.rationale
+
+
+class TestAPromiseHoldsWhileTheRefundCanStillGetThere:
+    """ "Will be processed once approved" is a promise about the ladder, not a status on it."""
+
+    @pytest.mark.parametrize(
+        "status, claim, expected",
+        [
+            ("pending_review", "The $66.56 refund will be processed once approved", True),
+            ("pending_review", "Your refund for order 10665 will be issued once approved", True),
+            ("denied", "The $66.56 refund will be processed once approved", False),
+            ("pending_review", "Your refund has been approved and will be processed", False),
+            ("approved", "Your refund has been approved and will be processed", True),
+        ],
+    )
+    def test_the_promise(self, status: str, claim: str, expected: bool) -> None:
+        assert _holds(status, claim) is expected
+
+    def test_the_rationale_names_the_promise(self) -> None:
+        finding = StateModel().judge(
+            "The $66.56 refund will be processed once approved", _status("pending_review")
+        )
+        assert finding is not None and "a promise of" in finding.rationale

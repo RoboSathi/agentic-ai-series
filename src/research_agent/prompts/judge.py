@@ -4,11 +4,13 @@ The judge sees the criterion, the report and the ledger's claims — the
 independent audit's inputs, nothing from the conversation that produced them.
 """
 
+from datetime import date
+
 from pydantic import BaseModel, Field
 
 from agent_platform.evidence import LedgerSnapshot
 from research_agent.domain.report import Report
-from research_agent.prompts.base import RolePrompt
+from research_agent.prompts.base import RolePrompt, dated
 
 ROLE = "judge"
 
@@ -27,15 +29,20 @@ class JudgeAnswer(BaseModel):
     evidence: list[str] = Field(default_factory=list)
 
 
-def build(criterion: str, check: str, report: Report, ledger: LedgerSnapshot) -> RolePrompt:
+def build(
+    criterion: str, check: str, report: Report, ledger: LedgerSnapshot, today: date
+) -> RolePrompt:
     return RolePrompt(
         role=ROLE,
         instructions=INSTRUCTIONS,
-        payload={
-            "task": "judge",
-            "criterion": criterion,
-            "check": check,
-            "report": report.text(),
-            "evidence": [{"entry_id": e.entry_id, "claim": e.claim} for e in ledger.entries],
-        },
+        payload=dated(
+            {
+                "task": "judge",
+                "criterion": criterion,
+                "check": check,
+                "report": report.text(),
+                "evidence": [{"entry_id": e.entry_id, "claim": e.claim} for e in ledger.entries],
+            },
+            today,
+        ),
     )

@@ -11,6 +11,7 @@ import re
 from pydantic import BaseModel, Field
 
 from agent_platform.evidence import LedgerSnapshot
+from agent_platform.observability.step_card import ModelCall
 from research_agent.domain.report import Report, ReportSection
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
@@ -20,6 +21,8 @@ class CitationCheck(BaseModel):
     report: Report
     removed: list[str] = Field(default_factory=list)
     unknown_ids: list[str] = Field(default_factory=list)
+    # The synthesizer's call that wrote the draft (None when there was nothing to write from).
+    call: ModelCall | None = None
 
 
 def normalize_citations(body: str, pattern: re.Pattern[str]) -> str:

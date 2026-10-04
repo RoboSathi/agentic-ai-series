@@ -1,7 +1,7 @@
 """Everything a run tells the operator and the audit trail, through one object.
 
 Stage events go to the live feed (`StageReporter`, which also writes the
-observability log); transactions — a search, a fetch, a gate decision, a
+observability log); transactions — a search, a fetch, a research-kind decision, a
 security rejection, the frozen contract, the final status — go to the
 platform `AuditLedger`. Components call this rather than holding both, so
 "every transaction is audited" is enforced by there being one way to say

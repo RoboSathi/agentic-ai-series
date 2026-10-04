@@ -9,6 +9,7 @@ are never handed raw page text reads these payloads.
 """
 
 import json
+from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -21,6 +22,19 @@ ROLE_HEADER = "ROLE: {role}"
 PAYLOAD_OPEN = "INPUT (JSON):\n```json\n"
 PAYLOAD_CLOSE = "\n```"
 SCHEMA_INTRO = "\nAnswer with one JSON object and nothing else, matching this schema:\n"
+# Every research-side role is told the run's date. Without it a model counts "the last 20 years"
+# back from its training-era "now" (run-4f316d864e planned 2003-2023 on 2026-10-04).
+TODAY_KEY = "today"
+TODAY_RULE = (
+    'Today\'s date is `today` in the input. Every relative time ("the last 20 years", "this '
+    'season", "recent") counts back from it; never take the current date or year from your '
+    "own knowledge."
+)
+
+
+def dated(payload: dict[str, Any], today: date) -> dict[str, Any]:
+    """The payload with the run's date under `today` (and so the rule that goes with it)."""
+    return {**payload, TODAY_KEY: today.isoformat()}
 
 
 class RolePrompt(BaseModel):
@@ -33,7 +47,8 @@ class RolePrompt(BaseModel):
     payload: dict[str, Any]
 
     def messages(self, schema: type[BaseModel]) -> list[Message]:
-        system = f"{ROLE_HEADER.format(role=self.role)}\n{self.instructions.strip()}"
+        rule = f"\n\n{TODAY_RULE}" if TODAY_KEY in self.payload else ""
+        system = f"{ROLE_HEADER.format(role=self.role)}\n{self.instructions.strip()}{rule}"
         body = json.dumps(self.payload, indent=2, sort_keys=True, default=str)
         schema_text = json.dumps(schema.model_json_schema(), sort_keys=True)
         user = f"{PAYLOAD_OPEN}{body}{PAYLOAD_CLOSE}{SCHEMA_INTRO}{schema_text}"

@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from agent_platform.evals.entailment import EntailmentModel
 from agent_platform.evidence import LedgerSnapshot
 from agent_platform.logging import instrument
+from agent_platform.observability.step_card import ModelCall
 from research_agent.audit.checks import sentence_entailed
 from research_agent.audit.context import sentences
 from research_agent.domain.report import Report, ReportSection
@@ -33,6 +34,18 @@ _BARE_MARKER = re.compile(r"^\s*(?:[-*•]|\d+[.)])?\s*$")
 _SPACES = re.compile(r"[ \t]{2,}")
 
 
+SUPPORTED, REWRITTEN, DROPPED = "supported", "rewritten", "dropped"
+
+
+class SentenceCheck(BaseModel):
+    """One cited sentence: what became of it, the entries it cites, and its rewrite."""
+
+    sentence: str
+    outcome: str = SUPPORTED
+    cited: list[str] = Field(default_factory=list)
+    rewrite: str = ""
+
+
 class GuardedReport(BaseModel):
     """The report as the audit will read it, and what the guard did to it."""
 
@@ -41,6 +54,10 @@ class GuardedReport(BaseModel):
     supported: int = 0
     rewritten: list[str] = Field(default_factory=list)
     dropped: list[str] = Field(default_factory=list)
+    # Every cited sentence, in report order, with the entries behind it.
+    checks: list[SentenceCheck] = Field(default_factory=list)
+    # The rewrite call(s), when any sentence needed one.
+    call: ModelCall | None = None
 
 
 @instrument("research_agent")
@@ -65,16 +82,27 @@ class CitationGuard:
         cited = self._cited(report)
         failing = await self._failing(cited, ledger)
         supported = len(cited) - len(failing)
+        origin = {sentence: sentence for sentence in cited}
+        checks = {s: SentenceCheck(sentence=s, cited=self._ids(s)) for s in cited}
         rewritten: list[str] = []
         dropped: list[str] = []
+        calls: list[ModelCall] = []
         for _ in range(self._max_rewrites):
             if not failing:
                 break
-            replacements = await self._rewrite(failing, ledger)
+            replacements, call = await self._rewrite(failing, ledger)
+            calls.append(call)
             report = _replaced(report, replacements, self._appended)
+            for old, new in replacements.items():
+                first = checks[origin[old]]
+                first.outcome, first.rewrite = (REWRITTEN, new) if new else (DROPPED, "")
+                if new:
+                    origin[new] = origin[old]
             dropped.extend(old for old, new in replacements.items() if not new)
             rewritten.extend(new for new in replacements.values() if new)
             failing = await self._failing([new for new in replacements.values() if new], ledger)
+        for sentence in failing:
+            checks[origin.get(sentence, sentence)].outcome = DROPPED
         report = _replaced(report, dict.fromkeys(failing, ""), self._appended)
         return GuardedReport(
             report=report,
@@ -82,7 +110,13 @@ class CitationGuard:
             supported=supported,
             rewritten=[s for s in rewritten if s not in failing],
             dropped=[*dropped, *failing],
+            checks=list(checks.values()),
+            call=ModelCall.combined(calls),
         )
+
+    def _ids(self, sentence: str) -> list[str]:
+        """The entry ids a sentence cites, in order, once each."""
+        return list(dict.fromkeys(self._pattern.findall(sentence)))
 
     def _cited(self, report: Report) -> list[str]:
         bodies = [s.body for s in report.sections if s.heading not in self._appended]
@@ -95,7 +129,9 @@ class CitationGuard:
             if s and not await sentence_entailed(s, ledger, self._entailment, self._pattern)
         ]
 
-    async def _rewrite(self, failing: list[str], ledger: LedgerSnapshot) -> dict[str, str]:
+    async def _rewrite(
+        self, failing: list[str], ledger: LedgerSnapshot
+    ) -> tuple[dict[str, str], ModelCall]:
         """Each failing sentence -> its rewrite ("" when none could be written faithfully)."""
         items: list[dict[str, object]] = []
         for index, sentence in enumerate(failing):
@@ -105,12 +141,14 @@ class CitationGuard:
             items.append(
                 {"index": index, "sentence": sentence, "spans": spans, "citations": markers}
             )
-        answer = await self._caller.call(prompt.build_rewrite(items), prompt.RewriteAnswer)
+        answer, call = await self._caller.call_traced(
+            prompt.build_rewrite(items), prompt.RewriteAnswer
+        )
         by_index = {rewrite.index: rewrite.text.strip() for rewrite in answer.rewrites}
         return {
             sentence: self._faithful(sentence, by_index.get(index, sentence))
             for index, sentence in enumerate(failing)
-        }
+        }, call
 
     def _faithful(self, original: str, rewrite: str) -> str:
         """The rewrite, unless it cites what the original did not (then it is not a rewrite)."""

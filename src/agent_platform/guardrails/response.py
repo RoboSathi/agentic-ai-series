@@ -2,8 +2,10 @@
 
 Structural validation and factual grounding are separate controls:
 Pydantic constrains the shape; the hallucination detector constrains the
-claims.  A failed factual check is repaired once and then fails closed into
-HITL rather than sending an unsupported customer-facing assertion.
+claims.  A failed factual check is repaired, and what still fails is
+removed: the reply goes out without its refuted sentences (trimmed), or,
+when none survive, the configured withheld reply goes instead. Whether a
+person then reviews it is the agent's decision, not this module's.
 """
 
 from collections.abc import Awaitable, Callable
@@ -68,6 +70,11 @@ class ResponseGuardrailResult(BaseModel):
     # none = fully grounded; partial = some claims are supported and some are not;
     # complete = no customer-facing claims were supported.
     hallucination_scope: str = "none"
+    # What the customer received when a claim was refuted: the reply less the
+    # sentences that carried one (trimmed), or the withheld reply (withheld).
+    withheld: bool = False
+    removed_sentences: list[str] = Field(default_factory=list)
+    total_sentences: int = 0
     # Every claim, supported or not: its verdict, what decided it, and the
     # top-k evidence retrieval surfaced with the NLI result for each item.
     claim_checks: list[dict[str, Any]] = Field(default_factory=list)
@@ -83,13 +90,18 @@ class ResponseGuardrailResult(BaseModel):
         `grounded`, `escalated`, `repaired`, `reason_code` and
         `hallucination_scope` each say part of this; the card says it once.
         """
+        words = get_settings().guardrails.outcomes
         if self.escalated:
             # Why, in the words a card shows (`guardrails.block_reasons`, by finding code).
             why = get_settings().guardrails.block_reasons.get(self.reason_code, self.reason_code)
-            return f"BLOCKED · {why} · escalated to human review"
+            if self.withheld:
+                return words.withheld.format(why=why)
+            return words.trimmed.format(
+                removed=len(self.removed_sentences), total=self.total_sentences, why=why
+            )
         if self.repaired:
-            return f"PASSED after {self.repair_attempts} rewrite(s) · rewritten reply sent"
-        return "PASSED · reply sent unchanged"
+            return words.repaired.format(attempts=self.repair_attempts)
+        return words.passed
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -267,9 +279,16 @@ class ResponseGuardrail:
             failure_kinds=failures,
             attempts=attempts,
         )
+        surviving = _surviving_sentences(candidate, last.verdicts)
+        sentences = [
+            piece.strip() for piece, _ in sentence_pieces(candidate) if _is_sentence(piece)
+        ]
+        kept = {piece.strip() for piece, _ in sentence_pieces(surviving)}
         return ResponseGuardrailResult(
-            response=_surviving_sentences(candidate, last.verdicts)
-            or get_settings().hallucination_protection.withheld_reply,
+            response=surviving or get_settings().hallucination_protection.withheld_reply,
+            withheld=not surviving,
+            removed_sentences=[sentence for sentence in sentences if sentence not in kept],
+            total_sentences=len(sentences),
             # Not fully grounded when any claim was rejected, even if
             # sentences no claim refuted were kept.
             grounded=False,
@@ -391,6 +410,7 @@ def _claim_check(verdict: DetectionVerdict) -> dict[str, Any]:
                 "nli_label": check.nli_label,
                 "nli_score": check.nli_score,
                 "decisive": check.decisive,
+                "source": check.source,
             }
             for check in verdict.evidence_checks
         ],
@@ -433,6 +453,11 @@ def _tier_counts(assessment: GenerationAssessment) -> dict[str, int]:
     return counts
 
 
+def _is_sentence(piece: str) -> bool:
+    """Whether a piece of a reply says anything: a bare list marker ("1.") does not."""
+    return any(char.isalpha() for char in piece)
+
+
 def _surviving_sentences(response: str, verdicts: list[DetectionVerdict]) -> str:
     """The reply's own sentences that carry no refuted claim, verbatim.
 
@@ -449,7 +474,7 @@ def _surviving_sentences(response: str, verdicts: list[DetectionVerdict]) -> str
     kept = [
         (sentence.strip(), separator)
         for index, (sentence, separator) in enumerate(sentence_pieces(response))
-        if index not in rejected and any(char.isalpha() for char in sentence)
+        if index not in rejected and _is_sentence(sentence)
     ]
     # Each kept sentence keeps the break that followed it, so a list stays a list.
     return "".join(sentence + separator for sentence, separator in kept).strip()

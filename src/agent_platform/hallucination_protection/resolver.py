@@ -199,6 +199,7 @@ class GroundingResolver:
             nli_label=RECORD_LABEL,
             nli_score=1.0,
             decisive=True,
+            source=chunk.source,
         )
 
     def _direct_finding(
@@ -452,6 +453,7 @@ class GroundingResolver:
                 decisive=id(chunk) in by_chunk
                 and by_chunk[id(chunk)].label in _DECIDING_LABELS
                 and self._is_decisive(by_chunk[id(chunk)]),
+                source=chunk.source,
             )
             for chunk in retrieved
         ]

@@ -6,11 +6,11 @@ The planner produces sub-questions with dependencies. Running them one by one wa
 
 ## Decision
 
-The plan is a DAG validated by the commons `TaskGraph` (acyclic, closed, bounded by `max_dag_nodes`, every node traced to a rubric item). Each **wave** is a LangGraph superstep: `wave_start` computes the ready set and fans out one `Send` per node; `research_node` runs under the commons `AsyncDagScheduler`'s semaphore (`budget.concurrency`); `wave_done` joins. Budgets are reserved synchronously before every await.
+The plan is a DAG validated by the commons `TaskGraph` (acyclic, closed, bounded by `max_dag_nodes`, every node traced to a rubric item). Each **batch** is a LangGraph superstep: `batch_start` computes the ready set and fans out one `Send` per node; `research_node` runs under the commons `AsyncDagScheduler`'s semaphore (`budget.concurrency`); `batch_done` joins. Budgets are reserved synchronously before every await.
 
 ## Consequences
 
-- A checkpoint at every wave boundary; a crash resumes at the wave it interrupted.
+- A checkpoint at every batch boundary; a crash resumes at the batch it interrupted.
 - Dependents of a failed node are blocked, not run on missing inputs.
 - Concurrency is a budget field, visible in the contract.
 

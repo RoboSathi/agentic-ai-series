@@ -14,7 +14,6 @@ _RULES: dict[Archetype, type[StopRule]] = {
     "fact_verification": EveryClaimDecided,
     "explainer": EveryConceptCovered,
     "general": QuestionAnswered,
-    "qa": QuestionAnswered,
 }
 
 

@@ -19,7 +19,9 @@ class PIISpan(BaseModel):
     start: int
     end: int
     text: str
+    # Which recognizer found it, and how sure it was (a configured pattern is certain).
     detector: str = "pattern"
+    score: float = 1.0
 
     def overlaps(self, other: "PIISpan") -> bool:
         """Whether two spans cover any of the same characters."""

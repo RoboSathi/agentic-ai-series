@@ -81,7 +81,7 @@ from customer_support_agent.prompts.system_prompt import (
     build_reply_system_prompt,
     build_system_prompt,
 )
-from customer_support_agent.review.referral import ReviewReferral
+from customer_support_agent.review.referral import ReplyReferral, ReviewReferral
 from customer_support_agent.security.authentication import CustomerAuthenticator
 from customer_support_agent.tools.definitions import SupportTools
 
@@ -122,6 +122,7 @@ class NodeSupport:
     _verifier: EffectVerifier | None
     _mandate_issuer: MandateIssuer | None
     _referral: ReviewReferral | None
+    _reply_referral: ReplyReferral | None
     _agent_policy: AgentPolicy
     _features: FeatureSet
     _intents: CustomerSupportIntentRouter
@@ -284,10 +285,10 @@ class NodeSupport:
         referral did — queued it, and left the refund pending — not as a
         refusal, which NLI reads as contradicting "your request is in".
         """
-        return [text for text, _ in self._observations(state)]
+        return [text for text, _, _ in self._observations(state)]
 
-    def _observations(self, state: AgentState) -> list[tuple[str, bool]]:
-        """Each of this turn's tool observations, and whether it changed anything.
+    def _observations(self, state: AgentState) -> list[tuple[str, bool, str]]:
+        """Each of this turn's tool observations, whether it changed anything, and its tool.
 
         A call changed something when its tool is declared side-effecting
         *and* it ran (or was referred): a refused write left the world as
@@ -305,6 +306,9 @@ class NodeSupport:
                 if item.get("outcome") in _GROUNDED_AS_STATED
                 else _not_executed(item),
                 item.get("outcome") in _GROUNDED_AS_STATED and self._changes_state(item),
+                # The tool's own name (`support__get_order_status` -> `get_order_status`), which
+                # the HALLUCINATION CHECK card names as the line's source.
+                str(item.get("name", "")).rsplit("__", maxsplit=1)[-1],
             )
             for item in actions
         ]
@@ -333,9 +337,7 @@ class NodeSupport:
         # read as *neutral* on "your order has been cancelled", and an earlier
         # read of the still-pending order was left to contradict it. A refusal
         # stays whole, so its marker is never parted from what was refused.
-        tools = tool_evidence(
-            [Observation(text, changed) for text, changed in self._observations(state)]
-        )
+        tools = tool_evidence([Observation(*observed) for observed in self._observations(state)])
         # What the customer said, as the model saw it. A reply may echo it
         # ("I can't issue a $1 refund") but it proves nothing, so its tier
         # is configured support-only.

@@ -77,7 +77,7 @@ class Synthesizer:
             return CitationCheck(report=empty, removed=[], unknown_ids=[])
         size = self._depths[contract.brief.depth]
         shown = _spread(ledger, size.report_entries)
-        answer = await self._caller.call(
+        answer, call = await self._caller.call_traced(
             prompt.build(contract, shown, headings, gaps),
             prompt.SynthesisAnswer,
             max_tokens=size.report_max_tokens,
@@ -91,7 +91,7 @@ class Synthesizer:
             ],
             known_unknowns=[unknown.question for unknown in contract.brief.known_unknowns],
         )
-        return enforce_citations(report, ledger, self._pattern)
+        return enforce_citations(report, ledger, self._pattern).model_copy(update={"call": call})
 
     def with_limits(
         self,

@@ -28,7 +28,7 @@ lives in `research_agent` (pattern composition, research vocabulary).
 | Web access | none | **new** `web/` package: `WebGateway` (`search()`, `fetch()`, modes live/record/replay), `SearchProvider` + `TavilyProvider`, `Fetcher` + reader fallback, `FixtureStore`. |
 | Evidence ledger + verbatim rule | none | **new** `evidence/` package: `EvidenceLedger` (append-only), `VerbatimSpanValidator`. Generic claim/source/span vocabulary. |
 | Frozen artifacts | none (evals hash cases, nothing freezes/writes typed artifacts) | **new** `artifacts/` package: `FrozenArtifact`, `DirectoryArtifactStore` (run dirs, verify-unchanged). |
-| Async DAG scheduler | none (`design_patterns/workflow/fan_out_fan_in.py` is a teaching example, not a platform scheduler) | **new** `scheduling/` package: `TaskGraph` (cycles, waves, blocked dependents) + `AsyncDagScheduler` (bounded semaphore, failure isolation). LangGraph mapping: one `Send` per ready node per wave; the scheduler's semaphore bounds the Sends. |
+| Async DAG scheduler | none (`design_patterns/workflow/fan_out_fan_in.py` is a teaching example, not a platform scheduler) | **new** `scheduling/` package: `TaskGraph` (cycles, batches, blocked dependents) + `AsyncDagScheduler` (bounded semaphore, failure isolation). LangGraph mapping: one `Send` per ready node per batch; the scheduler's semaphore bounds the Sends. |
 | Rubric-check registry | `verification/` is read-back of side effects; `evals/` grades transcripts offline | **new** `verification/acceptance.py` `AcceptanceCheckRegistry` (named checks by kind `deterministic|nli|judge`, evaluate a list of check specs against a context). Lives beside `verification/` because it verifies an artifact at run time, not a transcript offline. |
 | Memory | `memory/` four stores + `MemoryFacade` (working/episodic/semantic/procedural; absent store = not built) | **reuse**: working = live run state (`note`), episodic = run index (`record_event`), semantic = archived artifacts (`submit` create), procedural = **not built** (`memory.procedural: false`). |
 | Audit | `audit/` `AuditLedger` (`AuditEntry` allow/deny/escalate) | **reuse**; every transaction (contract frozen, search, fetch, gate decisions, security rejections, final status, toggle snapshot) is one entry. |
@@ -122,13 +122,13 @@ lives in `research_agent` (pattern composition, research vocabulary).
   durable thread per scope that *interrupts on the user* (`await_decision`)
   each turn; `handle()` resumes it with the next message. No hand-rolled
   session machine.
-- **Waves are LangGraph supersteps.** `plan_wave` computes the ready set
+- **Batches are LangGraph supersteps.** `plan_batch` computes the ready set
   from `TaskGraph`; a conditional edge fans out one `Send` per node; the
   worker holds a slot of the scheduler's semaphore; `reflect` runs once
-  after the superstep. Checkpoints land at wave boundaries.
+  after the superstep. Checkpoints land at batch boundaries.
 - **Cancel is cooperative.** `ResearchHost.cancel()` sets the run's
   cancellation event; workers check it before every search/fetch and the
-  wave router checks it between waves. Status becomes `CANCELLED`, the
+  batch router checks it between batches. Status becomes `CANCELLED`, the
   checkpoint stays.
 - **Budgets reserve before every await**: `BudgetGuard.reserve()` is
   synchronous check-and-decrement, so parallel workers on one event loop
@@ -181,7 +181,7 @@ Recorded at the end of the build; the ADRs hold the reasoning.
 - **`/recall`** (optional in the brief): not built. The archive's episodic
   index and semantic fact are the substrate it would read.
 - **Resuming an interrupted autonomous run after a process restart** from
-  the console: checkpoints are written at every wave boundary and the run
+  the console: checkpoints are written at every batch boundary and the run
   registry records the thread, but no console command resumes a run.
 - **Live Tavily, DuckDuckGo and real-model runs** are the default since
   ADR ra-0018 but are not exercised in this environment (no credentials, no

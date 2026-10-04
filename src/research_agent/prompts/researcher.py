@@ -7,11 +7,12 @@ and URLs) that a page may have planted. This is the configuration the
 quarantine exists to replace; it is built only when that feature is off.
 """
 
+from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from research_agent.prompts.base import RolePrompt
+from research_agent.prompts.base import RolePrompt, dated
 from research_agent.prompts.extractor import ExtractedClaim
 
 ROLE = "researcher"
@@ -30,18 +31,26 @@ class ResearcherAnswer(BaseModel):
 
 
 def build(
-    question: str, url: str, page_text: str, max_claims: int, brief: dict[str, Any]
+    question: str,
+    url: str,
+    page_text: str,
+    max_claims: int,
+    brief: dict[str, Any],
+    today: date,
 ) -> RolePrompt:
     """The ordinary single-context agent: it holds the whole Brief *and* reads the page."""
     return RolePrompt(
         role=ROLE,
         instructions=INSTRUCTIONS,
-        payload={
-            "task": "research_read",
-            "question": question,
-            "url": url,
-            "page": page_text,
-            "max_claims": max_claims,
-            "brief": brief,
-        },
+        payload=dated(
+            {
+                "task": "research_read",
+                "question": question,
+                "url": url,
+                "page": page_text,
+                "max_claims": max_claims,
+                "brief": brief,
+            },
+            today,
+        ),
     )

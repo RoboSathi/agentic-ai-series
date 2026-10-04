@@ -1,6 +1,6 @@
 """Scoping rules and rubric generation, unit by unit (no graph)."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -135,8 +135,8 @@ class TestBriefBuilder:
                 multi=True,
             ),
         ]
-        brief = BriefBuilder(settings, _budget(), _budget(), get_agent_settings().depths).build(
-            "decision_support", "t", items, []
+        brief = BriefBuilder(settings, _budget(), get_agent_settings().depths).build(
+            "decision_support", "t", items, [], today=date(2026, 10, 4)
         )
         assert brief.options == ("X", "Y", "Z") and brief.recency_days == 365
         assert brief.source_policy.preferred_domains == ("lab.example",)
@@ -153,9 +153,10 @@ class TestBriefBuilder:
             brief_field="recency_days",
         )
         brief = BriefBuilder(
-            get_agent_settings().scoping, _budget(), _budget(), get_agent_settings().depths
-        ).build("explainer", "t", [item], [])
-        assert brief.recency_days is None
+            get_agent_settings().scoping, _budget(), get_agent_settings().depths
+        ).build("explainer", "the last 20 years of t", [item], [], today=date(2026, 10, 4))
+        assert brief.recency_days is None  # "no limit" is the user's answer, kept
+        assert brief.period_start == date(2006, 10, 4)  # the calendar, not 20 × 365 days
 
 
 def _brief(**fields: object) -> ScopeBrief:

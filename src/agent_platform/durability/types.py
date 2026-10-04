@@ -15,11 +15,16 @@ from pydantic import BaseModel, Field
 
 from agent_platform.observability.types import utc_now
 
-RunStatus = Literal["running", "completed", "failed_resumable", "interrupted", "cancelled"]
+RunStatus = Literal[
+    "running", "completed", "failed_resumable", "interrupted", "cancelled", "aborted"
+]
 
 # The statuses an operator can resume. A cancelled run stopped on purpose,
 # part-way: its last checkpoint is where it picks up again.
 RESUMABLE_STATUSES: tuple[RunStatus, ...] = ("failed_resumable", "interrupted", "cancelled")
+# The statuses a stopped run can be aborted from: stopped by the operator, or failed part-way.
+# An aborted run keeps its record and checkpoints (until retention) and never resumes.
+ABORTABLE_STATUSES: tuple[RunStatus, ...] = ("failed_resumable", "cancelled")
 
 
 class RunRecord(BaseModel):

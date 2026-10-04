@@ -46,7 +46,7 @@ OFFLINE = Path(__file__).with_name("offline.yaml")
 # Withheld in every harness unless a test turns them on: each would load a local model or
 # call a hosted one.
 OFFLINE_POSTURE = {
-    "gate_encoder": False,
+    "kind_encoder": False,
     "pii": False,
     "prompt_injection": False,
     "content_moderation": False,

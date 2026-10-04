@@ -16,18 +16,18 @@ It is deliberately **not an open-ended search engine**:
 - every run ends `COMPLETE`, `PARTIAL`, `CANCELLED` or `FAILED` — and a
   `PARTIAL` report says, item by item, what it could not establish and why.
 
-## Two modes
+## Two paths
 
-- **Q&A** — ask a question, get a short answer in one turn where every
-  sentence cites a page the agent fetched and quoted. No interview.
-  e.g. *Important AI news in the last 1 month*.
-- **Research** — the full flow: a short interview, acceptance criteria you
-  can edit and `/approve`, an autonomous run, an independent audit, a
-  report that ends COMPLETE or PARTIAL. The kind (decision, landscape,
-  fact-check, explainer, or general) is picked for you.
+- **A plain question** — answered directly in one turn: a ReAct loop over
+  web search, page fetch, weather and the clock, checked against what the
+  tools returned. No interview. A question that names no date gets the
+  latest information.
+- **`/research [question]`** — the full flow: a short interview, acceptance
+  criteria you can edit and `/approve`, an autonomous run, an independent
+  audit, a report that ends COMPLETE or PARTIAL. The research kind
+  (decision, landscape, fact-check, explainer, or general) is picked for you.
 
-The gate routes automatically; `/qa <question>` and `/research [question]`
-override it (ADR ra-0017).
+Only the user chooses between them (ADR ra-0020).
 
 ## Running it
 
@@ -44,7 +44,7 @@ make data ra                # record + validate the fixture world (offline)
 general questions, Tavily first for news/time-bounded ones and as the
 fallback — and every role is an NVIDIA NIM model. It stays inside free
 tiers: Tavily is capped at 900 calls a month (shared by every process),
-searches are cached for 24h, Q&A spends ≤3 searches and Research ≤8
+searches are cached for 24h, and a research run spends ≤8 searches
 (ADR ra-0018). **Demo**: the web is replayed from the recorded fixture
 world and every role is the fixture world's reference model — offline and
 reproducible, but it can only research the Kelvari topics the greeting lists.
@@ -53,7 +53,7 @@ reproducible, but it can only research the Kelvari topics the greeting lists.
 
 | package | what it owns |
 |---|---|
-| `scoping/` | the scopability gate, per-archetype checklists, hybrid termination, the anti-sycophancy guard, the Brief builder |
+| `scoping/` | the research kind, per-archetype checklists, hybrid termination, the anti-sycophancy guard, the Brief builder |
 | `rubric/` | templates per archetype, the deterministic generator, the editor, freeze + hash |
 | `planning/` | the planner and the plan validation gate |
 | `research/` | the worker, the three content defences, extraction, reflection, stop rules, telemetry |

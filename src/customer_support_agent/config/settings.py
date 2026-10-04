@@ -122,12 +122,21 @@ class AuthMessages(BaseModel):
     unknown_code: str
 
 
+class CancelledMessages(BaseModel):
+    """How far a stopped turn got, in this agent's words (the frame is the platform's)."""
+
+    # Tree labels: request, customer, decided, tools.
+    labels: dict[str, str]
+    unverified: str
+    none: str
+
+
 class CsaMessages(BaseModel):
     """Fixed wording this agent says itself, rather than a model."""
 
     auth: AuthMessages
-    # A turn the operator cancelled (`{step}` = the node it resumes at).
-    cancelled: str
+    # A turn the operator cancelled: where it stopped and how far it got.
+    cancelled: CancelledMessages
 
 
 class OrderTableSettings(BaseModel):
@@ -144,20 +153,31 @@ class OrderTableSettings(BaseModel):
     no_refund_detail: str
 
 
-class ConsoleActionSettings(BaseModel):
-    """One console button: its label and Textual variant (`{node}` = where a resume starts)."""
+class ReviewOutputSettings(BaseModel):
+    """How a review request reads: queued on a card, decided at the console, sent to a customer.
 
-    label: str
-    variant: str = "default"
+    `/queue approve|deny` prints one tree — the request, the decision, its
+    effect, and what the customer was told — under `labels`. `request` and
+    `effects` are keyed by action and by `<action>_<decision>`.
+    """
+
+    queued: str
+    reply_follow_up: str
+    title: str
+    labels: dict[str, str]
+    request: dict[str, str]
+    decided: str
+    effects: dict[str, str]
+    customer_told: str
+    customer_not_told: str
+    not_pending: str
 
 
 class ConsoleSettings(BaseModel):
     """This agent's operator-console controls."""
 
-    # The key that cancels the turn in flight.
+    # The key that cancels the turn in flight (the buttons are the platform's `tui.run_controls`).
     cancel_key: str
-    cancel: ConsoleActionSettings
-    resume: ConsoleActionSettings
 
 
 class CustomerSupportAgentSettings(YamlBackedSettings):
@@ -190,6 +210,7 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     grounding_facts: dict[str, str]
     # Who the console acts as when it approves or denies a queued refund.
     console_reviewer: str
+    review_output: ReviewOutputSettings
     evals: CsaEvalSettings
     # What `make dummy-data` generates (counts, seed, catalogue, weights).
     dummy_data_generator_path: str

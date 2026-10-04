@@ -21,8 +21,11 @@ OrderStatus = Literal["pending", "shipped", "delivered", "cancelled"]
 RefundStatus = Literal["none", "pending_review", "approved", "denied", "completed"]
 HitlStatus = Literal["pending", "approved", "denied"]
 # What a reviewer's approval will do. A cancellation that moves money is
-# reviewed as one decision, so approving it cancels *and* refunds.
-ReviewAction = Literal["refund", "cancel_and_refund"]
+# reviewed as one decision, so approving it cancels *and* refunds. A reply
+# review moves no money: approving it says the hallucination check was
+# wrong, and sends the customer what it removed.
+ReviewAction = Literal["refund", "cancel_and_refund", "reply"]
+REPLY_REVIEW: ReviewAction = "reply"
 
 # An order is refundable only once it is settled. Domain invariant, not a
 # tunable: it is what "refund" means for this business, and the dummy
@@ -169,13 +172,33 @@ class User(BaseModel):
         return f"{shown}{'*' * max(3, len(local) - len(shown))}@{domain}"
 
 
+class ReplyReview(BaseModel):
+    """A reply the hallucination check cut, as the reviewer needs to judge it."""
+
+    sent: str
+    removed: list[str]
+    reason_code: str
+    reason: str
+    withheld: bool = False
+
+
 class HitlRequest(BaseModel):
-    """A refund waiting on a human decision."""
+    """A request waiting on a human decision: a refund, or a reply the check cut.
+
+    A money request carries its order and amount; a reply review carries
+    `detail` instead, and may name no order.
+    """
 
     id: int | None = None
-    order_id: int
+    order_id: int | None = None
     user_id: int
-    requested_amount: Money
+    requested_amount: Money | None = None
     action: ReviewAction = "refund"
     status: HitlStatus = "pending"
     created_at: str = Field(default_factory=lambda: utc_now().isoformat())
+    session_id: str | None = None
+    detail: ReplyReview | None = None
+
+    @property
+    def is_reply(self) -> bool:
+        return self.action == REPLY_REVIEW

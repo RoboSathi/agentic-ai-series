@@ -53,6 +53,17 @@ class HostedContentSafetyGuard:
     def model(self) -> str:
         return self._model
 
+    def _reason(self, flagged: bool, categories: list[str], output: str) -> str:
+        """What the verdict says: what the model flagged, in its own words — never a bare
+        "flagged" that hides the evidence."""
+        if not flagged:
+            return self._settings.allowed_reason
+        named = _flagged_as(self._settings.flagged_categories_reason, categories)
+        if named:
+            return named
+        unnamed = self._settings.flagged_uncategorised_reason
+        return unnamed.format(output=output) if unnamed else self._settings.flagged_reason
+
     async def classify(self, text: str) -> GuardVerdict:
         """Classify text; 503/429/5xx failures are retried before unavailable."""
         started = time.perf_counter()
@@ -101,12 +112,11 @@ class HostedContentSafetyGuard:
                 categories=categories,
                 model=self._model,
                 provider=self._settings.provider,
-                reason=(
-                    self._settings.flagged_reason if flagged else self._settings.allowed_reason
-                ),
+                reason=self._reason(flagged, categories, output),
                 endpoint=self._endpoint,
                 api_called=True,
                 latency_ms=latency_ms,
+                output=output,
                 raw=data,
             )
         except Exception as exc:
@@ -131,6 +141,11 @@ class HostedContentSafetyGuard:
                 api_called=True,
                 latency_ms=latency_ms,
             )
+
+
+def _flagged_as(template: str, categories: list[str]) -> str:
+    """The flagged reason naming what the model found, or "" when it named nothing."""
+    return template.format(categories=", ".join(categories)) if template and categories else ""
 
 
 def _extract_chat_content(data: dict[str, Any]) -> str:
@@ -170,10 +185,10 @@ def _parse_safety_output(output: str) -> tuple[bool, list[str]]:
             continue
         if isinstance(parsed, dict):
             safety = str(parsed.get(words.response_safety_key, "")).strip().casefold()
-            categories_raw = parsed.get(words.response_categories_key, "")
-            categories = [c.strip() for c in str(categories_raw).split(",") if c.strip()]
             if safety in {words.safe_word, words.unsafe_word}:
-                return safety == words.unsafe_word, categories
+                return safety == words.unsafe_word, _categories(
+                    parsed, words.response_categories_keys
+                )
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
         raise ValueError("content-safety guard returned an empty classification")
@@ -181,6 +196,13 @@ def _parse_safety_output(output: str) -> tuple[bool, list[str]]:
     flagged = words.unsafe_word in first
     categories = [token.strip(" ,:;[]()") for token in lines[1:] if token.strip(" ,:;[]()")]
     return flagged, categories
+
+
+def _categories(parsed: dict[str, Any], keys: list[str]) -> list[str]:
+    """The categories under the first key present, given as a string or as a list."""
+    found = next((parsed[key] for key in keys if parsed.get(key)), "")
+    items = found if isinstance(found, list) else str(found).split(",")
+    return [str(item).strip() for item in items if str(item).strip()]
 
 
 def _call_key(prefix: str, text: str) -> str:
