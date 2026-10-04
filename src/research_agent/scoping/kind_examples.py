@@ -1,4 +1,4 @@
-"""The scope gate's labelled examples (`gate_training.yaml`), and how to score a classifier on them.
+"""The research kind's labelled examples (`kind_examples.yaml`), and how to score a classifier on them.
 
 The examples are what the intent classifier votes with (nearest labelled examples over the local
 embedder); these helpers load them, split them by label, and print a confusion matrix — for
@@ -11,11 +11,11 @@ from pathlib import Path
 
 import yaml
 
-from research_agent.scoping.encoder_gate import LABELS
+from research_agent.scoping.kind_encoder import LABELS
 
 
 def load_examples(path: Path) -> list[tuple[str, str]]:
-    """(text, label) pairs; a label outside the gate's set is an error, not a skipped row."""
+    """(text, label) pairs; a label outside the research kinds is an error, not a skipped row."""
     raw = yaml.safe_load(path.read_text())
     unknown = sorted(set(raw) - set(LABELS))
     if unknown:

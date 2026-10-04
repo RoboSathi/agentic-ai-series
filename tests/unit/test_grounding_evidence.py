@@ -207,7 +207,7 @@ class TestTheCardShowsOnlyWhatDecidedIt:
                 "evidence": [_line("policy", "entailment", 0.99, "hear back soon", decisive=True)],
             }
         )
-        assert 'Supported By [Policy] (Entailment 0.99): "hear back soon"' in card
+        assert 'supported by [Policy] (Entailment 0.99): "hear back soon"' in card
 
     def test_a_verdict_the_record_decided_has_no_parenthetical_and_no_tail(self) -> None:
         card = _card(
@@ -227,7 +227,7 @@ class TestTheCardShowsOnlyWhatDecidedIt:
                 ],
             }
         )
-        assert 'Supported By [Tool Result]: "Order 10665 refund status: pending_review."' in card
+        assert 'supported by [Tool Result]: "Order 10665 refund status: pending_review."' in card
         assert "Record" not in card and "so a claim" not in card
 
     def test_a_contradiction_by_a_model_says_how_sure(self) -> None:
@@ -243,7 +243,7 @@ class TestTheCardShowsOnlyWhatDecidedIt:
                 ],
             }
         )
-        assert 'Contradicted By [Tool Result] (Contradiction 0.98): "refund status: none"' in card
+        assert 'contradicted by [Tool Result] (Contradiction 0.98): "refund status: none"' in card
 
     def test_a_rule_that_found_no_line_says_what_it_found(self) -> None:
         card = _card(
@@ -254,7 +254,7 @@ class TestTheCardShowsOnlyWhatDecidedIt:
                 "evidence": [],
             }
         )
-        assert "Contradicted: Amount(s)" in card and "By [" not in card
+        assert "contradicted: Amount(s)" in card and "By [" not in card
 
 
 class TestAnUnverifiedClaimIsOneLine:
@@ -270,7 +270,7 @@ class TestAnUnverifiedClaimIsOneLine:
                 ],
             }
         )
-        assert card.splitlines()[-1].strip() == "Unverified: no evidence states or contradicts this"
+        assert card.splitlines()[-1].strip() == "unverified: no evidence states or contradicts this"
         assert "Also Read" not in card and "0.00" not in card and "not checked" not in card.lower()
 
     def test_a_line_the_model_did_score_is_named(self) -> None:
@@ -284,7 +284,7 @@ class TestAnUnverifiedClaimIsOneLine:
             }
         )
         assert (
-            'Unverified: [Tool Result] read as neutral (0.98): "Refunded $21.35 for order 10001"'
+            'unverified [Tool Result] read as neutral (0.98): "Refunded $21.35 for order 10001"'
             in card
         )
 
@@ -438,5 +438,128 @@ class TestAStateRecordIsNotSentToNli:
         body = Text()
         _append_claim(body, result.claim_checks[0])
         assert (
-            'Supported By [Tool Result]: "Order 10665 refund status: pending_review."' in body.plain
+            'supported by [Tool Result · process_refund]: "Order 10665 refund status: pending_review."'
+            in body.plain
         )
+
+
+class TestAPromiseIsReadAsAPromise:
+    """`cancel order 10193`: "will be processed once approved" was read as already processed."""
+
+    def _turn(self) -> AgentState:
+        return _state(
+            (
+                "support__cancel_order",
+                "Order 10193 has been cancelled. Refund of $66.56 for order 10193 has been "
+                "queued for human review. Order 10193 refund status: pending_review.",
+                "referred",
+            )
+        )
+
+    def _guard(self) -> ResponseGuardrail:
+        return ResponseGuardrail(
+            DetectionLadder(create_scoring_cascade(), entailment=_NeverReadsARecord())
+        )
+
+    async def test_the_reply_from_the_live_run_is_sent_whole(self) -> None:
+        reply = (
+            "Your order 10193 has been cancelled. The $66.56 refund is queued for review "
+            "and will be processed once approved."
+        )
+        result = await self._guard().enforce(reply, _Support()._grounding_evidence(self._turn()))
+        assert not result.escalated, result.claim_checks
+        assert result.response == reply
+
+    async def test_a_refund_stated_as_done_is_cut_and_the_rest_sent(self) -> None:
+        reply = "Your order 10193 has been cancelled. The $66.56 refund has been processed."
+        result = await self._guard().enforce(reply, _Support()._grounding_evidence(self._turn()))
+        assert result.escalated and not result.withheld
+        assert result.response == "Your order 10193 has been cancelled."
+        assert result.removed_sentences == ["The $66.56 refund has been processed."]
+        assert result.total_sentences == 2
+        assert result.outcome.startswith("TRIMMED · removed 1 of 2 sentence(s)")
+
+    async def test_nothing_left_is_withheld_and_blocked(self) -> None:
+        reply = "The $66.56 refund has been processed."
+        result = await self._guard().enforce(reply, _Support()._grounding_evidence(self._turn()))
+        assert result.withheld
+        assert result.response == get_settings().hallucination_protection.withheld_reply
+        assert result.outcome.startswith("BLOCKED · ") and result.outcome.endswith("reply withheld")
+
+
+class TestTheCardIsDrawnLikeTheOthers:
+    def _body(self, outcome: str) -> Any:
+        from rich.text import Text
+
+        from agent_platform.tui.widgets import _append_grounding
+
+        body = Text()
+        _append_grounding(body, {"outcome": outcome, "claim_checks": []})
+        return body
+
+    def test_only_the_state_word_takes_the_outcome_colour(self) -> None:
+        body = self._body("TRIMMED · removed 1 of 2 sentence(s) · a reason")
+        assert body.plain.startswith("  result = TRIMMED · removed")
+        styles = {body.plain[span.start : span.end]: str(span.style) for span in body.spans}
+        tones = get_settings().tui.tone_styles
+        assert styles["TRIMMED"] == tones["warn"]
+        assert styles[" · removed 1 of 2 sentence(s) · a reason"] != tones["fail"]
+
+    def test_a_claim_is_a_check_line_with_its_verdict(self) -> None:
+        card = _card(
+            {
+                "claim": "The $66.56 refund has been processed",
+                "verdict": "refuted",
+                "evidence": [
+                    _line(
+                        "tool result",
+                        "record",
+                        1.0,
+                        "Order 10193 refund status: pending_review.",
+                        decisive=True,
+                    )
+                ],
+            }
+        )
+        assert card.startswith("✗ The $66.56 refund has been processed [CONTRADICTED]")
+
+
+class TestTheCardNamesTheSource:
+    """RA's evidence is a page; the card said `[Tool Result]` and never which one."""
+
+    def test_a_url_is_named_by_its_host(self) -> None:
+        line = _line("tool result", "entailment", 0.97, "Hiring rose 4% in 2025", decisive=True)
+        line["source"] = "https://www.wef.org/reports/future-of-jobs-2025"
+        card = _card({"claim": "Hiring rose in 2025", "verdict": "supported", "evidence": [line]})
+        assert "supported by [Tool Result · www.wef.org]" in card
+
+    def test_a_tool_name_is_named_as_it_is(self) -> None:
+        line = _line(
+            "tool result",
+            "record",
+            1.0,
+            "Order 10193 refund status: pending_review.",
+            decisive=True,
+        )
+        line["source"] = "get_order_status"
+        card = _card(
+            {"claim": "Your refund is pending", "verdict": "supported", "evidence": [line]}
+        )
+        assert "[Tool Result · get_order_status]" in card
+
+    async def test_the_resolver_carries_the_source_through(self) -> None:
+        from agent_platform.context.types import Chunk
+
+        chunk = Chunk(
+            content="Order 10193 refund status: pending_review.",
+            kind="tool_result",
+            source="get_order_status",
+            metadata={"observation_sequence": 0},
+        )
+        result = (
+            await TestAPromiseIsReadAsAPromise()
+            ._guard()
+            .enforce("Your refund for order 10193 is pending review.", [chunk])
+        )
+        sources = [e["source"] for c in result.claim_checks for e in c["evidence"]]
+        assert "get_order_status" in sources

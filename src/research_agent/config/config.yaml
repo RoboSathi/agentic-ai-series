@@ -17,12 +17,12 @@ agent:
 features:
   # ra's own features
   scoping_challenge_check: true      # anti-sycophancy guard on interview turns
-  gate_encoder: true                 # rules + the local intent classifier before the LLM gate; the LLM is the fallback
+  kind_encoder: true                 # /research kind: cue rules + the local example classifier before the LLM
   direct_answer:                     # plain questions are answered directly (tools on demand); off = every question starts a scope
     enabled: true
     grounding: true                  # the answer is checked against what its tools returned; unsupported details are removed
   rubric: true                       # acceptance criteria; off = run with no contract items
-  reflection: true                   # gap analysis + follow-up queries after each wave
+  reflection: true                   # gap analysis + follow-up queries after each batch
   independent_audit: true               # independent audit of the delivered report
   citation_verification:             # verbatim-span rule + NLI claim support
     enabled: true
@@ -70,16 +70,20 @@ audit:
   prompt_source: research_agent/prompts
   policy_source: research contract (audit)
 
-# The research roles' default model and its protection: nemotron-super, backed up by
-# nemotron-ultra (strongest, slower) and then gpt-oss-20b (fast, a different family).
-x-super-chain: &super_chain
+# The research roles' default model and its protection: nemotron-ultra (the strongest on the
+# account; nemotron-super, the default until 2026-10-03, reached end of life that day), backed up
+# by nemotron-lightning (thinking off: with it on it narrates into the answer) and then gpt-oss-20b
+# last, so a call always gets some answer. The same line-up as the platform's `llm.chain`.
+x-default-chain: &default_chain
   provider: nim
-  model: nvidia/nemotron-3-super-120b-a12b
+  model: nvidia/nemotron-3-ultra-550b-a55b
   timeout_seconds: 60
   hedge_after_seconds: 25
   fallbacks:
-    - {provider: nim, model: nvidia/nemotron-3-ultra-550b-a55b}
-    - { provider: nim, model: openai/gpt-oss-20b }
+    - provider: nim
+      model: nvidia/nemotron-3.5-lightning-30b-a3b
+      extra_body: {chat_template_kwargs: {enable_thinking: false}}
+    - {provider: nim, model: openai/gpt-oss-20b}
 
 llm:
   # Role -> model. `judge` must differ from `synthesizer` while
@@ -94,34 +98,29 @@ llm:
     # spent 600-4,000 hidden tokens (3.5-32s) on it. Measured 2026-10-02 on a scoping prompt:
     # 5.5-9.9s with thinking, 0.5s without, and the questions were as specific.
     interviewer:
-      <<: *super_chain
+      <<: *default_chain
       extra_body: {chat_template_kwargs: {enable_thinking: false}}
     # Thinking off for the structured roles: a plan, an extraction, a gap list are schema-shaped
     # answers; with reasoning on the planner spent 34 s on a two-step plan (run-01ff185590).
     planner:
-      <<: *super_chain
+      <<: *default_chain
       timeout_seconds: 90
       extra_body: {chat_template_kwargs: {enable_thinking: false}}
-    researcher: {<<: *super_chain, timeout_seconds: 90}
+    researcher: {<<: *default_chain, timeout_seconds: 90}
     extractor:
-      <<: *super_chain
+      <<: *default_chain
       timeout_seconds: 90
       extra_body: {chat_template_kwargs: {enable_thinking: false}}
     reflector:
-      <<: *super_chain
+      <<: *default_chain
       extra_body: {chat_template_kwargs: {enable_thinking: false}}
-    synthesizer: {<<: *super_chain, timeout_seconds: 120, hedge_after_seconds: 60}
-    # The judge is the strongest model on the account, and a different one from the writer;
-    # about 2x slower than gpt-oss-20b at the median (6.0s vs 2.8s per call, measured
-    # 2026-10-01). Its backup is gpt-oss-20b: also not the writer.
-    judge:
-      provider: nim
-      model: nvidia/nemotron-3-ultra-550b-a55b
-      timeout_seconds: 120
-      hedge_after_seconds: 45
-      fallbacks: [{provider: nim, model: openai/gpt-oss-20b}]
+    synthesizer: {<<: *default_chain, timeout_seconds: 120, hedge_after_seconds: 60}
+    # The judge: the same line-up as the writer since super's retirement (2026-10-03), with a
+    # longer limit for grading. It is therefore not independent of the synthesizer, and
+    # `research_agent.audit.independent_judge` is off so every audit records that.
+    judge: {<<: *default_chain, timeout_seconds: 120, hedge_after_seconds: 45}
     # Multi-step tool calling: the model the platform recommends for it.
-    answerer: *super_chain
+    answerer: *default_chain
 
   # The intent classifier's embedder, local: nearest labelled examples need similarity, not a
   # network call per message. e5 expects "query: " before every text it compares.
@@ -138,7 +137,7 @@ tui:
     - {pattern: '\[must\]', style: "bold yellow"}
     - {pattern: '\[soft\]', style: "blue"}
     - {pattern: '^R\d+\b', style: "bold magenta"}
-    - {pattern: '(?<![\w/])/(?:research|qa|done|approve|rubric|waive|cancel|show|history|help)\b', style: "bold cyan"}
+    - {pattern: '(?<![\w/])/(?:research|done|approve|rubric|waive|cancel|show|history|help)\b', style: "bold cyan"}
     - {pattern: '^\(I removed details[^)]*\)$', style: "dim italic"}
     - {pattern: '^\*\*Status:\*\* COMPLETE.*$', style: "bold green"}
     - {pattern: '^\*\*Status:\*\* PARTIAL.*$', style: "bold yellow"}
@@ -201,6 +200,17 @@ security:
       - supersedes your instructions
       - note to ai
       - ai research assistant
+  content_moderation:
+    # A research assistant, not a support desk: questions about people, places, companies,
+    # history and current events — and about the user's own details — are ordinary here.
+    system_prompt: |
+      You are a content-safety classifier for a research assistant that answers questions and
+      researches topics on the web.
+      Classify only the latest user message. Return JSON and nothing else.
+      Schema: {"User Safety":"safe"|"unsafe","Safety Categories":"comma-separated categories"}.
+      Omit Safety Categories when the message is safe. Questions about people, places,
+      organisations, history, science, news and current events are safe, as are questions about
+      the user's own account or details.
 
 
 research_agent:
@@ -230,17 +240,11 @@ research_agent:
     rubric_add: add
     rubric_drop: drop
     rubric_set: set
-    qa: qa
     research: research
 
   # Everything the agent says that is not written by a model.
   messages:
     refuse: I can't research that request.
-    input_blocked: "I can't act on that message: a safety screen stopped it. Rephrase it and try again."
-    reframe: "What would you like?\n{options}\nReply with a number, or rephrase your question."
-    reframe_option: '  {number}. {label} — e.g. "{example}"'
-    qa_started: "Quick answer: searching the web now (no interview). /research gives a full, audited research run instead."
-    qa_followup: "Want more depth? /research runs a full, audited research scope on this question."
     challenge_prefix: "Before we go on: "
     propose_done: "I have enough to plan. Draft plan:\n{plan}"
     plan_step: "Research {part}"
@@ -281,30 +285,13 @@ research_agent:
     # The anti-sycophancy guard: at least one challenge or follow-up every K turns.
     challenge_every_k_turns: 3
     checklists_path: src/research_agent/scoping/checklists.yaml
-    # First messages that ask for something this agent will not research.
+    # Requests this agent refuses, before any model is asked: a plain question or a /research one.
     refuse_patterns:
       - '\b(?:make|build|synthesi[sz]e)\s+(?:a\s+)?(?:bomb|weapon|explosive|nerve agent)\b'
       - '\b(?:dox|home address of)\b'
-    # Open-ended requests that need a reframe before they are scopable.
-    # Messages with no question in them at all ("tell me about X"): the
-    # agent offers the two modes instead of guessing.
-    reframe_patterns:
-      - '^\s*(?:tell me (?:about|everything)|what about)\b'
-    # A message that asks for a research *run* rather than an answer, even
-    # when it names no specialised kind: it becomes a `general` Research scope.
-    quick_reason: "a plain question is answered directly; /research starts a full research run"
-    rule_gate_min_cue_hits: 2
-    research_cues: [research, investigate, deep dive, in-depth, report on, study of, analyse, analyze]
-    # The reframe menu: one line per mode, each with a question that works.
-    reframe_options:
-      - mode: qa
-        label: "Quick answer (Q&A)"
-        example: Important AI news in the last 1 month
-        aliases: [qa, q&a, quick, answer, question, news]
-      - mode: research
-        label: "Research (interview, acceptance criteria, audited report)"
-        example: Help me choose a vector database for 10 million documents
-        aliases: [research, deep, full, report, choose, compare, map, mapping, verify, check, explain]
+    # The cue rules name a research kind only when at least this many of its cues appear (and no
+    # other kind ties it); otherwise the encoder, then the LLM.
+    kind_rule_min_cue_hits: 2
     time_window:
       amount_pattern: '(\d+)\s*(day|week|month|year)s?\b'
       relative_pattern: '\b(?:last|past|previous|recent)\s+(day|week|month|year)\b'
@@ -312,9 +299,8 @@ research_agent:
       # Only news phrasing: "the market today" means "currently", not one day.
       today_pattern: '\b(?:today|yesterday)(?:''s)?\s+(?:news|headlines|announcements|updates)\b|\b(?:last|past)\s+24\s+hours\b'
       unit_days: {day: 1, week: 7, month: 30, year: 365}
-    # Cues for the Research kinds. A question with none of them (and no
-    # research cue) is answered directly as Q&A. The live gate is a model;
-    # these are its hints, and the demo reference model's whole rule.
+      unit_months: {month: 1, year: 12}
+    # Cues for the research kinds: the cue rules' whole vocabulary, and hints for the LLM.
     archetype_keywords:
       decision_support: [choose, choosing, decide, which should, compare, versus, " vs ", option, pick, recommend, should we, should i, which is better, better than, alternatives to, trade-off]
       landscape_brief: [landscape, players, market map, who are the, competitors, ecosystem, market, who makes, vendors, startups, map the, overview of the]
@@ -370,20 +356,6 @@ research_agent:
       budget: {max_searches: 8, max_fetches: 24, max_tokens: 200000, max_seconds: 900, max_rounds: 3, max_dag_nodes: 8, max_gap_fill_rounds: 1, concurrency: 2}
       report_entries: 60
       report_max_tokens: 8192
-
-  # Q&A: a quick cited answer, no interview. Three searches at most (the
-  # router asks DuckDuckGo first, Tavily only for news/time-bounded
-  # questions or when DuckDuckGo finds nothing), one follow-up round.
-  qa:
-    budget:
-      max_searches: 3
-      max_fetches: 8
-      max_tokens: 80000
-      max_seconds: 300
-      max_rounds: 2
-      max_dag_nodes: 3
-      max_gap_fill_rounds: 0
-      concurrency: 2
 
   planning:
     max_queries_per_node: 2
@@ -474,29 +446,15 @@ research_agent:
     window_chars: 2000
     max_windows: 4
 
-  # The intent classifier (nearest labelled examples over the local e5 embedder, `llm.local_embedder`)
-  # in front of the LLM scope gate: it decides alone only above both bars.
-  gate_encoder:
+  # Which kind of research a `/research` question asks for: cue rules, then the nearest labelled
+  # examples over the local e5 embedder (`llm.local_embedder`), then the LLM. The examples are
+  # this agent's own data (scoping/kind_examples.yaml); the nearest 7 vote, and the vote decides
+  # alone only above both bars.
+  kind_encoder:
+    exemplars_path: src/research_agent/scoping/kind_examples.yaml
+    neighbours: 7
     min_confidence: 0.80
     min_margin: 0.25
-
-  # The front door. A plain question is answered directly (no scope, no plan, no audit
-  # pipeline); only a research request starts a scope. Rules first, then the encoder above,
-  # then the LLM for what the encoder is unsure of. Anything left is answered directly.
-  intent_router:
-    research_cue_min_hits: 1
-    # No training: a message is compared with the labelled examples the scope gate already ships
-    # (scoping/gate_training.yaml) and the nearest 7 vote. Measured 2026-10-02, leave-one-out over
-    # the 88 examples (answer vs research): one bar of 0.70 decided 91% but sent 2 questions to
-    # research; answer at 0.70 and research at 0.85 decide 85%, 95% right, 1 question sent to
-    # research. "Important AI news on impact of software jobs in the last 3 months" went to
-    # research at 0.71 before the news examples were added; it now reads answer at 0.86.
-    exemplars_path: src/research_agent/scoping/gate_training.yaml
-    neighbours: 7
-    min_confidence: 0.7
-    research_min_confidence: 0.85
-    encoder_answer_labels: [qa, answer]
-    llm_fallback: true
 
   # The direct-answer path: a ReAct loop (THOUGHT -> ACTION -> OBSERVATION -> THOUGHT ...),
   # then the HALLUCINATION CHECK (the answer checked against what the tools returned) and, only if that check
@@ -512,6 +470,9 @@ research_agent:
     call_timeout_seconds: 45
     repair_timeout_seconds: 45
     min_call_seconds: 5
+    # The last step is asked for text this many times; a model that still asks for a tool is
+    # then asked to answer from the tool results alone, so a found answer is never dropped.
+    final_attempts: 2
     max_tokens: 8192
     temperature: 0.2
     # An answer of three or more sentences written as prose is shown one point per sentence.
@@ -522,6 +483,10 @@ research_agent:
     search_max_results: 5
     snippet_max_chars: 1200
     fetch_max_chars: 6000
+    # One slow site held a quick answer 20 s (olympics.com, 2026-10-04): the answer path fetches
+    # with its own, shorter limits; a page it gives up on is one of several results.
+    fetch_timeout_seconds: 8
+    fetch_max_attempts: 1
     date_format: "%A, %d %B %Y, %H:%M %Z"
     clock_format: "%A, %d %B %Y, %H:%M:%S %Z (UTC%z)"
     context:
@@ -601,8 +566,8 @@ research_agent:
       ungrounded_heading: "Checked against the sources · {removed} unsupported detail(s) removed · {tally}"
       outcome_unchanged: "PASSED · answer sent unchanged"
       outcome_repaired: "PASSED after a rewrite · the rewritten answer was sent"
-      outcome_filtered: "FILTERED · unsupported sentences removed before sending"
-      outcome_withheld: "WITHHELD · nothing in the answer could be verified"
+      outcome_filtered: "TRIMMED · unsupported sentences removed before sending"
+      outcome_withheld: "BLOCKED · nothing in the answer could be verified · answer withheld"
       filtered_note: "(I removed details I could not verify against the sources.)"
       withheld: "I could not verify an answer from the sources I found. Try again, or use /research for a fuller run."
       session_state_heading: "# Session state"
@@ -619,6 +584,23 @@ research_agent:
       weather_now: "Now: {conditions}"
       weather_day: "{day}: {conditions}"
 
+  # An undated question asks for the latest. The model is told so in its prompt, and this check
+  # holds it to that: a search pinned to a past year the question never named, or results that
+  # are all old, get a note the model reads before it answers. A dated question is left alone.
+  recency:
+    enabled: true
+    year_pattern: '\b(?:19|20)\d{2}\b'
+    stale_after_days: 365
+    messages:
+      pinned: >-
+        Note: this search is pinned to {years}, which the question did not ask for. Today is
+        {today}, and a question that names no date asks for the latest. Search again without
+        that year (or for {current}) before answering.
+      stale: >-
+        Note: the newest dated result here is from {newest}; today is {today}. A question that
+        names no date asks for the latest: if the answer can have changed since, search for
+        newer coverage before answering.
+      outside_period: "This query names {years}, before the approved period {start} → {end}."
   # The reply shows numbered sources and one finding per line; the archive keeps evidence ids.
   reader_view: true
   reader_view_wording:
@@ -647,8 +629,10 @@ research_agent:
     not_used: not used
 
   audit:
-    # When true, `judge` must resolve to a different model than `synthesizer`.
-    independent_judge: true
+    # When true, `judge` must resolve to a different model than `synthesizer`. Off since
+    # 2026-10-03: with nemotron-super retired, both run on nemotron-ultra (the account's strongest
+    # model). Recorded on every audit result, so a report never claims an independence it lacks.
+    independent_judge: false
     # lexical: deterministic (what tests inject); platform: the configured NLI
     # cross-encoder.
     entailment_model: platform
@@ -672,12 +656,12 @@ research_agent:
 
   tui:
     stage_labels:
-      scope_gate: SCOPE GATE
+      research_kind: RESEARCH KIND
       hallucination_check: HALLUCINATION CHECK
       llm_call_interviewer: THINKING · INTERVIEWER
       llm_call_planner: THINKING · PLANNER
       llm_call_researcher: THINKING · READING A PAGE
-      llm_call_extractor: THINKING · READING A PAGE
+      llm_call_extractor: THINKING · EXTRACTOR
       llm_call_reflector: THINKING · REFLECTING
       llm_call_synthesizer: THINKING · WRITING THE REPORT
       llm_call_judge: THINKING · JUDGE
@@ -686,21 +670,20 @@ research_agent:
       coverage_update: WAIVER
       rubric_generate: RUBRIC
       plan_dag: PLAN
-      wave_start: RESEARCH BATCH
+      batch_start: RESEARCH BATCH
       worker_search: SEARCH
       worker_fetch: FETCH
       content_defense: CONTENT DEFENCE
       reflect_gap_analysis: REFLECT
       budget_tick: BUDGET
-      page_result: PAGE
-      wave_summary: BATCH RESULT
+      page_result: EXTRACT
+      batch_summary: BATCH RESULT
       synthesize: SYNTHESIZE
       citation_guard: HALLUCINATION CHECK · REPORT
       independent_audit: LLM JUDGE
       gap_fill: GAP FILL
       finalize: FINAL STATUS
     command_help:
-      qa: "Quick cited answer from a few web searches, no interview (/qa <question>)"
       research: "Full research run on a question — interview, criteria, audit (/research [question]; bare = the last question)"
       done: "End the interview now; open required items become known unknowns"
       waive: "Waive an open checklist item (/waive <id> or /waive all)"
@@ -718,13 +701,13 @@ research_agent:
         - {label: "✓ Done interviewing", command: done, variant: success}
       RUBRIC_REVIEW:
         - {label: "▶ Approve and run", command: approve, variant: primary}
-      RUNNING:
-        - {label: "■ Stop Agent", command: cancel, during_turn: true, variant: error}
+      # RUNNING / STOPPED: the platform's run buttons (`tui.run_controls`), the same as every agent.
     phase_colors:
       SCOPING: "bold magenta"
       RUBRIC_REVIEW: "bold magenta"
       RUNNING: "bold green"
       AUDITING: "bold yellow"
+      STOPPED: "bold yellow"
       DELIVERED: "bold cyan"
       CANCELLED: "bold red"
       FAILED: "bold red"
@@ -754,38 +737,17 @@ research_agent:
       SPAN_NOT_VERBATIM: the quote does not appear word-for-word on the page
     # Every sentence a card or the status block says. Placeholders are filled by the card.
     cards:
-      mode.qa: quick answer
-      mode.research: full research
       classifier.rule: "a deterministic rule"
-      classifier.encoder: the intent classifier
+      classifier.encoder: the example classifier
       classifier.llm: the LLM
-      scope_gate.refused: "Request declined · decided by {classifier}"
-      scope_gate.reframe: "Needs a clearer goal · decided by {classifier}"
-      scope_gate.scopable: "Scope: {mode} · {kind} · decided by {classifier}"
-      scope_gate.topic: "Topic: {topic}"
-      scope_gate.window: "Time window: last {days} days"
-      scope_gate.section.understood: What was understood
-      scope_gate.section.classifier: How it was decided
-      scope_gate.model: "Model: {model}"
-      intent.heading.answer: "Answer directly · {classifier}"
-      intent.heading.research: "Research run · {classifier}"
-      intent.heading.refuse: "Refused · {classifier}"
-      intent.source.rule: rules
-      intent.source.encoder: the intent classifier
-      intent.source.llm: the LLM
-      intent.source.default: the default (answer directly)
-      intent.section.checks: Front door
-      intent.decided_by: "Decided by: {by} · {model}"
-      intent.no_model: rules, no model
-      intent.scores: "Scores: answer {answer} · research {research} · bar {bar}"
-      intent.rules_clear: "Rules: no refusal · no research cue"
-      intent.rules.refusal_hit: "Rules: matches a refusal pattern"
-      intent.rules.cues_hit: "Rules: research cue — {cues}"
-      intent.rules.kind_hit: "Rules: {kind} cues — {cues}"
-      intent.decision.answer: "Route: direct answer — ReAct with web tools"
-      intent.decision.research: "Route: research — interview, criteria, audited report"
-      intent.decision.refuse: "Route: refused"
-      scope_gate.encoder_read: "The intent classifier read it as {label}: {share} of the vote, runner-up {runner_up}."
+      research_kind.refused: "Request declined · decided by {classifier}"
+      research_kind.heading: "Research kind: {kind} · decided by {classifier}"
+      research_kind.topic: "Topic: {topic}"
+      research_kind.window: "Time window: last {days} days"
+      research_kind.section.understood: What was understood
+      research_kind.section.classifier: How it was decided
+      research_kind.model: "Model: {model}"
+      research_kind.encoder_read: "The example classifier read it as {label}: {share} of the vote, runner-up {runner_up}."
       interview.heading: "Interview · turn {turn} · asking about {item}"
       interview.no_item: wrap-up
       interview.guard: "Interviewer went too long without challenging an answer · asking again with a challenge"
@@ -852,7 +814,9 @@ research_agent:
       search.section.results: Results (site · date)
       search.section.note: Note
       search.summary_ignored: The provider's own summary was ignored (untrusted).
-      page.heading: "{host} · {kept} fact(s) kept"
+      page.heading: "{host} · {kept} of {extracted} claim(s) kept"
+      page.asked: "Extract claims that answer {node} · {question}"
+      page.decision: "kept {kept} · refused {refused} · of {extracted} proposed"
       page.evidence: "{id} · {claim}"
       page.rejected: "{why} · “{span}” — {nearest}"
       stop.undated: "no evidence admitted: all {count} result(s) had no readable publication date, so none could be checked against the recency window"
@@ -866,9 +830,6 @@ research_agent:
       page.nothing: The extractor found no claim on this page.
       page.size: "{chars} characters{via}"
       page.via_reader: " · read through the page reader"
-      page.section.kept: "Evidence kept (quoted word-for-word from the page)"
-      page.section.rejected: Claims refused
-      page.section.note: Note
       page.section.for: Researching
       page.section.page: Page
       batch_result.heading: "Batch {batch} result · {pages} page(s) read · {evidence} evidence item(s) collected"
@@ -878,34 +839,57 @@ research_agent:
       batch_result.section.refused: Results not used
       batch_result.section.meaning: What “evidence” means
       batch_result.glossary: "A claim quoted word-for-word from a page that was read. Only evidence can be cited in the report."
+      # REFLECT and GAP FILL are step cards (`observability.step_card`): Asked, Model,
+      # Reasoning, Response, Decision, Evidence. These are the words inside them.
+      # How far a stopped run got: the stop report's tree (its frame is the platform's).
+      stop.topic: topic
+      stop.round: round
+      stop.round_value: "{round} (gap-fill rounds: {gap_fill})"
+      stop.questions: sub-questions answered
+      stop.questions_value: "{answered} of {asked}"
+      stop.evidence: evidence
+      stop.evidence_value: "{items} item(s) from {sources} source(s)"
+      stop.spent: budget spent
       reflect.continue: "Reflect · round {round} · {gaps} gap(s) · researching further"
       reflect.stop: "Reflect · {gaps} gap(s) · stopping"
       reflect.question: "Does the evidence collected so far meet every acceptance criterion, and is more research worthwhile?"
       reflect.no_gaps: Every criterion is met by the evidence so far.
-      reflect.section.question: Reflection question
-      reflect.section.gaps: Gaps (criteria not yet met)
-      reflect.section.decision: Decision
-      reflect.section.follow_ups: Follow-up questions
+      reflect.missing: "missing: {detail}"
+      reflect.accepted: "{count} follow-up(s) accepted: {ids}"
+      reflect.follow_up: "{node} · {question} · serves {items}"
+      reflect.rejected: "dropped “{question}” · {why}"
+      reflect.why.no_gap: it serves no unmet criterion
+      reflect.why.tried: every query it proposed was already tried
+      reflect.why.over_limit: over the limit on follow-ups per round
+      reflect.budget_dropped: "{count} follow-up(s) dropped to fit the searches left"
+      reflect.no_model: "the model was not asked: {reason}"
+      reflect.decision_stop: "stop researching · the report is written from the evidence so far"
+      reflect.verdict_sufficient: "the model judged the evidence enough to answer the question"
+      reflect.verdict_gaps: "the model judged the answer incomplete"
+      reflect.critique_question: "Do the claims collected so far actually answer the question, and is more research worthwhile?"
+      reflect.criterion: "{mark} {criterion} · {check}: {detail}"
+      reflect.criterion_evidence: "{item} · {check}: {items}"
+      reflect.rule: "the {rule} stop rule ({archetype})"
+      reflect.rule_inputs: "{met} of {total} criteria met · must-pass met {must_met} of {must_total} · entities {before} → {after}"
+      reflect.stop_reason: "stop rule says: {reason}"
+      reflect.ledger: "{claims} claim(s) from {sources} source(s){hosts}"
+      reflect.ledger_hosts: " · {hosts}"
       synthesize.heading: "Writing the report · {citations} citation(s) · {status}"
       synthesize.evidence: "{n} evidence item(s) from {sites} website(s)"
       synthesize.questions: "{answered} of {asked} sub-question(s) produced evidence"
       synthesize.intent: Write the report only from the collected evidence, citing each claim; state plainly what could not be established.
       synthesize.removed: "{n} citation(s) naming evidence that does not exist were removed"
-      synthesize.section.inputs: Drawing on
-      synthesize.section.intent: Intent
-      synthesize.section.sections: Sections
-      synthesize.section.unmet: Criteria still unmet (reported as limits)
-      synthesize.section.removed: Corrections
+      synthesize.unmet: "still unmet, reported as limits: {criterion}"
+      synthesize.section_line: "{heading} · {citations} citation(s)"
+      synthesize.cited: "{id} · {host}"
       judge.heading: "{passed}/{total} criteria met · score {score} · {outcome}"
       judge.unknown_model: "(model not recorded)"
-      judge.section.judge: The judge
-      judge.section.criteria: Criteria, and how each was checked
-      judge.section.score: How the score was reached
-      judge.section.to_pass: What would make this COMPLETE
-      judge.model: "Judge model: {model}"
+      judge.asked: "Does the report meet each of its {count} criteria? It passes at {pass_at}."
+      judge.rationale: "{id}: {rationale}"
+      judge.cited: "{id} · {items}"
+      judge.to_pass: "to become COMPLETE: {need}"
       judge.independent.True: "Independent of the writer ({writer}): it sees only the report and its evidence, never the run's reasoning"
       judge.independent.False: "Not independent: the writer ({writer}) is the same model"
-      judge.usage: "Judge calls: {calls} · {tokens} tokens · {seconds}s"
       judge.nli: "Entailment checks (NLI criteria): {model}"
       judge.how: "Deterministic criteria are computed, NLI criteria are scored by the entailment model, and judge criteria by the judge model."
       judge.honest.True: The report's stated limits match what the checks found.
@@ -955,26 +939,39 @@ research_agent:
       final.section.saved: Saved
       budget.at_start: at the start
       plan.unavailable: "Planning stopped: the model did not respond ({error}). Nothing was researched; try again."
-      plan.heading: "{nodes} sub-question(s) · {waves} wave(s) · {validity}"
+      plan.heading: "{nodes} sub-question(s) · {batches} batch(es) · {validity}"
       plan.valid: valid
       plan.valid_repaired: valid after one repair
       plan.rejected: "Plan rejected twice: {error}"
       plan.line: "{id} · {question} ← {items}"
-      plan.section.questions: Sub-questions, and the criteria each answers
-      plan.section.validation: Validation
-      plan.section.problems: Problems
+      plan.asked: "Break “{topic}” into at most {nodes} sub-question(s) that together cover every criterion:"
+      plan.period: "Period: {start} → {end} (resolved from today, not by the model)"
+      plan.repaired_because: "↻ the first plan was repaired: {problems}"
       plan.check.acyclic: "✓ acyclic: every sub-question can run once its dependencies have"
       plan.check.traced: "✓ traced: every acceptance criterion is answered by a sub-question"
-      plan.check.repaired: "↻ the first plan failed validation and was repaired once"
       guard.heading: "Every cited sentence checked against its sources · {supported}/{checked} supported as written · {rewritten} rewritten"
       guard.heading_dropped: "Cited sentences checked against their sources · {supported}/{checked} supported as written · {rewritten} rewritten · {dropped} removed"
-      guard.section.rewritten: Rewritten to say only what their sources say
-      guard.section.dropped: Removed (no source supports them)
-      guard.section.how: How this check works
+      guard.asked: Is every cited sentence supported by the exact spans it cites?
+      guard.sentence: "{mark} {sentence} [{outcome}]"
+      guard.source: '{verb} [{id} · {host}]: "{span}"'
+      guard.unknown_source: "cites {id}, which is not in the evidence ledger"
+      guard.rewritten_to: "rewritten to: {text}"
+      guard.dropped_why: "removed: not supported by its sources, even after one rewrite"
+      guard.verb.supported: supported by
+      guard.verb.rewritten: rewritten from
+      guard.verb.dropped: cited
+      guard.mark.supported: "✓"
+      guard.mark.rewritten: "↻"
+      guard.mark.dropped: "✗"
       guard.how: "Each sentence is checked by {model} against the exact spans it cites; a sentence that fails is rewritten once from those spans, and removed if it still fails."
-      gap_fill.heading: "Gap-fill round {round}: {nodes} targeted sub-question(s)"
+      gap_fill.heading: "Gap fill · round {round} · gaps {gaps} · {nodes} sub-question(s)"
+      gap_fill.question: "Which follow-up questions could close the criteria the audit found unmet?"
       stop.cancelled: cancelled
       stop.reflection_withheld: "reflection withheld: the plan ran once"
+      stop.no_follow_up: no follow-up could close the remaining gaps
+      stop.critique_sufficient: "{reason}; the critique agrees the evidence answers the question"
+      stop.critique_no_follow_up: the critique found the answer incomplete, but no follow-up could close it
+      stop.critique_no_room: "{reason}; the critique found the answer incomplete: {critique}"
       stop.budget: "budget exhausted ({counters})"
       stop.max_rounds: maximum rounds reached
       budget.after_batch: "after batch {batch}"

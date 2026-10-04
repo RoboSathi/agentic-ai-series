@@ -9,6 +9,7 @@ no conversation, no pages, no run state.
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import date
 from typing import Protocol
 from urllib.parse import urlparse
 
@@ -25,7 +26,7 @@ class Judge(Protocol):
     """Scores one judge-type item against the report (a model call)."""
 
     async def judge(
-        self, spec: CheckSpec, report: Report, ledger: LedgerSnapshot
+        self, spec: CheckSpec, report: Report, ledger: LedgerSnapshot, today: date
     ) -> CheckOutcome: ...
 
 

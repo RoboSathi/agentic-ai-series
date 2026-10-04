@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 RunStatus = Literal["COMPLETE", "PARTIAL", "CANCELLED", "FAILED"]
 SessionPhase = Literal[
-    "SCOPING", "RUBRIC_REVIEW", "RUNNING", "AUDITING", "DELIVERED", "CANCELLED", "FAILED"
+    "SCOPING", "RUBRIC_REVIEW", "RUNNING", "AUDITING", "STOPPED", "DELIVERED", "CANCELLED", "FAILED"
 ]
 COVERAGE_AND_LIMITS = "Coverage & Limits"
 

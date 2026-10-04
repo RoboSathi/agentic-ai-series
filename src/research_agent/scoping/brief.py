@@ -10,6 +10,7 @@ Brief, which is what makes a frozen contract reproducible.
 
 import re
 from collections.abc import Mapping, Sequence
+from datetime import date, timedelta
 from typing import Any
 
 from agent_platform.logging import instrument
@@ -17,7 +18,6 @@ from research_agent.config.settings import DepthProfile, ScopingSettings
 from research_agent.domain.budget import Budget
 from research_agent.domain.scope import (
     DEFAULT_DEPTH,
-    QA,
     Archetype,
     CoverageItem,
     Depth,
@@ -31,6 +31,7 @@ _DOMAIN = re.compile(r"\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b", re.IGNORECASE)
 _AVOID = re.compile(r"\b(?:avoid|block|exclude|not|never|except)\b", re.IGNORECASE)
 _CLAUSE = re.compile(r";|\.\s")
 DEPTH_FIELD = "depth"
+RECENCY_FIELD = "recency_days"
 
 
 @instrument("research_agent")
@@ -41,25 +42,14 @@ class BriefBuilder:
         self,
         settings: ScopingSettings,
         budget: Budget,
-        qa_budget: Budget,
         depths: Mapping[Depth, DepthProfile],
     ) -> None:
         self._settings = settings
         self._split = re.compile(settings.answer_split_pattern, re.IGNORECASE)
         self._pages = re.compile(settings.pages_pattern, re.IGNORECASE)
         self._budget = budget
-        self._qa_budget = qa_budget
         self._depths = depths
         self._window = TimeWindowParser(settings.time_window)
-
-    def question(self, topic: str, recent_days: int | None) -> ScopeBrief:
-        """The Q&A Brief: the question and its time window, nothing to interview for."""
-        return ScopeBrief(
-            archetype=QA,
-            topic=topic,
-            recency_days=recent_days,
-            budget=self._qa_budget.capped_by(self._budget),
-        )
 
     def build(
         self,
@@ -67,6 +57,7 @@ class BriefBuilder:
         topic: str,
         items: Sequence[CoverageItem],
         unknowns: Sequence[KnownUnknown],
+        today: date,
     ) -> ScopeBrief:
         fields: dict[str, Any] = {}
         size = ""
@@ -78,6 +69,7 @@ class BriefBuilder:
             else:
                 fields[item.brief_field] = self._value(item)
         depth, budget = self._sized(size)
+        fields.update(self._period(topic, items, today, fields))
         return ScopeBrief(
             archetype=archetype,
             topic=topic,
@@ -86,6 +78,39 @@ class BriefBuilder:
             known_unknowns=tuple(unknowns),
             **fields,
         )
+
+    def _period(
+        self,
+        topic: str,
+        items: Sequence[CoverageItem],
+        today: date,
+        answered: dict[str, Any],
+    ) -> dict[str, Any]:
+        """The period a stated window covers, as dates counted back from `today`.
+
+        Read from the topic and every covered answer, not only the recency item: "the last 20
+        years" given as a landscape's scope boundary is still a period. With no recency answer,
+        the same window also bounds how recent the sources must be; a recency answer, even
+        "no limit", is the user's and is kept.
+        """
+        recency_days = answered.get(RECENCY_FIELD)
+        texts = [topic] + [
+            item.value
+            for item in items
+            if item.status == "covered" and not item.private and item.brief_field != DEPTH_FIELD
+        ]
+        span = next(
+            (found for text in texts if (found := self._window.span(text)) is not None), None
+        )
+        if span is None:
+            if recency_days is None:
+                return {}
+            start = today - timedelta(days=recency_days)
+            return {"period_start": start, "period_end": today}
+        period = {"period_start": self._window.start(today, span), "period_end": today}
+        if RECENCY_FIELD in answered:
+            return period
+        return {**period, RECENCY_FIELD: (today - period["period_start"]).days}
 
     def _sized(self, answer: str) -> tuple[Depth, Budget]:
         """The size the user asked for (small when they did not) and the budget it allows.
@@ -117,7 +142,7 @@ class BriefBuilder:
         )
 
     def _value(self, item: CoverageItem) -> Any:
-        if item.brief_field == "recency_days":
+        if item.brief_field == RECENCY_FIELD:
             return self._recency(item.value)
         if item.brief_field == "source_policy":
             return self._source_policy(item.value)

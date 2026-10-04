@@ -1,4 +1,4 @@
-"""The scoping graph: first message → gate → interview ⇄ user → rubric review → approve.
+"""The scoping graph: /research question → research kind → interview ⇄ user → rubric → approve.
 
 One durable thread per scope. Every turn ends at `await_user`, which
 interrupts the graph (`await_decision`) with the reply the user should
@@ -20,32 +20,28 @@ from research_agent.graph.scoping_nodes import ScopingNodes
 from research_agent.graph.state import ScopingState
 
 WAIT = "await_user"
+# The first node: which kind of research the question asks for (or a refusal).
+KIND = "research_kind"
 
 
 def build_scoping_graph(nodes: ScopingNodes, checkpointer: Any, with_rubric: bool) -> Any:
     """Compile the scoping graph; the rubric stages exist only when the feature does."""
     builder = StateGraph(ScopingState)
-    builder.add_node("scope_gate", nodes.gate)
+    builder.add_node(KIND, nodes.kind)
     builder.add_node("interview_turn", nodes.interview)
     builder.add_node("coverage_update", nodes.waive)
     builder.add_node("close_scoping", nodes.close)
     builder.add_node("rubric_frozen", nodes.freeze)
     builder.add_node("say", nodes.say)
-    builder.add_node("auto_freeze", nodes.auto_freeze)
     builder.add_node(WAIT, _await_user)
-    builder.add_edge(START, "scope_gate")
-    builder.add_conditional_edges(
-        "scope_gate", nodes.after_gate, ["interview_turn", "auto_freeze", WAIT, END]
-    )
-    # Q&A: no interview and no review — the question is frozen as asked.
-    builder.add_edge("auto_freeze", END)
+    builder.add_edge(START, KIND)
+    builder.add_conditional_edges(KIND, nodes.after_kind, ["interview_turn", END])
     builder.add_edge("interview_turn", WAIT)
     # After a waiver the interviewer moves on to the next open item.
     builder.add_edge("coverage_update", "interview_turn")
     builder.add_edge("say", WAIT)
     builder.add_edge("rubric_frozen", END)
     targets = [
-        "scope_gate",
         "interview_turn",
         "coverage_update",
         "close_scoping",

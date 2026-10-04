@@ -1,11 +1,17 @@
-"""Reflection after each wave: cheap checks first, a model only for the gaps.
+"""Reflection after each batch: code checks first, then the model's judgement.
 
 1. Deterministic coverage checks over the ledger → the Gap list.
 2. The archetype stop rule, plus budget, rounds and cancellation → stop?
-3. Only if continuing (and reflection is not withheld): the reflector
-   model proposes follow-up sub-questions for unmet items only. Its
-   proposals are filtered in code — a follow-up that serves no gap, or
-   only repeats a tried query, is dropped.
+3. Gaps left (and reflection not withheld): the reflector model proposes
+   follow-up sub-questions for the unmet items only.
+4. Every check passed and the stop rule says stop: the reflector model
+   critiques whether the claims actually answer the question — the checks
+   count citations and terms, not meaning — and may propose follow-ups.
+
+A model never declares a run done while a check fails: it is asked to
+critique only once the code says the criteria are met. Its proposals are
+filtered in code — a follow-up that serves no criterion, or only repeats a
+tried query, is dropped.
 """
 
 import re
@@ -14,6 +20,7 @@ from collections.abc import Callable
 from pydantic import BaseModel, Field
 
 from agent_platform.logging import instrument
+from agent_platform.observability.step_card import ModelCall
 from agent_platform.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
 from research_agent.audit.checks import COVERAGE_CHECKS
 from research_agent.audit.context import CheckContext
@@ -23,6 +30,32 @@ from research_agent.llm.structured import StructuredCaller
 from research_agent.prompts import reflector as prompt
 from research_agent.prompts.base import RolePrompt
 from research_agent.research.stop_rules import StopDecision, StopInput, StopRule
+
+# Why a proposed follow-up was dropped (`research_agent.messages` words them for the card).
+NO_GAP = "no_gap"
+TRIED = "tried"
+OVER_LIMIT = "over_limit"
+
+
+class Rejected(BaseModel):
+    """A follow-up the model proposed and the code dropped, and why."""
+
+    question: str
+    why: str
+
+
+class FollowUpProposal(BaseModel):
+    """What the reflector model proposed: what was kept, what was dropped, and the call itself."""
+
+    accepted: list[SubQuestion] = Field(default_factory=list)
+    rejected: list[Rejected] = Field(default_factory=list)
+    call: ModelCall | None = None
+    # What the model said about its proposal or its critique, in its own words: the card's
+    # Reasoning (the reflector runs with thinking off, so the call itself carries none).
+    reasoning: str = ""
+    # The critique's verdict on whether the claims answer the question; None when the model
+    # was asked for follow-ups rather than for a critique.
+    sufficient: bool | None = None
 
 
 class Reflection(BaseModel):
@@ -69,19 +102,61 @@ class Reflector:
     def decide(
         self, archetype: Archetype, verdicts: list[CheckVerdict], before: int, after: int
     ) -> StopDecision:
-        """The archetype's stop rule (Strategy), applied to this wave's verdicts."""
+        """The archetype's stop rule (Strategy), applied to this batch's verdicts."""
         observed = StopInput(verdicts=verdicts, entities_before=before, entities_after=after)
         return self._rule_for(archetype).decide(observed)
+
+    def rule_name(self, archetype: Archetype) -> str:
+        """The archetype's stop rule, by name, as a card says what decided."""
+        return self._rule_for(archetype).name
 
     async def follow_ups(
         self, ctx: CheckContext, verdicts: list[CheckVerdict], tried: list[str], round_number: int
     ) -> list[SubQuestion]:
         """Model-proposed follow-ups, filtered to unmet items and untried queries."""
+        return (await self.propose(ctx, verdicts, tried, round_number)).accepted
+
+    async def propose(
+        self, ctx: CheckContext, verdicts: list[CheckVerdict], tried: list[str], round_number: int
+    ) -> FollowUpProposal:
+        """The model's follow-ups, what of them was kept and dropped, and the call that made them."""
         gaps = [v for v in verdicts if not v.passed]
         if self._caller is None or not gaps or self._max == 0:
-            return []
-        answer = await self._caller.call(self._prompt(ctx, gaps, tried), prompt.ReflectorAnswer)
-        return _accepted(answer, {v.item_id for v in gaps}, set(tried), round_number, self._max)
+            return FollowUpProposal()
+        answer, call = await self._caller.call_traced(
+            self._prompt(ctx, gaps, tried), prompt.ReflectorAnswer
+        )
+        accepted, rejected = _sorted(
+            answer, {v.item_id for v in gaps}, set(tried), round_number, self._max
+        )
+        return FollowUpProposal(
+            accepted=accepted, rejected=rejected, call=call, reasoning=answer.rationale
+        )
+
+    async def critique(
+        self, ctx: CheckContext, verdicts: list[CheckVerdict], tried: list[str], round_number: int
+    ) -> FollowUpProposal:
+        """Before the run stops: do the claims answer the question? If not, follow-ups for it."""
+        items = set(ctx.contract.rubric.ids)
+        if self._caller is None or not items:
+            return FollowUpProposal()
+        claims = [entry.claim for entry in ctx.ledger.entries]
+        checks = [{"item_id": v.item_id, "passed": v.passed, "detail": v.detail} for v in verdicts]
+        answer, call = await self._caller.call_traced(
+            prompt.build_critique(ctx.contract, checks, tried, claims, self._max),
+            prompt.CritiqueAnswer,
+        )
+        reasoning = answer.critique or answer.rationale
+        if answer.sufficient:
+            return FollowUpProposal(call=call, reasoning=reasoning, sufficient=True)
+        accepted, rejected = _sorted(answer, items, set(tried), round_number, self._max)
+        return FollowUpProposal(
+            accepted=accepted,
+            rejected=rejected,
+            call=call,
+            reasoning=reasoning,
+            sufficient=False,
+        )
 
     def _prompt(self, ctx: CheckContext, gaps: list[CheckVerdict], tried: list[str]) -> RolePrompt:
         payload_gaps = [
@@ -102,29 +177,39 @@ def _text(ctx: CheckContext, item_id: str) -> str:
     return item.text if item is not None else ""
 
 
-def _accepted(
+def _sorted(
     answer: prompt.ReflectorAnswer,
     gap_ids: set[str],
     tried: set[str],
     round_number: int,
     limit: int,
-) -> list[SubQuestion]:
+) -> tuple[list[SubQuestion], list[Rejected]]:
+    """The follow-ups that serve a gap with a fresh query, up to the limit; and the rest, with why."""
     accepted: list[SubQuestion] = []
+    rejected: list[Rejected] = []
+    seen = {t.casefold() for t in tried}
     for index, follow in enumerate(answer.follow_ups, start=1):
         serves = tuple(item for item in follow.rubric_items if item in gap_ids)
-        fresh = tuple(
-            query
-            for query in follow.queries
-            if query.casefold() not in {t.casefold() for t in tried}
+        fresh = tuple(query for query in follow.queries if query.casefold() not in seen)
+        why = (
+            NO_GAP
+            if not serves
+            else TRIED
+            if not fresh
+            else OVER_LIMIT
+            if len(accepted) >= limit
+            else ""
         )
-        if serves and fresh and len(accepted) < limit:
-            accepted.append(
-                SubQuestion(
-                    node_id=f"F{round_number}-{index}",
-                    question=follow.question,
-                    rubric_items=serves,
-                    queries=fresh,
-                    subject=follow.subject,
-                )
+        if why:
+            rejected.append(Rejected(question=follow.question, why=why))
+            continue
+        accepted.append(
+            SubQuestion(
+                node_id=f"F{round_number}-{index}",
+                question=follow.question,
+                rubric_items=serves,
+                queries=fresh,
+                subject=follow.subject,
             )
-    return accepted
+        )
+    return accepted, rejected

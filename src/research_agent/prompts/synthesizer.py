@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from agent_platform.evidence import LedgerSnapshot
 from research_agent.domain.rubric import Contract
-from research_agent.prompts.base import RolePrompt
+from research_agent.prompts.base import RolePrompt, dated
 from research_agent.prompts.planner import brief_view, rubric_view
 
 ROLE = "synthesizer"
@@ -59,12 +59,15 @@ def build(
     return RolePrompt(
         role=ROLE,
         instructions=INSTRUCTIONS,
-        payload={
-            "task": "synthesize",
-            "brief": brief_view(contract),
-            "rubric": rubric_view(contract),
-            "ledger": ledger_view(ledger),
-            "sections": headings,
-            "unmet_items": gaps,
-        },
+        payload=dated(
+            {
+                "task": "synthesize",
+                "brief": brief_view(contract),
+                "rubric": rubric_view(contract),
+                "ledger": ledger_view(ledger),
+                "sections": headings,
+                "unmet_items": gaps,
+            },
+            contract.frozen_at.date(),
+        ),
     )

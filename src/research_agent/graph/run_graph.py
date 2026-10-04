@@ -1,10 +1,10 @@
 """The autonomous run graph (see `run_nodes` for the shape).
 
-Waves are LangGraph supersteps: `wave_start` fans out one `Send` per
-ready node, every `research_node` of the wave runs concurrently (bounded
-by the scheduler's semaphore), and `wave_done` runs once after the whole
-superstep — so a checkpoint lands at every wave boundary and a crash
-resumes at the wave it interrupted. With the Independent Audit withheld,
+Batches are LangGraph supersteps: `batch_start` fans out one `Send` per
+ready node, every `research_node` of the batch runs concurrently (bounded
+by the scheduler's semaphore), and `batch_done` runs once after the whole
+superstep — so a checkpoint lands at every batch boundary and a crash
+resumes at the batch it interrupted. With the Independent Audit withheld,
 `independent_audit` is simply not a node: synthesis goes straight to
 finalization.
 """
@@ -22,9 +22,9 @@ def build_run_graph(nodes: RunNodes, checkpointer: Any, with_audit: bool) -> Any
     for name, node in (
         ("init_run", nodes.init_run),
         ("plan_dag", nodes.plan),
-        ("wave_start", nodes.wave_start),
+        ("batch_start", nodes.batch_start),
         ("research_node", nodes.research_node),
-        ("wave_done", nodes.wave_done),
+        ("batch_done", nodes.batch_done),
         ("reflect_gap_analysis", nodes.reflect),
         ("synthesize", nodes.synthesize),
         ("gap_fill", nodes.gap_fill),
@@ -34,17 +34,17 @@ def build_run_graph(nodes: RunNodes, checkpointer: Any, with_audit: bool) -> Any
         builder.add_node(name, node)
     builder.add_edge(START, "init_run")
     builder.add_edge("init_run", "plan_dag")
-    builder.add_conditional_edges("plan_dag", nodes.after_plan, ["wave_start", "finalize"])
+    builder.add_conditional_edges("plan_dag", nodes.after_plan, ["batch_start", "finalize"])
     builder.add_conditional_edges(
-        "wave_start", nodes.fan_out, ["research_node", "reflect_gap_analysis", "finalize"]
+        "batch_start", nodes.fan_out, ["research_node", "reflect_gap_analysis", "finalize"]
     )
-    builder.add_edge("research_node", "wave_done")
-    builder.add_edge("wave_done", "wave_start")
+    builder.add_edge("research_node", "batch_done")
+    builder.add_edge("batch_done", "batch_start")
     builder.add_conditional_edges(
-        "reflect_gap_analysis", nodes.after_reflect, ["wave_start", "synthesize"]
+        "reflect_gap_analysis", nodes.after_reflect, ["batch_start", "synthesize"]
     )
     _audit_edges(builder, nodes, with_audit)
-    builder.add_conditional_edges("gap_fill", nodes.after_gap_fill, ["wave_start", "finalize"])
+    builder.add_conditional_edges("gap_fill", nodes.after_gap_fill, ["batch_start", "finalize"])
     builder.add_edge("finalize", "archive")
     builder.add_edge("archive", END)
     return builder.compile(checkpointer=checkpointer)

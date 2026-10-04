@@ -1,39 +1,9 @@
-# Labelled first messages for the scope gate's encoder (scoping/encoder_gate.py).
+# Labelled `/research` questions for the research-kind classifier (scoping/kind_encoder.py).
 #
-# One label per message: `qa`, or the research archetype the message asks for. Hand-written and
-# deliberately varied in phrasing; the golden cases and real first messages from the archive
-# (`make runs ra`) are the next source. `gate_training.py` holds out a stratified 20% and prints
-# accuracy and a confusion matrix before anything is saved — read it before trusting the model.
-qa:
-  - Important AI news in the last 1 month
-  - What did OpenAI announce this week?
-  - Who won the Nobel Prize in physics this year?
-  - What is the latest version of PostgreSQL?
-  - When does the EU AI Act come into force?
-  - How does retrieval-augmented generation work?
-  - What are the headlines in semiconductor news today?
-  - Latest research on solid-state batteries
-  - Which companies raised funding for AI agents in the past 30 days?
-  - What is the capital gains tax rate in India for equity?
-  - Is the new iPhone available in India yet?
-  - What happened at the last Federal Reserve meeting?
-  - Recent developments in quantum error correction
-  - Who is the CEO of Nvidia?
-  - What does the new GDPR fine decision say?
-  - Top stories about open-source LLMs this month
-  # News and "impact of X" questions with a time window: a quick cited answer, not a report.
-  - Key news on AI's effect on hiring in the last 2 months
-  - Latest news about layoffs in the tech industry this quarter
-  - What are the important updates on AI regulation in the past 6 weeks?
-  - Recent news on how AI is affecting customer support jobs
-  - What has happened with GPU export controls in the last 3 months?
-  - Major announcements from Google about Gemini this month
-  - Top news on the impact of automation on manufacturing jobs this year
-  - Any important news on electric vehicle sales in India recently?
-  - What changed in the AI startup funding market in the last quarter?
-  - Biggest cybersecurity incidents reported in the past month
-  - News on remote work trends in the last 60 days
-  - What are people saying about the impact of AI coding assistants on developers lately?
+# One label per message: the research kind it asks for. Hand-written and deliberately varied in
+# phrasing; the golden cases and real questions from the archive (`make runs ra`) are the next
+# source. `kind_examples.py` holds out a stratified 20% and prints accuracy and a confusion
+# matrix — read it before trusting the classifier.
 decision_support:
   - Help me choose a vector database for 10 million documents
   - Which should we pick, Kafka or Pulsar, for our event pipeline?

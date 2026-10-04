@@ -17,7 +17,7 @@ and every transaction goes to the `AuditLedger`.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> SCOPING: first message (scopable or reframe)
+    [*] --> SCOPING: /research (a research kind)
     [*] --> [*]: refused
     SCOPING --> SCOPING: interview turn · /waive · challenge
     SCOPING --> RUBRIC_REVIEW: /done or confirmed proposal (rubric generated)
@@ -39,11 +39,9 @@ With the `rubric` feature withheld there is no `RUBRIC_REVIEW` stage:
 
 ```mermaid
 flowchart LR
-    START([start]) --> scope_gate
-    scope_gate -->|Q&A| auto_freeze --> END
-    scope_gate -->|Research| interview_turn
-    scope_gate -->|needs reframe| await_user
-    scope_gate -->|refuse| END([end])
+    START([start]) --> research_kind
+    research_kind -->|a kind| interview_turn
+    research_kind -->|refuse| END([end])
     interview_turn --> await_user
     await_user -->|answer| interview_turn
     await_user -->|/waive| coverage_update --> interview_turn
@@ -54,9 +52,10 @@ flowchart LR
     await_user -->|other command| say --> await_user
 ```
 
-- **Q&A** skips the interview: `auto_freeze` builds the Brief from the
-  question (and its time window), generates the `qa` rubric, freezes and
-  hashes the contract, and the run graph runs it on the Q&A budget.
+- **A plain question never reaches this graph**: it is answered directly
+  (ADR ra-0020). `research_kind` decides which kind of research a
+  `/research` question asks for — cue rules, the example classifier, then
+  the LLM — and that kind picks the checklist the interview covers.
 - **Termination is enforced in code** (`scoping/termination.py`): the
   interviewer may only *propose* done when no required item is open; the
   user confirms. `/done` closes at any time — open items become known
@@ -72,26 +71,26 @@ flowchart LR
 ```mermaid
 flowchart TD
     START([start]) --> init_run --> plan_dag
-    plan_dag -->|valid| wave_start
+    plan_dag -->|valid| batch_start
     plan_dag -->|invalid twice| finalize
-    wave_start -->|Send per ready node| research_node
-    research_node --> wave_done --> wave_start
-    wave_start -->|wave empty| reflect_gap_analysis
-    wave_start -->|cancelled / budget| finalize
-    reflect_gap_analysis -->|follow-ups| wave_start
+    batch_start -->|Send per ready node| research_node
+    research_node --> batch_done --> batch_start
+    batch_start -->|batch empty| reflect_gap_analysis
+    batch_start -->|cancelled / budget| finalize
+    reflect_gap_analysis -->|follow-ups| batch_start
     reflect_gap_analysis -->|stop rule met / nothing to add| synthesize
     synthesize --> independent_audit
     independent_audit -->|must-pass gaps, budget left| gap_fill
     independent_audit -->|otherwise| finalize
-    gap_fill -->|targeted nodes| wave_start
+    gap_fill -->|targeted nodes| batch_start
     gap_fill -->|nothing to try| finalize
     finalize --> archive --> END([end])
 ```
 
-- **Waves are supersteps.** `wave_start` computes the ready set from the
+- **Batches are supersteps.** `batch_start` computes the ready set from the
   commons `TaskGraph` and fans out one `Send` per node; each
   `research_node` holds a slot of the `AsyncDagScheduler`'s semaphore; a
-  checkpoint lands at every wave boundary.
+  checkpoint lands at every batch boundary.
 - With `independent_audit` withheld, `synthesize` goes straight to
   `finalize`; with `reflection` withheld the plan runs once.
 

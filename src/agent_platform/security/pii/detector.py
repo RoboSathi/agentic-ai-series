@@ -1,5 +1,8 @@
 """PII detection, redaction and minimization (E32, LLD §12.2).
 
+Detection is Presidio (spaCy NER and recognizers, `presidio.py`) plus the configured
+patterns, or the patterns alone. Redaction tokenizes into the audit vault (`vault.py`).
+
 Applied at three distinct surfaces, which is the part usually missed:
 PII in *input* (minimize what a tool call carries), PII in *memory* (what
 persists across sessions), and PII in *logs* (a mandatory pass before a
@@ -7,13 +10,20 @@ trace is written). Redacting only the visible response leaves the same
 data in three places that outlive it.
 """
 
-import hashlib
 import re
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 from agent_platform.config import get_settings
 from agent_platform.logging import get_logger
 from agent_platform.security.pii.types import PIISpan, RedactionMode
+from agent_platform.security.pii.vault import PIIVault, create_pii_vault
+
+
+class _Default:
+    """Marks "build the configured vault", distinct from an explicit None (no vault)."""
+
+
+_DEFAULT = _Default()
 
 
 @runtime_checkable
@@ -64,29 +74,15 @@ class PatternPIIDetector:
         return _resolve_overlaps(found)
 
 
-class NERPIIDetector:
-    """Named-entity detection for what patterns cannot express.
+class RedactedSpan(NamedTuple):
+    """One redaction as it may be shown and logged: no value, only its token and provenance."""
 
-    Names and addresses have no regex. Without a model this detector
-    reports nothing and says so, rather than pretending coverage it does
-    not have — a silently empty detector is worse than an absent one.
-    """
-
-    def __init__(self, model: PIIDetector | None = None) -> None:
-        self._model = model
-        self._enabled = get_settings().security.pii.ner_enabled
-        self._logger = get_logger("pii")
-
-    @property
-    def available(self) -> bool:
-        """Whether this detector can actually contribute anything."""
-        return self._enabled and self._model is not None
-
-    def detect(self, text: str) -> list[PIISpan]:
-        """Delegate to the model when one is wired; otherwise contribute nothing."""
-        if not self.available or self._model is None:
-            return []
-        return [span.model_copy(update={"detector": "ner"}) for span in self._model.detect(text)]
+    category: str
+    detector: str
+    score: float
+    start: int
+    end: int
+    token: str
 
 
 class PIIFilterImpl:
@@ -96,13 +92,22 @@ class PIIFilterImpl:
     composition root declining to build one, not this object being asked
     to stand there doing nothing — a detector that is present but inert
     still appears in traces and still reads as a defence.
+
+    `tokenize` writes `[CATEGORY:token]` with a keyed token and keeps the
+    value in the vault for audit; without a vault it masks instead.
     """
 
-    def __init__(self, detectors: list[PIIDetector] | None = None) -> None:
+    def __init__(
+        self,
+        detectors: list[PIIDetector] | None = None,
+        vault: PIIVault | None | _Default = _DEFAULT,
+    ) -> None:
         settings = get_settings().security.pii
-        self._detectors: list[PIIDetector] = detectors or [PatternPIIDetector(), NERPIIDetector()]
+        self._detectors: list[PIIDetector] = detectors or _default_detectors()
+        self._vault = create_pii_vault() if isinstance(vault, _Default) else vault
         self._mode: RedactionMode = settings.mode
         self._mask_token = settings.mask_token
+        self._token_format = settings.token_format
         self._allowed_fields = set(settings.tool_call_allowed_fields)
         self._logger = get_logger("pii")
 
@@ -144,22 +149,67 @@ class PIIFilterImpl:
             self._logger.debug("Minimized tool-call payload", dropped=sorted(dropped))
         return {key: value for key, value in payload.items() if key in allowed}
 
+    @property
+    def model(self) -> str:
+        """The model behind detection ("" for patterns alone)."""
+        return next(
+            (str(getattr(d, "model", "")) for d in self._detectors if getattr(d, "model", "")), ""
+        )
+
+    @property
+    def unavailable(self) -> str:
+        """Why the model detector fell back to patterns ("" when it did not)."""
+        return next(
+            (
+                str(getattr(d, "unavailable", ""))
+                for d in self._detectors
+                if getattr(d, "unavailable", "")
+            ),
+            "",
+        )
+
+    def tokens(self, text: str) -> list[RedactedSpan]:
+        """What redacting `text` replaces: each span's category, recognizer, score and token.
+
+        For a card and a log line — never the value itself. Empty without a vault (masking).
+        """
+        if self._vault is None:
+            return []
+        return [
+            RedactedSpan(
+                category=span.category,
+                detector=span.detector,
+                score=span.score,
+                start=span.start,
+                end=span.end,
+                token=self._vault.token(span.category, span.text),
+            )
+            for span in self.detect(text)
+        ]
+
     def _replacement(self, span: PIISpan, mode: RedactionMode) -> str:
         """The text that stands in for one redacted span."""
         if mode == "remove":
             return ""
-        if mode == "tokenize":
-            return f"{self._mask_token[:-1]}:{span.category}:{_stable_token(span.text)}]"
+        if mode == "tokenize" and self._vault is not None:
+            token = self._vault.token(span.category, span.text)
+            self._vault.keep(span.category, token, span.text)
+            return self._token_format.format(category=span.category, token=token)
         return self._mask_token
 
 
-def _stable_token(text: str) -> str:
-    """A deterministic surrogate: the same value maps to the same token.
+def _default_detectors() -> list[PIIDetector]:
+    """Presidio (the patterns as its fallback) when configured; the patterns alone otherwise.
 
-    Stability is what keeps tokenized data joinable — two records about
-    the same customer still match — without the original ever persisting.
+    Building one never loads anything: the analyzer is shared, loaded once — in the background
+    by a console that starts it early, or on the first message otherwise.
     """
-    return hashlib.sha256(text.encode()).hexdigest()[:12]
+    patterns = PatternPIIDetector()
+    if get_settings().security.pii.engine != "presidio":
+        return [patterns]
+    from agent_platform.security.pii.presidio import PresidioPIIDetector
+
+    return [PresidioPIIDetector(fallback=patterns)]
 
 
 def _resolve_overlaps(spans: list[PIISpan]) -> list[PIISpan]:

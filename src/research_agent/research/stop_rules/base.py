@@ -1,7 +1,7 @@
 """The archetype stop rule (Strategy): has this run done what its archetype asks?
 
 Each archetype ends on a different condition — every option scored on
-every criterion, no new entities in the last wave, every claim decided,
+every criterion, no new entities in the last batch, every claim decided,
 every concept covered. The rule is one small class per archetype, chosen
 by the Brief's archetype; budgets and cancellation are checked separately
 by the reflector, so a rule only ever answers "is the work complete?".
@@ -15,7 +15,7 @@ from agent_platform.verification.acceptance import CheckVerdict
 
 
 class StopInput(BaseModel):
-    """What a stop rule may look at after a wave."""
+    """What a stop rule may look at after a batch."""
 
     verdicts: list[CheckVerdict] = Field(default_factory=list)
     entities_before: int = 0

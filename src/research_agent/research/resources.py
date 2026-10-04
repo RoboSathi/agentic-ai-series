@@ -3,7 +3,7 @@
 Held by the run, never by the graph state (none of it is serialisable,
 and none of it is the kind of thing a checkpoint should carry); what a
 resumed run needs back — spend, ledger, examined sources — is snapshotted
-into state at each wave boundary instead.
+into state at each batch boundary instead.
 """
 
 import asyncio
@@ -21,6 +21,7 @@ from research_agent.guardrails.injection import InjectionScreen
 from research_agent.observability.telemetry import RunTelemetry
 from research_agent.research.defenses import OutboundGuard
 from research_agent.research.extractor import PageReading
+from research_agent.research.recency import RecencyGuard
 
 
 class PageReader(Protocol):
@@ -42,6 +43,8 @@ class RunResources:
     settings: ResearchSettings
     outbound: OutboundGuard | None = None
     screen: InjectionScreen | None = None
+    # No date named means the latest: a planned query pinned to the past is shown, not rewritten.
+    recency: RecencyGuard | None = None
     # Bounds how many pages the run reads at once (the platform bulkhead, one pool).
     page_reads: Bulkhead = field(default_factory=ResourcePoolBulkhead)
     cancel: asyncio.Event = field(default_factory=asyncio.Event)

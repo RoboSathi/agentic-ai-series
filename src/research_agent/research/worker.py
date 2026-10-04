@@ -34,6 +34,7 @@ from research_agent.llm.structured import OutputTruncatedError
 from research_agent.presentation.narration import say
 from research_agent.research import cards
 from research_agent.research.defenses import apply_source_policy, rank_by_kind
+from research_agent.research.extractor import PageReading
 from research_agent.research.resources import RunResources
 from research_agent.research.spans import canonical_span, nearest_match
 
@@ -148,8 +149,28 @@ class ResearcherWorker:
             _window_label(response.request),
             [f"{host_of(h.url)} · {h.published_date[:16] or 'undated'}" for h in response.hits],
             bool(response.provider_summary),
+            self._recency_note(query, response),
         )
         self._r.telemetry.card("worker_search", heading, sections)
+
+    def _recency_note(self, query: str, response: SearchResponse) -> str:
+        """A planned query pinned to the past, or old results, for an undated brief: shown only.
+
+        The planner wrote the query from a contract the user approved, so it runs as written;
+        the card and the log say it was not held to the latest.
+        """
+        guard, brief = self._r.recency, self._r.contract.brief
+        if guard is None:
+            return ""
+        if brief.period_start is not None and brief.period_end is not None:
+            early = guard.outside_period(query, brief.period_start)
+            return guard.period_note(early, brief.period_start, brief.period_end)
+        if brief.recency_days is not None:
+            return ""
+        today = self._as_of()
+        published = [hit.published_date for hit in response.hits]
+        verdict = guard.check(brief.topic, query, published, today)
+        return guard.note(verdict, today, today.isoformat())
 
     def _policy(self, hits: list[SearchHit]) -> list[SearchHit]:
         in_scope = [hit for hit in hits if self._recent(hit)]
@@ -218,7 +239,7 @@ class ResearcherWorker:
             self._unreadable(node, page, exc)
             return
         admitted, refused = self._admit(node, reading.candidates, hit, page, result)
-        self._page_card(node, page, len(reading.candidates), admitted, refused)
+        self._page_card(node, page, reading, admitted, refused)
         await self._follow(node, reading.follow_up_queries, reading.follow_up_urls, queue, result)
 
     def _unreadable(self, node: SubQuestion, page: FetchedPage, exc: Exception) -> None:
@@ -375,18 +396,21 @@ class ResearcherWorker:
         self,
         node: SubQuestion,
         page: FetchedPage,
-        extracted: int,
+        reading: PageReading,
         admitted: list[EvidenceEntry],
         refused: list[dict[str, str]],
     ) -> None:
-        """One card per page: the site, the evidence kept, and the claims refused and why."""
+        """One card per page: what was asked of it, the model's reading, what was kept and why."""
         tui = get_agent_settings().tui
         heading, sections = cards.page_card(
-            node,
-            page.url,
-            len(page.text),
-            page.via == "reader",
-            extracted,
+            cards.PageStep(
+                node=node,
+                url=page.url,
+                chars=len(page.text),
+                via_reader=page.via == "reader",
+                extracted=len(reading.candidates),
+                call=reading.call,
+            ),
             admitted,
             refused,
             tui.reasons,

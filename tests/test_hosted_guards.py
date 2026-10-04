@@ -105,6 +105,8 @@ async def test_content_guard_records_model_and_categories(monkeypatch: pytest.Mo
     assert verdict.api_called is True
     assert verdict.model == "nvidia/llama-3.1-nemotron-safety-guard-8b-v3"
     assert verdict.categories == ["Criminal Planning/Confessions"]
+    # The reason says what the model found, not only that it found something.
+    assert "Criminal Planning/Confessions" in verdict.reason
     assert verdict.latency_ms is not None
 
 
@@ -148,3 +150,68 @@ async def test_jailbreak_guard_retries_503(monkeypatch: pytest.MonkeyPatch) -> N
     verdict = await guard.classify("hello")
     assert verdict.decision == "allow"
     assert retry.attempts == 2
+
+
+def _guard_for(content: str) -> HostedContentSafetyGuard:
+    client = FakeAsyncClient({"choices": [{"message": {"content": content}}]})
+    return HostedContentSafetyGuard(
+        base_url="https://integrate.api.nvidia.com/v1",
+        endpoint="/chat/completions",
+        timeout_seconds=2,
+        model="nvidia/nemotron-3.5-content-safety",
+        client=client,  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "categories"),
+    [
+        (
+            '{"User Safety":"unsafe","Safety Categories":"PII/Privacy, Violence"}',
+            ["PII/Privacy", "Violence"],
+        ),
+        ('{"User Safety":"unsafe","Safety Categories":["PII/Privacy"]}', ["PII/Privacy"]),
+        ('{"User Safety":"unsafe","categories":"Violence"}', ["Violence"]),
+        ('{"User Safety":"unsafe"}', []),
+    ],
+)
+async def test_categories_are_read_in_every_shape_models_give(
+    monkeypatch: pytest.MonkeyPatch, content: str, categories: list[str]
+) -> None:
+    monkeypatch.setenv("NVIDIA_API_KEY", "test-key")
+    verdict = await _guard_for(content).classify("text")
+    assert verdict.flagged and verdict.categories == categories
+    assert verdict.output == content  # the model's own words, kept verbatim
+
+
+@pytest.mark.asyncio
+async def test_a_flag_with_no_category_quotes_what_the_model_said(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: "what is my email id ?" was blocked with only "the model flagged the input"."""
+    monkeypatch.setenv("NVIDIA_API_KEY", "test-key")
+    content = '{"User Safety":"unsafe"}'
+    verdict = await _guard_for(content).classify("what is my email id ?")
+    assert content in verdict.reason
+
+
+@pytest.mark.asyncio
+async def test_a_personal_data_only_flag_is_advisory_not_a_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
+    from agent_platform.security import SecuritySuite, TermContentModerator
+    from agent_platform.security.screening import MessageScreener
+
+    monkeypatch.setenv("NVIDIA_API_KEY", "test-key")
+    guard = _guard_for('{"User Safety":"unsafe","Safety Categories":"PII/Privacy"}')
+    suite = SecuritySuite(moderator=TermContentModerator(), content_safety_guard=guard)
+    feed = InMemoryLiveStatusFeed(max_events=0)
+    outcome = await MessageScreener(suite).moderation(
+        "what is my email id ?", StageReporter(feed, "t")
+    )
+    assert not outcome.blocked
+    card = next(e for e in feed.events if e.stage == "content_moderation" and e.status != "started")
+    assert card.status == "warning" and card.fields["output"]
+    assert "PII/Privacy" in str(card.fields["reason"])

@@ -95,7 +95,7 @@ decision_support:
 
 landscape_brief:
   - item_id: scope_boundary
-    goal: where the landscape starts and stops (segment, region)
+    goal: where the landscape starts and stops (segment and region; a time span is the recency item)
     required: true
     brief_field: geography
   - item_id: criteria

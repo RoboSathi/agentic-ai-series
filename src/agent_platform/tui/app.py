@@ -12,7 +12,7 @@ holds no product's vocabulary and can open against an agent it has never
 heard of.
 """
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
 from typing import Any, Callable
 
 from textual import events
@@ -23,6 +23,7 @@ from textual.widgets import Button, Footer, Header, Input, OptionList
 
 from agent_platform.commands import (
     PREFIX,
+    AbortCommand,
     Command,
     CommandRegistry,
     ConsoleEffect,
@@ -127,7 +128,11 @@ class AgenticTuiApp(App[None]):
         margin: 0 1;
     }
 
+    /* One row, no border: the variant's fill still says "button". */
     #actions Button {
+        height: 1;
+        border: none;
+        padding: 0 1;
         margin-right: 1;
         min-width: 4;
         text-style: bold;
@@ -254,6 +259,7 @@ class AgenticTuiApp(App[None]):
             )
         if isinstance(self._agent, DurableAgent):
             self._register_command(ResumeCommand(lambda: self._agent))
+            self._register_command(AbortCommand(lambda: self._agent))
 
     def _register_command(self, command: Command) -> None:
         """Register a command, handing it the console's scope if it narrows by one."""
@@ -294,7 +300,6 @@ class AgenticTuiApp(App[None]):
             self._panel.note(greeting, style=palette("notice"))
         if self._status_host is not None or self._action_host is not None:
             self.set_interval(get_settings().tui.status_refresh_ms / 1000, self._refresh_status)
-        self._announce_resumable_runs()
 
     def _greeting(self) -> str:
         """The agent's own first words, when it offers them; nothing otherwise.
@@ -329,23 +334,6 @@ class AgenticTuiApp(App[None]):
             self._panel.note(
                 "⏹ cancel requested" if stopped else "Nothing is running.",
                 style=palette("notice"),
-            )
-
-    def _announce_resumable_runs(self) -> None:
-        """Say, on opening, which runs the last process left unfinished.
-
-        A crash is invisible from a fresh console otherwise: the new
-        session starts clean and the half-finished turn sits in the
-        checkpoint file where nobody looks.
-        """
-        if not isinstance(self._agent, DurableAgent):
-            return
-        pending = self._agent.runs.resumable(get_settings().commands.default_limit)
-        if pending:
-            self._panel.note(
-                f"↻ {len(pending)} run(s) are waiting on a reviewer or can be resumed — "
-                "/queue lists the reviews, /resume <thread> continues a stopped run",
-                style=palette("notice_strong"),
             )
 
     def action_menu_move(self, step: int) -> None:
@@ -384,6 +372,17 @@ class AgenticTuiApp(App[None]):
             name="agent-turn",
         )
 
+    def _start_resume(self, thread_id: str) -> None:
+        """Continue a stopped run as a turn: the same status line, cards and answer as any turn."""
+        self.query_one("#query", Input).disabled = True
+        self.run_worker(
+            self._turn_of(
+                get_settings().tui.resume_banner, lambda: self._live_agent().resume(thread_id)
+            ),
+            exclusive=True,
+            name="agent-turn",
+        )
+
     async def _run_command(self, line: str) -> None:
         """Run a slash command; one that becomes a turn is shown once, by the turn.
 
@@ -399,7 +398,8 @@ class AgenticTuiApp(App[None]):
             result = await self._commands.dispatch(line)
         self._apply(result.effect)
 
-        if not (result.effect.clear_transcript or result.effect.agent_turn):
+        effect = result.effect
+        if not (effect.clear_transcript or effect.agent_turn or effect.resume_thread):
             self._panel.show_lines(self._view.render(result))
 
         self._schedule_follow_latest()
@@ -430,6 +430,8 @@ class AgenticTuiApp(App[None]):
             self._panel.note(f"Session switched to {effect.session_id}", style=palette("info"))
         if effect.agent_turn:
             self._start_turn(effect.agent_turn)
+        if effect.resume_thread:
+            self._start_resume(effect.resume_thread)
 
     def _rebuild_agent(self) -> None:
         """Compose the agent again under the configuration as it now stands.
@@ -454,6 +456,22 @@ class AgenticTuiApp(App[None]):
         self._bind_live_commands()
 
     async def _run(self, query: str) -> None:
+        await self._turn_of(
+            f"USER  {query}",
+            lambda: self._live_agent().handle(query, session_id=self._session_id),
+        )
+
+    def _live_agent(self) -> Any:
+        """The agent a turn calls (`_turn_of` has already said so when there is none)."""
+        return self._agent
+
+    async def _turn_of(self, opening: str, call: Callable[[], Awaitable[Any]]) -> None:
+        """One turn on screen: banner, opening line, live status, then the answer and footer.
+
+        A typed message and a resumed run are both turns, and are shown the same way. A
+        resume drawn as command output left the status line on its last stage (nothing
+        started or finished it) and the answer in the command colour.
+        """
         self._turn += 1
         self._tokens.start_turn()
         self._follow_latest = True
@@ -465,10 +483,7 @@ class AgenticTuiApp(App[None]):
             f"\n══════════════ TURN {self._turn:02d} ══════════════",
             style=palette("banner"),
         )
-        self._panel.note(
-            f"USER  {query}",
-            style=palette("user"),
-        )
+        self._panel.note(opening, style=palette("user"))
 
         self._schedule_follow_latest()
         self._status.begin(self._labels.title_for("intake"))
@@ -485,7 +500,7 @@ class AgenticTuiApp(App[None]):
 
         try:
             with bound_channel(get_settings().tui.channel):
-                state = await self._agent.handle(query, session_id=self._session_id)
+                state = await call()
 
             self._panel.note("ASSISTANT", style=palette("assistant"))
             self._panel.response(state.response or "")

@@ -10,7 +10,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from research_agent.domain.rubric import Contract
-from research_agent.prompts.base import RolePrompt
+from research_agent.prompts.base import RolePrompt, dated
 
 ROLE = "planner"
 
@@ -25,8 +25,12 @@ Plan the research as a small DAG of sub-questions.
 - Name the brief subject (an option, claim or concept) a node is about in
   `subject` when it is about one.
 - Stay within the node limit. Do not plan work the rubric does not need.
-- For a `qa` or `general` brief the topic is the question itself: plan the
+- For a `general` brief the topic is the question itself: plan the
   fewest nodes (often one) whose queries would find pages that answer it.
+- When the brief has `period_start` and `period_end`, they are the span to cover, already
+  resolved from `today`: use those years as given and never recompute them.
+- When the brief names no date, edition or period, it asks for the latest as of `today`:
+  never pin a query to a year, season or edition from your own knowledge.
 - When the brief has `recency_days`, write queries for recent coverage
   (the search is already limited to that window; do not add dates or
   words like "last month").
@@ -76,12 +80,15 @@ def build(contract: Contract, max_nodes: int, max_queries: int) -> RolePrompt:
     return RolePrompt(
         role=ROLE,
         instructions=INSTRUCTIONS,
-        payload={
-            "task": "plan",
-            "brief": brief_view(contract),
-            "rubric": rubric_view(contract),
-            "max_nodes": max_nodes,
-            "max_queries_per_node": max_queries,
-            "max_searches": contract.budget.max_searches,
-        },
+        payload=dated(
+            {
+                "task": "plan",
+                "brief": brief_view(contract),
+                "rubric": rubric_view(contract),
+                "max_nodes": max_nodes,
+                "max_queries_per_node": max_queries,
+                "max_searches": contract.budget.max_searches,
+            },
+            contract.frozen_at.date(),
+        ),
     )

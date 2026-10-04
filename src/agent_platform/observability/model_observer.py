@@ -2,7 +2,8 @@
 
 The chain says "the primary was slow, a backup started" and "the backup answered"; this turns
 each into a warning card on the `llm_call` stage. The heading names the role and what
-happened, never a model (configuration may swap it); the body names both models.
+happened, never a model (configuration may swap it); the body names both models. The role
+is upper-cased (`PLANNER`, `JUDGE`) so it stands out of the heading, as it does on every card.
 """
 
 from collections.abc import Callable
@@ -23,7 +24,7 @@ class StageReporterModelObserver:
     def backup_started(self, label: str, primary: str, backup: str, reason: str) -> None:
         words = get_settings().observability.model_events
         summary = words.backup_started.format(
-            label=label,
+            label=label.upper(),
             primary=primary,
             backup=backup,
             reason=words.reasons.get(reason, reason),
@@ -32,7 +33,7 @@ class StageReporterModelObserver:
 
     def backup_answered(self, label: str, primary: str, backup: str) -> None:
         words = get_settings().observability.model_events
-        self._card(words.backup_answered.format(label=label), primary, backup)
+        self._card(words.backup_answered.format(label=label.upper()), primary, backup)
 
     def _card(self, summary: str, primary: str, backup: str) -> None:
         reporter = self._reporter()

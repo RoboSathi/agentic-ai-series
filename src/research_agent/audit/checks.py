@@ -227,7 +227,7 @@ async def sentence_entailed(
 async def judged(spec: CheckSpec, ctx: CheckContext) -> CheckOutcome:
     if ctx.judge is None or ctx.report is None:
         return CheckOutcome(score=0.0, detail="no judge or no report")
-    return await ctx.judge.judge(spec, ctx.report, ctx.ledger)
+    return await ctx.judge.judge(spec, ctx.report, ctx.ledger, ctx.contract.frozen_at.date())
 
 
 _DETERMINISTIC: dict[str, Check] = {

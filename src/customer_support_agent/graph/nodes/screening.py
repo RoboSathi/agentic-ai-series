@@ -9,8 +9,7 @@ quarantined, and the audit trail says why.
 from typing import Any
 
 from agent_platform.basic_sanity import BasicSanityRequest
-from agent_platform.resilience.dead_letter_queue import DeadLetterReason
-from agent_platform.security import MessageScreener
+from agent_platform.security import MessageScreener, ScreenOutcome, ScreenSubject
 from customer_support_agent.basic_sanity import owned_order_id
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.graph.nodes._support import NodeSupport
@@ -52,7 +51,7 @@ class ScreeningNodes(NodeSupport):
         ordinary, not an attack — the stage that refuses things is
         `prompt_injection`, which runs alongside this one.
         """
-        outcome = MessageScreener(self._security).redact(state.query, self._reporter)
+        outcome = self._screener().redact(state.query, self._reporter)
         return {
             "model_query": outcome.text,
             "decisions": [
@@ -150,74 +149,30 @@ class ScreeningNodes(NodeSupport):
             },
         }
 
-    def _quarantine_security_request(
-        self,
-        state: AgentState,
-        *,
-        reason: DeadLetterReason,
-        injection_detected: bool = False,
-        injection_reason: str = "",
-        moderation_flagged: bool = False,
-        moderation_reason: str = "",
-        moderation_categories: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Persist a security-rejected request and stop before intent/LLM execution."""
-        entry = None
-        enqueue_error = None
-        if self._dead_letter_queue is not None and self._dead_letter_queue.enabled:
-            try:
-                sanitized_query = self._security.redact(state.query)
-                entry = self._dead_letter_queue.enqueue(
-                    reason=reason,
-                    payload=sanitized_query,
-                    trace_id=str(state.metadata.get("trace_id", "")),
-                    session_id=state.session_id,
-                    # The platform quarantines on behalf of a principal, not
-                    # a customer — this agent's principal happens to be one.
-                    principal_id=(
-                        str(state.customer_id) if state.customer_id is not None else None
-                    ),
-                    metadata={
-                        "prompt_injection": injection_detected,
-                        "content_moderation": moderation_flagged,
-                        "injection_reason": injection_reason,
-                        "moderation_categories": list(moderation_categories or []),
-                        "moderation_reason": moderation_reason,
-                    },
-                )
-            except Exception as exc:
-                # Security remains fail-closed even if the quarantine store is
-                # temporarily unavailable. Never continue to intent or the LLM.
-                enqueue_error = str(exc)
-                self._logger.error(
-                    "Security quarantine store failed; request remains blocked",
-                    error=enqueue_error,
-                )
+    def _screener(self) -> MessageScreener:
+        """The platform's screener, quarantining what it blocks in this agent's queue."""
+        return MessageScreener(self._security, self._dead_letter_queue)
 
-        self._done(
-            "dead_letter_queue",
-            summary="Request quarantined for human review",
-            event_kind="escalation",
-            fields={
-                "queued": entry is not None,
-                "queue_id": entry.id if entry is not None else None,
-                "reason": reason,
-                "prompt_injection": injection_detected,
-                "content_moderation": moderation_flagged,
-                "persistence_error": bool(enqueue_error),
-            },
+    @staticmethod
+    def _subject(state: AgentState) -> ScreenSubject:
+        return ScreenSubject(
+            session_id=state.session_id,
+            trace_id=str(state.metadata.get("trace_id", "")),
+            # The platform quarantines on behalf of a principal; this agent's is a customer.
+            principal_id=str(state.customer_id) if state.customer_id is not None else None,
         )
+
+    @staticmethod
+    def _screened_out(state: AgentState, outcome: ScreenOutcome) -> dict[str, Any]:
+        """A blocked message ends the turn with the platform's refusal; it never reaches a model."""
         return {
-            "response": "I’m unable to help with that request right now. Please rephrase your request.",
-            "decisions": [
-                *state.decisions,
-                "security: request quarantined",
-            ],
+            "response": outcome.refusal,
+            "decisions": [*state.decisions, "security: request quarantined"],
             "metadata": {
                 **state.metadata,
                 "halted": "security_quarantine",
                 "security_quarantine": True,
-                "dead_letter_queue_id": entry.id if entry is not None else None,
+                "dead_letter_queue_id": outcome.quarantine_id,
             },
         }
 
@@ -229,19 +184,15 @@ class ScreeningNodes(NodeSupport):
         the trace shows the gap instead of showing a check that passed
         without looking at anything.
         """
-        outcome = await MessageScreener(self._security).injection(
+        outcome = await self._screener().injection(
             _outbound(state),
             self._reporter,
             instructions=self._system_prompt(),
             tools=self._registry.all_tools(),
+            subject=self._subject(state),
         )
         if outcome.blocked:
-            return self._quarantine_security_request(
-                state,
-                reason="prompt_injection",
-                injection_detected=True,
-                injection_reason=outcome.reason,
-            )
+            return self._screened_out(state, outcome)
         return {
             "decisions": [*state.decisions, f"injection: {outcome.reason}"],
             "metadata": {
@@ -252,15 +203,11 @@ class ScreeningNodes(NodeSupport):
 
     async def content_moderation(self, state: AgentState) -> dict[str, Any]:
         """Screen the message against the content policy."""
-        outcome = await MessageScreener(self._security).moderation(_outbound(state), self._reporter)
+        outcome = await self._screener().moderation(
+            _outbound(state), self._reporter, subject=self._subject(state)
+        )
         if outcome.blocked:
-            return self._quarantine_security_request(
-                state,
-                reason="content_moderation",
-                moderation_flagged=True,
-                moderation_reason=outcome.reason,
-                moderation_categories=outcome.categories,
-            )
+            return self._screened_out(state, outcome)
         return {
             "decisions": [*state.decisions],
             "metadata": {**state.metadata},

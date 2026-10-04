@@ -10,6 +10,8 @@ depending on what the developer's dummy data happened to contain that
 afternoon, which is not a test.
 """
 
+from typing import Any
+
 import pytest
 
 from agent_platform.commands import (
@@ -162,12 +164,13 @@ class TestCommandView:
     def test_a_failed_result_is_styled_as_an_error(self) -> None:
         view = CommandView()
         lines = view.render(CommandResult(title="Unknown command", ok=False).line("nope"))
-        assert all(line.style == view._style.error_style for line in lines)
+        # Styles are spans (Textual drops Rich colour names from a base style).
+        assert all(_style_of(line) == view._style.error_style for line in lines)
 
     def test_a_row_keeps_its_own_style(self) -> None:
         """Pending review is yellow wherever it appears — the row says so."""
         result = CommandResult(rows=[CommandRow(cells=["10001"], style="yellow")])
-        assert CommandView().render(result)[0].style == "yellow"
+        assert _style_of(CommandView().render(result)[0]) == "yellow"
 
     def test_the_rendering_copies_out_as_plain_text(self) -> None:
         """Ctrl-O exports the feed, so a table must survive being pasted."""
@@ -301,7 +304,7 @@ class TestConfigStaysReadOnly:
 class TestConsoleSurface:
     """The console offers exactly these commands — a removed one cannot creep back."""
 
-    KEPT = {"audit", "clear", "config", "eval", "harness", "help", "kb", "memory", "queue"}
+    KEPT = {"audit", "clear", "config", "dlq", "eval", "harness", "help", "kb", "memory", "queue"}
 
     @pytest.mark.asyncio
     async def test_help_groups_every_command_once(self) -> None:
@@ -309,3 +312,8 @@ class TestConsoleSurface:
         names = [row.cells[1] for row in result.rows]
         assert len(names) == len(set(names))
         assert all(row.cells[0] for row in result.rows)
+
+
+def _style_of(line: Any) -> str:
+    """The one style a rendered command line is drawn in."""
+    return str(line.spans[0].style) if line.spans else str(line.style)

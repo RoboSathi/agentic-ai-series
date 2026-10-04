@@ -3,6 +3,7 @@
 -- order_status:  pending / shipped / delivered / cancelled
 -- refund_status: none / pending_review / approved / denied / completed
 -- hitl_queue.status: pending / approved / denied
+-- hitl_queue.action: refund / cancel_and_refund / reply
 --
 -- Ids are INTEGER: joins across these tables are on the id columns, and
 -- SQLite compares integers directly rather than collating text.
@@ -60,14 +61,20 @@ CREATE INDEX IF NOT EXISTS idx_orders_user ON orders (user_id);
 
 CREATE TABLE IF NOT EXISTS hitl_queue (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    order_id INTEGER NOT NULL REFERENCES orders(order_id),
+    -- NULL for a reply review: a reply need not be about one order.
+    order_id INTEGER REFERENCES orders(order_id),
     user_id INTEGER NOT NULL REFERENCES users(user_id),
-    requested_amount_cents INTEGER NOT NULL,
-    -- What approval does: 'refund', or 'cancel_and_refund' for an order
-    -- that has not shipped (see domain.models.ReviewAction).
+    requested_amount_cents INTEGER,
+    -- What approval does: 'refund', 'cancel_and_refund' for an order that
+    -- has not shipped, or 'reply' for a reply the hallucination check
+    -- trimmed or withheld (see domain.models.ReviewAction).
     action TEXT NOT NULL DEFAULT 'refund',
     status TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    -- The conversation a decision is reported back into.
+    session_id TEXT,
+    -- A reply review's case, as JSON (domain.models.ReplyReview).
+    detail TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_hitl_status ON hitl_queue (status);

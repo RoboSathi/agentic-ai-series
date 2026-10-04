@@ -439,6 +439,18 @@ class CheckpointEncryptionSettings(BaseModel):
     required: bool
 
 
+class StopReportWording(BaseModel):
+    """What a stopped run says, the same for every agent (`durability/stop_report.py`)."""
+
+    # `{step}`: the stage the run resumes at, in capitals.
+    heading: str
+    choices: str
+    aborted: str
+    nothing_to_abort: str
+    # What `step` says when the run stopped after its last stage.
+    the_end: str
+
+
 class DurabilitySettings(YamlBackedSettings):
     """Durable execution: checkpoints, resumable runs (LLD §13, E35)."""
 
@@ -451,8 +463,10 @@ class DurabilitySettings(YamlBackedSettings):
     # How much of a run's query the run registry keeps for display.
     preview_chars: int
     encryption: CheckpointEncryptionSettings
-    # Recorded as the error of a run an operator cancelled.
+    # Recorded as the error of a run an operator cancelled, or aborted after stopping it.
     cancel_reason: str
+    abort_reason: str
+    stop_report: StopReportWording
 
     model_config = SettingsConfigDict(env_prefix="DURABILITY__")
 
@@ -507,6 +521,21 @@ class ModelEventWording(BaseModel):
     backup_label: str
 
 
+class StepCardSettings(BaseModel):
+    """The one layout every step card uses (`observability/step_card.py`)."""
+
+    # Section key -> title, in the order a card shows them.
+    sections: dict[str, str]
+    model_line: str
+    backup_line: str
+    # When the step was decided without a model (`{by}`: the rule that decided).
+    no_model_line: str
+    # Appended to the model line when it stands for several calls.
+    calls_suffix: str
+    # Where a structured answer states its own rationale, read when the provider gave no reasoning.
+    rationale_fields: list[str]
+
+
 class ObservabilitySettings(YamlBackedSettings):
     """Tracing, SLOs, cost stack, queue math (LLD §6)."""
 
@@ -517,6 +546,7 @@ class ObservabilitySettings(YamlBackedSettings):
     persist_traces: bool
     slo_targets: dict[str, float]
     review_queue: ReviewQueueSettings
+    step_card: StepCardSettings
     # How a card in the tool-use loop names its iteration. `{step}` is the
     # model call being made, `{max}` the cap on tool iterations.
     loop_step_prefix: str
@@ -795,6 +825,19 @@ class MemorySettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="MEMORY__")
 
 
+class GuardrailOutcomeSettings(BaseModel):
+    """What happened to a checked reply, as a card's result line says it.
+
+    Named by what the customer received: the reply as written, a rewrite, the reply with its
+    refuted sentences removed, or nothing of it. The first word is the state a card colours.
+    """
+
+    passed: str
+    repaired: str
+    trimmed: str
+    withheld: str
+
+
 class GuardrailsSettings(YamlBackedSettings):
     """Output/schema guardrail settings."""
 
@@ -805,6 +848,7 @@ class GuardrailsSettings(YamlBackedSettings):
     constrained_backend: Literal["grammar", "guided_json"]
     # Why a reply was blocked, by finding code, in the words a card shows.
     block_reasons: dict[str, str] = Field(default_factory=dict)
+    outcomes: GuardrailOutcomeSettings
 
     model_config = SettingsConfigDict(env_prefix="GUARDRAILS__")
 
@@ -977,14 +1021,61 @@ class AuthSettings(BaseModel):
     enabled: bool
 
 
+class PresidioSettings(BaseModel):
+    """Presidio's analyzer over a local spaCy pipeline: names and places no regex can find."""
+
+    # The spaCy pipeline, its release, where the release wheel is published (`{model}`,
+    # `{version}`), and the repository folder it is unpacked into and loaded from (once, by
+    # `make models` or the first load; never fetched again at run time).
+    model: str
+    version: str
+    download_url: str
+    download_timeout_seconds: float = Field(gt=0)
+    local_model_dir: str
+    download_if_missing: bool
+    language: str
+    # A span Presidio scores below this is not personal data.
+    score_threshold: float = Field(ge=0.0, le=1.0)
+    # The entity types redacted (Presidio's names). An agent narrows or widens this in its own
+    # config: names and places are personal data to a support agent, research subjects to another.
+    entities: list[str]
+    # The score a configured `patterns` match carries inside Presidio.
+    pattern_score: float = Field(ge=0.0, le=1.0)
+
+    @property
+    def resolved_local_model_dir(self) -> Path:
+        return resolve_path(self.local_model_dir)
+
+
+class PiiVaultSettings(BaseModel):
+    """The reversible map from a redaction token to its value, encrypted, for audit only."""
+
+    # The *name* of the environment variable holding the key (32 bytes, hex or raw) — never
+    # the key itself. The key also keys the tokens (HMAC), so they cannot be brute-forced.
+    key_env: str
+    # Refuse to start without a key; off for development.
+    required: bool
+    # Vault rows older than this are deleted when a vault opens.
+    retention_days: int = Field(ge=1)
+
+
 class PiiSettings(BaseModel):
     """PII detection/redaction/minimization (E32)."""
 
+    # `presidio`: Presidio's NER and recognizers plus the configured patterns; `pattern`: the
+    # configured patterns alone (also the fallback when Presidio cannot load).
+    engine: Literal["presidio", "pattern"]
     mode: RedactionMode
     mask_token: str
-    ner_enabled: bool
+    # `tokenize` writes `[CATEGORY:token]`: the category, then this many characters of the token.
+    token_format: str
+    token_chars: int = Field(ge=8, le=64)
     patterns: dict[str, str]
     tool_call_allowed_fields: list[str]
+    presidio: PresidioSettings
+    vault: PiiVaultSettings
+    # Recognizers that are a model (NER); every other recognizer is a deterministic rule.
+    model_recognizers: list[str]
 
 
 class SecurityGuardModelSettings(BaseModel):
@@ -1009,6 +1100,11 @@ class SecurityGuardModelSettings(BaseModel):
     # The check's name on a card, and what the verdict says (`{env}` the key's variables).
     check_name: str
     flagged_reason: str
+    # The flagged reason when the model named what it found (`{categories}`); unset, the plain
+    # `flagged_reason` is used. A content-safety model names categories; a jailbreak one does not.
+    flagged_categories_reason: str = ""
+    # The flagged reason when the model named nothing (`{output}`: its reply, verbatim).
+    flagged_uncategorised_reason: str = ""
     allowed_reason: str
     missing_key_reason: str
 
@@ -1041,6 +1137,10 @@ class SecurityGuardSettings(BaseModel):
     # What an assessment says when a hosted guard flagged the text, or was unavailable and
     # the policy fails closed (`{guard}` the guard's check name).
     hosted_flagged_reason: str
+    # The same, when the guard named categories (`{categories}`).
+    hosted_flagged_categories_reason: str
+    # A flag in advisory categories only: shown, not blocked (`{guard}`, `{categories}`).
+    hosted_advisory_reason: str
     fail_closed_reason: str
 
 
@@ -1065,9 +1165,14 @@ class ContentModerationSettings(BaseModel):
     # How the classifier's JSON answer is read: the keys `system_prompt` asks for, and the
     # words that mean safe and unsafe. Agrees with the prompt, so both live here.
     response_safety_key: str
-    response_categories_key: str
+    # Where the categories may be, first found wins: models differ in the key they use, and give
+    # a comma-separated string or a list.
+    response_categories_keys: list[str]
     safe_word: str
     unsafe_word: str
+    # A flag naming only these categories is a warning, not a block: personal data has its own
+    # screen (PII redaction), which has already run on the message.
+    advisory_categories: list[str]
 
 
 class ScreeningMessages(BaseModel):
@@ -1076,7 +1181,18 @@ class ScreeningMessages(BaseModel):
     pii_started: str
     # `{categories}` the kinds redacted, `{count}` how many spans.
     pii_redacted: str
+    # One redaction on the card and in the log: `{category}`, `{detector}`, `{score}`, `{token}`
+    # (the masked form has no token).
+    pii_entity: str
+    pii_entity_masked: str
     pii_clear: str
+    # The card's `reason`, as the other screens give one: what was found and by what (`{rule}`
+    # rule-based, `{model}` model spans, `{categories}`), nothing found, or the model unavailable.
+    pii_reason_found: str
+    pii_reason_clear: str
+    pii_reason_unavailable: str
+    # Shown as the model when detection is patterns alone.
+    pii_no_model: str
     injection_started: str
     injection_blocked_rule: str
     injection_blocked_model: str
@@ -1084,11 +1200,17 @@ class ScreeningMessages(BaseModel):
     injection_passed_model: str
     injection_passed_rule: str
     moderation_started: str
+    # A flag in advisory categories only (PII/Privacy): shown as a warning, not blocked.
+    moderation_advisory: str
     moderation_blocked_rule: str
     moderation_blocked_model: str
     moderation_unavailable: str
     moderation_passed_model: str
     moderation_passed_rule: str
+    # A blocked message: the quarantine card's heading, and what the person is told instead.
+    quarantined: str
+    quarantine_failed: str
+    refusal: str
 
 
 class SecuritySettings(YamlBackedSettings):
@@ -1165,6 +1287,13 @@ class RateLimitSettings(BaseModel):
         return resolve_path(self.store_path)
 
 
+class SagaSettings(BaseModel):
+    """The compensating saga: on, and what a step stopped by the operator is recorded as."""
+
+    enabled: bool
+    stopped_reason: str
+
+
 class ResilienceSettings(YamlBackedSettings):
     """Resilience controls, including durable dead-letter quarantine."""
 
@@ -1174,7 +1303,7 @@ class ResilienceSettings(YamlBackedSettings):
     timeout: TimeoutSettings
     bulkhead: BulkheadSettings
     idempotency: EnabledToggle
-    saga: EnabledToggle
+    saga: SagaSettings
     dead_letter_queue: DeadLetterQueueSettings
     rate_limit: RateLimitSettings
 
@@ -1380,6 +1509,30 @@ class PresentationSettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="PRESENTATION__")
 
 
+class DeadLetterCommandWords(BaseModel):
+    """What `/dlq` and `make dlq` say (`commands/quarantine.py`)."""
+
+    summary: str
+    usage: str
+    default_status: str
+    list_title: str
+    counts: str
+    headers: list[str]
+    empty: str
+    show_hint: str
+    entry_title: str
+    preview_chars: int = Field(ge=8)
+    time_format: str
+    unknown: str
+    unknown_status: str
+    unknown_id: str
+    needs_id: str
+    needs_note: str
+    refused: str
+    done: str
+    audit_action: str
+
+
 class CommandSettings(YamlBackedSettings):
     """Console slash commands (LLD §20)."""
 
@@ -1395,15 +1548,21 @@ class CommandSettings(YamlBackedSettings):
     # when asked for someone else's records (`ConsoleScope`).
     verify_first: str
     not_your_records: str
+    dlq: DeadLetterCommandWords
 
     model_config = SettingsConfigDict(env_prefix="COMMANDS__")
 
 
 class ResponseHighlight(BaseModel):
-    """One colouring rule for the final answer: a regex, and the style of what it matches."""
+    """One colouring rule for the final answer: a regex, and the style of what it matches.
+
+    `line`, when set, scopes the rule to lines matching it — a table's
+    heading row, say — so a heading word in a data row is left alone.
+    """
 
     pattern: str
     style: str
+    line: str | None = None
 
 
 class CommandOutputSettings(BaseModel):
@@ -1417,6 +1576,13 @@ class CommandOutputSettings(BaseModel):
     column_gap: int
     max_column_width: int
     prompt_style: str
+
+
+class RunControl(BaseModel):
+    """One run button: its label (`{node}` = where a resume starts) and Textual variant."""
+
+    label: str
+    variant: str
 
 
 class TuiSettings(YamlBackedSettings):
@@ -1445,6 +1611,10 @@ class TuiSettings(YamlBackedSettings):
     status_collapsed_symbol: str
     status_expanded_symbol: str
     status_expand_hint: str
+    # The run buttons every agent shows: stop while running; resume or abort once stopped.
+    run_controls: dict[str, RunControl]
+    # The line a resumed turn opens with, where a typed turn shows `USER  <message>`.
+    resume_banner: str
     status_history_hint: str
     # The live status line's colour by state: running, complete, failed.
     status_styles: dict[str, str]
@@ -1508,6 +1678,24 @@ class DuckDuckGoSettings(BaseModel):
 SearchProviderName = Literal["tavily", "duckduckgo"]
 
 
+class SearchAugmentSettings(BaseModel):
+    """When a free answer is weak, also ask the metered provider — within a paced allowance."""
+
+    enabled: bool = True
+    # The metered provider asked, and the rate-limit bucket whose monthly quota paces it.
+    provider: SearchProviderName
+    quota_bucket: str
+    # Weak: fewer hits than this, or less than this share of the query's content words in the
+    # top `top_k` titles and snippets. Words shorter than `min_term_chars` are not counted.
+    min_hits: int = Field(ge=1)
+    min_term_coverage: float = Field(ge=0.0, le=1.0)
+    top_k: int = Field(ge=1)
+    min_term_chars: int = Field(ge=1)
+    # The share of the monthly quota augmentation may spend, paced evenly over the month; the
+    # rest is kept for pure fallback and research runs.
+    share: float = Field(ge=0.0, le=1.0)
+
+
 class WebSearchSettings(BaseModel):
     """Which providers answer a search, in order, and how long answers are reused."""
 
@@ -1516,6 +1704,7 @@ class WebSearchSettings(BaseModel):
     # Searches bounded in time or by topic (news) prefer these, in order.
     time_bounded_providers: list[SearchProviderName]
     max_results: int = Field(ge=1)
+    augment: SearchAugmentSettings
     # Live answers are kept on disk and reused for this long (0: no cache).
     cache_ttl_hours: float = Field(ge=0)
     cache_dir: str

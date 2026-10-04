@@ -24,7 +24,8 @@ from agent_platform.logging import get_logger, logged
 from agent_platform.observability.types import utc_now
 from agent_platform.primitives.money import Money
 from agent_platform.resilience import SagaResult
-from customer_support_agent.domain.models import HitlRequest, Order
+from customer_support_agent.config import get_agent_settings
+from customer_support_agent.domain.models import HitlRequest, Order, ReviewAction
 from customer_support_agent.persistence.repositories import HitlQueueRepository, OrdersRepository
 from customer_support_agent.resilience.cancellation_saga import CancellationSaga
 from customer_support_agent.resilience.refund_saga import RefundSaga
@@ -35,10 +36,15 @@ class ReviewOutcome(BaseModel):
 
     request_id: int
     decision: str
+    action: ReviewAction = "refund"
     order_id: int | None = None
     amount: Money | None = None
     refund_issued: bool = False
     reason: str = ""
+    # A reply review: the conversation it came from, and what the customer is now sent.
+    session_id: str | None = None
+    removed: list[str] = Field(default_factory=list)
+    follow_up: str = ""
 
 
 class ReviewQueueService:
@@ -83,11 +89,14 @@ class ReviewQueueService:
             return ReviewOutcome(
                 request_id=request_id, decision="not_found", reason="no pending request"
             )
-        order = self._orders.get(request.order_id)
-        if order is None:
+        if request.is_reply:
+            return self._decide_reply(request, reviewer, approved=True)
+        order = None if request.order_id is None else self._orders.get(request.order_id)
+        if order is None or request.requested_amount is None:
             return ReviewOutcome(
                 request_id=request_id,
                 decision="failed",
+                action=request.action,
                 reason=f"order {request.order_id} no longer exists",
             )
         # The eligibility rule is re-checked at approval, not trusted from
@@ -103,6 +112,7 @@ class ReviewQueueService:
             return ReviewOutcome(
                 request_id=request_id,
                 decision="denied",
+                action=request.action,
                 order_id=order.order_id,
                 reason=ineligible,
             )
@@ -111,6 +121,7 @@ class ReviewQueueService:
             return ReviewOutcome(
                 request_id=request_id,
                 decision="failed",
+                action=request.action,
                 order_id=order.order_id,
                 amount=request.requested_amount,
                 reason=f"refund failed at '{result.failed_step}' and was rolled back",
@@ -122,6 +133,7 @@ class ReviewQueueService:
         return ReviewOutcome(
             request_id=request_id,
             decision="approved",
+            action=request.action,
             order_id=order.order_id,
             amount=request.requested_amount,
             refund_issued=True,
@@ -129,9 +141,10 @@ class ReviewQueueService:
 
     async def _issue(self, request: HitlRequest, order: Order, reason: str) -> SagaResult:
         """Run whatever the reviewer approved, through its own saga."""
+        amount = request.requested_amount or order.amount
         if request.action == "cancel_and_refund":
-            return await self._cancellation.cancel(order, request.requested_amount, reason)
-        return await self._saga.issue(order, request.requested_amount, reason)
+            return await self._cancellation.cancel(order, amount, reason)
+        return await self._saga.issue(order, amount, reason)
 
     @logged("customer_support_agent")
     def deny(self, request_id: int, reviewer: str, reason: str = "") -> ReviewOutcome:
@@ -141,8 +154,11 @@ class ReviewQueueService:
             return ReviewOutcome(
                 request_id=request_id, decision="not_found", reason="no pending request"
             )
+        if request.is_reply:
+            return self._decide_reply(request, reviewer, approved=False, reason=reason)
         self._queue.decide(request_id, "denied")
-        self._orders.set_refund_status(request.order_id, "denied")
+        if request.order_id is not None:
+            self._orders.set_refund_status(request.order_id, "denied")
         # The reviewer overturned an eligible escalation. Recorded as the
         # agent being right and the human declining: sustained, that is
         # algorithm aversion, and it is only visible if it is counted.
@@ -151,6 +167,7 @@ class ReviewQueueService:
         return ReviewOutcome(
             request_id=request_id,
             decision="denied",
+            action=request.action,
             order_id=request.order_id,
             amount=request.requested_amount,
             reason=reason or "denied by reviewer",
@@ -164,6 +181,35 @@ class ReviewQueueService:
         overturning everything makes the agent a formality nobody trusts.
         """
         return self._trust.report()
+
+    def _decide_reply(
+        self, request: HitlRequest, reviewer: str, *, approved: bool, reason: str = ""
+    ) -> ReviewOutcome:
+        """Whether the hallucination check was right to cut a reply.
+
+        Approving says it was not: the customer is sent what it removed.
+        Denying says it was, and nothing more is sent. Either way the
+        agreement is counted, so a check that is overturned more often
+        than not shows up as one nobody should trust.
+        """
+        decision = "approved" if approved else "denied"
+        self._queue.decide(int(request.id or 0), decision)
+        # Approving overturns the check (it was wrong); denying upholds it.
+        self._trust.record(agent_correct=not approved, human_accepted=not approved)
+        rationale = reason or f"reply review {decision} by reviewer"
+        self._record(request, reviewer, "allow" if approved else "deny", rationale)
+        removed = request.detail.removed if request.detail is not None else []
+        template = get_agent_settings().review_output.reply_follow_up
+        return ReviewOutcome(
+            request_id=int(request.id or 0),
+            decision=decision,
+            action=request.action,
+            order_id=request.order_id,
+            reason=request.detail.reason if request.detail is not None else rationale,
+            session_id=request.session_id,
+            removed=removed,
+            follow_up=template.format(removed=" ".join(removed)) if approved and removed else "",
+        )
 
     def _find(self, request_id: int) -> HitlRequest | None:
         """A pending request by id, or None if it is absent or decided."""

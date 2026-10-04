@@ -54,6 +54,9 @@ class StateModel:
         }
         self._identifier = re.compile(settings.record_identifier_pattern, re.IGNORECASE)
         self._context = re.compile(states.context_pattern, re.IGNORECASE)
+        # "Will be processed once approved" is a promise, not a status: what follows the
+        # first promise marker is judged by whether the refund can still get there.
+        self._promise = re.compile(settings.promissory_pattern, re.IGNORECASE)
         # What the record's status is the status *of*, as a rationale names it.
         self._subject = states.subject
         self._phrases = [
@@ -71,18 +74,38 @@ class StateModel:
         Deferred when the claim is not about a refund, names no state the
         vocabulary knows, or the record states no status: silence is not a
         refutation, and a claim the model cannot place is left to the tiers.
+        What the claim *promises* ("will be processed once approved") holds
+        while the refund can still reach it; only what it *states* must
+        already be true.
         """
         if not self._context.search(claim):
             return None
         current = self.current(self._about(claim, record))
-        matched = self._matched(claim)
-        if current is None or not matched:
+        asserted, promised = self._split_promise(claim)
+        stated, pledged = self._matched(asserted), self._matched(promised)
+        negated = bool(_NEGATION.search(claim))
+        if negated:
+            # A denied promise ("won't be refunded") is not a status the record can show.
+            pledged = []
+        if current is None or not (stated or pledged):
             return None
         status, chunk = current
-        truths = [self._holds(phrase, status) for _, phrase in matched]
-        negated = bool(_NEGATION.search(claim))
-        holds = not any(truths) if negated else all(truths)
-        return StateFinding(holds, self._rationale(status, matched, truths, negated), chunk)
+        truths = [self._holds(phrase, status) for _, phrase in stated]
+        holds = (not any(truths) if negated else all(truths)) and (
+            not pledged or self._reachable(status)
+        )
+        return StateFinding(holds, self._rationale(status, stated, pledged, holds, negated), chunk)
+
+    def _split_promise(self, claim: str) -> tuple[str, str]:
+        """The claim as stated (before its first promise marker), and as promised (after it)."""
+        marker = self._promise.search(claim)
+        if marker is None:
+            return claim, ""
+        return claim[: marker.start()], claim[marker.end() :]
+
+    def _reachable(self, status: str) -> bool:
+        """Whether a refund at this status can still move up the ladder: a branch has stopped."""
+        return status in self._ladder
 
     def _about(self, claim: str, record: list[Chunk]) -> list[Chunk]:
         """The record about the order the claim names: another order's status is not its status."""
@@ -156,11 +179,16 @@ class StateModel:
     def _rationale(
         self,
         status: str,
-        matched: list[tuple[re.Pattern[str], StatePhraseSettings]],
-        truths: list[bool],
+        stated: list[tuple[re.Pattern[str], StatePhraseSettings]],
+        pledged: list[tuple[re.Pattern[str], StatePhraseSettings]],
+        holds: bool,
         negated: bool,
     ) -> str:
-        said = ", ".join(sorted({phrase.reaches for _, phrase in matched}))
-        verb = "holds" if (not any(truths) if negated else all(truths)) else "does not hold"
-        denied = " (denied)" if negated else ""
-        return f"{self._subject} status is {status}, so a claim of {said}{denied} {verb}"
+        parts = []
+        if stated:
+            said = ", ".join(sorted({phrase.reaches for _, phrase in stated}))
+            parts.append(f"a claim of {said}{' (denied)' if negated else ''}")
+        if pledged:
+            parts.append(f"a promise of {', '.join(sorted({p.reaches for _, p in pledged}))}")
+        verb = "holds" if holds else "does not hold"
+        return f"{self._subject} status is {status}, so {' and '.join(parts)} {verb}"

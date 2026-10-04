@@ -18,6 +18,7 @@ from agent_platform.commands.knowledge import KnowledgeBaseCommand
 from agent_platform.commands.runs import CancelCommand
 from agent_platform.commands.types import Command
 from agent_platform.config import FeatureSet, get_settings
+from agent_platform.durability.controls import run_actions
 from agent_platform.host import HostAction
 from agent_platform.logging import get_logger
 from agent_platform.memory.semantic.rag import KnowledgeBase
@@ -35,9 +36,6 @@ _STAGE_LABELS = {
     "refund_eligibility_check": "REFUND ELIGIBILITY",
 }
 
-# A stopped run the console offers to resume; one waiting on a reviewer resumes
-# through `/queue approve|deny` instead.
-_RESUMABLE_HERE = ("cancelled", "failed_resumable")
 
 _TITLE = "Customer Support Agent"
 _PLACEHOLDER = "Ask the support agent…  (/help for commands)"
@@ -59,18 +57,25 @@ class CustomerSupportHost:
         return ask_for_code()
 
     def prepare(self) -> None:
-        """Load the intent classifier before the event loop opens.
+        """Load the local models before the event loop opens — side by side.
 
         Native tokenizer initialization after Textual has opened its
         descriptors surfaces Python's `fds_to_keep` multiprocessing
         error on macOS. That is a runtime ordering problem, not an
-        intent-routing decision, so it is solved by ordering.
+        intent-routing decision, so it is solved by ordering. The intent
+        classifier and the NLI model load in parallel; the PII analyzer
+        starts on its own thread and is not waited for.
         """
         import os
+        from concurrent.futures import ThreadPoolExecutor
 
         os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-        self._classifier = load_intent_classifier()
-        self._preload_entailment()
+        self._start_presidio()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            classifier = pool.submit(load_intent_classifier)
+            entailment = pool.submit(self._preload_entailment)
+            self._classifier = classifier.result()
+            entailment.result()
         self._knowledge_base = self._synced_knowledge_base()
         self._recover_runs()
 
@@ -103,19 +108,9 @@ class CustomerSupportHost:
         return bool(agent is not None and agent.cancel())
 
     def actions(self, session_id: str) -> Sequence[HostAction]:
-        """Cancel while a turn runs; Resume when this session's last run stopped part-way."""
+        """Stop while a turn runs; Resume or Abort when this session's last run stopped part-way."""
         agent = self.agent
-        if agent is None:
-            return []
-        console = get_agent_settings().console
-        if agent.running:
-            return [HostAction(console.cancel.label, "/cancel", True, console.cancel.variant)]
-        last = agent.runs.latest_in_session(session_id)
-        if last is None or last.status not in _RESUMABLE_HERE:
-            return []
-        node = last.next_node.split(",")[0] or "the last step"
-        label = console.resume.label.format(node=node)
-        return [HostAction(label, f"/resume {last.thread_id}", False, console.resume.variant)]
+        return [] if agent is None else run_actions(agent, session_id)
 
     def verified_subject(self, session_id: str) -> str | None:
         """Who is verified in a console session; the console's commands show only theirs."""
@@ -221,6 +216,14 @@ class CustomerSupportHost:
         from agent_platform.memory.semantic.rag import create_knowledge_base
 
         return create_knowledge_base(reranker=create_reranker(fallback=create_scoring_cascade()))
+
+    @staticmethod
+    def _start_presidio() -> None:
+        """The PII analyzer loads in the background: the console does not wait for it."""
+        if get_settings().security.pii.engine == "presidio":
+            from agent_platform.security.pii.presidio import preload_presidio_in_background
+
+            preload_presidio_in_background()
 
     @staticmethod
     def _preload_entailment() -> None:

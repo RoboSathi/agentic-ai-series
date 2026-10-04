@@ -7,12 +7,13 @@ claim no tool result supports does not reach the customer.
 
 from typing import Any
 
-from agent_platform.guardrails import CustomerResponse
+from agent_platform.guardrails import CustomerResponse, ResponseGuardrailResult
 from agent_platform.hallucination_protection.checker import Resampler
 from agent_platform.llm.types import CompletionRequest, Message
 from agent_platform.resilience import (
     external_api_error_fields,
 )
+from customer_support_agent.config import get_agent_settings
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.reporting import (
@@ -99,11 +100,7 @@ class FinalizeNodes(NodeSupport):
             # No schema line here: this draft never went through the JSON
             # envelope, and reporting it as valid described a check that
             # did not run.
-            self._report_grounding(
-                blocked=guardrail_result.escalated,
-                summary=_grounding_headline(guardrail_result),
-                fields=guardrail_result.model_dump(exclude={"response"}),
-            )
+            self._report_grounding(state, guardrail_result)
             return {
                 "response": guardrail_result.response,
                 "decisions": [
@@ -124,14 +121,7 @@ class FinalizeNodes(NodeSupport):
                 evidence,
             )
             if guardrail_result.escalated:
-                guardrail_fields = guardrail_result.model_dump(
-                    exclude={"response"},
-                )
-                self._report_grounding(
-                    blocked=True,
-                    summary=_grounding_headline(guardrail_result),
-                    fields=guardrail_fields,
-                )
+                self._report_grounding(state, guardrail_result)
                 return {
                     "response": guardrail_result.response,
                     "decisions": [
@@ -214,14 +204,7 @@ class FinalizeNodes(NodeSupport):
             revise=revise_unsupported,
         )
         reply = guardrail_result.response
-        guardrail_fields = guardrail_result.model_dump(
-            exclude={"response"},
-        )
-        self._report_grounding(
-            blocked=guardrail_result.escalated,
-            summary=_grounding_headline(guardrail_result),
-            fields=guardrail_fields,
-        )
+        self._report_grounding(state, guardrail_result)
         state.metadata["hallucination_rate"] = guardrail_result.hallucination_rate
         state.metadata["guardrail_reason_code"] = guardrail_result.reason_code
         state.metadata["guardrail_escalated"] = guardrail_result.escalated
@@ -305,8 +288,8 @@ class FinalizeNodes(NodeSupport):
 
         return resample
 
-    def _report_grounding(self, *, blocked: bool, summary: str, fields: dict[str, Any]) -> None:
-        """Narrate the grounding stage — but only when there is one.
+    def _report_grounding(self, state: AgentState, result: ResponseGuardrailResult) -> None:
+        """Narrate the grounding stage — but only when there is one — and queue what it cut.
 
         With `hallucination_guard` withheld no detector is built, and
         `ResponseGuardrail.enforce` returns the draft unexamined. Printing
@@ -314,11 +297,34 @@ class FinalizeNodes(NodeSupport):
         that never ran, which is worse than silence: it is the screen
         telling an operator a control is there when it is not. A stage
         that was not built has nothing to report.
+
+        The card is coloured by what the customer received: the reply as
+        written (done), the reply less a sentence (a warning), or nothing
+        of it (blocked). A cut reply is queued for a person either way.
         """
         if self._grounding is None:
             return
-        report = self._reporter_blocked if blocked else self._done
+        review = self._refer_reply(state, result)
+        fields = result.model_dump(exclude={"response"})
+        if review is not None:
+            fields["review_request"] = review
+        summary = _grounding_headline(result, review)
+        report = (
+            self._reporter_blocked
+            if result.withheld
+            else self._reporter_warning
+            if result.escalated
+            else self._done
+        )
         report("hallucination_check", summary=summary, event_kind="grounding", fields=fields)
+
+    def _refer_reply(self, state: AgentState, result: ResponseGuardrailResult) -> int | None:
+        """The review request a cut reply was queued as, when there is a queue to put it in."""
+        if self._reply_referral is None:
+            return None
+        return self._reply_referral.refer(
+            result, customer_id=state.customer_id, session_id=state.session_id
+        )
 
     def _is_deliberation(self, content: str) -> bool:
         """Whether this text is the model thinking rather than replying.
@@ -332,8 +338,11 @@ class FinalizeNodes(NodeSupport):
         return any(marker in lowered for marker in self._deliberation_markers)
 
 
-def _grounding_headline(result: Any) -> str:
-    """The card title: the outcome when blocked, the claim tally when not."""
-    if result.escalated:
+def _grounding_headline(result: ResponseGuardrailResult, review: int | None) -> str:
+    """The card title: what was sent when a claim was cut, the claim tally when not."""
+    if not result.escalated:
+        return str(result.tally)
+    if review is None:
         return str(result.outcome)
-    return str(result.tally)
+    queued = get_agent_settings().review_output.queued.format(id=review)
+    return f"{result.outcome} · {queued}"

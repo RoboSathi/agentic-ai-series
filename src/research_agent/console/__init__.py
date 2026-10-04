@@ -8,14 +8,17 @@ checklist and the budget meters) and a cancel key. The platform composes it from
 """
 
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from rich.markup import escape
 
 from agent_platform.commands.types import Command
 from agent_platform.config import FeatureSet, get_settings
+from agent_platform.durability.controls import run_actions
 from agent_platform.host import HostAction
+from agent_platform.logging import get_logger
 from agent_platform.observability import StageReporter
 from research_agent.config import get_agent_settings
 from research_agent.console.commands import (
@@ -54,20 +57,31 @@ class ResearchHost:
 
     @staticmethod
     def _preload_local_models(nli: bool) -> None:
-        """Load the local models now, before the TUI's event loop owns the process descriptors.
+        """Load the local models now, side by side, before the TUI's event loop owns the
+        process descriptors.
 
-        Loaded lazily inside the TUI, the NLI model fails on macOS (`bad value(s) in
-        fds_to_keep`) and every claim after that is judged by the lexical fallback. A model that
-        cannot load still does not stop the console: the checker logs why and falls back.
+        Loaded lazily inside the TUI, a local model fails on macOS (`bad value(s) in
+        fds_to_keep`): the NLI model would leave every claim to the lexical fallback. The NLI
+        model and the research-kind examples (the e5 embedder, and the examples it embeds once)
+        load in parallel; both are resident for the life of the process. A model that cannot
+        load does not stop the console: it is logged, and its caller falls back.
         """
         from agent_platform.evals.entailment import preload_entailment_model
-        from research_agent.graph.builder import intent_embedder
+        from research_agent.graph.builder import warm_kind_examples
 
+        _start_presidio()
+        agent = get_agent_settings()
+        loads: list[Callable[[], None]] = [lambda: warm_kind_examples(agent)]
         if nli:
-            preload_entailment_model()
-        embedder = intent_embedder()
-        if hasattr(embedder, "ensure_loaded_sync"):
-            embedder.ensure_loaded_sync()
+            loads.append(preload_entailment_model)
+        with ThreadPoolExecutor(max_workers=len(loads)) as pool:
+            for future in [pool.submit(load) for load in loads]:
+                try:
+                    future.result()
+                except Exception as exc:
+                    get_logger("research_agent").warning(
+                        "A local model did not load; its caller will fall back", error=str(exc)
+                    )
 
     def build(self, reporter: StageReporter, features: FeatureSet | None = None) -> Any:
         """Compose the agent, reporting its stages to this feed."""
@@ -84,7 +98,6 @@ class ResearchHost:
         agent = get_agent_settings()
         names, help_text, messages = agent.command_names, agent.tui.command_help, agent.messages
         forwarded = [
-            ForwardedCommand(names.qa, help_text["qa"], f"/{names.qa} <question>", needs_args=True),
             ForwardedCommand(
                 names.research, help_text["research"], f"/{names.research} [question]"
             ),
@@ -131,6 +144,10 @@ class ResearchHost:
         """The buttons for where the session stands: finish, approve or cancel."""
         if self.agent is None:
             return []
+        # Stop while a run is in flight; Resume or Abort once one stopped: the platform's buttons.
+        controls = run_actions(self.agent, session_id)
+        if controls:
+            return controls
         settings = get_agent_settings()
         phase = self.agent.panel_state(session_id)["phase"]
         names = settings.command_names
@@ -175,6 +192,14 @@ class ResearchHost:
         if items:
             detail += _checklist_lines(items)
         return [], detail
+
+
+def _start_presidio() -> None:
+    """The PII analyzer loads on its own thread, not waited for: the console opens at once."""
+    if get_settings().security.pii.engine == "presidio":
+        from agent_platform.security.pii.presidio import preload_presidio_in_background
+
+        preload_presidio_in_background()
 
 
 def _styled(text: str, style: str) -> str:

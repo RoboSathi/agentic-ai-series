@@ -132,6 +132,12 @@ class _Agent:
     def cancel(self) -> bool:
         return False
 
+    async def abort(self, thread_id: str) -> Any:
+        return SimpleNamespace(status="aborted", response="")
+
+    def describe_progress(self, values: dict[str, Any]) -> dict[str, Any]:
+        return {}
+
 
 def _service(outcome: ReviewOutcome) -> Any:
     async def approve(request_id: int, reviewer: str) -> ReviewOutcome:

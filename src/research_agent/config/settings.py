@@ -15,7 +15,7 @@ from pydantic_settings import SettingsConfigDict
 from agent_platform.config.paths import resolve_path
 from agent_platform.config.settings import YamlBackedSettings
 from research_agent.domain.budget import Budget
-from research_agent.domain.scope import Depth, Mode
+from research_agent.domain.scope import Depth
 
 
 class CommandNames(BaseModel):
@@ -31,7 +31,6 @@ class CommandNames(BaseModel):
     rubric_add: str
     rubric_drop: str
     rubric_set: str
-    qa: str
     research: str
 
 
@@ -40,13 +39,6 @@ class MessageSettings(BaseModel):
 
     refuse: str
     # A message one of the input screens (injection, moderation) stopped.
-    input_blocked: str
-    # `{options}` becomes the numbered menu, one `reframe_option` line each.
-    reframe: str
-    reframe_option: str
-    # Said when a question goes straight to a quick answer, and after it.
-    qa_started: str
-    qa_followup: str
     challenge_prefix: str
     # `{plan}`: the draft plan, one "  - step" line per sub-question.
     propose_done: str
@@ -102,16 +94,6 @@ class SetupMessages(BaseModel):
     no_search_key: str
 
 
-class ReframeOption(BaseModel):
-    """One choice in the reframe menu: a mode, how it is named, an example."""
-
-    mode: Mode
-    label: str
-    example: str
-    # Words a reply may use instead of the number or the label.
-    aliases: list[str] = Field(default_factory=list)
-
-
 class TimeWindowSettings(BaseModel):
     """How "in the last 1 month" becomes a day count (all patterns case-insensitive)."""
 
@@ -124,6 +106,9 @@ class TimeWindowSettings(BaseModel):
     # "today", "yesterday": one day.
     today_pattern: str
     unit_days: dict[str, int]
+    # Units counted on the calendar for a period's start ("the last 20 years" on 2026-10-04
+    # starts 2006-10-04, not 7,300 days back): months per unit.
+    unit_months: dict[str, int]
 
 
 class ScopingSettings(BaseModel):
@@ -133,16 +118,10 @@ class ScopingSettings(BaseModel):
     challenge_every_k_turns: int = Field(ge=1)
     checklists_path: str
     refuse_patterns: list[str]
-    reframe_patterns: list[str]
     archetype_keywords: dict[str, list[str]]
-    # A message naming no specialised kind but asking for a *research run*.
-    research_cues: list[str]
-    # The deterministic gate decides a research kind only when at least this many of that
-    # kind's cues appear (and no other kind ties it); otherwise the encoder, then the LLM.
-    # Why a plain message is answered as Q&A (shown on the scope card).
-    quick_reason: str
-    rule_gate_min_cue_hits: int = Field(ge=1)
-    reframe_options: list[ReframeOption]
+    # The cue rules name a research kind only when at least this many of that kind's cues
+    # appear (and no other kind ties it); otherwise the encoder, then the LLM.
+    kind_rule_min_cue_hits: int = Field(ge=1)
     time_window: TimeWindowSettings
     answer_split_pattern: str
     vague_answer_max_words: int = Field(ge=0)
@@ -220,7 +199,7 @@ class ResearchSettings(BaseModel):
         "no readable publication date (got '{date}'), so it cannot be shown to fall "
         "inside the {days}-day window"
     )
-    # A Q&A or general question bounded to this many days or fewer is news:
+    # A question bounded to this many days or fewer is news:
     # search the providers' news vertical (`news_topic`).
     news_window_days: int = Field(ge=1)
     news_topic: str
@@ -244,12 +223,6 @@ class CallSettings(BaseModel):
     truncation_retry_factor: float = Field(gt=1)
     # Timeouts, retries and backup models are not here: they are each role's
     # `llm.roles.<role>` chain, applied by the platform (`ModelChainBuilder`).
-
-
-class QaSettings(BaseModel):
-    """The Q&A fast path: no interview, a small budget, one follow-up round."""
-
-    budget: Budget
 
 
 class DepthProfile(BaseModel):
@@ -333,37 +306,18 @@ class InjectionModelSettings(BaseModel):
     max_windows: int = Field(default=4, ge=1)
 
 
-class EncoderGateSettings(BaseModel):
-    """The learned classifier in front of the LLM scope gate: when it may answer alone."""
+class KindEncoderSettings(BaseModel):
+    """The nearest-example classifier in front of the LLM research-kind call: when it decides.
 
-    # Below either bar the message goes to the LLM gate instead.
-    min_confidence: float = Field(ge=0.0, le=1.0)
-    min_margin: float = Field(ge=0.0, le=1.0)
-
-
-class IntentRouterSettings(BaseModel):
-    """The front door: answer a question directly, or start a research scope.
-
-    Same layering as the Customer Support router: deterministic rules, then the BERT-family
-    encoder (`gate_encoder`), then the LLM for what the encoder is unsure of. With no encoder
-    trained, a message the rules do not claim is answered directly rather than sent to a
-    120B model just to be told so.
+    A `/research` question is compared with the labelled examples (`exemplars_path`, a file of
+    `kind: [messages]`) and the nearest `neighbours` vote. It decides alone only above both bars;
+    below either, the LLM decides.
     """
 
-    # A message with at least this many `scoping.research_cues` is a research request.
-    research_cue_min_hits: int = Field(ge=1)
-    # The labelled example messages the nearest-example classifier compares a message with
-    # (a file of `label: [messages]`), and how many of the nearest vote.
     exemplars_path: str
     neighbours: int = Field(ge=1)
-    # The grouped share (answer against research) the answer side needs to decide; below it,
-    # the LLM. Starting research needs `research_min_confidence`: it is the expensive path.
-    min_confidence: float = Field(ge=0.5, le=1.0)
-    research_min_confidence: float = Field(ge=0.5, le=1.0)
-    # Labels that mean "answer directly"; any other known label is a research kind.
-    encoder_answer_labels: list[str]
-    # Ask the LLM when the encoder is unsure (off: unsure means answer directly).
-    llm_fallback: bool = True
+    min_confidence: float = Field(ge=0.0, le=1.0)
+    min_margin: float = Field(ge=0.0, le=1.0)
 
 
 class AnswerBudget(BaseModel):
@@ -494,6 +448,31 @@ class AnswerGroundingSettings(BaseModel):
     repair_evidence_per_claim: int = Field(ge=1)
 
 
+class RecencyMessages(BaseModel):
+    """What the model is told when a search is pinned to the past or finds only old results."""
+
+    pinned: str
+    stale: str
+    # A planned query naming years before the brief's resolved period: `{years}`, `{start}`, `{end}`.
+    outside_period: str
+
+
+class RecencySettings(BaseModel):
+    """An undated question asks for the latest: the check that holds searches to that.
+
+    A model pins a query to the edition it knows from training ("... 2023") although the prompt
+    says what today is. A prompt rule alone does not stop it; this check reads the query and the
+    results, and adds a note the model reads before it answers.
+    """
+
+    enabled: bool = True
+    # A four-digit year in a question or a query.
+    year_pattern: str
+    # An undated question whose newest dated result is older than this gets the stale note.
+    stale_after_days: int = Field(ge=1)
+    messages: RecencyMessages
+
+
 class AnswerSettings(BaseModel):
     """The direct-answer path: a budgeted ReAct loop over a few read-only tools."""
 
@@ -506,6 +485,8 @@ class AnswerSettings(BaseModel):
     repair_timeout_seconds: float = Field(gt=0)
     # A step is not started with less time than this left; the loop answers with what it has.
     min_call_seconds: float = Field(gt=0)
+    # Tries for a text answer on the last step before answering from the observations alone.
+    final_attempts: int = Field(ge=1)
     # Output-token cap for one model response.
     max_tokens: int = Field(ge=1)
     temperature: float = Field(ge=0.0)
@@ -514,6 +495,10 @@ class AnswerSettings(BaseModel):
     snippet_max_chars: int = Field(ge=100)
     # How much of a fetched page the model is shown.
     fetch_max_chars: int = Field(ge=200)
+    # A page fetch for a quick answer: shorter and with fewer attempts than a research run's, so
+    # one slow site cannot spend half the turn (the model reads another result instead).
+    fetch_timeout_seconds: float = Field(gt=0)
+    fetch_max_attempts: int = Field(ge=1)
     # strftime format for the date the prompt carries ("Today is ...").
     date_format: str
     # strftime format of the clock tool's answer.
@@ -592,7 +577,6 @@ class ResearchAgentSettings(YamlBackedSettings):
     rubric: RubricSettings
     budget: Budget
     depths: dict[Depth, DepthProfile]
-    qa: QaSettings
     planning: PlanningSettings
     matching: MatchingSettings
     research: ResearchSettings
@@ -601,9 +585,9 @@ class ResearchAgentSettings(YamlBackedSettings):
     synthesis: SynthesisSettings
     audit: AuditSettings
     injection_model: InjectionModelSettings = Field(default_factory=InjectionModelSettings)
-    gate_encoder: EncoderGateSettings
-    intent_router: IntentRouterSettings
+    kind_encoder: KindEncoderSettings
     answer: AnswerSettings
+    recency: RecencySettings
     # The reply shows numbered sources and one finding per line; the archived report keeps
     # the evidence ids. Off: the raw report text.
     reader_view: bool = True

@@ -26,6 +26,7 @@ from research_agent.llm.structured import StructuredCaller
 from research_agent.observability.telemetry import RunTelemetry
 from research_agent.prompts import answer as prompt
 from research_agent.research.cards import cap_reached_card
+from research_agent.research.recency import RecencyGuard
 
 
 @instrument("research_agent")
@@ -40,12 +41,13 @@ class DirectAnswerer:
         telemetry: RunTelemetry,
         grounding: AnswerGrounding | None = None,
         context: AnswerContext | None = None,
+        recency: RecencyGuard | None = None,
     ) -> None:
         self._context = context
         self._settings = settings
         self._telemetry = telemetry
         self._graph = build_answer_graph(
-            AnswerNodes(caller, registry, settings, telemetry, grounding)
+            AnswerNodes(caller, registry, settings, telemetry, grounding, recency)
         )
         self._logger = get_logger("research_agent")
 
@@ -56,7 +58,7 @@ class DirectAnswerer:
             else SessionContext()
         )
         turn = self._turn(question, context)
-        today = datetime.now().astimezone().strftime(self._settings.date_format)
+        today = turn.asked_at.strftime(self._settings.date_format)
         system = "\n\n".join([prompt.INSTRUCTIONS.format(today=today), *context.blocks])
         try:
             final = await self._graph.ainvoke(
@@ -82,7 +84,8 @@ class DirectAnswerer:
             stages=LOOP_STAGES,
             detail=self._settings.messages.loop_step_detail,
         )
-        return Turn(question, self._budget(), ToolControlLoop(), context, loop)
+        asked_at = datetime.now().astimezone()
+        return Turn(question, self._budget(), ToolControlLoop(), context, loop, asked_at)
 
     def _without_sources(self, text: str) -> str:
         """The answer as the model should remember it: its words, not the citation list.

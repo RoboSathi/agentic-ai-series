@@ -2,12 +2,12 @@
 
 The scoping graph's state is a pydantic model: one session's interview,
 checklist and (once approved) contract. The run graph's state is a
-TypedDict because waves fan out with LangGraph `Send`s whose results are
+TypedDict because batches fan out with LangGraph `Send`s whose results are
 merged by reducers; its values are the same pydantic domain types.
 
 Neither holds a live collaborator (a gateway, a ledger object, a model
 client). What a resumed run needs back — the ledger, the spend, the trace
-— is snapshotted into run state at every wave boundary.
+— is snapshotted into run state at every batch boundary.
 """
 
 import operator
@@ -20,11 +20,11 @@ from research_agent.audit.independent import AuditResult
 from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.report import Report, RunStatus
 from research_agent.domain.rubric import Contract, Rubric
-from research_agent.domain.scope import Archetype, CoverageItem, Mode, ScopeBrief
+from research_agent.domain.scope import Archetype, CoverageItem, ScopeBrief
 from research_agent.domain.trace import RunTrace
 from research_agent.research.worker import NodeResult
 
-ScopePhase = Literal["GATE", "REFRAME", "QA", "INTERVIEW", "RUBRIC_REVIEW", "APPROVED", "REFUSED"]
+ScopePhase = Literal["KIND", "INTERVIEW", "RUBRIC_REVIEW", "APPROVED", "REFUSED"]
 
 
 class ScopingState(BaseModel):
@@ -32,10 +32,7 @@ class ScopingState(BaseModel):
 
     session_id: str = ""
     first_message: str = ""
-    phase: ScopePhase = "GATE"
-    # Q&A or Research; `forced_mode` is set by /qa or /research and wins.
-    mode: Mode = "research"
-    forced_mode: Mode | None = None
+    phase: ScopePhase = "KIND"
     archetype: Archetype | None = None
     topic: str = ""
     # A time window read from the first message, in days.
@@ -61,12 +58,12 @@ def _merge(left: dict[str, str], right: dict[str, str]) -> dict[str, str]:
 
 
 class RunState(TypedDict, total=False):
-    """One autonomous run, checkpointed at every wave boundary."""
+    """One autonomous run, checkpointed at every batch boundary."""
 
     contract: Contract
     plans: list[PlanDag]
     round: int
-    wave: int
+    batch: int
     round_nodes: list[SubQuestion]
     done: Annotated[dict[str, str], _merge]
     results: Annotated[list[NodeResult], operator.add]

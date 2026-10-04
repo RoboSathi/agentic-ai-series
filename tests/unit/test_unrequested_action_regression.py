@@ -93,7 +93,8 @@ class TestOfferedSetIsEnforcedAtInvocation:
         )
         agent = build_agent(llm=llm, pool=seeded_pool, with_memory=False)
         await agent.handle(CONVERSATIONAL)
-        assert HitlQueueRepository(seeded_pool).pending() == []
+        # A reply the check cut may be queued for review; no money request may be.
+        assert [r for r in HitlQueueRepository(seeded_pool).pending() if not r.is_reply] == []
 
 
 class TestDuplicateActionSuppression:

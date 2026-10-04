@@ -1,9 +1,11 @@
 """The interviewer's prompt: one turn of the scoping interview."""
 
+from datetime import date
+
 from pydantic import BaseModel, Field
 
 from research_agent.domain.scope import CoverageItem
-from research_agent.prompts.base import RolePrompt
+from research_agent.prompts.base import RolePrompt, dated
 
 ROLE = "interviewer"
 
@@ -91,20 +93,24 @@ def build(
     asked_item_id: str,
     answer: str,
     turn: int,
+    today: date,
 ) -> RolePrompt:
     return RolePrompt(
         role=ROLE,
         instructions=INSTRUCTIONS,
-        payload={
-            "task": "interview",
-            "archetype": archetype,
-            "request": request,
-            "topic": topic,
-            "turn": turn,
-            "asked_item_id": asked_item_id,
-            "answer": answer,
-            "checklist": [_visible(item) for item in items],
-        },
+        payload=dated(
+            {
+                "task": "interview",
+                "archetype": archetype,
+                "request": request,
+                "topic": topic,
+                "turn": turn,
+                "asked_item_id": asked_item_id,
+                "answer": answer,
+                "checklist": [_visible(item) for item in items],
+            },
+            today,
+        ),
     )
 
 

@@ -22,7 +22,7 @@ from agent_platform.commands.inspection import (
 )
 from agent_platform.commands.knowledge import KnowledgeBaseCommand
 from agent_platform.commands.registry import PREFIX, CommandRegistry
-from agent_platform.commands.runs import CancelCommand, ResumeCommand
+from agent_platform.commands.runs import AbortCommand, CancelCommand, ResumeCommand
 from agent_platform.commands.scope import ConsoleScope, ScopedCommand
 from agent_platform.commands.system import (
     ClearCommand,
@@ -40,6 +40,7 @@ __all__ = [
     "ScopedCommand",
     "PREFIX",
     "ResumeCommand",
+    "AbortCommand",
     "AuditCommand",
     "CancelCommand",
     "ClearCommand",

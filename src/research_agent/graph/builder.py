@@ -11,6 +11,7 @@ Tests pass a scripted model, a replaying gateway and in-memory stores and
 get the real wiring of everything else.
 """
 
+import asyncio
 import re
 from collections.abc import Callable
 from functools import cache
@@ -22,6 +23,7 @@ from agent_platform.artifacts import DirectoryArtifactStore
 from agent_platform.audit import AuditLedger, create_audit_ledger
 from agent_platform.config import FeatureSet, active_features, get_settings, set_active_features
 from agent_platform.config.paths import resolve_path
+from agent_platform.config.settings import WebSettings
 from agent_platform.context import (
     CandidateSource,
     ContextFailureDetector,
@@ -65,6 +67,7 @@ from agent_platform.observability.store import DuckDbObservabilityStore
 from agent_platform.observability.types import utc_now
 from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agent_platform.resilience import ResilientCaller, ResourcePoolBulkhead
+from agent_platform.resilience.dead_letter_queue import DeadLetterQueue
 from agent_platform.security import (
     MessageScreener,
     PromptInjectionGuard,
@@ -95,13 +98,14 @@ from research_agent.graph.state import StateTypes
 from research_agent.guardrails.answer_grounding import AnswerGrounding
 from research_agent.guardrails.injection import InjectionScreen
 from research_agent.guardrails.input_screen import InputScreen
-from research_agent.intent import ResearchIntentRouter
+from research_agent.guardrails.refusal import RefusalRule
 from research_agent.llm.structured import RoleClients, StructuredCaller
 from research_agent.observability.telemetry import RunTelemetry
 from research_agent.planning.planner import Planner
 from research_agent.research.cards import cap_reached_card
 from research_agent.research.defenses import OutboundGuard
 from research_agent.research.extractor import QuarantinedExtractor, UnquarantinedReader
+from research_agent.research.recency import RecencyGuard
 from research_agent.research.reflector import GapAnalyzer, Reflector
 from research_agent.research.resources import RunResources
 from research_agent.research.stop_rules import stop_rule_for
@@ -109,10 +113,11 @@ from research_agent.rubric.editor import RubricEditor
 from research_agent.rubric.generator import RubricGenerator
 from research_agent.scoping.brief import BriefBuilder
 from research_agent.scoping.challenge_check import ChallengeGuard
-from research_agent.scoping.encoder_gate import EncoderGateClassifier, IntentBackend
-from research_agent.scoping.gate import ArchetypeClassifier, LlmArchetypeClassifier
-from research_agent.scoping.rule_gate import RuleGate
+from research_agent.scoping.kind import KindClassifier, LlmKindClassifier
+from research_agent.scoping.kind_encoder import EncoderKindClassifier, IntentBackend
+from research_agent.scoping.kind_rules import KindRules
 from research_agent.scoping.termination import TerminationPolicy
+from research_agent.scoping.window import TimeWindowParser
 from research_agent.synthesis.citation_guard import CitationGuard
 from research_agent.synthesis.synthesizer import Synthesizer
 from research_agent.tools import build_answer_registry
@@ -157,16 +162,14 @@ def build_agent(
         truncation_retry_factor=agent.calls.truncation_retry_factor,
     )
     memory = _memory(agent, posture, platform, ledger, reporter, episodic)
-    backend = _classifier_backend(agent, posture)
+    backend = kind_backend(agent, posture)
     archive = ResearchArchive(
         artifacts or DirectoryArtifactStore(settings.artifacts.resolved_root),
         memory,
         agent.archive.run_id_prefix,
         semantic_pointer=agent.archive.semantic_pointer,
     )
-    router, answerer = _front_door(
-        agent, posture, caller, telemetry, gateway, backend, memory, archive
-    )
+    answerer = _direct_answerer(agent, posture, caller, telemetry, gateway, memory, archive)
     saver = checkpointer or create_checkpointer(state_types=model_types(StateTypes))
     registry = RunRegistry(platform)
     run_nodes = RunNodes(_run_parts(agent, posture, caller, roles, archive, entailment))
@@ -189,16 +192,19 @@ def build_agent(
         telemetry=telemetry,
         settings=agent,
         memory=memory,
-        router=router,
         answerer=answerer,
-        screen=_input_screen(agent, posture, telemetry),
+        screen=_input_screen(posture, telemetry, platform),
+        refusal=RefusalRule(agent.scoping.refuse_patterns),
     )
 
 
 def _input_screen(
-    agent: ResearchAgentSettings, posture: FeatureSet, telemetry: RunTelemetry
+    posture: FeatureSet, telemetry: RunTelemetry, platform: SqlitePlatformStore
 ) -> InputScreen | None:
-    """The person's message screened by the declared detectors — or None when none is declared."""
+    """The person's message screened by the declared detectors — or None when none is declared.
+
+    A block is quarantined in the platform's dead-letter queue, as it is for every agent.
+    """
     suite = SecuritySuite(
         pii=PIIFilterImpl() if posture.is_on("pii") else None,
         injection=PromptInjectionGuard() if posture.is_on("prompt_injection") else None,
@@ -206,7 +212,12 @@ def _input_screen(
     )
     if suite.pii is None and not suite.enabled:
         return None
-    return InputScreen(MessageScreener(suite), telemetry)
+    quarantine = DeadLetterQueue(
+        platform,
+        agent_id=get_settings().agent.id,
+        enabled=get_settings().resilience.dead_letter_queue.enabled,
+    )
+    return InputScreen(MessageScreener(suite, quarantine), telemetry)
 
 
 def role_clients(observer: ModelCallObserver | None = None) -> RoleClients:
@@ -231,29 +242,54 @@ def _require_independent_judge(
 
 
 def _encoder_wanted(agent: ResearchAgentSettings, posture: FeatureSet) -> bool:
-    """Whether the BERT-family encoder is part of this posture (never in the offline one)."""
-    return posture.is_on("gate_encoder")
+    """Whether the example classifier is part of this posture (never in the offline one)."""
+    return posture.is_on("kind_encoder")
 
 
-def _classifier_backend(agent: ResearchAgentSettings, posture: FeatureSet) -> IntentBackend | None:
-    """The learned classifier behind the scope gate and the front door, or None.
+def kind_backend(agent: ResearchAgentSettings, posture: FeatureSet) -> IntentBackend | None:
+    """The example classifier behind the research kind, or None (`kind_encoder` off).
 
-    Nearest labelled examples (`intent_router.exemplars_path`) over an embedding model: no
-    training, and the examples are the agent's own data. None when the posture withholds
-    classifiers (`gate_encoder` off): rules and the LLM decide.
+    Nearest labelled examples (`kind_encoder.exemplars_path`) over an embedding model: no
+    training, and the examples are the agent's own data. With the local embedder it is one per
+    process, so the examples are embedded once — warmed at start-up — and not again on every
+    `/harness` rebuild (1.8 s on e5-large-v2, measured 2026-10-04).
     """
     if not _encoder_wanted(agent, posture):
         return None
-    path = resolve_path(agent.intent_router.exemplars_path)
-    exemplars = yaml.safe_load(path.read_text())
-    embedder = intent_embedder()
+    settings = agent.kind_encoder
+    if get_settings().llm.local_embedder.enabled:
+        return _resident_kind_examples(settings.exemplars_path, settings.neighbours)
+    return _kind_examples(create_embedding_client(), settings.exemplars_path, settings.neighbours)
+
+
+@cache
+def _resident_kind_examples(path: str, neighbours: int) -> ExemplarIntentClassifier:
+    return _kind_examples(_local_embedder(), path, neighbours)
+
+
+def warm_kind_examples(agent: ResearchAgentSettings) -> None:
+    """Load the local embedder and embed the kind examples now, before an event loop opens.
+
+    Whatever the posture: `/harness` can turn the example classifier on later, and a model
+    loaded inside the console's loop fails on macOS (`fds_to_keep`).
+    """
+    if not get_settings().llm.local_embedder.enabled:
+        return
+    settings = agent.kind_encoder
+    asyncio.run(_resident_kind_examples(settings.exemplars_path, settings.neighbours).warm())
+
+
+def _kind_examples(
+    embedder: EmbeddingClient, path: str, neighbours: int
+) -> ExemplarIntentClassifier:
+    exemplars = yaml.safe_load(resolve_path(path).read_text())
     get_logger("research_agent").info(
-        "Intent classifier: nearest labelled example",
+        "Research-kind classifier: nearest labelled example",
         embedder=embedder.model_id or get_settings().llm.embedding.model,
         examples=sum(len(texts) for texts in exemplars.values()),
         labels=sorted(exemplars),
     )
-    return ExemplarIntentClassifier(embedder, exemplars, agent.intent_router.neighbours)
+    return ExemplarIntentClassifier(embedder, exemplars, neighbours)
 
 
 def intent_embedder() -> EmbeddingClient:
@@ -274,48 +310,46 @@ def _local_embedder() -> LocalSentenceEmbedder:
     return LocalSentenceEmbedder()
 
 
-def gate_classifier(
+def kind_classifier(
     agent: ResearchAgentSettings,
     posture: FeatureSet,
     caller: StructuredCaller,
     backend: IntentBackend | None,
-) -> ArchetypeClassifier:
-    """Rules, then a fine-tuned BERT-family classifier, then the LLM — the LLM only as fallback.
+) -> KindClassifier:
+    """Rules, then the example classifier, then the LLM — the LLM only as fallback.
 
-    Refusal patterns and plain cue rules answer first, the encoder answers the clear cases (a
-    confident, unambiguous label) at no model cost, and the LLM gate keeps everything they are
-    unsure about. It is the whole gate whenever the feature is off or the offline posture is on.
+    Refusal patterns and plain cue rules answer first, the example classifier answers the clear
+    cases (a confident, unambiguous label) at no model cost, and the LLM keeps everything they
+    are unsure about. It decides alone whenever the feature is off or the offline posture is on.
     """
-    llm = LlmArchetypeClassifier(caller, agent.scoping)
+    llm = LlmKindClassifier(caller, agent.scoping)
     if not _encoder_wanted(agent, posture):
         return llm
-    return EncoderGateClassifier(backend, llm, agent.gate_encoder, RuleGate(agent.scoping))
+    return EncoderKindClassifier(backend, llm, agent.kind_encoder, KindRules(agent.scoping))
 
 
-def _front_door(
+def _direct_answerer(
     agent: ResearchAgentSettings,
     posture: FeatureSet,
     caller: StructuredCaller,
     telemetry: RunTelemetry,
     gateway: GatewayFactory | None,
-    backend: IntentBackend | None,
     memory: MemoryFacade | None,
     archive: ResearchArchive,
-) -> tuple[ResearchIntentRouter | None, DirectAnswerer | None]:
-    """The intent router and the direct answerer — or neither, so every question starts a scope.
+) -> DirectAnswerer | None:
+    """What answers a plain question — or None, so every question starts a research scope.
 
     Withheld with the `direct_answer` feature.
     """
     if not posture.is_on("direct_answer"):
-        return None, None
-    web = gateway() if gateway is not None else create_web_gateway()
+        return None
+    web = gateway() if gateway is not None else create_web_gateway(_answer_web(agent))
     registry = build_answer_registry(
         agent.answer,
         web,
         create_http_client(agent.answer.weather.timeout_seconds),
         _injection_screen(agent, posture, InstructionDataSeparator()),
     )
-    router = ResearchIntentRouter(agent.intent_router, agent.scoping, backend, caller)
     grounding = _answer_grounding(agent, posture)
     earlier = EarlierRunsSource(archive, agent.answer.context, agent.answer.messages)
     context = AnswerContext(
@@ -326,7 +360,26 @@ def _front_door(
         window=_context_window(posture, memory, earlier),
         reporter=lambda: telemetry.reporter,
     )
-    return router, DirectAnswerer(caller, registry, agent.answer, telemetry, grounding, context)
+    return DirectAnswerer(
+        caller, registry, agent.answer, telemetry, grounding, context, recency_guard(agent)
+    )
+
+
+def _answer_web(agent: ResearchAgentSettings) -> WebSettings:
+    """The platform's web settings with the answer path's own, shorter fetch limits."""
+    web = get_settings().web
+    fetch = web.fetch.model_copy(
+        update={
+            "timeout_seconds": agent.answer.fetch_timeout_seconds,
+            "max_attempts": agent.answer.fetch_max_attempts,
+        }
+    )
+    return web.model_copy(update={"fetch": fetch})
+
+
+def recency_guard(agent: ResearchAgentSettings) -> RecencyGuard:
+    """No date named means the latest: the check on what the answer and the run search for."""
+    return RecencyGuard(agent.recency, TimeWindowParser(agent.scoping.time_window))
 
 
 def _context_window(
@@ -376,11 +429,11 @@ def _scoping_parts(
     generator = RubricGenerator(agent.rubric.resolved_templates_path) if rubric_on else None
     return ScopingParts(
         clock=utc_now,
-        classifier=gate_classifier(agent, posture, caller, backend),
+        classifier=kind_classifier(agent, posture, caller, backend),
         caller=caller,
         checklists=agent.scoping.resolved_checklists_path,
         termination=TerminationPolicy(agent.scoping.max_turns),
-        briefs=BriefBuilder(agent.scoping, agent.budget, agent.qa.budget, agent.depths),
+        briefs=BriefBuilder(agent.scoping, agent.budget, agent.depths),
         telemetry=telemetry,
         settings=agent.scoping,
         messages=agent.messages,
@@ -558,6 +611,7 @@ def _resources_factory(
                 agent.research.max_claims_per_page,
                 agent.research.extractor_page_chars,
                 agent.research.extractor_window_chars,
+                contract.frozen_at.date(),
             )
             if posture.is_on("quarantined_extractor")
             else UnquarantinedReader(
@@ -566,6 +620,7 @@ def _resources_factory(
                 contract.brief.model_dump(mode="json"),
                 agent.research.extractor_page_chars,
                 agent.research.extractor_window_chars,
+                contract.frozen_at.date(),
             )
         )
         return RunResources(
@@ -581,6 +636,7 @@ def _resources_factory(
             else None,
             screen=_injection_screen(agent, posture, separator),
             page_reads=ResourcePoolBulkhead(agent.research.page_concurrency),
+            recency=recency_guard(agent),
         )
 
     return build

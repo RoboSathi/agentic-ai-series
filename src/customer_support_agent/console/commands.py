@@ -16,21 +16,24 @@ becomes a conversation turn.
 """
 
 from collections.abc import Callable
-from typing import Any, get_args
+from typing import Any, Protocol, get_args, runtime_checkable
 
 from agent_platform.commands import CommandError, CommandResult
 from agent_platform.commands._pool import PoolBackedCommand
 from agent_platform.commands.scope import ConsoleScope
 from agent_platform.config import get_settings
 from agent_platform.durability import DurableAgent
+from agent_platform.logging import get_logger
 from agent_platform.observability.queue import LittlesLawQueueModel
 from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.presentation.text_tree import value_lines
 from customer_support_agent.config import get_agent_settings
-from customer_support_agent.domain.models import OrderStatus
+from customer_support_agent.domain.models import REPLY_REVIEW, HitlRequest, OrderStatus
 from customer_support_agent.graph.nodes.review_wait import review_wait_key
 from customer_support_agent.persistence.repositories import (
     HitlQueueRepository,
 )
+from customer_support_agent.review.queue import ReviewOutcome
 
 
 def _order_statuses() -> frozenset[str]:
@@ -41,6 +44,57 @@ def _order_statuses() -> frozenset[str]:
     domain gains one.
     """
     return frozenset(get_args(OrderStatus))
+
+
+@runtime_checkable
+class FollowUpRecipient(Protocol):
+    """An agent a reviewer's decision can be reported back through."""
+
+    def deliver_follow_up(self, session_id: str, reply: str) -> None: ...
+
+
+def _decision_tree(outcome: ReviewOutcome, reviewer: str, told: str) -> dict[str, str]:
+    """`request`, `decided`, `effect`, `customer`: one decision as the console reads it."""
+    words = get_agent_settings().review_output
+    labels = words.labels
+    effect_key = (
+        "failed" if outcome.decision == "failed" else f"{outcome.action}_{outcome.decision}"
+    )
+    nothing_to_tell = outcome.action == REPLY_REVIEW and outcome.decision != "approved"
+    return {
+        labels["request"]: words.request[outcome.action].format(
+            order_id=outcome.order_id,
+            amount=outcome.amount,
+            reason=outcome.reason,
+            removed=" ".join(outcome.removed),
+        ),
+        labels["decided"]: words.decided.format(decision=outcome.decision, reviewer=reviewer),
+        labels["effect"]: words.effects[effect_key].format(reason=outcome.reason),
+        **(
+            {}
+            if nothing_to_tell
+            else {
+                labels["customer"]: words.customer_told.format(reply=told)
+                if told
+                else words.customer_not_told
+            }
+        ),
+    }
+
+
+def _request_line(request: HitlRequest) -> str:
+    """What one queued request asks a person to decide, in this agent's words."""
+    detail = request.detail
+    return (
+        get_agent_settings()
+        .review_output.request[request.action]
+        .format(
+            order_id=request.order_id,
+            amount=request.requested_amount,
+            reason=detail.reason if detail is not None else "",
+            removed=" ".join(detail.removed) if detail is not None else "",
+        )
+    )
 
 
 _APPROVE = "approve"
@@ -72,6 +126,7 @@ class QueueCommand(PoolBackedCommand):
         super().__init__(pool)
         self._agent = agent
         self._scope: ConsoleScope | None = None
+        self._logger = get_logger("customer_support_agent")
 
     def bind_scope(self, scope: ConsoleScope) -> None:
         """Show and decide only the console session's verified customer's requests."""
@@ -115,37 +170,51 @@ class QueueCommand(PoolBackedCommand):
         if not self._is_theirs(request_id):
             # The answer an unknown id gets: another customer's request is not
             # confirmed to exist.
-            return CommandResult(title=f"Review request {request_id} — not_found").line(
-                f"Request {request_id} is not pending (already decided, or not found). "
-                "/queue lists what is waiting."
-            )
+            words = get_agent_settings().review_output
+            return CommandResult(
+                title=words.title.format(id=request_id, decision="not_found")
+            ).line(words.not_pending.format(id=request_id))
         reviewer = get_agent_settings().console_reviewer
         service = build_review_service(self.pool)
         if args[0].casefold() == _APPROVE:
             outcome = await service.approve(request_id, reviewer)
         else:
             outcome = service.deny(request_id, reviewer, " ".join(args[2:]))
-        result = CommandResult(title=f"Review request {request_id} — {outcome.decision}")
+        words = get_agent_settings().review_output
+        result = CommandResult(title=words.title.format(id=request_id, decision=outcome.decision))
         if outcome.decision not in _DECIDED:
-            return result.line(
-                f"Request {request_id} is not pending (already decided, or not found). "
-                "/queue lists what is waiting."
-            )
-        result.line(outcome.reason or f"order {outcome.order_id}, {outcome.amount}")
-        return await self._resume_waiting(request_id, outcome.model_dump(mode="json"), result)
+            return result.line(words.not_pending.format(id=request_id))
+        told = await self._tell_customer(outcome)
+        for line in value_lines(_decision_tree(outcome, reviewer, told)):
+            result.line(line)
+        return result
 
-    async def _resume_waiting(
-        self, request_id: int, decision: dict[str, Any], result: CommandResult
-    ) -> CommandResult:
+    async def _tell_customer(self, outcome: ReviewOutcome) -> str:
+        """What the customer was sent about this decision, or "" when nobody could be told.
+
+        A refund's paused run resumes and says what was decided; an approved
+        reply review is added to its conversation. The run's thread id is in
+        the log, not here: the operator decided a request, not a thread.
+        """
         agent = self._agent() if self._agent is not None else None
+        if outcome.action == REPLY_REVIEW:
+            if not outcome.follow_up or not isinstance(agent, FollowUpRecipient):
+                return ""
+            agent.deliver_follow_up(str(outcome.session_id or ""), outcome.follow_up)
+            return outcome.follow_up
         if not isinstance(agent, DurableAgent):
-            return result.line("No durable agent is running; no conversation to resume.")
-        record = agent.runs.waiting_on(review_wait_key(request_id))
+            return ""
+        record = agent.runs.waiting_on(review_wait_key(outcome.request_id))
         if record is None:
-            return result.line("No paused conversation was waiting on this request.")
-        resumed = await agent.resume(record.thread_id, decision)
-        result.line(f"Resumed {record.thread_id} → {resumed.status}")
-        return result.line(f"ASSISTANT → {resumed.response}")
+            return ""
+        resumed = await agent.resume(record.thread_id, outcome.model_dump(mode="json"))
+        self._logger.info(
+            "Review decision resumed a paused run",
+            request_id=outcome.request_id,
+            thread_id=record.thread_id,
+            status=resumed.status,
+        )
+        return resumed.response
 
     def _overview(self, args: list[str]) -> CommandResult:
         customer = self._customer()
@@ -156,17 +225,15 @@ class QueueCommand(PoolBackedCommand):
             # Scoped to one customer, a customer column says the same thing every row.
             result.headers = [
                 "id",
-                "order",
+                "request",
                 *(["customer"] if customer is None else []),
-                "amount",
                 "raised",
             ]
             for request in pending[: get_settings().commands.recent_window]:
                 result.row(
                     str(request.id),
-                    str(request.order_id),
+                    _request_line(request),
                     *([str(request.user_id)] if customer is None else []),
-                    str(request.requested_amount),
                     request.created_at[:16],
                 )
         else:

@@ -13,7 +13,7 @@ from agent_platform.security.content_moderation import (
     HostedContentSafetyGuard,
 )
 from agent_platform.security.content_moderation.types import ModerationVerdict
-from agent_platform.security.pii.detector import PIIFilterImpl
+from agent_platform.security.pii.detector import PIIFilterImpl, RedactedSpan
 from agent_platform.security.pii.types import PIISpan, RedactionMode
 from agent_platform.security.prompt_injection import (
     HostedJailbreakGuard,
@@ -34,6 +34,14 @@ def check_names() -> tuple[str, str, str, str]:
         guards.jailbreak.check_name,
         guards.content_safety.check_name,
     )
+
+
+def _advisory(categories: list[str]) -> bool:
+    """Whether every category the model named is advisory (an empty list never is)."""
+    advisory = {
+        c.casefold() for c in get_settings().security.content_moderation.advisory_categories
+    }
+    return bool(categories) and all(category.casefold() in advisory for category in categories)
 
 
 def _joined(earlier: str, reason: str) -> str:
@@ -113,6 +121,14 @@ class SecuritySuite:
     def detect_pii(self, text: str) -> list[PIISpan]:
         """What personal data this text contains, or nothing when the filter is withheld."""
         return self.pii.detect(text) if self.pii else []
+
+    def pii_model(self) -> tuple[str, str]:
+        """The PII model's name, and why it is unavailable ("" for either when not applicable)."""
+        return (self.pii.model, self.pii.unavailable) if self.pii else ("", "")
+
+    def pii_tokens(self, text: str) -> list[RedactedSpan]:
+        """Each span redaction would replace, by category, recognizer, score and token."""
+        return self.pii.tokens(text) if self.pii else []
 
     def redact(self, text: str, mode: RedactionMode | None = None) -> str:
         """Remove personal data before the text is logged or persisted."""
@@ -244,6 +260,7 @@ class SecuritySuite:
                 "api_called": model_verdict.api_called,
                 "decision": model_verdict.decision,
                 "categories": list(model_verdict.categories),
+                "output": model_verdict.output,
                 "latency_ms": model_verdict.latency_ms,
                 **(
                     {
@@ -256,15 +273,31 @@ class SecuritySuite:
                 "reason": model_verdict.reason,
             }
         )
-        if model_verdict.flagged:
+        if model_verdict.flagged and _advisory(model_verdict.categories):
+            # Only categories another screen owns: shown as a warning, the message goes on.
+            verdict.checks[-1]["status"] = "ADVISORY"
+            verdict.reason = _joined(
+                verdict.reason,
+                settings.hosted_advisory_reason.format(
+                    guard=settings.content_safety.check_name,
+                    categories=", ".join(model_verdict.categories),
+                ),
+            )
+        elif model_verdict.flagged:
             verdict.flagged = True
             verdict.advisory_only = False
             for category in model_verdict.categories:
                 if category not in verdict.categories:
                     verdict.categories.append(category)
+            check = settings.content_safety.check_name
+            found = model_verdict.categories
             verdict.reason = _joined(
                 verdict.reason,
-                settings.hosted_flagged_reason.format(guard=settings.content_safety.check_name),
+                settings.hosted_flagged_categories_reason.format(
+                    guard=check, categories=", ".join(found)
+                )
+                if found
+                else settings.hosted_flagged_reason.format(guard=check),
             )
         elif not model_verdict.available and not settings.fail_open_on_unavailable:
             verdict.flagged = True

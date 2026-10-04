@@ -1,5 +1,7 @@
 # ADR ra-0017 — Two modes: Q&A and Research (amends ra-0011)
 
+**Status:** superseded by ra-0020 (2026-10-04)
+
 ## Context
 
 With four specialised archetypes and a keyword gate, most ordinary

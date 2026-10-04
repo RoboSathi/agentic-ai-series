@@ -1,4 +1,6 @@
-"""Q&A vs Research: the gate, the reframe menu, /qa and /research, time windows, set-up checks."""
+"""Into a research run: /research, its research kind, time windows, and the set-up checks."""
+
+from datetime import date
 
 import pytest
 
@@ -9,7 +11,6 @@ from research_agent.domain.budget import Budget
 from research_agent.domain.scope import CoverageItem
 from research_agent.scoping import checklist
 from research_agent.scoping.brief import BriefBuilder
-from research_agent.scoping.gate import resolve_reframe_choice
 from research_agent.scoping.window import TimeWindowParser
 from tests.research_agent.conftest import BuildHarness
 
@@ -47,35 +48,16 @@ class TestTimeWindows:
             status="covered",
             value="last 1 month",
         )
-        budget = get_agent_settings().budget
-        brief = BriefBuilder(
-            get_agent_settings().scoping, budget, budget, get_agent_settings().depths
-        ).build("general", "t", [item], [])
+        agent = get_agent_settings()
+        brief = BriefBuilder(agent.scoping, agent.budget, agent.depths).build(
+            "general", "t", [item], [], today=date(2026, 10, 4)
+        )
         assert brief.recency_days == 30
 
     def test_a_stated_window_is_not_asked_again(self) -> None:
         items = [CoverageItem(item_id="recency", goal="p", brief_field="recency_days")]
         assert checklist.prefill_window(items, 30)[0].status == "covered"
         assert checklist.prefill_window(items, None)[0].status == "open"
-
-
-class TestReframeMenu:
-    @pytest.mark.parametrize(
-        ("reply", "mode"),
-        [
-            ("1", "qa"),
-            ("2", "research"),
-            ("news", "qa"),
-            ("mapping a field", "research"),
-            ("Q&A please", "qa"),
-            ("banana", None),
-            ("7", None),
-        ],
-    )
-    def test_replies_resolve_deterministically(
-        self, ra_config: None, reply: str, mode: str | None
-    ) -> None:
-        assert resolve_reframe_choice(reply, get_agent_settings().scoping.reframe_options) == mode
 
 
 def _key_envs() -> list[str]:
@@ -139,7 +121,6 @@ def test_budgets_stay_inside_the_free_tiers(ra_config: None) -> None:
     raw = yaml.safe_load((REPO_ROOT / "src/research_agent/config/config.yaml").read_text())
     agent = raw["research_agent"]
     assert Budget.model_validate(agent["budget"]).max_searches <= 8
-    assert Budget.model_validate(agent["qa"]["budget"]).max_searches <= 3
 
 
 class TestGreeting:
@@ -161,38 +142,38 @@ class TestGreeting:
 FIRST_QUESTION = {"next_question": "What decision does this feed?", "next_item_id": "decision"}
 
 
-def _gate(archetype: str) -> dict[str, object]:
-    """The LLM gate's answer (the gate asks it first when the encoder is withheld)."""
-    return {"decision": "scopable", "mode": "research", "archetype": archetype, "topic": "t"}
+def _kind(archetype: str) -> dict[str, object]:
+    """The LLM's research-kind answer (asked first when the example classifier is withheld)."""
+    return {"decision": "scopable", "archetype": archetype, "topic": "t"}
 
 
 class TestRouting:
     async def test_slash_research_asks_which_kind(self, harness: BuildHarness) -> None:
-        """The gate settles the kind; the interviewer then asks its first question."""
-        h = harness({"interviewer": [_gate("decision_support"), FIRST_QUESTION]})
+        """The research kind is settled first; the interviewer then asks its first question."""
+        h = harness({"interviewer": [_kind("decision_support"), FIRST_QUESTION]})
         reply = await h.agent.handle(
             "/research Help me choose a grid storage option for my microgrid", "s"
         )
         scope = h.agent.session("s").scope
         assert reply.phase == "SCOPING" and scope is not None
-        assert scope.mode == "research" and scope.archetype == "decision_support"
+        assert scope.archetype == "decision_support"
         assert FIRST_QUESTION["next_question"] in reply.response
 
     async def test_with_the_encoder_on_kind_cues_decide_by_rule(
         self, harness: BuildHarness, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Rules answer before any model: only the interviewer is asked, never the gate."""
+        """Rules answer before any model: only the interviewer is asked, never for the kind."""
         from research_agent.graph import builder
 
-        monkeypatch.setattr(builder, "_classifier_backend", lambda agent, posture: None)
-        h = harness({"interviewer": [FIRST_QUESTION]}, features={"gate_encoder": True})
+        monkeypatch.setattr(builder, "kind_backend", lambda agent, posture: None)
+        h = harness({"interviewer": [FIRST_QUESTION]}, features={"kind_encoder": True})
         await h.agent.handle("/research Help me choose a grid storage option for my microgrid", "s")
         scope = h.agent.session("s").scope
         assert scope is not None and scope.archetype == "decision_support"
         assert len(h.roles.models["interviewer"].requests) == 1
 
     async def test_a_window_in_the_question_is_carried(self, harness: BuildHarness) -> None:
-        h = harness({"interviewer": [_gate("decision_support"), FIRST_QUESTION]})
+        h = harness({"interviewer": [_kind("decision_support"), FIRST_QUESTION]})
         await h.agent.handle("/research Help me choose a storage option from the last 2 years", "s")
         scope = h.agent.session("s").scope
         assert scope is not None and scope.recent_days == 730

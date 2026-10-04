@@ -62,6 +62,10 @@ class ExemplarIntentClassifier:
         ranked = sorted(self._labels, key=lambda label: votes[label], reverse=True)
         return [IntentCandidate(intent=label, score=votes[label] / total) for label in ranked]
 
+    async def warm(self) -> None:
+        """Embed the examples now, so the first message does not wait for it."""
+        await self._index()
+
     async def _index(self) -> list[list[float]]:
         """The examples' vectors, computed once, however many messages ask at the same time."""
         async with self._indexing:

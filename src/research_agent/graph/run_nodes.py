@@ -1,13 +1,13 @@
 """The autonomous run graph's nodes.
 
-    init_run → plan_dag → wave_start ─Send×N→ research_node → wave_done ─┐
+    init_run → plan_dag → batch_start ─Send×N→ research_node → batch_done ─┐
                               ▲                                          │
                               └──── more ready nodes in this round ◄─────┤
                                                                          ▼
-                 reflect_gap_analysis ── continue (follow-ups) ──► wave_start
+                 reflect_gap_analysis ── continue (follow-ups) ──► batch_start
                         │ stop
                         ▼
-                    synthesize → independent_audit ── must-pass gaps ──► gap_fill → wave_start
+                    synthesize → independent_audit ── must-pass gaps ──► gap_fill → batch_start
                                         │ (or audit withheld)
                                         ▼
                                     finalize → archive → END
@@ -26,6 +26,7 @@ from langgraph.types import Send
 from agent_platform.config import FeatureSet
 from agent_platform.control_loop import BudgetGuard
 from agent_platform.logging import describe_error
+from agent_platform.observability.types import StatusKind
 from agent_platform.scheduling import AsyncDagScheduler, TaskGraph
 from agent_platform.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
 from research_agent.archive.store import ResearchArchive
@@ -38,9 +39,9 @@ from research_agent.domain.report import LimitEntry, Report, RunStatus
 from research_agent.graph.state import RunState
 from research_agent.planning.ids import renumber
 from research_agent.planning.planner import Planner, PlanRejectedError
-from research_agent.presentation.narration import clip, say
+from research_agent.presentation.narration import say
 from research_agent.research import cards
-from research_agent.research.reflector import GapAnalyzer, Reflector
+from research_agent.research.reflector import FollowUpProposal, GapAnalyzer, Reflector
 from research_agent.research.resources import RunResources
 from research_agent.research.worker import UNREADABLE, ResearcherWorker
 from research_agent.synthesis.citation_guard import CitationGuard, GuardedReport
@@ -154,24 +155,22 @@ class RunNodes:
         return {
             "toggles": toggles,
             "round": 1,
-            "wave": 0,
+            "batch": 0,
             "gap_fill_round": 0,
             "status": None,
             "stop_reason": "",
         }
 
     async def plan(self, state: RunState) -> Update:
-        r = self.resources
+        r, contract = self.resources, state["contract"]
         r.budget.charge(ROUNDS, 1)
         try:
-            plan, validation, repaired = await self._p.planner.plan(state["contract"])
+            outcome = await self._p.planner.plan(contract)
         except PlanRejectedError as exc:
-            r.telemetry.card(
-                "plan_dag",
-                say("plan.rejected", error=str(exc)),
-                {say("plan.section.problems"): list(exc.validation.problems)},
-                status="failed",
+            heading, sections = cards.plan_card(
+                contract, None, 0, exc.call, rejected=list(exc.validation.problems)
             )
+            r.telemetry.card("plan_dag", heading, sections, status="failed")
             r.telemetry.audit("plan.rejected", "deny", str(exc))
             return {
                 "status": "FAILED",
@@ -187,49 +186,36 @@ class RunNodes:
             r.telemetry.stage("plan_dag", message, {"error": error}, status="failed")
             r.telemetry.audit("plan.unavailable", "deny", error)
             return {"status": "FAILED", "stop_reason": message, "plans": [], "round_nodes": []}
-        self._plan_card(plan, repaired)
+        plan = outcome.plan
+        batches = len(TaskGraph(plan.tasks()).batches())
+        heading, sections = cards.plan_card(
+            contract, plan, batches, outcome.call, repaired_problems=outcome.problems
+        )
+        r.telemetry.card("plan_dag", heading, sections)
         return {"plans": [plan], "round_nodes": list(plan.nodes)}
-
-    def _plan_card(self, plan: PlanDag, repaired: bool) -> None:
-        """The plan and its validation, as one card: what will be asked, and that it can run."""
-        waves = len(TaskGraph(plan.tasks()).waves())
-        validity = say("plan.valid_repaired") if repaired else say("plan.valid")
-        heading = say("plan.heading", nodes=len(plan.nodes), waves=waves, validity=validity)
-        questions = [
-            say("plan.line", id=n.node_id, question=n.question, items=", ".join(n.rubric_items))
-            for n in plan.nodes
-        ]
-        checks = [say("plan.check.acyclic"), say("plan.check.traced")]
-        if repaired:
-            checks.append(say("plan.check.repaired"))
-        sections = {
-            say("plan.section.questions"): questions,
-            say("plan.section.validation"): checks,
-        }
-        self.resources.telemetry.card("plan_dag", heading, sections)
 
     @staticmethod
     def after_plan(state: RunState) -> str:
-        return "finalize" if state.get("status") == "FAILED" else "wave_start"
+        return "finalize" if state.get("status") == "FAILED" else "batch_start"
 
-    # -- waves -------------------------------------------------------------------------
+    # -- batches -------------------------------------------------------------------------
 
-    async def wave_start(self, state: RunState) -> Update:
+    async def batch_start(self, state: RunState) -> Update:
         ready, blocked = self._ready(state)
-        wave = state.get("wave", 0) + (1 if ready else 0)
+        batch = state.get("batch", 0) + (1 if ready else 0)
         if ready:
             contract = state["contract"]
             heading, sections = cards.batch_card(
                 state["round"],
-                wave,
+                batch,
                 ready,
                 blocked,
                 contract.budget.concurrency,
                 contract.rubric,
                 self._p.clip_chars,
             )
-            self.resources.telemetry.card("wave_start", heading, sections)
-        return {"wave": wave, "done": {node_id: "blocked" for node_id in blocked}}
+            self.resources.telemetry.card("batch_start", heading, sections)
+        return {"batch": batch, "done": {node_id: "blocked" for node_id in blocked}}
 
     def fan_out(self, state: RunState) -> list[Send] | str:
         if self.resources.cancelled:
@@ -265,11 +251,11 @@ class RunNodes:
                 return {"done": {node.node_id: "failed"}, "results": []}
         return {"done": {node.node_id: "done"}, "results": [result]}
 
-    async def wave_done(self, state: RunState) -> Update:
-        """The wave boundary: snapshot what a resumed run needs, show the meters."""
+    async def batch_done(self, state: RunState) -> Update:
+        """The batch boundary: snapshot what a resumed run needs, show the meters."""
         r = self.resources
-        self._budget_card(say("budget.after_batch", batch=state.get("wave", 0)))
-        self._wave_summary(state.get("wave", 0), state.get("plans", []))
+        self._budget_card(say("budget.after_batch", batch=state.get("batch", 0)))
+        self._batch_summary(state.get("batch", 0), state.get("plans", []))
         return {
             "ledger": r.ledger.snapshot(),
             "spent": _spent(r.budget),
@@ -285,68 +271,114 @@ class RunNodes:
         failing = [v for v in verdicts if not v.passed]
         gaps = [v.item_id for v in failing]
         entities = GapAnalyzer.entities(ctx, ctx.entity_pattern)
-        stop, reason = self._should_stop(state, verdicts, entities)
-        update: Update = (
-            {"gaps": gaps, "stop_reason": reason, "round_nodes": []}
-            if stop
-            else await self._next_round(state, ctx, verdicts, gaps)
+        stop, reason, judgeable = self._should_stop(state, verdicts, entities)
+        proposal = FollowUpProposal()
+        if not stop:
+            update, proposal = await self._next_round(state, ctx, verdicts, gaps)
+        elif judgeable:
+            update, proposal = await self._critiqued(state, ctx, verdicts, gaps, reason)
+        else:
+            update = {"gaps": gaps, "stop_reason": reason, "round_nodes": []}
+        archetype = contract.brief.archetype
+        step = cards.FollowUpStep(
+            gaps=failing,
+            proposal=proposal,
+            planned=update["round_nodes"],
+            reason=update.get("stop_reason") or reason,
+            rubric=contract.rubric,
+            entries=ctx.ledger.entries,
+            limit=self._p.clip_chars,
+            verdicts=verdicts,
+            rule=self._p.reflector.rule_name(archetype),
+            archetype=archetype,
+            entities=(state.get("entities", 0), entities),
         )
-        follow_ups = update["round_nodes"]
-        heading, sections = cards.reflect_card(
-            state["round"],
-            failing,
-            bool(follow_ups),
-            update.get("stop_reason") or reason,
-            follow_ups,
-            contract.rubric,
-            self._p.clip_chars,
-        )
-        r.telemetry.card("reflect_gap_analysis", heading, sections)
+        heading, sections = cards.reflect_card(state["round"], bool(step.planned), step)
+        status: StatusKind = "warning" if failing and not step.planned else "completed"
+        r.telemetry.card("reflect_gap_analysis", heading, sections, status=status)
         return {**update, "entities": entities}
 
     def _should_stop(
         self, state: RunState, verdicts: list[CheckVerdict], entities: int
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, bool]:
+        """Stop?, why, and whether the model should judge the evidence before the run stops.
+
+        It judges whenever reflection is on and the run ends on its own terms — the stop rule
+        says answered, or the rounds or budget ran out — not when the operator stopped it, no
+        page could be read, or reflection is withheld.
+        """
         r = self.resources
         if r.cancelled:
-            return True, say("stop.cancelled")
+            return True, say("stop.cancelled"), False
         blocked = self._unreadable_only()
         if blocked:
-            return True, blocked
+            return True, blocked, False
         archetype = state["contract"].brief.archetype
         decision = self._p.reflector.decide(archetype, verdicts, state.get("entities", 0), entities)
+        if not self._p.reflection_enabled:
+            if decision.stop:
+                return True, decision.reason, False
+            return True, say("stop.reflection_withheld"), False
         if decision.stop:
             # Answered is answered, even if a cap was reached getting there.
-            return True, decision.reason
-        if not self._p.reflection_enabled:
-            return True, say("stop.reflection_withheld")
+            return True, decision.reason, True
         # Rounds used up is the plan running its course, not a limit hit mid-way.
         exhausted = [c for c in r.budget.exhausted_counters() if c != ROUNDS]
         if exhausted or r.trace.budget_stops:
             spent = ", ".join(exhausted or r.trace.budget_stops)
-            return True, say("stop.budget", counters=spent)
+            return True, say("stop.budget", counters=spent), True
         if r.budget.remaining(ROUNDS) <= 0:
-            return True, say("stop.max_rounds")
-        return False, decision.reason
+            return True, say("stop.max_rounds"), True
+        return False, decision.reason, False
+
+    def _room_for_a_round(self) -> bool:
+        """Whether a follow-up round could still run: searches and rounds left."""
+        r = self.resources
+        return r.budget.remaining(SEARCHES) > 0 and r.budget.remaining(ROUNDS) > 0
+
+    def _tried(self) -> list[str]:
+        return [q for queries in self.resources.trace.queries_by_node.values() for q in queries]
 
     async def _next_round(
         self, state: RunState, ctx: CheckContext, verdicts: list[CheckVerdict], gaps: list[str]
+    ) -> tuple[Update, FollowUpProposal]:
+        proposal = await self._p.reflector.propose(ctx, verdicts, self._tried(), state["round"] + 1)
+        return self._round_from(state, proposal, gaps, say("stop.no_follow_up")), proposal
+
+    async def _critiqued(
+        self,
+        state: RunState,
+        ctx: CheckContext,
+        verdicts: list[CheckVerdict],
+        gaps: list[str],
+        reason: str,
+    ) -> tuple[Update, FollowUpProposal]:
+        """Every check passed: the model judges whether the claims answer the question.
+
+        Asked whatever budget is left: its verdict and reasoning are on the card either way.
+        Only its follow-ups need room for another round (a small run has none after round 1).
+        """
+        proposal = await self._p.reflector.critique(
+            ctx, verdicts, self._tried(), state["round"] + 1
+        )
+        if proposal.sufficient:
+            stop = say("stop.critique_sufficient", reason=reason)
+            return {"gaps": gaps, "stop_reason": stop, "round_nodes": []}, proposal
+        if not self._room_for_a_round():
+            stop = say("stop.critique_no_room", reason=reason, critique=proposal.reasoning)
+            return {"gaps": gaps, "stop_reason": stop, "round_nodes": []}, proposal
+        return self._round_from(state, proposal, gaps, say("stop.critique_no_follow_up")), proposal
+
+    def _round_from(
+        self, state: RunState, proposal: FollowUpProposal, gaps: list[str], none_left: str
     ) -> Update:
+        """The next round from the accepted follow-ups that fit the searches left, or a stop."""
         r = self.resources
-        tried = [q for queries in r.trace.queries_by_node.values() for q in queries]
         follow_ups = self._numbered(
-            fit_to_budget(
-                await self._p.reflector.follow_ups(ctx, verdicts, tried, state["round"] + 1),
-                r.budget.remaining(SEARCHES),
-            ),
-            state,
+            fit_to_budget(proposal.accepted, r.budget.remaining(SEARCHES)), state
         )
         if not follow_ups:
-            return {
-                "gaps": gaps,
-                "stop_reason": "no follow-up could close the remaining gaps",
-                "round_nodes": [],
-            }
+            return {"gaps": gaps, "stop_reason": none_left, "round_nodes": []}
         r.budget.charge(ROUNDS, 1)
         plans = [
             *state.get("plans", []),
@@ -366,7 +398,7 @@ class RunNodes:
 
     @staticmethod
     def after_reflect(state: RunState) -> str:
-        return "wave_start" if state.get("round_nodes") else "synthesize"
+        return "batch_start" if state.get("round_nodes") else "synthesize"
 
     # -- synthesize, audit, gap-fill ----------------------------------------------------------
 
@@ -376,7 +408,7 @@ class RunNodes:
         checked = await self._p.synthesizer.draft(contract, ledger, state.get("gaps", []))
         if self._p.citation_guard is not None and ledger.entries:
             guarded = await self._p.citation_guard.guard(checked.report, ledger)
-            self._guard_card(guarded)
+            self._guard_card(guarded, ledger)
             checked = checked.model_copy(update={"report": guarded.report})
         verdicts = await self._self_check(contract, ledger, checked.report)
         status = self._provisional_status(verdicts)
@@ -396,28 +428,17 @@ class RunNodes:
             contract.rubric,
             status,
             self._p.clip_chars,
+            call=checked.call,
         )
         r.telemetry.card(
             "synthesize", heading, sections, status="warning" if checked.removed else "completed"
         )
         return {"report": report, "ledger": ledger}
 
-    def _guard_card(self, guarded: GuardedReport) -> None:
-        """What the citation guard did to the draft, before the audit reads it."""
+    def _guard_card(self, guarded: GuardedReport, ledger: Any) -> None:
+        """What the citation guard did to the draft, sentence by sentence, before the audit."""
         clean = not guarded.dropped
-        heading = say(
-            "guard.heading" if clean else "guard.heading_dropped",
-            supported=guarded.supported,
-            checked=guarded.checked,
-            rewritten=len(guarded.rewritten),
-            dropped=len(guarded.dropped),
-        )
-        limit = self._p.clip_chars
-        sections = {
-            say("guard.section.rewritten"): [clip(s, limit) for s in guarded.rewritten],
-            say("guard.section.dropped"): [clip(s, limit) for s in guarded.dropped],
-            say("guard.section.how"): [say("guard.how", model=self._p.nli_model)],
-        }
+        heading, sections = cards.guard_card(guarded, ledger, self._p.nli_model, self._p.clip_chars)
         r = self.resources
         r.telemetry.card(
             "citation_guard", heading, sections, status="completed" if clean else "warning"
@@ -475,6 +496,7 @@ class RunNodes:
             independent=audit.independent,
             honest=audit.honest,
             usage=usage.get(self._p.judge_role, {}),
+            judge_role=self._p.judge_role,
         )
         heading, sections = cards.audit_card(
             audit.verdicts,
@@ -515,20 +537,23 @@ class RunNodes:
         ctx = self._p.context(state["contract"], r.ledger.snapshot(), None)
         gaps = [v for v in audit.verdicts if v.must_pass and not v.passed]
         tried = [q for queries in r.trace.queries_by_node.values() for q in queries]
+        proposal = await self._p.reflector.propose(
+            ctx, gaps, tried, self._p.gap_fill_round_offset + state["gap_fill_round"]
+        )
         follow_ups = self._numbered(
-            fit_to_budget(
-                await self._p.reflector.follow_ups(
-                    ctx, gaps, tried, self._p.gap_fill_round_offset + state["gap_fill_round"]
-                ),
-                r.budget.remaining(SEARCHES),
-            ),
-            state,
+            fit_to_budget(proposal.accepted, r.budget.remaining(SEARCHES)), state
         )
-        r.telemetry.stage(
-            "gap_fill",
-            say("gap_fill.heading", round=state["gap_fill_round"] + 1, nodes=len(follow_ups)),
-            {"gaps": [g.item_id for g in gaps], "nodes": [f.node_id for f in follow_ups]},
+        step = cards.FollowUpStep(
+            gaps=gaps,
+            proposal=proposal,
+            planned=follow_ups,
+            reason="",
+            rubric=state["contract"].rubric,
+            entries=ctx.ledger.entries,
+            limit=self._p.clip_chars,
         )
+        heading, sections = cards.gap_fill_card(state["gap_fill_round"] + 1, step)
+        r.telemetry.card("gap_fill", heading, sections)
         update: Update = {"gap_fill_round": state["gap_fill_round"] + 1, "round_nodes": follow_ups}
         if follow_ups:
             # Only a plan that runs is a plan: an empty one would be recorded as run.
@@ -538,7 +563,7 @@ class RunNodes:
 
     @staticmethod
     def after_gap_fill(state: RunState) -> str:
-        return "wave_start" if state.get("round_nodes") else "finalize"
+        return "batch_start" if state.get("round_nodes") else "finalize"
 
     # -- finalize and archive ------------------------------------------------------------------
 
@@ -702,13 +727,13 @@ class RunNodes:
             return say("stop.undated" if codes == {"undated"} else "stop.unreadable", count=count)
         return ""
 
-    def _wave_summary(self, wave: int, plans: list[PlanDag]) -> None:
+    def _batch_summary(self, batch: int, plans: list[PlanDag]) -> None:
         """What became of this run's search hits so far: admitted, or rejected and why."""
         r = self.resources
         entries = r.ledger.snapshot().entries
         questions = {n.node_id: n.question for plan in plans for n in plan.nodes}
         heading, sections = cards.batch_result_card(
-            wave,
+            batch,
             r.trace.sources_examined,
             entries,
             r.trace.rejected_codes,
@@ -717,7 +742,7 @@ class RunNodes:
             self._p.clip_chars,
         )
         r.telemetry.card(
-            "wave_summary", heading, sections, status="completed" if entries else "warning"
+            "batch_summary", heading, sections, status="completed" if entries else "warning"
         )
 
     def _budget_card(self, label: str) -> None:

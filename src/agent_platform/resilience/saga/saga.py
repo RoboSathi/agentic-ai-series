@@ -7,8 +7,15 @@ reverse order, because a later step may depend on an earlier one.
 
 Reverse order matters. Releasing a reservation before the refund that
 consumed it is undone leaves the two out of step.
+
+A Stop is a failure too. The operator's cancel arrives as `CancelledError`,
+which is not an `Exception`: caught only as one, a refund stopped between
+"mark refunded" and "record payment" stayed half-applied, and resuming it
+hit "already refunded". A stopped saga compensates (shielded, so the same
+Stop cannot cut the undo short) and then lets the cancellation through.
 """
 
+import asyncio
 from typing import Protocol, runtime_checkable
 
 from agent_platform.config import get_settings
@@ -42,6 +49,9 @@ class CompensatingSaga:
         for step in steps:
             try:
                 await step.action()
+            except asyncio.CancelledError:
+                await self._stopped(completed, step.name)
+                raise
             except Exception as exc:
                 self._logger.error("Saga step failed", step=step.name, error=str(exc))
                 if not self._enabled:
@@ -50,6 +60,20 @@ class CompensatingSaga:
             completed.append(step)
             self._logger.debug("Saga step committed", step=step.name)
         return SagaResult(succeeded=True, completed=[step.name for step in completed])
+
+    async def _stopped(self, completed: list[SagaStep], step: str) -> None:
+        """A Stop mid-saga: undo what committed, shielded from the Stop that caused it."""
+        reason = get_settings().resilience.saga.stopped_reason
+        if not self._enabled:
+            self._uncompensated(completed, step, reason)
+            return
+        result = await asyncio.shield(self._compensate(completed, step, reason))
+        self._logger.warning(
+            "Saga stopped mid-way; committed steps compensated",
+            stopped_at=step,
+            compensated=result.compensated,
+            compensation_errors=result.compensation_errors,
+        )
 
     def _uncompensated(self, completed: list[SagaStep], failed_step: str, error: str) -> SagaResult:
         """A failure reported without unwinding, because the saga is disabled."""

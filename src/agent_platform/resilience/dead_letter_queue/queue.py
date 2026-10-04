@@ -140,6 +140,37 @@ class DeadLetterQueue:
             )
         ]
 
+    def entries(self, status: DeadLetterStatus | None, limit: int) -> list[DeadLetterEntry]:
+        """The newest entries first, in one status or in all of them (None)."""
+        where, params = ("AND status = ?", (status,)) if status is not None else ("", ())
+        return [
+            _entry(row)
+            for row in self._store.iter_rows(
+                "SELECT * FROM platform_resilience_dead_letter_queue "
+                f"WHERE agent_id = ? {where} ORDER BY id DESC LIMIT ?",
+                (self._agent_id, *params, limit),
+            )
+        ]
+
+    def get(self, entry_id: int) -> DeadLetterEntry | None:
+        """One entry of this agent's, by id."""
+        row = self._store.query_one(
+            "SELECT * FROM platform_resilience_dead_letter_queue WHERE id = ? AND agent_id = ?",
+            (entry_id, self._agent_id),
+        )
+        return _entry(row) if row is not None else None
+
+    def counts(self) -> dict[str, int]:
+        """How many entries are in each status."""
+        return {
+            str(row["status"]): int(row["n"])
+            for row in self._store.iter_rows(
+                "SELECT status, COUNT(*) AS n FROM platform_resilience_dead_letter_queue "
+                "WHERE agent_id = ? GROUP BY status",
+                (self._agent_id,),
+            )
+        }
+
     def mark_in_review(self, entry_id: int, reviewer: str) -> bool:
         """Claim one queued request for a human reviewer."""
         result = self._store.execute(

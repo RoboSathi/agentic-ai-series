@@ -1,6 +1,6 @@
 """The scoping graph's nodes.
 
-Each node does one thing and reports it: the gate's decision, each
+Each node does one thing and reports it: the research kind, each
 interview turn (with the checklist it left behind), a waiver, the rubric,
 the frozen contract. What the model proposes is filtered through code —
 the termination policy and the challenge guard — before it becomes state.
@@ -15,7 +15,7 @@ from typing import Any
 
 from research_agent.config.settings import CommandNames, MessageSettings, ScopingSettings
 from research_agent.domain.rubric import Contract, Rubric
-from research_agent.domain.scope import GENERAL, GateVerdict, Mode, ScopeBrief, UnknownReason
+from research_agent.domain.scope import GENERAL, KindVerdict, ScopeBrief, UnknownReason
 from research_agent.graph import cards
 from research_agent.graph.state import ScopingState
 from research_agent.llm.structured import StructuredCaller
@@ -27,12 +27,7 @@ from research_agent.rubric.generator import RubricGenerator
 from research_agent.scoping import checklist
 from research_agent.scoping.brief import BriefBuilder
 from research_agent.scoping.challenge_check import ChallengeGuard
-from research_agent.scoping.gate import (
-    ArchetypeClassifier,
-    render_options,
-    resolve_reframe_choice,
-    with_mode,
-)
+from research_agent.scoping.kind import KindClassifier
 from research_agent.scoping.termination import TerminationPolicy
 
 Update = dict[str, Any]
@@ -44,7 +39,7 @@ class ScopingParts:
 
     # "Now" for the contract (injectable, so a test can fix the date).
     clock: Callable[[], datetime]
-    classifier: ArchetypeClassifier
+    classifier: KindClassifier
     caller: StructuredCaller
     checklists: Path
     termination: TerminationPolicy
@@ -60,7 +55,7 @@ class ScopingParts:
 
 
 class ScopingNodes:
-    """Gate, interview, waivers, rubric review and freezing, as graph nodes."""
+    """Research kind, interview, waivers, rubric review and freezing, as graph nodes."""
 
     def __init__(self, parts: ScopingParts) -> None:
         self._p = parts
@@ -68,85 +63,42 @@ class ScopingNodes:
             re.compile(pattern, re.IGNORECASE) for pattern in parts.settings.affirmations
         ]
 
-    # -- gate ------------------------------------------------------------------------
+    # -- research kind ------------------------------------------------------------------
 
-    async def gate(self, state: ScopingState) -> Update:
-        """Q&A, a Research kind, a reframe menu, or a refusal — for the first message."""
-        choice = self._reframe_choice(state)
-        forced = choice or state.forced_mode
-        message = (
-            state.first_message
-            if state.phase == "GATE" or choice is not None
-            else f"{state.first_message} {state.user_input}"
-        )
-        verdict = await self._p.classifier.classify(message, forced)
-        if forced is not None and verdict.decision != "refuse":
-            verdict = with_mode(verdict, forced)
-        self._report_gate(verdict)
-        if verdict.decision == "refuse":
+    async def kind(self, state: ScopingState) -> Update:
+        """Which kind of research the question asks for — or a refusal."""
+        verdict = await self._p.classifier.classify(state.first_message)
+        self._report_kind(verdict)
+        if verdict.decision == "refuse" or verdict.archetype is None:
             return {"phase": "REFUSED", "reply": self._p.messages.refuse}
-        if verdict.decision == "needs_reframe" or verdict.archetype is None:
-            return {"phase": "REFRAME", "reply": self._menu(), "user_input": ""}
-        found = {"topic": verdict.topic or message, "recent_days": verdict.recent_days}
-        if verdict.mode == "qa":
-            return {"phase": "QA", "mode": "qa", "archetype": verdict.archetype, **found}
         items = checklist.load_checklist(self._p.checklists, verdict.archetype)
         return {
             "phase": "INTERVIEW",
-            "mode": "research",
             "archetype": verdict.archetype,
             "items": checklist.prefill_window(items, verdict.recent_days),
-            **found,
+            "topic": verdict.topic or state.first_message,
+            "recent_days": verdict.recent_days,
         }
 
-    def _reframe_choice(self, state: ScopingState) -> Mode | None:
-        if state.phase != "REFRAME":
-            return None
-        return resolve_reframe_choice(state.user_input, self._p.settings.reframe_options)
-
-    def _menu(self) -> str:
-        options = render_options(self._p.settings.reframe_options, self._p.messages.reframe_option)
-        return self._p.messages.reframe.format(options=options)
-
-    def _report_gate(self, verdict: GateVerdict) -> None:
-        heading, sections = cards.gate_card(verdict)
+    def _report_kind(self, verdict: KindVerdict) -> None:
+        heading, sections = cards.kind_card(verdict)
+        refused = verdict.decision == "refuse"
         self._p.telemetry.card(
-            "scope_gate",
-            heading,
-            sections,
-            status="blocked" if verdict.decision == "refuse" else "completed",
+            "research_kind", heading, sections, status="blocked" if refused else "completed"
         )
         self._p.telemetry.audit(
-            "scope.gate",
-            "deny" if verdict.decision == "refuse" else "allow",
+            "scope.kind",
+            "deny" if refused else "allow",
             verdict.reason or verdict.decision,
             archetype=verdict.archetype,
-            gate_decision=verdict.decision,
-            mode=verdict.mode,
+            kind_decision=verdict.decision,
             classifier=verdict.source,
             classifier_model=verdict.source_model,
         )
 
     @staticmethod
-    def after_gate(state: ScopingState) -> str:
-        if state.phase == "REFUSED":
-            return "__end__"
-        if state.phase == "QA":
-            return "auto_freeze"
-        return "await_user" if state.phase == "REFRAME" else "interview_turn"
-
-    async def auto_freeze(self, state: ScopingState) -> Update:
-        """Q&A: the question becomes a Brief, the Brief a contract — no interview, no review."""
-        brief = self._p.briefs.question(state.topic, state.recent_days)
-        rubric = self._p.generator.generate(brief) if self._p.generator is not None else Rubric()
-        contract = self._freeze(brief, rubric, "the Q&A question was asked")
-        return {
-            "brief": brief,
-            "rubric": rubric,
-            "contract": contract,
-            "phase": "APPROVED",
-            "reply": self._p.messages.qa_started,
-        }
+    def after_kind(state: ScopingState) -> str:
+        return "__end__" if state.phase == "REFUSED" else "interview_turn"
 
     # -- interview -------------------------------------------------------------------
 
@@ -160,6 +112,7 @@ class ScopingNodes:
             asked_item_id=state.asked_item_id,
             answer=state.user_input,
             turn=turn_number,
+            today=self._p.clock().date(),
         )
         turn = await self._p.caller.call(prompt, interviewer_prompt.InterviewTurn)
         turn, since = await self._guarded(prompt, turn, state)
@@ -291,7 +244,13 @@ class ScopingNodes:
             "turn_cap" if state.turn >= self._p.settings.max_turns else "closed_early"
         )
         unknowns = checklist.known_unknowns(state.items, reason)
-        brief = self._p.briefs.build(state.archetype or GENERAL, state.topic, state.items, unknowns)
+        brief = self._p.briefs.build(
+            state.archetype or GENERAL,
+            state.topic,
+            state.items,
+            unknowns,
+            today=self._p.clock().date(),
+        )
         self._p.telemetry.audit(
             "scope.closed",
             "allow",
@@ -378,8 +337,6 @@ class ScopingNodes:
     # -- routing ----------------------------------------------------------------------
 
     def route_input(self, state: ScopingState) -> str:
-        if state.phase == "REFRAME":
-            return "scope_gate"
         verb = _verb(state.user_input)
         if verb is None and self._affirmed(state.user_input):
             # "yes" to what was just proposed: the plan closes the interview, the criteria

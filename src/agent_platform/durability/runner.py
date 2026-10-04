@@ -30,6 +30,7 @@ from agent_platform.config.settings import DurabilitySettings
 from agent_platform.durability.checkpointer import SqliteCheckpointer
 from agent_platform.durability.registry import RunRegistry
 from agent_platform.durability.types import (
+    ABORTABLE_STATUSES,
     RESUMABLE_STATUSES,
     CheckpointInfo,
     ResumableRunError,
@@ -136,6 +137,41 @@ class DurableGraphRunner:
             Command(resume=decision) if record.status == "interrupted" else None
         )
         return await self._invoke(thread_id, payload, reporter)
+
+    async def abort(self, thread_id: str, reporter: StageReporter | None = None) -> RunOutcome:
+        """End a stopped run for good: it keeps its record and checkpoints, and never resumes.
+
+        Nothing is undone here: a Stop already left the run's effects whole (a saga it cut
+        off compensated), so aborting is only the decision not to go on.
+        """
+        record = self._registry.get(thread_id)
+        if record is None or record.status not in ABORTABLE_STATUSES:
+            state = record.status if record else "unknown"
+            raise ResumeRefusedError(f"Thread {thread_id} is {state}; nothing to abort")
+        snapshot = await self._graph.aget_state(_config(thread_id))
+        self._registry.mark(
+            thread_id,
+            "aborted",
+            next_node=record.next_node,
+            checkpoint_id=record.checkpoint_id,
+            error=self._settings.abort_reason,
+        )
+        self._logger.warning("Run aborted; record kept", thread=thread_id, node=record.next_node)
+        if reporter is not None:
+            reporter.warning(
+                "run_aborted",
+                event_kind="system",
+                summary=self._settings.stop_report.aborted,
+                fields={"stopped_at": record.next_node or "—", "thread": thread_id},
+            )
+        return RunOutcome(
+            thread_id=thread_id,
+            status="aborted",
+            values=dict(snapshot.values or {}),
+            next_nodes=[node for node in record.next_node.split(",") if node],
+            checkpoint_id=record.checkpoint_id,
+            checkpoints=self._count(thread_id),
+        )
 
     async def values(self, thread_id: str) -> dict[str, Any]:
         """The latest state of a thread (empty if it has none)."""

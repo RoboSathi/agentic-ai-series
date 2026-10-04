@@ -41,6 +41,9 @@ class ConsoleEffect(BaseModel):
     # and forwards, so there is still exactly one way a turn reaches the
     # agent: `handle()`.
     agent_turn: str = ""
+    # Continue this stopped run as a turn: the console shows it the way it shows any turn
+    # (its status line, its cards, its answer), rather than as command output.
+    resume_thread: str = ""
 
 
 class CommandRow(BaseModel):

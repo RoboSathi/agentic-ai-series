@@ -9,6 +9,7 @@ observations   what each successful tool call returned: the only thing that can 
 
 import operator
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, TypedDict
 
 from langchain_core.runnables import RunnableConfig
@@ -46,6 +47,8 @@ class Turn:
     control: ToolControlLoop
     context: SessionContext
     loop: LoopReporter
+    # When the question was asked: "today" for the prompt and for the recency check.
+    asked_at: datetime
 
     def spent(self, counter: str) -> float:
         return self.budget.snapshot()[counter].spent

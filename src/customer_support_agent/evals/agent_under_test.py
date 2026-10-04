@@ -246,7 +246,9 @@ def side_effects(pool: SqliteConnectionPool, facts: FixtureFacts) -> dict[str, A
     reviews = [
         dict(row)
         for row in pool.execute(
-            "SELECT id, order_id, user_id, requested_amount_cents, status FROM hitl_queue"
+            # Money reviews only: a reply review is not a side effect the oracle scores.
+            "SELECT id, order_id, user_id, requested_amount_cents, status FROM hitl_queue "
+            "WHERE action != 'reply'"
         ).rows
         if row["id"] not in facts.seeded_review_ids
     ]

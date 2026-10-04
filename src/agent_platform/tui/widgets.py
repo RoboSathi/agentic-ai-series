@@ -17,6 +17,7 @@ import time
 from collections.abc import Mapping, Sequence
 from functools import cache
 from typing import Any, cast
+from urllib.parse import urlparse
 
 from rich.text import Text
 from textual.containers import Horizontal, VerticalScroll
@@ -382,7 +383,7 @@ class StatusLineWidget(Static):
         marker = (
             settings.status_expanded_symbol if self._expanded else settings.status_collapsed_symbol
         )
-        text = Text(f"{marker} ", style=palette("marker"))
+        text = Text.styled(f"{marker} ", palette("marker"))
         text.append_text(headline)
         if not self._expanded:
             text.append(f"  {settings.status_expand_hint}", style=palette("muted"))
@@ -403,7 +404,7 @@ class StatusLineWidget(Static):
             symbol = "✓"
             style = styles["complete"]
 
-        line = Text(f"{symbol} ", style=style)
+        line = Text.styled(f"{symbol} ", style)
         line.append(self.stage_label, style=style)
 
         if self._show_token_count and self._tokens is not None and self._started_at:
@@ -946,41 +947,43 @@ def _narrative_line(item: Any) -> tuple[str, str]:
 def _append_grounding(body: Text, fields: Mapping[str, Any]) -> None:
     """The hallucination check, as a verdict and one line of proof per claim.
 
-    Everything else the guardrail reports — every retrieved passage with
-    its cosine and NLI scores, the diagnostics, the per-tier counts — is in
-    `guardrails.log`. The card answers three questions: was the reply sent,
-    what was it checked against, and what decided each sentence.
+    Drawn like every other card: `key = value` rows, then one check line
+    per claim. Everything else the guardrail reports — every retrieved
+    passage with its cosine and NLI scores, the diagnostics, the per-tier
+    counts — is in `guardrails.log`. The card answers three questions: what
+    was sent, what was it checked against, and what decided each sentence.
     """
-    escalated = bool(fields.get("escalated"))
-    _append_row(
-        body, "result", str(fields.get("outcome") or ""), _tone("fail" if escalated else "pass")
-    )
+    _append_outcome(body, str(fields.get("outcome") or ""))
     checks = [c for c in fields.get("claim_checks") or [] if isinstance(c, Mapping)]
     if checks:
-        unverified = any(c.get("verdict") == "undetermined" for c in checks)
+        unverified = any(c.get("verdict") == _UNDETERMINED for c in checks)
         note = " (unverified does not block)" if unverified else ""
-        _append_row(body, "claims", str(fields.get("tally") or "") + note, palette("emphasis"))
-    _append_row(
-        body,
-        "checked against",
-        str(fields.get("evidence_searched") or "no evidence"),
-        palette("muted"),
+        _append_grounding_row(body, "claims", str(fields.get("tally") or "") + note)
+    _append_grounding_row(
+        body, "checked against", str(fields.get("evidence_searched") or "no evidence")
     )
     provenance = [str(line) for line in fields.get("provenance_checks") or []]
     if provenance:
-        _append_row(body, "ids & amounts", "  ".join(provenance), palette("muted"))
+        _append_grounding_row(body, "ids & amounts", "  ".join(provenance))
     checker = next((c for c in checks if c.get("decided_by") != "deterministic_provenance"), None)
     if checker is not None:
-        _append_row(body, "checker", _checker_line(checker), palette("muted"))
+        _append_grounding_row(body, "checker", _checker_line(checker))
+    # Each claim as a check line under the rows, the way a guardrail card lists its checks.
     for check in checks:
         _append_claim(body, check)
 
 
-def _append_row(body: Text, label: str, value: str, style: str) -> None:
-    if body:
-        body.append("\n")
-    body.append(f"  {label:<16}", style=palette("emphasis"))
-    body.append(value, style=style)
+def _append_grounding_row(body: Text, key: str, value: str) -> None:
+    body.append("\n  " if body else "  ")
+    _append_pair(body, key, " = ", value)
+
+
+def _append_outcome(body: Text, outcome: str) -> None:
+    """`result = TRIMMED · removed 1 of 2 …`: only the state word takes its tone."""
+    word, separator, rest = outcome.partition(" ")
+    body.append("  ")
+    _append_pair(body, "result", " = ", word, _state_style(word))
+    body.append(separator + rest, style=get_settings().tui.body_styles["value"])
 
 
 def _checker_line(check: Mapping[str, Any]) -> str:
@@ -993,56 +996,60 @@ def _checker_line(check: Mapping[str, Any]) -> str:
 
 
 def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
-    """`✓ claim`, then the one line that decided it.
+    """`✗ claim [CONTRADICTED]`, as a check line, then the one line that decided it.
 
-        Supported By [Tool Result]: "Order 10665 refund status: pending_review."
-        Supported By [Policy] (Entailment 0.99): "…"
-        Contradicted By [Tool Result] (Contradiction 0.98): "…"
-        Contradicted: Amount(s) ['$99.00'] appear in the reply but in no tool result.
-        Unverified: no evidence states or contradicts this
+        contradicted by [Tool Result]: "Order 10665 refund status: pending_review."
+        supported by [Policy] (Entailment 0.99): "…"
+        contradicted: Amount(s) ['$99.00'] appear in the reply but in no tool result.
+        unverified: no evidence states or contradicts this
 
     A probability appears only where a model gave one. Everything else about
     how the claim was checked is in `guardrails.log`.
     """
+    styles = get_settings().tui.body_styles
     verdict = str(check.get("verdict") or _UNDETERMINED)
-    mark, tone, _ = _CLAIM_MARKS.get(verdict, ("?", "warn", verdict))
+    mark, tone, name = _CLAIM_MARKS.get(verdict, ("?", "warn", verdict))
     style = _tone(tone)
-    body.append(f"\n\n  {mark} ", style=style)
-    body.append(str(check.get("claim") or ""), style=palette("emphasis"))
+    body.append(f"\n    {mark} ", style=style)
+    body.append(str(check.get("claim") or ""), style=styles["value"])
+    body.append(f" [{name.upper()}]", style=style)
     evidence = [item for item in check.get("evidence") or [] if isinstance(item, Mapping)]
     if verdict == _UNDETERMINED:
-        _append_unverified(body, evidence, style)
+        _append_unverified(body, evidence)
         return
     item = _deciding_evidence(verdict, evidence)
-    lead = "Supported By" if verdict == "supported" else "Contradicted By"
+    lead = "supported by" if verdict == "supported" else "contradicted by"
     if item is None or not _decided(verdict, evidence):
         # Decided by a rule that found no line to quote — an amount or id no
         # evidence states. Naming the nearest passage as the contradiction
         # sent readers after the wrong cause.
-        body.append(f"\n      {lead.split()[0]}: {check.get('rationale')}", style=style)
+        _append_proof(body, lead.split()[0], str(check.get("rationale") or ""), styles["value"])
         return
     basis = str(check.get("basis") or "")
-    body.append(
-        f"\n      {lead} [{_title(item.get('tier'))}]{f' ({basis})' if basis else ''}: ",
-        style=style,
-    )
-    body.append(f'"{_excerpt(item)}"', style=palette("muted"))
+    key = f"{lead} [{_where(item)}]{f' ({basis})' if basis else ''}"
+    _append_proof(body, key, f'"{_excerpt(item)}"', styles["muted"])
 
 
-def _append_unverified(body: Text, evidence: list[Mapping[str, Any]], style: str) -> None:
+def _append_proof(body: Text, key: str, value: str, style: str) -> None:
+    """The indented `key: value` line under a claim saying what decided it."""
+    body.append("\n      ")
+    _append_pair(body, key, ": ", value, style)
+
+
+def _append_unverified(body: Text, evidence: list[Mapping[str, Any]]) -> None:
     """Why nothing decided the claim: a line the model read and found neutral, or nothing near it."""
+    styles = get_settings().tui.body_styles
     scored = [item for item in evidence if _was_scored(item)]
     best = max(scored, key=lambda item: float(item.get("nli_score") or 0), default=None)
     if best is None:
-        body.append("\n      Unverified: no evidence states or contradicts this", style=style)
+        _append_proof(body, "unverified", "no evidence states or contradicts this", styles["value"])
         return
     label = str(best.get("nli_label"))
-    body.append(
-        f"\n      Unverified: [{_title(best.get('tier'))}] read as "
-        f"{_NLI_NAMES.get(label, label)} ({float(best.get('nli_score') or 0):.2f}): ",
-        style=style,
+    key = (
+        f"unverified [{_where(best)}] read as "
+        f"{_NLI_NAMES.get(label, label)} ({float(best.get('nli_score') or 0):.2f})"
     )
-    body.append(f'"{_excerpt(best)}"', style=palette("muted"))
+    _append_proof(body, key, f'"{_excerpt(best)}"', styles["muted"])
 
 
 def _was_scored(item: Mapping[str, Any]) -> bool:
@@ -1054,6 +1061,13 @@ def _was_scored(item: Mapping[str, Any]) -> bool:
 def _title(value: Any) -> str:
     """`tool result` as `Tool Result`."""
     return str(value or "").title()
+
+
+def _where(item: Mapping[str, Any]) -> str:
+    """`Tool Result · wef.org`: the tier, and where the line came from (a URL as its host)."""
+    source = str(item.get("source") or "")
+    host = urlparse(source).netloc if "://" in source else source
+    return f"{_title(item.get('tier'))} · {host}" if host else _title(item.get("tier"))
 
 
 def _decided(verdict: str, evidence: list[Any]) -> bool:
@@ -1130,15 +1144,21 @@ def _message_line(message: Mapping[str, Any]) -> str:
 
 
 class FeedNote(Static):
-    """Non-event note such as user input, assistant response, or command output."""
+    """Non-event note such as user input, assistant response, or command output.
+
+    The style is applied as a span (`Text.styled`), never as the Text's base style: Textual
+    parses a base style itself and does not know Rich's colour names, so `orange3` or
+    `bright_black` there rendered as the default white.
+    """
 
     def __init__(
         self,
-        text: str,
+        text: str | Text,
         style: str = "",
     ) -> None:
-        super().__init__(Text(text, style=style), classes="feed-note")
-        self.plain_text = text
+        rendered = text if isinstance(text, Text) else Text.styled(text, style)
+        super().__init__(rendered, classes="feed-note")
+        self.plain_text = rendered.plain
 
 
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
@@ -1208,20 +1228,26 @@ def _highlight_spans(line: str) -> list[tuple[int, int, str, str, int]]:
     """The configured highlight rules' matches, Markdown bold markers dropped from what shows."""
     return [
         (m.start(), m.end(), m.group(0).replace(_MARKDOWN_BOLD, ""), style, 0)
-        for pattern, style in _highlights()
+        for pattern, style, scope in _highlights()
+        if scope is None or scope.search(line)
         for m in pattern.finditer(line)
         if m.end() > m.start()
     ]
 
 
-def _highlights() -> list[tuple[re.Pattern[str], str]]:
+def _highlights() -> list[tuple[re.Pattern[str], str, re.Pattern[str] | None]]:
     rules = get_settings().tui.response_highlights
-    return _compiled_highlights(tuple((rule.pattern, rule.style) for rule in rules))
+    return _compiled_highlights(tuple((rule.pattern, rule.style, rule.line) for rule in rules))
 
 
 @cache
-def _compiled_highlights(rules: tuple[tuple[str, str], ...]) -> list[tuple[re.Pattern[str], str]]:
-    return [(re.compile(pattern), style) for pattern, style in rules]
+def _compiled_highlights(
+    rules: tuple[tuple[str, str, str | None], ...],
+) -> list[tuple[re.Pattern[str], str, re.Pattern[str] | None]]:
+    return [
+        (re.compile(pattern), style, re.compile(line) if line is not None else None)
+        for pattern, style, line in rules
+    ]
 
 
 class ChoiceMenu(OptionList):
@@ -1297,8 +1323,8 @@ class ActionBar(Horizontal):
         for index, action in enumerate(actions):
             button_id = f"action-{self._generation}-{index}"
             commands[button_id] = action.command
-            # Full-size, bordered and coloured by variant: a compact button has no
-            # border or fill and read as plain text nobody thought to click.
+            # One row tall (`#actions Button` CSS), but still filled with its variant's colour:
+            # Textual's compact button has no fill and read as plain text nobody clicked.
             variant = cast(ButtonVariant, getattr(action, "variant", "default"))
             button = Button(action.label, id=button_id, variant=variant)
             button.disabled = busy and not action.during_turn
@@ -1433,7 +1459,7 @@ class LiveStatusPanel(VerticalScroll):
         self.mount(new, before=old)
         old.remove()
 
-    def note(self, text: str, style: str = "") -> None:
+    def note(self, text: str | Text, style: str = "") -> None:
         note = FeedNote(text, style)
         self._entries.append(note)
         self._trim_if_needed()
@@ -1448,7 +1474,8 @@ class LiveStatusPanel(VerticalScroll):
 
     def show_lines(self, lines: list[Text]) -> None:
         for line in lines:
-            self.note(line.plain, str(line.style or ""))
+            # Mounted as built: its colours are spans, which a `line.style` copy would drop.
+            self.note(line)
 
     def clear_feed(self) -> None:
         self._entries.clear()

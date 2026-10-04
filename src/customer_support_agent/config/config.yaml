@@ -88,6 +88,10 @@ security:
   pii:
     # The tool-call fields this agent's tools actually take.
     tool_call_allowed_fields: [order_id, user_id, amount, reason, status]
+    presidio:
+      # A customer's name and address are personal data here, beside the platform's contact and
+      # financial identifiers.
+      entities: [PERSON, LOCATION, EMAIL_ADDRESS, PHONE_NUMBER, CREDIT_CARD, IBAN_CODE, IP_ADDRESS, US_SSN]
   prompt_injection:
     suspicious_phrases:
       - ignore previous instructions
@@ -108,7 +112,7 @@ guardrails:
   # The guardrail card's block reasons, in this agent's words.
   block_reasons:
     TOOL_EVIDENCE_IDENTIFIER_MISMATCH: names an order number found in no evidence
-    TOOL_EVIDENCE_RECORD_STATE_MISMATCH: says the refund is settled; the record disagrees
+    TOOL_EVIDENCE_RECORD_STATE_MISMATCH: states a refund status the record disagrees with
     TOOL_EVIDENCE_NOT_EXECUTED: claims a refund the tool call never executed
 
 hallucination_protection:
@@ -435,13 +439,16 @@ customer_support_agent:
     auth:
       ask_for_code: "Before I can look anything up, I need to verify your account.\nPlease share your {length}-character user code."
       unknown_code: "I couldn't find an account with that code. Please check it and try again — it's the {length}-character code from your order confirmation email."
-    cancelled: "Stopped before {step}; everything done so far is saved. Press Resume to continue from there."
+    # How far a stopped turn got, as the stop report's tree (its frame is the platform's
+    # `durability.stop_report`).
+    cancelled:
+      labels: {request: request, customer: customer, decided: decided so far, tools: tools called}
+      unverified: not verified yet
+      none: nothing yet
   # The console's run controls: cancel the turn in flight, then resume it from its last
   # completed step (state persistence, idempotent replay, breaker state across a resume).
   console:
     cancel_key: ctrl+x
-    cancel: {label: "■ Stop Agent", variant: error}
-    resume: {label: "↻ Resume Agent from {node}", variant: primary}
   # The order list, rendered from the record (never by the model) as a box table. The words are
   # what a customer reads for each state; `tui.response_highlights` colours them.
   order_table:
@@ -463,6 +470,30 @@ customer_support_agent:
   demo_user_code: 2HEDZTV
   policy_path: src/customer_support_agent/prompts/customer_policy.md
   console_reviewer: console_operator
+  # One human review queue: refunds above the limit, and replies the hallucination check cut.
+  review_output:
+    # Appended to the HALLUCINATION CHECK card when a cut reply was queued.
+    queued: "queued for review #{id}"
+    # What the customer is sent when a reviewer says the check was wrong.
+    reply_follow_up: "Following up on my last reply: a colleague has checked it, and this part stands. {removed}"
+    title: "Review request #{id} — {decision}"
+    labels: {request: request, decided: decided, effect: effect, customer: customer}
+    request:
+      refund: "refund · order {order_id} · {amount}"
+      cancel_and_refund: "cancel and refund · order {order_id} · {amount}"
+      reply: 'reply · {reason} · removed: "{removed}"'
+    decided: "{decision} by {reviewer}"
+    effects:
+      refund_approved: refund issued
+      refund_denied: "no money moved · {reason}"
+      cancel_and_refund_approved: order cancelled and refund issued
+      cancel_and_refund_denied: "no money moved · {reason}"
+      reply_approved: the removed text was sent to the customer
+      reply_denied: nothing more sent · the check stands
+      failed: "failed · {reason}"
+    customer_told: 'told: "{reply}"'
+    customer_not_told: not notified · no open conversation
+    not_pending: "Request {id} is not pending (already decided, or not found). /queue lists what is waiting."
   dummy_data_generator_path: src/customer_support_agent/dummy_data/generator.yaml
   # This agent's evals: the golden set, the fixture it runs against, and
   # what its graders read. Run with `make eval` (see agent_platform.evals).
@@ -486,8 +517,15 @@ tui:
   # The order table, coloured by state. Anchored to a table cell (`│ word │`), so the same word in
   # a sentence is left alone. Named terminal colours, so they read on a light or a dark theme.
   response_highlights:
+    # The order table. The grid recedes; the headings read as headings, not as a row.
     - {pattern: '^[┌├└][─┬┼┴┐┤┘]+$', style: "bright_black"}
-    - {pattern: '^│ # │.*$', style: "bold"}
+    - {line: '^│', pattern: '│', style: "bright_black"}
+    - {line: '^│ +# +│', pattern: '[^│\s][^│]*?(?=\s*│)', style: "bold cyan"}
+    # Position and date are secondary; the order id and total are what a customer quotes.
+    - {line: '^│', pattern: '(?<=^│ ) *\d+(?= │)', style: "bright_black"}
+    - {line: '^│', pattern: '(?<=│ )\d{4}-\d{2}-\d{2}(?= +│)', style: "bright_black"}
+    - {line: '^│', pattern: '(?<=│ )\d{5}(?= +│)', style: "bold"}
+    - {line: '^│', pattern: '\$[\d,]+\.\d{2}(?= │$)', style: "bold"}
     - {pattern: '(?<=│ )delivered(?= +│)', style: "green"}
     - {pattern: '(?<=│ )on its way(?= +│)', style: "cyan"}
     - {pattern: '(?<=│ )being prepared(?= +│)', style: "yellow"}

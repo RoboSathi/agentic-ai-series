@@ -25,6 +25,7 @@ from research_agent.graph.answerer import DirectAnswerer
 from research_agent.guardrails.answer_grounding import AnswerGrounding
 from research_agent.llm.structured import StructuredCaller
 from research_agent.observability.telemetry import RunTelemetry
+from research_agent.prompts import answer as prompt
 from research_agent.tools import URLS_KEY
 from tests.conftest import ScriptedLLM
 
@@ -59,6 +60,10 @@ class _Roles:
 
 
 def _answerer(script: list[dict[str, Any]]) -> tuple[DirectAnswerer, list[StatusEvent]]:
+    return _answerer_over(ScriptedLLM(script))
+
+
+def _answerer_over(model: ScriptedLLM) -> tuple[DirectAnswerer, list[StatusEvent]]:
     settings = get_agent_settings().answer
     feed = InMemoryLiveStatusFeed(max_events=0)
     events: list[StatusEvent] = []
@@ -78,7 +83,7 @@ def _answerer(script: list[dict[str, Any]]) -> tuple[DirectAnswerer, list[Status
             )
         ]
     )
-    caller = StructuredCaller(_Roles(ScriptedLLM(script)), PydanticValidator(), reporter)
+    caller = StructuredCaller(_Roles(model), PydanticValidator(), reporter)
     ladder = DetectionLadder(create_scoring_cascade(), entailment=LexicalEntailmentModel())
     grounding = AnswerGrounding(ResponseGuardrail(ladder), settings.grounding, settings.messages)
     telemetry = RunTelemetry(reporter, NullAuditLedger(), trace_id="answer-test")
@@ -137,3 +142,39 @@ async def test_an_answer_from_the_models_own_knowledge_is_not_grounded() -> None
     answerer, events = _answerer([{"content": "Paris is the capital of France."}])
     assert await answerer.answer("capital of France?") == "Paris is the capital of France."
     assert "hallucination_check" not in _stages(events)
+
+
+def _tool_calls_until_the_cap() -> list[dict[str, Any]]:
+    return [{"tool_calls": [CALL]}] * get_agent_settings().answer.budget.max_tool_calls
+
+
+@pytest.mark.asyncio
+async def test_a_last_step_that_asks_for_a_tool_still_answers_from_what_was_found() -> None:
+    """Regression: the model had the facts, asked for one more page on its last step, and the
+    loop sent "I could not form an answer" (an Asian Games medal-tally question, 2026-10-04)."""
+    settings = get_agent_settings().answer
+    model = ScriptedLLM(
+        _tool_calls_until_the_cap()
+        + [{"tool_calls": [CALL]}] * settings.final_attempts
+        + [{"content": "Tomorrow in Pune: light drizzle, up to 32.5°C."}]
+    )
+    answerer, _ = _answerer_over(model)
+    reply = await answerer.answer("weather in Pune tomorrow?")
+    assert "32.5°C" in reply
+    assert settings.messages.empty not in reply
+    # The last try is a fresh conversation over the observations, with nothing to resume.
+    fallback = next(r for r in model.requests if r.messages[0].content == prompt.FROM_OBSERVATIONS)
+    assert fallback.tools is None and "light drizzle" in str(fallback.messages[1].content)
+
+
+@pytest.mark.asyncio
+async def test_the_last_step_is_told_it_is_the_last_and_offered_no_tools() -> None:
+    model = ScriptedLLM(
+        _tool_calls_until_the_cap() + [{"content": "Tomorrow in Pune: light drizzle, 32.5°C."}]
+    )
+    answerer, _ = _answerer_over(model)
+    reply = await answerer.answer("weather in Pune tomorrow?")
+    final = model.requests[len(_tool_calls_until_the_cap())]
+    assert final.tools is None
+    assert final.messages[-1].content == prompt.FINAL_STEP
+    assert "32.5°C" in reply

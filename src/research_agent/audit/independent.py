@@ -19,6 +19,7 @@ covered actually unmet?
 """
 
 from collections.abc import Callable
+from datetime import date
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -79,7 +80,9 @@ class LlmJudge:
         self._caller = caller
         self._logger = get_logger("research_agent")
 
-    async def judge(self, spec: CheckSpec, report: Report, ledger: LedgerSnapshot) -> CheckOutcome:
+    async def judge(
+        self, spec: CheckSpec, report: Report, ledger: LedgerSnapshot, today: date
+    ) -> CheckOutcome:
         """The judge's score — or, when the judge and every backup failed, *not judged*.
 
         A criterion nobody could judge is unverified: it earns no credit and, if it must pass,
@@ -88,8 +91,10 @@ class LlmJudge:
         """
         criterion = str(spec.params.get("text", spec.name))
         try:
-            answer = await self._caller.call(
-                judge_prompt.build(criterion, spec.name, report, ledger), judge_prompt.JudgeAnswer
+            # Traced: the AUDIT card shows the judge's work, so no LLM CALL card per criterion.
+            answer, _ = await self._caller.call_traced(
+                judge_prompt.build(criterion, spec.name, report, ledger, today),
+                judge_prompt.JudgeAnswer,
             )
         except Exception as exc:
             self._logger.warning("Judge unavailable", item=spec.item_id, error=describe_error(exc))

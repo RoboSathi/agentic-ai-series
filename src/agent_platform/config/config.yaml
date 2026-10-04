@@ -172,12 +172,11 @@ llm:
       adapter: hosted
       key_env_vars: [nvidia_api_key]
       base_url: https://integrate.api.nvidia.com/v1
-      # NIM entitlements are per-account; this model is confirmed invokable
-      # and does reliable multi-step tool calling for the refund agent.
-      # (nvidia/nemotron-3.5-lightning-30b-a3b is invokable but narrates
-      # chain-of-thought instead of answering.) It does NOT honor
-      # guided_json/response_format — see guardrails.constrained_backend.
-      model: nvidia/nemotron-3-super-120b-a12b
+      # NIM entitlements are per-account. nvidia/nemotron-3-super-120b-a12b, the primary until
+      # 2026-10-03, reached end of life that day (HTTP 410 Gone). Ultra, the strongest model on
+      # the account, replaces it (3.7s for a short answer, measured 2026-10-03). It does NOT
+      # honor guided_json/response_format — see guardrails.constrained_backend.
+      model: nvidia/nemotron-3-ultra-550b-a55b
       timeout_seconds: 60
       input_cost_per_1k_tokens: 0.0002
       output_cost_per_1k_tokens: 0.0006
@@ -195,10 +194,13 @@ llm:
   chain:
     timeout_seconds: 60
     hedge_after_seconds: 30
-    # The strongest model first (about 2x slower than gpt-oss-20b at the median, 6.0s vs 2.8s,
-    # measured 2026-10-01), then the fast cross-family model if it too fails or stalls.
+    # Ultra first (above), then lightning, then gpt-oss-20b last so a call always gets some
+    # answer. Lightning runs with thinking off: with it on, it narrates garbled reasoning into
+    # the answer and hits the token cap (82s); off, it answers cleanly (48s, measured 2026-10-03).
     fallbacks:
-      - {provider: nim, model: nvidia/nemotron-3-ultra-550b-a55b}
+      - provider: nim
+        model: nvidia/nemotron-3.5-lightning-30b-a3b
+        extra_body: {chat_template_kwargs: {enable_thinking: false}}
       - {provider: nim, model: openai/gpt-oss-20b}
   cascade:
     enabled: false
@@ -391,6 +393,16 @@ durability:
     required: false
   # A cancelled run keeps its checkpoints and resumes from the last completed node.
   cancel_reason: cancelled by the operator
+  # An aborted run keeps its record and checkpoints until retention, and never resumes.
+  abort_reason: aborted by the operator
+  # What a stopped run says, for every agent: where, how far it got (the agent's own tree),
+  # then the two choices on a line of their own.
+  stop_report:
+    heading: "Stopped before {step}. Where the run got to:"
+    choices: "Everything done so far is saved. Choose ↻ Resume to continue from {step}, or ✕ Abort to end this run."
+    aborted: "Run aborted · its record is kept (/runs). The chat is yours."
+    nothing_to_abort: Nothing here is stopped, so there is nothing to abort.
+    the_end: the end
 
 audit:
   enabled: true
@@ -420,6 +432,22 @@ observability:
   llm_request_heading: "LLM request · {purpose}"
   llm_response_heading: "LLM response · {purpose}"
   llm_tool_requested_heading: "LLM response · tool requested: {tool}"
+  # One layout for every step card (`observability/step_card.py`): these sections, in this
+  # order, an empty one left out. A step's model call is drawn inside its card, not beside it.
+  # The body may name a model; a heading never does.
+  step_card:
+    sections:
+      asked: Asked
+      model: Model
+      reasoning: Reasoning
+      response: Response
+      decision: Decision
+      evidence: Evidence
+    model_line: "{role} · {model} · {tokens} tokens · {seconds}s"
+    backup_line: "answered by its backup: {backup}"
+    no_model_line: "no model call · decided in code by {by}"
+    calls_suffix: " · {calls} calls"
+    rationale_fields: [rationale, reason, reasoning]
   # A model chain's backup cards (`llm/observer.py`). No heading names a model.
   model_events:
     backup_started: "{label} · {reason} · switching from ({primary}) → ({backup})"
@@ -664,6 +692,13 @@ guardrails:
     TOOL_EVIDENCE_NOT_EXECUTED: claims an action the tool call never executed
     CLAIM_DETAIL_UNSOURCED: states a date or number found in no evidence
     HALLUCINATION_GUARD_BLOCK: a claim is contradicted by the evidence
+  # What the customer received, as the card's result line says it. The first word is the state
+  # the card is coloured by (`tui.state_words`): sentences removed is a warning, nothing sent a block.
+  outcomes:
+    passed: "PASSED · reply sent unchanged"
+    repaired: "PASSED after {attempts} rewrite(s) · rewritten reply sent"
+    trimmed: "TRIMMED · removed {removed} of {total} sentence(s) · {why}"
+    withheld: "BLOCKED · {why} · reply withheld"
 
 hallucination_protection:
   enforce_grounding: true
@@ -832,7 +867,13 @@ security:
   screening:
     pii_started: Removing personal data before the model call
     pii_redacted: "REDACTED · {categories} · {count} match(es)"
+    pii_entity: "{category} · {detector} · {score} · [{category}:{token}]"
+    pii_entity_masked: "{category} · {detector} · {score} · masked"
     pii_clear: PASS · no PII detected
+    pii_reason_found: "{rule} by deterministic rules, {model} by the NER model: {categories}"
+    pii_reason_clear: "no personal data found by the deterministic rules or the NER model"
+    pii_reason_unavailable: "NER model unavailable ({error}); deterministic rules only"
+    pii_no_model: "none (deterministic rules only)"
     injection_started: Checking untrusted input for injection
     injection_blocked_rule: Prompt injection blocked · deterministic match
     injection_blocked_model: Prompt injection blocked · model detection
@@ -842,9 +883,15 @@ security:
     moderation_started: Checking content policy
     moderation_blocked_rule: Content safety blocked · deterministic match
     moderation_blocked_model: Content safety blocked · model detection
+    moderation_advisory: Content safety advisory · personal data left to the PII screen
     moderation_unavailable: Content safety model check unavailable
     moderation_passed_model: Content safety check passed · model verified
     moderation_passed_rule: Content safety check passed · deterministic scan
+    # What a block means is the same for every agent: the message (PII redacted) goes to the
+    # dead-letter queue for a person, one card says so, and the person gets this refusal.
+    quarantined: "Quarantined for human review · {reason}"
+    quarantine_failed: "Blocked · quarantine store unavailable ({error}) · {reason}"
+    refusal: "I can't help with that request as written: a safety screen stopped it. Please rephrase it and try again."
   # RBAC (auth) stays on because the Gatekeeper's "who is asking?" question
   # depends on it. Whether each screening stage exists is a feature
   # (`features:`), not a flag here.
@@ -852,19 +899,47 @@ security:
     enabled: true
     # Roles and the action -> permission mapping. Empty here: an agent's
   pii:
-    # `mask` keeps the shape of a value without its content, so a
-    # redacted trace is still readable as a trace.
-    mode: mask             # mask | tokenize | remove
+    # presidio: Presidio's recognizers and spaCy NER (names, places) plus the patterns below;
+    # pattern: the patterns alone. Presidio that cannot load falls back to the patterns.
+    engine: presidio
+    # `tokenize` replaces a value with `[CATEGORY:token]`, the token an HMAC of the value under
+    # the vault key: the same value always gets the same token (records stay joinable), and the
+    # vault maps a token back to its value for audit. Without a vault key, `mask` is used.
+    mode: tokenize         # mask | tokenize | remove
     mask_token: "[REDACTED]"
-    ner_enabled: false
-    # Detector patterns, ordered most-specific first so a card number is not
-    # first matched as a shorter numeric identifier.
+    token_format: "[{category}:{token}]"
+    token_chars: 12
+    # Detector patterns, by Presidio entity name, ordered most-specific first so a card number
+    # is not first matched as a shorter numeric identifier.
     patterns:
-      credit_card: '\b(?:\d[ -]?){13,16}\b'
-      ssn: '\b\d{3}-\d{2}-\d{4}\b'
-      email: '\b[\w.+-]+@[\w-]+\.[\w.-]+\b'
-      phone: '(?<!\d)(?:\+?\d{1,2}[ -])?\(?\d{3}\)?[ -]\d{3}[ -]\d{4}(?!\d)'
-      ip_address: '\b\d{1,3}(?:\.\d{1,3}){3}\b'
+      CREDIT_CARD: '\b(?:\d[ -]?){13,16}\b'
+      US_SSN: '\b\d{3}-\d{2}-\d{4}\b'
+      EMAIL_ADDRESS: '\b[\w.+-]+@[\w-]+\.[\w.-]+\b'
+      PHONE_NUMBER: '(?<!\d)(?:\+?\d{1,2}[ -])?\(?\d{3}\)?[ -]\d{3}[ -]\d{4}(?!\d)'
+      IP_ADDRESS: '\b\d{1,3}(?:\.\d{1,3}){3}\b'
+    presidio:
+      # spaCy's own release for the installed spaCy 3.8 (the Hugging Face copy is 3.7.1).
+      model: en_core_web_lg
+      version: "3.8.0"
+      download_url: "https://github.com/explosion/spacy-models/releases/download/{model}-{version}/{model}-{version}-py3-none-any.whl"
+      download_timeout_seconds: 600
+      local_model_dir: local_models/spacy/en_core_web_lg
+      download_if_missing: true
+      language: en
+      score_threshold: 0.5
+      pattern_score: 0.85
+      # Contact and financial identifiers. An agent that holds names and places as personal
+      # data (a support agent) adds PERSON and LOCATION in its own config.
+      entities: [EMAIL_ADDRESS, PHONE_NUMBER, CREDIT_CARD, IBAN_CODE, IP_ADDRESS, US_SSN]
+    # The audit vault: token → value, AES-GCM encrypted under the key named here (the same key
+    # makes the tokens). `make pii-reveal <agent> T=<token>` reads one back, and is audited.
+    # Presidio recognizers that are a model (spaCy NER); the rest (patterns, checksums,
+    # phone-number rules) are deterministic, and the PII card reports the two separately.
+    model_recognizers: [SpacyRecognizer]
+    vault:
+      key_env: PII_VAULT_KEY
+      required: false
+      retention_days: 30
     # Fields a tool call may carry; everything else is dropped before the
     # call leaves the harness (data minimization, E32).
     # Which tool-call fields may survive redaction. Empty here: the fields
@@ -892,7 +967,9 @@ security:
       Schema: {"User Safety":"safe"|"unsafe","Safety Categories":"comma-separated categories"}.
       Omit Safety Categories when the message is safe. Ordinary product-support requests are safe.
     response_safety_key: User Safety
-    response_categories_key: Safety Categories
+    response_categories_keys: [Safety Categories, safety_categories, categories]
+    # Personal-data flags are the PII screen's job (redaction runs first): shown, not blocked.
+    advisory_categories: [PII/Privacy]
     safe_word: safe
     unsafe_word: unsafe
   guards:
@@ -928,12 +1005,17 @@ security:
       resilience_key: hosted-content-safety
       check_name: Nemotron Content Safety
       flagged_reason: The content-safety model flagged the input.
+      # What the model said it found, in its own words (e.g. "Violence, Sexual").
+      flagged_categories_reason: "The content-safety model flagged the input as: {categories}."
+      flagged_uncategorised_reason: "The content-safety model answered unsafe without naming a category. It said: {output}"
       allowed_reason: The content-safety model classified the input as safe.
       missing_key_reason: "{env} is not configured"
     rule_checks:
       injection: Deterministic prompt-injection scan
       moderation: Deterministic blocked-term scan
     hosted_flagged_reason: "hosted {guard} flagged the input"
+    hosted_flagged_categories_reason: "hosted {guard} flagged the input as: {categories}"
+    hosted_advisory_reason: "hosted {guard} flagged {categories} only — advisory: the PII screen handles personal data"
     fail_closed_reason: "hosted {guard} unavailable and security policy is configured to fail closed"
 
 resilience:
@@ -956,6 +1038,8 @@ resilience:
     enabled: true
   saga:
     enabled: true
+    # A Stop that lands mid-saga undoes what committed, like a failure does: never half-applied.
+    stopped_reason: stopped by the operator mid-way
   dead_letter_queue:
     enabled: true
   # Hosted model endpoints are rate-limited per account, so every process
@@ -1023,16 +1107,18 @@ evals:
       - "refused"
       - "unable"
   judge:
-    # The strongest model on the account grades. Trade-off, chosen knowingly (2026-10-03): it is
-    # the same family (Nemotron) as the agent's own model, so the judge is no longer
-    # vendor-independent and may share the agent's habits; gpt-oss-20b, a different family, is
-    # its backup. Verified invokable by `make llm-check` (mistral-large and
-    # llama-3.1-nemotron-70b are listed for this account but answer 404).
+    # The strongest model on the account grades. Trade-off, chosen knowingly (2026-10-03): since
+    # super's retirement the judge and the agent share ultra as primary, so the judge is not
+    # independent of the model it grades and may share its habits. Lightning (thinking off) and
+    # then gpt-oss-20b back it up; gpt-oss-20b is last so a grade always comes back.
     provider: nim
     model: nvidia/nemotron-3-ultra-550b-a55b
     timeout_seconds: 120
     hedge_after_seconds: 45
     fallbacks:
+      - provider: nim
+        model: nvidia/nemotron-3.5-lightning-30b-a3b
+        extra_body: {chat_template_kwargs: {enable_thinking: false}}
       - {provider: nim, model: openai/gpt-oss-20b}
     temperature: 0.0
     # A reasoning model: its hidden reasoning spends from this budget
@@ -1143,6 +1229,27 @@ commands:
   # A scoped command (`/memory`, an agent's `/queue`) shows only the session's verified subject.
   verify_first: Nobody is verified in this session yet. Verify first, then ask again.
   not_your_records: This console shows only the verified account's own records.
+  # `/dlq` (and `make dlq <agent>`): the messages a security screen quarantined, for review.
+  dlq:
+    summary: Quarantined messages (dead-letter queue) — list, show, claim, resolve, discard
+    usage: "/dlq [pending|in_review|resolved|discarded|all] [limit] · /dlq <id> · /dlq claim <id> · /dlq resolve|discard <id> <note>"
+    default_status: pending
+    list_title: "Dead-letter queue — {status} ({n})"
+    counts: "by status: {counts}"
+    headers: [id, when, screen, status, session, decided by, message (redacted)]
+    empty: Nothing here.
+    show_hint: "/dlq <id> shows everything recorded about one entry."
+    entry_title: "Dead-letter entry {id}"
+    preview_chars: 48
+    time_format: "%Y-%m-%d %H:%M"
+    unknown: "—"
+    unknown_status: "No status '{status}'. {usage}"
+    unknown_id: "No dead-letter entry {id} for this agent."
+    needs_id: "/dlq {action} needs an entry id. {usage}"
+    needs_note: "/dlq {action} needs a note saying why (it is kept with the entry and audited)."
+    refused: "Entry {id} is {status}: it cannot be {action}d from there."
+    done: "Entry {id}: {action} recorded by {reviewer} (the message was not re-run)."
+    audit_action: "dlq.{action}"
 
 # Plain-text renderers (`presentation/`): the same lines print from `make` and draw in the TUI.
 presentation:
@@ -1195,6 +1302,12 @@ tui:
     muted: "bright_black"
     history: "yellow"
   status_expand_hint: "click to expand"
+  resume_banner: "↻ RESUMED  continuing the stopped turn from its last saved step"
+  # The run buttons, the same for every agent.
+  run_controls:
+    stop: {label: "■ Stop Agent", variant: error}
+    resume: {label: "↻ Resume Agent from {node}", variant: primary}
+    abort: {label: "✕ Abort", variant: warning}
   status_history_hint: "scroll down to follow"
   choice_menu_hint: "↑/↓ then Enter to pick · or type your own answer"
   # Event kinds whose `started` event draws a pending card at once (replaced in place by
@@ -1227,6 +1340,7 @@ tui:
   # Words that name a state, wherever a card shows them as a value -> their tone.
   state_words:
     PASS: pass
+    PASSED: pass
     OK: pass
     CLEAR: pass
     ALLOW: pass
@@ -1241,6 +1355,10 @@ tui:
     ESCALATE: warn
     WARNING: warn
     REFERRED: warn
+    TRIMMED: warn
+    SUPPORTED: pass
+    CONTRADICTED: fail
+    UNVERIFIED: warn
     SKIPPED: dim
     NO_MATCH: pass
   response_styles:
@@ -1278,6 +1396,20 @@ web:
     providers: [duckduckgo, tavily]
     time_bounded_providers: [tavily, duckduckgo]
     max_results: 8
+    # A general DuckDuckGo answer that looks weak — fewer than `min_hits` hits, or under
+    # `min_term_coverage` of the query's words in its top `top_k` titles and snippets — also asks
+    # Tavily and merges the two. Paced: at most `share` of Tavily's monthly quota, spread evenly
+    # over the month (`resilience.rate_limit.buckets.tavily.monthly_quota`); the rest stays for
+    # pure fallback and research runs. A strong answer spends nothing metered.
+    augment:
+      enabled: true
+      provider: tavily
+      quota_bucket: tavily
+      min_hits: 4
+      min_term_coverage: 0.6
+      top_k: 3
+      min_term_chars: 3
+      share: 0.5
     # Live answers are reused from disk for this long: repeating a question
     # costs no provider call.
     cache_ttl_hours: 24

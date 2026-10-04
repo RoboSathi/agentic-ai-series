@@ -1,4 +1,4 @@
-"""The async DAG scheduler: waves, bounded concurrency, failure isolation."""
+"""The async DAG scheduler: batches, bounded concurrency, failure isolation."""
 
 import asyncio
 
@@ -6,10 +6,10 @@ import pytest
 
 from agent_platform.scheduling import (
     AsyncDagScheduler,
+    BatchSummary,
     InvalidTaskGraphError,
     TaskGraph,
     TaskNode,
-    WaveSummary,
     find_cycle,
 )
 
@@ -19,9 +19,9 @@ def _graph(*edges: tuple[str, tuple[str, ...]]) -> TaskGraph:
 
 
 class TestTaskGraph:
-    def test_waves_follow_dependencies(self) -> None:
+    def test_batches_follow_dependencies(self) -> None:
         graph = _graph(("a", ()), ("b", ()), ("c", ("a", "b")), ("d", ("c",)))
-        assert graph.waves() == [["a", "b"], ["c"], ["d"]]
+        assert graph.batches() == [["a", "b"], ["c"], ["d"]]
 
     def test_a_cycle_is_refused_and_named(self) -> None:
         with pytest.raises(InvalidTaskGraphError) as raised:
@@ -55,7 +55,7 @@ class TestAsyncDagScheduler:
 
         outcomes = await AsyncDagScheduler(2).run(_graph(("a", ()), ("b", ("a",))), worker)
         assert order == ["a", "b"]
-        assert outcomes["b"].value == "B" and outcomes["b"].wave == 2
+        assert outcomes["b"].value == "B" and outcomes["b"].batch == 2
 
     async def test_concurrency_is_bounded(self) -> None:
         in_flight = 0
@@ -95,14 +95,14 @@ class TestAsyncDagScheduler:
         assert outcomes["c"].status == "blocked"
         assert outcomes["d"].status == "done"
 
-    async def test_the_caller_can_stop_between_waves(self) -> None:
+    async def test_the_caller_can_stop_between_batches(self) -> None:
         async def worker(node_id: str) -> None:
             return None
 
-        waves: list[WaveSummary] = []
+        batches: list[BatchSummary] = []
         graph = _graph(("a", ()), ("b", ("a",)))
-        outcomes = await AsyncDagScheduler(1, observer=waves.append).run(
-            graph, worker, should_continue=lambda: not waves
+        outcomes = await AsyncDagScheduler(1, observer=batches.append).run(
+            graph, worker, should_continue=lambda: not batches
         )
         assert outcomes["a"].status == "done"
         assert outcomes["b"].status == "skipped"

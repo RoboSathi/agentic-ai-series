@@ -1,7 +1,7 @@
 """The words the operator's cards and status block are written in.
 
 Every sentence a card says lives in `config.yaml` under `tui.cards`, keyed
-by card and part (`scope_gate.heading`), and is filled in here. Code decides
+by card and part (`research_kind.heading`), and is filled in here. Code decides
 *what* happened; this module is the only place that says it in English, so
 changing a card's wording is a config edit, never a code change.
 """
@@ -27,6 +27,11 @@ def describe(prefix: str, name: str) -> str:
 def title_of(identifier: str) -> str:
     """An identifier as words: `decision_support` -> `decision support`."""
     return identifier.replace("_", " ")
+
+
+def role_title(role: str) -> str:
+    """A model role as a card names it: `planner` -> `PLANNER`, so it stands out of the line."""
+    return title_of(role).upper()
 
 
 def toned(text: str, tone: str) -> Line:
