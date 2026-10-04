@@ -14,6 +14,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from agent_platform.config.environment import load_environment
 from agent_platform.config.features import FeatureSet
 from agent_platform.config.paths import resolve_path
 from agent_platform.config.yaml_config import deep_merge, load_section
@@ -1824,7 +1825,9 @@ class AppConfig(BaseSettings):
     # a `features:` block, not by calling a setter.
     features: FeatureSet = Field(default_factory=lambda: FeatureSet(tree=load_section("features")))
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # No `env_file`: `.env` is loaded into the process environment
+    # (`config/environment.py`), where every section and bare key reads it.
+    model_config = SettingsConfigDict()
 
 
 _config_instance: AppConfig | None = None
@@ -1840,6 +1843,7 @@ def get_settings() -> AppConfig:
     """
     global _config_instance
     if _config_instance is None:
+        load_environment()
         _config_instance = AppConfig()
     return _config_instance
 

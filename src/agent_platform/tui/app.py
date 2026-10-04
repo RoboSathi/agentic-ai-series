@@ -39,6 +39,7 @@ from agent_platform.host import (
     AgentHost,
     CancellableHost,
     GreetingHost,
+    HousekeepingHost,
     StatusHost,
     SubjectHost,
     resolve_host,
@@ -49,6 +50,7 @@ from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.types import StatusEvent
 from agent_platform.tui.clipboard import Osc52ClipboardService
 from agent_platform.tui.command_view import CommandView
+from agent_platform.tui.completion import TabCompleter
 from agent_platform.tui.labels import StageLabelRegistry
 from agent_platform.tui.suggest import CommandSuggester
 from agent_platform.tui.widgets import (
@@ -180,6 +182,9 @@ class AgenticTuiApp(App[None]):
         Binding("pagedown", "page_down", "Page down", priority=True),
         Binding("ctrl+u", "page_up", "Page up", priority=True, show=False),
         Binding("ctrl+d", "page_down", "Page down", priority=True, show=False),
+        # Complete a slash command; anything else keeps Tab's focus behaviour.
+        Binding("tab", "complete(1)", "Complete", priority=True, show=False),
+        Binding("shift+tab", "complete(-1)", "Complete back", priority=True, show=False),
         Binding("up", "menu_move(-1)", "Previous choice", show=False),
         Binding("down", "menu_move(1)", "Next choice", show=False),
     ]
@@ -213,6 +218,7 @@ class AgenticTuiApp(App[None]):
         self._actions = ActionBar()
         self._tokens = TokenCounterWidget()
         self._commands = CommandRegistry()
+        self._completer = TabCompleter(self._commands)
         self._view = CommandView()
         self._turn = 0
         identity = get_settings().agent
@@ -301,6 +307,23 @@ class AgenticTuiApp(App[None]):
             self._panel.note(greeting, style=palette("notice"))
         if self._status_host is not None or self._action_host is not None:
             self.set_interval(get_settings().tui.status_refresh_ms / 1000, self._refresh_status)
+        if isinstance(self._host, HousekeepingHost):
+            self.set_interval(self._host.housekeeping_interval(), self._housekeep)
+
+    def _housekeep(self) -> None:
+        """Run the host's clock-driven work, one run at a time, off the input path."""
+        self.run_worker(
+            self._run_housekeeping(), name="housekeeping", group="housekeeping", exclusive=True
+        )
+
+    async def _run_housekeeping(self) -> None:
+        if not isinstance(self._host, HousekeepingHost):
+            return
+        try:
+            for line in await self._host.housekeeping():
+                self._panel.note(line, style=palette("notice"))
+        except Exception as exc:
+            self._journal.warning("Housekeeping failed", error=str(exc))
 
     def _greeting(self) -> str:
         """The agent's own first words, when it offers them; nothing otherwise.
@@ -339,6 +362,27 @@ class AgenticTuiApp(App[None]):
 
     def action_menu_move(self, step: int) -> None:
         self._menu.move(step)
+
+    def action_complete(self, step: int) -> None:
+        """Tab: complete the slash command being typed, cycling on repeat."""
+        query = self.query_one("#query", Input)
+        completed = (
+            self._completer.complete(query.value, step)
+            if self.focused is query and not query.disabled
+            else None
+        )
+        if completed is None:
+            # Not a command (or nothing matches): Tab moves focus, as it always did.
+            if step > 0:
+                self.action_focus_next()
+            else:
+                self.action_focus_previous()
+            return
+        query.value = completed
+        query.cursor_position = len(completed)
+        choices = self._completer.candidates(completed.rstrip())
+        if len(choices) > 1:
+            self.notify("  ".join(choice.rsplit(" ", maxsplit=1)[-1] for choice in choices))
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Typing is a free-text answer: the menu steps aside."""

@@ -18,7 +18,7 @@ only one of them would be tested.
 from pydantic import BaseModel, Field
 
 from agent_platform.audit import AuditEntry, AuditLedger, NullAuditLedger
-from agent_platform.gatekeeper.types import AuthorityContext
+from agent_platform.gatekeeper.types import AuthorityContext, Standing
 from agent_platform.hallucination_protection import TrustCalibrationTracker, TrustReport
 from agent_platform.logging import get_logger, logged
 from agent_platform.observability.types import utc_now
@@ -129,7 +129,8 @@ class ReviewQueueService:
         self._queue.decide(request_id, "approved")
         # The agent escalated something the reviewer agreed with.
         self._trust.record(agent_correct=True, human_accepted=True)
-        self._record(request, reviewer, "allow", "approved by reviewer")
+        # RATIFIED: the agent had no authority for this; the reviewer did, and adopted it.
+        self._record(request, reviewer, "allow", "approved by reviewer", standing="RATIFIED")
         return ReviewOutcome(
             request_id=request_id,
             decision="approved",
@@ -215,7 +216,14 @@ class ReviewQueueService:
         """A pending request by id, or None if it is absent or decided."""
         return next((item for item in self._queue.pending() if item.id == request_id), None)
 
-    def _record(self, request: HitlRequest, reviewer: str, decision: str, rationale: str) -> None:
+    def _record(
+        self,
+        request: HitlRequest,
+        reviewer: str,
+        decision: str,
+        rationale: str,
+        standing: Standing | None = None,
+    ) -> None:
         """Audit the human decision under the reviewer's own authority.
 
         The reviewer is the actor, not the agent: the whole point of the
@@ -227,9 +235,12 @@ class ReviewQueueService:
                 trace_id=f"review-{request.id}",
                 actor=reviewer,
                 action="approve_hitl_request",
-                authority_context=AuthorityContext(
-                    actor=reviewer, granted_by="workspace"
-                ).model_dump(mode="json"),
+                authority_context={
+                    **AuthorityContext(actor=reviewer, granted_by="workspace").model_dump(
+                        mode="json"
+                    ),
+                    **({"standing": standing} if standing is not None else {}),
+                },
                 decision=decision,  # type: ignore[arg-type]
                 rationale=rationale,
             )

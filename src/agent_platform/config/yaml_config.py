@@ -35,6 +35,7 @@ from typing import Any
 
 import yaml
 
+from agent_platform.config.environment import load_environment
 from agent_platform.config.paths import resolve_path
 
 _CONFIG_DIR = Path(__file__).parent
@@ -187,6 +188,8 @@ def _overlay_files() -> list[Path]:
 
 def load_config() -> dict[str, Any]:
     """The fully merged configuration: platform, agents, run, then local."""
+    # The overlay chain is named by `AGENTIC_OVERLAYS`, which `.env` may set.
+    load_environment()
     merged = _read_yaml(_CONFIG_FILE)
     for overlay in (*_overlay_files(), *_run_overlays):
         merged = deep_merge(merged, _read_yaml(overlay))

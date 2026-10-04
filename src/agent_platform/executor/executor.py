@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 import time
+from contextvars import ContextVar
 from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel
@@ -22,6 +23,16 @@ from agent_platform.observability import StageReporter
 from agent_platform.observability.types import utc_now
 from agent_platform.resilience.idempotency.guard import IdempotencyGuard
 from agent_platform.tools.types import ToolCall, ToolResult
+
+# The idempotency key of the call being executed right now ("" for a read,
+# or outside an execution). A handler whose effect can later be undone
+# records it beside the effect, so the undo can release the key too.
+_EXECUTION_KEY: ContextVar[str] = ContextVar("execution_key", default="")
+
+
+def current_execution_key() -> str:
+    """The idempotency key the Executor is running the current call under."""
+    return _EXECUTION_KEY.get()
 
 
 @runtime_checkable
@@ -119,7 +130,11 @@ class ToolExecutorImpl:
                 return outcome
 
         async def run_handler() -> Any:
-            return await self._handler.execute(call)
+            token = _EXECUTION_KEY.set(key)
+            try:
+                return await self._handler.execute(call)
+            finally:
+                _EXECUTION_KEY.reset(token)
 
         try:
             raw = (

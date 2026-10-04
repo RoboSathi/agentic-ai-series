@@ -31,7 +31,11 @@ async def run() -> EpisodeOutput:
     )
     pool = SqliteConnectionPool(IN_MEMORY)
     audit = SqliteAuditLedger(pool)
-    gatekeeper = GatekeeperImpl(authorizer=Authorizer(), ledger=CumulativeLedger(pool), audit=audit)
+    # The ledger is on here whatever the deploying agent declares: this
+    # episode demonstrates the platform mechanism, not one agent's posture.
+    gatekeeper = GatekeeperImpl(
+        authorizer=Authorizer(), ledger=CumulativeLedger(pool, enabled=True), audit=audit
+    )
     authority = AuthorityContext(actor="agent-1", roles=["support_agent"], granted_by="user_task")
 
     for action, params in [

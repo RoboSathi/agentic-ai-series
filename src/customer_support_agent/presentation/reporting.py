@@ -122,6 +122,7 @@ def gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
     """Expose the exact proposal and deterministic checks behind the ruling."""
     fields: dict[str, Any] = {
         "decision": decision.verdict,
+        "standing": decision.standing,
         "action": display_tool_name(decision.action),
         "effect": "write" if call.side_effecting else "read",
         "reason_code": decision.reason_code,
@@ -150,7 +151,6 @@ def gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
 
 # The result keys this agent's tool cards show: what a support operator reads.
 TOOL_RESULT_KEYS = (
-    "verdict",
     "order_id",
     "amount",
     "order_status",

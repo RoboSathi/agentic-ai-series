@@ -24,10 +24,7 @@ from agent_platform.context.types import Chunk
 from agent_platform.control_loop import ToolControlLoop
 from agent_platform.durability import DurableGraphRunner, RunRegistry, SqliteCheckpointer
 from agent_platform.evals import NollmScoringCascadeImpl
-from agent_platform.executor import (
-    ToolExecutionHandler,
-    ToolExecutor,
-)
+from agent_platform.executor import ToolExecutor
 from agent_platform.gatekeeper import Gatekeeper
 from agent_platform.gatekeeper.mandate import MandateIssuer
 from agent_platform.guardrails import ResponseGuardrail
@@ -109,7 +106,6 @@ class NodeSupport:
     _registry: NamespacedToolRegistry
     _tools: SupportTools
     _executor: ToolExecutor
-    _handler: ToolExecutionHandler | None
     _security: SecuritySuite
     _working_memory: WorkingMemoryStore | None
     _long_term: MemoryFacade | None

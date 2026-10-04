@@ -74,6 +74,10 @@ class FeatureSet(BaseModel):
         Declared-only, because the caller is usually a human typing a
         feature name: silently creating `hallucinaton_guard` would report
         success and change nothing.
+
+        A parent moves its whole subtree. Setting only its `enabled` key
+        left `memory on` after `/harness off` with every store still off —
+        a parent reported on that gated nothing back in.
         """
         if path not in self.paths():
             raise KeyError(path)
@@ -110,7 +114,7 @@ def _with_value(node: Mapping[str, Any], parts: list[str], value: bool) -> dict[
     if rest:
         copied[head] = _with_value(target if isinstance(target, Mapping) else {}, rest, value)
     elif isinstance(target, Mapping):
-        copied[head] = {**target, ENABLED_KEY: value}
+        copied[head] = {**_with_every_value(target, value), ENABLED_KEY: value}
     else:
         copied[head] = value
     return copied

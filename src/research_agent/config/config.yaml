@@ -698,9 +698,9 @@ research_agent:
     quiet_budget_counters: [rounds, gap_fill_rounds]
     actions:
       SCOPING:
-        - {label: "✓ Done interviewing", command: done, variant: success}
+        - {label: "✓ Done Interviewing", command: done, variant: primary}
       RUBRIC_REVIEW:
-        - {label: "▶ Approve and run", command: approve, variant: primary}
+        - {label: "▶ Approve & Run", command: approve, variant: success}
       # RUNNING / STOPPED: the platform's run buttons (`tui.run_controls`), the same as every agent.
     phase_colors:
       SCOPING: "bold magenta"

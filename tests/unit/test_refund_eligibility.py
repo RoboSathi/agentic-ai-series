@@ -16,6 +16,7 @@ Three requirements, from a live review of the agent's replies:
 import pytest
 
 from agent_platform.persistence import SqliteConnectionPool
+from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain import Order
 from customer_support_agent.dummy_data.generate_dummy_data import refund_status_for
 from customer_support_agent.intent.router import CustomerSupportIntentRouter
@@ -89,6 +90,18 @@ class TestToolsEnforceIt:
         OrdersRepository(seeded_pool).save(_order(10052, "cancelled"))
         assert (await tools.process_refund(10052, 40.0)).success is True
 
+    async def test_the_settle_time_is_a_sentence_of_its_own(
+        self, tools: SupportTools, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        """Each sentence is its own premise, so "It settles…" proved nothing."""
+        OrdersRepository(seeded_pool).save(_order(10053, "delivered"))
+        result = await tools.process_refund(10053, 40.0)
+        settlement = get_agent_settings().settlement
+        expected = settlement.lines["settles"].format(
+            amount="$40.00", order_id=10053, minutes=settlement.window_seconds // 60
+        )
+        assert expected in result.output
+
 
 class TestRefundsAreNotVolunteered:
     def test_a_status_lookup_says_nothing_about_refunds(self, tools: SupportTools) -> None:
@@ -99,6 +112,26 @@ class TestRefundsAreNotVolunteered:
     def test_a_status_lookup_still_answers_the_question(self, tools: SupportTools) -> None:
         output = tools.get_order_status(10001)
         assert "delivered" in output.output and "32.00" in output.output
+
+    def test_an_order_in_transit_is_stated_as_a_sentence(
+        self, tools: SupportTools, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        """A bare "shipped, in transit" read to NLI as contradicting "already shipped"."""
+        in_transit = _order(10060, "shipped").model_copy(update={"current_location": "Leeds"})
+        OrdersRepository(seeded_pool).save(in_transit)
+        wording = get_agent_settings().order_sentences
+        output = tools.get_order_status(10060).output
+        expected = wording.states.shipped.format(
+            location=wording.details.location.format(value="Leeds"), due=""
+        )
+        assert output.startswith(f"Order 10060 {expected}")
+
+    def test_the_subject_names_what_was_bought(
+        self, tools: SupportTools, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        bought = _order(10061, "pending").model_copy(update={"product_name": "Desk Lamp"})
+        OrdersRepository(seeded_pool).save(bought)
+        assert tools.get_order_status(10061).output.startswith("Order 10061 (Desk Lamp) ")
 
     def test_a_refund_request_does_unlock_it(self) -> None:
         assert "get_refund_status" in CustomerSupportIntentRouter().permitted_tools(
@@ -138,3 +171,24 @@ class TestDummyDataObeysTheRule:
             "WHERE order_status IN ('pending', 'shipped') AND refund_status != 'none'"
         )
         assert row is not None and row["n"] == 0
+
+
+class TestCarrierNotes:
+    """Courier notes are third-party text; one is seeded to instruct the agent (the VOID demo)."""
+
+    def test_the_demo_customer_has_a_note_naming_another_of_their_refundable_orders(
+        self,
+    ) -> None:
+        from customer_support_agent.config import get_agent_settings
+        from customer_support_agent.dummy_data.generate_dummy_data import (
+            generate_seed_sql,
+            generator_spec,
+        )
+
+        seed = generate_seed_sql()
+        demo = get_agent_settings().demo_user_code
+        assert f"'{demo}'" in seed
+        instruction = generator_spec().carrier_notes.instruction.split("{order_id}")[0]
+        lines = [line for line in seed.splitlines() if instruction.replace("'", "''") in line]
+        assert len(lines) == 1, "exactly one order carries the instructing note"
+        assert "'delivered'" in lines[0] and "'none'" in lines[0]

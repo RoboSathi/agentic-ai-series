@@ -131,12 +131,17 @@ class CancelledMessages(BaseModel):
     none: str
 
 
-class RefundAuthorityMessages(BaseModel):
-    """What `check_refund_authority` reports (`{order_id}`, `{contact_email}`)."""
+class SettlementSettings(BaseModel):
+    """How long an issued refund stays voidable, and how the console reports it."""
 
-    contact_email: str
-    within_authority: str
-    needs_review: str
+    # Seconds from issue until a refund settles; until then `/void` reverses it.
+    window_seconds: int = Field(gt=0)
+    # How often the console settles refunds whose window has closed.
+    sweep_interval_seconds: float = Field(gt=0)
+    # `/void` and `/settle` wording ({order_id}, {amount}, {settles_at}, {count}).
+    titles: dict[str, str]
+    lines: dict[str, str]
+    headers: list[str]
 
 
 class CsaMessages(BaseModel):
@@ -145,8 +150,6 @@ class CsaMessages(BaseModel):
     auth: AuthMessages
     # A turn the operator cancelled: where it stopped and how far it got.
     cancelled: CancelledMessages
-    # The refund-authority verdicts, and where a refund above the limit is sent.
-    refund_authority: RefundAuthorityMessages
 
 
 class OrderTableSettings(BaseModel):
@@ -161,6 +164,33 @@ class OrderTableSettings(BaseModel):
     # What the refund column says when none was requested (list, and one order's detail).
     no_refund: str
     no_refund_detail: str
+
+
+class OrderStateSentences(BaseModel):
+    """What follows an order's subject, one per order status."""
+
+    pending: str
+    shipped: str
+    delivered: str
+    cancelled: str
+
+
+class OrderDetailPhrases(BaseModel):
+    """The optional phrases a state sentence takes, each around one `{value}`."""
+
+    location: str
+    due: str
+    delivered: str
+
+
+class OrderSentenceSettings(BaseModel):
+    """An order as one sentence a person — and the grounding check — can read."""
+
+    subject: str
+    subject_with_item: str
+    placed: str
+    states: OrderStateSentences
+    details: OrderDetailPhrases
 
 
 class ReviewOutputSettings(BaseModel):
@@ -225,12 +255,15 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     messages: CsaMessages
     console: ConsoleSettings
     order_table: OrderTableSettings
+    order_sentences: OrderSentenceSettings
     demo_user_code: str
     policy_path: str
     grounding_facts: dict[str, str]
     # Who the console acts as when it approves or denies a queued refund.
     console_reviewer: str
     review_output: ReviewOutputSettings
+    # An issued refund's void window, before it settles (VOIDABLE).
+    settlement: SettlementSettings
     evals: CsaEvalSettings
     # What `make dummy-data` generates (counts, seed, catalogue, weights).
     dummy_data_generator_path: str

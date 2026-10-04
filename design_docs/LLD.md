@@ -671,6 +671,13 @@ void/voidable/ratifiable) are *not* reimplemented here, they're direct
 references to `gatekeeper` and `evals` per the "strongest layer was never
 a detector" thesis.
 
+**Void / voidable / ratifiable (built 2026-10-04).** It is the Gatekeeper's
+*standing* on each decision (`gatekeeper.types.Standing`): VOID when denied —
+nothing runs or is queued; RATIFIABLE when escalated — a person may adopt it
+(recorded RATIFIED); VOIDABLE when allowed and the tool declares `voidable` —
+for this agent, a refund is `issued` and can be voided until it settles
+(`RefundSettlement`); VALID otherwise; UNGOVERNED with the Gatekeeper withheld.
+
 ### 12.4 `security/content_moderation`
 
 **Interfaces** — `ContentModerator.moderate(text) -> ModerationVerdict`,

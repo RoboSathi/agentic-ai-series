@@ -181,6 +181,9 @@ class TestCommandView:
         assert "│" not in text
 
 
+STORES = ("working", "episodic", "semantic", "procedural")
+
+
 class TestHarnessCommand:
     """E01's switch: the same model, with and without what surrounds it.
 
@@ -227,6 +230,32 @@ class TestHarnessCommand:
         set_active_features(get_settings().features)
         await HarnessCommand().run(["memory", "off"])
         assert active_features().is_on("memory.semantic") is False
+
+    async def test_switching_a_parent_on_restores_its_children(
+        self, restore_settings: None
+    ) -> None:
+        set_active_features(get_settings().features)
+        await HarnessCommand().run(["off"])
+        await HarnessCommand().run(["memory", "on"])
+        features = active_features()
+        assert all(features.is_on(f"memory.{store}") for store in STORES)
+
+    async def test_a_sub_feature_can_be_named_in_words(self, restore_settings: None) -> None:
+        """`/harness memory working off` is the same as `memory.working off`."""
+        set_active_features(get_settings().features)
+        await HarnessCommand().run(["memory", "working", "off"])
+        features = active_features()
+        assert features.is_on("memory.working") is False
+        assert features.is_on("memory.episodic") is True
+
+    def test_after_a_parent_its_children_are_offered(self, restore_settings: None) -> None:
+        set_active_features(get_settings().features)
+        offered = HarnessCommand().argument_completions(["memory"])
+        assert set(STORES) <= set(offered) and {"on", "off"} <= set(offered)
+
+    def test_after_a_leaf_only_the_switch_is_offered(self, restore_settings: None) -> None:
+        set_active_features(get_settings().features)
+        assert HarnessCommand().argument_completions(["pii"]) == ["on", "off"]
 
     async def test_it_never_reads_from_disk(self, restore_settings: None) -> None:
         """A hot reload. `on` grants everything rather than restoring a file,

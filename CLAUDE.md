@@ -120,8 +120,20 @@ building anything non-trivial.
 
   **PRD G1 is retired as written.** The Gatekeeper may be withheld, and
   then a tool call executes with no authorization, budget or surface
-  policy. The audit entry is still written on that path, and no budget is
-  committed.
+  policy — but still through the Executor (idempotency, deadline). The
+  audit entry is still written on that path, with standing UNGOVERNED, and
+  no budget is committed.
+
+  **The Gatekeeper decides authority only.** A fact about the *record*
+  (the order exists, is the customer's, is refundable, the amount is its
+  full total) belongs to the tool, checked once, with a conditional write.
+  A fact about the *actor or the instruction* (offered, RBAC, mandate, the
+  per-action limit) belongs to the Gatekeeper, which reads no database per
+  call. Every decision names a standing: VOID (denied, nothing queued),
+  RATIFIABLE (escalated to a person; approval is RATIFIED), VOIDABLE
+  (allowed, and undoable until it settles — a refund is `issued`, then
+  settles; `/void`, `/settle`), VALID. Never log or show a control state no
+  code path produces or that cannot change a verdict.
 
 ## Known failure patterns — don't repeat these
 

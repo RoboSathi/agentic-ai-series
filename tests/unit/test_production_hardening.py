@@ -92,7 +92,8 @@ class TestTheEscalationPathDrains:
         request_id = review.pending()[0].id
         outcome = await review.approve(request_id, reviewer="supervisor-1")  # type: ignore[arg-type]
         assert outcome.refund_issued is True
-        assert OrdersRepository(seeded_pool).get(10002).refund_status == "completed"  # type: ignore[union-attr]
+        # Ratified, it runs as any refund does: issued, settling later.
+        assert OrdersRepository(seeded_pool).get(10002).refund_status == "issued"  # type: ignore[union-attr]
 
     def test_a_queued_refund_can_be_denied_without_paying(
         self, tools: SupportTools, review: ReviewQueueService, seeded_pool: SqliteConnectionPool

@@ -65,15 +65,23 @@ class CommandRegistry:
         an order id or a status is a value, and guessing one would be
         guessing at intent. A feature path is different — the set is
         fixed and the operator is choosing from it, which is the same
-        kind of completion as the command word itself.
+        kind of completion as the command word itself. So is a set the
+        system holds right now, such as the refunds still voidable.
+
+        The command is told the words already typed, so what it offers
+        can depend on position: `/harness <path> <on|off>`.
         """
-        head, _, rest = line.strip().lstrip(PREFIX).partition(" ")
+        # Leading space only: a trailing one is how the operator says "next word".
+        head, _, rest = line.lstrip(" ").lstrip(PREFIX).partition(" ")
         command = self._commands.get(head.casefold())
         offered = getattr(command, "argument_completions", None)
         if offered is None:
             return []
-        stem = rest.rsplit(" ", maxsplit=1)[-1].casefold()
-        return [value for value in offered() if value.startswith(stem)]
+        *typed, stem = rest.split(" ")
+        stem = stem.casefold()
+        return [
+            value for value in offered([word for word in typed if word]) if value.startswith(stem)
+        ]
 
     async def dispatch(self, line: str) -> CommandResult:
         """Run the command a line names.

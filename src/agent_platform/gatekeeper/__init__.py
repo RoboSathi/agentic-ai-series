@@ -17,6 +17,7 @@ from agent_platform.gatekeeper.types import (
     CheckStatus,
     LedgerEntry,
     LedgerState,
+    Standing,
     Verdict,
 )
 
@@ -38,6 +39,7 @@ __all__ = [
     "NullTier2Advisor",
     "RoleAuthorizer",
     "SemanticTier2Advisor",
+    "Standing",
     "Tier2Advisor",
     "Verdict",
 ]

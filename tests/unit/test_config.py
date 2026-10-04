@@ -3,6 +3,8 @@
 import os
 from pathlib import Path
 
+import pytest
+
 from agent_platform.config import (
     clear_overlays,
     config_sources,
@@ -10,6 +12,7 @@ from agent_platform.config import (
     reload_settings,
     use_overlay,
 )
+from agent_platform.config.environment import apply_environment_file
 from agent_platform.config.paths import REPO_ROOT, resolve_path
 from agent_platform.config.toggles import ConfigFeatureToggle
 
@@ -29,6 +32,50 @@ class TestPaths:
 
     def test_absolute_paths_pass_through(self, tmp_path: Path) -> None:
         assert resolve_path(str(tmp_path)) == tmp_path
+
+
+class TestEnvironmentFile:
+    """`.env` completes the process environment; it is not a second config schema.
+
+    Every consumer of a bare key (`LANGGRAPH_AES_KEY`, `PII_VAULT_KEY`, a
+    provider key) reads `os.environ`, and every section reads its own
+    `SECTION__FIELD`. `AppConfig` parsing the file itself made any such
+    line an "extra input" and stopped the console at start-up.
+    """
+
+    _KEY = "AGENTIC_TEST_ONLY_KEY"
+
+    def test_a_bare_key_reaches_the_environment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(self._KEY, raising=False)
+        env = tmp_path / ".env"
+        env.write_text(f"{self._KEY}=from-file\n", encoding="utf-8")
+        apply_environment_file(env)
+        assert os.environ[self._KEY] == "from-file"
+        monkeypatch.delenv(self._KEY)
+
+    def test_an_exported_variable_wins_over_the_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(self._KEY, "exported")
+        env = tmp_path / ".env"
+        env.write_text(f"{self._KEY}=from-file\n", encoding="utf-8")
+        apply_environment_file(env)
+        assert os.environ[self._KEY] == "exported"
+
+    def test_a_missing_file_changes_nothing(self, tmp_path: Path) -> None:
+        before = dict(os.environ)
+        apply_environment_file(tmp_path / "absent.env")
+        assert dict(os.environ) == before
+
+    def test_unknown_lines_in_a_working_directory_env_do_not_stop_start_up(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, restore_settings: None
+    ) -> None:
+        """The reported crash: `make gen-key >> .env`, then `make agent`."""
+        (tmp_path / ".env").write_text("PII_VAULT_KEY=abc\nLANGGRAPH_AES_KEY=def\n")
+        monkeypatch.chdir(tmp_path)
+        assert reload_settings() is get_settings()
 
 
 class TestSettings:

@@ -30,11 +30,13 @@ from customer_support_agent.presentation.orders import (
     REFUND_STATUS_LINE,
     customer_orders,
     describe_orders,
+    order_state_sentence,
 )
 from customer_support_agent.resilience.cancellation_saga import CancellationSaga
 from customer_support_agent.resilience.refund_saga import RefundSaga
 
 _NOT_FOUND = "No order found with id {order_id}"
+_CARRIER_NOTE = '. The carrier\'s delivery note reads: "{note}"'
 _NOT_AUTHENTICATED = "No authenticated customer; nothing can be read or changed"
 # How a tool states an order's refund state. The hallucination guard reads
 # this field to decide whether a "your refund is done" reply is true, so a
@@ -55,9 +57,20 @@ _REFUND_STATE_SENTENCES: dict[str, str] = {
     "none": "No refund has been requested for order {order_id}",
     "pending_review": _REVIEW_PENDING,
     "approved": "The refund for order {order_id} has been approved",
+    "issued": (
+        "The refund of {amount} for order {order_id} has been issued and is waiting to settle"
+    ),
     "completed": "The refund of {amount} for order {order_id} has been completed",
     "denied": "The refund request for order {order_id} was declined by a reviewer",
 }
+# What a refund that just ran left behind: issued, settling at the end of
+# its window. The conditional write that issued it is what makes this true;
+# it is not read back.
+_ISSUED_STATUS = "issued"
+# The `settlement.lines` entry that tells the customer when it settles: a
+# sentence naming its refund, since each sentence is checked on its own.
+_SETTLES = "settles"
+_SECONDS_PER_MINUTE = 60
 NAMESPACE = "support"
 # The harness-only referral writes (see `SupportTools.harness_actions`).
 QUEUE_FOR_APPROVAL = "queue_for_approval"
@@ -194,19 +207,6 @@ class SupportTools:
                 side_effecting=False,
             ),
             ToolDefinition(
-                name="check_refund_authority",
-                namespace=NAMESPACE,
-                description=(
-                    "Check whether you may refund an order yourself. Call it before process_refund."
-                ),
-                args_schema=OrderLookupArgs,
-                handler=self.check_refund_authority,
-                required_permission="read_orders",
-                surface="editable",
-                reversible=True,
-                side_effecting=False,
-            ),
-            ToolDefinition(
                 name="process_refund",
                 namespace=NAMESPACE,
                 description=(
@@ -219,6 +219,8 @@ class SupportTools:
                 surface="editable",
                 reversible=False,
                 side_effecting=True,
+                # Issued, not settled: a person can void it until it settles.
+                voidable=True,
                 requires_authority_rank=5,
             ),
             ToolDefinition(
@@ -267,20 +269,17 @@ class SupportTools:
         order = self._owned_order(order_id)
         if order is None:
             return ToolResult(success=False, error=_NOT_FOUND.format(order_id=order_id))
-        parcel = (
-            f", {order.whereabouts}" if order.is_trackable or order.estimated_delivery_date else ""
-        )
         tracking = (
             f", tracking {order.carrier} {order.tracking_number}"
             if order.tracking_number and order.carrier
             else ""
         )
+        # The carrier's own words, quoted and attributed: third-party text the
+        # customer may ask about, never an instruction to this agent.
+        note = _CARRIER_NOTE.format(note=order.carrier_note) if order.carrier_note else ""
         return ToolResult(
             success=True,
-            output=(
-                f"Order {order.order_id}: {order.description}, {order.order_status}"
-                f"{parcel}{tracking}, total {order.amount}"
-            ),
+            output=f"{order_state_sentence(order)}{tracking}, total {order.amount}{note}",
             data={
                 **order.model_dump(exclude={"amount", "unit_price"}),
                 "amount": str(order.amount),
@@ -301,36 +300,6 @@ class SupportTools:
                 + _REFUND_STATUS.format(order_id=order.order_id, status=order.refund_status)
             ),
             data={"refund_status": order.refund_status, "pending_review": pending is not None},
-        )
-
-    def check_refund_authority(self, order_id: int) -> ToolResult:
-        """Whether this agent may refund the order's full total without a person.
-
-        A verdict, not the limit: the refund limit lives only in the policy
-        row, and the model is never shown it. Refunds are for the full total,
-        so the order's amount is the amount asked about.
-        """
-        customer_id = current_customer_id()
-        if customer_id is None:
-            return ToolResult(success=False, error=_NOT_AUTHENTICATED)
-        validation = self._refund_policy.validate(order_id, customer_id)
-        if not validation.allowed or validation.order is None:
-            return ToolResult(success=False, error=validation.reason)
-        order = validation.order
-        words = get_agent_settings().messages.refund_authority
-        needs_review = self._refund_policy.needs_review(order.amount)
-        verdict = "needs_review" if needs_review else "within_authority"
-        message = words.needs_review if needs_review else words.within_authority
-        # The status line lets the guard's state check refute "sent for
-        # review" when the verdict sent nothing anywhere.
-        return ToolResult(
-            success=True,
-            output=(
-                message.format(order_id=order_id, contact_email=words.contact_email)
-                + " "
-                + _REFUND_STATUS.format(order_id=order_id, status=order.refund_status)
-            ),
-            data={"verdict": verdict, "refund_status": order.refund_status},
         )
 
     def list_orders(self, order_status: OrderStatus | None = None) -> ToolResult:
@@ -383,7 +352,7 @@ class SupportTools:
     def _settled(
         self, order_id: int, validation: RefundValidationResult, result: SagaResult, verb: str
     ) -> ToolResult:
-        """Report a money-moving saga: the rollback on failure, the read-back state on success."""
+        """Report a money-moving saga: the rollback on failure, the issued refund on success."""
         if not result.succeeded:
             return ToolResult(
                 success=False,
@@ -395,19 +364,24 @@ class SupportTools:
             )
         refund = validation.amount
         assert refund is not None
-        status = self._settled_status(order_id)
+        settlement = get_agent_settings().settlement
+        settles = settlement.lines[_SETTLES].format(
+            amount=refund,
+            order_id=order_id,
+            minutes=max(1, settlement.window_seconds // _SECONDS_PER_MINUTE),
+        )
         return ToolResult(
             success=True,
             output=(
-                f"{verb} {refund} for order {order_id}. "
-                + _REFUND_STATUS.format(order_id=order_id, status=status)
+                f"{verb} order {order_id}. {settles}. "
+                + _REFUND_STATUS.format(order_id=order_id, status=_ISSUED_STATUS)
             ),
             data={
                 "order_id": order_id,
                 "amount": str(refund),
                 "amount_cents": refund.cents,
                 "steps": result.completed,
-                "refund_status": status,
+                "refund_status": _ISSUED_STATUS,
             },
         )
 

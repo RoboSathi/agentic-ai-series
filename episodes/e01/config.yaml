@@ -49,9 +49,8 @@ features:
 # Cumulative budgets across a window (E12) and surface classes (E12) are
 # each their own episode and are not switched on yet. The Sheridan levels
 # behind this check get their full treatment in E03.
+# (The cumulative ledger is already off: the agent's own config withholds it.)
 gatekeeper:
-  ledger:
-    enabled: false
   surface_policy:
     enabled: false
 

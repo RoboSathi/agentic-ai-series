@@ -108,6 +108,7 @@ from customer_support_agent.persistence.schema import ensure_schema
 from customer_support_agent.presentation.orders import order_sentence
 from customer_support_agent.resilience.cancellation_saga import CancellationSaga
 from customer_support_agent.resilience.refund_saga import RefundSaga
+from customer_support_agent.resilience.refund_settlement import RefundSettlement
 from customer_support_agent.review.queue import ReviewQueueService
 from customer_support_agent.review.referral import ReplyReferral, ReviewReferral
 from customer_support_agent.security.authentication import CustomerAuthenticator
@@ -306,13 +307,7 @@ def build_agent(
         agent_id=agent_id,
         enabled=settings.resilience.dead_letter_queue.enabled,
     )
-    saga = RefundSaga(
-        orders,
-        refunds,
-        idempotency=idempotency,
-        refund_policy=refund_policy,
-        saga=CompensatingSaga(),
-    )
+    saga = RefundSaga(orders, refunds, idempotency=idempotency, saga=CompensatingSaga())
     cancellation = CancellationSaga(orders, saga, idempotency=idempotency, saga=CompensatingSaga())
     tools = SupportTools(
         orders,
@@ -412,9 +407,9 @@ def build_agent(
     )
 
     # Withholding the Gatekeeper is the sharpest demonstration in the set:
-    # the same refund that was escalated a moment ago simply happens. The
-    # audit entry is still written on that path, so the trail records an
-    # ungoverned execution rather than recording nothing at all.
+    # the same refund that was escalated a moment ago simply happens. Only
+    # the authority decision goes: the call still runs through the Executor
+    # (idempotency, deadline, audit), and its audit row reads UNGOVERNED.
     governed = (
         gatekeeper
         or GatekeeperImpl(
@@ -424,9 +419,7 @@ def build_agent(
                 platform_store, agent_id, agent_policy, settings.gatekeeper.ledger.enabled
             ),
             audit=ledger,
-            business_rules=CustomerSupportBusinessRules(
-                orders, hitl, agent_policy, refund_policy=refund_policy
-            ),
+            business_rules=CustomerSupportBusinessRules(agent_policy),
         )
         if features.is_on("gatekeeper")
         else None
@@ -448,11 +441,6 @@ def build_agent(
             idempotency=idempotency,
             reporter=reporter,
         ),
-        # The same adapter, unwrapped. With the Gatekeeper withheld the
-        # graph calls this directly, so there is no idempotency key and no
-        # deadline — which is precisely what the execution boundary was
-        # providing, shown by its absence.
-        handler=tool_handler,
         dead_letter_queue=dead_letter_queue,
         # Each screening detector is wired only if this agent declared
         # it. Absent means the stage does not run and has nothing to
@@ -586,6 +574,28 @@ def build_review_service(
             store=observability_store,
             agent_id=get_settings().agent.id,
         ),
+    )
+
+
+def build_settlement_service(
+    pool: SqliteConnectionPool | None = None, audit: AuditLedger | None = None
+) -> RefundSettlement:
+    """Voiding and settling issued refunds (`/void`, `/settle`, the console's sweep).
+
+    The operator's side of a VOIDABLE refund, built apart from the agent
+    like the review queue: the agent issues refunds and has no route to
+    void or settle one. Its idempotency guard is the agent's own, so a void
+    can release the records the refund was made under.
+    """
+    settings = get_settings()
+    connection = pool or SqliteConnectionPool(get_agent_settings().resolved_db_path)
+    platform_store = SqlitePlatformStore(connection, agent_id=settings.agent.id)
+    observability_store = DuckDbObservabilityStore() if settings.audit.enabled else None
+    return RefundSettlement(
+        OrdersRepository(connection),
+        RefundLedgerRepository(connection),
+        idempotency=SqliteIdempotencyGuard(platform_store),
+        audit=audit or create_audit_ledger(store=observability_store, agent_id=settings.agent.id),
     )
 
 

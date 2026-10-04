@@ -17,6 +17,7 @@ from typing import Any, Protocol
 
 from agent_platform.evals.contracts import GoldenCase, Severity, Transcript
 from agent_platform.primitives.money import Money
+from customer_support_agent.domain.models import PAID_REFUND_STATUSES
 from customer_support_agent.evals.dataset.schema import CsaExpectation, SideEffectClass
 from customer_support_agent.evals.fixture import FixtureFacts, FixtureUser
 
@@ -187,7 +188,7 @@ class NoDoubleRefund:
             order
             for order in orders
             if (fact := ctx.facts.orders.get(order)) is not None
-            and fact.refund_status == _COMPLETED
+            and fact.refund_status in PAID_REFUND_STATUSES
         ]
         bad = repeated + already
         return Verdict(not bad, f"refunded more than once: {bad}" if bad else "at most once")

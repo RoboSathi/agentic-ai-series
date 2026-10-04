@@ -9,6 +9,7 @@ from customer_support_agent.persistence.repositories import (
     OrdersRepository,
     RefundLedgerRepository,
     UsersRepository,
+    order_turn_scope,
 )
 from customer_support_agent.persistence.schema import ensure_schema
 
@@ -18,4 +19,5 @@ __all__ = [
     "RefundLedgerRepository",
     "UsersRepository",
     "ensure_schema",
+    "order_turn_scope",
 ]

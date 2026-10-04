@@ -65,6 +65,7 @@ FIELD_PRIORITY = (
     "messages",
     "response",
     "decision",
+    "standing",
     "action",
     "effect",
     "qualified_action",
@@ -727,12 +728,16 @@ class StageEventWidget(Collapsible):
 
         if stage == "gatekeeper_evaluation":
             verdict = fields.get("decision") or fields.get("verdict")
+            standing = fields.get("standing")
             action = fields.get("action")
             subject = _subject_part(fields)
             amount = _first_present(fields, AMOUNT_FIELDS)
             parts = []
             if verdict:
                 parts.append(str(verdict).upper())
+            # What the principal may do about it: VOID, RATIFIABLE, VOIDABLE…
+            if standing:
+                parts.append(str(standing))
             if action:
                 parts.append(self._labels.tool_label(str(action)))
             if subject:

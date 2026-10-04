@@ -57,10 +57,7 @@ from agent_platform.durability import (
 )
 from agent_platform.durability.stop_report import stop_report
 from agent_platform.evals import NollmScoringCascadeImpl
-from agent_platform.executor import (
-    ToolExecutionHandler,
-    ToolExecutor,
-)
+from agent_platform.executor import ToolExecutor
 from agent_platform.gatekeeper import Gatekeeper
 from agent_platform.gatekeeper.mandate import MandateIssuer
 from agent_platform.guardrails import ResponseGuardrail
@@ -113,7 +110,7 @@ from customer_support_agent.graph.nodes.screening import ScreeningNodes
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.intent.router import CustomerSupportIntentRouter, Intent
 from customer_support_agent.observability.accounting import TurnAccountant, TurnOutcome
-from customer_support_agent.persistence.repositories import OrdersRepository
+from customer_support_agent.persistence.repositories import OrdersRepository, order_turn_scope
 from customer_support_agent.presentation.orders import (
     OrderMenu,
 )
@@ -172,7 +169,6 @@ class CustomerSupportAgent(
         agent_policy: AgentPolicy | None = None,
         intent_router: CustomerSupportIntentRouter | None = None,
         features: FeatureSet | None = None,
-        handler: ToolExecutionHandler | None = None,
         audit: AuditLedger | None = None,
         verifier: EffectVerifier | None = None,
         mandate_issuer: MandateIssuer | None = None,
@@ -197,9 +193,6 @@ class CustomerSupportAgent(
         self._registry = registry
         self._tools = tools
         self._executor = executor
-        # The raw domain adapter, used only where the governed execution
-        # boundary has been withheld. See `_execute_ungoverned`.
-        self._handler = handler
         self._security = security
         self._working_memory = working_memory
         self._memory_event_sink = memory_event_sink
@@ -359,7 +352,8 @@ class CustomerSupportAgent(
         customer = customer or self._sessions.get(session_id) or current_customer()
         # One turn, one trace: every line any subsystem logs for this turn
         # carries it, with the agent, the session and the caller's channel.
-        with bound_customer(customer), self._turn_log_context(session_id):
+        # And one read of each order: every stage of the turn shares it.
+        with bound_customer(customer), self._turn_log_context(session_id), order_turn_scope():
             return await self._handle_bound(query, session_id, customer)
 
     async def _handle_bound(

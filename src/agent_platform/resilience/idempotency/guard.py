@@ -40,6 +40,8 @@ class IdempotencyGuard(Protocol):
 
     def remember(self, key: str, result: Any) -> None: ...
 
+    def forget(self, key: str) -> None: ...
+
 
 class SqliteIdempotencyGuard:
     """Durable at-most-once execution scoped to one agent."""
@@ -95,6 +97,18 @@ class SqliteIdempotencyGuard:
     def remember(self, key: str, result: Any) -> None:
         """Record an outcome for a key the caller executed itself."""
         self._record(key, result)
+
+    def forget(self, key: str) -> None:
+        """Release a key whose operation was undone, so a new request runs rather than replays.
+
+        A remembered result answers "this was already done". Once the effect
+        has been reversed — a payment voided before it settled — that answer
+        is false, and the next identical request is a new one.
+        """
+        self._store.execute(
+            "DELETE FROM platform_idempotency_records WHERE agent_id = ? AND key = ?",
+            (self._agent_id, key),
+        )
 
     def _record(self, key: str, result: Any) -> None:
         """Persist the outcome so a replay can return it verbatim."""

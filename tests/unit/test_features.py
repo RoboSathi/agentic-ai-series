@@ -77,6 +77,19 @@ class TestOverride:
         flipped = a_set().with_override("context", True)
         assert flipped.is_on("context") and flipped.is_on("context.rerank")
 
+    def test_setting_a_parent_moves_its_whole_subtree(self) -> None:
+        """`/harness off` then `/harness memory on` must give back every store."""
+        restored = a_set().with_all(False).with_override("memory", True)
+        assert all(restored.is_on(path) for path in ("memory.working", "memory.episodic"))
+
+    def test_a_parent_switched_back_on_returns_every_child(self) -> None:
+        withheld = a_set().with_override("memory", False).with_override("memory", True)
+        assert withheld.is_on("memory.episodic")
+
+    def test_setting_one_child_leaves_its_siblings_alone(self) -> None:
+        moved = a_set().with_all(True).with_override("memory.working", False)
+        assert not moved.is_on("memory.working") and moved.is_on("memory.episodic")
+
     def test_the_original_is_untouched(self) -> None:
         """Handing the same posture to several collaborators has to be safe."""
         original = a_set()

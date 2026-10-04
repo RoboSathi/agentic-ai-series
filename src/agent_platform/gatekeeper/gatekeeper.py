@@ -1,9 +1,11 @@
 """Deterministic admission control immediately before side effects.
 
-The Gatekeeper does not choose an automation level. That is a design-time
-property of the graph. It verifies an exact proposed action against trusted
-agent authority, trusted tool metadata, and agent-owned deterministic business
-rules, then returns ALLOW, DENY, or ESCALATE.
+The Gatekeeper decides one thing: whether the agent has *authority* to run
+the exact call the model proposed. It does not ask whether the action is
+correct for the record (the tool does) or whether the input is safe
+(screening does). It reads trusted agent policy, trusted tool metadata and
+the agent's own authority rules, returns ALLOW, DENY or ESCALATE, and names
+the action's standing: VOID, RATIFIABLE, VOIDABLE or VALID.
 """
 
 from typing import Protocol, runtime_checkable
@@ -103,6 +105,10 @@ class GatekeeperImpl:
         failure: _Failure = None
 
         for check_name in self._CHECK_ORDER:
+            # A deployment without cumulative accounting has no such check
+            # to report, not a check that ran and was skipped every time.
+            if check_name == "cumulative" and not self._ledger.enabled:
+                continue
             if failure is not None:
                 checks.append(self._skipped(check_name))
                 continue
@@ -133,6 +139,9 @@ class GatekeeperImpl:
                 reason_code="GATEKEEPER_ALLOW",
                 question="complete",
                 checks=checks,
+                # Allowed, and still undoable for a while: the principal keeps
+                # the right to void it until its window closes.
+                standing="VOIDABLE" if call.voidable else "VALID",
             )
         else:
             question, verdict, reason_code, reason = failure
@@ -155,6 +164,7 @@ class GatekeeperImpl:
             action=call.action,
             actor=context.actor,
             verdict=decision.verdict,
+            standing=decision.standing,
             reason_code=decision.reason_code,
             question=decision.question,
             reason=decision.reason,
@@ -484,6 +494,7 @@ class GatekeeperImpl:
                     "policy_role": self._policy.role,
                     "policy_authority_rank": self._policy.authority_rank,
                     "policy_updated_at": self._policy.updated_at,
+                    "standing": decision.standing,
                 },
                 model_version=model,
                 decision=decision.verdict,

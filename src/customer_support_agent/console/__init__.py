@@ -24,7 +24,7 @@ from agent_platform.logging import get_logger
 from agent_platform.memory.semantic.rag import KnowledgeBase
 from agent_platform.observability import StageReporter
 from customer_support_agent.config import get_agent_settings
-from customer_support_agent.console.commands import QueueCommand
+from customer_support_agent.console.commands import QueueCommand, SettleCommand, VoidCommand
 from customer_support_agent.intent.router import load_intent_classifier
 
 # Stage keys only this agent emits. The platform labels its own stages
@@ -134,6 +134,8 @@ class CustomerSupportHost:
 
         return [
             QueueCommand(agent=lambda: self.agent),
+            VoidCommand(),
+            SettleCommand(),
             CancelCommand(lambda: self.agent),
             KnowledgeBaseCommand(lambda: self.knowledge_base),
             DreamCommand(build_dream_service),
@@ -141,6 +143,30 @@ class CustomerSupportHost:
 
     def stage_labels(self) -> Mapping[str, str]:
         return _STAGE_LABELS
+
+    # -- settlement: issued refunds settle when their void window closes -----------------
+
+    def housekeeping_interval(self) -> float:
+        return get_agent_settings().settlement.sweep_interval_seconds
+
+    async def housekeeping(self) -> Sequence[str]:
+        """Settle every issued refund whose void window has closed; one line for each."""
+        settled = await self._settlement().settle_due(get_settings().agent.id)
+        words = get_agent_settings().settlement.lines["settled"]
+        return [
+            words.format(order_id=outcome.order_id, amount=outcome.amount)
+            for outcome in settled
+            if outcome.state == "settled"
+        ]
+
+    def _settlement(self) -> Any:
+        """The settlement service, built once: the sweep runs every few seconds."""
+        service = getattr(self, "_settlement_service", None)
+        if service is None:
+            from customer_support_agent.graph.builder import build_settlement_service
+
+            service = self._settlement_service = build_settlement_service()
+        return service
 
     @staticmethod
     def _synced_knowledge_base() -> KnowledgeBase | None:

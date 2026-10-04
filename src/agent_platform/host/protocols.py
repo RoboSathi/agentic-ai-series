@@ -161,3 +161,19 @@ __all__ = [
     "StatusHost",
     "SubjectHost",
 ]
+
+
+@runtime_checkable
+class HousekeepingHost(Protocol):
+    """An agent with back-office work that falls due on a clock, not on a message.
+
+    The console calls `housekeeping` every `housekeeping_interval()` seconds,
+    one call at a time, and notes each line it returns in the feed. The
+    platform does not know what the work is (settling refunds whose void
+    window has closed, for one agent); only that it must not wait for a
+    customer to say something.
+    """
+
+    def housekeeping_interval(self) -> float: ...
+
+    async def housekeeping(self) -> Sequence[str]: ...
