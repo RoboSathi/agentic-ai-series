@@ -68,12 +68,14 @@ from customer_support_agent.domain.order_reference import (
     OrderReferenceResolver,
 )
 from customer_support_agent.gatekeeper.business_rules import REFUND_ACTION_CLASS
+from customer_support_agent.graph.loop_decision import duplicate_suppressed
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.intent.router import CustomerSupportIntentRouter, Intent
 from customer_support_agent.observability.accounting import TurnAccountant
 from customer_support_agent.persistence.repositories import OrdersRepository
 from customer_support_agent.presentation.orders import (
     OrderMenu,
+    order_record,
 )
 from customer_support_agent.prompts.policy import policy_text
 from customer_support_agent.prompts.system_prompt import (
@@ -285,7 +287,32 @@ class NodeSupport:
         referral did — queued it, and left the refund pending — not as a
         refusal, which NLI reads as contradicting "your request is in".
         """
-        return [text for text, _, _ in self._observations(state)]
+        record = self._order_record(state)
+        return [
+            *([record.content] if record is not None else []),
+            *(text for text, _, _ in self._observations(state)),
+        ]
+
+    def _order_record(self, state: AgentState) -> Chunk | None:
+        """The order under discussion as the database holds it now, if one is settled.
+
+        The model is shown this order in its context window; the reply it
+        writes from it is checked against the same row, read again here
+        rather than taken back out of the window. Only that one order: a
+        refund or cancellation is never about any other.
+        """
+        order_id = state.metadata.get(ORDER_UNDER_DISCUSSION)
+        if isinstance(order_id, bool) or not isinstance(order_id, int) or self._orders is None:
+            return None
+        return order_record(self._orders, order_id, state.customer_id)
+
+    def _evidence_sources(self, state: AgentState) -> list[str]:
+        """Where this turn's record evidence came from: the order record, then each tool."""
+        record = self._order_record(state)
+        return [
+            *([record.source] if record is not None else []),
+            *(tool for _, _, tool in self._observations(state)),
+        ]
 
     def _observations(self, state: AgentState) -> list[tuple[str, bool, str]]:
         """Each of this turn's tool observations, whether it changed anything, and its tool.
@@ -338,6 +365,9 @@ class NodeSupport:
         # read of the still-pending order was left to contradict it. A refusal
         # stays whole, so its marker is never parted from what was refused.
         tools = tool_evidence([Observation(*observed) for observed in self._observations(state)])
+        # The order record goes first: it was read for the turn, and anything
+        # this turn's tools wrote after it supersedes it in the guard's order.
+        record = self._order_record(state)
         # What the customer said, as the model saw it. A reply may echo it
         # ("I can't issue a $1 refund") but it proves nothing, so its tier
         # is configured support-only.
@@ -354,6 +384,7 @@ class NodeSupport:
             if not str(item.get("source", "")).startswith(KNOWLEDGE_SOURCE_PREFIX)
         ]
         return [
+            *([record] if record is not None else []),
             *tools,
             *self._policy_evidence(),
             *_knowledge_evidence(),
@@ -621,6 +652,42 @@ class NodeSupport:
                 summary=summary,
                 fields=fields,
             )
+
+    def _report_loop_status(
+        self,
+        *,
+        tool_rounds: int,
+        tools_requested: bool,
+        invocations: list[Any],
+        escalated: bool,
+        refusal_final: bool,
+        next_step: str,
+        because: str,
+    ) -> None:
+        """Show every criterion the loop weighs, its value now, and the step it chose.
+
+        Reported by the node that just ran (on the event loop, where a card
+        can be drawn), from the same decision the graph routes on. Reported
+        every round, not only when a criterion fires: a card that appears
+        only on failure leaves a passing round unexplained.
+        """
+        words = get_agent_settings().control_loop_status
+        fields: dict[str, Any] = {
+            "criteria": {
+                "model_requested_tools": tools_requested,
+                "iteration_limit": f"{tool_rounds} of {self._max_rounds}",
+                "duplicate_action": duplicate_suppressed(invocations),
+                "escalated_to_human": escalated,
+                "final_refusal": refusal_final,
+            },
+            "next_step": next_step,
+            "because": words.because.get(because, because),
+        }
+        summary = words.summary.format(
+            round=tool_rounds, max_rounds=self._max_rounds, next_step=next_step
+        )
+        self._logger.info("Control loop status", **fields)
+        self._done("control_loop", summary=summary, event_kind="control_loop", fields=fields)
 
     def _stepped(
         self, stage: str, summary: str | None, fields: dict[str, Any] | None

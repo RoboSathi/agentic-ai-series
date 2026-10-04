@@ -14,6 +14,7 @@ from agent_platform.resilience import (
     external_api_error_fields,
 )
 from customer_support_agent.config import get_agent_settings
+from customer_support_agent.control_loop.quality_gate import Critique
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.reporting import (
@@ -24,6 +25,16 @@ from customer_support_agent.prompts.system_prompt import (
     build_reply_instruction,
     build_reply_system_prompt,
 )
+
+# What `finalize` does with the draft, as the hallucination check's pre-check line states it.
+_SEND_DRAFT = "send_draft"
+_REVISE_REPLY = "revise_reply"
+_GUARD_WITHOUT_EVIDENCE = "guard_without_evidence"
+_PASSED = "passed"
+_FAILED = "failed"
+_NO_EVIDENCE = "none"
+# Where the draft check's line waits for the hallucination check card.
+_PRE_CHECK = "pre_check"
 
 
 class FinalizeNodes(NodeSupport):
@@ -54,41 +65,25 @@ class FinalizeNodes(NodeSupport):
         last = messages[-1] if messages else Message()
         authoritative_evidence = self._authoritative_observations(state)
         critique = self._deliberation.reflect(last.content, authoritative_evidence)
-        reflection_comment = critique.summary
-        self._logger.info(
-            "Customer response reflection completed",
-            acceptable=critique.acceptable,
-            problems=critique.problems,
-            evidence_count=len(authoritative_evidence),
-        )
-        # Reflection is part of the control loop, not a standalone workflow
-        # stage. Only expose an actual reflector comment from the current
-        # Critique; do not manufacture a success message for the TUI.
-        if reflection_comment:
-            reflection_event_fields = {"reflection_comment": reflection_comment}
-            if critique.acceptable:
-                self._done(
-                    "control_loop",
-                    event_kind="control_loop",
-                    fields=reflection_event_fields,
-                )
-            else:
-                self._reporter_warning(
-                    "control_loop",
-                    event_kind="control_loop",
-                    fields=reflection_event_fields,
-                )
-        if (
+        sendable = (
             last.role == "assistant"
             and not last.tool_calls
             and is_customer_ready(last.content)
             and not self._is_deliberation(last.content)
-            # Reflection is what decides whether the draft in hand is good
+            # The draft check decides whether the draft in hand is good
             # enough to send, or whether the second call is worth its cost.
             # Without it the only question asked was "is this shaped like
             # a reply", which a confident wrong answer also passes.
             and critique.acceptable
-        ):
+        )
+        if sendable:
+            next_step = _SEND_DRAFT
+        elif not critique.acceptable and not authoritative_evidence:
+            next_step = _GUARD_WITHOUT_EVIDENCE
+        else:
+            next_step = _REVISE_REPLY
+        self._report_draft_check(state, last.content, critique, next_step)
+        if sendable:
             # Grounding runs on this path too. It used to be checked only
             # when a second call was needed, which is the *rarer* path —
             # so the reply that usually reached the customer was the one
@@ -109,7 +104,7 @@ class FinalizeNodes(NodeSupport):
                 ],
                 "escalated": state.escalated or guardrail_result.escalated,
             }
-        # If reflection found an issue and there is no authoritative tool
+        # If the draft check found an issue and there is no authoritative tool
         # evidence, run the deterministic hallucination gate before asking
         # another LLM to rewrite the answer. Otherwise the repair model can
         # manufacture a plausible business outcome from the same unsupported
@@ -126,13 +121,13 @@ class FinalizeNodes(NodeSupport):
                     "response": guardrail_result.response,
                     "decisions": [
                         *state.decisions,
-                        f"reflection: rejected ({critique.summary})",
+                        f"draft_check: failed ({critique.summary})",
                         f"grounding: {guardrail_result.reason_code}",
                     ],
                     "escalated": state.escalated or guardrail_result.escalated,
                 }
 
-        # The reflector already logged what it found; saying it twice
+        # The draft check already logged what it found; saying it twice
         # here would double every rejection in the trace.
         request = CompletionRequest(
             messages=self._reply_messages(state),
@@ -218,7 +213,7 @@ class FinalizeNodes(NodeSupport):
         ]
         decisions = [*state.decisions, *grounding]
         if not critique.acceptable:
-            decisions.append(f"reflection: revised ({critique.summary})")
+            decisions.append(f"draft_check: revised ({critique.summary})")
         if guardrail_result.escalated:
             decisions.append(
                 f"guardrail: escalated ({', '.join(guardrail_result.failure_kinds) or 'unsupported'})"
@@ -247,6 +242,36 @@ class FinalizeNodes(NodeSupport):
             "response": reply,
             "decisions": decisions,
         }
+
+    def _report_draft_check(
+        self, state: AgentState, draft: str, critique: Critique, next_step: str
+    ) -> None:
+        """Record the draft check for the hallucination check card, and log all of it.
+
+        The draft check is the grounding guard's deterministic pre-filter,
+        not an LLM critiquing itself: fixed rules (an empty draft, a
+        deliberation, an order id no record holds) that decide only how the
+        reply reaches the guard. So it is shown on the guard's card, as one
+        line, and logged in full here.
+        """
+        problems = list(critique.problems)
+        sources = self._evidence_sources(state)
+        record = self._order_record(state)
+        self._logger.info(
+            "Draft check completed" if critique.acceptable else "Draft check failed",
+            draft_check=_PASSED if critique.acceptable else _FAILED,
+            problems=problems,
+            next_step=next_step,
+            checks_run=list(critique.checks),
+            evidence_sources=sources,
+            order_record=record.content if record is not None else "",
+            draft=draft,
+        )
+        line = f"{_PASSED if critique.acceptable else _FAILED} → {next_step}"
+        if problems:
+            line += f" · {'; '.join(problems)}"
+        line += f" · evidence: {', '.join(sources) or _NO_EVIDENCE}"
+        state.metadata[_PRE_CHECK] = line
 
     def _reply_messages(self, state: AgentState) -> list[Message]:
         """The smallest payload that can write this reply.
@@ -306,6 +331,9 @@ class FinalizeNodes(NodeSupport):
             return
         review = self._refer_reply(state, result)
         fields = result.model_dump(exclude={"response"})
+        pre_check = state.metadata.get(_PRE_CHECK)
+        if pre_check:
+            fields[_PRE_CHECK] = pre_check
         if review is not None:
             fields["review_request"] = review
         summary = _grounding_headline(result, review)

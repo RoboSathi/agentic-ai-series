@@ -59,8 +59,10 @@ FIELD_PRIORITY = (
     "reasoning",
     "tool_calls",
     "observation",
+    "output",
     "user_query",
     "system_prompt",
+    "messages",
     "response",
     "decision",
     "action",
@@ -145,7 +147,6 @@ FIELD_PRIORITY = (
     "hallucination_rate",
     "response_ready",
     "revised",
-    "reflection_comment",
     "comment",
     "grounding_issues",
     "fallback",
@@ -166,6 +167,8 @@ FIELD_PRIORITY = (
 )
 
 FIELD_LABELS = {
+    # A tool result's `result` says the call ran, not what it answered.
+    "result": "call",
     "policy_version": "policy",
     "requested_amount": "requested",
     "allowed_amount": "allowed",
@@ -176,7 +179,6 @@ FIELD_LABELS = {
     "output_tokens": "output_tokens",
     "total_tokens": "total_tokens",
     "comment": "comment",
-    "reflection_comment": "reflection_comment",
     "schema_valid": "reply_matches_json_schema",
 }
 
@@ -238,6 +240,7 @@ MUTED_FIELDS = {
 BLOCK_FIELDS = (
     "reasoning",
     "observation",
+    "output",
     "system_prompt",
     "user_query",
     "prompt",
@@ -336,6 +339,13 @@ class StatusLineWidget(Static):
             self.frame = (self.frame + 1) % len(self._frames)
             self.refresh()
 
+    def metrics(self) -> str:
+        """`3m 27s · 9.7k tokens`: the turn's time and tokens, as every surface shows them."""
+        elapsed = _elapsed(self.elapsed_seconds)
+        if not self._show_token_count or self._tokens is None:
+            return elapsed
+        return f"{elapsed} · {_compact(self._tokens.turn_tokens)} tokens"
+
     def bind_tokens(self, counter: TokenCounterWidget) -> None:
         self._tokens = counter
 
@@ -407,17 +417,8 @@ class StatusLineWidget(Static):
         line = Text.styled(f"{symbol} ", style)
         line.append(self.stage_label, style=style)
 
-        if self._show_token_count and self._tokens is not None and self._started_at:
-            line.append(
-                f"  ({_elapsed(self.elapsed_seconds)} · "
-                f"↓ {_compact(self._tokens.turn_tokens)} tokens)",
-                style=palette("metrics"),
-            )
-        elif self._started_at:
-            line.append(
-                f"  ({_elapsed(self.elapsed_seconds)})",
-                style=palette("metrics"),
-            )
+        if self._started_at:
+            line.append(f"  ({self.metrics()})", style=palette("metrics"))
 
         if not self._following:
             line.append("  · HISTORY", style=palette("history"))
@@ -701,6 +702,9 @@ class StageEventWidget(Collapsible):
             return "response generated"
 
         if stage == "control_loop":
+            # A round's status card: its own summary says the round and the next step.
+            if "criteria" in fields and self.event.summary:
+                return self.event.summary
             decision = str(fields.get("decision") or "").upper()
             reason_code = str(fields.get("reason_code") or "")
             round_number = fields.get("round")
@@ -954,6 +958,9 @@ def _append_grounding(body: Text, fields: Mapping[str, Any]) -> None:
     was sent, what was it checked against, and what decided each sentence.
     """
     _append_outcome(body, str(fields.get("outcome") or ""))
+    # The agent's deterministic pre-filter, when it has one: how the reply reached this check.
+    if fields.get("pre_check"):
+        _append_grounding_row(body, "pre-check", str(fields["pre_check"]))
     checks = [c for c in fields.get("claim_checks") or [] if isinstance(c, Mapping)]
     if checks:
         unverified = any(c.get("verdict") == _UNDETERMINED for c in checks)
@@ -1137,10 +1144,14 @@ def _is_transcript(value: Any) -> bool:
 
 
 def _message_line(message: Mapping[str, Any]) -> str:
-    """One chat message, as `role: content`."""
+    """One chat message, as `role: content`, then any tool calls it made, one per line."""
     role = message.get("role", "?")
-    content = message.get("content", "")
-    return f"{role}: {content}"
+    answering = message.get("tool")
+    head = f"{role} ({answering})" if answering else str(role)
+    lines = [f"{head}: {message.get('content', '')}"]
+    for call in message.get("tool_calls") or []:
+        lines.append(f"  → {call.get('tool')}({call.get('arguments')})")
+    return "\n".join(lines)
 
 
 class FeedNote(Static):
@@ -1354,7 +1365,7 @@ def _merge_control_loop_events(
 ) -> StatusEvent:
     """Coalesce adjacent control-loop facts into one operator card.
 
-    The graph may emit the loop decision before and the reflection result
+    The graph may emit the loop decision before and the draft-check result
     after the model turn. They describe one control-loop round, so the TUI
     should render one card rather than two consecutive CONTROL LOOP sections.
     """

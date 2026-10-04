@@ -14,6 +14,8 @@ A refund is always for the full order total. Partial refunds are not supported, 
 ## Human review
 Most refunds are issued as soon as the order is confirmed as eligible. Some are checked by a person before any money moves. Those are placed in the review queue, and the customer is told their refund needs a manual review and that they will hear back soon.
 
+A refund the agent cannot issue itself is not placed in the review queue. The customer is told it cannot be processed here and is asked to email customer support about it.
+
 A reviewer can approve or deny a queued refund. An approved refund is then issued exactly like an automatic one.
 
 ## Cancelling an order

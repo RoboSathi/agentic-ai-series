@@ -30,7 +30,7 @@ The TURN SUMMARY is where quiet bookkeeping is read, one line each and only when
 
 | Card | Fields it keeps |
 |---|---|
-| LLM Request | `model`, `context_tokens`, `system_prompt` (which contains the retrieved context), `user_query`, `tools_offered` |
+| LLM Request | `model`, `context_tokens`, `system_prompt` (which contains the retrieved context), `user_query`, `messages` (every non-system message sent, including the model's earlier tool calls and their results), `tools_offered` |
 | LLM Response | tokens, latency, `tool_calls` or `response`, `finish_reason` when known |
 | Tool Result | `tool`, `result`, `execution_status` (completed, failed, timed_out or replayed), `duration_ms`, the tool's own domain fields |
 | Gatekeeper | `decision`, `action`, `reason_code`, `question`, `checks` (each with what it observed) |

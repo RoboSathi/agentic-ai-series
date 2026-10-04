@@ -104,7 +104,7 @@ class RefundPolicy:
                 order=order,
                 amount=requested,
             )
-        if action == "queue_for_approval" and not self._needs_review(requested):
+        if action == "queue_for_approval" and not self.needs_review(requested):
             return self._reject(
                 "WITHIN_DIRECT_LIMIT",
                 f"A {requested} refund is within the {self._direct_limit} direct-refund limit, so it "
@@ -114,7 +114,7 @@ class RefundPolicy:
             )
         return RefundValidationResult(allowed=True, order=order, amount=requested)
 
-    def _needs_review(self, requested: Money) -> bool:
+    def needs_review(self, requested: Money) -> bool:
         """Whether an amount is above what this agent may refund on its own.
 
         With no declared limit the question cannot be decided here, and

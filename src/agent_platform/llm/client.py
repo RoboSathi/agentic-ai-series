@@ -22,6 +22,7 @@ from agent_platform.config.settings import (
     ProviderName,
 )
 from agent_platform.llm.http import create_sdk_http_client
+from agent_platform.llm.metering import record_usage
 from agent_platform.llm.types import (
     CompletionRequest,
     CompletionResult,
@@ -166,6 +167,7 @@ class OpenAICompatibleClient(LLMClient):
             latency_ms=(time.perf_counter() - started) * 1000,
         )
         self._log_response(result, normalised)
+        record_usage(usage)
         return result
 
     def _reasoning_of(self, message: Any) -> str:

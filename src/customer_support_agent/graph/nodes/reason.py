@@ -16,6 +16,7 @@ from agent_platform.llm.types import CompletionRequest, CompletionResult, Messag
 from agent_platform.resilience import (
     external_api_error_fields,
 )
+from customer_support_agent.graph.loop_decision import after_reason_step
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.reporting import FALLBACK_REPLY
@@ -57,6 +58,17 @@ class ReasoningNodes(NodeSupport):
         message = Message(role="assistant", content=result.content, tool_calls=result.tool_calls)
         state.working_memory.add_current_turn(message)
         self._report_llm_response(result, purpose="tool_selection")
+        requested = bool(result.tool_calls)
+        next_step, because = after_reason_step(requested)
+        self._report_loop_status(
+            tool_rounds=state.tool_rounds + 1,
+            tools_requested=requested,
+            invocations=list(state.metadata.get("last_tool_invocations") or []),
+            escalated=state.escalated,
+            refusal_final=bool(state.metadata.get("refusal_is_final")),
+            next_step=next_step,
+            because=because,
+        )
         return {
             "tool_rounds": state.tool_rounds + 1,
             # The offered set is carried, not recomputed. Selection can

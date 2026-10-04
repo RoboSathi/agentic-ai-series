@@ -10,12 +10,10 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
+from customer_support_agent.graph.loop_decision import after_act_step, after_reason_step
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.nodes.review_wait import AWAITING_REVIEW
 from customer_support_agent.graph.state import AgentState
-from customer_support_agent.presentation.reporting import (
-    control_loop_fields,
-)
 
 # Each optional stage and the feature that decides whether it is built.
 _STAGE_FEATURES = {
@@ -172,31 +170,19 @@ class GraphWiring(NodeSupport):
         return "done" if state.metadata.get("halted") else "next"
 
     def _after_reason(self, state: AgentState) -> str:
-        """Act on requested tools, or finish."""
+        """Act on requested tools, or finish. The `reason` node reported why."""
         last = self._current_messages(state)[-1] if self._current_messages(state) else None
-        return "act" if last is not None and last.tool_calls else "finalize"
+        return after_reason_step(last is not None and bool(last.tool_calls))[0]
 
     def _after_act(self, state: AgentState) -> str:
-        """Continue only while autonomous execution remains permitted."""
-        # A Gatekeeper ESCALATE is a terminal autonomous decision for this turn.
-        # Do not send the model back to reason(), or it could propose another
-        # side effect after the system has explicitly handed control to a human.
-        if state.escalated:
-            return "finalize"
-        # Some refusals are terminal for the same reason: no re-proposal
-        # with different arguments can turn them into an allow. Sending the
-        # model back to try again buys a slower version of the same answer,
-        # which is how one refused refund became three and then the cap.
-        if state.metadata.get("refusal_is_final"):
-            return "finalize"
-        next_round = state.tool_rounds + 1
-        if next_round <= self._max_rounds:
-            return "reason"
-        report = self._control_loop.evaluate_round(next_round, self._max_rounds)
-        self._reporter_blocked(
-            "control_loop",
-            summary="Maximum tool iterations reached",
-            event_kind="control_loop",
-            fields=control_loop_fields(report),
-        )
-        return "finalize"
+        """Go round again only while permitted. The `act` node reported why.
+
+        Pure: LangGraph runs a routing function off the event loop, where a
+        card cannot be drawn, so it decides and says nothing.
+        """
+        return after_act_step(
+            state.tool_rounds,
+            self._max_rounds,
+            state.escalated,
+            bool(state.metadata.get("refusal_is_final")),
+        )[0]

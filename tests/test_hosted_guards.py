@@ -213,5 +213,5 @@ async def test_a_personal_data_only_flag_is_advisory_not_a_block(
     )
     assert not outcome.blocked
     card = next(e for e in feed.events if e.stage == "content_moderation" and e.status != "started")
-    assert card.status == "warning" and card.fields["output"]
-    assert "PII/Privacy" in str(card.fields["reason"])
+    assert card.status == "warning" and card.fields["categories"] == ["PII/Privacy"]
+    assert "output" not in card.fields and "reason" not in card.fields

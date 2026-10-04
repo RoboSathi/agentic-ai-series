@@ -43,6 +43,7 @@ from agent_platform.host import (
     SubjectHost,
     resolve_host,
 )
+from agent_platform.llm.metering import metered
 from agent_platform.logging import bound_channel, get_logger, new_session_id
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.types import StatusEvent
@@ -499,16 +500,16 @@ class AgenticTuiApp(App[None]):
             return
 
         try:
-            with bound_channel(get_settings().tui.channel):
+            # Every model call the turn makes is counted where it is made (the LLM
+            # adapter); the turn only says where the count goes.
+            with bound_channel(get_settings().tui.channel), metered(self._tokens.add):
                 state = await call()
 
             self._panel.note("ASSISTANT", style=palette("assistant"))
             self._panel.response(state.response or "")
             self._menu.offer(getattr(state, "choices", None) or [])
             self._panel.note(
-                f"──────── TURN {self._turn:02d} COMPLETE · "
-                f"{self._status.elapsed_seconds:.2f}s · "
-                f"{_compact(self._tokens.turn_tokens)} tokens ────────",
+                f"──────── TURN {self._turn:02d} COMPLETE · {self._status.metrics()} ────────",
                 style=palette("metrics"),
             )
             self._status.finish()
@@ -549,9 +550,6 @@ class AgenticTuiApp(App[None]):
             # position.
             self._history_pending += 1
             self._status.set_history_pending(self._history_pending)
-
-        if event.tokens_delta:
-            self._tokens.add(event.tokens_delta)
 
         if self._follow_latest:
             self._schedule_follow_latest()
@@ -643,10 +641,6 @@ class AgenticTuiApp(App[None]):
             )
         except Exception:
             pass
-
-
-def _compact(tokens: int) -> str:
-    return f"{tokens / 1000:.1f}k" if tokens >= 1000 else str(tokens)
 
 
 def main() -> None:

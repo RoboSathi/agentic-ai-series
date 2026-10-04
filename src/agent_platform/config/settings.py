@@ -1070,6 +1070,8 @@ class PiiSettings(BaseModel):
     # `tokenize` writes `[CATEGORY:token]`: the category, then this many characters of the token.
     token_format: str
     token_chars: int = Field(ge=8, le=64)
+    # The deployment's own values that only look like personal data, left as written.
+    allow_list: list[str] = Field(default_factory=list)
     patterns: dict[str, str]
     tool_call_allowed_fields: list[str]
     presidio: PresidioSettings
@@ -1095,6 +1097,9 @@ class SecurityGuardModelSettings(BaseModel):
     model: str
     timeout_seconds: float
     max_tokens: int = 16
+    # Provider request extras merged into the payload, e.g. a chat-template switch that makes a
+    # content-safety model name the categories it found.
+    extra_body: dict[str, Any] = Field(default_factory=dict)
     # The dependency name of this guard's retry/circuit-breaker stack.
     resilience_key: str
     # The check's name on a card, and what the verdict says (`{env}` the key's variables).

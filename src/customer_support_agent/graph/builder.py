@@ -85,7 +85,10 @@ from customer_support_agent.basic_sanity.order_validator import OrderSanityCheck
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.identity import current_customer_id
 from customer_support_agent.domain.models import Order
-from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
+from customer_support_agent.domain.order_reference import (
+    ORDER_UNDER_DISCUSSION,
+    WRITE_INTENT,
+)
 from customer_support_agent.domain.refund_policy import RefundPolicy
 from customer_support_agent.gatekeeper.business_rules import (
     REFUND_ACTION_CLASS,
@@ -102,6 +105,7 @@ from customer_support_agent.persistence.repositories import (
     UsersRepository,
 )
 from customer_support_agent.persistence.schema import ensure_schema
+from customer_support_agent.presentation.orders import order_sentence
 from customer_support_agent.resilience.cancellation_saga import CancellationSaga
 from customer_support_agent.resilience.refund_saga import RefundSaga
 from customer_support_agent.review.queue import ReviewQueueService
@@ -161,6 +165,11 @@ class OrderCorpusContextSource:
         established = self._established(task, corpus)
         if established is not None:
             return [established]
+        if task.metadata.get(WRITE_INTENT):
+            # A refund or cancellation is about one order. With none settled,
+            # ranking would put other orders' states in front of the model;
+            # it resolves the order with `list_orders` instead.
+            return []
         retriever = HybridRetriever(
             lexical=LexicalRetriever(corpus),
             dense=DenseRetriever(self._ranker, corpus),
@@ -188,15 +197,7 @@ def _order_chunk(order: Order) -> Chunk:
     queries dense retrieval exists for, and neither matches a row that
     says only an id, a status and an amount.
     """
-    return Chunk(
-        content=(
-            f"Order {order.order_id} placed {order.timestamp[:10]}: {order.description}, "
-            f"{order.order_status}, {order.whereabouts}, {order.amount}, "
-            f"refund {order.refund_status}"
-        ),
-        kind="retrieved",
-        source=str(order.order_id),
-    )
+    return Chunk(content=order_sentence(order), kind="retrieved", source=str(order.order_id))
 
 
 def _cumulative_ledger(
@@ -435,7 +436,7 @@ def build_agent(
         llm=llm or create_llm_client(observer=StageReporterModelObserver(lambda: reporter)),
         gatekeeper=governed,
         # Only a Gatekeeper escalates, so only a governed agent refers.
-        referral=ReviewReferral(tools) if governed is not None else None,
+        referral=ReviewReferral() if governed is not None else None,
         # Only the hallucination check cuts a reply, so only a checked agent refers one.
         reply_referral=ReplyReferral(hitl) if features.is_on("hallucination_guard") else None,
         audit=ledger,

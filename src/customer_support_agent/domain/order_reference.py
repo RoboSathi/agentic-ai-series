@@ -33,6 +33,11 @@ _STORED_REFERENCE = re.compile(r"\border\s+(\d+)\b", re.IGNORECASE)
 # cannot look under a spelling nobody writes.
 ORDER_UNDER_DISCUSSION = "order_under_discussion"
 
+# Whether this turn's intent may change an order (`mode: write`). A refund or
+# a cancellation concerns the order under discussion and no other, so its
+# context carries that one order or none.
+WRITE_INTENT = "write_intent"
+
 # Whether an order is this customer's own: (order id, customer id).
 OwnsOrder = Callable[[int, int], bool]
 

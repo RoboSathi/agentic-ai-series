@@ -39,9 +39,12 @@ choices:
     - {label: Large — thorough, many sources, value: large}
 
 common: &common
+  # Optional: a request almost always implies its use, and asked outright
+  # ("what will you use this for?") it is hard to answer and rarely changes
+  # what is searched.
   - item_id: purpose
     goal: what the answer will be used for
-    required: true
+    required: false
     brief_field: purpose
   - item_id: recency
     goal: how recent the sources must be
@@ -72,8 +75,11 @@ common: &common
     choices: *depth_choices
 
 decision_support:
+  # The choice the answer must settle, which a comparison request already
+  # states ("which is healthier"). A deadline was once part of the goal, and
+  # it made the interview open on "when do you need to decide?".
   - item_id: decision
-    goal: the decision being made, and by when
+    goal: the choice the answer must settle (which option is better, for what)
     required: true
     brief_field: decision
   - item_id: options
@@ -126,7 +132,7 @@ fact_verification:
 explainer:
   - item_id: audience
     goal: who the explanation is for and what they already know
-    required: true
+    required: false
     brief_field: decision
   - item_id: concepts
     goal: the sub-concepts the explanation must cover

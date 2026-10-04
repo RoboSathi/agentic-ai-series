@@ -67,6 +67,8 @@ class Critique(BaseModel):
 
     acceptable: bool = True
     problems: list[str] = Field(default_factory=list)
+    # Which checks produced this verdict, so a report can say what was looked at.
+    checks: list[str] = Field(default_factory=list)
 
     @property
     def summary(self) -> str:
@@ -122,6 +124,10 @@ class PlanLookup:
         return plan
 
 
+# The rules the draft check applies, in order, as a report names them.
+_DRAFT_CHECKS = ("empty", "deliberation", "order_ids")
+
+
 @instrument("customer_support_agent")
 class GroundedCritic:
     """Critiques a draft against the tool results behind it.
@@ -135,7 +141,10 @@ class GroundedCritic:
     def __init__(self) -> None:
         settings = get_agent_settings()
         self._markers = [marker.casefold() for marker in settings.deliberation_markers]
-        self._reference = re.compile(settings.followup.reference_pattern)
+        # An order id, in this agent's id shape. The follow-up pattern
+        # (any run of four or more digits) read a year in "August 8, 2026"
+        # as an order no tool had returned.
+        self._reference = re.compile(settings.order_reference.id_shape)
         self._logger = get_logger("customer_support_agent")
 
     def reflect(self, draft: str, evidence: list[str]) -> Critique:
@@ -148,10 +157,10 @@ class GroundedCritic:
             problems.append("the draft reads as deliberation rather than a reply")
         for identifier in set(self._reference.findall(draft)):
             if not any(identifier in text for text in evidence):
-                problems.append(f"{identifier} appears in the reply but in no tool result")
+                problems.append(f"order {identifier} appears in the reply but in no record")
         if problems:
-            self._logger.info("Reflection found problems with the draft", problems=problems)
-        return Critique(acceptable=not problems, problems=problems)
+            self._logger.info("Draft check failed", problems=problems)
+        return Critique(acceptable=not problems, problems=problems, checks=list(_DRAFT_CHECKS))
 
 
 @instrument("customer_support_agent")
