@@ -24,7 +24,8 @@ from agent_platform.context.types import (
 from agent_platform.context.window import CONTEXT_STAGE
 from agent_platform.memory.context_source import SOURCE_PREFIX as MEMORY_SOURCE_PREFIX
 from agent_platform.memory.context_source import SUBJECT_ID
-from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
+from customer_support_agent.config import get_agent_settings
+from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION, WRITE_INTENT
 from customer_support_agent.graph.nodes._support import GROUNDING_EVIDENCE, NodeSupport
 from customer_support_agent.graph.state import AgentState
 
@@ -40,6 +41,8 @@ class ContextNodes(NodeSupport):
         order_id = state.metadata.get(ORDER_UNDER_DISCUSSION)
         if order_id is not None:
             metadata[ORDER_UNDER_DISCUSSION] = order_id
+        if _is_write_intent(state.metadata.get("intent")):
+            metadata[WRITE_INTENT] = True
         # Whose long-term memory this turn may recall: the verified
         # customer's, and no one else's.
         if state.customer_id is not None:
@@ -110,3 +113,10 @@ def _verified_memory(chunk: Chunk) -> bool:
 
 def _without_label(content: str) -> str:
     return "\n".join(line for line in content.splitlines() if not is_provenance_header(line))
+
+
+def _is_write_intent(name: object) -> bool:
+    """Whether the classified intent may change an order (`mode: write` in config)."""
+    return any(
+        intent.name == name and intent.mode == "write" for intent in get_agent_settings().intents
+    )

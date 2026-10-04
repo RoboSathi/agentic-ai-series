@@ -18,13 +18,14 @@ from agent_platform.executor import (
     ApprovedToolCall,
     ExecutionOutcome,
 )
-from agent_platform.gatekeeper import AuthorityContext
+from agent_platform.gatekeeper import AuthorityContext, AuthorityDecision
 from agent_platform.gatekeeper.mandate import MandateSet
 from agent_platform.llm.types import Message
 from agent_platform.logging.trace_context import get_current_trace_id
 from agent_platform.observability.types import utc_now
 from agent_platform.tools.types import ToolResult
 from agent_platform.verification import VerificationReport
+from customer_support_agent.graph.loop_decision import ITERATION_LIMIT, after_act_step
 from customer_support_agent.graph.nodes._support import (
     TOOL_BLOCKED,
     TOOL_COMPLETED,
@@ -150,6 +151,12 @@ class ToolUseNodes(NodeSupport):
             for item in invocation_fields_history
             if isinstance(item.get("gatekeeper"), dict)
         )
+        self._report_after_act(
+            state,
+            invocation_fields_history,
+            escalated=state.escalated or turn_escalated,
+            refusal_final=_has_terminal_denial(invocation_fields_history),
+        )
         return {
             "decisions": decisions,
             "escalated": state.escalated or turn_escalated,
@@ -165,6 +172,36 @@ class ToolUseNodes(NodeSupport):
                 "refusal_is_final": _has_terminal_denial(invocation_fields_history),
             },
         }
+
+    def _report_after_act(
+        self,
+        state: AgentState,
+        invocations: list[dict[str, Any]],
+        *,
+        escalated: bool,
+        refusal_final: bool,
+    ) -> None:
+        """Report where the loop goes after this round, as the graph will route it."""
+        next_step, because = after_act_step(
+            state.tool_rounds, self._max_rounds, escalated, refusal_final
+        )
+        self._report_loop_status(
+            tool_rounds=state.tool_rounds,
+            tools_requested=True,
+            invocations=invocations,
+            escalated=escalated,
+            refusal_final=refusal_final,
+            next_step=next_step,
+            because=because,
+        )
+        if because == ITERATION_LIMIT:
+            report = self._control_loop.evaluate_round(state.tool_rounds + 1, self._max_rounds)
+            self._reporter_blocked(
+                "control_loop",
+                summary="Maximum tool iterations reached",
+                event_kind="control_loop",
+                fields=control_loop_fields(report),
+            )
 
     async def _execute_ungoverned(
         self,
@@ -355,7 +392,9 @@ class ToolUseNodes(NodeSupport):
                 }
                 tool_status = TOOL_BLOCKED
             elif decision.verdict == _ESCALATE:
-                evidence, result_fields, tool_status = self._refer_for_review(call, decision.reason)
+                evidence, result_fields, tool_status = await self._refer_for_review(
+                    call, decision, authority
+                )
             else:
                 # Say that it is final. The previous wording read like a
                 # transient failure, and the model answered it the way it
@@ -412,21 +451,36 @@ class ToolUseNodes(NodeSupport):
             self._gatekeeper.commit(call, authority)
         return await self._after_execution(call, outcome, control_fields, decision_fields)
 
-    def _refer_for_review(self, call: Any, reason: str) -> tuple[str, dict[str, Any], str]:
+    async def _refer_for_review(
+        self, call: Any, decision: AuthorityDecision, authority: AuthorityContext
+    ) -> tuple[str, dict[str, Any], str]:
         """Turn an escalation into a queued review, and say so without the reason.
 
         The Gatekeeper's reason names the limit; the model — and through it
         the customer — is told only that a person will decide. A limit an
         attacker can read is a limit they can structure around.
 
+        The queueing write is the harness's, and it runs through the
+        Executor like every other side effect: the trace shows EXECUTOR and
+        TOOL RESULT here as it does for any call, and the write gets the
+        same idempotency key and deadline. The escalated action itself is
+        never approved — `ApprovedToolCall.referral` approves only the write.
+
         A queued review is an outcome, not a refusal: the call did not run,
         but the referral did, and it changed the record. It is reported and
         grounded as *referred*, so "your request is with our team" is not
         read against a premise that says nothing happened.
         """
-        referred = self._referral.refer(call) if self._referral is not None else None
+        referral = self._referral.referral_call(call) if self._referral is not None else None
+        referred: ToolResult | None = None
+        outcome: ExecutionOutcome | None = None
+        if referral is not None:
+            outcome = await self._executor.execute(
+                ApprovedToolCall.referral(call, referral, decision, authority)
+            )
+            referred = outcome.result
         if referred is None or not referred.success:
-            text = f"That action requires human review: {reason}"
+            text = f"That action requires human review: {decision.reason}"
             if referred is not None:
                 text = f"That action requires human review, but queuing it failed: {referred.error}"
             return (
@@ -438,14 +492,9 @@ class ToolUseNodes(NodeSupport):
                 },
                 TOOL_BLOCKED,
             )
-        self._done(
-            "escalation",
-            event_kind="escalation",
-            summary="Escalated action queued for human review",
-            fields=tool_result_fields(call, referred),
-        )
         fields = {
-            **tool_result_fields(call, referred),
+            **tool_result_fields(call, referred, outcome=outcome, redact=self._security.redact),
+            "referral_action": referral.action if referral is not None else "",
             "result": "human_review_required",
             "execution_status": TOOL_REFERRED,
         }
@@ -472,7 +521,9 @@ class ToolUseNodes(NodeSupport):
         customer is told.
         """
         result = outcome.result
-        result_fields = tool_result_fields(call, result, outcome=outcome)
+        result_fields = tool_result_fields(
+            call, result, outcome=outcome, redact=self._security.redact
+        )
         if result.success:
             self._control_loop.record_success(call, result.output)
             self._done(

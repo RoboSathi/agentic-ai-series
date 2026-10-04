@@ -109,12 +109,22 @@ class PIIFilterImpl:
         self._mask_token = settings.mask_token
         self._token_format = settings.token_format
         self._allowed_fields = set(settings.tool_call_allowed_fields)
+        self._allow_list = {value.casefold() for value in settings.allow_list}
         self._logger = get_logger("pii")
 
     def detect(self, text: str) -> list[PIISpan]:
-        """Union of every detector's findings, de-overlapped."""
+        """Union of every detector's findings, de-overlapped, less the allow-listed values.
+
+        Filtered here, once, so every engine honours the list: a support
+        address the agent gives out on purpose is not a customer's data.
+        """
         return _resolve_overlaps(
-            [span for detector in self._detectors for span in detector.detect(text)]
+            [
+                span
+                for detector in self._detectors
+                for span in detector.detect(text)
+                if span.text.casefold() not in self._allow_list
+            ]
         )
 
     def redact(self, text: str, mode: RedactionMode | None = None) -> str:

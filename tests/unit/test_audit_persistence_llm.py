@@ -1,5 +1,8 @@
 """Audit trail, persistence and the LLM adapters (LLD §3, §4, §5)."""
 
+from types import SimpleNamespace
+from typing import Any
+
 import pytest
 
 from agent_platform.audit import AuditEntry, NullAuditLedger, SqliteAuditLedger
@@ -12,6 +15,7 @@ from agent_platform.llm.embeddings import (
     create_embedding_client,
     tokenize,
 )
+from agent_platform.llm.metering import metered
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message, TokenUsage
 from agent_platform.persistence import IN_MEMORY, ExecutionResult, SqliteConnectionPool
 
@@ -147,6 +151,49 @@ class TestLLMClient:
             CompletionRequest(messages=[Message(role="user", content="hi")])
         )
         assert len(scripted_llm.requests) == 1
+
+
+class _FakeCompletions:
+    """The SDK's `chat.completions`, answering with a fixed usage."""
+
+    def __init__(self, total_tokens: int) -> None:
+        self._total = total_tokens
+
+    async def create(self, **_: Any) -> SimpleNamespace:
+        message = SimpleNamespace(content="ok", tool_calls=None, model_extra={})
+        return SimpleNamespace(
+            model="fake",
+            choices=[SimpleNamespace(message=message, finish_reason="stop")],
+            usage=SimpleNamespace(
+                prompt_tokens=self._total, completion_tokens=0, total_tokens=self._total
+            ),
+        )
+
+
+def _metered_client(total_tokens: int) -> HostedClient:
+    sdk: Any = SimpleNamespace(chat=SimpleNamespace(completions=_FakeCompletions(total_tokens)))
+    return HostedClient(client=sdk)
+
+
+class TestTokenMetering:
+    """The adapter meters every call; no agent counts tokens itself."""
+
+    async def test_each_call_reaches_the_runs_sink(self) -> None:
+        counted: list[int] = []
+        client = _metered_client(40)
+        request = CompletionRequest(messages=[Message(role="user", content="hi")])
+        with metered(counted.append):
+            await client.complete(request)
+            await client.complete(request)
+        assert counted == [40, 40]
+
+    async def test_a_call_outside_a_run_is_counted_by_no_one(self) -> None:
+        counted: list[int] = []
+        request = CompletionRequest(messages=[Message(role="user", content="hi")])
+        with metered(counted.append):
+            pass
+        await _metered_client(40).complete(request)
+        assert counted == []
 
 
 class TestCascade:

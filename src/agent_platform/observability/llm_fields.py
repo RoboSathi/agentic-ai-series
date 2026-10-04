@@ -13,8 +13,10 @@ from agent_platform.config import get_settings
 def llm_request_fields(request: Any, *, model: str = "") -> dict[str, Any]:
     """Render the important inputs supplied to the LLM.
 
-    Keep the operator-facing event concise: the system prompt and latest user
-    query are the actual prompt, while the offered tool names explain the
+    The system prompt and latest user query lead; `messages` is every other
+    message the model receives, in order, including its own earlier tool
+    calls and their results, so a later round's card shows the whole
+    context the model reasons over. The offered tool names explain the
     action space. Provider-specific request envelopes are deliberately not
     repeated here.
     """
@@ -40,8 +42,32 @@ def llm_request_fields(request: Any, *, model: str = "") -> dict[str, Any]:
         "context_tokens": _tokens(request.messages),
         "system_prompt": system_prompt,
         "user_query": user_messages[-1] if user_messages else "",
+        "messages": _messages(request.messages),
         "tools_offered": tool_names,
     }
+
+
+def _messages(messages: list[Any]) -> list[dict[str, Any]]:
+    """Every non-system message as sent; a tool result is named by the tool that produced it.
+
+    A result carries only its call's opaque id, so the id is resolved to the tool name the
+    earlier assistant message requested it under.
+    """
+    tool_names: dict[str, str] = {}
+    shown: list[dict[str, Any]] = []
+    for message in messages:
+        if message.role == "system":
+            continue
+        entry: dict[str, Any] = {"role": message.role, "content": message.content}
+        if message.tool_calls:
+            entry["tool_calls"] = [
+                {"tool": call.name, "arguments": call.arguments} for call in message.tool_calls
+            ]
+            tool_names.update({call.id: call.name for call in message.tool_calls if call.id})
+        if message.tool_call_id:
+            entry["tool"] = tool_names.get(message.tool_call_id, message.tool_call_id)
+        shown.append(entry)
+    return shown
 
 
 def _tokens(messages: list[Any]) -> int:

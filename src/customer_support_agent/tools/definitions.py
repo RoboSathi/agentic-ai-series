@@ -6,6 +6,7 @@ common Executor; it contains no Gatekeeper logic.
 """
 
 import inspect
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Annotated, Any
 
@@ -15,6 +16,7 @@ from agent_platform.executor import ToolExecutionHandler
 from agent_platform.logging import get_logger, instrument
 from agent_platform.resilience import SagaResult
 from agent_platform.tools import ToolCall, ToolDefinition, ToolResult
+from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.cancellation_policy import CancellationPolicy
 from customer_support_agent.domain.identity import current_customer_id
 from customer_support_agent.domain.models import HitlRequest, Order, OrderStatus, ReviewAction
@@ -24,7 +26,11 @@ from customer_support_agent.persistence.repositories import (
     OrdersRepository,
     RefundLedgerRepository,
 )
-from customer_support_agent.presentation.orders import customer_orders, describe_orders
+from customer_support_agent.presentation.orders import (
+    REFUND_STATUS_LINE,
+    customer_orders,
+    describe_orders,
+)
 from customer_support_agent.resilience.cancellation_saga import CancellationSaga
 from customer_support_agent.resilience.refund_saga import RefundSaga
 
@@ -33,7 +39,7 @@ _NOT_AUTHENTICATED = "No authenticated customer; nothing can be read or changed"
 # How a tool states an order's refund state. The hallucination guard reads
 # this field to decide whether a "your refund is done" reply is true, so a
 # write must state the state it left behind, not only what it did.
-_REFUND_STATUS = "Order {order_id} refund status: {status}"
+_REFUND_STATUS = REFUND_STATUS_LINE
 # A waiting review, as its own sentence so it is its own premise. The earlier
 # "(a review request is already pending)" read to NLI as *contradicting* "a
 # review request has been submitted" — pending and submitted are the same
@@ -53,6 +59,9 @@ _REFUND_STATE_SENTENCES: dict[str, str] = {
     "denied": "The refund request for order {order_id} was declined by a reviewer",
 }
 NAMESPACE = "support"
+# The harness-only referral writes (see `SupportTools.harness_actions`).
+QUEUE_FOR_APPROVAL = "queue_for_approval"
+CANCEL_AND_REFER_REFUND = "cancel_and_refer_refund"
 _CANCELLED: OrderStatus = "cancelled"
 _ORDER_CANCELLED = "Order {order_id} has been cancelled"
 _NO_LONGER = (
@@ -185,6 +194,19 @@ class SupportTools:
                 side_effecting=False,
             ),
             ToolDefinition(
+                name="check_refund_authority",
+                namespace=NAMESPACE,
+                description=(
+                    "Check whether you may refund an order yourself. Call it before process_refund."
+                ),
+                args_schema=OrderLookupArgs,
+                handler=self.check_refund_authority,
+                required_permission="read_orders",
+                surface="editable",
+                reversible=True,
+                side_effecting=False,
+            ),
+            ToolDefinition(
                 name="process_refund",
                 namespace=NAMESPACE,
                 description=(
@@ -215,6 +237,19 @@ class SupportTools:
                 requires_authority_rank=5,
             ),
         ]
+
+    def harness_actions(self) -> dict[str, Callable[..., ToolResult]]:
+        """The writes only the harness makes, by qualified name: never in `definitions()`.
+
+        An escalated refund or cancellation is queued for a person by the
+        harness, through the Executor like any other side effect. These are
+        dispatchable there, but no registry holds them, so no model is ever
+        offered one.
+        """
+        return {
+            f"{NAMESPACE}.{QUEUE_FOR_APPROVAL}": self.queue_for_approval,
+            f"{NAMESPACE}.{CANCEL_AND_REFER_REFUND}": self.cancel_and_refer_refund,
+        }
 
     def _owned_order(self, order_id: int) -> Order | None:
         """The order, if the authenticated customer owns it."""
@@ -266,6 +301,36 @@ class SupportTools:
                 + _REFUND_STATUS.format(order_id=order.order_id, status=order.refund_status)
             ),
             data={"refund_status": order.refund_status, "pending_review": pending is not None},
+        )
+
+    def check_refund_authority(self, order_id: int) -> ToolResult:
+        """Whether this agent may refund the order's full total without a person.
+
+        A verdict, not the limit: the refund limit lives only in the policy
+        row, and the model is never shown it. Refunds are for the full total,
+        so the order's amount is the amount asked about.
+        """
+        customer_id = current_customer_id()
+        if customer_id is None:
+            return ToolResult(success=False, error=_NOT_AUTHENTICATED)
+        validation = self._refund_policy.validate(order_id, customer_id)
+        if not validation.allowed or validation.order is None:
+            return ToolResult(success=False, error=validation.reason)
+        order = validation.order
+        words = get_agent_settings().messages.refund_authority
+        needs_review = self._refund_policy.needs_review(order.amount)
+        verdict = "needs_review" if needs_review else "within_authority"
+        message = words.needs_review if needs_review else words.within_authority
+        # The status line lets the guard's state check refute "sent for
+        # review" when the verdict sent nothing anywhere.
+        return ToolResult(
+            success=True,
+            output=(
+                message.format(order_id=order_id, contact_email=words.contact_email)
+                + " "
+                + _REFUND_STATUS.format(order_id=order_id, status=order.refund_status)
+            ),
+            data={"verdict": verdict, "refund_status": order.refund_status},
         )
 
     def list_orders(self, order_status: OrderStatus | None = None) -> ToolResult:
@@ -476,7 +541,9 @@ class CustomerSupportToolHandler(ToolExecutionHandler):
     def __init__(self, tools: SupportTools) -> None:
         self._tools = tools
         self._handlers = {
-            definition.qualified_name: definition.handler for definition in tools.definitions()
+            **{definition.qualified_name: definition.handler for definition in tools.definitions()},
+            # The harness's referral writes: executed like any tool, offered to no model.
+            **tools.harness_actions(),
         }
 
     async def execute(self, call: ToolCall) -> ToolResult:

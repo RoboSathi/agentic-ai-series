@@ -131,12 +131,22 @@ class CancelledMessages(BaseModel):
     none: str
 
 
+class RefundAuthorityMessages(BaseModel):
+    """What `check_refund_authority` reports (`{order_id}`, `{contact_email}`)."""
+
+    contact_email: str
+    within_authority: str
+    needs_review: str
+
+
 class CsaMessages(BaseModel):
     """Fixed wording this agent says itself, rather than a model."""
 
     auth: AuthMessages
     # A turn the operator cancelled: where it stopped and how far it got.
     cancelled: CancelledMessages
+    # The refund-authority verdicts, and where a refund above the limit is sent.
+    refund_authority: RefundAuthorityMessages
 
 
 class OrderTableSettings(BaseModel):
@@ -180,11 +190,21 @@ class ConsoleSettings(BaseModel):
     cancel_key: str
 
 
+class ControlLoopStatusSettings(BaseModel):
+    """The control loop's per-round card: its title, and why each next step was taken."""
+
+    # `{round}`, `{max_rounds}`, `{next_step}`.
+    summary: str
+    # Reason key -> the sentence the card shows for it.
+    because: dict[str, str]
+
+
 class CustomerSupportAgentSettings(YamlBackedSettings):
     """The running product's own wiring values (LLD §21)."""
 
     _yaml_section = "customer_support_agent"
     max_tool_iterations: int
+    control_loop_status: ControlLoopStatusSettings
     # The most orders one `list_orders` call returns, newest first.
     list_orders_max_rows: int
     intents: list[IntentSettings]

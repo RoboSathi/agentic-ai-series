@@ -17,34 +17,51 @@ difference is the harness.
 from agent_platform.config import get_settings
 from agent_platform.guardrails import ResponseGuardrailResult
 from agent_platform.logging import get_logger, instrument
-from agent_platform.tools import ToolCall, ToolResult
+from agent_platform.tools import ToolCall
 from customer_support_agent.domain.models import REPLY_REVIEW, HitlRequest, ReplyReview
 from customer_support_agent.persistence.repositories import HitlQueueRepository
-from customer_support_agent.tools.definitions import SupportTools
+from customer_support_agent.tools.definitions import (
+    CANCEL_AND_REFER_REFUND,
+    NAMESPACE,
+    QUEUE_FOR_APPROVAL,
+)
 
 _REFUND = "process_refund"
 # A cancellation above the limit is not all-or-nothing: stopping the order
 # moves no money, so it happens now, and only its refund waits for a person.
 _CANCEL = "cancel_order"
+# Each escalated action and the harness write that sends it to a person.
+_REFERRALS = {_REFUND: QUEUE_FOR_APPROVAL, _CANCEL: CANCEL_AND_REFER_REFUND}
 
 
 @instrument("customer_support_agent")
 class ReviewReferral:
-    """Queues an escalated money-moving call for human review."""
+    """Turns an escalated money-moving call into the harness's referral call.
 
-    def __init__(self, tools: SupportTools) -> None:
-        self._tools = tools
+    It decides *what* a person is asked to review; it does not write the
+    request. The referral call goes through the Executor like every other
+    side effect, so the queue write has the same idempotency, deadline and
+    trace (EXECUTOR, TOOL RESULT) as the calls around it.
+    """
+
+    def __init__(self) -> None:
         self._logger = get_logger("customer_support_agent")
 
-    def refer(self, call: ToolCall) -> ToolResult | None:
-        """Queue the call for review; None when it is not an action a person reviews."""
-        refer = {
-            _REFUND: self._tools.queue_for_approval,
-            _CANCEL: self._tools.cancel_and_refer_refund,
-        }.get(call.action.rsplit(".", maxsplit=1)[-1])
-        if refer is None:
+    def referral_call(self, call: ToolCall) -> ToolCall | None:
+        """The queueing write for this escalated call; None when no person reviews it."""
+        action = _REFERRALS.get(call.action.rsplit(".", maxsplit=1)[-1])
+        if action is None:
             return None
-        return refer(call.params["order_id"], call.params["amount"])
+        return ToolCall(
+            action=f"{NAMESPACE}.{action}",
+            params={"order_id": call.params["order_id"], "amount": call.params["amount"]},
+            surface=call.surface,
+            reversible=False,
+            side_effecting=True,
+            requires_authority_rank=call.requires_authority_rank,
+            required_permission=call.required_permission,
+            call_id=call.call_id,
+        )
 
 
 @instrument("customer_support_agent")

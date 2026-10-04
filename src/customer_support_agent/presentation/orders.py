@@ -14,6 +14,7 @@ paying for a completion to read a table aloud is waste.
 
 from pydantic import BaseModel
 
+from agent_platform.context.types import Chunk
 from agent_platform.presentation import Align, box_table
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.models import Order, User
@@ -76,6 +77,47 @@ def render_order_list(orders: list[Order]) -> str:
     if not orders:
         return "You have no orders on this account."
     return "\n".join([f"Your {len(orders)} orders:", "", *_menu_lines(orders)])
+
+
+# How a record states an order's refund state. The hallucination guard's
+# state check reads this line (`record_state_pattern`) to judge any claim
+# about where a refund stands, so every record of an order ends with it.
+REFUND_STATUS_LINE = "Order {order_id} refund status: {status}"
+
+# The order under discussion, read fresh from the database for a reply to be
+# grounded on. It ranks with tool results (the guard's record tier) and its
+# source says a record, not a tool, established it.
+ORDER_RECORD_SOURCE = "order_record:{order_id}"
+
+
+def order_sentence(order: Order) -> str:
+    """One order as a sentence: what context shows the model, and what a record states."""
+    return (
+        f"Order {order.order_id} placed {order.timestamp[:10]}: {order.description}, "
+        f"{order.order_status}, {order.whereabouts}, {order.amount}, "
+        f"refund {order.refund_status}"
+    )
+
+
+def order_record(orders: OrdersRepository, order_id: int, customer_id: int | None) -> Chunk | None:
+    """The order as the database holds it now, if this customer owns it.
+
+    Read, never parsed out of the prompt window: what the model was shown
+    can be crowded or tampered with, the row cannot. It ends with the
+    refund-status line, so the guard's state check judges any claim about
+    where the refund stands against it.
+    """
+    if customer_id is None:
+        return None
+    order = orders.get_for_customer(order_id, customer_id)
+    if order is None:
+        return None
+    status = REFUND_STATUS_LINE.format(order_id=order.order_id, status=order.refund_status)
+    return Chunk(
+        content=f"{order_sentence(order)}. {status}",
+        kind="tool_result",
+        source=ORDER_RECORD_SOURCE.format(order_id=order.order_id),
+    )
 
 
 def describe_orders(orders: list[Order]) -> str:

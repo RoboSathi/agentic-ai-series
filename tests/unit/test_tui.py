@@ -111,6 +111,18 @@ class TestFormatting:
         assert _elapsed(64) == "1m 04s"
         assert _elapsed(3_720) == "1h 02m"
 
+    def test_the_footer_and_status_line_share_one_metrics_line(self) -> None:
+        """`207.01s` read as 3m 27s once the status line formatted it; the footer did not."""
+        line = StatusLineWidget()
+        counter = TokenCounterWidget()
+        line.bind_tokens(counter)
+        line.begin("Working…")
+        line._started_at -= 207
+        counter.add(9_700)
+        line.finish()
+        assert line.metrics() == "3m 27s · 9.7k tokens"
+        assert "(3m 27s · 9.7k tokens)" in line.render().plain
+
 
 class TestLayout:
     """The prompt sits under the transcript, with the live status just above it.

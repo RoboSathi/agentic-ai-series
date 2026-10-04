@@ -10,7 +10,7 @@ from typing import Any, Protocol, runtime_checkable
 import httpx
 
 from agent_platform.config import get_settings
-from agent_platform.config.settings import SecurityGuardModelSettings
+from agent_platform.config.settings import ContentModerationSettings, SecurityGuardModelSettings
 from agent_platform.logging import get_logger
 from agent_platform.resilience import ResilientCaller, dependency_failure_fields
 from agent_platform.security.guard_types import GuardVerdict
@@ -90,6 +90,7 @@ class HostedContentSafetyGuard:
             "max_tokens": self._max_tokens,
             "temperature": 0,
             "stream": False,
+            **self._settings.extra_body,
         }
         try:
             data = await post_json_with_poll(
@@ -189,13 +190,25 @@ def _parse_safety_output(output: str) -> tuple[bool, list[str]]:
                 return safety == words.unsafe_word, _categories(
                     parsed, words.response_categories_keys
                 )
+    return _parse_plain_output(text, words)
+
+
+def _parse_plain_output(text: str, words: ContentModerationSettings) -> tuple[bool, list[str]]:
+    """(flagged, categories) from a `Key: value` answer, e.g. "User Safety: unsafe" then
+    "Safety Categories: Violence, Sexual" — the model's native format."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
         raise ValueError("content-safety guard returned an empty classification")
-    first = lines[0].casefold()
-    flagged = words.unsafe_word in first
-    categories = [token.strip(" ,:;[]()") for token in lines[1:] if token.strip(" ,:;[]()")]
-    return flagged, categories
+    keyed = _keyed_lines(lines)
+    safety = keyed.get(words.response_safety_key.casefold(), lines[0]).casefold()
+    category_keys = [key.casefold() for key in words.response_categories_keys]
+    return words.unsafe_word in safety, _categories(keyed, category_keys)
+
+
+def _keyed_lines(lines: list[str]) -> dict[str, str]:
+    """`Key: value` lines as {casefolded key: value}; lines without a colon are skipped."""
+    pairs = (line.partition(":") for line in lines)
+    return {key.strip().casefold(): value.strip() for key, colon, value in pairs if colon}
 
 
 def _categories(parsed: dict[str, Any], keys: list[str]) -> list[str]:

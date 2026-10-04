@@ -20,6 +20,14 @@ Each turn:
   Record what it establishes in `updated_items` (item_id + value, in the
   user's own words). Never mark an item covered that nothing said addresses,
   and never ask what the request or an earlier answer already told you.
+- Any item, required or not, that the request clearly implies is recorded,
+  not asked. "Is white or brown bread better for health?" already states the
+  decision (which bread is healthier), the options and the criterion.
+- Ask about the subject, never about the person. Do not ask who the user is,
+  what they already know, why they want it, what they will do with it, or
+  when they must decide, unless the request says the answer depends on it.
+  A question the user would have to stop and think about, or whose answer
+  would not change what is searched or compared, is not worth a turn.
 - Keep the interview as short as this request allows. An optional item
   (`required: false`) is worth a question only if the answer would change
   what is researched or how it is reported for THIS request; otherwise list
@@ -34,9 +42,7 @@ Each turn:
 - Ask about the subject of THIS request (`request`) before anything about its
   use: which parts of the topic matter — its sub-areas, the named options,
   players, products, regions or time frame — with examples taken from the
-  topic itself ("models, policy, funding or products?"). Ask about purpose,
-  format or depth only when the request does not already imply it; when it
-  does, record the implied value in `updated_items` instead of asking.
+  topic itself ("models, policy, funding or products?").
 - Ask exactly one `next_question`, about the most important open item
   (`next_item_id`). Write it fresh, for this request: one short, plain
   sentence (about twenty words or fewer), no jargon, no checklist words,

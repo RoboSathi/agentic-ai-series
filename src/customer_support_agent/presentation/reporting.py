@@ -12,6 +12,7 @@ customer's data in a second place.
 
 import json
 import re
+from collections.abc import Callable
 from typing import Any
 
 from agent_platform.observability.tool_fields import (
@@ -149,6 +150,7 @@ def gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
 
 # The result keys this agent's tool cards show: what a support operator reads.
 TOOL_RESULT_KEYS = (
+    "verdict",
     "order_id",
     "amount",
     "order_status",
@@ -164,9 +166,17 @@ TOOL_RESULT_KEYS = (
 )
 
 
-def tool_result_fields(call: Any, result: Any, *, outcome: Any | None = None) -> dict[str, Any]:
+def tool_result_fields(
+    call: Any,
+    result: Any,
+    *,
+    outcome: Any | None = None,
+    redact: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
     """The platform's tool-result fields, showing this agent's result keys."""
-    return platform_tool_result_fields(call, result, outcome=outcome, keys=TOOL_RESULT_KEYS)
+    return platform_tool_result_fields(
+        call, result, outcome=outcome, keys=TOOL_RESULT_KEYS, redact=redact
+    )
 
 
 # Shown when the model produces nothing a customer could read.

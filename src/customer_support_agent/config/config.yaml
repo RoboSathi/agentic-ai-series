@@ -88,6 +88,10 @@ security:
   pii:
     # The tool-call fields this agent's tools actually take.
     tool_call_allowed_fields: [order_id, user_id, amount, reason, status]
+    # The support address `check_refund_authority` hands out (anchored here, used again under
+    # `messages.refund_authority`): the business's, not a customer's, so it is not redacted.
+    allow_list:
+      - &support_contact contact@robosathi.com
     presidio:
       # A customer's name and address are personal data here, beside the platform's contact and
       # financial identifiers.
@@ -124,7 +128,7 @@ hallucination_protection:
   record_identifier_pattern: '\border\s*#?\s*\d{3,}\b'
   record_identifier_label: order
   # An outcome stated as done. With a promise marker it is a promise.
-  outcome_pattern: '\b(?:refunded|queued|approved|processed|issued|completed|submitted|denied|rejected|cancelled|canceled|delivered|shipped|pending|on\s+its\s+way|human\s+review|request\s+created)\b'
+  outcome_pattern: '\b(?:refunded|queued|approved|processed|issued|completed?|done|finished|submitted|denied|rejected|cancelled|canceled|delivered|shipped|pending|on\s+its\s+way|human\s+review|request\s+created|sent\s+for\s+review|referred|escalated|forwarded)\b'
   record_state_pattern: 'refund(?:_|\s+)status\s*[:=]\s*(\w+)'
   # The refund state machine. A state record ("Order N refund status: X") is
   # not something an NLI model can read: it contradicted "has been submitted"
@@ -155,14 +159,14 @@ hallucination_protection:
     context_pattern: '(?:\b(?:refund|request|review|amount|money|payment|funds)|\$\s?\d)'
     phrases:
       - reaches: pending_review
-        pattern: '\b(?:requested|submitted|received|queued|initiated|started|created|sent\s+for\s+review)\b'
+        pattern: '\b(?:requested|submitted|received|queued|initiated|started|created|sent\s+for\s+review|referred|escalated|forwarded)\b'
       - reaches: pending_review
         exact: true
         pattern: '\b(?:pending|awaiting|under\s+review|in\s+review|human\s+review|manual\s+review)\b'
       - reaches: approved
         pattern: '\bapproved\b'
       - reaches: completed
-        pattern: '\b(?:refunded|completed|processed|issued|paid|on\s+its\s+way|sent\s+back|paid\s+back|credited|reimbursed|returned)\b'
+        pattern: '\b(?:refunded|completed?|done|finished|processed|issued|paid|on\s+its\s+way|sent\s+back|paid\s+back|credited|reimbursed|returned)\b'
       - reaches: denied
         exact: true
         pattern: '\b(?:denied|declined|rejected)\b'
@@ -230,6 +234,17 @@ customer_support_agent:
   grounding_facts:
     verified_customer: "You are {value}."
   max_tool_iterations: 5
+  # The CONTROL LOOP card, shown at each point the loop decides whether to go round again:
+  # every criterion it weighs, its current value, the next step, and why.
+  control_loop_status:
+    summary: "Round {round} of {max_rounds} · next: {next_step}"
+    because:
+      tool_requested: the model asked for a tool
+      no_tool_call: the model replied without asking for a tool
+      rounds_remain: the tools ran and rounds remain
+      escalated: an action was handed to a person; the agent stops acting
+      final_refusal: a refusal no other arguments can turn into an allow
+      iteration_limit: the iteration limit is reached
   list_orders_max_rows: 20
   # Tool -> budget class. A tool absent from this map is not financially
   # budgeted; whether it is allowed at all is the permission check's
@@ -299,6 +314,7 @@ customer_support_agent:
     - list_orders
     - get_order_status
     - get_refund_status
+    - check_refund_authority
     - process_refund
     description: asking to receive a refund for an order
   # Where a refund stands — a read, answered from the record with no model
@@ -445,6 +461,15 @@ customer_support_agent:
       labels: {request: request, customer: customer, decided: decided so far, tools: tools called}
       unverified: not verified yet
       none: nothing yet
+    # What `check_refund_authority` tells the model. A verdict, never the limit behind it.
+    # Above the limit nothing is queued: the customer is pointed to the contact instead,
+    # and the reply must not claim a review that never happened.
+    refund_authority:
+      contact_email: *support_contact
+      within_authority: "Order {order_id}: this refund is within your authority; you may process it."
+      # One fact per sentence, each naming the order: the guard checks a reply one premise
+      # at a time, and "about it" left the contact sentence with no order to match.
+      needs_review: "Order {order_id}: this refund cannot be processed here and has not been sent for review. For help with order {order_id}, please contact our support team at {contact_email}."
   # The console's run controls: cancel the turn in flight, then resume it from its last
   # completed step (state persistence, idempotent replay, breaker state across a resume).
   console:

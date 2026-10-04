@@ -891,7 +891,7 @@ security:
     # dead-letter queue for a person, one card says so, and the person gets this refusal.
     quarantined: "Quarantined for human review · {reason}"
     quarantine_failed: "Blocked · quarantine store unavailable ({error}) · {reason}"
-    refusal: "I can't help with that request as written: a safety screen stopped it. Please rephrase it and try again."
+    refusal: "I can't help with that request. Please rephrase it and try again."
   # RBAC (auth) stays on because the Gatekeeper's "who is asking?" question
   # depends on it. Whether each screening stage exists is a feature
   # (`features:`), not a flag here.
@@ -909,6 +909,9 @@ security:
     mask_token: "[REDACTED]"
     token_format: "[{category}:{token}]"
     token_chars: 12
+    # Values that look like personal data but are the deployment's own (a support address an
+    # agent hands out on purpose). Matched exactly, ignoring case; nothing else is spared.
+    allow_list: []
     # Detector patterns, by Presidio entity name, ordered most-specific first so a card number
     # is not first matched as a shorter numeric identifier.
     patterns:
@@ -1002,6 +1005,9 @@ security:
       model: nvidia/nemotron-3.5-content-safety
       timeout_seconds: 8
       max_tokens: 128
+      # Without request_categories the model answers only "User Safety: unsafe".
+      extra_body:
+        chat_template_kwargs: {request_categories: /categories, enable_thinking: false}
       resilience_key: hosted-content-safety
       check_name: Nemotron Content Safety
       flagged_reason: The content-safety model flagged the input.
@@ -1290,7 +1296,7 @@ tui:
     banner: "bold cyan"
     user: "bold"
     assistant: "bold green"
-    # The `(12.3s · ↓ 4.2k tokens)` bracket and the TURN COMPLETE footer.
+    # The `(12.3s · 4.2k tokens)` bracket and the TURN COMPLETE footer.
     metrics: "orange3"
     command: "bold cyan"
     notice: "yellow"

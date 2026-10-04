@@ -9,6 +9,9 @@ from agent_platform.gatekeeper.types import AuthorityContext, AuthorityDecision
 from agent_platform.observability.types import utc_now
 from agent_platform.tools.types import ToolCall, ToolResult
 
+# The Gatekeeper verdict a referral is the harness's answer to.
+_ESCALATE = "escalate"
+
 ExecutionStatus = Literal["completed", "failed", "timed_out", "replayed"]
 ExecutionPhase = Literal["started", "finished"]
 
@@ -56,6 +59,45 @@ class ApprovedToolCall(BaseModel):
                 reason="Executed without authorization: the gatekeeper feature is switched off.",
                 reason_code="GATEKEEPER_DISABLED",
                 question="ungoverned",
+            ),
+            authority=authority,
+        )
+
+    @classmethod
+    def referral(
+        cls,
+        original: ToolCall,
+        referral: ToolCall,
+        decision: AuthorityDecision,
+        authority: AuthorityContext,
+    ) -> "ApprovedToolCall":
+        """The harness's own move after an escalation: send the call to a person.
+
+        Built only from an *escalate* decision for `original`, and it
+        approves `referral` — the queueing write — never the escalated
+        action itself. The decision says so, so the audit trail can tell a
+        referral from an approval, the way it tells an ungoverned call.
+        Running it through the Executor gives the queue write the same
+        idempotency, deadline and trace as every other side effect.
+        """
+        if decision.verdict != _ESCALATE:
+            raise ValueError("A referral is built only from an escalate decision")
+        if decision.action != original.action:
+            raise ValueError(
+                f"Gatekeeper action '{decision.action}' does not match '{original.action}'"
+            )
+        return cls(
+            call=referral,
+            decision=AuthorityDecision(
+                verdict="allow",
+                action=referral.action,
+                actor=authority.actor,
+                reason=(
+                    f"Referral of the escalated '{original.action}' for human review; "
+                    "the action itself was not approved."
+                ),
+                reason_code="ESCALATION_REFERRAL",
+                question="referral",
             ),
             authority=authority,
         )

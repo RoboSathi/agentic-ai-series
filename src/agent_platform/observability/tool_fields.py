@@ -64,14 +64,27 @@ def _shown_argument(key: str, value: Any, redact: Callable[[str], str] | None) -
 
 
 def tool_result_fields(
-    call: Any, result: Any, *, outcome: Any | None = None, keys: Iterable[str] = ()
+    call: Any,
+    result: Any,
+    *,
+    outcome: Any | None = None,
+    keys: Iterable[str] = (),
+    redact: Callable[[str], str] | None = None,
 ) -> dict[str, Any]:
-    """The result's outcome, the executor's lifecycle, and the result keys the agent shows."""
+    """The result's outcome, what the tool returned, and the result keys the agent shows.
+
+    `output` is the tool's whole answer, untruncated: it is what the model
+    reads next, so a card without it hides the one thing the next step
+    was decided on. It passes the redactor like every request argument.
+    """
     fields: dict[str, Any] = {
         "tool": display_tool_name(call.action),
         "qualified_tool": call.action,
         "result": "success" if result.success else "failed",
     }
+    output = getattr(result, "output", "")
+    if output:
+        fields["output"] = redact(output) if redact is not None else output
     if outcome is not None:
         # One field says how it ended: completed, failed, timed_out or replayed.
         fields.update(

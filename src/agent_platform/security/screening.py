@@ -311,7 +311,7 @@ def _moderation_card(verdict: ModerationVerdict, words: ScreeningMessages) -> Ca
         unavailable=words.moderation_unavailable,
         passed_model=words.moderation_passed_model,
         passed_rule=words.moderation_passed_rule,
-        extra=("categories", "output"),
+        extra=("categories",),
         advisory=words.moderation_advisory,
     )
 
@@ -328,16 +328,18 @@ def _model_card(
     advisory: str = "",
 ) -> Card:
     """The hosted model's part of a screen: blocked, advisory, unavailable, passed, or never
-    asked. A flag shows what the model said (`extra`) and why (`reason`)."""
+    asked. A flag shows what the model found (`extra`), or why when it named nothing — a
+    `reason` that only restates the categories is noise."""
     if check is None:
         return "completed", passed_rule, fields
     shown = {"model": check.get("model"), "latency_ms": check.get("latency_ms")}
     status = check.get("status")
-    found = {name: check.get(name) for name in extra if check.get(name) not in (None, "")}
+    found = {name: check.get(name) for name in extra if check.get(name) not in (None, "", [])}
+    why = {} if found.get("categories") else {"reason": check.get("reason")}
     if status == FAIL:
-        return "blocked", blocked, {**fields, **shown, **found, "reason": check.get("reason")}
+        return "blocked", blocked, {**fields, **shown, **found, **why}
     if status == ADVISORY:
-        return "warning", advisory, {**fields, **shown, **found, "reason": check.get("reason")}
+        return "warning", advisory, {**fields, **shown, **found, **why}
     if status == SKIPPED:
         failure = {name: check.get(name) for name in ("error_code", "http_status", "reason")}
         return "warning", unavailable, {**fields, **shown, **failure}
