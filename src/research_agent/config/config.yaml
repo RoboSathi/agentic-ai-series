@@ -133,16 +133,16 @@ llm:
 # The answer's colours beyond light Markdown: what each criterion is, what to do next.
 tui:
   response_highlights:
-    - {pattern: '^→ Next:.*$', style: "bold green"}
-    - {pattern: '\[must\]', style: "bold yellow"}
-    - {pattern: '\[soft\]', style: "blue"}
-    - {pattern: '^R\d+\b', style: "bold magenta"}
-    - {pattern: '(?<![\w/])/(?:research|done|approve|rubric|waive|cancel|show|history|help)\b', style: "bold cyan"}
-    - {pattern: '^\(I removed details[^)]*\)$', style: "dim italic"}
-    - {pattern: '^\*\*Status:\*\* COMPLETE.*$', style: "bold green"}
-    - {pattern: '^\*\*Status:\*\* PARTIAL.*$', style: "bold yellow"}
-    - {pattern: '^\*\*Status:\*\* (?:FAILED|CANCELLED).*$', style: "bold red"}
-    - {pattern: '^(?:\*\*)?Sources?:?(?:\*\*)?:?', style: "bold magenta"}
+    - { pattern: '^→ Next:.*$', style: "bold #D6B978" }
+    - { pattern: '\[must\]', style: "bold #B8945A" }
+    - { pattern: '\[soft\]', style: "#A89F8F" }
+    - { pattern: '^R\d+\b', style: "bold #E2C792" }
+    - { pattern: '(?<![\w/])/(?:research|done|approve|rubric|waive|cancel|show|history|help)\b', style: "bold #B8945A" }
+    - { pattern: '^\(I removed details[^)]*\)$', style: "italic #8A8A8A" }
+    - { pattern: '^\*\*Status:\*\* COMPLETE.*$', style: "bold #59F06A" }
+    - { pattern: '^\*\*Status:\*\* PARTIAL.*$', style: "bold #F4D35E" }
+    - { pattern: '^\*\*Status:\*\* (?:FAILED|CANCELLED).*$', style: "bold #FF5C5C" }
+    - { pattern: '^(?:\*\*)?Sources?:?(?:\*\*)?:?', style: "bold #D6B978" }
 
 # What grounds a claim in a research answer. The platform's tiers are the support agent's
 # (a tool result grounds only a fact about the case); here every factual claim in an answer
@@ -658,14 +658,14 @@ research_agent:
     stage_labels:
       research_kind: RESEARCH KIND
       hallucination_check: HALLUCINATION CHECK
-      llm_call_interviewer: THINKING · INTERVIEWER
-      llm_call_planner: THINKING · PLANNER
-      llm_call_researcher: THINKING · READING A PAGE
-      llm_call_extractor: THINKING · EXTRACTOR
-      llm_call_reflector: THINKING · REFLECTING
-      llm_call_synthesizer: THINKING · WRITING THE REPORT
-      llm_call_judge: THINKING · JUDGE
-      llm_call_answerer: THINKING · ANSWERING
+      llm_call_interviewer: INTERVIEWER
+      llm_call_planner: PLANNER
+      llm_call_researcher: READING A PAGE
+      llm_call_extractor: EXTRACTOR
+      llm_call_reflector: REFLECTING
+      llm_call_synthesizer: WRITING THE REPORT
+      llm_call_judge: JUDGE
+      llm_call_answerer: ANSWERING
       interview_turn: INTERVIEW
       coverage_update: WAIVER
       rubric_generate: RUBRIC
@@ -703,23 +703,24 @@ research_agent:
         - {label: "▶ Approve & Run", command: approve, variant: success}
       # RUNNING / STOPPED: the platform's run buttons (`tui.run_controls`), the same as every agent.
     phase_colors:
-      SCOPING: "bold magenta"
-      RUBRIC_REVIEW: "bold magenta"
-      RUNNING: "bold green"
-      AUDITING: "bold yellow"
-      STOPPED: "bold yellow"
-      DELIVERED: "bold cyan"
-      CANCELLED: "bold red"
-      FAILED: "bold red"
+      SCOPING: "bold #D6B978"
+      RUBRIC_REVIEW: "bold #E2C792"
+      RUNNING: "bold #59F06A"
+      AUDITING: "bold #F4D35E"
+      STOPPED: "bold #F4D35E"
+      DELIVERED: "bold #59F06A"
+      CANCELLED: "bold #FF5C5C"
+      FAILED: "bold #FF5C5C"
+
     status_line_styles:
-      coverage: "yellow"
-      evidence: "cyan"
-      budget: "bright_black"
-    # A checklist item's status in the status line's expander (covered, waived, open).
+      coverage: "#D6B978"
+      evidence: "#E2C792"
+      budget: "#8A8A8A"
+
     checklist_styles:
-      covered: "green"
-      waived: "yellow"
-      open: "default"
+      covered: "#59F06A"
+      waived: "#F4D35E"
+      open: "#8A8A8A"
     # Rejection and gap codes, in words.
     reasons:
       recency: results older than the approved time window

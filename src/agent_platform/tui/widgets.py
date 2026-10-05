@@ -583,16 +583,16 @@ class StageEventWidget(Collapsible):
                 return f"out of scope · {fields['topic']}"
 
         if stage == "authentication":
-            return "identity verified" if fields.get("verified") else "verification required"
+            return "PASS · Identity Verified" if fields.get("verified") else "Verification Required"
 
         if stage == "basic_sanity":
             summary = get_settings().tui.reason_summaries.get(str(fields.get("reason_code")))
             if summary:
                 return summary
-            return "checks passed" if fields.get("passed") else "blocked"
+            return "PASS · Deterministic checks" if fields.get("passed") else "Blocked"
 
         if stage == "prompt_injection_check":
-            return "blocked" if fields.get("detected") else "checks passed"
+            return "Blocked" if fields.get("detected") else "PASS · No prompt injection attempt"
 
         if stage == "pii_filtering":
             if fields.get("detected"):
@@ -605,7 +605,7 @@ class StageEventWidget(Collapsible):
                     else ""
                 )
                 return f"REDACTED · {category_text}{suffix}"
-            return "PASS · no PII detected"
+            return "PASS · No PII detected"
 
         if stage == "content_moderation":
             if status == "blocked":
@@ -613,11 +613,11 @@ class StageEventWidget(Collapsible):
                 category_text = ", ".join(str(item) for item in categories)
 
                 if category_text:
-                    return f"flagged · categories: {category_text}"
+                    return f"Flagged · Categories: {category_text}"
 
-                return "flagged"
+                return "Flagged"
 
-            return "no issues detected"
+            return "PASS · No harmful content detected"
 
         if stage == "intent_classification":
             intent = fields.get("intent") or self.event.detail or "classified"
@@ -638,7 +638,7 @@ class StageEventWidget(Collapsible):
 
         if stage == "memory_recall":
             count = fields.get("selected", fields.get("count"))
-            return f"recalled {count} items" if count is not None else "memory read"
+            return f"Recalled {count} items" if count is not None else "memory read"
 
         if stage == "context_assembly":
             chunks = fields.get("chunks")
@@ -679,7 +679,7 @@ class StageEventWidget(Collapsible):
                     subject = _subject_part(given)
                     amount = given.get("amount")
                     parts = [
-                        "tool requested",
+                        "Tool Requested",
                         self._labels.tool_label(str(tool)) if tool else "tool",
                     ]
                     if subject:
@@ -693,14 +693,14 @@ class StageEventWidget(Collapsible):
                 count = len(requested) if isinstance(requested, list) else 0
                 purpose = fields.get("purpose")
                 parts = [
-                    "prompt sent",
-                    f"{count} tools offered" if count else "",
+                    "Prompt Sent",
+                    f"{count} Tools Offered" if count else "",
                     str(purpose or ""),
                 ]
                 return " · ".join(part for part in parts if part)
             if fields.get("finish_reason") == "tool_calls":
-                return "tool requested"
-            return "response generated"
+                return "Tool Requested"
+            return "Response Generated"
 
         if stage == "control_loop":
             # A round's status card: its own summary says the round and the next step.
@@ -781,7 +781,7 @@ class StageEventWidget(Collapsible):
                 return f"{tally}{' · repaired' if fields.get('repaired') else ''}"
 
         if stage == "finalize":
-            return "response ready" if fields.get("response_ready", True) else "response not ready"
+            return "Response Ready" if fields.get("response_ready", True) else "Response Not Ready"
 
         if self.event.summary:
             return self.event.summary

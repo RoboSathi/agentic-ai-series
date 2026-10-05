@@ -1293,20 +1293,19 @@ tui:
     failed: "bold red"
   # One style per console role.
   palette:
-    banner: "bold cyan"
-    user: "bold"
-    assistant: "bold green"
-    # The `(12.3s · 4.2k tokens)` bracket and the TURN COMPLETE footer.
-    metrics: "orange3"
-    command: "bold cyan"
-    notice: "yellow"
-    notice_strong: "bold yellow"
-    info: "cyan"
-    error: "bold red"
-    emphasis: "bold"
-    marker: "bold"
-    muted: "bright_black"
-    history: "yellow"
+    banner: "bold #E2C792"
+    user: "bold #B8945A"
+    assistant: "bold #B8945A"
+    metrics: "#A89F8F"
+    command: "bold #F3EAD3"
+    notice: "#E8DFC9"
+    notice_strong: "bold #F0E6D2"
+    info: "#5A5A5A"
+    error: "bold #B91C1C"
+    emphasis: "bold #F3EAD3"
+    marker: "bold #F3EAD3"
+    muted: "#8A8A8A"
+    history: "#8A6A3D"
   status_expand_hint: "click to expand"
   resume_banner: "↻ RESUMED  continuing the stopped turn from its last saved step"
   # The run buttons, the same for every agent.
@@ -1323,26 +1322,26 @@ tui:
   # card, whatever stage or agent it comes from: running cyan, done green, warning yellow,
   # failure red. The colour is in the title's own text, so focus and hover never repaint it.
   outcome_colors:
-    started: cyan
-    completed: "#90EE90"
-    warning: yellow
-    waiting: yellow
-    failed: red
-    blocked: red
+    started: "#E2C792"
+    completed: "#59F06A"
+    warning: "#F4D35E"
+    waiting: "#F4D35E"
+    failed: "#FF5C5C"
+    blocked: "#FF5C5C"
   # An expanded card: section titles, `key = value` / `key: value` keys, and plain values.
   # A value that says a state (PASS, FAIL, ...) takes that state's tone instead.
   section_title_style: "bold cyan"
   body_styles:
-    key: "bold cyan"
-    separator: bright_black
-    value: default
-    muted: bright_black
+    key: "bold #B8945A"
+    separator: "#E4E4E0"
+    value: "#F3EAD3"
+    muted: "#8A8A8A"
   # The same state colours as the titles, for a card's lines and values.
   tone_styles:
-    pass: green
-    fail: red
-    warn: yellow
-    dim: bright_black
+    pass: "#59F06A"
+    fail: "#FF5C5C"
+    warn: "#F4D35E"
+    dim: "#77736A"
   # Words that name a state, wherever a card shows them as a value -> their tone.
   state_words:
     PASS: pass
@@ -1368,13 +1367,13 @@ tui:
     SKIPPED: dim
     NO_MATCH: pass
   response_styles:
-    h1: "bold cyan"
-    h2: "bold magenta"
-    bold: "bold yellow"
-    bullet: cyan
-    citation: green
-    url: "underline blue"
-    body: default
+      h1: "bold #E2C792"
+      h2: "bold #D6B978"
+      bold: "bold #B8945A"
+      bullet: "#B8945A"
+      citation: "#8FBF7A"
+      url: "underline #D6B978"
+      body: "#F3EAD3"
   # Extra colouring by pattern: agent vocabulary, so each agent's overlay supplies its own.
   response_highlights: []
 

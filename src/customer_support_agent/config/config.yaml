@@ -462,7 +462,7 @@ customer_support_agent:
   # Fixed wording the agent says itself. `{length}` is user_code_length.
   messages:
     auth:
-      ask_for_code: "Before I can look anything up, I need to verify your account.\nPlease share your {length}-character user code."
+      ask_for_code: "Verify your account.\nKindly enter your {length}-character user code shared over email."
       unknown_code: "I couldn't find an account with that code. Please check it and try again — it's the {length}-character code from your order confirmation email."
     # How far a stopped turn got, as the stop report's tree (its frame is the platform's
     # `durability.stop_report`).

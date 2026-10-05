@@ -81,10 +81,10 @@ class AgenticTuiApp(App[None]):
 
     #feed {
         height: 1fr;
-        padding: 0 1;
+        padding: 0 2;
         scrollbar-size-vertical: 1;
-        scrollbar-color: $accent;
-        scrollbar-color-hover: $accent-lighten-2;
+        scrollbar-color: #B8945A;
+        scrollbar-color-hover: #9A7340;
     }
 
     .feed-note {
@@ -151,13 +151,18 @@ class AgenticTuiApp(App[None]):
     }
 
     #query {
-        height: auto;
-        margin: 0 1;
-        border: round $accent;
-    }
+    height: auto;
+    margin: 0 1;
+    border: round #6F5A35;
+    background: #11100E;
+    color: #F3EAD3;
+    padding: 0 1;
+}
 
     #query:focus {
-        border: round $accent-lighten-2;
+        border: round #B8945A;
+        background: #14120F;
+        color: #F3EAD3;
     }
 
     #status-line {
@@ -178,8 +183,8 @@ class AgenticTuiApp(App[None]):
         # with CSI u). Priority, or the focused Input takes it for its own copy.
         Binding("super+c", "copy_selection", "Copy selection", priority=True, show=False),
         Binding("ctrl+l", "clear_feed", "Clear"),
-        Binding("pageup", "page_up", "Page up", priority=True),
-        Binding("pagedown", "page_down", "Page down", priority=True),
+        Binding("pageup", "page_up", "Page up", priority=True, show=False),
+        Binding("pagedown", "page_down", "Page down", priority=True, show=False),
         Binding("ctrl+u", "page_up", "Page up", priority=True, show=False),
         Binding("ctrl+d", "page_down", "Page down", priority=True, show=False),
         # Complete a slash command; anything else keeps Tab's focus behaviour.
@@ -299,7 +304,7 @@ class AgenticTuiApp(App[None]):
         self.query_one("#query", Input).focus()
         self._status.bind_tokens(self._tokens)
         self._panel.note(
-            "Author = RoboSathi | robosathi.com",
+            "Author: RoboSathi | robosathi.com",
             style=palette("banner"),
         )
         greeting = self._greeting()
