@@ -518,7 +518,7 @@ customer_support_agent:
   # it settles it can be voided (`/void`), after that only refunded. Settling is
   # when the customer is told the money is on its way.
   settlement:
-    window_seconds: 6000
+    window_seconds: 3600
     sweep_interval_seconds: 15
     titles:
       issued: "Issued refunds — {count} voidable"

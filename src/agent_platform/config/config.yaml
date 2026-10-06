@@ -891,7 +891,7 @@ security:
     # dead-letter queue for a person, one card says so, and the person gets this refusal.
     quarantined: "Quarantined for human review · {reason}"
     quarantine_failed: "Blocked · quarantine store unavailable ({error}) · {reason}"
-    refusal: "I can't help with that request. Please rephrase it and try again."
+    refusal: "I can not help you with that request. Kindly rephrase it and try again."
   # RBAC (auth) stays on because the Gatekeeper's "who is asking?" question
   # depends on it. Whether each screening stage exists is a feature
   # (`features:`), not a flag here.
