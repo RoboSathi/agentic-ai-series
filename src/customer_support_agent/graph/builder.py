@@ -65,6 +65,7 @@ from agent_platform.observability import (
     SLORegistry,
     StageReporter,
 )
+from agent_platform.observability.langsmith import build_trace_exporter
 from agent_platform.observability.model_observer import StageReporterModelObserver
 from agent_platform.observability.tracer import LocalTracer
 from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
@@ -434,6 +435,8 @@ def build_agent(
         reply_referral=ReplyReferral(hitl) if features.is_on("hallucination_guard") else None,
         audit=ledger,
         features=features,
+        # Exported traces are always PII-redacted, whatever the `pii` feature says.
+        trace_exporter=build_trace_exporter(agent_id, lambda: PIIFilterImpl().redact),
         registry=registry,
         tools=tools,
         executor=ToolExecutorImpl(

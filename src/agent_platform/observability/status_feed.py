@@ -9,7 +9,9 @@ import time
 from typing import Any, Callable, Iterator, Mapping, Protocol, runtime_checkable
 
 from agent_platform.config import get_settings
+from agent_platform.llm.metering import attach, detach
 from agent_platform.logging import get_logger
+from agent_platform.observability.langsmith import current_trace_url
 from agent_platform.observability.turn_tally import TurnTally
 from agent_platform.observability.types import EventKind, StatusEvent, StatusKind
 
@@ -96,6 +98,7 @@ class StageReporter:
         self._started: dict[str, float] = {}
         self._logger = get_logger("observability")
         self._tally: TurnTally | None = None
+        self._meter: Any = None
         self._turn_started = 0.0
 
     def begin_turn(self, **context: Any) -> None:
@@ -103,6 +106,8 @@ class StageReporter:
         self._context = {key: value for key, value in context.items() if value not in (None, "")}
         self._started.clear()
         self._tally = TurnTally()
+        # The tally hears every model call of the turn from the central meter.
+        self._meter = attach(self._tally.model_call)
         self._turn_started = time.monotonic()
 
     def end_turn(
@@ -121,20 +126,25 @@ class StageReporter:
         if tally is None:
             return
         self._tally = None
+        if self._meter is not None:
+            detach(self._meter)
+            self._meter = None
         seconds = time.monotonic() - self._turn_started
+        trace = _trace_link()
         self._logger.info(
             "Turn finished",
             outcome=outcome,
             **self._context,
             **log_fields,
             **({"working_memory": dict(working_memory)} if working_memory else {}),
+            **trace,
         )
         self.emit(
             "turn_summary",
             status,
             event_kind="system",
             summary=tally.headline(outcome, seconds),
-            fields=tally.fields(outcome, seconds, working_memory),
+            fields={**tally.fields(outcome, seconds, working_memory), **trace},
         )
         self._context = {}
 
@@ -317,3 +327,9 @@ def _empty(value: Any) -> bool:
     `False` and `0` are answers ("written = false", "dropped = 0") and stay.
     """
     return value is None or (isinstance(value, (str, list, tuple, dict, set)) and not value)
+
+
+def _trace_link() -> dict[str, str]:
+    """The turn's LangSmith link as a summary field, or nothing when there is none."""
+    url = current_trace_url()
+    return {get_settings().observability.langsmith.url_field: url} if url else {}

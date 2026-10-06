@@ -28,6 +28,7 @@ from agent_platform.hallucination_protection import Observation, tool_evidence
 from agent_platform.llm.embeddings import tokenize
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message, ModelToolCall
 from agent_platform.logging import describe_error, get_logger, instrument
+from agent_platform.observability.langsmith import tool_run
 from agent_platform.observability.llm_fields import llm_request_fields, llm_response_fields
 from agent_platform.observability.tool_fields import display_tool_name, tool_request_fields
 from agent_platform.tools.registry import NamespacedToolRegistry
@@ -360,7 +361,8 @@ class AnswerNodes:
 
     async def _invoke(self, handler: Any, params: Mapping[str, Any], name: str) -> ToolResult:
         try:
-            outcome = handler(**params)
+            # Inside a turn's trace the call is reported as a tool run; elsewhere inert.
+            outcome = tool_run(name, handler)(**params)
             return await outcome if inspect.isawaitable(outcome) else outcome  # type: ignore[no-any-return]
         except Exception as exc:
             detail = describe_error(exc)

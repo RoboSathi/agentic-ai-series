@@ -243,6 +243,21 @@ research_agent:
     research: research
 
   # Everything the agent says that is not written by a model.
+  # The TURN SUMMARY card that ends every turn, as csa's does: what the turn
+  # left the session doing, read from its phase.
+  turn_summary:
+    outcomes:
+      DELIVERED: answered
+      SCOPING: interviewing
+      RUBRIC_REVIEW: waiting for rubric approval
+      RUNNING: research running
+      AUDITING: research running
+      STOPPED: stopped
+      CANCELLED: cancelled
+      FAILED: failed
+    waiting: [SCOPING, RUBRIC_REVIEW]
+    failed: [FAILED]
+    crashed: failed
   messages:
     refuse: I can't research that request.
     challenge_prefix: "Before we go on: "

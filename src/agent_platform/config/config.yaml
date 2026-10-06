@@ -420,7 +420,25 @@ audit:
 observability:
   enabled: true
   analytics_db_path: data/observability.duckdb
-  langsmith_enabled: false
+  # Each turn exported as one LangSmith trace whose run id is the turn's log
+  # trace_id. Every payload is PII-redacted before it leaves the process; with
+  # no key set (or enabled: false) nothing is exported and nothing changes.
+  langsmith:
+    enabled: false
+    endpoint: https://api.smith.langchain.com
+    web_url: https://smith.langchain.com
+    project: "{agent_id}"
+    root_run_name: "{agent_id} turn"
+    thread_key: session_id
+    # false: a graph step is sent as what it changed (its output), not the whole
+    # state again as its input. The turn's root run still carries the question.
+    full_node_state: false
+    # Share of turns exported (1.0 = every turn). Lower it in an agent's overlay
+    # for production volume; a turn left out has no trace and no link.
+    sample_rate: 1.0
+    key_env_vars: [langchain_api_key, LANGSMITH_API_KEY, LANGCHAIN_API_KEY]
+    run_url: "{web_url}/o/{tenant_id}/projects/p/{project_id}/r/{run_id}?trace_id={run_id}"
+    url_field: trace
   persist_traces: true
   # The loop is typed tool use, not ReAct: the model proposes a validated
   # call and there is no thought step, so the label names a model call, the

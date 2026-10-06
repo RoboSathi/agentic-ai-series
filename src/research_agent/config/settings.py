@@ -562,6 +562,18 @@ class PanelSettings(BaseModel):
     quiet_budget_counters: list[str] = Field(default_factory=list)
 
 
+class TurnSummarySettings(BaseModel):
+    """How a turn's summary card reads, from the phase the session is left in."""
+
+    # Phase -> the outcome in words.
+    outcomes: dict[str, str]
+    # Phases that leave the session waiting on the person, and that mean failure.
+    waiting: list[str]
+    failed: list[str]
+    # The outcome when the turn raised.
+    crashed: str
+
+
 class ResearchAgentSettings(YamlBackedSettings):
     """The research agent's own wiring values."""
 
@@ -572,6 +584,7 @@ class ResearchAgentSettings(YamlBackedSettings):
     greeting: GreetingSettings
     command_names: CommandNames
     messages: MessageSettings
+    turn_summary: TurnSummarySettings
     setup: SetupMessages
     scoping: ScopingSettings
     rubric: RubricSettings

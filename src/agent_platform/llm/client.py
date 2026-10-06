@@ -32,6 +32,7 @@ from agent_platform.llm.types import (
     TokenUsage,
 )
 from agent_platform.llm.typography import TypographyNormaliser
+from agent_platform.observability.langsmith import instrument_sdk_client
 
 if TYPE_CHECKING:
     from agent_platform.llm.observer import ModelCallObserver
@@ -120,11 +121,14 @@ class OpenAICompatibleClient(LLMClient):
         self._provider: LLMProviderSettings = self._settings.provider_settings(self.provider_name)
         self._logger = get_logger("llm")
         self._typography = TypographyNormaliser(self._settings.output_normalisation)
-        self._client = client or AsyncOpenAI(
-            base_url=self._provider.base_url,
-            api_key=self._settings.api_key_for(self.provider_name) or _PLACEHOLDER_API_KEY,
-            timeout=self._provider.timeout_seconds,
-            http_client=create_sdk_http_client(self._provider.timeout_seconds),
+        # Inside a turn's trace each call is reported as a model run; elsewhere inert.
+        self._client = client or instrument_sdk_client(
+            AsyncOpenAI(
+                base_url=self._provider.base_url,
+                api_key=self._settings.api_key_for(self.provider_name) or _PLACEHOLDER_API_KEY,
+                timeout=self._provider.timeout_seconds,
+                http_client=create_sdk_http_client(self._provider.timeout_seconds),
+            )
         )
 
     @property

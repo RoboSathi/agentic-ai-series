@@ -35,6 +35,7 @@ without patching a single import.
 """
 
 import uuid
+from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from typing import Any
 
@@ -64,7 +65,7 @@ from agent_platform.guardrails import ResponseGuardrail
 from agent_platform.hallucination_protection import DetectionLadder, GroundingReasoningDiagnoser
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import Message, TokenUsage
-from agent_platform.logging import bound_log_context, get_logger, new_trace_id
+from agent_platform.logging import get_logger
 from agent_platform.memory import (
     MemoryAction,
     MemoryCommand,
@@ -81,6 +82,12 @@ from agent_platform.observability import (
     SLORegistry,
     StageReporter,
     Tracer,
+)
+from agent_platform.observability.langsmith import (
+    NullTraceExporter,
+    TraceExporter,
+    TurnTrace,
+    turn_trace,
 )
 from agent_platform.resilience import (
     DeadLetterQueue,
@@ -178,6 +185,7 @@ class CustomerSupportAgent(
         runs: RunRegistry | None = None,
         long_term_memory: MemoryFacade | None = None,
         context_health: ContextFailureDetector | None = None,
+        trace_exporter: TraceExporter | None = None,
     ) -> None:
         settings = get_agent_settings()
         # Which stages this agent has. Read once, here, because the graph
@@ -201,6 +209,8 @@ class CustomerSupportAgent(
         self._selector = selector
         self._cascade = cascade
         self._reporter = reporter
+        # Where each turn's trace is exported (LangSmith), if anywhere.
+        self._trace_exporter = trace_exporter or NullTraceExporter()
         # The model is a remote dependency like any other: bounded by a
         # timeout, retried under an idempotency key, and behind a breaker
         # so a provider outage fails fast instead of queueing.
@@ -353,8 +363,15 @@ class CustomerSupportAgent(
         # One turn, one trace: every line any subsystem logs for this turn
         # carries it, with the agent, the session and the caller's channel.
         # And one read of each order: every stage of the turn shares it.
-        with bound_customer(customer), self._turn_log_context(session_id), order_turn_scope():
-            return await self._handle_bound(query, session_id, customer)
+        with (
+            bound_customer(customer),
+            self._turn_trace(session_id, {"query": query}) as trace,
+            order_turn_scope(),
+        ):
+            state = await self._handle_bound(query, session_id, customer)
+            trace.annotate(_turn_facts(state))
+            trace.finish({"response": state.response})
+            return state
 
     async def _handle_bound(
         self, query: str, session_id: str, customer: Customer | None
@@ -528,14 +545,22 @@ class CustomerSupportAgent(
         waiting = record is not None and record.status == "interrupted"
         prior = AgentState.model_validate(await self._runner.values(thread_id))
         customer = self._rebind(prior)
-        with bound_customer(customer), self._turn_log_context(prior.session_id):
-            return await self._resume_bound(thread_id, decision, prior, waiting)
+        inputs = {"resume": thread_id, "decision": str(decision or "")}
+        with bound_customer(customer), self._turn_trace(prior.session_id, inputs) as trace:
+            result = await self._resume_bound(thread_id, decision, prior, waiting)
+            trace.annotate({"resumed": True, "run_status": result.status})
+            trace.finish({"response": result.response})
+            return result
 
-    @staticmethod
-    def _turn_log_context(session_id: str) -> AbstractContextManager[None]:
-        """A fresh trace for one turn (a resume is a turn of its own)."""
-        return bound_log_context(
-            agent=get_settings().agent.id, session=session_id, trace_id=new_trace_id()
+    def _turn_trace(
+        self, session_id: str, inputs: Mapping[str, Any]
+    ) -> AbstractContextManager[TurnTrace]:
+        """A fresh trace for one turn (a resume is a turn of its own), logged and exported."""
+        return turn_trace(
+            self._trace_exporter,
+            agent=get_settings().agent.id,
+            session=session_id,
+            inputs=inputs,
         )
 
     async def _resume_bound(
@@ -808,3 +833,14 @@ class CustomerSupportAgent(
                 str(remembered) if isinstance(remembered, str) and remembered else state.response,
             )
         working.clear_current_turn()
+
+
+def _turn_facts(state: AgentState) -> dict[str, Any]:
+    """What the dashboard filters a turn by: its intent, what was decided, how it ended."""
+    return {
+        "intent": state.metadata.get("intent"),
+        "decisions": state.decisions,
+        "escalated": state.escalated,
+        "halted": state.metadata.get("halted"),
+        "tool_rounds": state.tool_rounds,
+    }

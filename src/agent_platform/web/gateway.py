@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from agent_platform.config.settings import WebMode
 from agent_platform.logging import describe_error, get_logger
+from agent_platform.observability.langsmith import traced_tool
 from agent_platform.resilience import ResilientCaller
 from agent_platform.web.cache import SearchCache
 from agent_platform.web.fetcher import Fetcher
@@ -97,6 +98,7 @@ class WebGateway:
     def mode(self) -> WebMode:
         return self._mode
 
+    @traced_tool
     async def search(self, request: SearchRequest) -> SearchResponse:
         """Hits for one query; the provider's own summary is carried, flagged, never promoted."""
         remembered = self._remembered(request)
@@ -138,6 +140,7 @@ class WebGateway:
             provider=response.provider,
         )
 
+    @traced_tool
     async def fetch(self, url: str) -> FetchedPage:
         """A page's text, from the cache when this gateway already has it."""
         key = url_key(url)

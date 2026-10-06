@@ -30,8 +30,14 @@ from agent_platform.durability import (
     RunRegistry,
 )
 from agent_platform.durability.stop_report import stop_report
-from agent_platform.logging import bound_log_context, get_logger, new_trace_id
+from agent_platform.logging import get_logger
 from agent_platform.memory import MemoryFacade
+from agent_platform.observability.langsmith import (
+    NullTraceExporter,
+    TraceExporter,
+    turn_trace,
+)
+from agent_platform.observability.types import StatusKind
 from research_agent.archive.store import ResearchArchive
 from research_agent.config.settings import ResearchAgentSettings
 from research_agent.domain.report import COVERAGE_AND_LIMITS, Report, SessionPhase
@@ -94,6 +100,7 @@ class ResearchAgent:
         answerer: DirectAnswerer | None = None,
         screen: InputScreen | None = None,
         refusal: RefusalRule | None = None,
+        trace_exporter: TraceExporter | None = None,
     ) -> None:
         self._scoping = scoping
         # The person's own message, screened before any layer reads it (None: no screen declared).
@@ -111,6 +118,8 @@ class ResearchAgent:
         self._answerer = answerer
         # Requests this agent will not help with, refused before any model reads them.
         self._refusal = refusal
+        # Where each turn's trace is exported (LangSmith), if anywhere.
+        self._trace_exporter = trace_exporter or NullTraceExporter()
         self._sessions: dict[str, SessionRecord] = {}
         self._active: RunResources | None = None
         # The run thread in flight: what Stop pauses through the durable runner.
@@ -131,10 +140,38 @@ class ResearchAgent:
 
     async def handle(self, query: str, session_id: str) -> TurnResult:
         """One turn, under a trace of its own that every log line it causes carries."""
-        with bound_log_context(
-            agent=get_settings().agent.id, session=session_id, trace_id=new_trace_id()
-        ):
+        with turn_trace(
+            self._trace_exporter,
+            agent=get_settings().agent.id,
+            session=session_id,
+            inputs={"query": query},
+        ) as trace:
+            result = await self._summarised(query, session_id)
+            trace.annotate({"phase": result.phase, "run_id": result.run_id})
+            trace.finish({"response": result.response, "phase": result.phase})
+            return result
+
+    async def _summarised(self, query: str, session_id: str) -> TurnResult:
+        """The turn, ended by the same TURN SUMMARY card csa's turns end with."""
+        reporter = self._telemetry.reporter
+        if reporter is None:
             return await self._handle(query, session_id)
+        words = self._settings.turn_summary
+        reporter.begin_turn(session=session_id)
+        try:
+            result = await self._handle(query, session_id)
+        except Exception:
+            reporter.end_turn("failed", words.crashed)
+            raise
+        status: StatusKind = (
+            "waiting"
+            if result.phase in words.waiting
+            else "failed"
+            if result.phase in words.failed
+            else "completed"
+        )
+        reporter.end_turn(status, words.outcomes.get(result.phase, result.phase))
+        return result
 
     async def _handle(self, query: str, session_id: str) -> TurnResult:
         record = self.session(session_id)

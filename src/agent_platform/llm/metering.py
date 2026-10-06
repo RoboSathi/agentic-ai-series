@@ -13,30 +13,42 @@ call) inherit it.
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 
 from agent_platform.llm.types import TokenUsage
 
 TokenSink = Callable[[int], None]
 
-_current_sink: ContextVar[TokenSink | None] = ContextVar("current_token_sink", default=None)
+# Every sink watching the current run: the surface that started it (the TUI's
+# status bar) and the turn being summarised both hear each call.
+_current_sinks: ContextVar[tuple[TokenSink, ...]] = ContextVar("current_token_sinks", default=())
 
 
 @contextmanager
 def metered(sink: TokenSink) -> Iterator[None]:
     """Send the tokens of every model call made inside this block to `sink`."""
-    token = _current_sink.set(sink)
+    token = attach(sink)
     try:
         yield
     finally:
-        _current_sink.reset(token)
+        detach(token)
+
+
+def attach(sink: TokenSink) -> Token[tuple[TokenSink, ...]]:
+    """Add `sink` to the current run's meters until `detach` (for a bracket, not a block)."""
+    return _current_sinks.set((*_current_sinks.get(), sink))
+
+
+def detach(token: Token[tuple[TokenSink, ...]]) -> None:
+    """Undo one `attach`."""
+    _current_sinks.reset(token)
 
 
 def record_usage(usage: TokenUsage) -> None:
     """Report one call's usage to the run watching it, if any is."""
-    sink = _current_sink.get()
-    if sink is not None and usage.total_tokens > 0:
-        sink(usage.total_tokens)
+    if usage.total_tokens > 0:
+        for sink in _current_sinks.get():
+            sink(usage.total_tokens)
 
 
-__all__ = ["TokenSink", "metered", "record_usage"]
+__all__ = ["TokenSink", "attach", "detach", "metered", "record_usage"]

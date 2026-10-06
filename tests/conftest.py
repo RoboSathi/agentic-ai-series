@@ -221,6 +221,20 @@ def isolated_analytics_store(tmp_path_factory: pytest.TempPathFactory) -> Iterat
     reload_settings()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def no_trace_export() -> Iterator[None]:
+    """No test exports a trace, whatever key the developer's shell exports.
+
+    With a LangSmith key in the environment every agent a test builds would
+    send its scripted turns to the developer's dashboard and spend their
+    trace quota. Without one, the exporter is the no-op it is in CI.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        for name in get_settings().observability.langsmith.key_env_vars:
+            patch.delenv(name, raising=False)
+        yield
+
+
 def _eval_paths(root: Any) -> dict[str, Any]:
     return {
         "EVALS__STORE__DB_PATH": root / "evals.duckdb",

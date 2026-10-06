@@ -62,6 +62,7 @@ from agent_platform.llm.roles import RoleModelRouter
 from agent_platform.logging import get_logger
 from agent_platform.memory import EpisodicStore, MemoryFacade, SemanticStore, WorkingMemoryStore
 from agent_platform.observability import StageReporter
+from agent_platform.observability.langsmith import build_trace_exporter
 from agent_platform.observability.model_observer import StageReporterModelObserver
 from agent_platform.observability.store import DuckDbObservabilityStore
 from agent_platform.observability.types import utc_now
@@ -195,6 +196,8 @@ def build_agent(
         answerer=answerer,
         screen=_input_screen(posture, telemetry, platform),
         refusal=RefusalRule(agent.scoping.refuse_patterns),
+        # Exported traces are always PII-redacted, whatever the `pii` feature says.
+        trace_exporter=build_trace_exporter(settings.agent.id, lambda: PIIFilterImpl().redact),
     )
 
 

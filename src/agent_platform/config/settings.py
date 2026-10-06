@@ -537,13 +537,41 @@ class StepCardSettings(BaseModel):
     rationale_fields: list[str]
 
 
+class LangSmithSettings(BaseModel):
+    """Exporting each turn's trace to LangSmith (`observability/langsmith.py`)."""
+
+    enabled: bool
+    endpoint: str
+    web_url: str
+    # `{agent_id}`: each agent's turns land in a project of their own.
+    project: str
+    root_run_name: str
+    # The metadata key LangSmith groups a conversation's turns by (a thread).
+    thread_key: str
+    # Send each graph step's full input state (true) or only what it changed (false).
+    full_node_state: bool
+    # Share of turns exported, 0.0–1.0, decided per turn; an agent's overlay may lower it.
+    sample_rate: float = Field(ge=0.0, le=1.0)
+    # Bare env vars tried in order. The key is never a field, so it never
+    # reaches model_dump() or a log line.
+    key_env_vars: list[str]
+    # `{web_url}`, `{tenant_id}`, `{project_id}`, `{run_id}`.
+    run_url: str
+    # The turn summary's field that carries the link.
+    url_field: str
+
+    def api_key(self) -> str | None:
+        """The first configured key variable that is set."""
+        return _first_env(self.key_env_vars)
+
+
 class ObservabilitySettings(YamlBackedSettings):
     """Tracing, SLOs, cost stack, queue math (LLD §6)."""
 
     _yaml_section = "observability"
     enabled: bool
     analytics_db_path: str
-    langsmith_enabled: bool
+    langsmith: LangSmithSettings
     persist_traces: bool
     slo_targets: dict[str, float]
     review_queue: ReviewQueueSettings

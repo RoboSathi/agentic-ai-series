@@ -14,9 +14,10 @@ from typing import Any
 
 from agent_platform.observability.types import StatusEvent
 
-# Stages whose completion is one model call / one tool execution.
-_LLM_STAGE = "llm_response_received"
-_TOOL_STAGE = "tool_result"
+# Model calls are counted where every one is made (the central meter, see
+# `model_call`); a tool result is any card of this kind, whatever the agent
+# names its stage.
+_TOOL_KIND = "tool_result"
 # Stages that belong to memory, whichever operation they record.
 _MEMORY_PREFIX = "memory_"
 _RECALL_STAGE = "memory_recall"
@@ -55,10 +56,7 @@ class TurnTally:
         if event.status not in _TERMINAL:
             return
         self._statuses[event.status] += 1
-        if event.stage == _LLM_STAGE and event.status == "completed":
-            self._llm_calls += 1
-            self._tokens += _int(event.fields.get("total_tokens"))
-        if event.stage == _TOOL_STAGE:
+        if event.event_kind == _TOOL_KIND:
             tool = str(event.fields.get("tool") or "tool")
             refused = event.status == "blocked"
             self._refused += refused
@@ -77,6 +75,11 @@ class TurnTally:
             route = str(event.fields.get("route") or "")
             if route:
                 self._memory[_MEMORY_WORDS.get(route, route)] += 1
+
+    def model_call(self, tokens: int) -> None:
+        """One provider call of this turn, as the central meter reports it."""
+        self._llm_calls += 1
+        self._tokens += tokens
 
     def fields(
         self,

@@ -16,14 +16,14 @@ and a shared DuckDB analytics store for traces and audit data.
 - `StageReporter`, `InMemoryLiveStatusFeed`, `NullLiveStatusFeed`, `StatusEvent` (`status_feed.py`, `types.py`)
 - Card fields every agent shares: `llm_request_fields`/`llm_response_fields` (`llm_fields.py`), `tool_request_fields`/`tool_result_fields`/`control_loop_fields` (`tool_fields.py`)
 - `LoopReporter`, `mark_step` (`loop_reporter.py`): a reasoning loop's cards numbered "Step N", with the cap beside it
-- `LocalTracer`, `LangSmithTracer`, `traced` (`tracer.py`, `tracing.py`)
+- `LocalTracer`, `traced` (`tracer.py`, `tracing.py`); `LangSmithExporter`, `turn_trace` (`langsmith.py`)
 - `DuckDbObservabilityStore` (`store.py`) — shared analytics file
 - `CostAggregatorImpl` (`cost.py`), `SLORegistry`/`SLOTracker` (`slo.py`), `LittlesLawQueueModel` (`queue.py`), `PostmortemRegister` (`postmortem.py`)
 
 ## Configuration
 
-Section `observability:` — `enabled` (tracing + SLOs), `analytics_db_path`, `langsmith_enabled`,
-`persist_traces`, `slo_targets`, `review_queue`.
+Section `observability:` — `enabled` (tracing + SLOs), `analytics_db_path`, `langsmith`
+(per-turn trace export, `langsmith.py`), `persist_traces`, `slo_targets`, `review_queue`.
 
 ## Seams
 

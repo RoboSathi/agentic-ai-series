@@ -20,6 +20,7 @@ from agent_platform.config import get_settings
 from agent_platform.executor.types import ApprovedToolCall, ExecutionAuditEvent, ExecutionOutcome
 from agent_platform.logging import get_logger, instrument, logged
 from agent_platform.observability import StageReporter
+from agent_platform.observability.langsmith import tool_run
 from agent_platform.observability.types import utc_now
 from agent_platform.resilience.idempotency.guard import IdempotencyGuard
 from agent_platform.tools.types import ToolCall, ToolResult
@@ -132,7 +133,7 @@ class ToolExecutorImpl:
         async def run_handler() -> Any:
             token = _EXECUTION_KEY.set(key)
             try:
-                return await self._handler.execute(call)
+                return await tool_run(call.action, self._handler.execute)(call)
             finally:
                 _EXECUTION_KEY.reset(token)
 
