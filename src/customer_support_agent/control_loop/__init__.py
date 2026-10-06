@@ -4,7 +4,7 @@ The **Tool-Use Loop** is the `reason ⇄ act` cycle in the graph: the model
 proposes a typed tool call, the harness executes it, the observation comes
 back, bounded by `max_tool_iterations`. It is deliberately *not* ReAct —
 there is no natural-language thought step, and calling it ReAct would
-teach the wrong thing. `design_patterns/agentic/react.py` is the pure form.
+teach the wrong thing. The research agent's `research/worker.py` is the ReAct form.
 
 The **Output Quality Gate** is `quality_gate`. It was called a
 "deliberation loop", which oversold it: it looks a plan up in config,

@@ -2,8 +2,8 @@
 
 **Status:** Draft v1 — build spec for coding-agent execution
 **Scope:** Whole platform — `agent_platform` shared library, `customer_support_agent`
-running project, `episodes/` per-episode demos, `design_patterns/` WF/AG reference
-library — as required to support all 48 episodes of *The Agentic AI Systems
+running project and `research_agent` (the per-episode demos and the WF/AG reference
+library were retired by ADR 0006) — as required to support all 48 episodes of *The Agentic AI Systems
 Masterclass*.
 **Companion documents:** `HLD.md` (architecture), `LLD.md` (subsystem-level design),
 `Program_Design.md` (repo layout, build phasing, standards).
@@ -22,7 +22,7 @@ governed agentic AI system. It is simultaneously:
    (`customer_support_agent`) that demonstrates every governance discipline
    the series teaches, operating against a real (seeded) policy and order
    dataset.
-3. **A teaching library** (`design_patterns/`): independent, minimal reference
+3. ~~**A teaching library** (`design_patterns/`)~~ — retired by ADR 0006; patterns are taught through the agents. Originally: independent, minimal reference
    implementations of the 15 WF/AG patterns and 5 cross-cutting concept
    patterns named in Module 1, decoupled from the running example so each
    pattern can be understood in isolation.
@@ -241,8 +241,8 @@ requirements, not a separate module's.
 | FR-55c | DB browser, memory inspector (all 4 CoALA stores, real content), and audit-trail view — **deferred to next phase**; interfaces are specified in `LLD.md` so the module boundary is stable, but no panel implementation ships this phase | `tui` — **deferred, TODO** | E01 onward |
 | FR-56 | File logging required independently of the TUI: the TUI's live feed is a human-readable summary only — full structured/debug detail for the same event goes only to the corresponding log file | `logging`, `tui` | — |
 | FR-57 | Every governance feature (and sub-feature) independently toggleable on/off, live, without restart (Tier-2 mutable in-memory config singleton) | `config` | — |
-| FR-58 | Per-episode `episodes/eNN/app.py` exercises the harness at that episode's stage of maturity | `episodes/` | all |
-| FR-59 | `design_patterns/` hosts independent reference implementations of all 15 WF/AG patterns + 5 concept patterns | `design_patterns/` | M1, M4–M18 |
+| FR-58 | **Retired** ([ADR 0006](adr/0006-retire-episodes-and-pattern-library.md)): episodes are demonstrated by running `customer_support_agent` / `research_agent` under config overlays; there are no per-episode scripts | — | all |
+| FR-59 | **Retired** ([ADR 0006](adr/0006-retire-episodes-and-pattern-library.md)): no separate pattern library; each agent's `design_docs/patterns.md` maps the patterns to where it uses them | — | M1, M4–M18 |
 
 ## 8. Non-functional requirements
 
@@ -293,7 +293,8 @@ which phase) is `Program_Design.md` §4.
 ## 11. Resolved decisions (previously open questions)
 
 - **Episode numbering**: the 48-episode v10 curriculum is the reference
-  for `episodes/` folder naming (E01–E48).
+  for episode numbering (E01–E48); since ADR 0006 an episode is a config
+  overlay over an agent, not an `episodes/` folder.
 - **New-package placement**: `sandbox`, `control_loop` (merging the
   earlier `loop_engineering`/`state_management` split),
   `multi_agent`, and `prompt_compilation` all land as top-level

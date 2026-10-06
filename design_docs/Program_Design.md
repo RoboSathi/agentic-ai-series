@@ -64,12 +64,6 @@ agentic-harness-core/
 │       ├── review/        # the human side of escalation
 │       ├── graph/         # state, edges, builder, agent, nodes/
 │       ├── prompts/
-├── episodes/
-│   └── e01 .. e48/        # each: app.py + episode-scoped README
-├── design_patterns/
-│   ├── wf/                # 6 workflow patterns (E04)
-│   ├── ag/                # 9 agentic patterns (E05-E07)
-│   └── concepts/          # 5 cross-cutting concept references
 ├── tests/
 │   ├── unit/               # mirrors src/ package structure 1:1
 │   └── integration/
@@ -124,7 +118,7 @@ series is a naming bug).
 | **RBAC / PoLP** | NIST role model + Principle of Least Privilege; just-in-time scoped elevation only, never standing (E10 in v6 numbering). |
 | **Topology** | Supervisor / Hierarchy / Peer Network / Swarm — multi-agent coordination shape (E41). |
 | **Blast Radius** | Scope of damage a wrong action can cause — one of the Three Gates variables, also drives `sandbox` isolation-tier selection (E03, E34). |
-| **Tool-Use Loop** | The `reason ⇄ act` cycle: the model proposes a *typed tool call*, the harness executes it, the observation returns. Bounded by `max_tool_iterations`. Deliberately **not ReAct** — there is no natural-language thought step, and the proposal is a validated call rather than parsed prose. `design_patterns/agentic/react.py` remains the pure form. |
+| **Tool-Use Loop** | The `reason ⇄ act` cycle: the model proposes a *typed tool call*, the harness executes it, the observation returns. Bounded by `max_tool_iterations`. Deliberately **not ReAct** — there is no natural-language thought step, and the proposal is a validated call rather than parsed prose. The research agent's `research/worker.py` is the ReAct form. |
 | **Output Quality Gate** | Plan lookup → deterministic critique → at most one repair → independent score. A single pass, not a loop; named `quality_gate` after being called a "deliberation loop" it never was. |
 | **Action Mandate** | A deterministic record that *this* subject may take *this* action on *this* target, up to *this* much, in *this* round. Issued from what the person supplied and the authoritative record, never from model output. Scopes a write to a record the person established; it does not judge whether they asked for it, which is language work the model does. |
 | **Effect Verification** | Reading the changed thing back after a side effect and reconciling it against what the action claimed. "The executor returned success" and "the money moved" are different claims; an unverified result never becomes authoritative. |
@@ -163,8 +157,9 @@ series is a naming bug).
 
 Each phase ends with: `ruff` clean, `mypy --strict` clean, `pytest`
 coverage ≥ 80% on everything touched, and — where applicable — the
-episode's own exit artifact demonstrably working end-to-end via
-`episodes/eNN/app.py` and visible in the TUI.
+episode's own exit artifact demonstrably working end-to-end by running
+the agent under that episode's config overlay, visible in the TUI
+(ADR 0006 removed the per-episode scripts).
 
 | Phase | Scope | Episodes | Definition of done |
 |---|---|---|---|
@@ -264,7 +259,6 @@ jobs:
 | Eval (component/integration/golden-task) | Behavioral correctness against the Eval Pyramid | `evals` | component+integration on every PR; golden-task nightly |
 | Eval (production shadow) | Live-traffic shadow scoring | `evals` + `observability` | continuous against the running agent |
 | Adversarial/attack-path | Security and guardrail invariants | `gatekeeper`, `guardrails`, `security` | every PR (fast subset) + full suite at each phase gate |
-| Episode smoke | `episodes/eNN/app.py` runs to its exit artifact | `episodes/` | on change to any module that episode depends on |
 
 ## 9. Resolved decisions (see `PRD.md` §11 for the full list) and what's still open
 

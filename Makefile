@@ -1,5 +1,5 @@
-.PHONY: gen-key help install clean lint type-check format test verify agent episode llm-check model-check models data refund-limit \
-	clean-memory show-memory dream runs patterns \
+.PHONY: gen-key help install clean lint type-check format test verify agent llm-check model-check models data refund-limit \
+	clean-memory show-memory dream runs \
 	eval eval-generate eval-oracle eval-security eval-judge eval-deepeval eval-report eval-diff \
 	eval-runs eval-sql _agent
 
@@ -103,10 +103,8 @@ help:
 	@echo "  make runs ra              List archived research runs"
 	@echo "  make dlq <agent> [STATUS=…|ID=…] [ACTION=claim|resolve|discard ID=… NOTE=…]   Quarantined messages (same as /dlq)"
 	@echo "  make pii-reveal <agent> T=<token> WHY=<reason>   What a PII token stood for (audited; needs PII_VAULT_KEY)"
-	@echo "  make episode E=05         One episode (calls the live model)"
 	@echo "  make model-check [agent]  Probe every hosted model and run every local model, per agent (BENCH=1 times them; alias: llm-check)"
 	@echo "  make models [agent]       Download (if missing) and run each agent's local models (run by make install)"
-	@echo "  make patterns             Pattern coverage matrix across agents"
 	@echo ""
 	@echo "$(GREEN)Customer support admin$(NC) (csa only):"
 	@echo "  make refund-limit 100     Set the per-refund limit the Gatekeeper enforces (agent DB)"
@@ -158,26 +156,20 @@ clean:
 	rm -rf logs/*.log logs/*/
 
 lint:
-	./venv/bin/ruff check src/ tests/ design_patterns/
+	./venv/bin/ruff check src/ tests/
 
 type-check:
-	./venv/bin/mypy --strict src/ design_patterns/
+	./venv/bin/mypy --strict src/
 
 format:
-	./venv/bin/ruff format src/ tests/ design_patterns/
-	./venv/bin/ruff check src/ tests/ design_patterns/ --fix
+	./venv/bin/ruff format src/ tests/
+	./venv/bin/ruff check src/ tests/ --fix
 
 test:
 	./venv/bin/pytest tests/ --cov=src --cov-report=term-missing -q
 
 agent: _agent
 	$(PYTHON) -m agent_platform.tui
-
-# Run one episode: make episode E=05  (or E=48a). Configured episodes call
-# the live model — this is a recording-session tool, not a check.
-episode:
-	@test -n "$(E)" || (echo "$(YELLOW)Usage: make episode E=05$(NC)" && exit 1)
-	AGENTIC_OVERLAYS=$(csa_OVERLAY) $(PYTHON) -m episodes.e$(E)
 
 # Every agent's models, one agent at a time (its overlay names its roles and local models):
 # `make model-check`, or `make model-check ra`. BENCH=1 also times each chat model.
@@ -211,9 +203,6 @@ dlq: _agent
 pii-reveal: _agent
 	@test -n "$(T)" -a -n "$(WHY)" || (echo "$(YELLOW)Usage: make pii-reveal <agent> T=<token> WHY=<reason>$(NC)" && exit 2)
 	@$(PYTHON) -m agent_platform.security.pii.reveal "$(T)" --why "$(WHY)"
-
-patterns:
-	@$(PYTHON) -m design_patterns.coverage $(foreach a,$(AGENTS),--agent $(a)=$($(a)_PKG)) --markdown design_docs/patterns_coverage.md
 
 # -- customer support admin (csa only) ---------------------------------------------
 # `make refund-limit 100`: the amount is the second goal, so it is given a
@@ -290,10 +279,10 @@ gen-key:
 # in one process lets the first overlay declaration win for both.
 verify:
 	@echo "$(BLUE)1/4 Ruff lint + format...$(NC)"
-	./venv/bin/ruff check src/ tests/ design_patterns/ > /dev/null && \
-	./venv/bin/ruff format --check src/ tests/ design_patterns/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
+	./venv/bin/ruff check src/ tests/ > /dev/null && \
+	./venv/bin/ruff format --check src/ tests/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
 	@echo "$(BLUE)2/4 mypy --strict...$(NC)"
-	./venv/bin/mypy --strict src/ design_patterns/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
+	./venv/bin/mypy --strict src/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
 	@echo "$(BLUE)3/4 Pytest with coverage gate (80%)...$(NC)"
 	./venv/bin/pytest tests/ --cov=src -q > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
 	@echo "$(BLUE)4/4 Composition root imports (one process per agent)...$(NC)"

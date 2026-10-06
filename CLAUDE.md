@@ -17,10 +17,12 @@ the standard of Anthropic, OpenAI, or Google, not tutorial-grade scaffolding.
     project (a customer-support refund agent), which **composes**
     `agent_platform` rather than duplicating it. This grows incrementally
     across episodes through to the capstone.
-  - `episodes/` — per-episode folders (e01, e02, ...), each a minimal working
-    `app.py` that exercises the harness at that episode's stage of maturity.
-  - `design_patterns/` — reference implementations of the WF/AG pattern
-    library taught across the series, independent of the running example.
+  - `src/research_agent/` — the second agent on the same platform (scoped,
+    durable web research), composed the same way.
+  - Episodes are demonstrated by running these agents under config overlays
+    (features, profiles, ablations), not by separate per-episode scripts.
+    Each agent's `design_docs/patterns.md` maps the WF/AG patterns the series
+    teaches to where that agent uses them.
 
 ## Non-negotiable engineering standards
 

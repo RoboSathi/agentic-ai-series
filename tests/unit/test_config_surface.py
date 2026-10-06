@@ -17,19 +17,17 @@ import yaml
 from pydantic import BaseModel
 
 from agent_platform.config.settings import AppConfig
-from agent_platform.config.yaml_config import deep_merge
 from customer_support_agent.config.settings import CustomerSupportAgentSettings
 
 ROOT = Path(__file__).resolve().parents[2]
 PLATFORM = ROOT / "src" / "agent_platform" / "config" / "config.yaml"
 AGENT = ROOT / "src" / "customer_support_agent" / "config" / "config.yaml"
-EPISODES = sorted((ROOT / "episodes").glob("*/config.yaml"))
 AGENT_SECTION = "customer_support_agent"
 # Sections that are not settings models: the overlay list, the feature
-# tree (a FeatureSet, any shape), and episode metadata (EpisodeSettings).
-FREE_FORM = {"overlays", "features", "episode"}
+# tree (a FeatureSet, any shape).
+FREE_FORM = {"overlays", "features"}
 SETTINGS_FILES = ("config/settings.py",)
-CODE_ROOTS = ("src", "episodes", "design_patterns")
+CODE_ROOTS = ("src",)
 
 Tree = dict[str, "Tree | None"]
 
@@ -81,40 +79,14 @@ def _undeclared(data: Any, tree: Tree | None, prefix: str) -> list[str]:
     return found
 
 
-def _flat(data: Any, prefix: str = "") -> dict[str, Any]:
-    if not isinstance(data, dict):
-        return {prefix: data}
-    flat: dict[str, Any] = {}
-    for key, value in data.items():
-        flat.update(_flat(value, f"{prefix}.{key}" if prefix else str(key)))
-    return flat
-
-
 def _load(path: Path) -> dict[str, Any]:
     return yaml.safe_load(path.read_text()) or {}
 
 
-@pytest.mark.parametrize(
-    "path", [PLATFORM, AGENT, *EPISODES], ids=lambda p: str(p.relative_to(ROOT))
-)
+@pytest.mark.parametrize("path", [PLATFORM, AGENT], ids=lambda p: str(p.relative_to(ROOT)))
 def test_every_yaml_key_is_a_declared_setting(path: Path) -> None:
     schema = _schema()
     data = {key: value for key, value in _load(path).items() if key not in FREE_FORM}
     orphans = [key for key in data if key not in schema]
     orphans += _undeclared(data, schema, "")
     assert orphans == [], f"{path.name}: keys no settings model reads: {orphans}"
-
-
-@pytest.mark.parametrize("path", EPISODES, ids=lambda p: p.parent.name)
-def test_an_episode_overlay_changes_what_it_states(path: Path) -> None:
-    """An episode's features block is its declared posture and is kept whole;
-    every other line must differ from what the episode would inherit."""
-    inherited = _flat(deep_merge(_load(PLATFORM), _load(AGENT)))
-    restated = [
-        key
-        for key, value in _flat(_load(path)).items()
-        if not key.startswith(("features.", "episode."))
-        and key in inherited
-        and inherited[key] == value
-    ]
-    assert restated == [], f"{path.parent.name} restates inherited values: {restated}"

@@ -71,5 +71,4 @@ the running process only.
 
 ## Patterns
 
-See [`patterns.yaml`](patterns.yaml) and the cross-agent matrix
-(`make patterns`, [`design_docs/patterns_coverage.md`](../../../design_docs/patterns_coverage.md)).
+See [`patterns.md`](patterns.md).

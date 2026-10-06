@@ -92,8 +92,7 @@ implementation deferred to a later phase) and one (`multi_agent`) is a
 | `tools` | Typed `ToolCall`, registry, namespacing, retrieval-based selection | live | E01, E05, E22 |
 | `tui` | Live status feed (spinner, human-readable stage labels, token counts, copy). DB browser/memory inspector/audit view designed at interface level | **live status feed only this phase**; panels deferred | cross-cutting |
 | `customer_support_agent` | The running product: LangGraph graph, refund/order tools, policy prompts, control-loop composition | live | running example |
-| `episodes/eNN` | Minimal `app.py` per episode exercising the harness at that episode's maturity | live | all |
-| `design_patterns/` | Independent WF/AG pattern reference implementations | live | M1, M4–M18 |
+| `episodes/eNN`, `design_patterns/` | **Removed** (ADR 0006): episodes run the agents under config overlays; patterns are mapped in each agent's `design_docs/patterns.md` | retired | — |
 
 ## 4. Request lifecycle (primary data flow)
 
@@ -239,7 +238,7 @@ config, logging                          (layer 0 — no deps)
                             └─ verification                            (layer 5b — depends on tools + logging)
         └─ sandbox, control_loop, mcp, multi_agent, prompt_compilation  (layer 6 — parked/stub this phase; see §3)
                                  └─ customer_support_agent      (layer 7 — composes everything)
-                                      └─ episodes/, design_patterns/, tui  (layer 8 — consumers only)
+                                      └─ tui  (layer 8 — consumers only)
 ```
 
 No `economics` layer entry — cost-stack aggregation lives inside

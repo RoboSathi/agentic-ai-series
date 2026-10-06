@@ -132,7 +132,7 @@ class CuratorQueue:
 
 
 class InMemoryCuratorQueue:
-    """The same queue for a pipeline built without a platform store (episodes, tests)."""
+    """The same queue for a pipeline built without a platform store (tests)."""
 
     def __init__(self) -> None:
         self._items: dict[int, tuple[str, WriteResult]] = {}

@@ -69,5 +69,5 @@ reproducible, but it can only research the Kelvari topics the greeting lists.
 
 [ubiquitous_language.md](ubiquitous_language.md) ·
 [architecture.md](architecture.md) · [threat_model.md](threat_model.md) ·
-[evals.md](evals.md) · [patterns.yaml](patterns.yaml) · [adr/](adr/) ·
+[evals.md](evals.md) · [patterns.md](patterns.md) · [adr/](adr/) ·
 [BUILD_PLAN.md](BUILD_PLAN.md) (reuse map, deviations)

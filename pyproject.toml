@@ -69,16 +69,14 @@ pythonpath = ["."]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
-# Episodes are being rewritten; their smoke tests are outside the gates until then.
-addopts = "--strict-markers --ignore=tests/episodes"
+addopts = "--strict-markers"
 asyncio_mode = "auto"
 markers = [
     "live_llm: hits a real LLM endpoint; skipped unless RUN_LIVE_LLM_TESTS=1 and credentials are present",
 ]
 
 [tool.coverage.run]
-# Episodes are being rewritten and are outside the gates until they return.
-source = ["src", "design_patterns"]
+source = ["src"]
 omit = ["*/tests/*"]
 
 [tool.coverage.report]

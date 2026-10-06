@@ -15,18 +15,16 @@ for no visible reason.
 
 import json
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
 
 from agent_platform.config import (
-    REPO_ROOT,
     clear_overlays,
     get_settings,
     reload_settings,
     set_active_features,
-    use_overlay,
 )
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import (
@@ -42,7 +40,6 @@ from customer_support_agent.config.settings import reload_agent_settings
 from customer_support_agent.domain.identity import Customer, set_current_customer
 from customer_support_agent.domain.models import Order, User
 from customer_support_agent.persistence.schema import ensure_schema
-from episodes._shared import CONFIG_FILENAME, EpisodeSettings
 
 _ANALYTICS_PATH_VAR = "OBSERVABILITY__ANALYTICS_DB_PATH"
 _CHECKPOINTS_PATH_VAR = "DURABILITY__DB_PATH"
@@ -292,23 +289,6 @@ def restore_settings() -> Iterator[None]:
     clear_overlays()
     set_active_features(None)
     reload_settings()
-
-
-@pytest.fixture
-def episode_config(restore_settings: None) -> Callable[[str], EpisodeSettings]:
-    """Load one episode's config the way `run_episode` does.
-
-    Applying the real overlay rather than a hand-built settings object is
-    the point: what is under test is that the episode's own `config.yaml`
-    produces the agent the episode claims to be demonstrating.
-    """
-
-    def apply(name: str) -> EpisodeSettings:
-        use_overlay(REPO_ROOT / "episodes" / name / CONFIG_FILENAME)
-        reload_settings()
-        return EpisodeSettings()  # type: ignore[call-arg]
-
-    return apply
 
 
 _CONTENT_FEATURES = ("pii", "prompt_injection", "content_moderation")

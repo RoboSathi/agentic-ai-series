@@ -283,7 +283,7 @@ class SqliteAuditLedger:
 
 
 class NullAuditLedger:
-    """No-op ledger for episodes that deliberately disable audit."""
+    """No-op ledger for a component built without an audit trail (tests, standalone use)."""
 
     def record(self, entry: AuditEntry) -> None:
         return None

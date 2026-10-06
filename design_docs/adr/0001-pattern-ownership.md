@@ -1,5 +1,8 @@
 # ADR 0001 — Pattern ownership: composition is agent-owned
 
+> The `design_patterns/` paragraph below is superseded by
+> [ADR 0006](0006-retire-episodes-and-pattern-library.md); the ownership decision stands.
+
 ## Context
 
 The series teaches sixteen WF/AG patterns (`design_patterns/catalogue.py`)

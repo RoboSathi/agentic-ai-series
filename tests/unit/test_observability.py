@@ -14,7 +14,6 @@ from agent_platform.observability import (
     StatusEvent,
 )
 from agent_platform.observability.types import CostStack, utc_now
-from agent_platform.persistence import SqliteConnectionPool
 
 
 class TestStatusFeed:
@@ -67,31 +66,29 @@ class TestStatusFeed:
 
 
 class TestTracer:
-    def test_a_span_is_recorded_with_its_authority_context(
-        self, pool: SqliteConnectionPool
-    ) -> None:
+    def test_a_span_is_recorded_with_its_authority_context(self) -> None:
         """A trace that cannot answer "why" is telemetry, not audit."""
-        tracer = LocalTracer(pool)
+        tracer = LocalTracer()
         with tracer.span("refund", actor="agent-1", tool="process_refund") as span:
             trace_id = span.trace_id
         recorded = tracer.spans_for(trace_id)
         assert recorded and recorded[0].actor == "agent-1"
 
-    def test_a_span_records_its_latency(self, pool: SqliteConnectionPool) -> None:
-        tracer = LocalTracer(pool)
+    def test_a_span_records_its_latency(self) -> None:
+        tracer = LocalTracer()
         with tracer.span("refund") as span:
             trace_id = span.trace_id
         assert tracer.spans_for(trace_id)[0].latency_ms >= 0
 
-    def test_a_raising_body_still_closes_the_span(self, pool: SqliteConnectionPool) -> None:
-        tracer = LocalTracer(pool)
+    def test_a_raising_body_still_closes_the_span(self) -> None:
+        tracer = LocalTracer()
         with pytest.raises(RuntimeError):
             with tracer.span("refund"):
                 raise RuntimeError("boom")
         assert tracer.spans
 
-    def test_nested_spans_share_a_trace(self, pool: SqliteConnectionPool) -> None:
-        tracer = LocalTracer(pool)
+    def test_nested_spans_share_a_trace(self) -> None:
+        tracer = LocalTracer()
         with tracer.span("outer") as outer:
             with tracer.span("inner", parent=outer) as inner:
                 assert inner.parent_id == outer.span_id

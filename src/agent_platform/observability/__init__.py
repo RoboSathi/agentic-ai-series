@@ -16,7 +16,6 @@ from agent_platform.observability.status_feed import (
 )
 from agent_platform.observability.store import DuckDbObservabilityStore, create_observability_store
 from agent_platform.observability.tracer import (
-    LangSmithTracer,
     LocalTracer,
     Redactor,
     Tracer,
@@ -43,7 +42,6 @@ __all__ = [
     "EventKind",
     "CostStack",
     "InMemoryLiveStatusFeed",
-    "LangSmithTracer",
     "LittlesLawQueueModel",
     "LiveStatusFeed",
     "LocalTracer",

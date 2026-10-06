@@ -1298,6 +1298,9 @@ lifecycle (HLD §4) end-to-end against a seeded DB.
 
 ## 22. `episodes/` and `design_patterns/`
 
+> **Retired** by [ADR 0006](adr/0006-retire-episodes-and-pattern-library.md):
+> both packages were removed. The text below is kept as history.
+
 **Purpose.** `episodes/eNN/app.py` — minimal, runnable, exercises the
 harness at episode NN's maturity (no forward-dependency on a subsystem
 not yet "live" for that episode, per the config toggles). `design_patterns/`

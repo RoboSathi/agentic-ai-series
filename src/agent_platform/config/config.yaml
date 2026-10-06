@@ -125,8 +125,6 @@ logging:
     ledger: aquamarine1
     artifacts: wheat1
     verification: light_steel_blue
-    design_patterns: plum1
-    episodes: khaki1
   file_enabled: true
   # The file log is the authoritative record, so it captures more than the
   # console: DEBUG here is what makes LLM payloads, call traces and

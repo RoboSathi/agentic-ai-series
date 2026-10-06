@@ -18,28 +18,6 @@ from agent_platform.logging import (
 )
 from agent_platform.observability.store import DuckDbObservabilityStore
 from agent_platform.observability.types import Span, utc_now
-from agent_platform.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
-
-_CREATE_SQLITE_SPANS_TABLE = """
-CREATE TABLE IF NOT EXISTS platform_trace_spans (
-    agent_id TEXT NOT NULL,
-    span_id TEXT PRIMARY KEY,
-    trace_id TEXT NOT NULL,
-    parent_id TEXT,
-    name TEXT NOT NULL,
-    actor TEXT,
-    tool TEXT,
-    policy_version TEXT,
-    model_version TEXT,
-    state_transition TEXT,
-    result TEXT,
-    started_at TEXT NOT NULL,
-    ended_at TEXT,
-    latency_ms REAL NOT NULL,
-    cost_usd REAL NOT NULL,
-    attributes TEXT NOT NULL
-)
-"""
 
 _CREATE_DUCKDB_SPANS_TABLE = """
 CREATE TABLE IF NOT EXISTS platform_trace_spans (
@@ -84,18 +62,15 @@ class Tracer(Protocol):
 class LocalTracer:
     """In-process tracer with shared DuckDB persistence for observed agents.
 
-    The legacy ``pool`` parameter remains supported for older episode demos.
-    New agents should pass ``store`` so all traces land in the shared
-    observability database rather than an agent's business database.
+    Spans land in the shared observability database (``store``), never in
+    an agent's business database. Without a store they are kept in memory.
     """
 
     def __init__(
         self,
-        pool: SqliteConnectionPool | None = None,
         redactor: Redactor | None = None,
         *,
         store: DuckDbObservabilityStore | None = None,
-        platform_store: PlatformStore | None = None,
         agent_id: str | None = None,
     ) -> None:
         self._settings = get_settings().observability
@@ -104,19 +79,10 @@ class LocalTracer:
         self._redactor = redactor
         self._spans: list[Span] = []
         self._subscribers: list[Any] = []
-        self._pool = pool
         self._store = store
-        self._platform_store = platform_store or (
-            as_platform_store(pool, agent_id=agent_id) if pool is not None else None
-        )
-        self._agent_id = agent_id or (
-            self._platform_store.agent_id if self._platform_store else get_settings().agent.id
-        )
+        self._agent_id = agent_id or get_settings().agent.id
         if self._store is not None and self._settings.persist_traces:
             self._store.execute_script(_CREATE_DUCKDB_SPANS_TABLE)
-        elif self._platform_store is not None and self._settings.persist_traces:
-            self._platform_store.execute_script(_CREATE_SQLITE_SPANS_TABLE)
-            self._migrate_legacy_sqlite_spans()
 
     def subscribe(self, subscriber: Any) -> None:
         """Register an observer notified as each span completes (cost, SLOs)."""
@@ -195,9 +161,7 @@ class LocalTracer:
         return list(self._spans)
 
     def _persist(self, span: Span) -> None:
-        if not self._settings.persist_traces:
-            return
-        if self._store is None and self._platform_store is None:
+        if not self._settings.persist_traces or self._store is None:
             return
         redacted = self._redact(span)
         table = "platform_trace_spans"
@@ -225,65 +189,7 @@ class LocalTracer:
             redacted.cost_usd,
             json.dumps(redacted.attributes, default=str),
         )
-        if self._store is not None:
-            self._store.execute(sql, params)
-        else:
-            # Legacy episode compatibility only; new agents use DuckDB.
-            self._platform_store.execute(sql, params)  # type: ignore[union-attr]
-
-    def _migrate_legacy_sqlite_spans(self) -> None:
-        """Copy legacy SQLite spans into the platform-owned trace table."""
-        if self._platform_store is None:
-            return
-        exists = self._platform_store.query_one(
-            "SELECT 1 AS hit FROM sqlite_master WHERE type = 'table' AND name = ?",
-            ("trace_spans",),
-        )
-        if exists is None:
-            return
-        columns = {
-            str(row["name"])
-            for row in self._platform_store.iter_rows("PRAGMA table_info(trace_spans)")
-        }
-        if "agent_id" in columns:
-            rows = self._platform_store.iter_rows(
-                "SELECT agent_id, span_id, trace_id, parent_id, name, actor, tool, policy_version, "
-                "model_version, state_transition, result, started_at, ended_at, latency_ms, cost_usd, attributes "
-                "FROM trace_spans WHERE agent_id = ?",
-                (self._agent_id,),
-            )
-        else:
-            rows = self._platform_store.iter_rows(
-                "SELECT span_id, trace_id, parent_id, name, actor, tool, policy_version, "
-                "model_version, state_transition, result, started_at, ended_at, latency_ms, cost_usd, attributes "
-                "FROM trace_spans"
-            )
-        for row in rows:
-            values = (
-                row.get("agent_id", self._agent_id),
-                row["span_id"],
-                row["trace_id"],
-                row["parent_id"],
-                row["name"],
-                row["actor"],
-                row["tool"],
-                row["policy_version"],
-                row["model_version"],
-                row["state_transition"],
-                row["result"],
-                row["started_at"],
-                row["ended_at"],
-                row["latency_ms"],
-                row["cost_usd"],
-                row["attributes"],
-            )
-            self._platform_store.execute(
-                "INSERT OR REPLACE INTO platform_trace_spans "
-                "(agent_id, span_id, trace_id, parent_id, name, actor, tool, policy_version, "
-                "model_version, state_transition, result, started_at, ended_at, latency_ms, "
-                "cost_usd, attributes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                values,
-            )
+        self._store.execute(sql, params)
 
     def _redact(self, span: Span) -> Span:
         """Apply the PII pass — no trace reaches storage unfiltered."""
@@ -297,49 +203,3 @@ class LocalTracer:
             for key, value in copy.attributes.items()
         }
         return copy
-
-
-class LangSmithTracer:
-    """Dual-write wrapper that also reports spans to LangSmith.
-
-    LangSmith is an optional external dependency: if it is disabled or the
-    client can't be constructed, this degrades to the wrapped tracer rather
-    than failing the request.
-    """
-
-    def __init__(self, inner: LocalTracer) -> None:
-        self._inner = inner
-        self._logger = get_logger("observability")
-        self._client = self._build_client()
-
-    def _build_client(self) -> Any:
-        if not get_settings().observability.langsmith_enabled:
-            return None
-        try:
-            from langsmith import Client
-
-            return Client()
-        except Exception as exc:
-            self._logger.warning("LangSmith unavailable; local tracing only", error=str(exc))
-            return None
-
-    def start_span(self, name: str, parent: Span | None = None, **fields: Any) -> Span:
-        return self._inner.start_span(name, parent, **fields)
-
-    def end_span(self, span: Span, result: str | None = None) -> None:
-        self._inner.end_span(span, result)
-        if self._client is None:
-            return
-        try:
-            self._client.create_run(
-                name=span.name,
-                run_type="chain",
-                inputs={"actor": span.actor, "tool": span.tool},
-                outputs={"result": span.result},
-                extra={"trace_id": span.trace_id, "cost_usd": span.cost_usd},
-            )
-        except Exception as exc:
-            self._logger.warning("LangSmith span export failed", error=str(exc))
-
-    def spans_for(self, trace_id: str) -> list[Span]:
-        return self._inner.spans_for(trace_id)
