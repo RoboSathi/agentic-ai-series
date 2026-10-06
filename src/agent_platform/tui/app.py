@@ -19,7 +19,7 @@ from textual import events
 from textual.actions import SkipAction
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Button, Footer, Header, Input, OptionList
+from textual.widgets import Button, Footer, Header, Input, OptionList, TextArea
 
 from agent_platform.commands import (
     PREFIX,
@@ -67,9 +67,20 @@ AgentFactory = Callable[[StageReporter], Any]
 # developer poking at the shell. A real run always names one.
 _DEFAULT_TITLE = "Agent Harness"
 
+# Multi-line chat window
+class ChatPrompt(TextArea):
+    """Multiline chat editor: Enter submits, Shift+Enter inserts a newline."""
+
+    def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            event.prevent_default()
+            submit = getattr(self.app, "action_submit_query", None)
+            if submit is not None:
+                submit()
+            return
+        super()._on_key(event)
 
 # Recall tiers that answered without an embedding model.
-
 
 class AgenticTuiApp(App[None]):
     """Live semantic execution dashboard over a running support agent."""
@@ -151,13 +162,17 @@ class AgenticTuiApp(App[None]):
     }
 
     #query {
-    height: auto;
-    margin: 0 1;
-    border: round #6F5A35;
-    background: #11100E;
-    color: #F3EAD3;
-    padding: 0 1;
-}
+        height: auto;
+        min-height: 3;
+        max-height: 10;
+        margin: 0 1;
+        border: round #6F5A35;
+        background: #11100E;
+        color: #F3EAD3;
+        padding: 0 1;
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
 
     #query:focus {
         border: round #B8945A;
@@ -285,12 +300,13 @@ class AgenticTuiApp(App[None]):
         yield self._status
         yield self._actions
         yield self._menu
-        yield Input(
+        yield ChatPrompt(
             placeholder=(
                 self._host.placeholder() if self._host else "Ask the agent…  (/help for commands)"
             ),
             id="query",
-            suggester=CommandSuggester(self._commands),
+            soft_wrap=True,
+            show_line_numbers=False,
         )
         yield self._tokens
         yield Footer()
@@ -301,7 +317,7 @@ class AgenticTuiApp(App[None]):
             get_settings().tui.refresh_interval_ms / 1000,
             self._status.tick,
         )
-        self.query_one("#query", Input).focus()
+        self.query_one("#query", ChatPrompt).focus()
         self._status.bind_tokens(self._tokens)
         self._panel.note(
             "Author: RoboSathi | robosathi.com",
@@ -345,7 +361,7 @@ class AgenticTuiApp(App[None]):
                 summary, detail = self._status_host.status_lines(self._session_id)
                 self._status.set_block(summary, detail)
             if self._action_host is not None:
-                busy = self.query_one("#query", Input).disabled
+                busy = self.query_one("#query", ChatPrompt).disabled
                 self._actions.offer(self._action_host.actions(self._session_id), busy)
         except Exception as exc:
             self._journal.warning("Status block failed to render", error=str(exc))
@@ -370,7 +386,7 @@ class AgenticTuiApp(App[None]):
 
     def action_complete(self, step: int) -> None:
         """Tab: complete the slash command being typed, cycling on repeat."""
-        query = self.query_one("#query", Input)
+        query = self.query_one("#query", ChatPrompt)
         completed = (
             self._completer.complete(query.value, step)
             if self.focused is query and not query.disabled
@@ -389,33 +405,43 @@ class AgenticTuiApp(App[None]):
         if len(choices) > 1:
             self.notify("  ".join(choice.rsplit(" ", maxsplit=1)[-1] for choice in choices))
 
-    def on_input_changed(self, event: Input.Changed) -> None:
+    def on_input_changed(self, event: ChatPrompt.Changed) -> None:
         """Typing is a free-text answer: the menu steps aside."""
         if event.value and self._menu.offered:
             self._menu.dismiss()
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         value = self._menu.value_at(event.option_index)
-        if value is not None and not self.query_one("#query", Input).disabled:
+        if value is not None and not self.query_one("#query", ChatPrompt).disabled:
             self._menu.dismiss()
             self._start_turn(value)
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        query = event.value.strip() or self._menu.chosen() or ""
+    def action_submit_query(self) -> None:
+        """Submit the multiline prompt; Enter sends, Shift+Enter creates a newline."""
+        query = (
+                self.query_one("#query", ChatPrompt).text.strip()
+                or self._menu.chosen()
+                or ""
+        )
+
         if not query:
             return
-        event.input.value = ""
+
+        self.query_one("#query", ChatPrompt).text = ""
         self._menu.dismiss()
 
         if CommandRegistry.is_command(query):
-            await self._run_command(query)
+            self.run_worker(
+                self._run_command(query),
+                name="command",
+            )
             return
 
         self._start_turn(query)
 
     def _start_turn(self, query: str) -> None:
         """Run a turn as a Textual worker, so the UI keeps repainting meanwhile."""
-        self.query_one("#query", Input).disabled = True
+        self.query_one("#query", ChatPrompt).disabled = True
         self.run_worker(
             self._run(query),
             exclusive=True,
@@ -424,7 +450,7 @@ class AgenticTuiApp(App[None]):
 
     def _start_resume(self, thread_id: str) -> None:
         """Continue a stopped run as a turn: the same status line, cards and answer as any turn."""
-        self.query_one("#query", Input).disabled = True
+        self.query_one("#query", ChatPrompt).disabled = True
         self.run_worker(
             self._turn_of(
                 get_settings().tui.resume_banner, lambda: self._live_agent().resume(thread_id)
@@ -544,8 +570,8 @@ class AgenticTuiApp(App[None]):
                 style=palette("notice"),
             )
             self._status.fail()
-            self.query_one("#query", Input).disabled = False
-            self.query_one("#query", Input).focus()
+            self.query_one("#query", ChatPrompt).disabled = False
+            self.query_one("#query", ChatPrompt).focus()
             return
 
         try:
@@ -575,7 +601,7 @@ class AgenticTuiApp(App[None]):
             self._schedule_follow_latest()
 
         finally:
-            query_input = self.query_one("#query", Input)
+            query_input = self.query_one("#query", ChatPrompt)
             query_input.disabled = False
             query_input.focus()
 
