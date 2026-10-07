@@ -321,6 +321,16 @@ class StatusLineWidget(Static):
         self.stage_label = label
         self.refresh()
 
+    def clear_turn(self) -> None:
+        """Remove the completed/failed turn state before a non-turn command runs."""
+        self._started_at = 0.0
+        self._finished_at = 0.0
+        self.running = False
+        self._run_state = "idle"
+        self.stage_label = ""
+        self._history_pending = 0
+        self.refresh()
+
     def finish(self) -> None:
         self._finished_at = time.monotonic()
         self.running = False

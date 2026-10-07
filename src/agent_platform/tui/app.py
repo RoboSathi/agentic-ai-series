@@ -497,6 +497,11 @@ class AgenticTuiApp(App[None]):
         # had previously scrolled through history.
         self._set_following(True)
         forwarded = self._forwards_turn(line)
+        # Slash commands are console operations, not agent turns. Clear the
+        # previous turn's status so a stale "TURN COMPLETE" is not shown
+        # underneath command output. A command that forwards/resumes a turn
+        # will immediately establish fresh turn status in _turn_of().
+        self._status.clear_turn()
         if not forwarded:
             self._panel.note(line, style=palette("command"))
         with bound_channel(get_settings().tui.channel):
