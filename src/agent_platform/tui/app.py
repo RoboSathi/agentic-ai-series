@@ -98,14 +98,34 @@ class AgenticTuiApp(App[None]):
         scrollbar-color-hover: #9A7340;
     }
 
+    /* Feed is a timeline, not a stack of roomy cards. Keep semantic rows
+       visually separated by the title backgrounds rather than empty lines. */
     .feed-note {
-        margin: 0 0 1 0;
+        margin: 0;
+    }
+
+    .feed-note.turn-banner {
+        margin: 1 0 0 0;
+    }
+
+    .feed-note.turn-complete {
+        margin: 0;
+    }
+    
+    .feed-note.response-gap {
+        height: 1;
+        margin: 0;
+        padding: 0;
+    }
+    
+    .feed-note.agent-label {
+        margin: 1 0 0 0;
     }
 
     StageEventWidget,
     .stage-event {
         width: 100%;
-        margin: 0 0 1 0;
+        margin: 0;
         padding: 0;
     }
 
@@ -125,7 +145,7 @@ class AgenticTuiApp(App[None]):
     }
 
     .stage-details {
-        padding: 0 1 1 3;
+        padding: 0 1 0 3;
         color: $text-muted;
         height: auto;
     }
@@ -556,8 +576,9 @@ class AgenticTuiApp(App[None]):
         self._status.set_history_pending(0)
 
         self._panel.note(
-            f"\n══════════════ TURN {self._turn:02d} ══════════════",
+            f"══════════════ TURN {self._turn:02d} ══════════════",
             style=palette("banner"),
+            classes="turn-banner",
         )
         self._panel.note(opening, style=palette("user"))
 
@@ -580,13 +601,19 @@ class AgenticTuiApp(App[None]):
             with bound_channel(get_settings().tui.channel), metered(self._tokens.add):
                 state = await call()
 
-            self._panel.note("ASSISTANT", style=palette("assistant"))
-            self._panel.response(state.response or "")
-            self._menu.offer(getattr(state, "choices", None) or [])
             self._panel.note(
-                f"──────── TURN {self._turn:02d} COMPLETE · {self._status.metrics()} ────────",
-                style=palette("metrics"),
+                "AGENT",
+                style=palette("assistant"),
+                classes="agent-label",
             )
+            self._panel.response(state.response or "")
+            self._panel.note(" ", classes="response-gap")
+            self._menu.offer(getattr(state, "choices", None) or [])
+            # self._panel.note(
+            #     f"──────── TURN {self._turn:02d} COMPLETE · {self._status.metrics()} ────────",
+            #     style=palette("metrics"),
+            #     classes="turn-complete",
+            # )
             self._status.finish()
             self._schedule_follow_latest()
 

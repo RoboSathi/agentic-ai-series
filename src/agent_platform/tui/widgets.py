@@ -1171,9 +1171,14 @@ class FeedNote(Static):
         self,
         text: str | Text,
         style: str = "",
+        *,
+        classes: str = "",
     ) -> None:
         rendered = text if isinstance(text, Text) else Text.styled(text, style)
-        super().__init__(rendered, classes="feed-note")
+        widget_classes = "feed-note"
+        if classes:
+            widget_classes += f" {classes}"
+        super().__init__(rendered, classes=widget_classes)
         self.plain_text = rendered.plain
 
 
@@ -1475,8 +1480,8 @@ class LiveStatusPanel(VerticalScroll):
         self.mount(new, before=old)
         old.remove()
 
-    def note(self, text: str | Text, style: str = "") -> None:
-        note = FeedNote(text, style)
+    def note(self, text: str | Text, style: str = "", classes: str = "") -> None:
+        note = FeedNote(text, style, classes=classes)
         self._entries.append(note)
         self._trim_if_needed()
         self.mount(note)
