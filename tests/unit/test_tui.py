@@ -134,25 +134,22 @@ class TestLayout:
 
     async def test_the_prompt_is_below_the_transcript(self) -> None:
         from textual.containers import VerticalScroll
-        from textual.widgets import Input
 
-        from agent_platform.tui.app import AgenticTuiApp
+        from agent_platform.tui.app import AgenticTuiApp, ChatPrompt
 
         app = AgenticTuiApp()
         async with app.run_test(size=(78, 26)):
             feed = app.query_one("#feed", VerticalScroll)
-            prompt = app.query_one("#query", Input)
+            prompt = app.query_one("#query", ChatPrompt)
             assert prompt.region.y > feed.region.y
 
     async def test_the_status_line_sits_above_the_prompt(self) -> None:
         """Between the transcript and the chat bar, as in Claude Code."""
-        from textual.widgets import Input
-
-        from agent_platform.tui.app import AgenticTuiApp
+        from agent_platform.tui.app import AgenticTuiApp, ChatPrompt
 
         app = AgenticTuiApp()
         async with app.run_test(size=(78, 26)):
-            prompt = app.query_one("#query", Input)
+            prompt = app.query_one("#query", ChatPrompt)
             feed = app.query_one("#feed")
             assert feed.region.y + feed.region.height <= app._status.region.y
             assert app._status.region.y + app._status.region.height <= prompt.region.y
@@ -282,11 +279,11 @@ class TestEveryKeptCommandIsWired:
                 assert result.ok or line == "/kb", (line, result.lines)
 
     async def test_typing_a_command_renders_it_in_the_feed(self, seeded_pool: object) -> None:
-        from textual.widgets import Input
+        from agent_platform.tui.app import ChatPrompt
 
         app = self._app(seeded_pool)
         async with app.run_test(size=(100, 40)) as pilot:
-            app.query_one("#query", Input).value = "/help"
+            app.query_one("#query", ChatPrompt).text = "/help"
             await pilot.press("enter")
             await pilot.pause()
             assert "/queue" in app._panel.as_text()
@@ -298,3 +295,64 @@ class TestEveryKeptCommandIsWired:
             result = await app._commands.dispatch("/memory working")
             assert result.ok
             await app._run_command("/harness on")
+
+
+class TestTheMultiLinePromptCompletes:
+    """The prompt became a TextArea and Tab still read `Input.value`: `/har` + Tab crashed."""
+
+    async def test_tab_completes_a_command_word(self) -> None:
+        from agent_platform.tui.app import AgenticTuiApp, ChatPrompt
+
+        app = AgenticTuiApp()
+        async with app.run_test(size=(100, 30)) as pilot:
+            prompt = app.query_one("#query", ChatPrompt)
+            prompt.text = "/har"
+            await pilot.press("tab")
+            assert prompt.text == "/harness "
+            assert prompt.cursor_location == prompt.document.end
+
+    async def test_a_second_tab_moves_on_to_the_argument(self) -> None:
+        from agent_platform.tui.app import AgenticTuiApp, ChatPrompt
+
+        app = AgenticTuiApp()
+        async with app.run_test(size=(100, 30)) as pilot:
+            prompt = app.query_one("#query", ChatPrompt)
+            prompt.text = "/har"
+            await pilot.press("tab", "tab")
+            assert prompt.text.startswith("/harness ") and len(prompt.text) > len("/harness ")
+
+    async def test_typing_dismisses_an_offered_menu(self) -> None:
+        from types import SimpleNamespace
+
+        from agent_platform.tui.app import AgenticTuiApp
+
+        app = AgenticTuiApp()
+        async with app.run_test(size=(100, 30)) as pilot:
+            app._menu.offer([SimpleNamespace(label="Order 10533", value="10533")])
+            assert app._menu.offered
+            await pilot.press("x")
+            await pilot.pause()
+            assert not app._menu.offered
+
+    async def test_shift_enter_breaks_the_line_and_enter_does_not(self) -> None:
+        from agent_platform.tui.app import AgenticTuiApp, ChatPrompt
+
+        app = AgenticTuiApp()
+        async with app.run_test(size=(100, 30)) as pilot:
+            prompt = app.query_one("#query", ChatPrompt)
+            await pilot.press("a", "shift+enter", "b")
+            assert prompt.text == "a\nb"
+
+    async def test_a_commands_output_is_followed_to_its_end(self) -> None:
+        """The feed used to land on the last line of a command's output, and stopped short."""
+        from agent_platform.tui.app import AgenticTuiApp, ChatPrompt
+
+        app = AgenticTuiApp()
+        async with app.run_test(size=(100, 20)) as pilot:
+            app.query_one("#query", ChatPrompt).text = "/help"
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.pause()
+            panel = app._panel
+            assert panel.max_scroll_y > 0, "the output must overflow for this to test anything"
+            assert panel.scroll_y >= panel.max_scroll_y - 1, (panel.scroll_y, panel.max_scroll_y)

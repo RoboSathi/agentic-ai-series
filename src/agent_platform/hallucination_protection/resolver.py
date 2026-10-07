@@ -116,6 +116,13 @@ class GroundingResolver:
         self._record_kinds = frozenset(
             kind for tier in self._tiers if "record" in tier.claims for kind in tier.kinds
         )
+        # The rules that may refute: an amount found here is a policy amount, not an invented one.
+        self._rule_kinds = frozenset(
+            kind
+            for tier in self._tiers
+            if "rule" in tier.claims and tier.may_refute
+            for kind in tier.kinds
+        )
 
     async def resolve(
         self, claim: str, evidence: list[Chunk], claim_class: ClaimClass | None = None
@@ -157,9 +164,9 @@ class GroundingResolver:
     def _settled_by_record(
         self, claim: str, kind: ClaimClass, record: list[Chunk]
     ) -> tuple[str, Chunk] | None:
-        """A record claim the record decides by itself: a refusal it shows, or a status it holds."""
+        """A claim the record decides by itself: a refusal, a status, or a commitment under way."""
         if kind != "record":
-            return None
+            return self._direct.kept_commitment(claim, record)
         return self._direct.refusal_support(claim, record) or self._direct.state_support(
             claim, record
         )
@@ -205,13 +212,13 @@ class GroundingResolver:
         self, claim: str, kind: ClaimClass, evidence: list[Chunk]
     ) -> DirectFinding | None:
         """What the record, or the evidence as a whole, rules out without asking a model."""
+        record = [chunk for chunk in evidence if chunk.kind in self._record_kinds]
         if kind == "record":
-            return self._direct.refutation(
-                claim, [chunk for chunk in evidence if chunk.kind in self._record_kinds]
-            )
+            rules = [chunk for chunk in evidence if chunk.kind in self._rule_kinds]
+            return self._direct.refutation(claim, record, rules)
         return self._direct.unsourced_detail(
             claim, [chunk for chunk in evidence if chunk.kind in self._graded_kinds]
-        )
+        ) or self._direct.broken_commitment(claim, record)
 
     def _settle(
         self, claim: str, kind: ClaimClass, outcomes: list[_TierOutcome]

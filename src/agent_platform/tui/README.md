@@ -14,7 +14,7 @@ second source of truth — and file logging runs independently of it.
 
 - `AgenticTuiApp`, `main` (`app.py`; `python -m agent_platform.tui` / `make agent`)
 - Widgets: `LiveStatusPanel`, `StageEventWidget`, `StatusLineWidget`, `TokenCounterWidget` (`widgets.py`)
-- `CommandView` (`command_view.py`), `CommandSuggester` (`suggest.py`), `StageLabelRegistry` (`labels.py`), clipboard (`clipboard.py`)
+- `CommandView` (`command_view.py`), `TabCompleter` (`completion.py`), `StageLabelRegistry` (`labels.py`), clipboard (`clipboard.py`)
 
 ## What a card shows
 

@@ -129,3 +129,35 @@ class TestAPromiseHoldsWhileTheRefundCanStillGetThere:
             "The $66.56 refund will be processed once approved", _status("pending_review")
         )
         assert finding is not None and "a promise of" in finding.rationale
+
+
+class TestACommitmentNeedsAProcessAlreadyUnderWay:
+    """ "Will be sent for review" is true only if something has already been sent.
+
+    Order 10533 ($103.39) was answered "this refund request will be sent for
+    human review … You'll hear back soon" while its refund status was `none`:
+    the model had declined to call the tool whose escalation queues a review,
+    so nothing would ever be sent. Reachability alone passed it, because a
+    refund at `none` can in principle reach `pending_review`.
+    """
+
+    @pytest.mark.parametrize(
+        "status, claim, expected",
+        [
+            ("none", "This refund request will be sent for human review", False),
+            ("pending_review", "This refund request will be sent for human review", True),
+            ("none", "You'll hear back soon", False),
+            ("pending_review", "You'll hear back soon", True),
+            ("none", "Your refund for order 10665 will be issued", False),
+        ],
+    )
+    def test_a_commitment(self, status: str, claim: str, expected: bool) -> None:
+        assert _holds(status, claim) is expected
+
+    def test_a_conditional_offer_is_not_a_commitment(self) -> None:
+        """ "Once you confirm" offers; it does not say anything is under way."""
+        assert _holds("none", "Once you confirm, your refund will be issued") is True
+
+    def test_the_rationale_says_nothing_is_under_way(self) -> None:
+        finding = StateModel().judge("You'll hear back soon", _status("none"))
+        assert finding is not None and "none" in finding.rationale

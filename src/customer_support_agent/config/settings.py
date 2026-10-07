@@ -202,6 +202,9 @@ class ReviewOutputSettings(BaseModel):
     """
 
     queued: str
+    # The model's view of an escalation that reached no queue: no limit in it.
+    not_queued: str
+    no_referral: str
     reply_follow_up: str
     title: str
     labels: dict[str, str]

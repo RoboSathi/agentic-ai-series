@@ -7,8 +7,9 @@ space so the next argument can be typed at once.
 
 What completes is the registry's answer, unchanged: command words always,
 and an argument only where the command declares a closed set for that
-position. The inline ghost text (`suggest.py`) still shows the first match;
-this is the same candidates, made reachable.
+position. The prompt is a multi-line TextArea, which shows no ghost text,
+so Tab is the one way a completion is offered; when several match, the
+console lists them.
 """
 
 from os.path import commonprefix

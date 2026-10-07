@@ -787,6 +787,11 @@ hallucination_protection:
   record_identifier_pattern: '(?!)'
   record_identifier_label: record
   outcome_pattern: '(?!)'
+  # Of those markers, the ones that commit rather than offer. "Will be sent for review" says the
+  # thing is under way; "once you confirm" and "I can" do not. A commitment about a record's state
+  # holds only if the record has already left its first state: nothing promised by a process that
+  # never started will happen.
+  commitment_pattern: '\b(?:will|shall|going\s+to)\b|[''’]ll\b'
   promissory_pattern: '\b(?:will|would|shall|going\s+to|once|if|when|may|might|could|should|can|get|gets|getting)\b|[''’]ll\b'
   # A claim that the agent could not, or did not, act. The record of a call it
   # refused is what grounds it, so it is supported by a NOT EXECUTED entry

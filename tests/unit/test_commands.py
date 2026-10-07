@@ -26,7 +26,6 @@ from agent_platform.commands.system import ClearCommand
 from agent_platform.config import active_features, get_settings, set_active_features
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.tui.command_view import CommandView
-from agent_platform.tui.suggest import CommandSuggester
 from customer_support_agent.console.commands import QueueCommand
 
 # A key value that must never be rendered, whatever variable holds it.
@@ -64,14 +63,6 @@ class TestDispatch:
         registry = CommandRegistry()
         assert registry.completions("/c") == ["clear", "config"]
         assert registry.completions("/m") == ["memory"]
-
-    @pytest.mark.asyncio
-    async def test_the_suggester_completes_only_the_command_word(self) -> None:
-        """Arguments are values — guessing one would be guessing intent."""
-        suggester = CommandSuggester(CommandRegistry())
-        assert await suggester.get_suggestion("/au") == "/audit"
-        assert await suggester.get_suggestion("/audit den") is None
-        assert await suggester.get_suggestion("where is my order") is None
 
 
 class TestInspectionCommands:

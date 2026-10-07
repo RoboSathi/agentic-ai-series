@@ -17,7 +17,7 @@ from typing import NamedTuple
 from agent_platform.config import get_settings
 from agent_platform.context.types import Chunk
 from agent_platform.hallucination_protection.claims import money_pattern, specifics
-from agent_platform.hallucination_protection.states import StateModel
+from agent_platform.hallucination_protection.states import StateFinding, StateModel
 from agent_platform.primitives.money import Money, money_or_none
 
 # How a refused or failed tool call is written into evidence. It grounds a
@@ -77,12 +77,15 @@ class DirectChecker:
         self._refusal = re.compile(settings.refusal_pattern, re.IGNORECASE)
         self._states = StateModel()
 
-    def refutation(self, claim: str, record: list[Chunk]) -> DirectFinding | None:
+    def refutation(
+        self, claim: str, record: list[Chunk], policy: list[Chunk] | None = None
+    ) -> DirectFinding | None:
         """The first way the record fails to ground this claim, if it does.
 
-        `record` is what this turn's tools and read-backs established.
-        A fact about this case with no record at all is unsourced, which
-        is not the same as merely unscored.
+        `record` is what this turn's tools and read-backs established, and
+        `policy` the rules that may refute a claim. A fact about this case
+        with no record at all is unsourced, which is not the same as merely
+        unscored.
         """
         if not record:
             return DirectFinding(
@@ -90,7 +93,28 @@ class DirectChecker:
                 "The reply states a fact about this case but no tool result exists for this turn.",
             )
         text = "\n".join(chunk.content for chunk in record)
-        return self._unsourced(claim, text) or self._state_conflict(claim, record, text)
+        rules = "\n".join(chunk.content for chunk in policy or [])
+        return self._unsourced(claim, text, rules) or self._state_conflict(claim, record, text)
+
+    def broken_commitment(self, claim: str, record: list[Chunk]) -> DirectFinding | None:
+        """A rule claim that commits to a state the record shows nothing under way to reach.
+
+        "You'll hear back soon" names no order and no amount, so it reads as
+        a rule; but it is true only if a review is queued, and the order
+        10533 reply said it while the refund status was `none`.
+        """
+        finding = self._commitment(claim, record)
+        if finding is None or finding.holds:
+            return None
+        return DirectFinding(RECORD_STATE_MISMATCH, finding.rationale, finding.chunk)
+
+    def kept_commitment(self, claim: str, record: list[Chunk]) -> tuple[str, Chunk] | None:
+        """What the record shows when a rule claim's commitment is already under way."""
+        finding = self._commitment(claim, record)
+        return (finding.rationale, finding.chunk) if finding and finding.holds else None
+
+    def _commitment(self, claim: str, record: list[Chunk]) -> StateFinding | None:
+        return self._states.judge(claim, record) if self._states.commits(claim) else None
 
     def state_support(self, claim: str, record: list[Chunk]) -> tuple[str, Chunk] | None:
         """What the record shows when its refund status makes the claim true.
@@ -146,19 +170,37 @@ class DirectChecker:
             DETAIL_UNSOURCED, f"{', '.join(missing)} appear(s) in the claim but in no evidence."
         )
 
-    def _unsourced(self, claim: str, text: str) -> DirectFinding | None:
-        """An order number or an amount the record never mentions."""
+    def _unsourced(self, claim: str, text: str, rules: str) -> DirectFinding | None:
+        """An order number the record never mentions, or an amount no evidence holds."""
         missing_ids = sorted(record_ids(claim) - numbers(text))
         if missing_ids:
             return DirectFinding(
                 IDENTIFIER_MISMATCH,
                 f"{_label().capitalize()} reference(s) {missing_ids} appear in the reply but in no tool result.",
             )
-        missing_amounts = [str(a) for a in sorted(amounts(claim) - amounts(text))]
-        if missing_amounts:
+        return self._unsourced_amount(claim, amounts(claim) - amounts(text), amounts(rules))
+
+    def _unsourced_amount(
+        self, claim: str, missing: set[Money], rule_amounts: set[Money]
+    ) -> DirectFinding | None:
+        """An amount neither the record nor a rule holds, or a rule's amount said to have moved.
+
+        A limit the policy states ("$50.00") is not invented because no tool
+        returned it. It is still not this case's money: a claim that says it
+        was refunded or approved has taken a rule's figure for a record's.
+        """
+        unsourced = [str(a) for a in sorted(missing - rule_amounts)]
+        if unsourced:
             return DirectFinding(
                 AMOUNT_MISMATCH,
-                f"Amount(s) {missing_amounts} appear in the reply but in no tool result.",
+                f"Amount(s) {unsourced} appear in the reply but in no tool result or policy.",
+            )
+        borrowed = [str(a) for a in sorted(missing & rule_amounts)]
+        if borrowed and self._states.asserts_settled(claim):
+            return DirectFinding(
+                AMOUNT_MISMATCH,
+                f"Amount(s) {borrowed} come from policy, not this {_label()}'s record, "
+                f"but the reply says a {self._states.subject} moved in them.",
             )
         return None
 

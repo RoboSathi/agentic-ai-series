@@ -21,7 +21,6 @@ from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.reporting import FALLBACK_REPLY
 from customer_support_agent.prompts.system_prompt import build_system_prompt
-from customer_support_agent.gatekeeper.business_rules import REFUND_ACTION_CLASS
 
 
 class ReasoningNodes(NodeSupport):
@@ -226,15 +225,11 @@ class ReasoningNodes(NodeSupport):
 
     def _system_prompt(self) -> str:
         """Return the agent system prompt for security screening and LLM calls."""
-        limit = self._agent_policy.per_action_limit(REFUND_ACTION_CLASS)
-        refund_limit = str(limit) if limit is not None else "unlimited"
-        return build_system_prompt(refund_limit=refund_limit)
+        return build_system_prompt()
 
     def _prompt_messages(self, state: AgentState) -> list[Message]:
         """Build the small provider payload from working memory and context."""
-        limit = self._agent_policy.per_action_limit(REFUND_ACTION_CLASS)
-        refund_limit = str(limit) if limit is not None else "unlimited"
-        system = build_system_prompt(refund_limit=refund_limit)
+        system = build_system_prompt()
         if state.context is not None and state.context.text:
             system = f"{system}\n\n# Retrieved context\n{state.context.text}"
         if state.metadata.get("intent_execution_route") == "llm_fallback":

@@ -971,6 +971,8 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     record_identifier_label: str
     outcome_pattern: str
     promissory_pattern: str
+    # The promissory markers that commit ("will"), as against those that offer ("once", "can").
+    commitment_pattern: str
     # Settled-refund wording, the record field that settles it, and the
     # record wording that says it is still waiting on a person.
     refusal_pattern: str

@@ -57,6 +57,8 @@ class StateModel:
         # "Will be processed once approved" is a promise, not a status: what follows the
         # first promise marker is judged by whether the refund can still get there.
         self._promise = re.compile(settings.promissory_pattern, re.IGNORECASE)
+        # Of those, the markers that commit ("will be sent") rather than offer ("once you confirm").
+        self._commitment = re.compile(settings.commitment_pattern, re.IGNORECASE)
         # What the record's status is the status *of*, as a rationale names it.
         self._subject = states.subject
         self._phrases = [
@@ -76,12 +78,15 @@ class StateModel:
         refutation, and a claim the model cannot place is left to the tiers.
         What the claim *promises* ("will be processed once approved") holds
         while the refund can still reach it; only what it *states* must
-        already be true.
+        already be true. A *commitment* ("will be sent for review", "you'll
+        hear back") holds only once the refund has left its first status:
+        the order 10533 reply promised a review while the status was `none`,
+        and with nothing under way nothing would ever be sent.
         """
         if not self._context.search(claim):
             return None
         current = self.current(self._about(claim, record))
-        asserted, promised = self._split_promise(claim)
+        asserted, promised, committed = self._split_promise(claim)
         stated, pledged = self._matched(asserted), self._matched(promised)
         negated = bool(_NEGATION.search(claim))
         if negated:
@@ -92,20 +97,29 @@ class StateModel:
         status, chunk = current
         truths = [self._holds(phrase, status) for _, phrase in stated]
         holds = (not any(truths) if negated else all(truths)) and (
-            not pledged or self._reachable(status)
+            not pledged or self._kept(status, committed)
         )
         return StateFinding(holds, self._rationale(status, stated, pledged, holds, negated), chunk)
 
-    def _split_promise(self, claim: str) -> tuple[str, str]:
-        """The claim as stated (before its first promise marker), and as promised (after it)."""
+    def _split_promise(self, claim: str) -> tuple[str, str, bool]:
+        """The claim as stated (before its first promise marker), as promised, and if it commits."""
         marker = self._promise.search(claim)
         if marker is None:
-            return claim, ""
-        return claim[: marker.start()], claim[marker.end() :]
+            return claim, "", False
+        committed = bool(self._commitment.match(marker.group(0)))
+        return claim[: marker.start()], claim[marker.end() :], committed
+
+    def _kept(self, status: str, committed: bool) -> bool:
+        """Whether a promise can be kept: reachable, and for a commitment already under way."""
+        return self._reachable(status) and (not committed or self._under_way(status))
 
     def _reachable(self, status: str) -> bool:
         """Whether a refund at this status can still move up the ladder: a branch has stopped."""
         return status in self._ladder
+
+    def _under_way(self, status: str) -> bool:
+        """Whether the refund has left the ladder's first status, so something is in motion."""
+        return bool(self._ladder) and status != self._ladder[0]
 
     def _about(self, claim: str, record: list[Chunk]) -> list[Chunk]:
         """The record about the order the claim names: another order's status is not its status."""
@@ -113,6 +127,10 @@ class StateModel:
         if not named:
             return record
         return [chunk for chunk in record if named & set(re.findall(r"\d{3,}", chunk.content))]
+
+    def commits(self, claim: str) -> bool:
+        """Whether the claim's first promise is a commitment ("will", "'ll") and not an offer."""
+        return self._split_promise(claim)[2]
 
     def asserts_settled(self, claim: str) -> bool:
         """Whether the claim says money moved, or was authorised, and does not deny it."""

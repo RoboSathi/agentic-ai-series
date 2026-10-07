@@ -25,6 +25,7 @@ from agent_platform.llm.types import Message
 from agent_platform.logging.trace_context import get_current_trace_id
 from agent_platform.tools.types import ToolResult
 from agent_platform.verification import VerificationReport
+from customer_support_agent.config.settings import get_agent_settings
 from customer_support_agent.graph.loop_decision import ITERATION_LIMIT, after_act_step
 from customer_support_agent.graph.nodes._support import (
     TOOL_BLOCKED,
@@ -454,9 +455,13 @@ class ToolUseNodes(NodeSupport):
             )
             referred = outcome.result
         if referred is None or not referred.success:
-            text = f"That action requires human review: {decision.reason}"
-            if referred is not None:
-                text = f"That action requires human review, but queuing it failed: {referred.error}"
+            # The Gatekeeper's reason names the limit; the model reads only that a person decides.
+            wording = get_agent_settings().review_output
+            text = (
+                wording.no_referral
+                if referred is None
+                else wording.not_queued.format(error=referred.error)
+            )
             return (
                 text,
                 {

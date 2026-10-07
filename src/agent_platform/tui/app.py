@@ -19,7 +19,7 @@ from textual import events
 from textual.actions import SkipAction
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Button, Footer, Header, Input, OptionList, TextArea
+from textual.widgets import Button, Footer, Header, OptionList, TextArea
 
 from agent_platform.commands import (
     PREFIX,
@@ -52,7 +52,6 @@ from agent_platform.tui.clipboard import Osc52ClipboardService
 from agent_platform.tui.command_view import CommandView
 from agent_platform.tui.completion import TabCompleter
 from agent_platform.tui.labels import StageLabelRegistry
-from agent_platform.tui.suggest import CommandSuggester
 from agent_platform.tui.widgets import (
     ActionBar,
     ChoiceMenu,
@@ -67,20 +66,29 @@ AgentFactory = Callable[[StageReporter], Any]
 # developer poking at the shell. A real run always names one.
 _DEFAULT_TITLE = "Agent Harness"
 
+
 # Multi-line chat window
 class ChatPrompt(TextArea):
     """Multiline chat editor: Enter submits, Shift+Enter inserts a newline."""
 
-    def _on_key(self, event: events.Key) -> None:
+    async def _on_key(self, event: events.Key) -> None:
+        # TextArea's handler is a coroutine: called without `await`, every other key was dropped.
         if event.key == "enter":
             event.prevent_default()
             submit = getattr(self.app, "action_submit_query", None)
             if submit is not None:
                 submit()
             return
-        super()._on_key(event)
+        if event.key == "shift+enter":
+            # TextArea breaks a line only on plain Enter, which here submits.
+            event.prevent_default()
+            self.insert("\n")
+            return
+        await super()._on_key(event)
+
 
 # Recall tiers that answered without an embedding model.
+
 
 class AgenticTuiApp(App[None]):
     """Live semantic execution dashboard over a running support agent."""
@@ -111,13 +119,13 @@ class AgenticTuiApp(App[None]):
     .feed-note.turn-complete {
         margin: 0;
     }
-    
+
     .feed-note.response-gap {
         height: 1;
         margin: 0;
         padding: 0;
     }
-    
+
     .feed-note.agent-label {
         margin: 1 0 0 0;
     }
@@ -408,7 +416,7 @@ class AgenticTuiApp(App[None]):
         """Tab: complete the slash command being typed, cycling on repeat."""
         query = self.query_one("#query", ChatPrompt)
         completed = (
-            self._completer.complete(query.value, step)
+            self._completer.complete(query.text, step)
             if self.focused is query and not query.disabled
             else None
         )
@@ -419,15 +427,16 @@ class AgenticTuiApp(App[None]):
             else:
                 self.action_focus_previous()
             return
-        query.value = completed
-        query.cursor_position = len(completed)
+        query.text = completed
+        # After the completed word, so the next Tab completes the next argument.
+        query.move_cursor(query.document.end)
         choices = self._completer.candidates(completed.rstrip())
         if len(choices) > 1:
             self.notify("  ".join(choice.rsplit(" ", maxsplit=1)[-1] for choice in choices))
 
-    def on_input_changed(self, event: ChatPrompt.Changed) -> None:
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Typing is a free-text answer: the menu steps aside."""
-        if event.value and self._menu.offered:
+        if event.text_area.text and self._menu.offered:
             self._menu.dismiss()
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
@@ -438,11 +447,7 @@ class AgenticTuiApp(App[None]):
 
     def action_submit_query(self) -> None:
         """Submit the multiline prompt; Enter sends, Shift+Enter creates a newline."""
-        query = (
-                self.query_one("#query", ChatPrompt).text.strip()
-                or self._menu.chosen()
-                or ""
-        )
+        query = self.query_one("#query", ChatPrompt).text.strip() or self._menu.chosen() or ""
 
         if not query:
             return

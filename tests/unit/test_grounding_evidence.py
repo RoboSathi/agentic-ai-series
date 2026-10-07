@@ -563,3 +563,98 @@ class TestTheCardNamesTheSource:
         )
         sources = [e["source"] for c in result.claim_checks for e in c["evidence"]]
         assert "get_order_status" in sources
+
+
+class _LimitedSupport(_Support):
+    """The agent with a $50.00 direct refund limit, which the guard (never the model) holds."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        from agent_platform.primitives.money import Money
+
+        self._agent_policy = SimpleNamespace(per_action_limit=lambda _action: Money.parse("50.00"))
+
+
+class TestAReviewIsPromisedOnlyOnceOneIsQueued:
+    """`refund order 10533` ($103.39, limit $50.00): a review was promised and none was queued.
+
+    The model, told the limit, declined to call `process_refund`, so the
+    Gatekeeper never escalated and nothing reached the queue. The guard cut
+    the review sentence for the wrong reason ("$50.00 in no tool result",
+    though the limit is policy evidence) and let "You'll hear back soon"
+    through as unverified.
+    """
+
+    _READ = (
+        "support__get_order_status",
+        "Order 10533 placed 2026-08-20 has shipped and was delivered on 2026-08-28, $103.39. "
+        "Order 10533 refund status: none",
+    )
+    _REFERRED = (
+        "support__process_refund",
+        "Refund of $103.39 for order 10533 has been queued for human review. "
+        "Order 10533 refund status: pending_review",
+        "referred",
+    )
+    _GUARD = staticmethod(
+        lambda: ResponseGuardrail(
+            DetectionLadder(create_scoring_cascade(), entailment=_NeverReadsARecord())
+        )
+    )
+
+    async def test_with_nothing_queued_both_promises_are_cut_for_what_the_record_says(
+        self,
+    ) -> None:
+        reply = (
+            "Order 10533 was delivered on 2026-08-28 with a total of $103.39. Since the order "
+            "total exceeds the $50.00 refund limit I'm authorized to handle directly, this refund "
+            "request will be sent for human review. You'll hear back soon."
+        )
+        evidence = _LimitedSupport()._grounding_evidence(_state(self._READ))
+        result = await self._GUARD().enforce(reply, evidence)
+        assert result.response == "Order 10533 was delivered on 2026-08-28 with a total of $103.39."
+        assert "You'll hear back soon." in result.removed_sentences
+        refuted = [c for c in result.claim_checks if c["verdict"] == "refuted"]
+        assert refuted and all("refund status is none" in c["rationale"] for c in refuted)
+        assert result.reason_code == "TOOL_EVIDENCE_RECORD_STATE_MISMATCH"
+
+    async def test_once_the_referral_ran_the_same_promises_are_supported(self) -> None:
+        reply = (
+            "Your refund request for order 10533 has been sent for human review. "
+            "You'll hear back soon."
+        )
+        evidence = _LimitedSupport()._grounding_evidence(_state(self._READ, self._REFERRED))
+        result = await self._GUARD().enforce(reply, evidence)
+        assert not result.escalated, result.claim_checks
+        assert result.response == reply
+
+
+class TestAPolicyAmountIsNotAnUnsourcedOne:
+    """The limit is in the guard's policy evidence; "$50.00 in no tool result" was wrong."""
+
+    async def test_the_limit_is_found_in_policy(self) -> None:
+        evidence = _LimitedSupport()._grounding_evidence(
+            _state(TestAReviewIsPromisedOnlyOnceOneIsQueued._READ)
+        )
+        result = await TestAReviewIsPromisedOnlyOnceOneIsQueued._GUARD().enforce(
+            "Refunds above $50.00 for order 10533 need additional review.", evidence
+        )
+        assert result.reason_code != "TOOL_EVIDENCE_AMOUNT_MISMATCH", result.claim_checks
+
+    async def test_a_policy_amount_stated_as_money_moved_is_still_refuted(self) -> None:
+        evidence = _LimitedSupport()._grounding_evidence(
+            _state(TestAReviewIsPromisedOnlyOnceOneIsQueued._READ)
+        )
+        result = await TestAReviewIsPromisedOnlyOnceOneIsQueued._GUARD().enforce(
+            "Your refund of $50.00 for order 10533 has been issued.", evidence
+        )
+        assert result.escalated and result.withheld
+
+    async def test_an_amount_in_no_evidence_at_all_is_still_unsourced(self) -> None:
+        evidence = _LimitedSupport()._grounding_evidence(
+            _state(TestAReviewIsPromisedOnlyOnceOneIsQueued._READ)
+        )
+        result = await TestAReviewIsPromisedOnlyOnceOneIsQueued._GUARD().enforce(
+            "Order 10533 cost $77.10.", evidence
+        )
+        assert result.reason_code == "TOOL_EVIDENCE_AMOUNT_MISMATCH"
