@@ -492,6 +492,10 @@ class AgenticTuiApp(App[None]):
         Echoing the line and the command's title as well put it on screen three
         times.
         """
+        # Slash-command output is new console output: return the feed to live
+        # mode before dispatch so the result is followed even when the operator
+        # had previously scrolled through history.
+        self._set_following(True)
         forwarded = self._forwards_turn(line)
         if not forwarded:
             self._panel.note(line, style=palette("command"))
@@ -712,10 +716,17 @@ class AgenticTuiApp(App[None]):
         self._panel.scroll_page_down(animate=False)
         self.call_after_refresh(self._follow_if_at_bottom)
 
-    def on_mouse_scroll(self, event: object) -> None:
-        # Textual dispatches mouse / trackpad scroll events through the app.
-        # Treat user wheel/trackpad interaction as an intentional history view,
-        # and resume following when it reaches the bottom again.
+    def on_mouse_scroll(self, event: events.MouseEvent) -> None:
+        # Mouse scroll events bubble to the App. Since the prompt is now a
+        # vertically scrollable TextArea, scrolling inside it must not put the
+        # feed into HISTORY mode. Only scrolls whose originating control is
+        # the feed (or one of its descendants) affect feed following.
+        control = event.control
+        if control is None or self._panel not in control.ancestors_with_self:
+            return
+
+        # Treat feed scrolling as an intentional history view, and resume
+        # following when it reaches the bottom again.
         self._set_following(False)
         self.call_after_refresh(self._follow_if_at_bottom)
 
@@ -734,20 +745,10 @@ class AgenticTuiApp(App[None]):
     def _schedule_follow_latest(self) -> None:
         if not self._follow_latest:
             return
-        # Mounting a Collapsible is queued by Textual.  Following on the next
-        # refresh avoids racing the newly-mounted card's layout calculation.
-        self.call_after_refresh(self._scroll_to_latest)
-
-    def _scroll_to_latest(self) -> None:
-        if not self._follow_latest:
-            return
-        try:
-            self._panel.scroll_end(
-                animate=False,
-                immediate=True,
-            )
-        except Exception:
-            pass
+        # Let Textual perform its own post-refresh deferral. In Textual 8.x,
+        # scroll_end(immediate=False) deliberately waits for the refresh/layout
+        # that updates max_scroll_y before calculating the end position.
+        self._panel.scroll_end(animate=False)
 
 
 def main() -> None:
