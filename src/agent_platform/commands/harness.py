@@ -80,9 +80,7 @@ class HarnessCommand:
         result = self._report()
         result.title = title
         result.line("")
-        result.line(
-            "The model, the system prompt and the tools are unchanged."
-        )
+        result.line("The model, the system prompt and the tools are unchanged.")
         result.effect = ConsoleEffect(rebuild_agent=True)
         return result
 

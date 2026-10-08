@@ -1,0 +1,67 @@
+{
+  "kind": "report",
+  "artifact_id": "run-511a392824",
+  "payload": {
+    "title": "Vedam School of Technology BTech CS and AI at ADYPU Pune Fees Curriculum Placements",
+    "status": "COMPLETE",
+    "sections": [
+      {
+        "heading": "Findings",
+        "body": "The Apple Macbook is included in the course fee [E1]. The fees mentioned in the table are the course fees [E2]. This is exclusive of Hostel & Mess fees [E3]. Additional fees payable directly to the University, over and above the course fee: one-time Application Fee (₹1,500), Registration Fee (₹5,000), Uniform Fee (₹5,000), Sports Activity Fee (₹5,000), and Examination Fee (₹3,000 per semester) [E4]."
+      },
+      {
+        "heading": "Known unknowns",
+        "body": "- what the answer will be used for"
+      },
+      {
+        "heading": "Coverage & Limits",
+        "body": "- Every must-pass criterion was met.\n- 1 source(s) rejected — blocked or paywalled. e.g. https://www.shiksha.com/college/vedam-school-of-technology-lohegaon-pune-237714/course-b-tech-in-cs-ai-1288780\n- Budget: Q1: fetches exhausted."
+      }
+    ],
+    "citations": [
+      {
+        "entry_id": "E1",
+        "url": "https://www.vedam.org/program/vst-adypu-pune",
+        "span": "Apple Macbook is included in the above course fee.",
+        "page_hash": "3d37625c4ae652d616371a4b83a6bbf475411492cb27cd153b1a3a06b98ebdc1",
+        "retrieved_at": "2026-10-02T03:27:04.547346Z"
+      },
+      {
+        "entry_id": "E2",
+        "url": "https://www.vedam.org/program/vst-adypu-pune",
+        "span": "The fees mentioned in the table is the Course fees.",
+        "page_hash": "3d37625c4ae652d616371a4b83a6bbf475411492cb27cd153b1a3a06b98ebdc1",
+        "retrieved_at": "2026-10-02T03:27:04.547346Z"
+      },
+      {
+        "entry_id": "E3",
+        "url": "https://www.vedam.org/program/vst-adypu-pune",
+        "span": "This is exclusive of Hostel & Mess fees.",
+        "page_hash": "3d37625c4ae652d616371a4b83a6bbf475411492cb27cd153b1a3a06b98ebdc1",
+        "retrieved_at": "2026-10-02T03:27:04.547346Z"
+      },
+      {
+        "entry_id": "E4",
+        "url": "https://www.vedam.org/program/vst-adypu-pune",
+        "span": "Additional fees payable directly to the University, over and above the course fee: one-time Application Fee (₹1,500), Registration Fee (₹5,000), Uniform Fee (₹5,000), Sports Activity Fee (₹5,000), and Examination Fee (₹3,000 per semester).",
+        "page_hash": "3d37625c4ae652d616371a4b83a6bbf475411492cb27cd153b1a3a06b98ebdc1",
+        "retrieved_at": "2026-10-02T03:27:04.547346Z"
+      }
+    ],
+    "limits": [],
+    "rejected_sources": [
+      "https://www.shiksha.com/college/vedam-school-of-technology-lohegaon-pune-237714/course-b-tech-in-cs-ai-1288780"
+    ],
+    "rejected_codes": {
+      "https://www.shiksha.com/college/vedam-school-of-technology-lohegaon-pune-237714/course-b-tech-in-cs-ai-1288780": "blocked"
+    },
+    "budget_notes": [
+      "Q1: fetches exhausted"
+    ],
+    "known_unknowns": [
+      "what the answer will be used for"
+    ]
+  },
+  "content_hash": "402d88590106e509fe05ab71c3fad803af94bbcbedf50ed42bb37a44bc7b47ca",
+  "frozen_at": "2026-10-02T03:30:06.979283Z"
+}

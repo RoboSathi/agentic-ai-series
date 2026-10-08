@@ -1,0 +1,122 @@
+{
+  "kind": "report",
+  "artifact_id": "run-196d40cbe6",
+  "payload": {
+    "title": "Impact of AI on Software Jobs",
+    "status": "PARTIAL",
+    "sections": [
+      {
+        "heading": "Findings",
+        "body": "Among young software developers specifically, the decline was nearly 20% [E1].\nAI was cited in 87,714 announced US job cuts through May 2026, representing 22% of all layoffs [E5].\nSenior software roles are taking a larger share of the market: 71% of the rebound in software-development postings from May 2025 to May 2026 came from senior positions [E8].\nUS postings requiring AI skills pay about 28% more on average, evidencing a wage premium for these skills [E9].\nEmployers are modifying recruitment strategies to prioritize skills-based hiring focused on uniquely human traits like resilience, adaptability, and creative leadership [E3]."
+      },
+      {
+        "heading": "Details",
+        "body": "Traditional white-collar recruitment has slowed, yet the demand for professionals capable of building and managing advanced systems is skyrocketing [E2].\nAI coding tools do not produce uniform productivity gains; studies show strong improvements on routine or greenfield work, but near-zero or negative effects on complex, mature codebases in some cases [E10].\nCode quality and verification remain major constraints, with 45% of AI-generated code in one security study introducing an OWASP Top 10 vulnerability [E11].\nAlgorithms enable novice workers to generate outputs that approximate expert quality, effectively leveling the playing field. Clients are no longer willing to pay premium rates for highly experienced gig workers when software provides a comparable baseline [E4].\nLong-term forecasts point toward job transformation rather than wholesale elimination: the WEF projects a net gain of 78 million jobs globally by 2030 and continues to rank software developers among the fastest-growing occupations [E12]."
+      },
+      {
+        "heading": "Known unknowns",
+        "body": "- None declared during scoping."
+      },
+      {
+        "heading": "Coverage & Limits",
+        "body": "- R1: Every factual sentence in the report cites collected evidence. — 10/11, scored 0.91 of the 1 required; found: Algorithms enable novice workers to generate outputs that approximate expert quality, effectively leveling the playing field.; run stopped: the question is answered with cited findings. Tried: no queries.\n- Budget: Q1: fetches exhausted."
+      }
+    ],
+    "citations": [
+      {
+        "entry_id": "E1",
+        "url": "https://recruitingconnection.org/blog/ai-job-displacement-statistics-trends/",
+        "span": "Among young software developers specifically, the decline was nearly 20%.",
+        "page_hash": "8c68ea655fe54fed29526a260af2da015f1444b4a36b467a4d22b6ed340ec476",
+        "retrieved_at": "2026-10-03T15:59:10.240525Z"
+      },
+      {
+        "entry_id": "E5",
+        "url": "https://uvik.net/blog/ai-job-displacement-statistics",
+        "span": "AI was cited in 87,714 announced US job cuts through May 2026, representing 22% of all layoffs, but these figures describe employer-stated layoff reasons rather than a complete measure of jobs directly replaced by AI.",
+        "page_hash": "7b2fa390cfeb4bb8a08450bbcb5895d48a8244f853920bc44f21ea22009b51a1",
+        "retrieved_at": "2026-10-03T15:59:09.643461Z"
+      },
+      {
+        "entry_id": "E8",
+        "url": "https://uvik.net/blog/ai-job-displacement-statistics",
+        "span": "Senior software roles are taking a larger share of the market: 71% of the rebound in software-development postings from May 2025 to May 2026 came from senior positions.",
+        "page_hash": "7b2fa390cfeb4bb8a08450bbcb5895d48a8244f853920bc44f21ea22009b51a1",
+        "retrieved_at": "2026-10-03T15:59:09.643461Z"
+      },
+      {
+        "entry_id": "E9",
+        "url": "https://uvik.net/blog/ai-job-displacement-statistics",
+        "span": "AI skills command a meaningful wage premium, with US postings requiring AI skills paying about 28% more on average and roles requiring multiple AI skills carrying an even higher premium.",
+        "page_hash": "7b2fa390cfeb4bb8a08450bbcb5895d48a8244f853920bc44f21ea22009b51a1",
+        "retrieved_at": "2026-10-03T15:59:09.643461Z"
+      },
+      {
+        "entry_id": "E3",
+        "url": "https://recruitingconnection.org/blog/ai-job-displacement-statistics-trends/",
+        "span": "To bypass this obstacle, employers are actively modifying recruitment strategies to prioritize skills-based hiring. The focus has shifted toward securing candidates with uniquely human traits (such as resilience, adaptability, and creative leadership) that software cannot readily replicate.",
+        "page_hash": "8c68ea655fe54fed29526a260af2da015f1444b4a36b467a4d22b6ed340ec476",
+        "retrieved_at": "2026-10-03T15:59:10.240525Z"
+      },
+      {
+        "entry_id": "E2",
+        "url": "https://recruitingconnection.org/blog/ai-job-displacement-statistics-trends/",
+        "span": "Traditional white-collar recruitment has slowed, yet the demand for professionals capable of building and managing advanced systems is skyrocketing.",
+        "page_hash": "8c68ea655fe54fed29526a260af2da015f1444b4a36b467a4d22b6ed340ec476",
+        "retrieved_at": "2026-10-03T15:59:10.240525Z"
+      },
+      {
+        "entry_id": "E10",
+        "url": "https://uvik.net/blog/ai-job-displacement-statistics",
+        "span": "AI coding tools do not produce uniform productivity gains. Studies show strong improvements on routine or greenfield work, but near-zero or negative effects on complex, mature codebases in some cases.",
+        "page_hash": "7b2fa390cfeb4bb8a08450bbcb5895d48a8244f853920bc44f21ea22009b51a1",
+        "retrieved_at": "2026-10-03T15:59:09.643461Z"
+      },
+      {
+        "entry_id": "E11",
+        "url": "https://uvik.net/blog/ai-job-displacement-statistics",
+        "span": "Code quality and verification remain major constraints, with 45% of AI-generated code in one security study introducing an OWASP Top 10 vulnerability.",
+        "page_hash": "7b2fa390cfeb4bb8a08450bbcb5895d48a8244f853920bc44f21ea22009b51a1",
+        "retrieved_at": "2026-10-03T15:59:09.643461Z"
+      },
+      {
+        "entry_id": "E4",
+        "url": "https://recruitingconnection.org/blog/ai-job-displacement-statistics-trends/",
+        "span": "Algorithms enable novice workers to generate outputs that approximate expert quality, effectively leveling the playing field.\n\nClients are no longer willing to pay premium rates for highly experienced gig workers when software provides a comparable baseline.",
+        "page_hash": "8c68ea655fe54fed29526a260af2da015f1444b4a36b467a4d22b6ed340ec476",
+        "retrieved_at": "2026-10-03T15:59:10.240525Z"
+      },
+      {
+        "entry_id": "E12",
+        "url": "https://uvik.net/blog/ai-job-displacement-statistics",
+        "span": "Long-term forecasts point toward job transformation rather than wholesale elimination: the WEF projects a net gain of 78 million jobs globally by 2030 and continues to rank software developers among the fastest-growing occupations.",
+        "page_hash": "7b2fa390cfeb4bb8a08450bbcb5895d48a8244f853920bc44f21ea22009b51a1",
+        "retrieved_at": "2026-10-03T15:59:09.643461Z"
+      }
+    ],
+    "limits": [
+      {
+        "item_id": "R1",
+        "text": "Every factual sentence in the report cites collected evidence.",
+        "tried_queries": [],
+        "sources_examined": [
+          "https://www.techtimes.com/articles/319027/20260624/ai-job-displacement-2026-oracle-names-ai-sec-filing-career-tier-risk-guide.htm",
+          "https://uvik.net/blog/ai-job-displacement-statistics",
+          "https://recruitingconnection.org/blog/ai-job-displacement-statistics-trends/",
+          "https://click-vision.com/ai-job-displacement-statistics",
+          "https://www.aiexposure.org/ai-job-displacement-statistics",
+          "https://www.nu.edu/blog/ai-job-statistics"
+        ],
+        "reason": "10/11, scored 0.91 of the 1 required; found: Algorithms enable novice workers to generate outputs that approximate expert quality, effectively leveling the playing field.; run stopped: the question is answered with cited findings"
+      }
+    ],
+    "rejected_sources": [],
+    "rejected_codes": {},
+    "budget_notes": [
+      "Q1: fetches exhausted"
+    ],
+    "known_unknowns": []
+  },
+  "content_hash": "75541a2decf1381c8eb19c25153184d646d8339f650c91d374b4065c82fee349",
+  "frozen_at": "2026-10-03T16:06:33.814574Z"
+}

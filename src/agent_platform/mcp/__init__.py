@@ -1,7 +1,9 @@
-"""Model Context Protocol — PARKED (LLD §16.1).
+"""Model Context Protocol: remote tools, entering as ordinary governed tools (LLD §16.1).
 
-Interface-only this phase; the contracts below are normative. No code in
-this repo calls them yet, and no transport is implemented.
+The contracts (`types`) are implemented over the MCP SDK: `SdkMcpSession` (one
+open session, owned by its own task), `SdkMcpTransport` (stdio or HTTP, from an
+agent's `mcp.servers`) and `GovernedMcpToolSource` (the server's tools as
+`ToolDefinition`s under a locally configured envelope).
 
 The idea: a tool need not be a Python function the agent's author wrote.
 An MCP server publishes tools, resources and prompts over a transport,
@@ -29,87 +31,33 @@ This is the same rule as the Authority Hierarchy — `tool_observations`
 rank below `user_task`, and a tool catalogue is a tool observation.
 """
 
-from typing import Any, Literal, Protocol, runtime_checkable
-
-from pydantic import BaseModel, Field
-
-from agent_platform.tools.types import ToolDefinition
-
-TransportKind = Literal["stdio", "http"]
-
-
-class McpServerSpec(BaseModel):
-    """How to reach one MCP server, and under whose name."""
-
-    name: str
-    transport: TransportKind = "stdio"
-    # stdio: the process to launch. http: the base URL to call.
-    command: list[str] = Field(default_factory=list)
-    url: str = ""
-    env: dict[str, str] = Field(default_factory=dict)
-    # Tools from this server are registered under this namespace, so two
-    # servers offering `search` do not collide and an audit entry says
-    # which one ran.
-    namespace: str = ""
-
-
-class McpToolInfo(BaseModel):
-    """A tool as the server described it — a claim, not a contract."""
-
-    name: str
-    description: str = ""
-    input_schema: dict[str, Any] = Field(default_factory=dict)
-
-
-@runtime_checkable
-class ToolGovernancePolicy(Protocol):
-    """Decides the execution envelope a remote tool is granted locally.
-
-    Never delegated to the server. The server says what its tool does;
-    this says what this deployment will let it do.
-    """
-
-    def envelope_for(self, server: McpServerSpec, tool: McpToolInfo) -> dict[str, Any]:
-        """Governance fields to apply to this tool's `ToolDefinition`."""
-        ...
-
-
-@runtime_checkable
-class McpSession(Protocol):
-    """An open conversation with one MCP server."""
-
-    async def list_tools(self) -> list[McpToolInfo]: ...
-
-    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any: ...
-
-    async def close(self) -> None: ...
-
-
-@runtime_checkable
-class McpTransport(Protocol):
-    """Opens a session to a server over one wire protocol."""
-
-    async def connect(self, server: McpServerSpec) -> McpSession: ...
-
-
-@runtime_checkable
-class McpToolSource(Protocol):
-    """An MCP server, presented as an ordinary source of governed tools.
-
-    Structurally a `tools.ToolSource`: whatever it yields is a plain
-    `ToolDefinition` and goes through the registry, the selector and the
-    Gatekeeper exactly like a local tool. There is no second path.
-    """
-
-    async def tools(self) -> list[ToolDefinition]: ...
-
+from agent_platform.mcp.session import McpSessionClosedError, SdkMcpSession
+from agent_platform.mcp.source import ConfiguredGovernancePolicy, GovernedMcpToolSource
+from agent_platform.mcp.transport import SdkMcpTransport, server_spec
+from agent_platform.mcp.types import (
+    McpCallResult,
+    McpServerSpec,
+    McpSession,
+    McpToolInfo,
+    McpToolSource,
+    McpTransport,
+    ToolGovernancePolicy,
+    TransportKind,
+)
 
 __all__ = [
+    "ConfiguredGovernancePolicy",
+    "GovernedMcpToolSource",
+    "McpCallResult",
     "McpServerSpec",
     "McpSession",
+    "McpSessionClosedError",
     "McpToolInfo",
     "McpToolSource",
     "McpTransport",
+    "SdkMcpSession",
+    "SdkMcpTransport",
     "ToolGovernancePolicy",
     "TransportKind",
+    "server_spec",
 ]

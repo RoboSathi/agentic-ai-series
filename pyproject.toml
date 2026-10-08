@@ -38,6 +38,12 @@ dependencies = [
     "pycryptodome>=3.20",
     # DuckDuckGo search for the web gateway's free first-try provider (no key).
     "ddgs>=9.0",
+    # DuckDB returns TIMESTAMPTZ columns to Python through pytz (the fact tables).
+    "pytz>=2024.1",
+    # Model Context Protocol: the analytics MCP server and the agents' MCP client.
+    "mcp>=2.0",
+    # Parses NL-to-SQL queries so the MCP server can allow SELECTs over curated views only.
+    "sqlglot>=25.0",
 ]
 
 [project.optional-dependencies]

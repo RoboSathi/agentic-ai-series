@@ -40,7 +40,6 @@ from agent_platform.llm.types import CompletionRequest, CompletionResult, Messag
 from agent_platform.memory import MemoryFacade, WorkingMemoryStore
 from agent_platform.memory.semantic.rag import KNOWLEDGE_SOURCE_PREFIX, markdown_sections
 from agent_platform.observability import (
-    SLORegistry,
     StageReporter,
     Tracer,
 )
@@ -115,7 +114,6 @@ class NodeSupport:
     _reporter: StageReporter | None
     _dead_letter_queue: DeadLetterQueue | None
     _tracer: Tracer | None
-    _slos: SLORegistry | None
     _grounding: DetectionLadder | None
     _verifier: EffectVerifier | None
     _mandate_issuer: MandateIssuer | None
@@ -538,11 +536,6 @@ class NodeSupport:
                 **({} if remembered_as is None else {"memory_response": remembered_as}),
             },
         }
-
-    def _record_slo(self, metric: str, value: float) -> None:
-        """Feed one observation to the SLO registry, when one is wired."""
-        if self._slos is not None:
-            self._slos.record(metric, value)
 
     def _report_llm_request(
         self,

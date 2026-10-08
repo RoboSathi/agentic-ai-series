@@ -1,0 +1,122 @@
+{
+  "kind": "report",
+  "artifact_id": "run-698939ce4d",
+  "payload": {
+    "title": "Kerala 2026 Public Holidays Overview",
+    "status": "PARTIAL",
+    "sections": [
+      {
+        "heading": "Summary",
+        "body": "Kerala's state government published its official 2026 public holiday calendar under Section 25 of the Negotiable Instruments Act, 1881, via the Kerala Gazette Extraordinary on 31 October 2025 [E1]. The calendar designates specific dates for national, religious, and regional observances throughout the year [E2][E3]."
+      },
+      {
+        "heading": "Concepts",
+        "body": "The Kerala government has released the official public holiday calendar for 2026, offering residents, government offices, schools, and the banking sector a clear schedule of next year’s notified holidays. Issued under Section 25 of the Negotiable Instruments Act, 1881, the list was published in the Kerala Gazette Extraordinary on 31 October 2025 and confirms the dates when state government institutions and designated establishments will remain closed. [E1] Mahasivarathri – 15 February (Sunday)\nEaster – 5 April (Sunday)\nDeepavali – 8 November (Sunday) [E4]"
+      },
+      {
+        "heading": "Examples",
+        "body": "Mannam Jayanthi – 2 January (Friday)\nRepublic Day – 26 January (Monday)\nId-ul-Fitr (Ramzan)* – 20 March (Friday) [E2] Major festival holidays comprise Vishu on 15 April, May Day on 1 May, Id-ul-Adha on 27 May, Independence Day on 15 August, First Onam/Milad-i-Sherif on 25 August, and Thiruvonam on 26 August [E3]."
+      },
+      {
+        "heading": "Known unknowns",
+        "body": "- None declared during scoping."
+      },
+      {
+        "heading": "Coverage & Limits",
+        "body": "- R1: Every factual sentence in the report cites collected evidence. — 5/10, scored 0.50 of the 1 required; found: The Kerala government has released the official public holiday calendar for 2026, offering residents, government offices, schools, and the banking sector a clear schedule of next year’s notified holidays., Issued under Section 25 of the Negotiable Instruments Act, 1881, the list was published in the Kerala Gazette Extraordinary on 31 October 2025 and confirms the dates when state government institutions and designated establishments will remain closed., Easter – 5 April (Sunday), Mannam Jayanthi – 2 January (Friday); run stopped: maximum rounds reached; the critique found the answer incomplete: The research only covers Kerala state holidays, while the brief asks for India-wide 2026 holidays, festivals, and long weekends. No national-level or other state calendars are cited, so the central question is unanswered.. Tried: India government gazette notified public holidays 2025 2026 calendar list, India festival calendar 2025 2026 Diwali Holi Eid dates long weekends.\n- R4: The sub-concept 'all' is explained and cross-checked in two sources. — 0 independent source(s), scored 0.00 of the 1 required; run stopped: maximum rounds reached; the critique found the answer incomplete: The research only covers Kerala state holidays, while the brief asks for India-wide 2026 holidays, festivals, and long weekends. No national-level or other state calendars are cited, so the central question is unanswered.. Tried: India government gazette notified public holidays 2025 2026 calendar list, India festival calendar 2025 2026 Diwali Holi Eid dates long weekends.\n- R2: Cited claims are supported by their quoted spans. — 4/5, scored 0.80 of the 1 required; found: [E1] Mahasivarathri – 15 February (Sunday); run stopped: maximum rounds reached; the critique found the answer incomplete: The research only covers Kerala state holidays, while the brief asks for India-wide 2026 holidays, festivals, and long weekends. No national-level or other state calendars are cited, so the central question is unanswered.. Tried: India government gazette notified public holidays 2025 2026 calendar list, India festival calendar 2025 2026 Diwali Holi Eid dates long weekends.\n- 1 source(s) rejected — blocked or paywalled. e.g. https://advocategandhi.com/delhi-government-notifies-list-of-public-holidays-for-2026-key-highlights-from-the-latest-gazette\n- 1 source(s) rejected — WebUnavailableError: fetch failed: ConnectTimeout. e.g. https://www.eskimo.travel/en/blog/india-public-holidays"
+      }
+    ],
+    "citations": [
+      {
+        "entry_id": "E1",
+        "url": "https://sakshipost.com/news/national/kerala-2026-public-holidays-announced-here-s-full-list-475471",
+        "span": "The Kerala government has released the official public holiday calendar for 2026, offering residents, government offices, schools, and the banking sector a clear schedule of next year’s notified holidays. Issued under Section 25 of the Negotiable Instruments Act, 1881, the list was published in the Kerala Gazette Extraordinary on 31 October 2025 and confirms the dates when state government institutions and designated establishments will remain closed.",
+        "page_hash": "1b8b7795e8f26a4cac562209bc02b7ca4dae1f6e536e9d1f33f028fcf1d4c37d",
+        "retrieved_at": "2026-10-05T12:15:59.635999Z"
+      },
+      {
+        "entry_id": "E2",
+        "url": "https://sakshipost.com/news/national/kerala-2026-public-holidays-announced-here-s-full-list-475471",
+        "span": "Mannam Jayanthi – 2 January (Friday)\n\nRepublic Day – 26 January (Monday)\n\nId-ul-Fitr (Ramzan)* – 20 March (Friday)",
+        "page_hash": "1b8b7795e8f26a4cac562209bc02b7ca4dae1f6e536e9d1f33f028fcf1d4c37d",
+        "retrieved_at": "2026-10-05T12:15:59.635999Z"
+      },
+      {
+        "entry_id": "E3",
+        "url": "https://sakshipost.com/news/national/kerala-2026-public-holidays-announced-here-s-full-list-475471",
+        "span": "Vishu – 15 April (Wednesday)\n\nMay Day – 1 May (Friday)\n\nId-ul-Ad’ha (Bakrid)* – 27 May (Wednesday)\n\nIndependence Day – 15 August (Saturday)\n\nFirst Onam/Milad-i-Sherif* – 25 August (Tuesday)\n\nThiruvonam – 26 August (Wednesday)",
+        "page_hash": "1b8b7795e8f26a4cac562209bc02b7ca4dae1f6e536e9d1f33f028fcf1d4c37d",
+        "retrieved_at": "2026-10-05T12:15:59.635999Z"
+      },
+      {
+        "entry_id": "E4",
+        "url": "https://sakshipost.com/news/national/kerala-2026-public-holidays-announced-here-s-full-list-475471",
+        "span": "Mahasivarathri – 15 February (Sunday)\n\nEaster – 5 April (Sunday)\n\nDeepavali – 8 November (Sunday)",
+        "page_hash": "1b8b7795e8f26a4cac562209bc02b7ca4dae1f6e536e9d1f33f028fcf1d4c37d",
+        "retrieved_at": "2026-10-05T12:15:59.635999Z"
+      }
+    ],
+    "limits": [
+      {
+        "item_id": "R1",
+        "text": "Every factual sentence in the report cites collected evidence.",
+        "tried_queries": [
+          "India government gazette notified public holidays 2025 2026 calendar list",
+          "India festival calendar 2025 2026 Diwali Holi Eid dates long weekends"
+        ],
+        "sources_examined": [
+          "https://advocategandhi.com/delhi-government-notifies-list-of-public-holidays-for-2026-key-highlights-from-the-latest-gazette",
+          "https://factohr-1a56a.kxcdn.com/holiday-list-in-india",
+          "https://www.sakshipost.com/news/national/kerala-2026-public-holidays-announced-here-s-full-list-475471",
+          "https://sakshipost.com/news/national/kerala-2026-public-holidays-announced-here-s-full-list-475471",
+          "https://www.eskimo.travel/en/blog/india-public-holidays"
+        ],
+        "reason": "5/10, scored 0.50 of the 1 required; found: The Kerala government has released the official public holiday calendar for 2026, offering residents, government offices, schools, and the banking sector a clear schedule of next year’s notified holidays., Issued under Section 25 of the Negotiable Instruments Act, 1881, the list was published in the Kerala Gazette Extraordinary on 31 October 2025 and confirms the dates when state government institutions and designated establishments will remain closed., Easter – 5 April (Sunday), Mannam Jayanthi – 2 January (Friday); run stopped: maximum rounds reached; the critique found the answer incomplete: The research only covers Kerala state holidays, while the brief asks for India-wide 2026 holidays, festivals, and long weekends. No national-level or other state calendars are cited, so the central question is unanswered."
+      },
+      {
+        "item_id": "R4",
+        "text": "The sub-concept 'all' is explained and cross-checked in two sources.",
+        "tried_queries": [
+          "India government gazette notified public holidays 2025 2026 calendar list",
+          "India festival calendar 2025 2026 Diwali Holi Eid dates long weekends"
+        ],
+        "sources_examined": [
+          "https://advocategandhi.com/delhi-government-notifies-list-of-public-holidays-for-2026-key-highlights-from-the-latest-gazette",
+          "https://factohr-1a56a.kxcdn.com/holiday-list-in-india",
+          "https://www.sakshipost.com/news/national/kerala-2026-public-holidays-announced-here-s-full-list-475471",
+          "https://sakshipost.com/news/national/kerala-2026-public-holidays-announced-here-s-full-list-475471",
+          "https://www.eskimo.travel/en/blog/india-public-holidays"
+        ],
+        "reason": "0 independent source(s), scored 0.00 of the 1 required; run stopped: maximum rounds reached; the critique found the answer incomplete: The research only covers Kerala state holidays, while the brief asks for India-wide 2026 holidays, festivals, and long weekends. No national-level or other state calendars are cited, so the central question is unanswered."
+      },
+      {
+        "item_id": "R2",
+        "text": "Cited claims are supported by their quoted spans.",
+        "tried_queries": [
+          "India government gazette notified public holidays 2025 2026 calendar list",
+          "India festival calendar 2025 2026 Diwali Holi Eid dates long weekends"
+        ],
+        "sources_examined": [
+          "https://advocategandhi.com/delhi-government-notifies-list-of-public-holidays-for-2026-key-highlights-from-the-latest-gazette",
+          "https://factohr-1a56a.kxcdn.com/holiday-list-in-india",
+          "https://www.sakshipost.com/news/national/kerala-2026-public-holidays-announced-here-s-full-list-475471",
+          "https://sakshipost.com/news/national/kerala-2026-public-holidays-announced-here-s-full-list-475471",
+          "https://www.eskimo.travel/en/blog/india-public-holidays"
+        ],
+        "reason": "4/5, scored 0.80 of the 1 required; found: [E1] Mahasivarathri – 15 February (Sunday); run stopped: maximum rounds reached; the critique found the answer incomplete: The research only covers Kerala state holidays, while the brief asks for India-wide 2026 holidays, festivals, and long weekends. No national-level or other state calendars are cited, so the central question is unanswered."
+      }
+    ],
+    "rejected_sources": [
+      "https://advocategandhi.com/delhi-government-notifies-list-of-public-holidays-for-2026-key-highlights-from-the-latest-gazette",
+      "https://www.eskimo.travel/en/blog/india-public-holidays"
+    ],
+    "rejected_codes": {
+      "https://advocategandhi.com/delhi-government-notifies-list-of-public-holidays-for-2026-key-highlights-from-the-latest-gazette": "blocked",
+      "https://www.eskimo.travel/en/blog/india-public-holidays": "error"
+    },
+    "budget_notes": [],
+    "known_unknowns": []
+  },
+  "content_hash": "3f6e27886f4c8bc522b027e89984417037393686c76ce880fbbf232c80cf4e09",
+  "frozen_at": "2026-10-05T12:19:18.693650Z"
+}

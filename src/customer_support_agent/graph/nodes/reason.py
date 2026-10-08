@@ -13,6 +13,8 @@ a timeout, a retry under an idempotency key, and a circuit breaker.
 from typing import Any
 
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
+from agent_platform.observability import Span
+from agent_platform.observability.model_observer import MODEL_STAGE as LLM_CALL_SPAN
 from agent_platform.resilience import (
     external_api_error_fields,
 )
@@ -89,9 +91,11 @@ class ReasoningNodes(NodeSupport):
         model — is the client's own (`create_llm_client` → `ModelChainBuilder`), so the node
         never wraps the model again: a second retry layer here would multiply the attempts.
         """
+        span = self._open_span(state)
         try:
             result = await self._llm.complete(request)
         except Exception as exc:
+            self._close_span(span, None, f"error: {exc!r}")
             error_fields = external_api_error_fields(exc)
             self._note_recovery(state, attempts=0, succeeded=False, error_fields=error_fields)
             self._done_failed(
@@ -104,7 +108,7 @@ class ReasoningNodes(NodeSupport):
                 self._logger.error("LLM API call failed", **error_fields)
             raise
         self._note_recovery(state, attempts=result.attempts, succeeded=True)
-        self._account_for(result, state)
+        self._close_span(span, result, result.finish_reason or "")
         return result
 
     def _note_recovery(
@@ -143,24 +147,25 @@ class ReasoningNodes(NodeSupport):
                 },
             )
 
-    def _account_for(self, result: CompletionResult, state: AgentState) -> None:
-        """Trace what the call did.
+    def _open_span(self, state: AgentState) -> Span | None:
+        """Open the call's span before the call, so its latency is the call's.
 
-        Tokens, not money: a rate card per provider is a second source of
-        truth about pricing that goes stale silently, and the token count
-        is what the harness actually observes.
+        start/end rather than the context manager: those are the Protocol's
+        methods, so a LangSmith-backed tracer works here without the graph
+        knowing which one it was given.
         """
-        if self._tracer is not None:
-            # start/end rather than the context manager: those are the
-            # Protocol's methods, so a LangSmith-backed tracer works here
-            # without the graph knowing which one it was given.
-            span = self._tracer.start_span(
-                "llm_call",
-                actor=state.actor,
-                model_version=result.model,
-            )
-            self._tracer.end_span(span, result=result.finish_reason or "")
-        self._record_slo("tool_failure_rate", 0.0)
+        if self._tracer is None:
+            return None
+        return self._tracer.start_span(LLM_CALL_SPAN, actor=state.actor)
+
+    def _close_span(self, span: Span | None, result: CompletionResult | None, outcome: str) -> None:
+        """Close the span with what the call used. Tokens, not money (`accounting.py`)."""
+        if self._tracer is None or span is None:
+            return
+        if result is not None:
+            span.model_version = result.model
+            span.attributes.update(result.usage.model_dump())
+        self._tracer.end_span(span, result=outcome)
 
     async def _offered_tools(self, state: AgentState) -> list[Any]:
         """Which tools this turn may use.

@@ -1,0 +1,209 @@
+{
+  "kind": "rubric",
+  "artifact_id": "run-7c37774e9a",
+  "payload": {
+    "items": [
+      {
+        "item_id": "R1",
+        "text": "Every option is assessed against every stated criterion.",
+        "check": {
+          "kind": "deterministic",
+          "name": "subject_criterion_coverage",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R2",
+        "text": "Every factual sentence in the report cites collected evidence.",
+        "check": {
+          "kind": "deterministic",
+          "name": "citations_per_claim",
+          "params": {
+            "min_citations": 1
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R3",
+        "text": "Cited claims are supported by their quoted spans.",
+        "check": {
+          "kind": "nli",
+          "name": "claims_entailed",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R4",
+        "text": "Where sources disagree, the counter-evidence is reported.",
+        "check": {
+          "kind": "deterministic",
+          "name": "counter_evidence_reported",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": false,
+        "weight": 1.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R5",
+        "text": "The recommendation states its trade-offs fairly.",
+        "check": {
+          "kind": "judge",
+          "name": "tradeoffs_stated",
+          "params": {}
+        },
+        "threshold": 0.7,
+        "must_pass": false,
+        "weight": 1.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R6",
+        "text": "Evidence on 'Quality of the college' is cited for each option.",
+        "check": {
+          "kind": "deterministic",
+          "name": "criterion_evidence",
+          "params": {
+            "min_citations": 1,
+            "criterion": "Quality of the college"
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "criterion",
+        "maps_to": [
+          "Quality of the college"
+        ]
+      },
+      {
+        "item_id": "R7",
+        "text": "Evidence on 'working conditions' is cited for each option.",
+        "check": {
+          "kind": "deterministic",
+          "name": "criterion_evidence",
+          "params": {
+            "min_citations": 1,
+            "criterion": "working conditions"
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "criterion",
+        "maps_to": [
+          "working conditions"
+        ]
+      },
+      {
+        "item_id": "R8",
+        "text": "Evidence on 'career growth' is cited for each option.",
+        "check": {
+          "kind": "deterministic",
+          "name": "criterion_evidence",
+          "params": {
+            "min_citations": 1,
+            "criterion": "career growth"
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "criterion",
+        "maps_to": [
+          "career growth"
+        ]
+      },
+      {
+        "item_id": "R9",
+        "text": "Evidence on 'compensation' is cited for each option.",
+        "check": {
+          "kind": "deterministic",
+          "name": "criterion_evidence",
+          "params": {
+            "min_citations": 1,
+            "criterion": "compensation"
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "criterion",
+        "maps_to": [
+          "compensation"
+        ]
+      },
+      {
+        "item_id": "R10",
+        "text": "Evidence on 'academic environment' is cited for each option.",
+        "check": {
+          "kind": "deterministic",
+          "name": "criterion_evidence",
+          "params": {
+            "min_citations": 1,
+            "criterion": "academic environment"
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "criterion",
+        "maps_to": [
+          "academic environment"
+        ]
+      },
+      {
+        "item_id": "R11",
+        "text": "Every cited link was fetched and resolved.",
+        "check": {
+          "kind": "deterministic",
+          "name": "links_resolved",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 2.0,
+        "origin": "source_policy",
+        "maps_to": [
+          "links_resolved"
+        ]
+      },
+      {
+        "item_id": "R12",
+        "text": "The report establishes at least 1 cited finding(s).",
+        "check": {
+          "kind": "deterministic",
+          "name": "findings_present",
+          "params": {
+            "min_findings": 1
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      }
+    ]
+  },
+  "content_hash": "5dc61fd991eea4f18aabbdbefcf518e0d9b81a88fb0af55f0f99bfe9ee6180b5",
+  "frozen_at": "2026-10-05T11:31:32.742064Z"
+}

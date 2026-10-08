@@ -1,0 +1,41 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-46635d55b9",
+  "payload": {
+    "archetype": "general",
+    "topic": "India's performance in Asian Games over the last 2 years",
+    "purpose": "to analyse the trend of performance",
+    "decision": "",
+    "criteria": [
+      "overall medals tally"
+    ],
+    "options": [],
+    "claims": [],
+    "concepts": [],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": true,
+      "min_distinct_domains": 1
+    },
+    "recency_days": 730,
+    "geography": "",
+    "depth": "small",
+    "deliverable_format": "short memo",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "2557b1441d28438380fdbb906b82266e3e730a7482bdc1c98667d3bc78917238",
+  "frozen_at": "2026-10-03T14:57:29.381178Z"
+}

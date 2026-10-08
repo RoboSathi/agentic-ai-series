@@ -14,19 +14,28 @@ from typing import Any
 from agent_platform.audit import AuditEntry, AuditLedger
 from agent_platform.audit.types import Decision
 from agent_platform.config import get_settings
-from agent_platform.logging import get_logger
-from agent_platform.observability import StageReporter
+from agent_platform.logging import get_current_trace_id, get_logger
+from agent_platform.observability import Fact, FactRecorder, NullFactRecorder, StageReporter
 from agent_platform.observability.types import StatusKind
 
 ACTOR = "research_agent"
+# Where an audit entry names the run (or answer) it belongs to.
+RUN_KEY = "run_id"
 
 
 class RunTelemetry:
     """Feed cards and audit entries for one session's runs."""
 
-    def __init__(self, reporter: StageReporter | None, audit: AuditLedger, trace_id: str) -> None:
+    def __init__(
+        self,
+        reporter: StageReporter | None,
+        audit: AuditLedger,
+        trace_id: str,
+        facts: FactRecorder | None = None,
+    ) -> None:
         self._reporter = reporter
         self._audit = audit
+        self._facts = facts or NullFactRecorder()
         self._trace_id = trace_id
         self._versions = get_settings().audit
         self._logger = get_logger("research_agent")
@@ -85,14 +94,23 @@ class RunTelemetry:
         if self._reporter is not None:
             self._reporter.started(stage, summary=summary)
 
+    def fact(self, fact: Fact) -> None:
+        """One analytic fact (a tool call, a turn), stamped with the turn it happened in."""
+        self._facts.record(fact)
+
     def audit(self, action: str, decision: Decision, rationale: str, **context: Any) -> None:
-        """One audit entry, attributed to this run's trace and versions."""
+        """One audit entry, under the turn that caused it, naming the run it belongs to.
+
+        The trace is the turn's (the id its log lines, facts and LangSmith run share),
+        so the entry joins the turn in analytics; the run id stays in the context, so a
+        run's entries are still found together. Outside a turn, the run id is the trace.
+        """
         self._audit.record(
             AuditEntry(
-                trace_id=self._trace_id,
+                trace_id=get_current_trace_id() or self._trace_id,
                 actor=ACTOR,
                 action=action,
-                authority_context=context,
+                authority_context={RUN_KEY: self._trace_id, **context},
                 policy_version=self._versions.policy_version,
                 data_version=self._versions.data_version,
                 decision=decision,

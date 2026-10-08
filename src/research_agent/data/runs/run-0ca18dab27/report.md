@@ -1,0 +1,35 @@
+# Top AI News
+
+**Status:** PARTIAL
+
+## Answer
+
+No relevant information was found within the provided evidence ledger, so no factual findings can be reported.
+
+## Known unknowns
+
+- None: every scope question was settled.
+
+## Coverage & Limits
+
+- R1: Every factual sentence in the answer cites the ledger. — 0/1, scored 0.00 of the 1 required; found: No relevant information was found within the provided evidence ledger, so no factual findings can be reported.; run stopped: budget exhausted (searches, rounds). Tried: top AI news site:techcrunch.com, top AI news site:theverge.com.
+- R6: The report establishes at least 1 cited finding(s). — 0 finding(s) established, scored 0.00 of the 1 required; run stopped: budget exhausted (searches, rounds). Tried: top AI news site:techcrunch.com, top AI news site:theverge.com, top AI news site:wired.com.
+- Rejected source: https://www.theverge.com/ai-artificial-intelligence/1001427/ai-is-supercharging-hacking-and-your-local-hospitals-and-banks-arent-ready (outside the approved 30-day recency window (published Mon, 28 Sep 2026 18:30:00 GMT)).
+- Rejected source: https://www.theverge.com/ai-artificial-intelligence/996563/ai-safety-research-metr-redwood-openai-anthropic (outside the approved 30-day recency window (published Thu, 17 Sep 2026 11:30:00 GMT)).
+- Rejected source: https://www.theverge.com/ai-artificial-intelligence/1002779/openai-dots-meta-muse-ai-agents-hardware-devices (outside the approved 30-day recency window (published Wed, 30 Sep 2026 18:07:38 GMT)).
+- Rejected source: https://www.theverge.com/policy/1002829/this-week-in-the-big-ai-data-center-buildout (outside the approved 30-day recency window (published Wed, 30 Sep 2026 18:39:18 GMT)).
+- Rejected source: https://www.theverge.com/ai-artificial-intelligence/1002636/ai-execs-trump-self-policing-deal-comments (outside the approved 30-day recency window (published Wed, 30 Sep 2026 17:15:49 GMT)).
+- Rejected source: https://techcrunch.com/2026/09/30/google-releases-gemini-4-argon-called-its-most-powerful-model-yet (outside the approved 30-day recency window (published Wed, 30 Sep 2026 23:43:07 GMT)).
+- Rejected source: https://techcrunch.com/2026/09/30/pledge-signed-by-president-trump-and-top-ai-leaders-misspells-the-united-states (outside the approved 30-day recency window (published Wed, 30 Sep 2026 14:50:55 GMT)).
+- Rejected source: https://techcrunch.com/category/artificial-intelligence/page/2 (outside the approved 30-day recency window (published Wed, 23 Sep 2026 13:00:00 GMT)).
+- Rejected source: https://techcrunch.com/2026/09/30/the-ugly-economics-of-consumer-ai (outside the approved 30-day recency window (published Wed, 30 Sep 2026 17:24:45 GMT)).
+- Rejected source: https://techcrunch.com/2026/09/29/heres-why-openai-is-absent-from-nvidias-industry-wide-effort-to-end-rogue-ai-agents (outside the approved 30-day recency window (published Tue, 29 Sep 2026 18:35:00 GMT)).
+- Rejected source: https://www.wired.com/story/ai-leaders-are-calling-for-a-slowdown-trumps-team-says-its-on-them (outside the approved 30-day recency window (published Mon, 14 Sep 2026 11:00:00 GMT)).
+- Rejected source: https://www.wired.com/story/heres-how-an-ai-slowdown-could-actually-work (outside the approved 30-day recency window (published Fri, 18 Sep 2026 19:21:09 GMT)).
+- Rejected source: https://www.wired.com/story/anthropic-researcher-quits-jacob-coxon-ai-fears-humanity (outside the approved 30-day recency window (published Wed, 09 Sep 2026 22:11:55 GMT)).
+- Rejected source: https://www.wired.com/story/openai-pauses-training-most-powerful-models-after-rogue-agents-target-government (outside the approved 30-day recency window (published Mon, 28 Sep 2026 11:32:19 GMT)).
+- Rejected source: https://www.wired.com/story/trumps-ai-safety-accord-is-a-fancy-pinky-swear (outside the approved 30-day recency window (published Wed, 30 Sep 2026 20:30:09 GMT)).
+- Budget: F2-2: searches exhausted.
+- Budget: F2-1: searches exhausted.
+
+## Citations

@@ -1,0 +1,165 @@
+{
+  "kind": "rubric",
+  "artifact_id": "run-5305c36c45",
+  "payload": {
+    "items": [
+      {
+        "item_id": "R1",
+        "text": "Every factual sentence in the report cites the ledger.",
+        "check": {
+          "kind": "deterministic",
+          "name": "citations_per_claim",
+          "params": {
+            "min_citations": 1
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R2",
+        "text": "Cited claims are supported by their quoted spans.",
+        "check": {
+          "kind": "nli",
+          "name": "claims_entailed",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R3",
+        "text": "Findings come from at least two independent domains.",
+        "check": {
+          "kind": "deterministic",
+          "name": "distinct_domains",
+          "params": {
+            "min_domains": 2
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": false,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R4",
+        "text": "The findings answer the question as asked.",
+        "check": {
+          "kind": "judge",
+          "name": "user_item",
+          "params": {}
+        },
+        "threshold": 0.7,
+        "must_pass": false,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R5",
+        "text": "The report covers 'what will be the change in swe work' with a citation.",
+        "check": {
+          "kind": "deterministic",
+          "name": "criterion_evidence",
+          "params": {
+            "min_citations": 1,
+            "criterion": "what will be the change in swe work"
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "origin": "criterion",
+        "maps_to": [
+          "what will be the change in swe work"
+        ]
+      },
+      {
+        "item_id": "R6",
+        "text": "The report covers 'number/kind of swe roles' with a citation.",
+        "check": {
+          "kind": "deterministic",
+          "name": "criterion_evidence",
+          "params": {
+            "min_citations": 1,
+            "criterion": "number/kind of swe roles"
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "origin": "criterion",
+        "maps_to": [
+          "number/kind of swe roles"
+        ]
+      },
+      {
+        "item_id": "R7",
+        "text": "The report covers 'starting from junior to architect' with a citation.",
+        "check": {
+          "kind": "deterministic",
+          "name": "criterion_evidence",
+          "params": {
+            "min_citations": 1,
+            "criterion": "starting from junior to architect"
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "origin": "criterion",
+        "maps_to": [
+          "starting from junior to architect"
+        ]
+      },
+      {
+        "item_id": "R8",
+        "text": "Primary sources are cited where they exist.",
+        "check": {
+          "kind": "deterministic",
+          "name": "primary_sources_cited",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": false,
+        "origin": "source_policy",
+        "maps_to": [
+          "primary_sources"
+        ]
+      },
+      {
+        "item_id": "R9",
+        "text": "Every cited link was fetched and resolved.",
+        "check": {
+          "kind": "deterministic",
+          "name": "links_resolved",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "origin": "source_policy",
+        "maps_to": [
+          "links_resolved"
+        ]
+      },
+      {
+        "item_id": "R10",
+        "text": "The report establishes at least 1 cited finding(s).",
+        "check": {
+          "kind": "deterministic",
+          "name": "findings_present",
+          "params": {
+            "min_findings": 1
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "origin": "template",
+        "maps_to": []
+      }
+    ]
+  },
+  "content_hash": "3ab15ea8a92a1d031e3ab4b3823c35894f69cc0a1148a31737480ab3644884a7",
+  "frozen_at": "2026-10-01T12:16:15.732674Z"
+}

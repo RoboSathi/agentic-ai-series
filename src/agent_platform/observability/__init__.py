@@ -1,6 +1,16 @@
 """Observability module for the agent platform."""
 
 from agent_platform.observability.cost import CostAggregator, CostAggregatorImpl
+from agent_platform.observability.facts import (
+    DuckDbFactLedger,
+    Fact,
+    FactRecorder,
+    LlmCallFact,
+    NullFactRecorder,
+    ToolCallFact,
+    TurnOutcomeFact,
+    create_fact_recorder,
+)
 from agent_platform.observability.postmortem import Postmortem, PostmortemRegister
 from agent_platform.observability.queue import (
     LittlesLawQueueModel,
@@ -35,6 +45,14 @@ from agent_platform.observability.types import (
 
 __all__ = [
     "CostAggregator",
+    "DuckDbFactLedger",
+    "Fact",
+    "FactRecorder",
+    "LlmCallFact",
+    "NullFactRecorder",
+    "ToolCallFact",
+    "TurnOutcomeFact",
+    "create_fact_recorder",
     "DuckDbObservabilityStore",
     "CostAggregatorImpl",
     "CostComponent",

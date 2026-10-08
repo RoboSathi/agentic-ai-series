@@ -1,0 +1,39 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-5d02bf1681",
+  "payload": {
+    "archetype": "qa",
+    "topic": "Important AI news in the last 1 month",
+    "purpose": "",
+    "decision": "",
+    "criteria": [],
+    "options": [],
+    "claims": [],
+    "concepts": [],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": false,
+      "min_distinct_domains": 1
+    },
+    "recency_days": 30,
+    "geography": "",
+    "depth": "standard",
+    "deliverable_format": "",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 8,
+      "max_tokens": 80000,
+      "max_seconds": 300.0,
+      "max_rounds": 2,
+      "max_dag_nodes": 3,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "367e25711ecc54c42dbca11c72e16a7816443199c0771b891aec6c6cdcc58b09",
+  "frozen_at": "2026-10-01T08:44:24.921093Z"
+}

@@ -1,0 +1,47 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-603cb8110b",
+  "payload": {
+    "archetype": "landscape_brief",
+    "topic": "India's performance at Asian Games 2026 compared to 2022",
+    "purpose": "",
+    "decision": "",
+    "criteria": [
+      "medal tally"
+    ],
+    "options": [],
+    "claims": [],
+    "concepts": [],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": false,
+      "min_distinct_domains": 1
+    },
+    "recency_days": null,
+    "geography": "India's performance at Asian Games 2026 compared to 2022",
+    "depth": "small",
+    "deliverable_format": "",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [
+      {
+        "item_id": "purpose",
+        "question": "what the answer will be used for",
+        "reason": "closed_early"
+      }
+    ],
+    "private_terms": []
+  },
+  "content_hash": "529f9ae84d93404e793267f8a9c919640fb382ccaa4f90b1853d5bd38ee7819e",
+  "frozen_at": "2026-10-02T16:11:42.386789Z"
+}

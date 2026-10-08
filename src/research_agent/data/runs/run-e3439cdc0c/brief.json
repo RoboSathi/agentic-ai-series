@@ -1,0 +1,42 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-e3439cdc0c",
+  "payload": {
+    "archetype": "general",
+    "topic": "India performance at cricket world cup 50 overs",
+    "purpose": "",
+    "decision": "",
+    "criteria": [
+      "performance in the semi final",
+      "final matches"
+    ],
+    "options": [],
+    "claims": [],
+    "concepts": [],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": false,
+      "min_distinct_domains": 1
+    },
+    "recency_days": 7300,
+    "geography": "",
+    "depth": "small",
+    "deliverable_format": "",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "3f783e183ebabadcc8d1b986bf528c01d9524fc63ab7763dd04352be5118d770",
+  "frozen_at": "2026-10-03T15:49:47.569892Z"
+}

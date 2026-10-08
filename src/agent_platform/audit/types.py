@@ -19,6 +19,10 @@ from agent_platform.observability.types import utc_now
 
 Decision = Literal["allow", "deny", "escalate"]
 
+# The key under which the Gatekeeper records an entry's standing inside
+# `authority_context`. Named once here because the ledger filters on it.
+STANDING_FIELD = "standing"
+
 
 class AuditEntry(BaseModel):
     """One consequential decision, attributable to a versioned tuple (E33)."""

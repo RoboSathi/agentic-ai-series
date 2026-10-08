@@ -115,4 +115,4 @@ class TestTargetsKeepTheirBehaviour:
     def test_verify_imports_each_root_in_its_own_process(self) -> None:
         out = _make("verify").stdout
         assert f"AGENTIC_OVERLAYS={CSA_OVERLAY}" in out and f"AGENTIC_OVERLAYS={RA_OVERLAY}" in out
-        assert out.count("import build_agent") == 2
+        assert out.count("import build_agent") == 3

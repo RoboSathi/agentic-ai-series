@@ -1,0 +1,41 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-a01bffacae",
+  "payload": {
+    "archetype": "general",
+    "topic": "India's performance in cricket world cup events",
+    "purpose": "",
+    "decision": "",
+    "criteria": [
+      "50 over cricket matches"
+    ],
+    "options": [],
+    "claims": [],
+    "concepts": [],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": false,
+      "min_distinct_domains": 1
+    },
+    "recency_days": null,
+    "geography": "",
+    "depth": "small",
+    "deliverable_format": "",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "a10fc1009316e14e5bd8a77177b4e4ecd033566c9efd113e4dff2da59ff6dcf9",
+  "frozen_at": "2026-10-03T15:29:32.585329Z"
+}

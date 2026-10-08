@@ -18,6 +18,7 @@ numbered "Step N", and every payload is in the log and the audit trail.
 import inspect
 import json
 import re
+import time
 from collections.abc import Mapping
 from typing import Any
 
@@ -28,6 +29,7 @@ from agent_platform.hallucination_protection import Observation, tool_evidence
 from agent_platform.llm.embeddings import tokenize
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message, ModelToolCall
 from agent_platform.logging import describe_error, get_logger, instrument
+from agent_platform.observability.facts import TOOL_COMPLETED, TOOL_FAILED, ToolCallFact
 from agent_platform.observability.langsmith import tool_run
 from agent_platform.observability.llm_fields import llm_request_fields, llm_response_fields
 from agent_platform.observability.tool_fields import display_tool_name, tool_request_fields
@@ -40,7 +42,7 @@ from research_agent.graph.answer_state import STEPS, TOOL_CALLS, AnswerState, Tu
 from research_agent.graph.points import as_points
 from research_agent.guardrails.answer_grounding import AnswerGrounding, GroundingOutcome
 from research_agent.llm.structured import ModelCallTimeoutError, StructuredCaller
-from research_agent.observability.telemetry import RunTelemetry
+from research_agent.observability.telemetry import ACTOR, RunTelemetry
 from research_agent.presentation.narration import clip, role_title
 from research_agent.prompts import answer as prompt
 from research_agent.research.recency import RecencyGuard
@@ -292,7 +294,18 @@ class AnswerNodes:
             tool_request_fields(call.name, call.arguments),
             event_kind="tool_request",
         )
+        started = time.perf_counter()
         result = await self._execute(call, turn)
+        self._telemetry.fact(
+            ToolCallFact(
+                action=call.name,
+                actor=ACTOR,
+                status=TOOL_COMPLETED if result.success else TOOL_FAILED,
+                succeeded=result.success,
+                duration_ms=(time.perf_counter() - started) * 1000,
+                error=result.error or "",
+            )
+        )
         text = result.output if result.success else result.error or self._notes.empty
         note = self._recency_note(turn, result)
         if note:

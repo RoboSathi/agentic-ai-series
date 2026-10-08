@@ -1,0 +1,10 @@
+version: 1
+type: explore
+display_name: Calls & Decisions
+metrics_view: calls_and_decisions
+dimensions: '*'
+measures: '*'
+defaults:
+  time_range: P30D
+  measures: [events, failure_rate, p95_latency, deny_rate, escalate_rate]
+  dimensions: [kind, name, outcome, standing]

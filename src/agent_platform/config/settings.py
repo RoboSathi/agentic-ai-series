@@ -573,6 +573,9 @@ class ObservabilitySettings(YamlBackedSettings):
     analytics_db_path: str
     langsmith: LangSmithSettings
     persist_traces: bool
+    # One row per model call, tool call and turn (`observability/facts.py`):
+    # what the analytics mart and the dashboards aggregate.
+    persist_facts: bool
     slo_targets: dict[str, float]
     review_queue: ReviewQueueSettings
     step_card: StepCardSettings
@@ -594,6 +597,91 @@ class ObservabilitySettings(YamlBackedSettings):
     model_events: "ModelEventWording"
 
     model_config = SettingsConfigDict(env_prefix="OBSERVABILITY__")
+
+
+class RedactPattern(BaseModel):
+    """One regex the analytics mart masks in free text before it leaves the database."""
+
+    pattern: str
+    replacement: str
+
+
+class QueryRejectionWords(BaseModel):
+    """Why the query guard refused a query, in words a model can act on."""
+
+    unparseable: str
+    single_statement: str
+    not_a_select: str
+    table_function: str
+    qualified_name: str
+    unknown_view: str
+    denied_function: str
+
+
+class AnalyticsQuerySettings(BaseModel):
+    """The limits every NL-to-SQL query over the mart runs under (`analytics/query_guard.py`)."""
+
+    dialect: str
+    # The session time zone results are reported in (the mart's timestamps are UTC).
+    timezone: str
+    max_rows: int = Field(ge=1)
+    timeout_seconds: float = Field(gt=0)
+    max_result_bytes: int = Field(ge=1024)
+    sample_rows: int = Field(ge=0)
+    # Functions no query may call, even over the curated views (lower case).
+    denied_functions: list[str]
+    rejections: QueryRejectionWords
+    timed_out: str
+
+
+class AnalyticsMcpServerSettings(BaseModel):
+    """How the analytics MCP server introduces itself to a client."""
+
+    name: str
+    instructions: str
+    manifest_uri: str
+
+
+class AnalyticsWords(BaseModel):
+    """What `make analytics-export` says (`analytics/cli.py`)."""
+
+    usage: str
+    title: str
+    rows: str
+    skipped: str
+    # A fact-backed view with no rows yet, and the line closing a mart that has none at all.
+    empty_hint: str
+    no_facts: str
+    locked: str
+    time_format: str
+
+
+class AnalyticsSettings(YamlBackedSettings):
+    """The analytics mart: curated views over the facts, exported as Parquet (LLD §6)."""
+
+    _yaml_section = "analytics"
+    mart_dir: str
+    mart_version: int
+    manifest_file: str
+    # How often a running console refreshes the mart; 0 exports only on demand.
+    export_interval_seconds: float = Field(ge=0)
+    semantic_layer: str
+    evals_alias: str
+    slo_windows_days: list[int]
+    redact_patterns: list[RedactPattern]
+    query: AnalyticsQuerySettings
+    mcp_server: AnalyticsMcpServerSettings
+    words: AnalyticsWords
+
+    model_config = SettingsConfigDict(env_prefix="ANALYTICS__")
+
+    @property
+    def resolved_mart_dir(self) -> Path:
+        return resolve_path(self.mart_dir)
+
+    @property
+    def resolved_semantic_layer(self) -> Path:
+        return resolve_path(self.semantic_layer)
 
 
 class RerankSettings(BaseModel):
@@ -1524,6 +1612,46 @@ class ToolsSettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="TOOLS__")
 
 
+class McpToolEnvelope(BaseModel):
+    """The governance a remote server's tools are granted here (never what the server claims)."""
+
+    surface: Literal["locked", "editable", "append_only", "human_controlled"]
+    reversible: bool
+    side_effecting: bool
+    requires_authority_rank: int = Field(ge=1)
+    required_permission: str | None = None
+
+
+class McpServerSettings(BaseModel):
+    """One MCP server an agent connects to, and the envelope its tools run under."""
+
+    name: str
+    transport: Literal["stdio", "http"] = "stdio"
+    # stdio: the process to launch; `{python}` is this interpreter. http: `url`.
+    command: list[str] = Field(default_factory=list)
+    url: str = ""
+    env: dict[str, str] = Field(default_factory=dict)
+    namespace: str
+    envelope: McpToolEnvelope | None = None
+
+
+class McpSettings(YamlBackedSettings):
+    """MCP servers an agent consumes as tools (`agent_platform.mcp`)."""
+
+    _yaml_section = "mcp"
+    servers: list[McpServerSettings]
+    # Applied to a server that declares no envelope: an undeclared remote tool is
+    # treated as a write nobody may undo, so the Gatekeeper sees the worst case.
+    default_envelope: McpToolEnvelope
+    # Per protocol round trip: a server that stops answering fails the call.
+    call_timeout_seconds: float = Field(gt=0)
+    python_placeholder: str
+    # Characters of a tool's text result handed on; 0 keeps all of it.
+    result_text_limit: int = Field(ge=0)
+
+    model_config = SettingsConfigDict(env_prefix="MCP__")
+
+
 class BoxGlyphSettings(BaseModel):
     """The characters a box-drawn table is drawn with: corners and joins, top to bottom."""
 
@@ -1569,6 +1697,45 @@ class DeadLetterCommandWords(BaseModel):
     audit_action: str
 
 
+class StatsCommandWords(BaseModel):
+    """What `/stats` says (`commands/stats.py`)."""
+
+    summary: str
+    usage: str
+    title: str
+    no_session: str
+    turns: str
+    models: str
+    model_line: str
+    tools: str
+    tool_line: str
+    decisions: str
+    slos: str
+    slo_line: str
+    met: str
+    missed: str
+    none: str
+
+
+class AuditCommandWords(BaseModel):
+    """What `/audit` says (`commands/inspection.py`)."""
+
+    summary: str
+    usage: str
+    trace_keyword: str
+    list_title: str
+    narrowed_by: str
+    trace_title: str
+    headers: list[str]
+    empty: str
+    trace_hint: str
+    needs_trace_id: str
+    unknown_filter: str
+    time_format: str
+    unknown: str
+    rationale_chars: int = Field(ge=8)
+
+
 class CommandSettings(YamlBackedSettings):
     """Console slash commands (LLD §20)."""
 
@@ -1585,6 +1752,8 @@ class CommandSettings(YamlBackedSettings):
     verify_first: str
     not_your_records: str
     dlq: DeadLetterCommandWords
+    audit: AuditCommandWords
+    stats: StatsCommandWords
 
     model_config = SettingsConfigDict(env_prefix="COMMANDS__")
 
@@ -1849,6 +2018,8 @@ class AppConfig(BaseSettings):
     )
     web: WebSettings = Field(default_factory=lambda: WebSettings())  # type: ignore[call-arg]
     artifacts: ArtifactSettings = Field(default_factory=lambda: ArtifactSettings())  # type: ignore[call-arg]
+    analytics: AnalyticsSettings = Field(default_factory=lambda: AnalyticsSettings())  # type: ignore[call-arg]
+    mcp: McpSettings = Field(default_factory=lambda: McpSettings())  # type: ignore[call-arg]
     # Which capabilities this deployment was given. Declared by the agent
     # rather than the platform, and merged here by the same overlay chain
     # as everything else — so an episode narrows the posture by declaring

@@ -7,6 +7,7 @@ from agent_platform.executor.executor import (
     ToolExecutorImpl,
     current_execution_key,
 )
+from agent_platform.executor.registry_handler import RegistryToolHandler, UnknownToolError
 from agent_platform.executor.types import (
     ApprovedToolCall,
     ExecutionAuditEvent,
@@ -22,8 +23,10 @@ __all__ = [
     "ExecutionOutcome",
     "ExecutionPhase",
     "ExecutionStatus",
+    "RegistryToolHandler",
     "ToolExecutionHandler",
     "ToolExecutor",
     "ToolExecutorImpl",
+    "UnknownToolError",
     "current_execution_key",
 ]

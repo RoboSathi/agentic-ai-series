@@ -1,0 +1,105 @@
+{
+  "kind": "rubric",
+  "artifact_id": "run-b3083c3f0c",
+  "payload": {
+    "items": [
+      {
+        "item_id": "R1",
+        "text": "Every factual sentence in the report cites collected evidence.",
+        "check": {
+          "kind": "deterministic",
+          "name": "citations_per_claim",
+          "params": {
+            "min_citations": 1
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R2",
+        "text": "Cited claims are supported by their quoted spans.",
+        "check": {
+          "kind": "nli",
+          "name": "claims_entailed",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R3",
+        "text": "The explanation is accurate and uses concrete examples.",
+        "check": {
+          "kind": "judge",
+          "name": "explanation_accuracy",
+          "params": {}
+        },
+        "threshold": 0.7,
+        "must_pass": false,
+        "weight": 1.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R4",
+        "text": "The sub-concept 'medal tally' is explained and cross-checked in two sources.",
+        "check": {
+          "kind": "deterministic",
+          "name": "concept_covered",
+          "params": {
+            "min_sources": 2,
+            "subject": "medal tally"
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "criterion",
+        "maps_to": [
+          "medal tally"
+        ]
+      },
+      {
+        "item_id": "R5",
+        "text": "Every cited link was fetched and resolved.",
+        "check": {
+          "kind": "deterministic",
+          "name": "links_resolved",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 2.0,
+        "origin": "source_policy",
+        "maps_to": [
+          "links_resolved"
+        ]
+      },
+      {
+        "item_id": "R6",
+        "text": "The report establishes at least 1 cited finding(s).",
+        "check": {
+          "kind": "deterministic",
+          "name": "findings_present",
+          "params": {
+            "min_findings": 1
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      }
+    ]
+  },
+  "content_hash": "8681284e558722705b7002d2f59201ae7dddb4023705815ed61007fdede2eb1d",
+  "frozen_at": "2026-10-05T11:45:04.328878Z"
+}

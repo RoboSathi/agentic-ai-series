@@ -17,6 +17,7 @@ from agent_platform.config.settings import ProviderName, RoleModelSettings
 from agent_platform.llm.chain import ClientFactory, ModelChainBuilder, RequestExtras
 from agent_platform.llm.client import LLMClient, create_pinned_llm_client
 from agent_platform.llm.observer import ModelCallObserver
+from agent_platform.observability.facts import FactRecorder
 
 
 class RoleNotConfiguredError(KeyError):
@@ -43,9 +44,10 @@ class RoleModelRouter:
         roles: Mapping[str, RoleModelSettings],
         factory: ClientFactory = _pinned,
         observer: ModelCallObserver | None = None,
+        recorder: FactRecorder | None = None,
     ) -> None:
         self._roles = dict(roles)
-        self._builder = ModelChainBuilder(factory, observer)
+        self._builder = ModelChainBuilder(factory, observer, recorder=recorder)
         self._clients: dict[str, LLMClient] = {}
 
     @property

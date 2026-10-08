@@ -1,0 +1,24 @@
+# Calls & Decisions — one row per model call, tool call or authority decision.
+# "Which model, tool or rule is the problem?" Holds the audit history too.
+version: 1
+type: metrics_view
+display_name: Calls & Decisions
+description: Every model call, tool call and authority decision the agents caused.
+model: events
+timeseries: recorded_at
+dimensions:
+  - {name: kind, display_name: Kind, column: kind}
+  - {name: agent_id, display_name: Agent, column: agent_id}
+  - {name: name, display_name: Model / tool / action, column: name}
+  - {name: outcome, display_name: Outcome, column: outcome}
+  - {name: standing, display_name: Standing, column: standing}
+  - {name: role, display_name: Model role, column: role}
+measures:
+  - {name: events, display_name: Events, expression: COUNT(*), format_preset: humanize}
+  - {name: failure_rate, display_name: Calls failed, expression: "AVG(CAST(failed AS DOUBLE)) FILTER (WHERE kind <> 'decision')", format_preset: percentage}
+  - {name: p95_latency, display_name: p95 call latency, expression: "QUANTILE_CONT(latency_ms, 0.95)", format_preset: interval_ms}
+  - {name: tokens, display_name: Tokens, expression: SUM(tokens), format_preset: humanize}
+  - {name: backup_rate, display_name: Served by a backup, expression: "AVG(CAST(is_backup AS DOUBLE)) FILTER (WHERE kind = 'model_call')", format_preset: percentage}
+  - {name: deny_rate, display_name: Denied, expression: "AVG(CASE WHEN outcome = 'deny' THEN 1.0 ELSE 0.0 END) FILTER (WHERE kind = 'decision')", format_preset: percentage}
+  - {name: escalate_rate, display_name: Escalated, expression: "AVG(CASE WHEN outcome = 'escalate' THEN 1.0 ELSE 0.0 END) FILTER (WHERE kind = 'decision')", format_preset: percentage}
+  - {name: ungoverned, display_name: Ungoverned, expression: "COUNT(*) FILTER (WHERE standing = 'UNGOVERNED')", format_preset: humanize}

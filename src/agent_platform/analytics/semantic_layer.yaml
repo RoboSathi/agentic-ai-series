@@ -1,0 +1,389 @@
+# The semantic layer: every view the analytics mart exports, its SQL, and what
+# each column means. One file, read by the exporter (to build the Parquet), the
+# analytics MCP server (to describe views to a model) and documented for Rill —
+# so a column's meaning cannot drift between the three.
+#
+# Placeholders the exporter fills in:
+#   {{view:<name>}}   an earlier view in this file
+#   {{evals}}         the attached eval database
+#   {{slo_targets}}   (metric, target, lower_is_better) from observability.slo_targets
+#   {{slo_windows}}   (days) from analytics.slo_windows_days
+#   {{redact(<expr>)}} <expr> with analytics.redact_patterns masked
+#
+# `per_turn: true` marks a view built from the facts agents record each turn,
+# so an empty one reads as "no turns yet" rather than "broken".
+#
+# Order matters: a view may only read views above it.
+views:
+  - name: llm_calls
+    source: observability
+    per_turn: true
+    description: >-
+      One row per provider call (each attempt on each model, retries and backups
+      included), with its role, tokens and latency. Use for token usage, model
+      latency percentiles and backup/failure rates.
+    sql: |
+      SELECT recorded_at, CAST(recorded_at AS DATE) AS day, agent_id, session_id, trace_id,
+             channel, role, provider, model, position, position > 0 AS is_backup,
+             prompt_tokens, completion_tokens, total_tokens, latency_ms, finish_reason,
+             succeeded, {{redact(error)}} AS error
+      FROM platform_llm_calls
+    columns:
+      recorded_at: When the call finished (UTC timestamp).
+      day: The calendar day of recorded_at (UTC).
+      agent_id: The agent that made the call (its configured agent.id).
+      session_id: The conversation the call belongs to.
+      trace_id: The turn the call belongs to; joins to turns.trace_id.
+      channel: Where the turn came in (tui, eval, ...).
+      role: The job the model was doing (an agent's llm role, or the provider name for the default client).
+      provider: The configured provider that served the call.
+      model: The model that served the call.
+      position: 0 for the role's primary model, 1+ for its backups in chain order.
+      is_backup: True when a backup model served the call (position > 0).
+      prompt_tokens: Input tokens billed for the call.
+      completion_tokens: Output tokens billed for the call.
+      total_tokens: prompt_tokens + completion_tokens.
+      latency_ms: Wall-clock duration of the provider call in milliseconds.
+      finish_reason: Why generation stopped (stop, length, tool_calls, ...); empty on failure.
+      succeeded: False when the call raised (timeout, HTTP error, ...).
+      error: The error when the call failed, masked; empty otherwise.
+
+  - name: tool_calls
+    source: observability
+    per_turn: true
+    description: >-
+      One row per tool execution after authorization, with its status and
+      duration. Use for tool failure rates, timeouts and slow tools.
+    sql: |
+      SELECT recorded_at, CAST(recorded_at AS DATE) AS day, agent_id, session_id, trace_id,
+             channel, action, actor, status, succeeded, side_effecting, replayed, timed_out,
+             duration_ms, {{redact(error)}} AS error
+      FROM platform_tool_calls
+    columns:
+      recorded_at: When the tool call finished (UTC timestamp).
+      day: The calendar day of recorded_at (UTC).
+      agent_id: The agent that called the tool.
+      session_id: The conversation the call belongs to.
+      trace_id: The turn the call belongs to; joins to turns.trace_id.
+      channel: Where the turn came in (tui, eval, ...).
+      action: The qualified tool name (namespace.tool).
+      actor: Who the call ran as.
+      status: completed, failed, timed_out or replayed.
+      succeeded: True when the tool returned a successful result.
+      side_effecting: True when the tool changes state (a write) rather than reading.
+      replayed: True when an idempotent replay returned a recorded result instead of running again.
+      timed_out: True when the call exceeded its execution timeout.
+      duration_ms: How long the tool took in milliseconds.
+      error: The tool's error when it failed, masked; empty otherwise.
+
+  - name: audit_decisions
+    source: observability
+    description: >-
+      The audit trail: one row per consequential decision (a tool authorized,
+      refused or escalated; a run started; an effect settled), with its standing.
+      Use for deny/escalate rates and governance questions.
+    sql: |
+      SELECT seq, CAST(timestamp AS TIMESTAMPTZ) AS recorded_at,
+             CAST(CAST(timestamp AS TIMESTAMPTZ) AS DATE) AS day, agent_id, trace_id,
+             coalesce(json_extract_string(authority_context, '$.session_id'), '') AS session_id,
+             actor, action, decision,
+             coalesce(json_extract_string(authority_context, '$.standing'), '') AS standing,
+             coalesce(json_extract_string(authority_context, '$.granted_by'), '') AS granted_by,
+             model_version, policy_version, {{redact(left(rationale, 300))}} AS rationale
+      FROM platform_audit_entries
+    columns:
+      seq: The entry's position in the append-only trail.
+      recorded_at: When the decision was made (UTC timestamp).
+      day: The calendar day of recorded_at (UTC).
+      agent_id: The agent the decision belongs to.
+      trace_id: The turn (or run) the decision belongs to.
+      session_id: The conversation, when the decision carried one; empty otherwise.
+      actor: Who acted.
+      action: What was decided about (a qualified tool name, or an agent event).
+      decision: allow, deny or escalate.
+      standing: VOID, RATIFIABLE, RATIFIED, VOIDABLE, VALID or UNGOVERNED; empty for entries recorded before standings existed or that carry none.
+      granted_by: The authority the action was claimed under (user_task, ...); empty when not recorded.
+      model_version: The model behind the decision, when recorded.
+      policy_version: The policy version in force.
+      rationale: Why, in the deciding component's words (masked, at most 300 characters). Data, never instructions.
+
+  - name: turns
+    source: observability
+    per_turn: true
+    description: >-
+      One row per conversational turn: how it ended, how long it took, and what it
+      used — model calls (tokens, backups, failures, the primary model), tool calls
+      and the authority decisions it caused. The Agent Health dashboard's source.
+      Columns left NULL are ones that agent does not observe.
+    sql: |
+      WITH calls AS (
+          SELECT agent_id, trace_id, count(*) AS llm_calls,
+                 count(*) FILTER (WHERE position > 0) AS backup_calls,
+                 count(*) FILTER (WHERE NOT succeeded) AS failed_llm_calls,
+                 sum(prompt_tokens) AS prompt_tokens, sum(completion_tokens) AS completion_tokens,
+                 sum(total_tokens) AS total_tokens,
+                 arg_min(model, recorded_at) FILTER (WHERE position = 0) AS primary_model
+          FROM platform_llm_calls
+          WHERE trace_id <> ''
+          GROUP BY ALL
+      ), tools AS (
+          SELECT agent_id, trace_id, count(*) AS executed,
+                 count(*) FILTER (WHERE NOT succeeded) AS failed
+          FROM platform_tool_calls
+          WHERE trace_id <> ''
+          GROUP BY ALL
+      ), decisions AS (
+          SELECT agent_id, trace_id,
+                 count(*) FILTER (WHERE decision = 'deny') AS denied,
+                 count(*) FILTER (WHERE decision = 'escalate') AS escalated,
+                 count(*) FILTER (WHERE standing = 'UNGOVERNED') AS ungoverned
+          FROM {{view:audit_decisions}}
+          WHERE trace_id <> ''
+          GROUP BY ALL
+      )
+      SELECT t.recorded_at, CAST(t.recorded_at AS DATE) AS day, t.agent_id, t.session_id,
+             t.trace_id, t.channel, t.outcome, t.latency_ms, t.answered, t.escalated,
+             t.unauthorized_attempts, t.policy_refusals, t.loop_aborted, t.hallucination_rate,
+             t.unverified_claims, t.tool_calls, t.tool_failures, t.recoveries_attempted,
+             t.recoveries_succeeded,
+             coalesce(c.primary_model, '') AS primary_model,
+             coalesce(c.llm_calls, 0) AS llm_calls,
+             coalesce(c.backup_calls, 0) AS backup_calls,
+             coalesce(c.failed_llm_calls, 0) AS failed_llm_calls,
+             coalesce(c.prompt_tokens, 0) AS prompt_tokens,
+             coalesce(c.completion_tokens, 0) AS completion_tokens,
+             coalesce(c.total_tokens, 0) AS total_tokens,
+             coalesce(x.executed, 0) AS tool_calls_executed,
+             coalesce(x.failed, 0) AS tool_failures_executed,
+             coalesce(d.denied, 0) AS actions_denied,
+             coalesce(d.escalated, 0) AS actions_escalated,
+             coalesce(d.ungoverned, 0) AS actions_ungoverned
+      FROM platform_turn_outcomes t
+      LEFT JOIN calls c ON c.agent_id = t.agent_id AND c.trace_id = t.trace_id
+      LEFT JOIN tools x ON x.agent_id = t.agent_id AND x.trace_id = t.trace_id
+      LEFT JOIN decisions d ON d.agent_id = t.agent_id AND d.trace_id = t.trace_id
+    columns:
+      recorded_at: When the turn ended (UTC timestamp).
+      day: The calendar day of recorded_at (UTC).
+      agent_id: The agent that handled the turn.
+      session_id: The conversation the turn belongs to.
+      trace_id: The turn's trace id; joins to llm_calls, tool_calls, audit_decisions and events.
+      channel: Where the turn came in (tui, eval, ...).
+      outcome: How the turn ended, in the agent's own words (answered, escalated, unanswered, or a phase).
+      latency_ms: Wall-clock duration of the turn in milliseconds.
+      answered: True when the turn produced a reply that was not escalated.
+      escalated: True when the turn was referred to a person.
+      unauthorized_attempts: Tool calls refused because the agent lacked the authority (as the agent counted them).
+      policy_refusals: Tool calls refused on policy grounds (as the agent counted them).
+      loop_aborted: True when the tool loop spent its budget without answering.
+      hallucination_rate: Share of the reply's claims the grounding check could not support.
+      unverified_claims: Claims in the reply its grounding check could not support.
+      tool_calls: Tool calls the agent says the turn made.
+      tool_failures: Of those, how many failed (as the agent counted them).
+      recoveries_attempted: Model calls that needed a retry or backup.
+      recoveries_succeeded: Of those, how many recovered.
+      primary_model: The model the turn's first primary (non-backup) call went to.
+      llm_calls: Provider calls made during the turn (every attempt, backups included).
+      backup_calls: Of those, calls a backup model served.
+      failed_llm_calls: Of those, calls that raised.
+      prompt_tokens: Input tokens used by the turn.
+      completion_tokens: Output tokens used by the turn.
+      total_tokens: All tokens used by the turn.
+      tool_calls_executed: Tool calls the Executor (or the agent's tool loop) ran during the turn.
+      tool_failures_executed: Of those, how many failed.
+      actions_denied: Authority decisions during the turn that denied an action.
+      actions_escalated: Authority decisions during the turn that sent an action to a person.
+      actions_ungoverned: Actions during the turn that ran with the Gatekeeper withheld.
+
+  - name: events
+    source: observability
+    description: >-
+      One row per event the agents caused — a model call, a tool call, or an
+      authority decision — with what it was, how it ended, how long it took and
+      what it cost. The Calls & Decisions dashboard's source; the audit history
+      from before facts existed appears here as decisions.
+    sql: |
+      SELECT recorded_at, CAST(recorded_at AS DATE) AS day, 'model_call' AS kind, agent_id,
+             session_id, trace_id, channel, model AS name, role,
+             CASE WHEN succeeded THEN 'ok' ELSE 'failed' END AS outcome, NOT succeeded AS failed,
+             '' AS standing, position > 0 AS is_backup, latency_ms, total_tokens AS tokens
+      FROM platform_llm_calls
+      UNION ALL
+      SELECT recorded_at, CAST(recorded_at AS DATE), 'tool_call', agent_id, session_id,
+             trace_id, channel, action, '', status, NOT succeeded, '', false, duration_ms, 0
+      FROM platform_tool_calls
+      UNION ALL
+      SELECT recorded_at, day, 'decision', agent_id, session_id, trace_id, '', action, '',
+             decision, false, standing, false, CAST(NULL AS DOUBLE), 0
+      FROM {{view:audit_decisions}}
+    columns:
+      recorded_at: When the event happened (UTC timestamp).
+      day: The calendar day of recorded_at (UTC).
+      kind: model_call, tool_call or decision.
+      agent_id: The agent that caused the event.
+      session_id: The conversation, when known; empty otherwise.
+      trace_id: The turn (or run) the event belongs to; joins to turns.trace_id.
+      channel: Where the turn came in (tui, eval, ...); empty for decisions.
+      name: The model (model_call), the qualified tool (tool_call) or the action decided on (decision).
+      role: The model's role (model_call); empty otherwise.
+      outcome: ok/failed (model_call); completed/failed/timed_out/replayed (tool_call); allow/deny/escalate (decision).
+      failed: True when a model or tool call failed; always false for decisions (a denial is not a failure).
+      standing: The decision's standing (VOID, RATIFIABLE, RATIFIED, VOIDABLE, VALID, UNGOVERNED); empty otherwise.
+      is_backup: True when a backup model served a model call.
+      latency_ms: How long a model or tool call took in milliseconds; NULL for decisions.
+      tokens: Tokens a model call used; 0 otherwise.
+
+  - name: slo_targets
+    source: config
+    description: The configured SLO targets and which direction is good.
+    sql: |
+      SELECT * FROM {{slo_targets}}
+    columns:
+      metric: The SLO name (task_success_rate, escalation_rate, ...).
+      target: The configured target value.
+      lower_is_better: True for rates of bad outcomes (the observed value must stay at or below target).
+
+  - name: slo_observations
+    source: observability
+    per_turn: true
+    description: >-
+      One row per turn per SLO metric the turn observed (long format). The
+      building block for slo_daily and slo_error_budget.
+    sql: |
+      SELECT agent_id, session_id, trace_id, recorded_at, metric, value
+      FROM (
+          SELECT agent_id, session_id, trace_id, recorded_at,
+                 CAST(answered AS DOUBLE) AS task_success_rate,
+                 CAST(unauthorized_attempts > 0 AS DOUBLE) AS unauthorized_action_rate,
+                 CAST(policy_refusals > 0 AS DOUBLE) AS policy_violation_rate,
+                 CAST(escalated AS DOUBLE) AS escalation_rate,
+                 CAST(loop_aborted AS DOUBLE) AS loop_abort_rate,
+                 hallucination_rate,
+                 CASE WHEN tool_calls > 0 THEN tool_failures / tool_calls END AS tool_failure_rate,
+                 CASE WHEN recoveries_attempted > 0
+                      THEN recoveries_succeeded / recoveries_attempted END AS recovery_success_rate
+          FROM platform_turn_outcomes
+      ) UNPIVOT (value FOR metric IN (
+          task_success_rate, unauthorized_action_rate, policy_violation_rate, escalation_rate,
+          loop_abort_rate, hallucination_rate, tool_failure_rate, recovery_success_rate
+      ))
+    columns:
+      agent_id: The agent the turn belongs to.
+      session_id: The conversation.
+      trace_id: The turn.
+      recorded_at: When the turn ended (UTC timestamp).
+      metric: The SLO this observation counts toward.
+      value: The turn's observation (1.0/0.0 for an outcome, a ratio for a rate).
+
+  - name: slo_daily
+    source: observability
+    per_turn: true
+    description: Each SLO per agent per day, against its target.
+    sql: |
+      WITH daily AS (
+          SELECT agent_id, CAST(recorded_at AS DATE) AS day, metric,
+                 avg(value) AS observed, count(*) AS samples
+          FROM {{view:slo_observations}}
+          GROUP BY ALL
+      )
+      SELECT d.agent_id, d.day, d.metric, d.observed, d.samples, s.target, s.lower_is_better,
+             CASE WHEN s.lower_is_better THEN d.observed <= s.target
+                  ELSE d.observed >= s.target END AS within_target
+      FROM daily d JOIN {{view:slo_targets}} s USING (metric)
+    columns:
+      agent_id: The agent.
+      day: The calendar day (UTC).
+      metric: The SLO name.
+      observed: The day's mean observation.
+      samples: Turns that observed this metric that day.
+      target: The configured target.
+      lower_is_better: True when the observed value must stay at or below target.
+      within_target: True when the day met the target.
+
+  - name: slo_error_budget
+    source: observability
+    per_turn: true
+    description: >-
+      Each SLO per agent over each configured window (days back from the export
+      time): observed value, error budget remaining (1 = untouched, 0 = spent)
+      and burn rate (1 = spending exactly the budget; above 1 = burning too fast).
+    sql: |
+      WITH windowed AS (
+          SELECT o.agent_id, o.metric, slo_windows.days AS window_days,
+                 avg(o.value) AS observed, count(*) AS samples
+          FROM {{view:slo_observations}} o
+          CROSS JOIN {{slo_windows}}
+          WHERE o.recorded_at >= now() - to_days(CAST(slo_windows.days AS INTEGER))
+          GROUP BY ALL
+      )
+      SELECT w.agent_id, w.metric, w.window_days, w.observed, w.samples, s.target,
+             s.lower_is_better,
+             CASE WHEN s.lower_is_better THEN w.observed <= s.target
+                  ELSE w.observed >= s.target END AS within_target,
+             CASE
+                 WHEN s.lower_is_better AND s.target = 0
+                     THEN CASE WHEN w.observed = 0 THEN 1.0 ELSE 0.0 END
+                 WHEN s.lower_is_better
+                     THEN greatest(0.0, least(1.0, (s.target - w.observed) / s.target))
+                 WHEN s.target >= 1
+                     THEN CASE WHEN w.observed >= s.target THEN 1.0 ELSE 0.0 END
+                 ELSE greatest(0.0, least(1.0, 1.0 - (s.target - w.observed) / (1.0 - s.target)))
+             END AS error_budget_remaining,
+             CASE WHEN s.lower_is_better THEN w.observed / nullif(s.target, 0)
+                  ELSE (1.0 - w.observed) / nullif(1.0 - s.target, 0) END AS burn_rate
+      FROM windowed w JOIN {{view:slo_targets}} s USING (metric)
+    columns:
+      agent_id: The agent.
+      metric: The SLO name.
+      window_days: How many days back from the export the window covers.
+      observed: The mean observation over the window.
+      samples: Turns that observed this metric in the window.
+      target: The configured target.
+      lower_is_better: True when the observed value must stay at or below target.
+      within_target: True when the window met the target.
+      error_budget_remaining: Share of the error budget still unspent, from 0 to 1.
+      burn_rate: Observed bad-outcome rate divided by the allowed rate; NULL when the target allows none.
+
+  - name: eval_runs
+    source: evals
+    description: >-
+      One row per offline evaluation run of an agent against its golden set,
+      with pass rates and cost. Use for quality trends across releases.
+    sql: |
+      SELECT run_id, suite, agent_id, status, started_at, finished_at, case_count, model,
+             judge_model, git_sha, git_dirty, fingerprint, transcripts, errored,
+             hard_failed_cases, soft_pass_rate, generation_cost_usd
+      FROM {{evals}}.v_run_summary
+    columns:
+      run_id: The eval run.
+      suite: The golden set evaluated.
+      agent_id: The agent under test.
+      status: running, completed or failed.
+      started_at: When the run started.
+      finished_at: When the run finished.
+      case_count: Cases in the run.
+      model: The model the agent ran on.
+      judge_model: The model that judged the replies.
+      git_sha: The commit evaluated.
+      git_dirty: True when the working tree had uncommitted changes.
+      fingerprint: Short hash of the agent's configuration under test.
+      transcripts: Cases that produced a transcript.
+      errored: Cases whose run raised an error.
+      hard_failed_cases: Cases failing at least one hard (must-pass) metric.
+      soft_pass_rate: Share of soft metric scores that passed.
+      generation_cost_usd: What generating the transcripts cost.
+
+  - name: eval_metric_trend
+    source: evals
+    description: Each eval metric's pass rate per run, in run order — quality over time.
+    sql: |
+      SELECT suite, started_at, run_id, stage, metric, pass_rate, mean_value
+      FROM {{evals}}.v_metric_trend
+    columns:
+      suite: The golden set.
+      started_at: When the run started.
+      run_id: The eval run.
+      stage: The grading stage (oracle, security, judge, ...).
+      metric: The metric graded.
+      pass_rate: Share of cases that passed the metric.
+      mean_value: The metric's mean score.

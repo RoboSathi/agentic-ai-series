@@ -1,0 +1,41 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-d78fbd38dd",
+  "payload": {
+    "archetype": "general",
+    "topic": "how to build a good harness",
+    "purpose": "",
+    "decision": "",
+    "criteria": [
+      "agentic AI harness"
+    ],
+    "options": [],
+    "claims": [],
+    "concepts": [],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": false,
+      "min_distinct_domains": 1
+    },
+    "recency_days": null,
+    "geography": "",
+    "depth": "small",
+    "deliverable_format": "",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "ee3bfaa1735b759e303beea4c830304bf6f6052377432df411baa8e9152b3f33",
+  "frozen_at": "2026-10-03T18:17:19.256096Z"
+}

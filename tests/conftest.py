@@ -204,6 +204,8 @@ def isolated_analytics_store(tmp_path_factory: pytest.TempPathFactory) -> Iterat
         # A test must never spend (or wait on) the developer's real
         # provider budget, which the TUI may be drawing on right now.
         _RATE_LIMIT_PATH_VAR: tmp_path_factory.mktemp("rate_limit") / "rate_limits.sqlite",
+        # The analytics mart is the developer's dashboard data.
+        "ANALYTICS__MART_DIR": tmp_path_factory.mktemp("mart"),
         # Eval history, reports and fixtures are developer data too.
         **_eval_paths(tmp_path_factory.mktemp("evals")),
     }

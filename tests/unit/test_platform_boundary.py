@@ -170,10 +170,10 @@ class TestEvalToolsAreNotRuntimeDependencies:
 class TestParkedPackagesAreRealBoundaries:
     """A parked package still has to import, or it is not a boundary."""
 
-    def test_mcp_imports_and_exports_its_contracts(self) -> None:
+    def test_mcp_exports_its_contracts_and_their_implementations(self) -> None:
         import agent_platform.mcp as mcp
 
-        assert set(mcp.__all__) == {
+        contracts = {
             "McpServerSpec",
             "McpSession",
             "McpToolInfo",
@@ -182,6 +182,28 @@ class TestParkedPackagesAreRealBoundaries:
             "ToolGovernancePolicy",
             "TransportKind",
         }
+        implementations = {"SdkMcpTransport", "SdkMcpSession", "GovernedMcpToolSource"}
+        assert contracts | implementations <= set(mcp.__all__)
+
+    def test_the_mcp_implementations_satisfy_their_contracts(self) -> None:
+        from agent_platform.mcp import (
+            ConfiguredGovernancePolicy,
+            GovernedMcpToolSource,
+            McpSession,
+            McpToolSource,
+            McpTransport,
+            SdkMcpSession,
+            SdkMcpTransport,
+            ToolGovernancePolicy,
+        )
+
+        def public(kind: type) -> set[str]:
+            return {name for name in dir(kind) if not name.startswith("_")}
+
+        assert public(McpSession) <= public(SdkMcpSession)
+        assert public(McpTransport) <= public(SdkMcpTransport)
+        assert public(McpToolSource) <= public(GovernedMcpToolSource)
+        assert isinstance(ConfiguredGovernancePolicy(), ToolGovernancePolicy)
 
     def test_an_mcp_tool_source_is_an_ordinary_tool_source(self) -> None:
         """Remote tools enter by the same door as local ones.

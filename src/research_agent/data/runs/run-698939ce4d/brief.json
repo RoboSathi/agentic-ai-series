@@ -1,0 +1,43 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-698939ce4d",
+  "payload": {
+    "archetype": "explainer",
+    "topic": "India 2026 holidays, festivals, and long weekends",
+    "purpose": "",
+    "decision": "",
+    "criteria": [],
+    "options": [],
+    "claims": [],
+    "concepts": [
+      "all"
+    ],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": false,
+      "min_distinct_domains": 1
+    },
+    "recency_days": 365,
+    "period_start": "2025-10-05",
+    "period_end": "2026-10-05",
+    "geography": "",
+    "depth": "small",
+    "deliverable_format": "short memo",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "55f8812850ac55be96324135ae30c87f74a50834a4f4a80b894442afa335a411",
+  "frozen_at": "2026-10-05T12:19:18.690673Z"
+}

@@ -1,0 +1,42 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-ec45ed014a",
+  "payload": {
+    "archetype": "general",
+    "topic": "how to build an autonomous research agent",
+    "purpose": "build an agent - using coding agents",
+    "decision": "",
+    "criteria": [
+      "autonomous programming agents - like claude",
+      "codex etc"
+    ],
+    "options": [],
+    "claims": [],
+    "concepts": [],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": false,
+      "min_distinct_domains": 1
+    },
+    "recency_days": 90,
+    "geography": "",
+    "depth": "standard",
+    "deliverable_format": "",
+    "budget": {
+      "max_searches": 8,
+      "max_fetches": 24,
+      "max_tokens": 200000,
+      "max_seconds": 900.0,
+      "max_rounds": 3,
+      "max_dag_nodes": 8,
+      "max_gap_fill_rounds": 1,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "4a068b26f685c9fb5a944bcbb37df6ba6b185eabdd6a43c1cecc284d481843d3",
+  "frozen_at": "2026-10-01T11:01:47.244193Z"
+}

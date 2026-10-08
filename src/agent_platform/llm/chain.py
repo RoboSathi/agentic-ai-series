@@ -15,11 +15,13 @@ from typing import Any
 
 from agent_platform.config import get_settings
 from agent_platform.config.settings import LLMSettings, ModelChainSettings, ModelRef, ProviderName
+from agent_platform.llm.call_log import RecordedClient
 from agent_platform.llm.cascade import CascadingLLMClient
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.observer import ModelCallObserver
 from agent_platform.llm.resilient import ResilientLLMClient
 from agent_platform.llm.types import CompletionRequest, CompletionResult, HealthCheckResult
+from agent_platform.observability.facts import FactRecorder
 from agent_platform.resilience import ResilientCaller
 
 ClientFactory = Callable[[ProviderName, str], LLMClient]
@@ -62,16 +64,23 @@ class ModelChainBuilder:
         factory: ClientFactory,
         observer: ModelCallObserver | None = None,
         settings: LLMSettings | None = None,
+        recorder: FactRecorder | None = None,
     ) -> None:
         self._factory = factory
         self._observer = observer
         self._settings = settings or get_settings().llm
+        # Each attempt on each model becomes one `LlmCallFact`, when the agent persists facts.
+        self._recorder = recorder
         self._adapters: dict[str, LLMClient] = {}
         self._guards: dict[str, ResilientCaller] = {}
 
     def build(self, primary: ModelRef, chain: ModelChainSettings, label: str) -> LLMClient:
         """The primary model, protected, then each backup in order (hedged when configured)."""
-        tiers = [self._protected(ref, chain.timeout_seconds) for ref in [primary, *chain.fallbacks]]
+        refs = [primary, *chain.fallbacks]
+        tiers = [
+            self._protected(ref, chain.timeout_seconds, label, position)
+            for position, ref in enumerate(refs)
+        ]
         if len(tiers) == 1:
             return tiers[0]
         # Backups are about availability: a weak answer is the role's to judge, not the chain's.
@@ -84,10 +93,14 @@ class ModelChainBuilder:
             label=label,
         )
 
-    def _protected(self, ref: ModelRef, timeout_seconds: float | None) -> LLMClient:
+    def _protected(
+        self, ref: ModelRef, timeout_seconds: float | None, label: str, position: int
+    ) -> LLMClient:
         if ref.key not in self._adapters:
             self._adapters[ref.key] = self._factory(ref.provider, ref.model)
         client = self._adapters[ref.key]
+        if self._recorder is not None:
+            client = RecordedClient(client, self._recorder, role=label, position=position)
         if ref.extra_body:
             client = RequestExtras(client, ref.extra_body)
         guard = self._guards.setdefault(ref.key, ResilientCaller(f"{DEPENDENCY_PREFIX}{ref.key}"))

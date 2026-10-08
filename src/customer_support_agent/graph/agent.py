@@ -79,6 +79,7 @@ from agent_platform.memory import (
     WriteResult,
 )
 from agent_platform.observability import (
+    FactRecorder,
     SLORegistry,
     StageReporter,
     Tracer,
@@ -186,6 +187,7 @@ class CustomerSupportAgent(
         long_term_memory: MemoryFacade | None = None,
         context_health: ContextFailureDetector | None = None,
         trace_exporter: TraceExporter | None = None,
+        facts: FactRecorder | None = None,
     ) -> None:
         settings = get_agent_settings()
         # Which stages this agent has. Read once, here, because the graph
@@ -216,7 +218,6 @@ class CustomerSupportAgent(
         # so a provider outage fails fast instead of queueing.
         self._dead_letter_queue = dead_letter_queue
         self._tracer = tracer
-        self._slos = slos
         self._grounding = grounding
         # Reads an effect back after execution. A result it cannot
         # verify never becomes authoritative, so no customer-facing
@@ -278,7 +279,7 @@ class CustomerSupportAgent(
         )
         # Eight SLOs are configured; this is what actually observes them,
         # once per turn.
-        self._accountant = TurnAccountant(slos=slos)
+        self._accountant = TurnAccountant(slos=slos, facts=facts)
         self._logger = get_logger("customer_support_agent")
         # Durable execution. The graph is compiled against the checkpointer,
         # so the runner and the graph must share it.
@@ -488,6 +489,7 @@ class CustomerSupportAgent(
         )
 
     def _begin_turn(self, thread_id: str, session_id: str) -> None:
+        self._accountant.begin()
         if self._reporter is not None:
             self._reporter.begin_turn(thread=thread_id, session=session_id)
 

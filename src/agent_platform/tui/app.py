@@ -21,6 +21,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Button, Footer, Header, OptionList, TextArea
 
+from agent_platform.analytics.refresh import MartRefresher
 from agent_platform.commands import (
     PREFIX,
     AbortCommand,
@@ -276,6 +277,7 @@ class AgenticTuiApp(App[None]):
         self._follow_latest = True
         self._history_pending = 0
         self._journal = get_logger("tui")
+        self._mart = MartRefresher()
 
         # Whose records a command may show: this session's verified subject,
         # when the agent can say who that is. Read live, so a session switch
@@ -358,6 +360,12 @@ class AgenticTuiApp(App[None]):
             self.set_interval(get_settings().tui.status_refresh_ms / 1000, self._refresh_status)
         if isinstance(self._host, HousekeepingHost):
             self.set_interval(self._host.housekeeping_interval(), self._housekeep)
+        if self._mart.interval_seconds() > 0:
+            self.set_interval(self._mart.interval_seconds(), self._refresh_mart)
+
+    def _refresh_mart(self) -> None:
+        """Re-export the analytics mart from this process, which holds the database lock."""
+        self.run_worker(self._mart.refresh(), name="mart", group="mart", exclusive=True)
 
     def _housekeep(self) -> None:
         """Run the host's clock-driven work, one run at a time, off the input path."""

@@ -1,0 +1,43 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-db35db3ee6",
+  "payload": {
+    "archetype": "general",
+    "topic": "identity question",
+    "purpose": "",
+    "decision": "",
+    "criteria": [
+      "identity question about the interviewer's nature or role"
+    ],
+    "options": [],
+    "claims": [],
+    "concepts": [],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": false,
+      "min_distinct_domains": 1
+    },
+    "recency_days": null,
+    "period_start": null,
+    "period_end": null,
+    "geography": "",
+    "depth": "small",
+    "deliverable_format": "",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "655028ba55ddd7408e6657adfebbe3e778abde1fb632ac4ac0180058e33bc6f4",
+  "frozen_at": "2026-10-05T12:27:50.472462Z"
+}

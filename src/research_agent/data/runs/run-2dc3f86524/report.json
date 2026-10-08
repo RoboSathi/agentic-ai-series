@@ -1,0 +1,99 @@
+{
+  "kind": "report",
+  "artifact_id": "run-2dc3f86524",
+  "payload": {
+    "title": "Impact of AI on Software Jobs",
+    "status": "PARTIAL",
+    "sections": [
+      {
+        "heading": "Findings",
+        "body": "Approximately 79 % of respondents report using AI tools at least once per day, indicating that Generative Artificial Intelligence has become a routine component of professional practice [E1]. Routine coding responsibilities for backend, frontend, and QA engineers are shifting toward higher-level tasks such as architectural reasoning, requirement formulation, and AI system orchestration [E2]. Several respondents predict a polarization effect: junior roles may decline in number, while senior and architect-level competencies become more valuable [E3]. AI delivers the greatest productivity gains in design, implementation, testing, and documentation, with over 70% of developers reporting time halved for boilerplate and documentation tasks [E4]."
+      },
+      {
+        "heading": "Details",
+        "body": "A common expectation is a shift from pure code writing toward architectural thinking, requirement formulation, quality assurance, and orchestration of AI systems [E2]. GenAI exerts its highest impact in design, implementation, testing, and documentation, where over 70 % of developers report at least halving the time for boilerplate and documentation tasks [E4]. Several respondents predict a polarization effect: junior roles may decline in number, while senior and architect-level competencies become more valuable [E3]."
+      },
+      {
+        "heading": "Known unknowns",
+        "body": "- None declared during scoping."
+      },
+      {
+        "heading": "Coverage & Limits",
+        "body": "- R7: Cited sources fall within the 90-day recency window. — 0/4, scored 0.00 of the 1 required; found: https://arxiv.org/html/2603.16975v1; run stopped: no follow-up could close the remaining gaps. Tried: AI impact on software developer roles responsibilities 2024 survey, generative AI changing DevOps QA engineer workflows recent report, new AI job roles software industry prompt engineer LLM ops 2024 hiring, AI specialist roles growth demand software companies recent data.\n- 6 source(s) rejected — outside the approved 90-day recency window. e.g. https://www.linkedin.com/posts/claire-longo_theres-a-new-wave-of-titles-ai-engineer-activity-7387514465296052224-KEbP, https://pecollective.com/blog/is-prompt-engineering-a-real-career (+4 more in the archived report)"
+      }
+    ],
+    "citations": [
+      {
+        "entry_id": "E1",
+        "url": "https://arxiv.org/html/2603.16975v1",
+        "span": "Approximately 79 % of respondents report using AI tools at least once per day, indicating that Generative Artificial Intelligence has become a routine component of professional practice.",
+        "page_hash": "3e01a7e8104afb254c10f2447822a100e7da77bf1a6944cf38e92fd67fe43af4",
+        "retrieved_at": "2026-10-03T17:12:58.275387Z"
+      },
+      {
+        "entry_id": "E2",
+        "url": "https://arxiv.org/html/2603.16975v1",
+        "span": "A common expectation is a shift from pure code writing toward architectural thinking, requirement formulation, quality assurance, and orchestration of AI systems.",
+        "page_hash": "3e01a7e8104afb254c10f2447822a100e7da77bf1a6944cf38e92fd67fe43af4",
+        "retrieved_at": "2026-10-03T17:12:58.275387Z"
+      },
+      {
+        "entry_id": "E3",
+        "url": "https://arxiv.org/html/2603.16975v1",
+        "span": "Several respondents predict a polarization effect: junior roles may decline in number, while senior and architect-level competencies become more valuable.",
+        "page_hash": "3e01a7e8104afb254c10f2447822a100e7da77bf1a6944cf38e92fd67fe43af4",
+        "retrieved_at": "2026-10-03T17:12:58.275387Z"
+      },
+      {
+        "entry_id": "E4",
+        "url": "https://arxiv.org/html/2603.16975v1",
+        "span": "GenAI exerts its highest impact in design, implementation, testing, and documentation, where over 70 % of developers report at least halving the time for boilerplate and documentation tasks.",
+        "page_hash": "3e01a7e8104afb254c10f2447822a100e7da77bf1a6944cf38e92fd67fe43af4",
+        "retrieved_at": "2026-10-03T17:12:58.275387Z"
+      }
+    ],
+    "limits": [
+      {
+        "item_id": "R7",
+        "text": "Cited sources fall within the 90-day recency window.",
+        "tried_queries": [
+          "AI impact on software developer roles responsibilities 2024 survey",
+          "generative AI changing DevOps QA engineer workflows recent report",
+          "new AI job roles software industry prompt engineer LLM ops 2024 hiring",
+          "AI specialist roles growth demand software companies recent data"
+        ],
+        "sources_examined": [
+          "https://consultadd.com/blog/ai-ml-engineer-jobs-roles-skills-pay-and-how-to-get-hired",
+          "https://www.linkedin.com/posts/claire-longo_theres-a-new-wave-of-titles-ai-engineer-activity-7387514465296052224-KEbP",
+          "https://pecollective.com/blog/is-prompt-engineering-a-real-career",
+          "https://community.deeplearning.ai/t/choosing-wisely-ai-jobs-hiring-demand-2026-edition/886043",
+          "https://arxiv.org/html/2603.16975v1",
+          "https://stackoverflow.blog/2025/12/26/ai-vs-gen-z",
+          "https://www.pace.edu/news/ai-software-development",
+          "https://nhsjs.com/2025/the-augmentative-role-of-ai-in-software-engineering-a-global-expert-survey"
+        ],
+        "reason": "0/4, scored 0.00 of the 1 required; found: https://arxiv.org/html/2603.16975v1; run stopped: no follow-up could close the remaining gaps"
+      }
+    ],
+    "rejected_sources": [
+      "https://community.deeplearning.ai/t/choosing-wisely-ai-jobs-hiring-demand-2026-edition/886043",
+      "https://nhsjs.com/2025/the-augmentative-role-of-ai-in-software-engineering-a-global-expert-survey",
+      "https://pecollective.com/blog/is-prompt-engineering-a-real-career",
+      "https://stackoverflow.blog/2025/12/26/ai-vs-gen-z",
+      "https://www.linkedin.com/posts/claire-longo_theres-a-new-wave-of-titles-ai-engineer-activity-7387514465296052224-KEbP",
+      "https://www.pace.edu/news/ai-software-development"
+    ],
+    "rejected_codes": {
+      "https://www.linkedin.com/posts/claire-longo_theres-a-new-wave-of-titles-ai-engineer-activity-7387514465296052224-KEbP": "recency",
+      "https://pecollective.com/blog/is-prompt-engineering-a-real-career": "recency",
+      "https://community.deeplearning.ai/t/choosing-wisely-ai-jobs-hiring-demand-2026-edition/886043": "recency",
+      "https://stackoverflow.blog/2025/12/26/ai-vs-gen-z": "recency",
+      "https://www.pace.edu/news/ai-software-development": "recency",
+      "https://nhsjs.com/2025/the-augmentative-role-of-ai-in-software-engineering-a-global-expert-survey": "recency"
+    },
+    "budget_notes": [],
+    "known_unknowns": []
+  },
+  "content_hash": "1bbfec9f405b369e468f89a6051b6b81e08c59afcbcbaedab8b7a6958a7c057c",
+  "frozen_at": "2026-10-03T17:17:23.626866Z"
+}

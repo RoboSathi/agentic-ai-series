@@ -64,7 +64,7 @@ llm:
 
 memory:
   episodic:
-    path: src/customer_support_agent/dummy_data/episodic
+    path: logs/memory/customer_support_agent
   dream:
     # How this agent words a refused tool call (graph/nodes/act.py);
     # refusals repeated across sessions become procedure candidates.
@@ -76,7 +76,7 @@ memory:
     # This agent's knowledge index and the corpus that feeds it. The
     # articles explain policy; the rules themselves stay in code.
     rag:
-      db_path: src/customer_support_agent/dummy_data/knowledge.db
+      db_path: src/customer_support_agent/db/knowledge.db
       corpus_dir: src/customer_support_agent/knowledge_base/articles
   write_pipeline:
     classification_hints:
@@ -109,7 +109,7 @@ security:
 
 # This agent's database; every default connection pool opens it.
 persistence:
-  db_path: src/customer_support_agent/dummy_data/agentic.db
+  db_path: src/customer_support_agent/db/agent.db
 
 guardrails:
   # The guardrail card's block reasons, in this agent's words.
@@ -203,6 +203,11 @@ evals:
   additional_manifest_paths:
     - src/customer_support_agent/evals/eval_manifest.yaml
   plugin: customer_support_agent.evals.plugin:CsaEvalPlugin
+  # This agent's reports and red-team output, under its own package (runtime layout, ADR 0010).
+  reporting:
+    output_dir: src/customer_support_agent/data/reports/evals
+  promptfoo:
+    output_dir: src/customer_support_agent/data/evals/promptfoo
   fingerprint:
     source_roots: [src/agent_platform, src/customer_support_agent]
     # Lists replace wholesale, so the platform's exclusions are restated.
@@ -226,7 +231,7 @@ evals:
 
 durability:
   # This agent's checkpoints: every turn it has run, node by node.
-  db_path: src/customer_support_agent/dummy_data/checkpoints.db
+  db_path: src/customer_support_agent/db/checkpoints.db
 
 customer_support_agent:
   # How the customer's own words name an order. One reader, used by the
@@ -574,8 +579,8 @@ customer_support_agent:
   evals:
     dataset_path: src/customer_support_agent/evals/dataset/golden_cases.yaml
     fixture_seed_path: src/customer_support_agent/evals/dataset/fixtures/eval_seed.sql
-    fixture_db_path: data/evals/csa_fixture.db
-    workspace_dir: data/evals/workspace
+    fixture_db_path: src/customer_support_agent/data/evals/fixture.db
+    workspace_dir: src/customer_support_agent/data/evals/workspace
     judge_rubric_path: src/customer_support_agent/evals/judge_rubric.yaml
     quality_metrics_path: src/customer_support_agent/evals/quality_metrics.yaml
     security_config_path: src/customer_support_agent/evals/security/promptfooconfig.yaml

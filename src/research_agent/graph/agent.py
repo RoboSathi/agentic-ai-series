@@ -12,6 +12,7 @@ so the caller (the console, or an eval's ScriptedUser) sees one turn that
 began with approval and ended with a delivered report.
 """
 
+import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
@@ -32,6 +33,7 @@ from agent_platform.durability import (
 from agent_platform.durability.stop_report import stop_report
 from agent_platform.logging import get_logger
 from agent_platform.memory import MemoryFacade
+from agent_platform.observability.facts import TurnOutcomeFact
 from agent_platform.observability.langsmith import (
     NullTraceExporter,
     TraceExporter,
@@ -146,10 +148,24 @@ class ResearchAgent:
             session=session_id,
             inputs={"query": query},
         ) as trace:
+            started = time.perf_counter()
             result = await self._summarised(query, session_id)
+            self._record_outcome(result, session_id, started)
             trace.annotate({"phase": result.phase, "run_id": result.run_id})
             trace.finish({"response": result.response, "phase": result.phase})
             return result
+
+    def _record_outcome(self, result: TurnResult, session_id: str, started: float) -> None:
+        """The turn as a fact; only what this agent observes is filled, the rest stays unknown."""
+        failed = result.phase in self._settings.turn_summary.failed
+        self._telemetry.fact(
+            TurnOutcomeFact(
+                session_id=session_id,
+                outcome=result.phase,
+                latency_ms=(time.perf_counter() - started) * 1000,
+                answered=bool(result.response) and not failed,
+            )
+        )
 
     async def _summarised(self, query: str, session_id: str) -> TurnResult:
         """The turn, ended by the same TURN SUMMARY card csa's turns end with."""

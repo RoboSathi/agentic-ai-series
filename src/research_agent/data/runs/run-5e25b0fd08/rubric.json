@@ -1,0 +1,161 @@
+{
+  "kind": "rubric",
+  "artifact_id": "run-5e25b0fd08",
+  "payload": {
+    "items": [
+      {
+        "item_id": "R1",
+        "text": "Every factual sentence in the report cites collected evidence.",
+        "check": {
+          "kind": "deterministic",
+          "name": "citations_per_claim",
+          "params": {
+            "min_citations": 1
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R2",
+        "text": "Cited claims are supported by their quoted spans.",
+        "check": {
+          "kind": "nli",
+          "name": "claims_entailed",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R3",
+        "text": "The explanation is accurate and uses concrete examples.",
+        "check": {
+          "kind": "judge",
+          "name": "explanation_accuracy",
+          "params": {}
+        },
+        "threshold": 0.7,
+        "must_pass": false,
+        "weight": 1.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R4",
+        "text": "The known unknown 'who the explanation is for and what they already know' is acknowledged and bounded in the report.",
+        "check": {
+          "kind": "deterministic",
+          "name": "known_unknown_acknowledged",
+          "params": {
+            "subject": "who the explanation is for and what they already know",
+            "item_id": "audience"
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 2.0,
+        "origin": "known_unknown",
+        "maps_to": [
+          "audience"
+        ]
+      },
+      {
+        "item_id": "R5",
+        "text": "The known unknown 'the sub-concepts the explanation must cover' is acknowledged and bounded in the report.",
+        "check": {
+          "kind": "deterministic",
+          "name": "known_unknown_acknowledged",
+          "params": {
+            "subject": "the sub-concepts the explanation must cover",
+            "item_id": "concepts"
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 2.0,
+        "origin": "known_unknown",
+        "maps_to": [
+          "concepts"
+        ]
+      },
+      {
+        "item_id": "R6",
+        "text": "The known unknown 'what the answer will be used for' is acknowledged and bounded in the report.",
+        "check": {
+          "kind": "deterministic",
+          "name": "known_unknown_acknowledged",
+          "params": {
+            "subject": "what the answer will be used for",
+            "item_id": "purpose"
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 2.0,
+        "origin": "known_unknown",
+        "maps_to": [
+          "purpose"
+        ]
+      },
+      {
+        "item_id": "R7",
+        "text": "Cited sources fall within the 90-day recency window.",
+        "check": {
+          "kind": "deterministic",
+          "name": "recency_window",
+          "params": {
+            "days": 90
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 2.0,
+        "origin": "source_policy",
+        "maps_to": [
+          "recency"
+        ]
+      },
+      {
+        "item_id": "R8",
+        "text": "Every cited link was fetched and resolved.",
+        "check": {
+          "kind": "deterministic",
+          "name": "links_resolved",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 2.0,
+        "origin": "source_policy",
+        "maps_to": [
+          "links_resolved"
+        ]
+      },
+      {
+        "item_id": "R9",
+        "text": "The report establishes at least 1 cited finding(s).",
+        "check": {
+          "kind": "deterministic",
+          "name": "findings_present",
+          "params": {
+            "min_findings": 1
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      }
+    ]
+  },
+  "content_hash": "a7488c14250eaeb99a0fab8a3087ce4c9fdc0335602361c1d248db2d9214d872",
+  "frozen_at": "2026-10-02T16:00:02.684497Z"
+}

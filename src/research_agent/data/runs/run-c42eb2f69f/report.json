@@ -1,0 +1,139 @@
+{
+  "kind": "report",
+  "artifact_id": "run-c42eb2f69f",
+  "payload": {
+    "title": "Automating Code Review Process",
+    "status": "PARTIAL",
+    "sections": [
+      {
+        "heading": "Findings",
+        "body": "Automated code review faces challenges such as filtering low-confidence findings, learning from team feedback, balancing recall/precision, and needing full codebase context [E5][E6][E7][E8]. Success can be measured by metrics like Time to Review (<4 h), Review Completion Time (<1 day), Pull Request Merge Rate, and Defect Rate Post-Review (<5 %) [E1][E2][E3][E4]. Empirical data shows 73.8% of automated comments were resolved, but average PR closure duration increased after tool introduction [E9][E10]. Effective integration requires seamless lifecycle integration, real-time IDE feedback, and CI/CD quality gating [E13][E14]."
+      },
+      {
+        "heading": "Details",
+        "body": "Challenge: filtering out low-confidence findings to reduce noise [E5]. Challenge: the AI reviewer must learn from team feedback to improve accuracy [E6]. Challenge: balancing recall and precision to avoid missing bugs or generating too many false positives [E7]. Challenge: ensuring the AI reviewer considers the full codebase context, not just the diff, to catch cross-file bugs [E8]. Metric: Time to Review measures the average time taken to start reviewing code, with an ideal benchmark of less than 4 hours [E1]. Metric: Review Completion Time measures the time from start to final approval, with an ideal benchmark of less than 1 day [E2]. Metric: Pull Request Merge Rate measures the number of PRs merged per week, using a team-defined benchmark [E3]. Metric: Defect Rate Post-Review measures bugs found after merging reviewed code, with an ideal benchmark of less than 5 % [E4]. Observation: 73.8% of automated code review comments were labeled as resolved [E9]. Observation: The overall average pull request closure duration increased from five hours 52 minutes to eight hours 20 minutes after introducing the automated code review tool [E10]. Requirement: Automated code review must be seamlessly integrated into the development lifecycle to have maximum impact [E13]. Requirement: Integrating automated code review requires providing real-time feedback in the IDE and acting as a quality gate in CI/CD pipelines [E14]."
+      },
+      {
+        "heading": "Known unknowns",
+        "body": "- None declared during scoping."
+      },
+      {
+        "heading": "Coverage & Limits",
+        "body": "- R2: Cited claims are supported by their quoted spans. — 8/16, scored 0.50 of the 1 required; found: Automated code review faces challenges such as filtering low-confidence findings, learning from team feedback, balancing recall/precision, and needing full codebase context [E5][E6][E7][E8]., Success can be measured by metrics like Time to Review (<4 h), Review Completion Time (<1 day), Pull Request Merge Rate, and Defect Rate Post-Review (<5 %) [E1][E2][E3][E4]., Empirical data shows 73.8% of automated comments were resolved, but average PR closure duration increased after tool introduction [E9][E10]., Effective integration requires seamless lifecycle integration, real-time IDE feedback, and CI/CD quality gating [E13][E14].; run stopped: the question is answered with cited findings. Tried: challenges automating code review, metrics success automated code review.\n- Budget: N1: fetches exhausted."
+      }
+    ],
+    "citations": [
+      {
+        "entry_id": "E5",
+        "url": "https://www.cubic.dev/blog/benefits-and-challenges-of-automated-code-review",
+        "span": "filters out noiseGood reviewers drop low-confidence findings, so they only comment on real problems.",
+        "page_hash": "55474cfd46f53d46a4c05abb8c998196ebd5e3812cd2cb9b8424cc3ac028efb5",
+        "retrieved_at": "2026-10-01T13:18:56.458955Z"
+      },
+      {
+        "entry_id": "E6",
+        "url": "https://www.cubic.dev/blog/benefits-and-challenges-of-automated-code-review",
+        "span": "learn from the comments your team accepts or dismisses, and from your senior engineers’ past reviews",
+        "page_hash": "55474cfd46f53d46a4c05abb8c998196ebd5e3812cd2cb9b8424cc3ac028efb5",
+        "retrieved_at": "2026-10-01T13:18:56.458955Z"
+      },
+      {
+        "entry_id": "E7",
+        "url": "https://www.cubic.dev/blog/benefits-and-challenges-of-automated-code-review",
+        "span": "Bugs caught (recall) is the share of real bugs a reviewer finds. False positives (1 − precision) are the share of its comments that aren’t real bugs.",
+        "page_hash": "55474cfd46f53d46a4c05abb8c998196ebd5e3812cd2cb9b8424cc3ac028efb5",
+        "retrieved_at": "2026-10-01T13:18:56.458955Z"
+      },
+      {
+        "entry_id": "E8",
+        "url": "https://www.cubic.dev/blog/benefits-and-challenges-of-automated-code-review",
+        "span": "Reviewers that only read the diff miss bugs that span files.",
+        "page_hash": "55474cfd46f53d46a4c05abb8c998196ebd5e3812cd2cb9b8424cc3ac028efb5",
+        "retrieved_at": "2026-10-01T13:18:56.458955Z"
+      },
+      {
+        "entry_id": "E1",
+        "url": "https://graphite.com/guides/monitoring-code-review-metrics-team-performance",
+        "span": "Time to ReviewAverage time taken to start reviewing code< 4 hours",
+        "page_hash": "94b11340584337940bfec7eeca43604f6948f706b7306a988647968e002caad1",
+        "retrieved_at": "2026-10-01T13:18:56.516677Z"
+      },
+      {
+        "entry_id": "E2",
+        "url": "https://graphite.com/guides/monitoring-code-review-metrics-team-performance",
+        "span": "Review Completion TimeTime from start to final approval< 1 day",
+        "page_hash": "94b11340584337940bfec7eeca43604f6948f706b7306a988647968e002caad1",
+        "retrieved_at": "2026-10-01T13:18:56.516677Z"
+      },
+      {
+        "entry_id": "E3",
+        "url": "https://graphite.com/guides/monitoring-code-review-metrics-team-performance",
+        "span": "Pull Request Merge RateNumber of PRs merged per weekTeam-defined benchmark",
+        "page_hash": "94b11340584337940bfec7eeca43604f6948f706b7306a988647968e002caad1",
+        "retrieved_at": "2026-10-01T13:18:56.516677Z"
+      },
+      {
+        "entry_id": "E4",
+        "url": "https://graphite.com/guides/monitoring-code-review-metrics-team-performance",
+        "span": "Defect Rate Post-ReviewBugs found after merging reviewed code< 5%",
+        "page_hash": "94b11340584337940bfec7eeca43604f6948f706b7306a988647968e002caad1",
+        "retrieved_at": "2026-10-01T13:18:56.516677Z"
+      },
+      {
+        "entry_id": "E9",
+        "url": "https://arxiv.org/html/2412.18531v2",
+        "span": "73.8% of automated code review comments were labeled as resolved.",
+        "page_hash": "25d52b69ba566526164cb6cfb4f61e1910104d793bbf96a1b69b579c7ff2547f",
+        "retrieved_at": "2026-10-01T13:19:19.696822Z"
+      },
+      {
+        "entry_id": "E10",
+        "url": "https://arxiv.org/html/2412.18531v2",
+        "span": "the overall average pull request closure duration increased from five hours 52 minutes to eight hours 20 minutes",
+        "page_hash": "25d52b69ba566526164cb6cfb4f61e1910104d793bbf96a1b69b579c7ff2547f",
+        "retrieved_at": "2026-10-01T13:19:19.696822Z"
+      },
+      {
+        "entry_id": "E13",
+        "url": "https://www.sonarsource.com/resources/library/what-is-automated-code-review",
+        "span": "For maximum impact, automated code review must be seamlessly integrated into the development lifecycle.",
+        "page_hash": "4e1f38e56ab3a5c791e09abdc0b8d383bfaa7922881b19aaa264087e560d3ec0",
+        "retrieved_at": "2026-10-01T13:19:31.203684Z"
+      },
+      {
+        "entry_id": "E14",
+        "url": "https://www.sonarsource.com/resources/library/what-is-automated-code-review",
+        "span": "This involves two main points of integration:\nIn the Integrated Development Environment (IDE): Tools provide real-time feedback as the developer is writing the code, preventing issues from ever being committed.",
+        "page_hash": "4e1f38e56ab3a5c791e09abdc0b8d383bfaa7922881b19aaa264087e560d3ec0",
+        "retrieved_at": "2026-10-01T13:19:31.203684Z"
+      }
+    ],
+    "limits": [
+      {
+        "item_id": "R2",
+        "text": "Cited claims are supported by their quoted spans.",
+        "tried_queries": [
+          "challenges automating code review",
+          "metrics success automated code review"
+        ],
+        "sources_examined": [
+          "https://www.cubic.dev/blog/benefits-and-challenges-of-automated-code-review",
+          "https://graphite.com/guides/monitoring-code-review-metrics-team-performance",
+          "https://arxiv.org/html/2412.18531v2",
+          "https://www.sonarsource.com/resources/library/what-is-automated-code-review",
+          "https://www.glowtouch.com/best-practices-and-metrics-for-code-review",
+          "https://graphite.com/guides/challenges-of-code-review"
+        ],
+        "reason": "8/16, scored 0.50 of the 1 required; found: Automated code review faces challenges such as filtering low-confidence findings, learning from team feedback, balancing recall/precision, and needing full codebase context [E5][E6][E7][E8]., Success can be measured by metrics like Time to Review (<4 h), Review Completion Time (<1 day), Pull Request Merge Rate, and Defect Rate Post-Review (<5 %) [E1][E2][E3][E4]., Empirical data shows 73.8% of automated comments were resolved, but average PR closure duration increased after tool introduction [E9][E10]., Effective integration requires seamless lifecycle integration, real-time IDE feedback, and CI/CD quality gating [E13][E14].; run stopped: the question is answered with cited findings"
+      }
+    ],
+    "rejected_sources": [],
+    "rejected_codes": {},
+    "budget_notes": [
+      "N1: fetches exhausted"
+    ],
+    "known_unknowns": []
+  },
+  "content_hash": "d774604e67b2102981806f1d32d77bf22b0a4a648ec0f283b15c2e60275e996c",
+  "frozen_at": "2026-10-01T13:21:04.420883Z"
+}

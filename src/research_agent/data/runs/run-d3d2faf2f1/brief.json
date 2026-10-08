@@ -1,0 +1,43 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-d3d2faf2f1",
+  "payload": {
+    "archetype": "explainer",
+    "topic": "memory architecture of agentic AI and CoALA framework",
+    "purpose": "",
+    "decision": "",
+    "criteria": [],
+    "options": [],
+    "claims": [],
+    "concepts": [
+      "all kinds of long term memory details"
+    ],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": false,
+      "min_distinct_domains": 1
+    },
+    "recency_days": null,
+    "period_start": null,
+    "period_end": null,
+    "geography": "",
+    "depth": "small",
+    "deliverable_format": "",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "62af624b5fc1505e94bf5f29109047af3eda2cbd2cf3dc36cd00c100eb20d9a1",
+  "frozen_at": "2026-10-07T09:07:23.415150Z"
+}

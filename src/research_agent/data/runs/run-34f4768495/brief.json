@@ -1,0 +1,46 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-34f4768495",
+  "payload": {
+    "archetype": "decision_support",
+    "topic": "White bread vs brown bread health impact",
+    "purpose": "Compare health impact of white and brown bread to determine which is better and why",
+    "decision": "Choose which bread is better for health: white or brown",
+    "criteria": [
+      "Health impact comparison"
+    ],
+    "options": [
+      "White bread",
+      "brown bread"
+    ],
+    "claims": [],
+    "concepts": [],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": false,
+      "min_distinct_domains": 1
+    },
+    "recency_days": null,
+    "period_start": null,
+    "period_end": null,
+    "geography": "",
+    "depth": "small",
+    "deliverable_format": "",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "da2fc5c60b53dddec3c5749d2e60421df590d673ef4556ba5b93fb16f10a3028",
+  "frozen_at": "2026-10-04T12:52:29.862056Z"
+}

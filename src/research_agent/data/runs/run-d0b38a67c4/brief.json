@@ -1,0 +1,42 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-d0b38a67c4",
+  "payload": {
+    "archetype": "general",
+    "topic": "important ai news in last 1 month",
+    "purpose": "get insights on trends",
+    "decision": "",
+    "criteria": [
+      "model development",
+      "impact on software engineering"
+    ],
+    "options": [],
+    "claims": [],
+    "concepts": [],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": true,
+      "min_distinct_domains": 1
+    },
+    "recency_days": 30,
+    "geography": "",
+    "depth": "small",
+    "deliverable_format": "short memo",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "37e8483d247889a28b2d4043f3fd4c88dcb4aff9a476d037ce389b6b4aa118d5",
+  "frozen_at": "2026-10-02T03:51:17.969594Z"
+}

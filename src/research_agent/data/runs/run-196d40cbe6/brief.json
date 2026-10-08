@@ -1,0 +1,43 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-196d40cbe6",
+  "payload": {
+    "archetype": "general",
+    "topic": "impact of ai on software jobs",
+    "purpose": "publish online?",
+    "decision": "",
+    "criteria": [
+      "job displacement",
+      "new roles",
+      "skill"
+    ],
+    "options": [],
+    "claims": [],
+    "concepts": [],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": false,
+      "min_distinct_domains": 1
+    },
+    "recency_days": null,
+    "geography": "",
+    "depth": "small",
+    "deliverable_format": "",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "c393c37efa58f8554a2d88ca2820807cb67cf1cb204cd47621e82aaae5253218",
+  "frozen_at": "2026-10-03T16:06:33.812372Z"
+}

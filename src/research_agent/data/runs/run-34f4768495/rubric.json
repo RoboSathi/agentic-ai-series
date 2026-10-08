@@ -1,0 +1,133 @@
+{
+  "kind": "rubric",
+  "artifact_id": "run-34f4768495",
+  "payload": {
+    "items": [
+      {
+        "item_id": "R1",
+        "text": "Every option is assessed against every stated criterion.",
+        "check": {
+          "kind": "deterministic",
+          "name": "subject_criterion_coverage",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R2",
+        "text": "Every factual sentence in the report cites collected evidence.",
+        "check": {
+          "kind": "deterministic",
+          "name": "citations_per_claim",
+          "params": {
+            "min_citations": 1
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R3",
+        "text": "Cited claims are supported by their quoted spans.",
+        "check": {
+          "kind": "nli",
+          "name": "claims_entailed",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R4",
+        "text": "Where sources disagree, the counter-evidence is reported.",
+        "check": {
+          "kind": "deterministic",
+          "name": "counter_evidence_reported",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": false,
+        "weight": 1.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R5",
+        "text": "The recommendation states its trade-offs fairly.",
+        "check": {
+          "kind": "judge",
+          "name": "tradeoffs_stated",
+          "params": {}
+        },
+        "threshold": 0.7,
+        "must_pass": false,
+        "weight": 1.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R6",
+        "text": "Evidence on 'Health impact comparison' is cited for each option.",
+        "check": {
+          "kind": "deterministic",
+          "name": "criterion_evidence",
+          "params": {
+            "min_citations": 1,
+            "criterion": "Health impact comparison"
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "criterion",
+        "maps_to": [
+          "Health impact comparison"
+        ]
+      },
+      {
+        "item_id": "R7",
+        "text": "Every cited link was fetched and resolved.",
+        "check": {
+          "kind": "deterministic",
+          "name": "links_resolved",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 2.0,
+        "origin": "source_policy",
+        "maps_to": [
+          "links_resolved"
+        ]
+      },
+      {
+        "item_id": "R8",
+        "text": "The report establishes at least 1 cited finding(s).",
+        "check": {
+          "kind": "deterministic",
+          "name": "findings_present",
+          "params": {
+            "min_findings": 1
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      }
+    ]
+  },
+  "content_hash": "9cf801afe626ece8d804397f233cdc812fb9a512ffd3cb9872a87b1be6681c2a",
+  "frozen_at": "2026-10-04T12:52:29.863310Z"
+}

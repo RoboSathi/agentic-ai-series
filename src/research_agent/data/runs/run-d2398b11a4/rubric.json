@@ -1,0 +1,100 @@
+{
+  "kind": "rubric",
+  "artifact_id": "run-d2398b11a4",
+  "payload": {
+    "items": [
+      {
+        "item_id": "R1",
+        "text": "Every factual sentence in the answer cites the ledger.",
+        "check": {
+          "kind": "deterministic",
+          "name": "citations_per_claim",
+          "params": {
+            "min_citations": 1
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R2",
+        "text": "Cited claims are supported by their quoted spans.",
+        "check": {
+          "kind": "nli",
+          "name": "claims_entailed",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R3",
+        "text": "The answer draws on at least two independent domains.",
+        "check": {
+          "kind": "deterministic",
+          "name": "distinct_domains",
+          "params": {
+            "min_domains": 2
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": false,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R4",
+        "text": "Cited sources fall within the 30-day recency window.",
+        "check": {
+          "kind": "deterministic",
+          "name": "recency_window",
+          "params": {
+            "days": 30
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "origin": "source_policy",
+        "maps_to": [
+          "recency"
+        ]
+      },
+      {
+        "item_id": "R5",
+        "text": "Every cited link was fetched and resolved.",
+        "check": {
+          "kind": "deterministic",
+          "name": "links_resolved",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "origin": "source_policy",
+        "maps_to": [
+          "links_resolved"
+        ]
+      },
+      {
+        "item_id": "R6",
+        "text": "The report establishes at least 1 cited finding(s).",
+        "check": {
+          "kind": "deterministic",
+          "name": "findings_present",
+          "params": {
+            "min_findings": 1
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "origin": "template",
+        "maps_to": []
+      }
+    ]
+  },
+  "content_hash": "921e25b6b911aa2a121bf96d9a50cf114f4f8637435c9ef7e85b1a9b61a77cb9",
+  "frozen_at": "2026-10-01T10:43:31.291631Z"
+}

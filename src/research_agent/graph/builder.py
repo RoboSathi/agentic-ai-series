@@ -62,6 +62,7 @@ from agent_platform.llm.roles import RoleModelRouter
 from agent_platform.logging import get_logger
 from agent_platform.memory import EpisodicStore, MemoryFacade, SemanticStore, WorkingMemoryStore
 from agent_platform.observability import StageReporter
+from agent_platform.observability.facts import FactRecorder, create_fact_recorder
 from agent_platform.observability.langsmith import build_trace_exporter
 from agent_platform.observability.model_observer import StageReporterModelObserver
 from agent_platform.observability.store import DuckDbObservabilityStore
@@ -148,11 +149,16 @@ def build_agent(
         pool or SqliteConnectionPool(settings.persistence.resolved_db_path),
         agent_id=settings.agent.id,
     )
-    ledger = audit or create_audit_ledger(
-        store=DuckDbObservabilityStore(), agent_id=settings.agent.id
+    store = DuckDbObservabilityStore()
+    ledger = audit or create_audit_ledger(store=store, agent_id=settings.agent.id)
+    # Model calls, tool calls and turns, as rows the analytics mart aggregates.
+    facts = create_fact_recorder(
+        store if settings.observability.enabled else None, settings.agent.id
     )
-    telemetry = RunTelemetry(reporter, ledger, trace_id=settings.agent.id)
-    roles = clients or role_clients(StageReporterModelObserver(lambda: telemetry.reporter))
+    telemetry = RunTelemetry(reporter, ledger, trace_id=settings.agent.id, facts=facts)
+    roles = clients or role_clients(
+        StageReporterModelObserver(lambda: telemetry.reporter), recorder=facts
+    )
     _require_independent_judge(roles, posture, agent)
     caller = StructuredCaller(
         roles,
@@ -223,10 +229,12 @@ def _input_screen(
     return InputScreen(MessageScreener(suite, quarantine), telemetry)
 
 
-def role_clients(observer: ModelCallObserver | None = None) -> RoleClients:
+def role_clients(
+    observer: ModelCallObserver | None = None, recorder: FactRecorder | None = None
+) -> RoleClients:
     """`llm.roles` through the router: each role on its model, protected and backed up by the
-    platform, its backup events told to `observer`."""
-    return RoleModelRouter(get_settings().llm.roles, observer=observer)
+    platform, its backup events told to `observer` and each call recorded to `recorder`."""
+    return RoleModelRouter(get_settings().llm.roles, observer=observer, recorder=recorder)
 
 
 def _require_independent_judge(

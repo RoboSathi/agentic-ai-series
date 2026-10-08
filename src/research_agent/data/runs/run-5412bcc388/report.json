@@ -1,0 +1,121 @@
+{
+  "kind": "report",
+  "artifact_id": "run-5412bcc388",
+  "payload": {
+    "title": "Vector Database Selection for 10 Million Documents",
+    "status": "PARTIAL",
+    "sections": [
+      {
+        "heading": "Findings",
+        "body": "Cohere provides 10 million 768-dimensional vectors [E1]. Pinecone: 45-80ms (serverless), 20-40ms (pod-based) [E2]; Pinecone demonstrates the lowest latency, with a p95 latency of 40-50 milliseconds [E6] Pinecone supports 5,000-10,000 QPS [E7]. Pinecone pricing starts at $0.096/hr per pod (~$70/month) and can reach $200-400/month for larger deployments [E8]. Weaviate: 30-70ms (with hybrid search adding 10-20ms) [E3]; In contrast, Weaviate shows a slightly higher latency range of 50-70 milliseconds [E9] Milvus query latency p95 is 25-50ms depending on index type and configuration [E4]; Zilliz Cloud (Milvus) costs $200-400 [E5]. If dataset does not fit in memory and speed is not critical, SQLite can be used as storage [E10]; otherwise Weaviate, Qdrant and Elasticsearch are good options [E11]."
+      },
+      {
+        "heading": "Details",
+        "body": "Pinecone demonstrates the lowest latency, with a p95 latency of 40-50 milliseconds [E6]; Pinecone supports 5,000-10,000 QPS [E7] Its cost starts around $70/month for 10M vectors and can rise to $200-400/month for larger usage [E8]. Weaviate provides hybrid search capabilities but exhibits higher latency (30-70ms base, plus 10-20ms for hybrid) [E3][E9]. Milvus/Zilliz Cloud delivers latency in the 25-50ms range with cost estimated $200-400 [E4][E5]. When memory constraints or speed are not priorities, SQLite can serve as a simple storage fallback [E10]; otherwise Weaviate, Qdrant, and Elasticsearch remain viable alternatives [E11]."
+      },
+      {
+        "heading": "Known unknowns",
+        "body": "- None declared during scoping."
+      },
+      {
+        "heading": "Coverage & Limits",
+        "body": "- Every must-pass criterion was met.\n- 2 source(s) rejected — The model's answer could not be used. e.g. https://www.firecrawl.dev/blog/best-vector-databases, https://eastondev.com/blog/en/posts/ai/20260427-rag-vector-database-selection/\n- Budget: Q1: fetches exhausted.\n- Budget: Q2: fetches exhausted."
+      }
+    ],
+    "citations": [
+      {
+        "entry_id": "E1",
+        "url": "https://zvec.org/en/docs/db/benchmarks",
+        "span": "Cohere 10M: 10 million 768-dimensional vectors",
+        "page_hash": "075df39e6964985411be71d48330e8fa805adf9397e482cb20ae8652fefbba12",
+        "retrieved_at": "2026-10-02T10:52:57.666274Z"
+      },
+      {
+        "entry_id": "E2",
+        "url": "https://reintech.io/blog/vector-database-comparison-2026-pinecone-weaviate-milvus-qdrant-chroma",
+        "span": "Pinecone: 45-80ms (serverless), 20-40ms (pod-based)",
+        "page_hash": "3476b58240dd580464257f399990216624c27fefb3f2b0d95bd497312de0b735",
+        "retrieved_at": "2026-10-02T10:52:55.366961Z"
+      },
+      {
+        "entry_id": "E6",
+        "url": "https://dasroot.net/posts/2026/03/vector-databases-comparison-pinecone-weaviate-milvus/",
+        "span": "Pinecone demonstrates the lowest latency, with a p95 latency of 40-50 milliseconds, making it particularly well-suited for real-time applications where responsiveness is crucial.",
+        "page_hash": "c720d162530fa9531219be99a0cf343bea769a682d54c7b1622445bc02037501",
+        "retrieved_at": "2026-10-02T10:53:29.427055Z"
+      },
+      {
+        "entry_id": "E7",
+        "url": "https://dasroot.net/posts/2026/03/vector-databases-comparison-pinecone-weaviate-milvus/",
+        "span": "Pinecone supports 5,000-10,000 QPS, making it efficient for moderate-scale applications.",
+        "page_hash": "c720d162530fa9531219be99a0cf343bea769a682d54c7b1622445bc02037501",
+        "retrieved_at": "2026-10-02T10:53:29.427055Z"
+      },
+      {
+        "entry_id": "E8",
+        "url": "https://dasroot.net/posts/2026/03/vector-databases-comparison-pinecone-weaviate-milvus/",
+        "span": "Pricing for Pinecone in 2026 starts at $0.096/hr per pod, which equates to approximately $70/month for 10M vectors. For larger deployments, costs can range from $200–$400/month, depending on the number of pods and usage.",
+        "page_hash": "c720d162530fa9531219be99a0cf343bea769a682d54c7b1622445bc02037501",
+        "retrieved_at": "2026-10-02T10:53:29.427055Z"
+      },
+      {
+        "entry_id": "E3",
+        "url": "https://reintech.io/blog/vector-database-comparison-2026-pinecone-weaviate-milvus-qdrant-chroma",
+        "span": "Weaviate: 30-70ms (with hybrid search adding 10-20ms)",
+        "page_hash": "3476b58240dd580464257f399990216624c27fefb3f2b0d95bd497312de0b735",
+        "retrieved_at": "2026-10-02T10:52:55.366961Z"
+      },
+      {
+        "entry_id": "E9",
+        "url": "https://dasroot.net/posts/2026/03/vector-databases-comparison-pinecone-weaviate-milvus/",
+        "span": "In contrast, Weaviate shows a slightly higher latency range of 50-70 milliseconds, which may still be acceptable for many applications but could introduce minor delays in highly interactive systems.",
+        "page_hash": "c720d162530fa9531219be99a0cf343bea769a682d54c7b1622445bc02037501",
+        "retrieved_at": "2026-10-02T10:53:29.427055Z"
+      },
+      {
+        "entry_id": "E4",
+        "url": "https://reintech.io/blog/vector-database-comparison-2026-pinecone-weaviate-milvus-qdrant-chroma",
+        "span": "Milvus: 25-50ms (depends on index type and configuration)",
+        "page_hash": "3476b58240dd580464257f399990216624c27fefb3f2b0d95bd497312de0b735",
+        "retrieved_at": "2026-10-02T10:52:55.366961Z"
+      },
+      {
+        "entry_id": "E5",
+        "url": "https://reintech.io/blog/vector-database-comparison-2026-pinecone-weaviate-milvus-qdrant-chroma",
+        "span": "Zilliz Cloud (Milvus): $200-400",
+        "page_hash": "3476b58240dd580464257f399990216624c27fefb3f2b0d95bd497312de0b735",
+        "retrieved_at": "2026-10-02T10:52:55.366961Z"
+      },
+      {
+        "entry_id": "E10",
+        "url": "https://jina.ai/news/benchmark-vector-search-databases-with-one-million-data",
+        "span": "Finally, if your dataset does not fit in memory, and you do not care much about the speed of nearest neighbor search, you can use SQLite as storage.",
+        "page_hash": "bbade8c29ddbb4248b52b029b3a7d384864d5b8981c1d1881b94e2ed6627d553",
+        "retrieved_at": "2026-10-02T10:56:06.476764Z"
+      },
+      {
+        "entry_id": "E11",
+        "url": "https://jina.ai/news/benchmark-vector-search-databases-with-one-million-data",
+        "span": "Otherwise, Weaviate, Qdrant and Elasticsearch are good options.",
+        "page_hash": "bbade8c29ddbb4248b52b029b3a7d384864d5b8981c1d1881b94e2ed6627d553",
+        "retrieved_at": "2026-10-02T10:56:06.476764Z"
+      }
+    ],
+    "limits": [],
+    "rejected_sources": [
+      "https://eastondev.com/blog/en/posts/ai/20260427-rag-vector-database-selection/",
+      "https://www.firecrawl.dev/blog/best-vector-databases"
+    ],
+    "rejected_codes": {
+      "https://www.firecrawl.dev/blog/best-vector-databases": "unreadable",
+      "https://eastondev.com/blog/en/posts/ai/20260427-rag-vector-database-selection/": "unreadable"
+    },
+    "budget_notes": [
+      "Q1: fetches exhausted",
+      "Q2: fetches exhausted"
+    ],
+    "known_unknowns": []
+  },
+  "content_hash": "de0aa5d70913ed3d56f25fbaabee5991b72480dd9fc58002f31f8f9679324a1e",
+  "frozen_at": "2026-10-02T10:58:41.750884Z"
+}

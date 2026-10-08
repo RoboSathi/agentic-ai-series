@@ -40,3 +40,11 @@ local_models/*
 patches/*
 # Eval reports (generated from data/evals.duckdb)
 reports/
+
+# Analytics mart (Parquet, regenerated), its link into the Rill project, Rill's own state,
+# and the repo-local Rill binary.
+data/analytics/
+dashboards/rill/data
+dashboards/rill/tmp/
+dashboards/rill/.env
+.tools/

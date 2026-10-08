@@ -1,0 +1,113 @@
+{
+  "kind": "report",
+  "artifact_id": "run-d0b38a67c4",
+  "payload": {
+    "title": "AI News Synthesis",
+    "status": "COMPLETE",
+    "sections": [
+      {
+        "heading": "Findings",
+        "body": "Google unveiled its Gemini 4 Argon model on September 30, 2026, after delaying Gemini 3.5 Pro [E1]. The company is providing Argon to select cybersecurity partners and participating in a voluntary pre-release process with the Trump administration, without announcing a public release timeline [E2]. Argon is described as the most performant model for complex workloads, comparable to OpenAI’s Astra and Anthropic’s Opus on coding and cyber benchmarks [E4]. OpenAI released its Astra model, claiming it is the most powerful and capable yet and a new frontier for computer and browser use with unmatched speed, accuracy, and safety [E10][E11]. Google releases Gemini 4 Argon, called its most powerful model yet [E12]"
+      },
+      {
+        "heading": "Details",
+        "body": "Cognizant and Cognition deployed autonomous AI engineering at Odyssey Logistics using Cognition’s Devin software engineer, announcing production results and expanded collaborative offerings [E6]. Devin is designed to handle multi-step development tasks—planning, writing, and testing code—working alongside Cognizant engineers [E7]. Training of over 3,000 associates on Devin has cut time to release-ready code by more than 50 % and accelerated greenfield development five to six times [E8]. As a result, delivery throughput rose by roughly a third and Odyssey recorded a 37 % net cost saving versus the conventional approach [E9]."
+      },
+      {
+        "heading": "Known unknowns",
+        "body": "- None declared during scoping."
+      },
+      {
+        "heading": "Coverage & Limits",
+        "body": "- Every must-pass criterion was met.\n- 2 source(s) rejected — blocked or paywalled. e.g. https://www.reuters.com/legal/litigation/google-announces-gemini-4-flagship-ai-model-after-months-delays-2026-09-30/, https://www.barrons.com/articles/google-ai-gemini-4-argon-alphabet-stock-d3df631c\n- Budget: Q2: fetches exhausted."
+      }
+    ],
+    "citations": [
+      {
+        "entry_id": "E1",
+        "url": "https://www.globalbankingandfinance.com/google-announces-gemini-4-flagship-ai-model-months-delays/",
+        "span": "Google unveiled its new Gemini 4 flagship AI model, “Argon,” on September 30, 2026, following delays to its predecessor Gemini 3.5 Pro.",
+        "page_hash": "04bc37f8ecf369ac4bc3c59ca058ce7b74145634cb093abdd65d39473be8fdf7",
+        "retrieved_at": "2026-10-02T03:47:42.977969Z"
+      },
+      {
+        "entry_id": "E2",
+        "url": "https://www.globalbankingandfinance.com/google-announces-gemini-4-flagship-ai-model-months-delays/",
+        "span": "Google said it was providing the model to select cybersecurity partners and was participating in the Trump administration's voluntary process for pre-release model access. It did not provide a timeline for the model's public release.",
+        "page_hash": "04bc37f8ecf369ac4bc3c59ca058ce7b74145634cb093abdd65d39473be8fdf7",
+        "retrieved_at": "2026-10-02T03:47:42.977969Z"
+      },
+      {
+        "entry_id": "E4",
+        "url": "https://www.globalbankingandfinance.com/google-announces-gemini-4-flagship-ai-model-months-delays/",
+        "span": "\"It's our most performant model yet built for complex workloads, and we see it comparable to frontier models like (OpenAI's) Astra and (Anthropic's) Opus on key coding and cyber benchmarks,\"",
+        "page_hash": "04bc37f8ecf369ac4bc3c59ca058ce7b74145634cb093abdd65d39473be8fdf7",
+        "retrieved_at": "2026-10-02T03:47:42.977969Z"
+      },
+      {
+        "entry_id": "E10",
+        "url": "https://techcrunch.com/2026/09/03/openai-launches-astra-its-powerful-and-controversial-new-model/",
+        "span": "OpenAI released Astra on Thursday, its latest AI model and — according to the company — its most powerful and capable one yet.",
+        "page_hash": "0c5178d9646c9cb36e5050b7f9aec17e738301e304563a5859a76c99b30a1caf",
+        "retrieved_at": "2026-10-02T03:48:20.749484Z"
+      },
+      {
+        "entry_id": "E11",
+        "url": "https://techcrunch.com/2026/09/03/openai-launches-astra-its-powerful-and-controversial-new-model/",
+        "span": "OpenAI claims that Astra represents “a new frontier on computer and browser use,” and that it handles tasks with unmatched “speed, accuracy, and safety.”",
+        "page_hash": "0c5178d9646c9cb36e5050b7f9aec17e738301e304563a5859a76c99b30a1caf",
+        "retrieved_at": "2026-10-02T03:48:20.749484Z"
+      },
+      {
+        "entry_id": "E12",
+        "url": "https://techcrunch.com/2026/09/03/openai-launches-astra-its-powerful-and-controversial-new-model/",
+        "span": "Google releases Gemini 4 Argon, called its most powerful model yet",
+        "page_hash": "0c5178d9646c9cb36e5050b7f9aec17e738301e304563a5859a76c99b30a1caf",
+        "retrieved_at": "2026-10-02T03:48:20.749484Z"
+      },
+      {
+        "entry_id": "E6",
+        "url": "https://www.expresscomputer.in/news/cognizant-and-cognition-put-autonomous-ai-engineering-into-production-at-odyssey-logistics-with-a-37-percent-net-cost-saving/139205/",
+        "span": "Cognizant and Cognition announced production results from autonomous AI engineering work at Odyssey Logistics, along with an expanded set of collaborative offerings built on Cognition’s AI software engineer, Devin.",
+        "page_hash": "fe67946fe5ffe49ad86d58947c722899763e124f92b7eacdd7544e06387f082b",
+        "retrieved_at": "2026-10-02T03:47:43.314069Z"
+      },
+      {
+        "entry_id": "E7",
+        "url": "https://www.expresscomputer.in/news/cognizant-and-cognition-put-autonomous-ai-engineering-into-production-at-odyssey-logistics-with-a-37-percent-net-cost-saving/139205/",
+        "span": "Devin, Cognition’s AI software engineer, is designed to take on multi-step development tasks – planning, writing and testing code across complex systems – working alongside Cognizant’s engineers.",
+        "page_hash": "fe67946fe5ffe49ad86d58947c722899763e124f92b7eacdd7544e06387f082b",
+        "retrieved_at": "2026-10-02T03:47:43.314069Z"
+      },
+      {
+        "entry_id": "E8",
+        "url": "https://www.expresscomputer.in/news/cognizant-and-cognition-put-autonomous-ai-engineering-into-production-at-odyssey-logistics-with-a-37-percent-net-cost-saving/139205/",
+        "span": "Cognizant has trained more than 3,000 associates on the Devin platform, and applied to its own engineering work, Devin has cut time to release-ready code by more than 50 percent and accelerated greenfield development five to six times.",
+        "page_hash": "fe67946fe5ffe49ad86d58947c722899763e124f92b7eacdd7544e06387f082b",
+        "retrieved_at": "2026-10-02T03:47:43.314069Z"
+      },
+      {
+        "entry_id": "E9",
+        "url": "https://www.expresscomputer.in/news/cognizant-and-cognition-put-autonomous-ai-engineering-into-production-at-odyssey-logistics-with-a-37-percent-net-cost-saving/139205/",
+        "span": "Delivery throughput rose by roughly a third and Odyssey recorded a 37 percent net cost saving against the conventional approach.",
+        "page_hash": "fe67946fe5ffe49ad86d58947c722899763e124f92b7eacdd7544e06387f082b",
+        "retrieved_at": "2026-10-02T03:47:43.314069Z"
+      }
+    ],
+    "limits": [],
+    "rejected_sources": [
+      "https://www.barrons.com/articles/google-ai-gemini-4-argon-alphabet-stock-d3df631c",
+      "https://www.reuters.com/legal/litigation/google-announces-gemini-4-flagship-ai-model-after-months-delays-2026-09-30/"
+    ],
+    "rejected_codes": {
+      "https://www.reuters.com/legal/litigation/google-announces-gemini-4-flagship-ai-model-after-months-delays-2026-09-30/": "blocked",
+      "https://www.barrons.com/articles/google-ai-gemini-4-argon-alphabet-stock-d3df631c": "blocked"
+    },
+    "budget_notes": [
+      "Q2: fetches exhausted"
+    ],
+    "known_unknowns": []
+  },
+  "content_hash": "c8fe901f7a7cbcb34e03f4fe13b767622455061ea7aed43f7d37e19150aab7f7",
+  "frozen_at": "2026-10-02T03:51:17.971502Z"
+}

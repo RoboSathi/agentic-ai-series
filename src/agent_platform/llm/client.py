@@ -36,6 +36,7 @@ from agent_platform.observability.langsmith import instrument_sdk_client
 
 if TYPE_CHECKING:
     from agent_platform.llm.observer import ModelCallObserver
+    from agent_platform.observability.facts import FactRecorder
 from agent_platform.logging import get_logger
 
 _PLACEHOLDER_API_KEY = "not-needed"
@@ -346,6 +347,7 @@ def create_llm_client(
     settings: LLMSettings | None = None,
     provider: ProviderName | None = None,
     observer: "ModelCallObserver | None" = None,
+    recorder: "FactRecorder | None" = None,
 ) -> LLMClient:
     """Build the configured LLM client (Factory).
 
@@ -364,7 +366,7 @@ def create_llm_client(
     name = provider or resolved.provider
     primary = ModelRef(provider=name, model=resolved.provider_settings(name).model)
     builder = ModelChainBuilder(
-        lambda p, m: create_pinned_llm_client(p, m, resolved), observer, resolved
+        lambda p, m: create_pinned_llm_client(p, m, resolved), observer, resolved, recorder
     )
     return builder.build(primary, resolved.chain, label=name)
 

@@ -1,0 +1,78 @@
+{
+  "kind": "report",
+  "artifact_id": "run-3305f1bb77",
+  "payload": {
+    "title": "India's Performance at the 2023 Asian Games: Medal Tally",
+    "status": "COMPLETE",
+    "sections": [
+      {
+        "heading": "Findings",
+        "body": "India won a record 107 medals at the 19th Asian Games in Hangzhou, China, including 28 gold, 38 silver, and 41 bronze [E1][E2][E4][E5]. India achieved its best ever medal haul at the Asian Games with 106 medals including 28 gold, 38 silver, and 40 bronze medals and finished fourth in the overall medal table [E3]."
+      },
+      {
+        "heading": "Details",
+        "body": "India signed off with a record 107 medals at the 19th Asian Games in Hangzhou, China, including 28 gold, 38 silver, and 41 bronze [E1][E2][E4][E5]. The Games were held in Hangzhou, China [E1][E4]."
+      },
+      {
+        "heading": "Known unknowns",
+        "body": "- None declared during scoping."
+      },
+      {
+        "heading": "Coverage & Limits",
+        "body": "- Every must-pass criterion was met.\n- 2 source(s) rejected — WebUnavailableError: fetch failed: ReadTimeout. e.g. https://www.olympics.com/en/news/asian-games-2023-hangzhou-india-medals-tally-winners-table, https://www.olympics.com/en/news/asian-games-2023-overall-medal-table-complete-list\n- 1 source(s) rejected — blocked or paywalled. e.g. https://sports.ndtv.com/asian-games-2023/medals-tally"
+      }
+    ],
+    "citations": [
+      {
+        "entry_id": "E1",
+        "url": "https://timesofindia.indiatimes.com/sports/asian-games-2023/india-asian-games/asian-games-medal-tally-2023-complete-winners-list-of-indian-players/articleshow/104035901.cms",
+        "span": "India signed off with a record 107 medals at the 19th Asian Games in Hangzhou, China. This included 28 gold, 38 silver and 41 bronze.",
+        "page_hash": "2147d47efad34427e62461c8b9f30fc7f575c4682c53fc09a797bc786459e2a8",
+        "retrieved_at": "2026-10-03T15:02:02.162737Z"
+      },
+      {
+        "entry_id": "E2",
+        "url": "https://www.scribd.com/document/856866212/Asian-Games-2023-Final-Medal-Tally",
+        "span": "India achieved significant success at the Asian Games 2023, winning a total of 107 medals, including 28 gold, 38 silver, and 41 bronze.",
+        "page_hash": "c4dea18b85caec347fde86d15d8f577fcd6bdbe40bd30bd67b72c3fa38ac669c",
+        "retrieved_at": "2026-10-03T15:02:22.577519Z"
+      },
+      {
+        "entry_id": "E4",
+        "url": "https://testbook.com/question-answer/how-many-total-medals-did-india-win-at-the-asian-g--69678630636b3b3a22493b78",
+        "span": "India achieved a record total of 107 medals at the Asian Games 2023, held in Hangzhou, China.",
+        "page_hash": "0451eddd02a7b6d282629ec263fd9b9a5830bce8338da6a538047ddf0c94ddad",
+        "retrieved_at": "2026-10-03T15:02:22.780657Z"
+      },
+      {
+        "entry_id": "E5",
+        "url": "https://testbook.com/question-answer/how-many-total-medals-did-india-win-at-the-asian-g--69678630636b3b3a22493b78",
+        "span": "India achieved a record total of 107 medals at the Asian Games 2023, held in Hangzhou, China.",
+        "page_hash": "0451eddd02a7b6d282629ec263fd9b9a5830bce8338da6a538047ddf0c94ddad",
+        "retrieved_at": "2026-10-03T15:02:22.780657Z"
+      },
+      {
+        "entry_id": "E3",
+        "url": "https://en.wikipedia.org/wiki/India_at_the_2022_Asian_Games",
+        "span": "India achieved its best ever medal haul at the Asian Games with 106 medals including 28 gold, 38 silver, and 40 bronze medals and finished fourth in the overall medal table.",
+        "page_hash": "914bacb619ee4a1f8423f2cbb78f45bee8f5bd654e786b4cd153daaaec11131b",
+        "retrieved_at": "2026-10-03T15:02:02.945024Z"
+      }
+    ],
+    "limits": [],
+    "rejected_sources": [
+      "https://sports.ndtv.com/asian-games-2023/medals-tally",
+      "https://www.olympics.com/en/news/asian-games-2023-hangzhou-india-medals-tally-winners-table",
+      "https://www.olympics.com/en/news/asian-games-2023-overall-medal-table-complete-list"
+    ],
+    "rejected_codes": {
+      "https://www.olympics.com/en/news/asian-games-2023-hangzhou-india-medals-tally-winners-table": "error",
+      "https://www.olympics.com/en/news/asian-games-2023-overall-medal-table-complete-list": "error",
+      "https://sports.ndtv.com/asian-games-2023/medals-tally": "blocked"
+    },
+    "budget_notes": [],
+    "known_unknowns": []
+  },
+  "content_hash": "56bf14d510af6e1aecda071da578e1ec8a17173f54f99f9e41804c29375f7387",
+  "frozen_at": "2026-10-03T15:04:57.254420Z"
+}

@@ -1,0 +1,87 @@
+{
+  "kind": "report",
+  "artifact_id": "run-4f316d864e",
+  "payload": {
+    "title": "India's Cricket World Cup Finals Journey and Player Participation",
+    "status": "PARTIAL",
+    "sections": [
+      {
+        "heading": "Overview",
+        "body": "India has appeared in four Cricket World Cup finals (2003, 2011, 2023) and finished as runners-up on three occasions. The team won the titles in 1983 and 2011."
+      },
+      {
+        "heading": "Players",
+        "body": "Sachin Tendulkar, Virender Sehwag and Harbhajan Singh featured in the 2003 and 2011 ODI World Cup finals [E9][E10][E11]. Each player's progression to the finals is documented with citations [R5]."
+      },
+      {
+        "heading": "Approaches and trends",
+        "body": "India's pattern shows early finals appearances (2003) followed by a home-win in 2011, then back-to-back semifinal exits in 2019 and 2023 despite strong group-stage performances. The team remained undefeated en route to the 2023 final before losing to Australia [E8]."
+      },
+      {
+        "heading": "Known unknowns",
+        "body": "- None declared during scoping."
+      },
+      {
+        "heading": "Coverage & Limits",
+        "body": "- R2: Every factual sentence in the report cites collected evidence. — 2/6, scored 0.33 of the 1 required; found: India has appeared in four Cricket World Cup finals (2003, 2011, 2023) and finished as runners-up on three occasions., The team won the titles in 1983 and 2011., Each player's progression to the finals is documented with citations [R5]., India's pattern shows early finals appearances (2003) followed by a home-win in 2011, then back-to-back semifinal exits in 2019 and 2023 despite strong group-stage performances.; run stopped: maximum rounds reached. Tried: no queries.\n- 2 source(s) rejected — blocked or paywalled. e.g. https://www.newsbytesapp.com/news/sports/breaking-down-india-s-record-in-icc-cricket-world-cup-semi-finals/story, https://cricreads.com/team-india-semi-final-records-stats-odi-world-cup-history/"
+      }
+    ],
+    "citations": [
+      {
+        "entry_id": "E9",
+        "url": "https://crickettimes.com/web-stories/from-virat-kohli-to-ms-dhoni-indian-players-with-most-icc-finals/",
+        "span": "Harbhajan played in the finals of 2003 and 2011 ODI World Cups.",
+        "page_hash": "ce05bff98fc72671e28aba982f2c0102662a80a6c69bb029087a99e51a1132a8",
+        "retrieved_at": "2026-10-04T05:53:12.498852Z"
+      },
+      {
+        "entry_id": "E10",
+        "url": "https://crickettimes.com/web-stories/from-virat-kohli-to-ms-dhoni-indian-players-with-most-icc-finals/",
+        "span": "Like Bhajji, Sehwag also played 4 ICC finals; 2002 Champions Trophy followed by 2003 ODI World Cup, 2007 T20 and \n2011 ODI World Cup.",
+        "page_hash": "ce05bff98fc72671e28aba982f2c0102662a80a6c69bb029087a99e51a1132a8",
+        "retrieved_at": "2026-10-04T05:53:12.498852Z"
+      },
+      {
+        "entry_id": "E11",
+        "url": "https://crickettimes.com/web-stories/from-virat-kohli-to-ms-dhoni-indian-players-with-most-icc-finals/",
+        "span": "Legendary Tendulkar played in the finals of 2000 and 2002 Champions Trophy. He appeared in 2003 and 2011 ODI World Cup finals as well.",
+        "page_hash": "ce05bff98fc72671e28aba982f2c0102662a80a6c69bb029087a99e51a1132a8",
+        "retrieved_at": "2026-10-04T05:53:12.498852Z"
+      },
+      {
+        "entry_id": "E8",
+        "url": "https://en.wikipedia.org/wiki/India_at_the_Cricket_World_Cup",
+        "span": "In the 2023 edition hosted exclusively by India, the Rohit Sharma-led Indian team did not lose a single match en route to the final. In the fourth final appearance at the World Cups, India lost to Australia and finished as runners-up for the second time.",
+        "page_hash": "74dd9beb127f3f2e541d72ba8c59f74e9d876c9194bc32748173e4f4e251e62b",
+        "retrieved_at": "2026-10-04T05:52:59.732776Z"
+      }
+    ],
+    "limits": [
+      {
+        "item_id": "R2",
+        "text": "Every factual sentence in the report cites collected evidence.",
+        "tried_queries": [],
+        "sources_examined": [
+          "https://www.newsbytesapp.com/news/sports/breaking-down-india-s-record-in-icc-cricket-world-cup-semi-finals/story",
+          "https://cricreads.com/team-india-semi-final-records-stats-odi-world-cup-history/",
+          "https://en.wikipedia.org/wiki/List_of_Cricket_World_Cup_finals",
+          "https://en.wikipedia.org/wiki/India_at_the_Cricket_World_Cup",
+          "https://crickettimes.com/web-stories/from-virat-kohli-to-ms-dhoni-indian-players-with-most-icc-finals/"
+        ],
+        "reason": "2/6, scored 0.33 of the 1 required; found: India has appeared in four Cricket World Cup finals (2003, 2011, 2023) and finished as runners-up on three occasions., The team won the titles in 1983 and 2011., Each player's progression to the finals is documented with citations [R5]., India's pattern shows early finals appearances (2003) followed by a home-win in 2011, then back-to-back semifinal exits in 2019 and 2023 despite strong group-stage performances.; run stopped: maximum rounds reached"
+      }
+    ],
+    "rejected_sources": [
+      "https://cricreads.com/team-india-semi-final-records-stats-odi-world-cup-history/",
+      "https://www.newsbytesapp.com/news/sports/breaking-down-india-s-record-in-icc-cricket-world-cup-semi-finals/story"
+    ],
+    "rejected_codes": {
+      "https://www.newsbytesapp.com/news/sports/breaking-down-india-s-record-in-icc-cricket-world-cup-semi-finals/story": "blocked",
+      "https://cricreads.com/team-india-semi-final-records-stats-odi-world-cup-history/": "blocked"
+    },
+    "budget_notes": [],
+    "known_unknowns": []
+  },
+  "content_hash": "d53db2c759445c0841c6fc9fac1fd93746101140946ba350d5ab1fb44065165b",
+  "frozen_at": "2026-10-04T05:54:43.917994Z"
+}

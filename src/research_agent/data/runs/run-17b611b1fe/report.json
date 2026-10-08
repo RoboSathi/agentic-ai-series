@@ -1,0 +1,127 @@
+{
+  "kind": "report",
+  "artifact_id": "run-17b611b1fe",
+  "payload": {
+    "title": "Impact of Mirror Neurons on Learning",
+    "status": "COMPLETE",
+    "sections": [
+      {
+        "heading": "Findings",
+        "body": "Mirror neurons are essential for learning new skills through imitation, bridging observation and execution to make learning by watching effective [E1][E2]. Children rely heavily on imitation for language and motor skill development, with observation priming the brain to replicate actions [E3]. Adults also learn through imitation, such as copying dance moves or sports techniques [E4]. Mirror neurons connect observed actions with executed actions, supporting imitation and observational learning [E5]. However, mirror neuron system excitability does not predict motor learning, though motor learning is reflected in MNS characteristics [E9][E10]. A significant correlation exists between non-dominant hand learning speed and MNS activation in the dominant hemisphere during observation of button presses and pinch gestures [E11]. Mirror neurons are not task-specific in their activation, showing correlations across different observed actions and muscle groups [E12]."
+      },
+      {
+        "heading": "Details",
+        "body": "From a young age, humans are natural imitators, learning gestures, skills, and behaviors by watching others [E6]. Imitation serves both practical functions (tool use, dance) and social functions [E7]. Unconscious mirroring of posture, gestures, or tone during conversation builds connection, trust, and rapport, facilitating smooth social interactions [E8]."
+      },
+      {
+        "heading": "Known unknowns",
+        "body": "- None declared during scoping."
+      },
+      {
+        "heading": "Coverage & Limits",
+        "body": "- Every must-pass criterion was met.\n- 2 source(s) rejected — blocked or paywalled. e.g. https://www.sciencedirect.com/science/article/pii/S1364661322001346, https://www.sciencedirect.com/science/article/pii/S0166432813001745\n- 1 source(s) rejected — dead link. e.g. https://zenodo.org/records/17984153/files/Mirror+Brain+A+Comprehensive+Review+of+the+Mirror+Neuron+System+-Formatted+Paper.pdf"
+      }
+    ],
+    "citations": [
+      {
+        "entry_id": "E1",
+        "url": "https://brainhealthuniversity.com/brain-health-insights/mirror-neurons-the-hidden-power-behind-empathy-and-learning/",
+        "span": "Mirror neurons are essential in how humans learn new skills. Children, in particular, rely heavily on imitation. From language development to motor skills, watching others perform an action primes the brain to replicate it. Even adults continue to learn this way – think of copying a dance move, practicing a golf swing, or following along with a cooking video. The mirror system bridges observation and execution, making learning by watching incredibly effective.",
+        "page_hash": "14ab5667ab9d70c775b07ec66bceba8175446697449d3f93a01b8b5412cc932d",
+        "retrieved_at": "2026-10-04T04:33:38.138123Z"
+      },
+      {
+        "entry_id": "E2",
+        "url": "https://brainhealthuniversity.com/brain-health-insights/mirror-neurons-the-hidden-power-behind-empathy-and-learning/",
+        "span": "The mirror system bridges observation and execution, making learning by watching incredibly effective.",
+        "page_hash": "14ab5667ab9d70c775b07ec66bceba8175446697449d3f93a01b8b5412cc932d",
+        "retrieved_at": "2026-10-04T04:33:38.138123Z"
+      },
+      {
+        "entry_id": "E3",
+        "url": "https://brainhealthuniversity.com/brain-health-insights/mirror-neurons-the-hidden-power-behind-empathy-and-learning/",
+        "span": "Children, in particular, rely heavily on imitation. From language development to motor skills, watching others perform an action primes the brain to replicate it.",
+        "page_hash": "14ab5667ab9d70c775b07ec66bceba8175446697449d3f93a01b8b5412cc932d",
+        "retrieved_at": "2026-10-04T04:33:38.138123Z"
+      },
+      {
+        "entry_id": "E4",
+        "url": "https://brainhealthuniversity.com/brain-health-insights/mirror-neurons-the-hidden-power-behind-empathy-and-learning/",
+        "span": "Even adults continue to learn this way – think of copying a dance move, practicing a golf swing, or following along with a cooking video.",
+        "page_hash": "14ab5667ab9d70c775b07ec66bceba8175446697449d3f93a01b8b5412cc932d",
+        "retrieved_at": "2026-10-04T04:33:38.138123Z"
+      },
+      {
+        "entry_id": "E5",
+        "url": "https://www.simplypsychology.org/mirror-neurons-function.html",
+        "span": "Mirror neurons also play a role in connecting what we see with what we do. \n\nThis connection is especially important in imitation and observational learning.",
+        "page_hash": "c51becebaa1f534324ea9cabae3eb991d682a6a1bcb192e4d8004cc9f86d77cb",
+        "retrieved_at": "2026-10-04T04:33:37.146515Z"
+      },
+      {
+        "entry_id": "E9",
+        "url": "https://www.frontiersin.org/journals/human-neuroscience/articles/10.3389/fnhum.2025.1650152/full",
+        "span": "The MNS excitability is not a predictor of motor learning, but motor learning is reflected in the characteristics of the MNS.",
+        "page_hash": "4615b31ba100856b38a48d82016453de2586e105b58c1cce6399a17b18242bd3",
+        "retrieved_at": "2026-10-04T04:33:52.437273Z"
+      },
+      {
+        "entry_id": "E10",
+        "url": "https://www.frontiersin.org/journals/human-neuroscience/articles/10.3389/fnhum.2025.1650152/full",
+        "span": "The MNS excitability is not a predictor of motor learning, but motor learning is reflected in the characteristics of the MNS.",
+        "page_hash": "4615b31ba100856b38a48d82016453de2586e105b58c1cce6399a17b18242bd3",
+        "retrieved_at": "2026-10-04T04:33:52.437273Z"
+      },
+      {
+        "entry_id": "E11",
+        "url": "https://www.frontiersin.org/journals/human-neuroscience/articles/10.3389/fnhum.2025.1650152/full",
+        "span": "We found a significant correlation between the learning speed of the non-dominant hand and mirror neuron activation in the dominant hemisphere during the observation of button presses and pinch gestures.",
+        "page_hash": "4615b31ba100856b38a48d82016453de2586e105b58c1cce6399a17b18242bd3",
+        "retrieved_at": "2026-10-04T04:33:52.437273Z"
+      },
+      {
+        "entry_id": "E12",
+        "url": "https://www.frontiersin.org/journals/human-neuroscience/articles/10.3389/fnhum.2025.1650152/full",
+        "span": "We also found a significant correlation in the pretraining session between MNS activation while observing button presses and pinch gestures for both the dominant and non-dominant hands in the APB and FDI muscles. This indicates a generalized effect on the part of MNS activation across tasks. Based on this result, we conclude that mirror neurons are not task specific in their activation, suggesting that a task need not visually replicate the observed action.",
+        "page_hash": "4615b31ba100856b38a48d82016453de2586e105b58c1cce6399a17b18242bd3",
+        "retrieved_at": "2026-10-04T04:33:52.437273Z"
+      },
+      {
+        "entry_id": "E6",
+        "url": "https://www.simplypsychology.org/mirror-neurons-function.html",
+        "span": "From a young age, humans are natural imitators, learning gestures, skills, and behaviors simply by watching others.",
+        "page_hash": "c51becebaa1f534324ea9cabae3eb991d682a6a1bcb192e4d8004cc9f86d77cb",
+        "retrieved_at": "2026-10-04T04:33:37.146515Z"
+      },
+      {
+        "entry_id": "E7",
+        "url": "https://www.simplypsychology.org/mirror-neurons-function.html",
+        "span": "This form of learning is not only practical—such as copying how to use a tool or follow a dance—but also social.",
+        "page_hash": "c51becebaa1f534324ea9cabae3eb991d682a6a1bcb192e4d8004cc9f86d77cb",
+        "retrieved_at": "2026-10-04T04:33:37.146515Z"
+      },
+      {
+        "entry_id": "E8",
+        "url": "https://www.simplypsychology.org/mirror-neurons-function.html",
+        "span": "Imitation can build connection and trust, even when it’s unconscious. For instance, people often mirror each other’s posture, gestures, or tone during conversation. \n\nThis subtle mimicry fosters rapport and helps us navigate social interactions smoothly.",
+        "page_hash": "c51becebaa1f534324ea9cabae3eb991d682a6a1bcb192e4d8004cc9f86d77cb",
+        "retrieved_at": "2026-10-04T04:33:37.146515Z"
+      }
+    ],
+    "limits": [],
+    "rejected_sources": [
+      "https://www.sciencedirect.com/science/article/pii/S0166432813001745",
+      "https://www.sciencedirect.com/science/article/pii/S1364661322001346",
+      "https://zenodo.org/records/17984153/files/Mirror+Brain+A+Comprehensive+Review+of+the+Mirror+Neuron+System+-Formatted+Paper.pdf"
+    ],
+    "rejected_codes": {
+      "https://www.sciencedirect.com/science/article/pii/S1364661322001346": "blocked",
+      "https://zenodo.org/records/17984153/files/Mirror+Brain+A+Comprehensive+Review+of+the+Mirror+Neuron+System+-Formatted+Paper.pdf": "dead_link",
+      "https://www.sciencedirect.com/science/article/pii/S0166432813001745": "blocked"
+    },
+    "budget_notes": [],
+    "known_unknowns": []
+  },
+  "content_hash": "ed24fd28b12876e341df98dfd723576592449884f0d401265f2f1240490c5a58",
+  "frozen_at": "2026-10-04T04:35:16.250432Z"
+}

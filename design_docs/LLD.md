@@ -959,9 +959,9 @@ agent_platform.multi_agent` succeeds) is the only test this phase.
 
 ---
 
-## 16.1 `mcp` `[new — parked, interface-only]`
+## 16.1 `mcp` `[built — 2026-10-08, ADR 0008]`
 
-**Purpose (future).** An MCP server publishes tools, resources and
+**Purpose.** An MCP server publishes tools, resources and
 prompts over a transport, and an agent that speaks the protocol can use
 them without its author having written any of them.
 
@@ -983,9 +983,15 @@ locally, per server, by whoever decided to trust that server. The
 description is the server's; the authority is not. Same rule as the
 Authority Hierarchy — a tool catalogue is a tool observation.
 
-**Status.** Contracts only (`McpServerSpec`, `McpTransport`,
-`McpSession`, `McpToolInfo`, `McpToolSource`, `ToolGovernancePolicy`).
-No transport is implemented and nothing calls this package.
+**Status.** Built over the official MCP SDK (ADR 0008). `SdkMcpTransport`
+opens stdio or HTTP servers named in an agent's `mcp.servers`;
+`SdkMcpSession` keeps one session per server, owned by a task of its own
+(the SDK's cancel scopes belong to the task that entered them);
+`GovernedMcpToolSource` lists the server's tools as `ToolDefinition`s,
+arguments validated by a model built from each tool's schema, envelope from
+`ConfiguredGovernancePolicy` (`mcp.servers[].envelope`, else the most
+restrictive `mcp.default_envelope`). First consumer: the ops agent, over
+the platform's own analytics MCP server (`agent_platform.analytics.mcp_server`).
 
 ---
 

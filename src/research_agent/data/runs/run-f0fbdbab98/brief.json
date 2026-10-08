@@ -1,0 +1,39 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-f0fbdbab98",
+  "payload": {
+    "archetype": "general",
+    "topic": "how to teach btech cs/ai students and prepare them for future ai drive s/w world",
+    "purpose": "define the curriculum and content",
+    "decision": "",
+    "criteria": [],
+    "options": [],
+    "claims": [],
+    "concepts": [],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": false,
+      "min_distinct_domains": 1
+    },
+    "recency_days": null,
+    "geography": "",
+    "depth": "small",
+    "deliverable_format": "",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "16f0e52d9ebf8cc800a82ccb7161cff4aec082e55313981f7fc1c0652c1ed1cb",
+  "frozen_at": "2026-10-01T13:43:42.400550Z"
+}

@@ -1,0 +1,108 @@
+{
+  "kind": "report",
+  "artifact_id": "run-b3083c3f0c",
+  "payload": {
+    "title": "India's Performance at the 2026 Asian Games",
+    "status": "COMPLETE",
+    "sections": [
+      {
+        "heading": "Summary",
+        "body": "One source states India won 80 medals at the 2026 Asian Games in Aichi-Nagoya, comprising 18 gold, 26 silver and 36 bronze, and that India are fifth in the standings [E1][E4]; another source states India won 85 medals at the 2026 Asian Games in Aichi-Nagoya, including 21 gold, 27 silver and 37 bronze, finishing fourth overall [E5][E7]. One source reports India have won 80 medals at the Asian Games 2026 in Aichi-Nagoya, comprising 18 gold, 26 silver and 36 bronze [E1]; another reports India have won 85 medals at the 2026 Asian Games in Aichi-Nagoya, including 21 gold, 27 silver and 37 bronze, finishing fourth overall [E5]. Notable first-time medals for India included Jay Meena's soft tennis medal [E17], Suchika Tariyal's MMA medal [E18], and the women's skeet team's first medal in that event [E19]. As of September 23, 2026, the interim tally stood at 12 medals (1 gold, 5 silver, 6 bronze) [E20]."
+      },
+      {
+        "heading": "Concepts",
+        "body": "One source states India have won 80 medals at the Asian Games 2026 in Aichi-Nagoya, comprising 18 gold, 26 silver and 36 bronze [E1] and that India are fifth in the standings [E4]; another states India have won 85 medals at the 2026 Asian Games in Aichi-Nagoya, including 21 gold, 27 silver and 37 bronze, finishing fourth overall [E5], with a standings table showing India fourth with 21 gold, 27 silver, 37 bronze, 85 total [E7]. The discipline-wise breakdown shows athletics produced 24 medals, including one gold, nine silver and 14 bronze; shooting contributed 15 medals; archery finished with nine medals [E8]."
+      },
+      {
+        "heading": "Examples",
+        "body": "Athletics contributed 24 medals (1 gold, 9 silver, 14 bronze), shooting 15 medals (3 gold, 8 silver, 4 bronze), and archery 9 medals (5 gold, 2 silver, 2 bronze) to India's tally [E8]. Historic firsts included a soft tennis medal by Jay Meena [E17], an MMA medal by Suchika Tariyal [E18], and a women's skeet team medal [E19]."
+      },
+      {
+        "heading": "Known unknowns",
+        "body": "- None declared during scoping."
+      },
+      {
+        "heading": "Coverage & Limits",
+        "body": "- Every must-pass criterion was met.\n- 1 source(s) rejected — WebUnavailableError: fetch failed: ReadTimeout. e.g. https://www.olympics.com/en/news/asian-games-2026-medal-tally-india-winners-table-list\n- Budget: Q2: fetches exhausted."
+      }
+    ],
+    "citations": [
+      {
+        "entry_id": "E1",
+        "url": "https://www.pratidintime.com/sports/asian-games-2026-medal-tally-full-list-of-indias-gold-silver-and-bronze-medal-winners-12571971",
+        "span": "India have won 80 medals at the Asian Games 2026 in Aichi-Nagoya, comprising 18 gold, 26 silver and 36 bronze .",
+        "page_hash": "2a3b1ef89da9274814dbcd5241a75f9d44a3104efc8dc7ea2fa4d17a384892c9",
+        "retrieved_at": "2026-10-05T11:41:32.122050Z"
+      },
+      {
+        "entry_id": "E4",
+        "url": "https://www.pratidintime.com/sports/asian-games-2026-medal-tally-full-list-of-indias-gold-silver-and-bronze-medal-winners-12571971",
+        "span": "India are fifth in the standings.",
+        "page_hash": "2a3b1ef89da9274814dbcd5241a75f9d44a3104efc8dc7ea2fa4d17a384892c9",
+        "retrieved_at": "2026-10-05T11:41:32.122050Z"
+      },
+      {
+        "entry_id": "E5",
+        "url": "https://thebridge.in/asian-games/asian-games-2026-medal-tally-india-medals-57938",
+        "span": "India have won 85 medals at the 2026 Asian Games in Aichi-Nagoya, including 21 gold, 27 silver and 37 bronze, finishing fourth overall.",
+        "page_hash": "e436397d05c996c3b5fdfba74b6b453c13c189335d7c7f6bce523072e7613dd8",
+        "retrieved_at": "2026-10-05T11:41:32.870691Z"
+      },
+      {
+        "entry_id": "E7",
+        "url": "https://thebridge.in/asian-games/asian-games-2026-medal-tally-india-medals-57938",
+        "span": "RankCountryGoldSilverBronzeTotal\n1China1698983341\n2Japan839591269\n3South Korea394368150\n4India21273785\n5Uzbekistan21252470",
+        "page_hash": "e436397d05c996c3b5fdfba74b6b453c13c189335d7c7f6bce523072e7613dd8",
+        "retrieved_at": "2026-10-05T11:41:32.870691Z"
+      },
+      {
+        "entry_id": "E17",
+        "url": "https://www.facebook.com/BJP4India/posts/%F0%9D%90%87%F0%9D%90%A2%F0%9D%90%AC%F0%9D%90%AD%F0%9D%90%A8%F0%9D%90%AB%F0%9D%90%A2%F0%9D%90%9C-%F0%9D%90%9F%F0%9D%90%A2%F0%9D%90%AB%F0%9D%90%AC%F0%9D%90%AD%F0%9D%90%AC-%F0%9D%90%9F%F0%9D%90%A8%F0%9D%90%AB-%F0%9D%90%88%F0%9D%90%A7%F0%9D%90%9D%F0%9D%90%A2%F0%9D%90%9A%F0%9D%90%A7-%F0%9D%90%AC%F0%9D%90%A9%F0%9D%90%A8%F0%9D%90%AB%F0%9D%90%AD%F0%9D%90%AC-asian-games-2026-is-witnessing-a-new-chapter-a/1577231317784482",
+        "span": "Jay Meena won India’s first-ever Asian Games medal in Soft Tennis.",
+        "page_hash": "37d8748ecfc31fd5f09db7667b7377c5570ef9e6a3a5d8b91f781f40e575f897",
+        "retrieved_at": "2026-10-05T11:42:14.784558Z"
+      },
+      {
+        "entry_id": "E18",
+        "url": "https://www.facebook.com/BJP4India/posts/%F0%9D%90%87%F0%9D%90%A2%F0%9D%90%AC%F0%9D%90%AD%F0%9D%90%A8%F0%9D%90%AB%F0%9D%90%A2%F0%9D%90%9C-%F0%9D%90%9F%F0%9D%90%A2%F0%9D%90%AB%F0%9D%90%AC%F0%9D%90%AD%F0%9D%90%AC-%F0%9D%90%9F%F0%9D%90%A8%F0%9D%90%AB-%F0%9D%90%88%F0%9D%90%A7%F0%9D%90%9D%F0%9D%90%A2%F0%9D%90%9A%F0%9D%90%A7-%F0%9D%90%AC%F0%9D%90%A9%F0%9D%90%A8%F0%9D%90%AB%F0%9D%90%AD%F0%9D%90%AC-asian-games-2026-is-witnessing-a-new-chapter-a/1577231317784482",
+        "span": "Suchika Tariyal secured India’s maiden Asian Games MMA medal.",
+        "page_hash": "37d8748ecfc31fd5f09db7667b7377c5570ef9e6a3a5d8b91f781f40e575f897",
+        "retrieved_at": "2026-10-05T11:42:14.784558Z"
+      },
+      {
+        "entry_id": "E19",
+        "url": "https://www.facebook.com/BJP4India/posts/%F0%9D%90%87%F0%9D%90%A2%F0%9D%90%AC%F0%9D%90%AD%F0%9D%90%A8%F0%9D%90%AB%F0%9D%90%A2%F0%9D%90%9C-%F0%9D%90%9F%F0%9D%90%A2%F0%9D%90%AB%F0%9D%90%AC%F0%9D%90%AD%F0%9D%90%AC-%F0%9D%90%9F%F0%9D%90%A8%F0%9D%90%AB-%F0%9D%90%88%F0%9D%90%A7%F0%9D%90%9D%F0%9D%90%A2%F0%9D%90%9A%F0%9D%90%A7-%F0%9D%90%AC%F0%9D%90%A9%F0%9D%90%A8%F0%9D%90%AB%F0%9D%90%AD%F0%9D%90%AC-asian-games-2026-is-witnessing-a-new-chapter-a/1577231317784482",
+        "span": "India’s Women’s Skeet Team claimed its first-ever Asian Games medal in the event.",
+        "page_hash": "37d8748ecfc31fd5f09db7667b7377c5570ef9e6a3a5d8b91f781f40e575f897",
+        "retrieved_at": "2026-10-05T11:42:14.784558Z"
+      },
+      {
+        "entry_id": "E20",
+        "url": "https://www.facebook.com/BJP4India/posts/%F0%9D%90%87%F0%9D%90%A2%F0%9D%90%AC%F0%9D%90%AD%F0%9D%90%A8%F0%9D%90%AB%F0%9D%90%A2%F0%9D%90%9C-%F0%9D%90%9F%F0%9D%90%A2%F0%9D%90%AB%F0%9D%90%AC%F0%9D%90%AD%F0%9D%90%AC-%F0%9D%90%9F%F0%9D%90%A8%F0%9D%90%AB-%F0%9D%90%88%F0%9D%90%A7%F0%9D%90%9D%F0%9D%90%A2%F0%9D%90%9A%F0%9D%90%A7-%F0%9D%90%AC%F0%9D%90%A9%F0%9D%90%A8%F0%9D%90%AB%F0%9D%90%AD%F0%9D%90%AC-asian-games-2026-is-witnessing-a-new-chapter-a/1577231317784482",
+        "span": "India’s medal tally at #AsianGames2026 now stands at 12: 1 Gold, 5 Silver and 6 Bronze. (till 5 PM, Sept 23, 2026)",
+        "page_hash": "37d8748ecfc31fd5f09db7667b7377c5570ef9e6a3a5d8b91f781f40e575f897",
+        "retrieved_at": "2026-10-05T11:42:14.784558Z"
+      },
+      {
+        "entry_id": "E8",
+        "url": "https://thebridge.in/asian-games/asian-games-2026-medal-tally-india-medals-57938",
+        "span": "India's strongest disciplines included athletics, shooting and archery. Athletics produced 24 medals, including one gold, nine silver and 14 bronze. Shooting contributed 15 medals, while archery finished with nine.",
+        "page_hash": "e436397d05c996c3b5fdfba74b6b453c13c189335d7c7f6bce523072e7613dd8",
+        "retrieved_at": "2026-10-05T11:41:32.870691Z"
+      }
+    ],
+    "limits": [],
+    "rejected_sources": [
+      "https://www.olympics.com/en/news/asian-games-2026-medal-tally-india-winners-table-list"
+    ],
+    "rejected_codes": {
+      "https://www.olympics.com/en/news/asian-games-2026-medal-tally-india-winners-table-list": "error"
+    },
+    "budget_notes": [
+      "Q2: fetches exhausted"
+    ],
+    "known_unknowns": []
+  },
+  "content_hash": "de7bb212af0d0662e1624e2c3a34e95e39ee798f9ba39a9324c24c36ed3663e0",
+  "frozen_at": "2026-10-05T11:45:04.329648Z"
+}

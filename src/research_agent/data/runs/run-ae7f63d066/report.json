@@ -1,0 +1,132 @@
+{
+  "kind": "report",
+  "artifact_id": "run-ae7f63d066",
+  "payload": {
+    "title": "Vedam College BTech CS/AI Program Overview",
+    "status": "PARTIAL",
+    "sections": [
+      {
+        "heading": "Findings",
+        "body": "The program offers a 4-year B.Tech in Computer Science with an AI specialization awarded by Ajeenkya DY Patil University [E1]. Vedam sits on a lush, 100-acre campus at Ajeenkya DY Patil University, Lohegaon — just 6 kilometres from Pune International Airport [E2]. Students receive a personal MacBook as part of the course fee [E3][E7]."
+      },
+      {
+        "heading": "Details",
+        "body": "The AI-First Curriculum is designed to equip students with the skills, tools, and mindset needed to thrive in an AI-powered world [E4]. From Day 1, students write real code, build projects, and solve industry-relevant problems [E5]. Students learn from top instructors who are engineers, researchers, and industry leaders from Google, Microsoft, Amazon, and leading startups [E6]. Students in the program receive a 6-month paid internship and preparation for global competitions such as GSOC, ICPC, and Imagine Cup [E9]. The program provides up to ₹1 Crore seed fund for student startups [E10]. A video features real student reviews that discuss the pros and cons of Vedam School of Technology's BTech CS/AI program [E8]."
+      },
+      {
+        "heading": "Known unknowns",
+        "body": "- None declared during scoping."
+      },
+      {
+        "heading": "Coverage & Limits",
+        "body": "- R2: Cited claims are supported by their quoted spans. — 6/9, scored 0.67 of the 1 required; found: Students receive a personal MacBook as part of the course fee [E3][E7]., The program provides up to ₹1 Crore seed fund for student startups [E10]., A video features real student reviews that discuss the pros and cons of Vedam School of Technology's BTech CS/AI program [E8].; run stopped: the question is answered with cited findings. Tried: Vedam College BTech Computer Science and Artificial Intelligence curriculum faculty infrastructure, Vedam College BTech CS AI student reviews placements.\n- 2 source(s) rejected — blocked or paywalled. e.g. https://www.shiksha.com/college/vedam-school-of-technology-lohegaon-pune-237714/course-b-tech-in-cs-ai-1288780, https://www.shiksha.com/college/vedam-school-of-technology-lohegaon-pune-237714/infrastructure\n- Budget: Q1: fetches exhausted.\n- Budget: Q2: fetches exhausted."
+      }
+    ],
+    "citations": [
+      {
+        "entry_id": "E1",
+        "url": "https://www.vedam.org/program/vst-adypu-pune",
+        "span": "4 Years\nB.Tech in CS with Specialisation in AI by Ajeenkya DY Patil University",
+        "page_hash": "3d37625c4ae652d616371a4b83a6bbf475411492cb27cd153b1a3a06b98ebdc1",
+        "retrieved_at": "2026-10-01T16:03:18.420019Z"
+      },
+      {
+        "entry_id": "E2",
+        "url": "https://www.vedam.org/program/vst-adypu-pune",
+        "span": "Vedam sits on a lush, 100-acre campus at Ajeenkya DY Patil University, Lohegaon — just 6 kilometres from Pune International Airport.",
+        "page_hash": "3d37625c4ae652d616371a4b83a6bbf475411492cb27cd153b1a3a06b98ebdc1",
+        "retrieved_at": "2026-10-01T16:03:18.420019Z"
+      },
+      {
+        "entry_id": "E3",
+        "url": "https://www.vedam.org/program/vst-adypu-pune",
+        "span": "Apple Macbook is included in the above course fee.",
+        "page_hash": "3d37625c4ae652d616371a4b83a6bbf475411492cb27cd153b1a3a06b98ebdc1",
+        "retrieved_at": "2026-10-01T16:03:18.420019Z"
+      },
+      {
+        "entry_id": "E7",
+        "url": "https://www.vedam.org/",
+        "span": "It's your key to a hands-on, immersive and collaborative learning experience in Computer Science and AI.",
+        "page_hash": "e661f2254aa197b2e91f85c48e462f8b2401ff5393459d7fac9ec96547806b62",
+        "retrieved_at": "2026-10-01T16:03:28.377457Z"
+      },
+      {
+        "entry_id": "E4",
+        "url": "https://www.vedam.org/",
+        "span": "Our AI-First Curriculum is designed to equip students with the skills, tools, and mindset needed to thrive in an AI-powered world.",
+        "page_hash": "e661f2254aa197b2e91f85c48e462f8b2401ff5393459d7fac9ec96547806b62",
+        "retrieved_at": "2026-10-01T16:03:28.377457Z"
+      },
+      {
+        "entry_id": "E5",
+        "url": "https://www.vedam.org/",
+        "span": "From Day 1, you'll be writing real code, building projects, and solving industry-relevant problems.",
+        "page_hash": "e661f2254aa197b2e91f85c48e462f8b2401ff5393459d7fac9ec96547806b62",
+        "retrieved_at": "2026-10-01T16:03:28.377457Z"
+      },
+      {
+        "entry_id": "E6",
+        "url": "https://www.vedam.org/",
+        "span": "At Vedam, you’ll learn from the best minds in tech—engineers, researchers, and industry leaders from Google, Microsoft, Amazon, and top startups.",
+        "page_hash": "e661f2254aa197b2e91f85c48e462f8b2401ff5393459d7fac9ec96547806b62",
+        "retrieved_at": "2026-10-01T16:03:28.377457Z"
+      },
+      {
+        "entry_id": "E9",
+        "url": "https://www.youtube.com/watch?v=tSjuIhTIF1E",
+        "span": "6-month paid internship + preparation for global competitions (GSOC, ICPC, Imagine Cup)",
+        "page_hash": "836cfe4aba5016cbccc34b3bc2b6e7b6788f443ea45dc81bbadb8f4c30ca3dc4",
+        "retrieved_at": "2026-10-01T16:03:39.155177Z"
+      },
+      {
+        "entry_id": "E10",
+        "url": "https://www.youtube.com/watch?v=tSjuIhTIF1E",
+        "span": "Upto 1Cr seed fund for startups",
+        "page_hash": "836cfe4aba5016cbccc34b3bc2b6e7b6788f443ea45dc81bbadb8f4c30ca3dc4",
+        "retrieved_at": "2026-10-01T16:03:39.155177Z"
+      },
+      {
+        "entry_id": "E8",
+        "url": "https://www.youtube.com/watch?v=tSjuIhTIF1E",
+        "span": "Real student reviews (pros, cons, reality check)",
+        "page_hash": "836cfe4aba5016cbccc34b3bc2b6e7b6788f443ea45dc81bbadb8f4c30ca3dc4",
+        "retrieved_at": "2026-10-01T16:03:39.155177Z"
+      }
+    ],
+    "limits": [
+      {
+        "item_id": "R2",
+        "text": "Cited claims are supported by their quoted spans.",
+        "tried_queries": [
+          "Vedam College BTech Computer Science and Artificial Intelligence curriculum faculty infrastructure",
+          "Vedam College BTech CS AI student reviews placements"
+        ],
+        "sources_examined": [
+          "https://www.vedam.org/program/vst-adypu-pune",
+          "https://www.campuscritique.in/colleges/vedam-adypu",
+          "https://www.vedam.org/",
+          "https://www.shiksha.com/college/vedam-school-of-technology-lohegaon-pune-237714/course-b-tech-in-cs-ai-1288780",
+          "https://www.youtube.com/watch?v=tSjuIhTIF1E",
+          "https://www.shiksha.com/college/vedam-school-of-technology-lohegaon-pune-237714/infrastructure"
+        ],
+        "reason": "6/9, scored 0.67 of the 1 required; found: Students receive a personal MacBook as part of the course fee [E3][E7]., The program provides up to ₹1 Crore seed fund for student startups [E10]., A video features real student reviews that discuss the pros and cons of Vedam School of Technology's BTech CS/AI program [E8].; run stopped: the question is answered with cited findings"
+      }
+    ],
+    "rejected_sources": [
+      "https://www.shiksha.com/college/vedam-school-of-technology-lohegaon-pune-237714/course-b-tech-in-cs-ai-1288780",
+      "https://www.shiksha.com/college/vedam-school-of-technology-lohegaon-pune-237714/infrastructure"
+    ],
+    "rejected_codes": {
+      "https://www.shiksha.com/college/vedam-school-of-technology-lohegaon-pune-237714/course-b-tech-in-cs-ai-1288780": "blocked",
+      "https://www.shiksha.com/college/vedam-school-of-technology-lohegaon-pune-237714/infrastructure": "blocked"
+    },
+    "budget_notes": [
+      "Q1: fetches exhausted",
+      "Q2: fetches exhausted"
+    ],
+    "known_unknowns": []
+  },
+  "content_hash": "7323928d683b0f2eef6ec5ee3c40393d7bbb66c01f5017eaacac41caf705d479",
+  "frozen_at": "2026-10-01T16:05:09.317754Z"
+}

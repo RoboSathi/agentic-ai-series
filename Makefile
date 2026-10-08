@@ -1,5 +1,5 @@
 .PHONY: gen-key help install clean lint type-check format test verify agent llm-check model-check models data refund-limit \
-	clean-memory show-memory dream runs \
+	clean-memory show-memory dream runs analytics-export analytics-mcp dashboard dashboard-install dashboard-refresh \
 	eval eval-generate eval-oracle eval-security eval-judge eval-deepeval eval-report eval-diff \
 	eval-runs eval-sql _agent
 
@@ -8,7 +8,7 @@
 # `overlays: []`), so the agent is named on the command line: agent-scoped
 # targets take it as their second goal — `make agent csa`, `make eval ra`.
 # Adding an agent is three lines here and nothing in the platform.
-AGENTS := csa ra
+AGENTS := csa ra ops
 
 csa_NAME := Customer Support Agent
 csa_PKG := customer_support_agent
@@ -26,6 +26,14 @@ ra_RUNS := $(ra_PKG).archive.cli
 ra_OFFLINE_PROFILE :=
 # No eval suite yet: the fixture-world suite was removed (ADR ra-0019).
 ra_EVALS :=
+
+ops_NAME := Ops Analyst
+ops_PKG := ops_agent
+ops_OVERLAY := src/ops_agent/config/config.yaml
+ops_DATA :=
+ops_RUNS :=
+ops_OFFLINE_PROFILE :=
+ops_EVALS :=
 
 # Targets whose second goal names the agent they act on.
 AGENT_SCOPED := agent data runs dlq pii-reveal model-check llm-check models eval eval-generate eval-oracle eval-security eval-judge \
@@ -105,6 +113,13 @@ help:
 	@echo "  make pii-reveal <agent> T=<token> WHY=<reason>   What a PII token stood for (audited; needs PII_VAULT_KEY)"
 	@echo "  make model-check [agent]  Probe every hosted model and run every local model, per agent (BENCH=1 times them; alias: llm-check)"
 	@echo "  make models [agent]       Download (if missing) and run each agent's local models (run by make install)"
+	@echo ""
+	@echo "$(GREEN)Analytics$(NC) (no agent name):"
+	@echo "  make analytics-export     Export the mart (curated views → Parquet) when no console is running"
+	@echo "  make analytics-mcp        The analytics MCP server on stdio (for MCP Inspector / Claude Code)"
+	@echo "  make dashboard-install    Install Rill into .tools/rill (checksum-verified, repo-local; skips if current, FORCE=1 reinstalls)"
+	@echo "  make dashboard            Rill dashboards over the mart: Agent Health, Calls & Decisions"
+	@echo "  make dashboard-refresh    Re-export the mart and reload a running dashboard"
 	@echo ""
 	@echo "$(GREEN)Customer support admin$(NC) (csa only):"
 	@echo "  make refund-limit 100     Set the per-refund limit the Gatekeeper enforces (agent DB)"
@@ -260,6 +275,44 @@ eval-runs: _agent
 
 eval-sql: _agent
 	$(EVALS) sql $(SQL)
+
+# -- analytics -------------------------------------------------------------------
+# The mart (curated views as Parquet) is refreshed by a running console every
+# analytics.export_interval_seconds; these work with no agent running.
+comma := ,
+space := $(empty) $(empty)
+RILL_DIR := .tools/rill
+RILL := $(RILL_DIR)/rill
+RILL_PROJECT := dashboards/rill
+RILL_VERSION ?= latest
+RILL_PORT ?= 9009
+# Rill caches each model; these are reloaded from the mart's Parquet on refresh.
+RILL_MODELS := turns events
+MART_DIR := $(shell $(PYTHON) -c "from agent_platform.config import get_settings; print(get_settings().analytics.resolved_mart_dir)" 2>/dev/null)
+
+analytics-export:
+	@$(PYTHON) -m agent_platform.analytics export
+
+# The analytics MCP server on stdio, for an MCP client (MCP Inspector, Claude Code) to launch.
+analytics-mcp:
+	@$(PYTHON) -m agent_platform.analytics.mcp_server
+
+dashboard-install:
+	@FORCE=$(FORCE) sh dashboards/install_rill.sh $(RILL_DIR) $(RILL_VERSION)
+
+dashboard:
+	@test -e $(RILL) || (echo "$(YELLOW)Rill is not installed: make dashboard-install$(NC)" && exit 2)
+	@test -x $(RILL) || (echo "$(YELLOW)$(RILL) is not executable: an install may still be running; wait for it, or FORCE=1 make dashboard-install$(NC)" && exit 2)
+	@test -f "$(MART_DIR)/manifest.json" || (echo "$(YELLOW)No mart yet at $(MART_DIR): make analytics-export (or run an agent)$(NC)" && exit 2)
+	@ln -sfn "$(MART_DIR)" $(RILL_PROJECT)/data
+	@$(PYTHON) -c "from agent_platform.analytics import read_manifest; m = read_manifest(); print('$(YELLOW)Agent Health is empty until an agent has run a turn: make agent <agent>, then make dashboard-refresh$(NC)') if m and m.views['turns'].rows == 0 else None"
+	$(RILL) start --reset --port $(RILL_PORT) $(RILL_PROJECT)
+
+# Re-export the mart and have a running `make dashboard` reload it (Rill does not watch Parquet).
+dashboard-refresh: analytics-export
+	@curl -fsS -X POST localhost:$(RILL_PORT)/v1/instances/default/trigger -H 'Content-Type: application/json' \
+		-d '{"models":[$(subst $(space),$(comma),$(foreach m,$(RILL_MODELS),{"model":"$(m)","full":true}))]}' > /dev/null \
+		&& echo "$(GREEN)✓ Rill reloaded $(RILL_MODELS)$(NC)" || echo "$(YELLOW)No Rill running on :$(RILL_PORT) (make dashboard)$(NC)"
 
 # Fresh 32-byte keys: the checkpoint key (durability.encryption) and the PII vault key
 # (security.pii.vault), which also keys the redaction tokens. Put the lines in .env, or export

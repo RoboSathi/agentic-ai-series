@@ -1,0 +1,42 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-c42eb2f69f",
+  "payload": {
+    "archetype": "general",
+    "topic": "automating code review process",
+    "purpose": "need to identify why is it difficult to automate code review, what metrics are required to correctly measure its success",
+    "decision": "",
+    "criteria": [
+      "code quality",
+      "mergeability etc"
+    ],
+    "options": [],
+    "claims": [],
+    "concepts": [],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": true,
+      "min_distinct_domains": 1
+    },
+    "recency_days": null,
+    "geography": "",
+    "depth": "small",
+    "deliverable_format": "a short memo",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "63fbb1e11183f8b1e5bc7d4844a9fb9f654a293b8eaf5c14c3b5c06389826b0d",
+  "frozen_at": "2026-10-01T13:21:04.417084Z"
+}

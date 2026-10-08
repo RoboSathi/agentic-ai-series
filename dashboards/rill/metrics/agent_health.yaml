@@ -1,0 +1,30 @@
+# Agent Health — one row per turn. "Are the agents doing their job, safely, fast
+# enough, and at what cost?" The rates here are the SLOs (observability.slo_targets).
+version: 1
+type: metrics_view
+display_name: Agent Health
+description: One row per conversational turn — outcome, latency, model and tool use, authority decisions.
+model: turns
+timeseries: recorded_at
+dimensions:
+  - {name: agent_id, display_name: Agent, column: agent_id}
+  - {name: outcome, display_name: Outcome, column: outcome}
+  - {name: primary_model, display_name: Primary model, column: primary_model}
+  - {name: channel, display_name: Channel, column: channel}
+measures:
+  - {name: turns, display_name: Turns, expression: COUNT(*), format_preset: humanize}
+  - {name: answered_rate, display_name: Answered, description: "task_success_rate SLO", expression: "AVG(CAST(answered AS DOUBLE))", format_preset: percentage}
+  - {name: escalation_rate, display_name: Escalated to a person, description: "escalation_rate SLO", expression: "AVG(CAST(escalated AS DOUBLE))", format_preset: percentage}
+  - {name: loop_abort_rate, display_name: Loop aborted, description: "loop_abort_rate SLO", expression: "AVG(CAST(loop_aborted AS DOUBLE))", format_preset: percentage}
+  - {name: p50_latency, display_name: p50 turn latency, expression: "QUANTILE_CONT(latency_ms, 0.5)", format_preset: interval_ms}
+  - {name: p95_latency, display_name: p95 turn latency, expression: "QUANTILE_CONT(latency_ms, 0.95)", format_preset: interval_ms}
+  - {name: tokens_per_turn, display_name: Tokens per turn, expression: AVG(total_tokens), format_preset: humanize}
+  - {name: total_tokens, display_name: Tokens, expression: SUM(total_tokens), format_preset: humanize}
+  - {name: model_calls_per_turn, display_name: Model calls per turn, expression: AVG(llm_calls), format_preset: humanize}
+  - {name: backup_share, display_name: Served by a backup model, expression: "SUM(backup_calls) / NULLIF(SUM(llm_calls), 0)", format_preset: percentage}
+  - {name: model_failure_rate, display_name: Model calls failed, expression: "SUM(failed_llm_calls) / NULLIF(SUM(llm_calls), 0)", format_preset: percentage}
+  - {name: tool_failure_rate, display_name: Tool calls failed, description: "tool_failure_rate SLO", expression: "SUM(tool_failures_executed) / NULLIF(SUM(tool_calls_executed), 0)", format_preset: percentage}
+  - {name: actions_denied, display_name: Actions denied, expression: SUM(actions_denied), format_preset: humanize}
+  - {name: actions_escalated, display_name: Actions escalated, expression: SUM(actions_escalated), format_preset: humanize}
+  - {name: actions_ungoverned, display_name: Ungoverned actions, expression: SUM(actions_ungoverned), format_preset: humanize}
+  - {name: unverified_claims, display_name: Unverified claims, expression: SUM(unverified_claims), format_preset: humanize}

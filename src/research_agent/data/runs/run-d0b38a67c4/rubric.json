@@ -1,0 +1,174 @@
+{
+  "kind": "rubric",
+  "artifact_id": "run-d0b38a67c4",
+  "payload": {
+    "items": [
+      {
+        "item_id": "R1",
+        "text": "Every factual sentence in the report cites collected evidence.",
+        "check": {
+          "kind": "deterministic",
+          "name": "citations_per_claim",
+          "params": {
+            "min_citations": 1
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R2",
+        "text": "Cited claims are supported by their quoted spans.",
+        "check": {
+          "kind": "nli",
+          "name": "claims_entailed",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R3",
+        "text": "Findings come from at least two independent domains.",
+        "check": {
+          "kind": "deterministic",
+          "name": "distinct_domains",
+          "params": {
+            "min_domains": 2
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": false,
+        "weight": 1.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R4",
+        "text": "The findings answer the question as asked.",
+        "check": {
+          "kind": "judge",
+          "name": "user_item",
+          "params": {}
+        },
+        "threshold": 0.7,
+        "must_pass": false,
+        "weight": 1.0,
+        "origin": "template",
+        "maps_to": []
+      },
+      {
+        "item_id": "R5",
+        "text": "The report covers 'model development' with a citation.",
+        "check": {
+          "kind": "deterministic",
+          "name": "criterion_evidence",
+          "params": {
+            "min_citations": 1,
+            "criterion": "model development"
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "criterion",
+        "maps_to": [
+          "model development"
+        ]
+      },
+      {
+        "item_id": "R6",
+        "text": "The report covers 'impact on software engineering' with a citation.",
+        "check": {
+          "kind": "deterministic",
+          "name": "criterion_evidence",
+          "params": {
+            "min_citations": 1,
+            "criterion": "impact on software engineering"
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "criterion",
+        "maps_to": [
+          "impact on software engineering"
+        ]
+      },
+      {
+        "item_id": "R7",
+        "text": "Primary sources are cited where they exist.",
+        "check": {
+          "kind": "deterministic",
+          "name": "primary_sources_cited",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": false,
+        "weight": 1.0,
+        "origin": "source_policy",
+        "maps_to": [
+          "primary_sources"
+        ]
+      },
+      {
+        "item_id": "R8",
+        "text": "Cited sources fall within the 30-day recency window.",
+        "check": {
+          "kind": "deterministic",
+          "name": "recency_window",
+          "params": {
+            "days": 30
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 2.0,
+        "origin": "source_policy",
+        "maps_to": [
+          "recency"
+        ]
+      },
+      {
+        "item_id": "R9",
+        "text": "Every cited link was fetched and resolved.",
+        "check": {
+          "kind": "deterministic",
+          "name": "links_resolved",
+          "params": {}
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 2.0,
+        "origin": "source_policy",
+        "maps_to": [
+          "links_resolved"
+        ]
+      },
+      {
+        "item_id": "R10",
+        "text": "The report establishes at least 1 cited finding(s).",
+        "check": {
+          "kind": "deterministic",
+          "name": "findings_present",
+          "params": {
+            "min_findings": 1
+          }
+        },
+        "threshold": 1.0,
+        "must_pass": true,
+        "weight": 3.0,
+        "origin": "template",
+        "maps_to": []
+      }
+    ]
+  },
+  "content_hash": "e75df24a97c2aec819e22e89e9531c96961004383bbe0fb50cb1c4274eff0a80",
+  "frozen_at": "2026-10-02T03:51:17.970733Z"
+}

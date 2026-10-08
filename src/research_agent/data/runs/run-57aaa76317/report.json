@@ -1,0 +1,121 @@
+{
+  "kind": "report",
+  "artifact_id": "run-57aaa76317",
+  "payload": {
+    "title": "Top AI News Related to Impact on Software Jobs in Last 2 Months",
+    "status": "PARTIAL",
+    "sections": [
+      {
+        "heading": "Findings",
+        "body": "Cisco cut nearly 4,000 jobs, about 5% of its workforce, to shift investment toward AI, cybersecurity, silicon, and optics [E1]."
+      },
+      {
+        "heading": "Details",
+        "body": "Cisco cut nearly 4,000 jobs (around 5% of its workforce) to shift investment toward AI, cybersecurity, silicon, and optics [E1]."
+      },
+      {
+        "heading": "Known unknowns",
+        "body": "- None declared during scoping."
+      },
+      {
+        "heading": "Coverage & Limits",
+        "body": "- R5: The report covers 'job losses' with a citation. — 0/1, scored 0.00 of the 1 required; found: job losses; run stopped: budget exhausted (fetches). Tried: AI job losses software roles last 2 months.\n- R6: The report covers 'new roles' with a citation. — 0/1, scored 0.00 of the 1 required; found: new roles; run stopped: budget exhausted (fetches). Tried: new AI roles software skill changes hiring trends last 2 months.\n- R7: The report covers 'skill changes' with a citation. — 0/1, scored 0.00 of the 1 required; found: skill changes; run stopped: budget exhausted (fetches). Tried: new AI roles software skill changes hiring trends last 2 months.\n- R8: The report covers 'or company hiring trends' with a citation. — 0/1, scored 0.00 of the 1 required; found: or company hiring trends; run stopped: budget exhausted (fetches). Tried: new AI roles software skill changes hiring trends last 2 months.\n- 4 source(s) rejected — outside the approved 60-day recency window. e.g. https://www.pin.com/blog/tech-job-market-report, https://www.naceweb.org/job-market/trends-and-predictions/demand-for-ai-skills-in-entry-level-jobs-nearly-triples-since-fall-2025 (+2 more in the archived report)\n- 1 source(s) rejected — blocked or paywalled. e.g. https://www.pwc.com/gx/en/services/ai/ai-jobs-barometer.html\n- Budget: Q1: fetches exhausted."
+      }
+    ],
+    "citations": [
+      {
+        "entry_id": "E1",
+        "url": "https://aimultiple.com/ai-job-loss",
+        "span": "Cisco cut nearly 4,000 jobs (around 5% of its workforce) to shift investment toward AI, cybersecurity, silicon, and optics.",
+        "page_hash": "3c88aab95a423b6946ba1c1aea04f38be23756910a8b586953c24f08cca070d3",
+        "retrieved_at": "2026-10-02T13:37:13.104850Z"
+      }
+    ],
+    "limits": [
+      {
+        "item_id": "R5",
+        "text": "The report covers 'job losses' with a citation.",
+        "tried_queries": [
+          "AI job losses software roles last 2 months"
+        ],
+        "sources_examined": [
+          "https://www.pwc.com/gx/en/services/ai/ai-jobs-barometer.html",
+          "https://www.pin.com/blog/tech-job-market-report",
+          "https://aimultiple.com/ai-job-loss",
+          "https://www.naceweb.org/job-market/trends-and-predictions/demand-for-ai-skills-in-entry-level-jobs-nearly-triples-since-fall-2025",
+          "https://www.linkedin.com/posts/robertbowley_the-ai-shift-where-are-all-the-job-losses-activity-7392495955893186561-CPAc",
+          "https://joshbersin.com/2026/03/why-ai-is-a-massive-job-creation-technology-despite-what-you-think"
+        ],
+        "reason": "0/1, scored 0.00 of the 1 required; found: job losses; run stopped: budget exhausted (fetches)"
+      },
+      {
+        "item_id": "R6",
+        "text": "The report covers 'new roles' with a citation.",
+        "tried_queries": [
+          "new AI roles software skill changes hiring trends last 2 months"
+        ],
+        "sources_examined": [
+          "https://www.pwc.com/gx/en/services/ai/ai-jobs-barometer.html",
+          "https://www.pin.com/blog/tech-job-market-report",
+          "https://aimultiple.com/ai-job-loss",
+          "https://www.naceweb.org/job-market/trends-and-predictions/demand-for-ai-skills-in-entry-level-jobs-nearly-triples-since-fall-2025",
+          "https://www.linkedin.com/posts/robertbowley_the-ai-shift-where-are-all-the-job-losses-activity-7392495955893186561-CPAc",
+          "https://joshbersin.com/2026/03/why-ai-is-a-massive-job-creation-technology-despite-what-you-think"
+        ],
+        "reason": "0/1, scored 0.00 of the 1 required; found: new roles; run stopped: budget exhausted (fetches)"
+      },
+      {
+        "item_id": "R7",
+        "text": "The report covers 'skill changes' with a citation.",
+        "tried_queries": [
+          "new AI roles software skill changes hiring trends last 2 months"
+        ],
+        "sources_examined": [
+          "https://www.pwc.com/gx/en/services/ai/ai-jobs-barometer.html",
+          "https://www.pin.com/blog/tech-job-market-report",
+          "https://aimultiple.com/ai-job-loss",
+          "https://www.naceweb.org/job-market/trends-and-predictions/demand-for-ai-skills-in-entry-level-jobs-nearly-triples-since-fall-2025",
+          "https://www.linkedin.com/posts/robertbowley_the-ai-shift-where-are-all-the-job-losses-activity-7392495955893186561-CPAc",
+          "https://joshbersin.com/2026/03/why-ai-is-a-massive-job-creation-technology-despite-what-you-think"
+        ],
+        "reason": "0/1, scored 0.00 of the 1 required; found: skill changes; run stopped: budget exhausted (fetches)"
+      },
+      {
+        "item_id": "R8",
+        "text": "The report covers 'or company hiring trends' with a citation.",
+        "tried_queries": [
+          "new AI roles software skill changes hiring trends last 2 months"
+        ],
+        "sources_examined": [
+          "https://www.pwc.com/gx/en/services/ai/ai-jobs-barometer.html",
+          "https://www.pin.com/blog/tech-job-market-report",
+          "https://aimultiple.com/ai-job-loss",
+          "https://www.naceweb.org/job-market/trends-and-predictions/demand-for-ai-skills-in-entry-level-jobs-nearly-triples-since-fall-2025",
+          "https://www.linkedin.com/posts/robertbowley_the-ai-shift-where-are-all-the-job-losses-activity-7392495955893186561-CPAc",
+          "https://joshbersin.com/2026/03/why-ai-is-a-massive-job-creation-technology-despite-what-you-think"
+        ],
+        "reason": "0/1, scored 0.00 of the 1 required; found: or company hiring trends; run stopped: budget exhausted (fetches)"
+      }
+    ],
+    "rejected_sources": [
+      "https://joshbersin.com/2026/03/why-ai-is-a-massive-job-creation-technology-despite-what-you-think",
+      "https://www.linkedin.com/posts/robertbowley_the-ai-shift-where-are-all-the-job-losses-activity-7392495955893186561-CPAc",
+      "https://www.naceweb.org/job-market/trends-and-predictions/demand-for-ai-skills-in-entry-level-jobs-nearly-triples-since-fall-2025",
+      "https://www.pin.com/blog/tech-job-market-report",
+      "https://www.pwc.com/gx/en/services/ai/ai-jobs-barometer.html"
+    ],
+    "rejected_codes": {
+      "https://www.pwc.com/gx/en/services/ai/ai-jobs-barometer.html": "blocked",
+      "https://www.pin.com/blog/tech-job-market-report": "recency",
+      "https://www.naceweb.org/job-market/trends-and-predictions/demand-for-ai-skills-in-entry-level-jobs-nearly-triples-since-fall-2025": "recency",
+      "https://www.linkedin.com/posts/robertbowley_the-ai-shift-where-are-all-the-job-losses-activity-7392495955893186561-CPAc": "recency",
+      "https://joshbersin.com/2026/03/why-ai-is-a-massive-job-creation-technology-despite-what-you-think": "recency"
+    },
+    "budget_notes": [
+      "Q1: fetches exhausted"
+    ],
+    "known_unknowns": []
+  },
+  "content_hash": "21c95b315f54449fb4a5bc9f3b296ac06221b775f47aa70f249774cb228b45dc",
+  "frozen_at": "2026-10-02T13:37:58.390809Z"
+}

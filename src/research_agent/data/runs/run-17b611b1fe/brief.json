@@ -1,0 +1,41 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-17b611b1fe",
+  "payload": {
+    "archetype": "general",
+    "topic": "impact of mirror neurons on learning",
+    "purpose": "",
+    "decision": "",
+    "criteria": [
+      "impact of mirror neurons on learning"
+    ],
+    "options": [],
+    "claims": [],
+    "concepts": [],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": true,
+      "min_distinct_domains": 1
+    },
+    "recency_days": null,
+    "geography": "",
+    "depth": "medium",
+    "deliverable_format": "",
+    "budget": {
+      "max_searches": 5,
+      "max_fetches": 12,
+      "max_tokens": 120000,
+      "max_seconds": 600.0,
+      "max_rounds": 2,
+      "max_dag_nodes": 4,
+      "max_gap_fill_rounds": 1,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "e04c69285f5cba162085ad32c6b92e980212dd96e75a890ba606c5030b8956b9",
+  "frozen_at": "2026-10-04T04:35:16.247644Z"
+}

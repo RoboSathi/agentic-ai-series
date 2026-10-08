@@ -1,0 +1,55 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-5e25b0fd08",
+  "payload": {
+    "archetype": "explainer",
+    "topic": "Impact of AI on software engineering jobs in the last 3 months",
+    "purpose": "",
+    "decision": "",
+    "criteria": [],
+    "options": [],
+    "claims": [],
+    "concepts": [],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": false,
+      "min_distinct_domains": 1
+    },
+    "recency_days": 90,
+    "geography": "",
+    "depth": "small",
+    "deliverable_format": "",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [
+      {
+        "item_id": "audience",
+        "question": "who the explanation is for and what they already know",
+        "reason": "closed_early"
+      },
+      {
+        "item_id": "concepts",
+        "question": "the sub-concepts the explanation must cover",
+        "reason": "closed_early"
+      },
+      {
+        "item_id": "purpose",
+        "question": "what the answer will be used for",
+        "reason": "closed_early"
+      }
+    ],
+    "private_terms": []
+  },
+  "content_hash": "5d87562ee6a983df09414f42cafe23a3d29975bbb41a7e71dd748878ba87a899",
+  "frozen_at": "2026-10-02T16:00:02.682545Z"
+}

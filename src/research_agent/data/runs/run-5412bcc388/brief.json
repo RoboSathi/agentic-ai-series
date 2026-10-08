@@ -1,0 +1,41 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-5412bcc388",
+  "payload": {
+    "archetype": "general",
+    "topic": "choosing a vector database for 10 million documents",
+    "purpose": "",
+    "decision": "",
+    "criteria": [
+      "10 million documents"
+    ],
+    "options": [],
+    "claims": [],
+    "concepts": [],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": false,
+      "min_distinct_domains": 1
+    },
+    "recency_days": null,
+    "geography": "",
+    "depth": "small",
+    "deliverable_format": "",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "b9e1bb8ee862bcbf7f04da9376ba7015906aca7bf649853feec4c4be1d86208d",
+  "frozen_at": "2026-10-02T10:58:41.748224Z"
+}

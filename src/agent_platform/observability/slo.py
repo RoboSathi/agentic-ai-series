@@ -12,15 +12,17 @@ from agent_platform.logging import get_logger
 from agent_platform.observability.types import SLOMeasurement, SLOStatus
 
 # Metrics where a *lower* observed value is better (rates of bad outcomes).
-_LOWER_IS_BETTER = {
-    "unauthorized_action_rate",
-    "hallucination_rate",
-    "escalation_rate",
-    "loop_abort_rate",
-    "tool_failure_rate",
-    "policy_violation_rate",
-    "cost_per_success_usd",
-}
+# Public: the analytics mart computes error budgets with the same rule.
+LOWER_IS_BETTER = frozenset(
+    {
+        "unauthorized_action_rate",
+        "hallucination_rate",
+        "escalation_rate",
+        "loop_abort_rate",
+        "tool_failure_rate",
+        "policy_violation_rate",
+    }
+)
 
 
 @runtime_checkable
@@ -77,7 +79,7 @@ class SLORegistry:
         if target is None:
             return 1.0
         observed = self.observed(slo_name)
-        if slo_name in _LOWER_IS_BETTER:
+        if slo_name in LOWER_IS_BETTER:
             if target == 0:
                 return 1.0 if observed == 0 else 0.0
             return max(0.0, min(1.0, (target - observed) / target))
@@ -90,7 +92,7 @@ class SLORegistry:
         """Current standing of one SLO."""
         target = self._targets.get(metric, 0.0)
         observed = self.observed(metric)
-        within = observed <= target if metric in _LOWER_IS_BETTER else observed >= target
+        within = observed <= target if metric in LOWER_IS_BETTER else observed >= target
         return SLOStatus(
             metric=metric,
             target=target,

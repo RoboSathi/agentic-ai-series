@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from agent_platform.audit import DuckDbAuditLedger
 from agent_platform.commands import (
     CommandError,
     CommandRegistry,
@@ -24,6 +25,7 @@ from agent_platform.commands.harness import HarnessCommand
 from agent_platform.commands.inspection import AuditCommand, ConfigCommand
 from agent_platform.commands.system import ClearCommand
 from agent_platform.config import active_features, get_settings, set_active_features
+from agent_platform.observability.store import DuckDbObservabilityStore
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.tui.command_view import CommandView
 from customer_support_agent.console.commands import QueueCommand
@@ -98,10 +100,9 @@ class TestInspectionCommands:
         assert not result.ok
 
     @pytest.mark.asyncio
-    async def test_an_empty_audit_trail_is_a_result_not_a_failure(
-        self, seeded_pool: SqliteConnectionPool
-    ) -> None:
-        result = await AuditCommand(seeded_pool).run([])
+    async def test_an_empty_audit_trail_is_a_result_not_a_failure(self) -> None:
+        ledger = DuckDbAuditLedger(DuckDbObservabilityStore(":memory:"))
+        result = await AuditCommand(ledger).run([])
         assert result.ok
         assert result.lines
 

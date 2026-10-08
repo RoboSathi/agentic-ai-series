@@ -1,0 +1,44 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-497d3d5685",
+  "payload": {
+    "archetype": "explainer",
+    "topic": "building hallucination guards for LLM responses",
+    "purpose": "",
+    "decision": "",
+    "criteria": [],
+    "options": [],
+    "claims": [],
+    "concepts": [
+      "detection methods",
+      "prevention techniques"
+    ],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": false,
+      "min_distinct_domains": 1
+    },
+    "recency_days": null,
+    "period_start": null,
+    "period_end": null,
+    "geography": "",
+    "depth": "small",
+    "deliverable_format": "",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "92793b2c4da631c622ef271e7735ac8b47310d1854591517f5b3933c68ab5a4e",
+  "frozen_at": "2026-10-04T17:31:52.467968Z"
+}

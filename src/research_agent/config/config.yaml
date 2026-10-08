@@ -172,17 +172,17 @@ web:
     max_attempts: 2
 
 artifacts:
-  root: data/research_runs
+  root: src/research_agent/data/runs
 
 persistence:
-  db_path: data/research_agent.db
+  db_path: src/research_agent/db/agent.db
 
 durability:
-  db_path: data/research_checkpoints.db
+  db_path: src/research_agent/db/checkpoints.db
 
 memory:
   episodic:
-    path: data/research_episodic
+    path: logs/memory/research_agent
 
 security:
   prompt_injection:

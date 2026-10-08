@@ -1,0 +1,305 @@
+{
+  "kind": "report",
+  "artifact_id": "run-bb9a77b706",
+  "payload": {
+    "title": "MCP + DuckDB + Rill Dashboard Integration",
+    "status": "PARTIAL",
+    "sections": [
+      {
+        "heading": "Summary",
+        "body": "The Model Context Protocol (MCP) follows a client-host-server architecture where each host can run multiple client instances [E1][E4]. MCP is open and enables integration between LLM applications and external data sources and tools [E12][E23]. The DuckDB MCP server is distributed via the mcp-server-motherduck package. Install it using uv (preferred for Python CLI tools) or pip [E8]. The server acts as a bridge between DuckDB and AI-driven environments, such as Cursor or Claude, allowing these tools to execute SQL commands and return results in real time. It supports both local DuckDB instances and cloud-based MotherDuck databases [E10]. Rill's default embedded engine is DuckDB [E27]. Rill Developer is an open-source, code-first BI tool that enables software engineers to profile data sets, design data models, and deploy dashboards to Rill Cloud [E31]. Users will follow the same basic steps that include downloading and installing Rill, configuring MotherDuck as a source, entering a SQL expression to return a single table and clicking import [E39][E40]. Together, these components allow AI assistants to query DuckDB databases and surface results in Rill-powered dashboards [E13][E30]."
+      },
+      {
+        "heading": "Concepts",
+        "body": "MCP follows a client-host-server architecture with stateful sessions; each client connects to exactly one server [E3][E6][E23]. Servers expose resources, tools, and prompts via MCP primitives [E7][E23]. The server acts as a bridge between DuckDB and AI-driven environments, such as Cursor or Claude, allowing these tools to execute SQL commands and return results in real time. It supports both local DuckDB instances and cloud-based MotherDuck databases [E10]. The DuckDB/MotherDuck MCP server allows the AI copilot (Cursor) to directly run queries against local DuckDB databases and/or remote MotherDuck databases and interpret the results [E13]. This guide assumes you'll be using Rill's default embedded engine, DuckDB [E27]. Rill Developer is an open-source, code-first BI tool that enables software engineers to profile data sets, design data models, and deploy dashboards to Rill Cloud [E31]. By default, Rill includes DuckDB as an embedded OLAP engine that ingests data from data sources and powers your dashboards. When you start a new project, you'll see a connectors/duckdb.yaml file alongside other project files. No additional configuration is needed to use DuckDB with Rill Developer or Rill Cloud [E36]. Because Rill is already built with DuckDB embedded, no additional type wrangling is needed, the data in MotherDuck is \"production-ready\" for Rill dashboards [E41]. MCP primitives (tools, prompts, resources) connect AI models to external data [E23][E25][E26]."
+      },
+      {
+        "heading": "Examples",
+        "body": "Install the DuckDB MCP server with uv pip install mcp-server-motherduck or pip install mcp-server-motherduck [E8]. Configure an IDE such as Cursor by adding a JSON entry with command uvx and args mcp-server-motherduck, --db-path md:, and optionally --motherduck-token [E9][E14][E15]. Test the Configuration: Restart your IDE and run a test query: SELECT 1 AS test; If successful, the server returns the result, confirming the setup [E11]. SELECT mcp_publish_table('products', 'data://tables/products', 'json'); [E17] mcp_publish_execution_tool(name, desc, sql, props, required, bindings) - Publish execution tools with prepared parameter binding [E18]. Create a Rill project with curl https://rill.sh | sh and rill start my-rill-project, then ingest data from MotherDuck by configuring MotherDuck as a source and entering a SQL expression [E28][E40]. Generate an AI-powered dashboard in Rill via the side menu option \"Generate dashboard with AI\" [E30]."
+      },
+      {
+        "heading": "Known unknowns",
+        "body": "- None declared during scoping."
+      },
+      {
+        "heading": "Coverage & Limits",
+        "body": "- R1: Every factual sentence in the report cites collected evidence. — 23/28, scored 0.82 of the 1 required; found: The DuckDB MCP server is distributed via the mcp-server-motherduck package., The server acts as a bridge between DuckDB and AI-driven environments, such as Cursor or Claude, allowing these tools to execute SQL commands and return results in real time., The server acts as a bridge between DuckDB and AI-driven environments, such as Cursor or Claude, allowing these tools to execute SQL commands and return results in real time., By default, Rill includes DuckDB as an embedded OLAP engine that ingests data from data sources and powers your dashboards.; run stopped: every sub-concept is covered in two sources; the critique found the answer incomplete: The claims provide solid coverage of MCP architecture, DuckDB/MotherDuck MCP server setup, and Rill Developer's DuckDB integration for dashboards. However, the critical intersection — how to place text-to-SQL in a chat UI that calls the MCP server and then visualizes results in Rill — is largely absent. There are no claims describing the chat UI component, the natural-language-to-SQL flow via MCP tools, or the end-to-end wiring between chat → MCP server → DuckDB → Rill dashboard.. Tried: Model Context Protocol MCP server client architecture specification, MCP protocol specification tools resources prompts, build MCP server DuckDB SQL execution example, MCP server DuckDB integration tutorial Python, Rill Developer DuckDB dashboard analytics integration, Rill dashboard DuckDB data source configuration, chat UI MCP client text-to-SQL implementation, MCP client chat interface natural language SQL.\n- R2: Cited claims are supported by their quoted spans. — 21/23, scored 0.91 of the 1 required; found: It supports both local DuckDB instances and cloud-based MotherDuck databases [E10]., It supports both local DuckDB instances and cloud-based MotherDuck databases [E10].; run stopped: every sub-concept is covered in two sources; the critique found the answer incomplete: The claims provide solid coverage of MCP architecture, DuckDB/MotherDuck MCP server setup, and Rill Developer's DuckDB integration for dashboards. However, the critical intersection — how to place text-to-SQL in a chat UI that calls the MCP server and then visualizes results in Rill — is largely absent. There are no claims describing the chat UI component, the natural-language-to-SQL flow via MCP tools, or the end-to-end wiring between chat → MCP server → DuckDB → Rill dashboard.. Tried: Model Context Protocol MCP server client architecture specification, MCP protocol specification tools resources prompts, build MCP server DuckDB SQL execution example, MCP server DuckDB integration tutorial Python, Rill Developer DuckDB dashboard analytics integration, Rill dashboard DuckDB data source configuration, chat UI MCP client text-to-SQL implementation, MCP client chat interface natural language SQL.\n- 3 source(s) rejected — blocked or paywalled. e.g. https://deepwiki.com/modelcontextprotocol/servers/1.1-mcp-protocol-and-architecture, https://medium.com/@msapeker/building-a-resilient-multi-agent-text-to-sql-chatbot-with-mcp-langgraph-chainlit-f5a5bf593329 (+1 more in the archived report)\n- Budget: Q5: searches exhausted.\n- Budget: Q6: searches exhausted."
+      }
+    ],
+    "citations": [
+      {
+        "entry_id": "E1",
+        "url": "https://modelcontextprotocol.io/specification/2025-11-25/architecture",
+        "span": "The Model Context Protocol (MCP) follows a client-host-server architecture where each\nhost can run multiple client instances.",
+        "page_hash": "b16ac0c7a12c969e2dfbbf52c37721f7aae77ee5988174367d3adf1d1d8234fd",
+        "retrieved_at": "2026-10-05T16:20:27.992519Z"
+      },
+      {
+        "entry_id": "E4",
+        "url": "https://modelcontextprotocol.io/specification/2026-07-28/architecture",
+        "span": "The Model Context Protocol (MCP) follows a client-host-server architecture where each\nhost can run multiple client instances.",
+        "page_hash": "0ee52ffe40f4399a386c83ccaff2430e602a5465b404797105d0f09423249bb7",
+        "retrieved_at": "2026-10-05T16:20:28.028375Z"
+      },
+      {
+        "entry_id": "E12",
+        "url": "https://modelcontextprotocol.info/specification/",
+        "span": "The Model Context Protocol (MCP) is an open protocol that enables seamless integration between LLM applications and external data sources and tools.",
+        "page_hash": "daf220b267e7129e84cd5e050c167674d577f7d5952e0b1848692704e7f568cb",
+        "retrieved_at": "2026-10-05T16:20:28.383782Z"
+      },
+      {
+        "entry_id": "E23",
+        "url": "https://dev.to/aws-heroes/mcp-prompts-and-resources-the-primitives-youre-not-using-3oo1",
+        "span": "The Model Context Protocol (MCP, spec 2025-11-25) defines three primitives for connecting AI models to external services: tools, prompts, and resources.",
+        "page_hash": "ceacfd27b198ccdb4b67d4683be3fa035bb5e0a660bc63aa9016ea753ae4b22c",
+        "retrieved_at": "2026-10-05T16:20:55.671173Z"
+      },
+      {
+        "entry_id": "E8",
+        "url": "https://apidog.com/blog/duckdb-mcp-server",
+        "span": "The DuckDB MCP server is distributed via the mcp-server-motherduck package. Install it using uv (preferred for Python CLI tools) or pip:\nInstall uv (Optional):pip install uv\n\nInstall the MCP Server:uv pip install mcp-server-motherduck\n\nOr, with pip:pip install mcp-server-motherduck",
+        "page_hash": "070d7f02ab610ea4d1b3283c07eb72a19b31216978e42829cb83e43a95b3bd2c",
+        "retrieved_at": "2026-10-05T16:20:32.344247Z"
+      },
+      {
+        "entry_id": "E10",
+        "url": "https://apidog.com/blog/duckdb-mcp-server",
+        "span": "The server acts as a bridge between DuckDB and AI-driven environments, such as Cursor or Claude, allowing these tools to execute SQL commands and return results in real time. It supports both local DuckDB instances and cloud-based MotherDuck databases, offering flexibility for diverse use cases. Additionally, the DuckDB MCP server includes security features like read-only mode and read-scaling tokens, ensuring safe integration with third-party tools.",
+        "page_hash": "070d7f02ab610ea4d1b3283c07eb72a19b31216978e42829cb83e43a95b3bd2c",
+        "retrieved_at": "2026-10-05T16:20:32.344247Z"
+      },
+      {
+        "entry_id": "E27",
+        "url": "https://docs.rilldata.com/developers/get-started/quickstart",
+        "span": "This guide assumes you'll be using Rill's default embedded engine, DuckDB.",
+        "page_hash": "503239116851bd9b44c67a70777740e884534893e8655d8a44baade5c21f4c5d",
+        "retrieved_at": "2026-10-05T16:21:53.961031Z"
+      },
+      {
+        "entry_id": "E31",
+        "url": "https://www.rilldata.com/blog/why-we-built-rill-with-duckdb",
+        "span": "Rill Developer is an open-source, code-first BI tool that enables software engineers to profile data sets, design data models, and deploy dashboards to Rill Cloud.",
+        "page_hash": "5e91b70d28561be309dfb5f591bd52e0f3cc7e87a534a88c6bc4bc8582a9c9f4",
+        "retrieved_at": "2026-10-05T16:21:54.410365Z"
+      },
+      {
+        "entry_id": "E39",
+        "url": "http://www.rilldata.com/blog/fast-duckdb-powered-dashboards",
+        "span": "At Rill, we’ve been longtime fans of DuckDB, in fact it’s the engine that powers auto-profiling and interactive modeling in Rill Developer, and the dashboards in Rill Cloud.",
+        "page_hash": "38272cad3c5df48d68da8567b73fde1f86e5e6f23e617f4c610033e9b227ec25",
+        "retrieved_at": "2026-10-05T16:21:56.455196Z"
+      },
+      {
+        "entry_id": "E40",
+        "url": "http://www.rilldata.com/blog/fast-duckdb-powered-dashboards",
+        "span": "Users will follow the same basic steps that include\ndownloading and installing Rill \n configuring MotherDuck as a source\nentering a SQL expression to return a single table and clicking import",
+        "page_hash": "38272cad3c5df48d68da8567b73fde1f86e5e6f23e617f4c610033e9b227ec25",
+        "retrieved_at": "2026-10-05T16:21:56.455196Z"
+      },
+      {
+        "entry_id": "E13",
+        "url": "https://motherduck.com/blog/faster-data-pipelines-with-mcp-duckdb-ai",
+        "span": "The DuckDB/MotherDuck MCP server allows the AI copilot (Cursor) to directly run queries against local DuckDB databases and/or remote MotherDuck databases and interpret the results.",
+        "page_hash": "d6b4eac69ee400d9851fe57bece358a441eeb3d927b22059864f84c77585f107",
+        "retrieved_at": "2026-10-05T16:20:42.418537Z"
+      },
+      {
+        "entry_id": "E30",
+        "url": "https://docs.rilldata.com/developers/get-started/quickstart",
+        "span": "Select the model's side menu and select \"Generate dashboard with AI\". Watch as Rill configures your metrics view and creates an Explore dashboard.",
+        "page_hash": "503239116851bd9b44c67a70777740e884534893e8655d8a44baade5c21f4c5d",
+        "retrieved_at": "2026-10-05T16:21:53.961031Z"
+      },
+      {
+        "entry_id": "E3",
+        "url": "https://modelcontextprotocol.io/specification/2025-11-25/architecture",
+        "span": "Each client is created by the host and maintains an isolated server connection:\n\nEstablishes one stateful session per server",
+        "page_hash": "b16ac0c7a12c969e2dfbbf52c37721f7aae77ee5988174367d3adf1d1d8234fd",
+        "retrieved_at": "2026-10-05T16:20:27.992519Z"
+      },
+      {
+        "entry_id": "E6",
+        "url": "https://modelcontextprotocol.io/specification/2026-07-28/architecture",
+        "span": "Each client is created by the host and communicates with exactly one server:",
+        "page_hash": "0ee52ffe40f4399a386c83ccaff2430e602a5465b404797105d0f09423249bb7",
+        "retrieved_at": "2026-10-05T16:20:28.028375Z"
+      },
+      {
+        "entry_id": "E7",
+        "url": "https://modelcontextprotocol.io/specification/2026-07-28/architecture",
+        "span": "Servers provide specialized context and capabilities:\n\nExpose resources, tools and prompts via MCP primitives\n\nOperate independently with focused responsibilities\n\nRequest client input (sampling, elicitation, roots) via InputRequiredResult within a reply\n\nMust respect security constraints\n\nCan be local processes or remote services",
+        "page_hash": "0ee52ffe40f4399a386c83ccaff2430e602a5465b404797105d0f09423249bb7",
+        "retrieved_at": "2026-10-05T16:20:28.028375Z"
+      },
+      {
+        "entry_id": "E36",
+        "url": "https://docs.rilldata.com/developers/build/connectors/olap/duckdb",
+        "span": "By default, Rill includes DuckDB as an embedded OLAP engine that ingests data from data sources and powers your dashboards. When you start a new project, you'll see a connectors/duckdb.yaml file alongside other project files. No additional configuration is needed to use DuckDB with Rill Developer or Rill Cloud.",
+        "page_hash": "da574bcdf697ffda9ba48039a88bf4bd06dc5594f7d934be2a124610adbe3eb2",
+        "retrieved_at": "2026-10-05T16:21:53.920245Z"
+      },
+      {
+        "entry_id": "E41",
+        "url": "http://www.rilldata.com/blog/fast-duckdb-powered-dashboards",
+        "span": "Because Rill is already built with DuckDB embedded, no additional type wrangling is needed, the data in MotherDuck is “production-ready” for Rill dashboards.",
+        "page_hash": "38272cad3c5df48d68da8567b73fde1f86e5e6f23e617f4c610033e9b227ec25",
+        "retrieved_at": "2026-10-05T16:21:56.455196Z"
+      },
+      {
+        "entry_id": "E25",
+        "url": "https://dev.to/aws-heroes/mcp-prompts-and-resources-the-primitives-youre-not-using-3oo1",
+        "span": "Clients discover available prompts via prompts/list -- parallel to tools/list -- and present them to users as slash commands, menu items, or quick actions.",
+        "page_hash": "ceacfd27b198ccdb4b67d4683be3fa035bb5e0a660bc63aa9016ea753ae4b22c",
+        "retrieved_at": "2026-10-05T16:20:55.671173Z"
+      },
+      {
+        "entry_id": "E26",
+        "url": "https://dev.to/aws-heroes/mcp-prompts-and-resources-the-primitives-youre-not-using-3oo1",
+        "span": "At the protocol level, a prompt is simple: the client calls prompts/get with a name and arguments, and the server returns a GetPromptResult containing a sequence of PromptMessage values.",
+        "page_hash": "ceacfd27b198ccdb4b67d4683be3fa035bb5e0a660bc63aa9016ea753ae4b22c",
+        "retrieved_at": "2026-10-05T16:20:55.671173Z"
+      },
+      {
+        "entry_id": "E9",
+        "url": "https://apidog.com/blog/duckdb-mcp-server",
+        "span": "To integrate the DuckDB MCP server with your IDE or AI tool, configure it using a JSON file. Below is an example for Cursor:\nAccess Cursor Settings: Navigate to Settings > Cursor Settings > MCP > Add a new Global MCP Server.\nCreate Configuration: Add the following JSON configuration:{\n \"mcpServers\": {\n \"mcp-server-motherduck\": {\n \"command\": \"uvx\",\n \"args\": [\n \"mcp-server-motherduck\",\n \"--db-path\",\n \"md:\",\n \"--motherduck-token\",\n \"<YOUR_MOTHERDUCK_TOKEN_HERE>\"\n ]\n }\n }\n}\n\nReplace <YOUR_MOTHERDUCK_TOKEN_HERE> with your MotherDuck token for cloud access. For local databases, use:{\n \"mcpServers\": {\n \"mcp-server-motherduck\": {\n \"command\": \"uvx\",\n \"args\": [\n \"mcp-server-motherduck\",\n \"--db-path\",\n \"/path/to/your/local.db\"\n ]\n }\n }\n}\n\nFor in-memory databases, use --db-path :memory:.\nEnable Read-Only Mode (Optional): To prevent data modifications, add the --read-only flag:{\n \"mcpServers\": {\n \"mcp-server-motherduck\": {\n \"command\": \"uvx\",\n \"args\": [\n \"mcp-server-motherduck\",\n \"--db-path\",\n \"/path/to/your/local.db\",\n \"--read-only\"\n ]\n }\n }\n}",
+        "page_hash": "070d7f02ab610ea4d1b3283c07eb72a19b31216978e42829cb83e43a95b3bd2c",
+        "retrieved_at": "2026-10-05T16:20:32.344247Z"
+      },
+      {
+        "entry_id": "E14",
+        "url": "https://motherduck.com/blog/faster-data-pipelines-with-mcp-duckdb-ai",
+        "span": "To install the DuckDB/MotherDuck MCP server in Cursor, go to Settings > Cursor Settings > MCP > Add a new Global MCP Server and add the following JSON configuration:",
+        "page_hash": "d6b4eac69ee400d9851fe57bece358a441eeb3d927b22059864f84c77585f107",
+        "retrieved_at": "2026-10-05T16:20:42.418537Z"
+      },
+      {
+        "entry_id": "E15",
+        "url": "https://motherduck.com/blog/faster-data-pipelines-with-mcp-duckdb-ai",
+        "span": "{\n \"mcpServers\": {\n \"mcp-server-motherduck\": {\n \"command\": \"uvx\", // Assumes uvx is installed and in PATH for running Python CLI tools\n \"args\": [\n \"mcp-server-motherduck\",\n \"--db-path\",\n \"md:\", // Connects to MotherDuck by default. Use a local file path like \"my_local_db.duckdb\" for local DBs.\n \"--motherduck-token\",\n \"<YOUR_MOTHERDUCK_TOKEN_HERE>\" // Required if connecting to MotherDuck\n ]\n }\n }\n}",
+        "page_hash": "d6b4eac69ee400d9851fe57bece358a441eeb3d927b22059864f84c77585f107",
+        "retrieved_at": "2026-10-05T16:20:42.418537Z"
+      },
+      {
+        "entry_id": "E11",
+        "url": "https://apidog.com/blog/duckdb-mcp-server",
+        "span": "Test the Configuration: Restart your IDE and run a test query:SELECT 1 AS test;\n\nIf successful, the server returns the result, confirming the setup.",
+        "page_hash": "070d7f02ab610ea4d1b3283c07eb72a19b31216978e42829cb83e43a95b3bd2c",
+        "retrieved_at": "2026-10-05T16:20:32.344247Z"
+      },
+      {
+        "entry_id": "E17",
+        "url": "https://duckdb.org/community_extensions/extensions/duckdb_mcp.html",
+        "span": "SELECT mcp_publish_table('products', 'data://tables/products', 'json');",
+        "page_hash": "0c14689aefe695749eb70fc36a22f35a36a360c49472ab52d2166e96fd37dfad",
+        "retrieved_at": "2026-10-05T16:20:38.215949Z"
+      },
+      {
+        "entry_id": "E18",
+        "url": "https://duckdb.org/community_extensions/extensions/duckdb_mcp.html",
+        "span": "mcp_publish_execution_tool(name, desc, sql, props, required, bindings) - Publish execution tools with prepared parameter binding",
+        "page_hash": "0c14689aefe695749eb70fc36a22f35a36a360c49472ab52d2166e96fd37dfad",
+        "retrieved_at": "2026-10-05T16:20:38.215949Z"
+      },
+      {
+        "entry_id": "E28",
+        "url": "https://docs.rilldata.com/developers/get-started/quickstart",
+        "span": "Get started with just two commands:\n\ncurl https://rill.sh | sh\nrill start my-rill-project",
+        "page_hash": "503239116851bd9b44c67a70777740e884534893e8655d8a44baade5c21f4c5d",
+        "retrieved_at": "2026-10-05T16:21:53.961031Z"
+      }
+    ],
+    "limits": [
+      {
+        "item_id": "R1",
+        "text": "Every factual sentence in the report cites collected evidence.",
+        "tried_queries": [
+          "Model Context Protocol MCP server client architecture specification",
+          "MCP protocol specification tools resources prompts",
+          "build MCP server DuckDB SQL execution example",
+          "MCP server DuckDB integration tutorial Python",
+          "Rill Developer DuckDB dashboard analytics integration",
+          "Rill dashboard DuckDB data source configuration",
+          "chat UI MCP client text-to-SQL implementation",
+          "MCP client chat interface natural language SQL"
+        ],
+        "sources_examined": [
+          "https://deepwiki.com/modelcontextprotocol/servers/1.1-mcp-protocol-and-architecture",
+          "https://modelcontextprotocol.io/specification/2025-11-25/architecture",
+          "https://modelcontextprotocol.io/specification/2026-07-28/architecture",
+          "https://modelcontextprotocol.info/specification/",
+          "https://apidog.com/blog/duckdb-mcp-server",
+          "https://duckdb.org/community_extensions/extensions/duckdb_mcp.html",
+          "https://motherduck.com/blog/faster-data-pipelines-with-mcp-duckdb-ai",
+          "https://github.com/motherduckdb/mcp-server-motherduck",
+          "https://dev.to/aws-heroes/mcp-prompts-and-resources-the-primitives-youre-not-using-3oo1",
+          "https://medium.com/@msapeker/building-a-resilient-multi-agent-text-to-sql-chatbot-with-mcp-langgraph-chainlit-f5a5bf593329",
+          "https://medium.com/@sanjeebmeister/model-context-protocol-mcp-in-ai-agent-development-text-to-sql-af66b2e4a52c",
+          "https://github.com/Akirachang/text-to-SQL-MCP",
+          "https://anikulkar.substack.com/p/how-to-build-text2sql-agent-using",
+          "https://docs.rilldata.com/developers/build/connectors/olap/duckdb",
+          "https://docs.rilldata.com/developers/get-started/quickstart",
+          "https://www.rilldata.com/blog/why-we-built-rill-with-duckdb",
+          "http://www.rilldata.com/blog/fast-duckdb-powered-dashboards",
+          "https://github.com/Pulkit0111/db_rag_mcp",
+          "https://www.youtube.com/watch?v=Xj29pDlF4QI"
+        ],
+        "reason": "23/28, scored 0.82 of the 1 required; found: The DuckDB MCP server is distributed via the mcp-server-motherduck package., The server acts as a bridge between DuckDB and AI-driven environments, such as Cursor or Claude, allowing these tools to execute SQL commands and return results in real time., The server acts as a bridge between DuckDB and AI-driven environments, such as Cursor or Claude, allowing these tools to execute SQL commands and return results in real time., By default, Rill includes DuckDB as an embedded OLAP engine that ingests data from data sources and powers your dashboards.; run stopped: every sub-concept is covered in two sources; the critique found the answer incomplete: The claims provide solid coverage of MCP architecture, DuckDB/MotherDuck MCP server setup, and Rill Developer's DuckDB integration for dashboards. However, the critical intersection — how to place text-to-SQL in a chat UI that calls the MCP server and then visualizes results in Rill — is largely absent. There are no claims describing the chat UI component, the natural-language-to-SQL flow via MCP tools, or the end-to-end wiring between chat → MCP server → DuckDB → Rill dashboard."
+      },
+      {
+        "item_id": "R2",
+        "text": "Cited claims are supported by their quoted spans.",
+        "tried_queries": [
+          "Model Context Protocol MCP server client architecture specification",
+          "MCP protocol specification tools resources prompts",
+          "build MCP server DuckDB SQL execution example",
+          "MCP server DuckDB integration tutorial Python",
+          "Rill Developer DuckDB dashboard analytics integration",
+          "Rill dashboard DuckDB data source configuration",
+          "chat UI MCP client text-to-SQL implementation",
+          "MCP client chat interface natural language SQL"
+        ],
+        "sources_examined": [
+          "https://deepwiki.com/modelcontextprotocol/servers/1.1-mcp-protocol-and-architecture",
+          "https://modelcontextprotocol.io/specification/2025-11-25/architecture",
+          "https://modelcontextprotocol.io/specification/2026-07-28/architecture",
+          "https://modelcontextprotocol.info/specification/",
+          "https://apidog.com/blog/duckdb-mcp-server",
+          "https://duckdb.org/community_extensions/extensions/duckdb_mcp.html",
+          "https://motherduck.com/blog/faster-data-pipelines-with-mcp-duckdb-ai",
+          "https://github.com/motherduckdb/mcp-server-motherduck",
+          "https://dev.to/aws-heroes/mcp-prompts-and-resources-the-primitives-youre-not-using-3oo1",
+          "https://medium.com/@msapeker/building-a-resilient-multi-agent-text-to-sql-chatbot-with-mcp-langgraph-chainlit-f5a5bf593329",
+          "https://medium.com/@sanjeebmeister/model-context-protocol-mcp-in-ai-agent-development-text-to-sql-af66b2e4a52c",
+          "https://github.com/Akirachang/text-to-SQL-MCP",
+          "https://anikulkar.substack.com/p/how-to-build-text2sql-agent-using",
+          "https://docs.rilldata.com/developers/build/connectors/olap/duckdb",
+          "https://docs.rilldata.com/developers/get-started/quickstart",
+          "https://www.rilldata.com/blog/why-we-built-rill-with-duckdb",
+          "http://www.rilldata.com/blog/fast-duckdb-powered-dashboards",
+          "https://github.com/Pulkit0111/db_rag_mcp",
+          "https://www.youtube.com/watch?v=Xj29pDlF4QI"
+        ],
+        "reason": "21/23, scored 0.91 of the 1 required; found: It supports both local DuckDB instances and cloud-based MotherDuck databases [E10]., It supports both local DuckDB instances and cloud-based MotherDuck databases [E10].; run stopped: every sub-concept is covered in two sources; the critique found the answer incomplete: The claims provide solid coverage of MCP architecture, DuckDB/MotherDuck MCP server setup, and Rill Developer's DuckDB integration for dashboards. However, the critical intersection — how to place text-to-SQL in a chat UI that calls the MCP server and then visualizes results in Rill — is largely absent. There are no claims describing the chat UI component, the natural-language-to-SQL flow via MCP tools, or the end-to-end wiring between chat → MCP server → DuckDB → Rill dashboard."
+      }
+    ],
+    "rejected_sources": [
+      "https://deepwiki.com/modelcontextprotocol/servers/1.1-mcp-protocol-and-architecture",
+      "https://medium.com/@msapeker/building-a-resilient-multi-agent-text-to-sql-chatbot-with-mcp-langgraph-chainlit-f5a5bf593329",
+      "https://medium.com/@sanjeebmeister/model-context-protocol-mcp-in-ai-agent-development-text-to-sql-af66b2e4a52c"
+    ],
+    "rejected_codes": {
+      "https://deepwiki.com/modelcontextprotocol/servers/1.1-mcp-protocol-and-architecture": "blocked",
+      "https://medium.com/@msapeker/building-a-resilient-multi-agent-text-to-sql-chatbot-with-mcp-langgraph-chainlit-f5a5bf593329": "blocked",
+      "https://medium.com/@sanjeebmeister/model-context-protocol-mcp-in-ai-agent-development-text-to-sql-af66b2e4a52c": "blocked"
+    },
+    "budget_notes": [
+      "Q5: searches exhausted",
+      "Q6: searches exhausted"
+    ],
+    "known_unknowns": []
+  },
+  "content_hash": "298ef692cd37db2107050f721c6580c32dd2c8954d7fe6e6f2f7f9b5fd0c6975",
+  "frozen_at": "2026-10-05T16:26:56.673821Z"
+}
