@@ -70,17 +70,24 @@ endif
 PYTHON := ./venv/bin/python
 EVALS := $(PYTHON) -m agent_platform.evals
 
-# Generated data the platform itself owns: `make dummy-data analytics` (a demo analytics world).
-DUMMY_KINDS := analytics
+# Generated data, one command: `make dummy-data csa` (each agent with a <agent>_DATA generator
+# rebuilds its own database), `make dummy-data analytics` (the platform's demo analytics world),
+# bare `make dummy-data` (every kind: agents first, then analytics).
+DATA_AGENTS := $(strip $(foreach a,$(AGENTS),$(if $($(a)_DATA),$(a))))
+DUMMY_KINDS := $(DATA_AGENTS) analytics
 ifeq (dummy-data,$(firstword $(MAKECMDGOALS)))
-DUMMY_KIND := $(word 2,$(MAKECMDGOALS))
-ifneq ($(DUMMY_KIND),)
-$(eval $(DUMMY_KIND):;@:)
+DUMMY_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+DUMMY_KIND := $(or $(DUMMY_ARGS),$(DUMMY_KINDS))
+ifneq ($(DUMMY_ARGS),)
+$(eval $(DUMMY_ARGS):;@:)
 endif
 endif
+# An agent's config layers for a data build: its overlay, then its offline profile, if any.
+data_overlays = $($(1)_OVERLAY)$(if $($(1)_OFFLINE_PROFILE),:src/$($(1)_PKG)/config/profiles/$($(1)_OFFLINE_PROFILE).yaml)
 
-# `SOURCE=<name>` picks the analytics source (`analytics.sources`: live, dummy) every
-# target and agent reads and writes: `make dashboard SOURCE=dummy`, `make agent ops SOURCE=dummy`.
+# `SOURCE=dummy` points the readers (export, dashboards, the analytics MCP server) at the demo
+# analytics source `make dummy-data` builds (`analytics.sources`: live, dummy). A running agent
+# always records to the live source (`analytics.record_source`), whatever SOURCE says.
 ifdef SOURCE
 export ANALYTICS__SOURCE := $(SOURCE)
 endif
@@ -121,10 +128,11 @@ help:
 	@echo "  make verify               All gates: lint, format, types, tests (80% coverage), both composition roots"
 	@echo ""
 	@echo "$(GREEN)Run$(NC) (agent name required):"
-	@echo "  make agent <agent>        The operator console (make agent csa; make agent ra)"
+	@echo "  make agent <agent>        The operator console (make agent csa; make agent ra); its facts and audit"
+	@echo "                            always go to the live analytics source"
 	@echo "  make agent ops            The Ops Analyst: the MCP demo agent. It answers questions about how the"
-	@echo "                            agents are running, using only the platform's analytics MCP server's tools"
-	@echo "  make data <agent>         csa: rebuild the agent DB (KEEP_MEMORY=1); ra: build + validate the fixture world"
+	@echo "                            agents are running, using only the platform's analytics MCP server's tools;"
+	@echo "                            SOURCE=dummy reads the demo world from make dummy-data (its own turns still go to live)"
 	@echo "  make runs ra              List archived research runs"
 	@echo "  make dlq <agent> [STATUS=…|ID=…] [ACTION=claim|resolve|discard ID=… NOTE=…]   Quarantined messages (same as /dlq)"
 	@echo "  make pii-reveal <agent> T=<token> WHY=<reason>   What a PII token stood for (audited; needs PII_VAULT_KEY)"
@@ -132,14 +140,18 @@ help:
 	@echo "  make models [agent]       Download (if missing) and run each agent's local models (run by make install)"
 	@echo ""
 	@echo "$(GREEN)Analytics$(NC) (no agent name):"
-	@echo "  make dummy-data analytics Generate the demo analytics source (30 days, every profiled agent) and its Parquet"
-	@echo "  SOURCE=dummy              Any target or agent on the demo source: make dashboard SOURCE=dummy;"
-	@echo "                            make agent ops SOURCE=dummy (the MCP demo over the demo data)"
-	@echo "  make analytics-export     Export the active source's views to Parquet when no console is running"
+	@echo "  make dummy-data [kind]    Generated data; no kind builds all ($(DUMMY_KINDS)):"
+	@echo "                              csa        rebuild the agent DB from its seed (KEEP_MEMORY=1 keeps memory)"
+	@echo "                              analytics  the demo analytics source (30 days, every profiled agent) + Parquet,"
+	@echo "                                         read by any reader target given SOURCE=dummy"
+	@echo "  make analytics-export     Export the source's views to Parquet when no console is running;"
+	@echo "                            SOURCE=dummy exports the demo source"
 	@echo "  make analytics-drop-legacy Drop the fact tables ADR 0009 retired (platform_llm_calls, ...)"
-	@echo "  make dashboard-install    Install Rill into .tools/rill (checksum-verified, repo-local; skips if current, FORCE=1 reinstalls)"
-	@echo "  make dashboard            Re-export the source's Parquet, generate the dashboards (Agent Platform + one per agent), serve them"
-	@echo "  make dashboard-refresh    Re-export the source's Parquet and reload a running dashboard"
+	@echo "  make dashboard-install    Install Rill into src/agent_platform/dashboards/.rill (checksum-verified, repo-local; skips if current, FORCE=1 reinstalls)"
+	@echo "  make dashboard            Re-export the source's Parquet, generate the dashboards (Agent Platform + one per agent),"
+	@echo "                            serve them; SOURCE=dummy serves the demo source"
+	@echo "  make dashboard-refresh    Re-export the source's Parquet and reload a running dashboard;"
+	@echo "                            SOURCE=dummy refreshes the demo source"
 	@echo ""
 	@echo "$(GREEN)Customer support admin$(NC) (csa only):"
 	@echo "  make refund-limit 100     Set the per-refund limit the Gatekeeper enforces (agent DB)"
@@ -220,9 +232,10 @@ llm-check model-check:
 	@$(foreach a,$(MODEL_CHECK_AGENTS),echo "$(BLUE)── $($(a)_NAME) ($(a)) ──$(NC)" && \
 		AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(PYTHON) -m agent_platform.llm.cli $(if $(BENCH),--bench) && ) true
 
+# Kept so `make data csa` still works; generated data is `make dummy-data <kind>`.
 data: _agent
-	@test -n "$($(AGENT)_DATA)" || (echo "$(YELLOW)'$(AGENT)' has no generated data$(NC)" && exit 2)
-	$(PYTHON) -m $($(AGENT)_DATA)
+	@echo "$(YELLOW)make data $(AGENT) is now make dummy-data $(AGENT)$(NC)"
+	@$(MAKE) --no-print-directory dummy-data $(AGENT)
 
 runs: _agent
 	@test -n "$($(AGENT)_RUNS)" || (echo "$(YELLOW)'$(AGENT)' keeps no archived runs$(NC)" && exit 2)
@@ -301,9 +314,10 @@ eval-sql: _agent
 # analytics.export_interval_seconds; these work with no agent running.
 comma := ,
 space := $(empty) $(empty)
-RILL_DIR := .tools/rill
+DASHBOARDS_DIR := src/agent_platform/dashboards
+RILL_DIR := $(DASHBOARDS_DIR)/.rill
 RILL := $(RILL_DIR)/rill
-RILL_PROJECT := dashboards/rill
+RILL_PROJECT := $(DASHBOARDS_DIR)/rill
 RILL_VERSION ?= latest
 RILL_PORT ?= 9009
 # Rill's internal gRPC port; change both to run a second Rill beside a running one.
@@ -313,10 +327,13 @@ RILL_MODELS = $(shell $(PYTHON) -m agent_platform.analytics models 2>/dev/null)
 PARQUET_DIR := $(shell $(if $(SOURCE),ANALYTICS__SOURCE=$(SOURCE) )$(PYTHON) -c "from agent_platform.config import get_settings; print(get_settings().analytics.resolved_parquet_dir)" 2>/dev/null)
 
 dummy-data:
-	@test -n "$(filter $(DUMMY_KIND),$(DUMMY_KINDS))" || \
-	  (echo "$(YELLOW)Usage: make dummy-data <kind>   (kinds: $(DUMMY_KINDS))$(NC)" && exit 2)
-	@$(PYTHON) -m agent_platform.analytics dummy
-	@echo "$(GREEN)✓ Then: make dashboard SOURCE=dummy · make agent ops SOURCE=dummy$(NC)"
+	@test -z "$(filter-out $(DUMMY_KINDS),$(DUMMY_KIND))" || \
+	  (echo "$(YELLOW)Usage: make dummy-data [kind]   (kinds: $(DUMMY_KINDS); none: all of them)$(NC)" && exit 2)
+	@$(foreach a,$(filter $(DATA_AGENTS),$(DUMMY_KIND)),echo "$(BLUE)── $($(a)_NAME) ($(a)) ──$(NC)" && \
+		AGENTIC_OVERLAYS=$(call data_overlays,$(a)) $(PYTHON) -m $($(a)_DATA) && ) true
+	@$(if $(filter analytics,$(DUMMY_KIND)),echo "$(BLUE)── Demo analytics source ──$(NC)" && \
+		$(PYTHON) -m agent_platform.analytics dummy && \
+		echo "$(GREEN)✓ Then: make dashboard SOURCE=dummy · make agent ops SOURCE=dummy$(NC)",true)
 
 analytics-export:
 	@$(PYTHON) -m agent_platform.analytics export
@@ -326,7 +343,7 @@ analytics-drop-legacy:
 	@$(PYTHON) -m agent_platform.analytics drop-legacy
 
 dashboard-install:
-	@FORCE=$(FORCE) sh dashboards/install_rill.sh $(RILL_DIR) $(RILL_VERSION)
+	@FORCE=$(FORCE) sh $(DASHBOARDS_DIR)/install_rill.sh $(RILL_DIR) $(RILL_VERSION)
 
 dashboard:
 	@test -e $(RILL) || (echo "$(YELLOW)Rill is not installed: make dashboard-install$(NC)" && exit 2)
@@ -338,7 +355,7 @@ dashboard:
 	@$(PYTHON) -m agent_platform.analytics dashboards
 	@$(PYTHON) -c "from agent_platform.analytics import read_manifest; m = read_manifest(); v = m.views.get('tasks') if m else None; print('$(YELLOW)The Agent Platform dashboard is empty until an agent has run a turn: make agent <agent>, then make dashboard-refresh$(NC)') if v is None or v.rows == 0 else None"
 	@echo "$(GREEN)Rill on http://localhost:$(RILL_PORT) (Ctrl+C to stop)$(NC)"
-	@sh dashboards/serve_rill.sh $(RILL) start --reset --port $(RILL_PORT) --port-grpc $(RILL_GRPC_PORT) $(RILL_PROJECT)
+	@sh $(DASHBOARDS_DIR)/serve_rill.sh $(RILL) start --reset --port $(RILL_PORT) --port-grpc $(RILL_GRPC_PORT) $(RILL_PROJECT)
 
 # Re-export the source's Parquet and have a running `make dashboard` reload it (Rill does not watch Parquet).
 dashboard-refresh: analytics-export

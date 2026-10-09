@@ -24,10 +24,10 @@ from typing import Any
 from langgraph.types import Send
 
 from agent_platform.config import FeatureSet
-from agent_platform.control_loop import BudgetGuard
 from agent_platform.hallucination_protection.confidence import ConfidenceCheck, report_confidence
 from agent_platform.hallucination_protection.levels import CheckLevel
 from agent_platform.logging import describe_error
+from agent_platform.loop_control import BudgetGuard
 from agent_platform.observability.types import StatusKind
 from agent_platform.scheduling import AsyncDagScheduler, TaskGraph
 from agent_platform.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
@@ -35,9 +35,11 @@ from research_agent.archive.store import ResearchArchive
 from research_agent.audit.context import CheckContext
 from research_agent.audit.independent import AuditResult, IndependentAuditor
 from research_agent.audit.verdict import AuditVerdict, decide
+from research_agent.config import get_agent_settings
 from research_agent.domain.budget import GAP_FILL_ROUNDS, ROUNDS, SEARCHES
 from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.report import LimitEntry, Report, RunStatus
+from research_agent.graph.run_loop import RunLoopReport
 from research_agent.graph.state import RunState
 from research_agent.planning.ids import renumber
 from research_agent.planning.planner import Planner, PlanRejectedError
@@ -51,6 +53,20 @@ from research_agent.synthesis.limits import build_limits, unmet_must_pass
 from research_agent.synthesis.synthesizer import Synthesizer
 
 Update = dict[str, Any]
+
+
+# The run graph's nodes, as LOOP CONTROL names the next step (`research_agent.run_loop.next`).
+_BATCH_START, _SYNTHESIZE, _GAP_FILL, _FINALIZE = (
+    "batch_start",
+    "synthesize",
+    "gap_fill",
+    "finalize",
+)
+# Why (`research_agent.run_loop.because`).
+_ANOTHER_ROUND, _CANCELLED, _NO_GAPS = "another_round", "cancelled", "no_gaps"
+_GAP_FILL_EXHAUSTED, _BUDGET_SPENT = "gap_fill_exhausted", "budget_spent"
+_REFLECTION_OFF, _GAPS_TO_FILL = "reflection_off", "gaps_to_fill"
+_GAP_FILL_PLANNED, _NO_FOLLOW_UP = "gap_fill_planned", "no_follow_up"
 
 
 @dataclass
@@ -200,11 +216,14 @@ class RunNodes:
 
     @staticmethod
     def after_plan(state: RunState) -> str:
-        return "finalize" if state.get("status") == "FAILED" else "batch_start"
+        return _FINALIZE if state.get("status") == "FAILED" else _BATCH_START
 
     # -- batches -------------------------------------------------------------------------
 
     async def batch_start(self, state: RunState) -> Update:
+        if self.resources.cancelled:
+            # `fan_out` will route to finalize; edges cannot draw, so this node says so.
+            self._report_loop(state, _FINALIZE, _CANCELLED)
         ready, blocked = self._ready(state)
         batch = state.get("batch", 0) + (1 if ready else 0)
         if ready:
@@ -223,7 +242,7 @@ class RunNodes:
 
     def fan_out(self, state: RunState) -> list[Send] | str:
         if self.resources.cancelled:
-            return "finalize"
+            return _FINALIZE
         ready, _ = self._ready(state)
         if not ready:
             return "reflect_gap_analysis"
@@ -300,6 +319,13 @@ class RunNodes:
         heading, sections = cards.reflect_card(state["round"], bool(step.planned), step)
         status: StatusKind = "warning" if failing and not step.planned else "completed"
         r.telemetry.card("reflect_gap_analysis", heading, sections, status=status)
+        another = bool(update["round_nodes"])
+        self._report_loop(
+            state,
+            _BATCH_START if another else _SYNTHESIZE,
+            _ANOTHER_ROUND if another else (update.get("stop_reason") or reason),
+            {"failing_checks": len(failing), "budget_stops": list(r.trace.budget_stops)},
+        )
         return {**update, "entities": entities}
 
     def _should_stop(
@@ -402,7 +428,7 @@ class RunNodes:
 
     @staticmethod
     def after_reflect(state: RunState) -> str:
-        return "batch_start" if state.get("round_nodes") else "synthesize"
+        return _BATCH_START if state.get("round_nodes") else _SYNTHESIZE
 
     # -- synthesize, audit, gap-fill ----------------------------------------------------------
 
@@ -486,6 +512,8 @@ class RunNodes:
         except Exception as exc:
             return self._audit_failed(describe_error(exc))
         self._report_audit(audit, state["contract"].rubric)
+        next_step, because = self._gap_fill_decision(audit)
+        self._report_loop(state, next_step, because, {"must_pass_gaps": len(audit.must_pass_gaps)})
         return {"audit": audit}
 
     def _audit_failed(self, error: str) -> Update:
@@ -534,15 +562,22 @@ class RunNodes:
         )
 
     def after_audit(self, state: RunState) -> str:
-        audit, r = state.get("audit"), self.resources
-        can_fill = (
-            r.budget.remaining(GAP_FILL_ROUNDS) > 0
-            and not r.budget.exhausted_counters()
-            and not r.cancelled
-        )
-        if audit is not None and audit.must_pass_gaps and can_fill and self._p.reflection_enabled:
-            return "gap_fill"
-        return "finalize"
+        return self._gap_fill_decision(state.get("audit"))[0]
+
+    def _gap_fill_decision(self, audit: AuditResult | None) -> tuple[str, str]:
+        """Gap-fill or finish, and why — one rule for the edge and for its LOOP CONTROL card."""
+        r = self.resources
+        if audit is None or not audit.must_pass_gaps:
+            return _FINALIZE, _NO_GAPS
+        if r.cancelled:
+            return _FINALIZE, _CANCELLED
+        if not self._p.reflection_enabled:
+            return _FINALIZE, _REFLECTION_OFF
+        if r.budget.remaining(GAP_FILL_ROUNDS) <= 0:
+            return _FINALIZE, _GAP_FILL_EXHAUSTED
+        if r.budget.exhausted_counters():
+            return _FINALIZE, _BUDGET_SPENT
+        return _GAP_FILL, _GAPS_TO_FILL
 
     async def gap_fill(self, state: RunState) -> Update:
         r, audit = self.resources, state.get("audit")
@@ -568,6 +603,13 @@ class RunNodes:
         )
         heading, sections = cards.gap_fill_card(state["gap_fill_round"] + 1, step)
         r.telemetry.card("gap_fill", heading, sections)
+        planned = bool(follow_ups)
+        self._report_loop(
+            state,
+            _BATCH_START if planned else _FINALIZE,
+            _GAP_FILL_PLANNED if planned else _NO_FOLLOW_UP,
+            {"gap_fill_round": f"{state['gap_fill_round'] + 1}", "gaps": len(gaps)},
+        )
         update: Update = {"gap_fill_round": state["gap_fill_round"] + 1, "round_nodes": follow_ups}
         if follow_ups:
             # Only a plan that runs is a plan: an empty one would be recorded as run.
@@ -577,7 +619,7 @@ class RunNodes:
 
     @staticmethod
     def after_gap_fill(state: RunState) -> str:
-        return "batch_start" if state.get("round_nodes") else "finalize"
+        return _BATCH_START if state.get("round_nodes") else _FINALIZE
 
     # -- finalize and archive ------------------------------------------------------------------
 
@@ -757,6 +799,23 @@ class RunNodes:
         )
         r.telemetry.card(
             "batch_summary", heading, sections, status="completed" if entries else "warning"
+        )
+
+    def _report_loop(
+        self,
+        state: RunState,
+        next_step: str,
+        because: str,
+        criteria: dict[str, Any] | None = None,
+    ) -> None:
+        """LOOP CONTROL: the round, every budget meter, and the step the run takes next."""
+        r = self.resources
+        RunLoopReport(r.telemetry.reporter, get_agent_settings().run_loop).report(
+            r.budget,
+            round_number=state["round"],
+            next_step=next_step,
+            because=because,
+            criteria=criteria,
         )
 
     def _budget_card(self, label: str) -> None:

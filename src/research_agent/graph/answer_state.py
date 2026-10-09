@@ -14,11 +14,12 @@ from typing import Annotated, TypedDict
 
 from langchain_core.runnables import RunnableConfig
 
-from agent_platform.control_loop import BudgetGuard
-from agent_platform.control_loop.watchdogs import ToolControlLoop
 from agent_platform.hallucination_protection import Observation
 from agent_platform.llm.types import Message
+from agent_platform.loop_control import BudgetGuard
+from agent_platform.loop_control.watchdogs import ToolLoopControl
 from agent_platform.observability.loop_reporter import LoopReporter
+from agent_platform.observability.step_events import StepEvents
 from research_agent.context.session import SessionContext
 
 # Budget counters of one answer, beside `TOKENS` (research_agent.domain.budget).
@@ -44,9 +45,11 @@ class Turn:
 
     question: str
     budget: BudgetGuard
-    control: ToolControlLoop
+    control: ToolLoopControl
     context: SessionContext
     loop: LoopReporter
+    # The platform's loop cards (LOOP CONTROL), numbered with the same step.
+    steps: StepEvents
     # When the question was asked: "today" for the prompt and for the recency check.
     asked_at: datetime
 

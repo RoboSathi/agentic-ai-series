@@ -3,9 +3,11 @@
 from collections.abc import Mapping
 from typing import Any
 
+from agent_platform.commands.skills import SkillsCommand
 from agent_platform.commands.types import Command
 from agent_platform.config import FeatureSet
 from agent_platform.observability import StageReporter
+from agent_platform.skills import SkillCatalog
 from ops_agent.config import get_agent_settings
 
 
@@ -27,10 +29,16 @@ class OpsHost:
     def build(self, reporter: StageReporter, features: FeatureSet | None = None) -> Any:
         from ops_agent.graph.builder import build_agent
 
-        return build_agent(reporter=reporter, features=features)
+        self._agent = build_agent(reporter=reporter, features=features)
+        return self._agent
 
     def commands(self) -> list[Command]:
-        return []
+        """`/skills` over this agent's procedures; it has no curator queue to approve from."""
+        return [SkillsCommand(self._catalog, lambda: None)]
+
+    def _catalog(self) -> SkillCatalog | None:
+        agent = getattr(self, "_agent", None)
+        return agent.skill_catalog if agent is not None else None
 
     def stage_labels(self) -> Mapping[str, str]:
         return get_agent_settings().stage_labels

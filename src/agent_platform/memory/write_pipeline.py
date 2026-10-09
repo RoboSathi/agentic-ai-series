@@ -539,7 +539,7 @@ class MemoryWritePipelineImpl:
             confirmed_at=utc_now(),
         )
         fact = pending.fact.model_copy(update={"confidence": 1.0, "provenance": confirmed})
-        prior = self._semantic.latest(fact.key, fact.subject_id) if self._semantic else None
+        prior = self._prior(fact)
         if prior is not None:
             fact = self._supersede(prior, fact)
         self._curator.decide(queue_id, "approved", principal.actor)
@@ -630,6 +630,17 @@ class MemoryWritePipelineImpl:
             )
         result = store.write(candidate, candidate.provenance)
         return result.model_copy(update={"stage": "route"})
+
+    def _prior(self, fact: MemoryFact) -> MemoryFact | None:
+        """The semantic fact an approval supersedes — none for other classes.
+
+        Only semantic facts supersede by key. A procedure is versioned by
+        its own store, and looking it up in the semantic one retired
+        whatever fact happened to share its name.
+        """
+        if self._semantic is None or store_type(fact.category) != "semantic":
+            return None
+        return self._semantic.latest(fact.key, fact.subject_id)
 
     def _queue(self, result: WriteResult) -> WriteResult:
         """Hold a write for a human, and keep the record either way."""

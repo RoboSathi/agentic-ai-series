@@ -11,7 +11,7 @@ one conversation, one audit trail, one run from request to outcome.
 
 The pause is its own node, after `finalize`, for a reason: LangGraph
 re-runs the whole node that called `interrupt()` when it resumes. Put in
-`act`, resuming would re-execute every tool call in the turn.
+`execute`, resuming would re-execute every tool call in the turn.
 """
 
 from typing import Any
@@ -23,7 +23,7 @@ from customer_support_agent.analytics import record_review
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 
-# Where in state `act` records a refund it queued for a person.
+# Where in state `execute` records a refund it queued for a person.
 AWAITING_REVIEW = "awaiting_review"
 # The prefix of what an approval wait is waiting on: `hitl:<request id>`.
 REVIEW_WAIT_PREFIX = "hitl:"

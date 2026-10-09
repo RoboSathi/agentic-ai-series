@@ -11,13 +11,16 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from agent_platform.control_loop import BudgetGuard
-from agent_platform.control_loop.types import ControlLoopReport
-from agent_platform.control_loop.watchdogs import ToolControlLoop
 from agent_platform.logging import describe_error, get_logger, instrument
+from agent_platform.loop_control import BudgetGuard
+from agent_platform.loop_control.types import LoopControlReport
+from agent_platform.loop_control.watchdogs import ToolLoopControl
 from agent_platform.observability.loop_reporter import LoopReporter
+from agent_platform.observability.step_events import StepEvents
+from agent_platform.skills import AgentInstructions
 from agent_platform.tools.path import ToolPath
 from agent_platform.tools.registry import NamespacedToolRegistry
+from research_agent.config import get_agent_settings
 from research_agent.config.settings import AnswerSettings
 from research_agent.context.session import AnswerContext, SessionContext
 from research_agent.domain.budget import TOKENS
@@ -53,8 +56,10 @@ class DirectAnswerer:
         grounding: AnswerGrounding | None = None,
         context: AnswerContext | None = None,
         recency: RecencyGuard | None = None,
+        instructions: AgentInstructions | None = None,
     ) -> None:
         self._context = context
+        self._instructions = instructions
         self._settings = settings
         self._telemetry = telemetry
         self._graph = build_answer_graph(
@@ -75,7 +80,9 @@ class DirectAnswerer:
         )
         turn = self._turn(question, context)
         today = turn.asked_at.strftime(self._settings.date_format)
-        system = "\n\n".join([prompt.INSTRUCTIONS.format(today=today), *context.blocks])
+        system = "\n\n".join(
+            [*self._profile(question), prompt.INSTRUCTIONS.format(today=today), *context.blocks]
+        )
         try:
             final = await self._graph.ainvoke(
                 initial_state(system, question, context.history),
@@ -94,6 +101,13 @@ class DirectAnswerer:
             self._context.remember(session_id, question, self._without_sources(text))
         return DirectAnswer(text=text, failed=bool(final["failure"]))
 
+    def _profile(self, question: str) -> list[str]:
+        """The profile and the answerer's procedures, above its own instructions."""
+        if self._instructions is None:
+            return []
+        signal = get_agent_settings().instructions.role_signal.format(role=prompt.ROLE)
+        return [self._instructions.compose(frozenset({signal}), question).text]
+
     def _turn(self, question: str, context: SessionContext) -> Turn:
         loop = LoopReporter(
             self._telemetry.reporter,
@@ -101,8 +115,9 @@ class DirectAnswerer:
             stages=LOOP_STAGES,
             detail=self._settings.messages.loop_step_detail,
         )
+        steps = StepEvents(self._telemetry.reporter, max_steps=self._settings.budget.max_steps)
         asked_at = datetime.now().astimezone()
-        return Turn(question, self._budget(), ToolControlLoop(), context, loop, asked_at)
+        return Turn(question, self._budget(), ToolLoopControl(), context, loop, steps, asked_at)
 
     def _without_sources(self, text: str) -> str:
         """The answer as the model should remember it: its words, not the citation list.
@@ -123,7 +138,7 @@ class DirectAnswerer:
             step_counter=STEPS,
         )
 
-    def _announce(self, report: ControlLoopReport) -> None:
+    def _announce(self, report: LoopControlReport) -> None:
         observed: dict[str, Any] = report.checks[0].observed if report.checks else {}
         self._telemetry.card(
             "budget_tick", *cap_reached_card(report.reason, observed), status="warning"

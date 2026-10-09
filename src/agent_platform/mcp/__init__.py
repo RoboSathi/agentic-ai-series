@@ -1,9 +1,15 @@
 """Model Context Protocol: remote tools, entering as ordinary governed tools (LLD §16.1).
 
-The contracts (`types`) are implemented over the MCP SDK: `SdkMcpSession` (one
-open session, owned by its own task), `SdkMcpTransport` (stdio or HTTP, from an
-agent's `mcp.servers`) and `GovernedMcpToolSource` (the server's tools as
-`ToolDefinition`s under a locally configured envelope).
+Every MCP concern lives here, by side of the wire:
+
+- `common/` — what both sides speak: the protocol's vocabulary and stdio serving.
+- `client/` — the governed client: `SdkMcpSession` (one open session, owned by
+  its own task), `SdkMcpTransport` (stdio or HTTP, from an agent's
+  `mcp.servers`) and `GovernedMcpToolSource` (the server's tools as
+  `ToolDefinition`s under a locally configured envelope).
+- `server/` — the servers the platform publishes, one package each (`analytics`).
+
+The package re-exports the client's public interface, which is what agents use.
 
 The idea: a tool need not be a Python function the agent's author wrote.
 An MCP server publishes tools, resources and prompts over a transport,
@@ -31,19 +37,20 @@ This is the same rule as the Authority Hierarchy — `tool_observations`
 rank below `user_task`, and a tool catalogue is a tool observation.
 """
 
-from agent_platform.mcp.session import McpSessionClosedError, SdkMcpSession
-from agent_platform.mcp.source import ConfiguredGovernancePolicy, GovernedMcpToolSource
-from agent_platform.mcp.transport import SdkMcpTransport, server_spec
-from agent_platform.mcp.types import (
-    McpCallResult,
+from agent_platform.mcp.client import (
+    ConfiguredGovernancePolicy,
+    GovernedMcpToolSource,
     McpServerSpec,
     McpSession,
-    McpToolInfo,
+    McpSessionClosedError,
     McpToolSource,
     McpTransport,
+    SdkMcpSession,
+    SdkMcpTransport,
     ToolGovernancePolicy,
-    TransportKind,
+    server_spec,
 )
+from agent_platform.mcp.common import McpCallResult, McpToolInfo, TransportKind
 
 __all__ = [
     "ConfiguredGovernancePolicy",

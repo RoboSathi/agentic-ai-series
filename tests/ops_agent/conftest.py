@@ -16,7 +16,6 @@ import pytest
 
 from agent_platform.analytics import ParquetExporter
 from agent_platform.analytics.source_db import SourceDatabase
-from agent_platform.analytics.mcp_server import build_server
 from agent_platform.audit import AuditEntry, DuckDbAuditLedger
 from agent_platform.config import (
     REPO_ROOT,
@@ -29,6 +28,7 @@ from agent_platform.config import (
 )
 from agent_platform.llm.types import ModelToolCall
 from agent_platform.mcp import McpServerSpec, SdkMcpTransport
+from agent_platform.mcp.server.analytics import build_server
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.store import DuckDbObservabilityStore
 from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool

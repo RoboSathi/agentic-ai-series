@@ -3,7 +3,7 @@
 ADR 0009 D9; schema §6.2. A proposal goes, in order, through:
 
 1. the registry — an unknown tool, or arguments that fail its schema, stop here;
-2. the turn's control loop — an identical call already made is suppressed;
+2. the turn's loop control — an identical call already made is suppressed;
 3. the Gatekeeper, when the agent has one — it rules on authority (and on
    whether the tool was offered), and writes its own audit entry; when it is
    withheld the call proceeds UNGOVERNED, and that is audited here;
@@ -25,13 +25,13 @@ from pydantic import BaseModel, ConfigDict
 
 from agent_platform.audit import STANDING_FIELD, AuditEntry, AuditLedger
 from agent_platform.audit.types import Decision
-from agent_platform.control_loop.types import ControlLoopReport
-from agent_platform.control_loop.watchdogs import ToolControlLoop
 from agent_platform.executor import ApprovedToolCall, ExecutionOutcome, ToolExecutor
 from agent_platform.gatekeeper import Gatekeeper
 from agent_platform.gatekeeper.types import AuthorityContext, AuthorityDecision
 from agent_platform.llm.types import ModelToolCall
 from agent_platform.logging import get_current_trace_id, get_logger
+from agent_platform.loop_control.types import LoopControlReport
+from agent_platform.loop_control.watchdogs import ToolLoopControl
 from agent_platform.observability.facts import ToolCallFact, fact_store
 from agent_platform.tools.registry import NamespacedToolRegistry
 from agent_platform.tools.types import ToolCall
@@ -56,7 +56,7 @@ class ToolTurn(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    loop: ToolControlLoop
+    loop: ToolLoopControl
     round_number: int
     max_rounds: int
     # The authority context for this call (who asks, what was offered, mandates).
@@ -81,7 +81,7 @@ class ToolOutcome(BaseModel):
     tool: str
     reason: str = ""
     call: ToolCall | None = None
-    control: ControlLoopReport | None = None
+    control: LoopControlReport | None = None
     authority: AuthorityContext | None = None
     decision: AuthorityDecision | None = None
     execution: ExecutionOutcome | None = None
@@ -93,7 +93,7 @@ class ToolOutcome(BaseModel):
 
 
 class ToolPath:
-    """Registry → control loop → Gatekeeper (optional) → Executor, recorded at every stop."""
+    """Registry → loop control → Gatekeeper (optional) → Executor, recorded at every stop."""
 
     def __init__(
         self,

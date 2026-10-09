@@ -15,9 +15,9 @@ Use it with `SOURCE=dummy`:
 ```
 make dummy-data analytics
 make dashboard SOURCE=dummy      # Rill over the demo source
-make agent ops SOURCE=dummy      # the MCP demo: ask the Ops Analyst about it (its own turns land here too)
+make agent ops SOURCE=dummy      # the MCP demo: ask the Ops Analyst about it (its own turns are recorded to the live source)
 ```
 
 An external MCP client (Claude Code, MCP Inspector) can launch the server itself:
-`ANALYTICS__SOURCE=dummy venv/bin/python -m agent_platform.analytics.mcp_server`.
+`ANALYTICS__SOURCE=dummy venv/bin/python -m agent_platform.mcp.server.analytics`.
 The live source is never touched.

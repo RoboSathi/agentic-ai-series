@@ -575,6 +575,22 @@ class LangSmithSettings(BaseModel):
         return _first_env(self.key_env_vars)
 
 
+class LoopControlWords(BaseModel):
+    """The LOOP CONTROL card: its heading, and why the loop chose its next step."""
+
+    summary: str
+    # Reason code → sentence; an agent adds the reasons only its loop has.
+    because: dict[str, str]
+
+
+class StepEventWords(BaseModel):
+    """Headings of the cards every agent's tool-use loop draws (`observability/step_events.py`)."""
+
+    tool_requested: str
+    gatekeeper: str
+    loop_control: LoopControlWords
+
+
 class ObservabilitySettings(YamlBackedSettings):
     """Tracing, SLOs, cost stack, queue math (LLD §6)."""
 
@@ -597,6 +613,7 @@ class ObservabilitySettings(YamlBackedSettings):
     llm_request_heading: str
     llm_response_heading: str
     llm_tool_requested_heading: str
+    step_events: StepEventWords
     # What a tool card shows when the model's arguments are not JSON.
     unparseable_arguments: str
     # An `amount` argument that is not money, as the card shows it.
@@ -844,8 +861,11 @@ class AnalyticsSettings(YamlBackedSettings):
     """Analytics sources: curated views over the facts, exported as Parquet (LLD §6)."""
 
     _yaml_section = "analytics"
-    # The active source, by name (`ANALYTICS__SOURCE`), and every source there is.
+    # The source readers read, by name (`ANALYTICS__SOURCE`, `make … SOURCE=dummy`).
     source: str
+    # The source a running agent records its facts and audit to. Never moved by `SOURCE`:
+    # pointing a reader at the demo world must not send a live run's records there.
+    record_source: str
     sources: dict[str, AnalyticsSource]
     schema_version: int
     manifest_file: str
@@ -871,12 +891,18 @@ class AnalyticsSettings(YamlBackedSettings):
 
     @property
     def active(self) -> AnalyticsSource:
-        """The active source (an unknown name fails loudly, naming the ones there are)."""
-        if self.source not in self.sources:
-            raise ValueError(
-                f"analytics.source '{self.source}' is not one of {sorted(self.sources)}"
-            )
-        return self.sources[self.source]
+        """The source readers read (an unknown name fails loudly, naming the ones there are)."""
+        return self._named("source", self.source)
+
+    @property
+    def recording(self) -> AnalyticsSource:
+        """The source a running agent records to, whatever readers were pointed at."""
+        return self._named("record_source", self.record_source)
+
+    def _named(self, key: str, name: str) -> AnalyticsSource:
+        if name not in self.sources:
+            raise ValueError(f"analytics.{key} '{name}' is not one of {sorted(self.sources)}")
+        return self.sources[name]
 
     @property
     def resolved_db_path(self) -> Path:
@@ -1128,6 +1154,86 @@ class DreamSettings(BaseModel):
     # Read-only tools, named by the agent. A summary condenses their calls
     # to "looked up …" and quotes only what changed something.
     lookup_tools: list[str] = Field(default_factory=list)
+
+
+class SkillSelectionSettings(BaseModel):
+    """How many procedures one prompt carries, and when a query names one."""
+
+    max_active: int = Field(gt=0)
+    min_lexical_score: float = Field(ge=0.0)
+
+
+class SkillRenderSettings(BaseModel):
+    """How procedures and their refs are written into a prompt and a record."""
+
+    procedure_heading: str
+    reference_heading: str
+    separator: str
+    ref: str
+    profile_ref: str
+
+
+class SkillReasonWords(BaseModel):
+    """Why a procedure was activated, as recorded on its card and audit entry."""
+
+    always: str
+    trigger: str
+    lexical: str
+
+
+class SkillObservabilitySettings(BaseModel):
+    """The stage names and summaries of the activation and sync events."""
+
+    activation_stage: str
+    sync_stage: str
+    activated: str
+    none_active: str
+    synced: str
+
+
+class SkillAuditSettings(BaseModel):
+    """Who the audit trail says activated or synced procedures, and as what action."""
+
+    actor: str
+    activation_action: str
+    sync_action: str
+
+
+class SkillSettings(YamlBackedSettings):
+    """The profile (AGENT.md) and authored skills (SKILL.md) — ADR 0010."""
+
+    _yaml_section = "skills"
+    profile_path: str
+    skills_dir: str
+    skill_file: str
+    references_dir: str
+    references_glob: str
+    frontmatter_delimiter: str
+    section_pattern: str
+    name_pattern: str
+    max_name_chars: int = Field(gt=0)
+    max_description_chars: int = Field(gt=0)
+    always_trigger: str
+    profile_sections: list[str]
+    skill_sections: list[str]
+    authored_artifact_type: str
+    selectable_artifact_types: list[str]
+    digest_chars: int = Field(gt=0)
+    selection: SkillSelectionSettings
+    render: SkillRenderSettings
+    reasons: SkillReasonWords
+    observability: SkillObservabilitySettings
+    audit: SkillAuditSettings
+
+    model_config = SettingsConfigDict(env_prefix="SKILLS__")
+
+    @property
+    def resolved_profile_path(self) -> Path:
+        return resolve_path(self.profile_path)
+
+    @property
+    def resolved_skills_dir(self) -> Path:
+        return resolve_path(self.skills_dir)
 
 
 class MemorySettings(YamlBackedSettings):
@@ -1893,6 +1999,10 @@ class McpCardWords(BaseModel):
     optional: str
     governance_line: str
     no_instructions: str
+    # The MCP CALL card, one per call (`observability/step_events.py`): any field of
+    # the exchange may be named (server, method, tool, duration_ms, is_error).
+    call_heading: str
+    call_failed_heading: str
 
 
 class McpSettings(YamlBackedSettings):
@@ -2001,6 +2111,34 @@ class AuditCommandWords(BaseModel):
     rationale_chars: int = Field(ge=8)
 
 
+class SkillsCommandWords(BaseModel):
+    """What `/skills` says (LLD §20)."""
+
+    summary: str
+    usage: str
+    group: str
+    list_title: str
+    list_headers: list[str]
+    history_title: str
+    history_headers: list[str]
+    pending_title: str
+    pending_headers: list[str]
+    empty: str
+    no_catalog: str
+    no_curator: str
+    unknown: str
+    needs_name: str
+    needs_id: str
+    not_a_procedure: str
+    approved: str
+    refused: str
+    curator_actor: str
+    description_chars: int = Field(gt=0)
+    none: str
+    active: str
+    inactive: str
+
+
 class CommandSettings(YamlBackedSettings):
     """Console slash commands (LLD §20)."""
 
@@ -2019,6 +2157,7 @@ class CommandSettings(YamlBackedSettings):
     dlq: DeadLetterCommandWords
     audit: AuditCommandWords
     stats: StatsCommandWords
+    skills: SkillsCommandWords
 
     model_config = SettingsConfigDict(env_prefix="COMMANDS__")
 
@@ -2265,6 +2404,7 @@ class AppConfig(BaseSettings):
     )
     context: ContextSettings = Field(default_factory=lambda: ContextSettings())  # type: ignore[call-arg]
     memory: MemorySettings = Field(default_factory=lambda: MemorySettings())  # type: ignore[call-arg]
+    skills: SkillSettings = Field(default_factory=lambda: SkillSettings())  # type: ignore[call-arg]
     guardrails: GuardrailsSettings = Field(default_factory=lambda: GuardrailsSettings())  # type: ignore[call-arg]
     hallucination_protection: HallucinationProtectionSettings = Field(
         default_factory=lambda: HallucinationProtectionSettings()  # type: ignore[call-arg]

@@ -135,6 +135,8 @@ leaves an open task, not a lost one.
 
 **Source** (analytics source). One analytics dataset: the DuckDB that agents write
 facts to, and the Parquet export of its curated, documented views. Readers (the MCP
-server, dashboards) only read the Parquet. `analytics.source` picks the active one
-(`live`, or `dummy` for the generated demo world; `SOURCE=dummy` on make). Retired
+server, dashboards) only read the Parquet. `analytics.source` picks the one readers
+read (`live`, or `dummy` for the generated demo world; `SOURCE=dummy` on make).
+`analytics.record_source` is where a running agent records, and is always `live`:
+pointing readers at the demo world never sends a live run's records there. Retired
 term: "mart".

@@ -1,8 +1,8 @@
 """Circuit breaker (Nygard, *Release It!*; LLD §13).
 
 A finite state machine with three states and four legal transitions —
-and it is the canonical worked example of the same discipline
-`control_loop` applies to the agent itself: an explicit transition table,
+and it is the canonical worked example of the same discipline the
+whole-flow control loop (planned, not built) will apply to the agent itself: an explicit transition table,
 illegal transitions rejected rather than silently tolerated.
 
     closed    --failures >= threshold-->  open

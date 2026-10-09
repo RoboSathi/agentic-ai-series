@@ -14,7 +14,7 @@ and a shared DuckDB analytics store for traces and audit data.
 ## Public interface
 
 - `StageReporter`, `InMemoryLiveStatusFeed`, `NullLiveStatusFeed`, `StatusEvent` (`status_feed.py`, `types.py`)
-- Card fields every agent shares: `llm_request_fields`/`llm_response_fields` (`llm_fields.py`), `tool_request_fields`/`tool_result_fields`/`control_loop_fields` (`tool_fields.py`)
+- Card fields every agent shares: `llm_request_fields`/`llm_response_fields` (`llm_fields.py`), `tool_request_fields`/`tool_result_fields`/`loop_control_fields` (`tool_fields.py`)
 - `LoopReporter`, `mark_step` (`loop_reporter.py`): a reasoning loop's cards numbered "Step N", with the cap beside it
 - `LocalTracer`, `traced` (`tracer.py`, `tracing.py`); `LangSmithExporter`, `turn_trace` (`langsmith.py`)
 - `DuckDbObservabilityStore` (`store.py`) — shared analytics file

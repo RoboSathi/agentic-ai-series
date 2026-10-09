@@ -41,17 +41,18 @@ patches/*
 # Eval reports (generated from data/evals.duckdb)
 reports/
 
-# Analytics mart (Parquet, regenerated), its link into the Rill project, Rill's own state,
-# and the repo-local Rill binary.
+# Analytics mart (Parquet, regenerated).
 data/analytics/
-dashboards/rill/data
-# Generated from the semantic layer by `make dashboard` (analytics/dashboards.py).
-dashboards/rill/models/
-dashboards/rill/metrics/
-dashboards/rill/dashboards/
-dashboards/rill/tmp/
-dashboards/rill/.env
-.tools/
+# Rill: the repo-local binary (`make dashboard-install`), the source link `make dashboard`
+# makes, Rill's own runtime state, and the project generated from the semantic layer
+# (analytics/dashboards.py). Only rill.yaml is versioned.
+src/agent_platform/dashboards/.rill/
+src/agent_platform/dashboards/rill/data
+src/agent_platform/dashboards/rill/tmp/
+src/agent_platform/dashboards/rill/.env
+src/agent_platform/dashboards/rill/models/
+src/agent_platform/dashboards/rill/metrics/
+src/agent_platform/dashboards/rill/dashboards/
 
 # Runtime databases (ADR 0009 hygiene): the platform's own stores and eval workspaces.
 src/agent_platform/db/*.duckdb*
@@ -61,7 +62,7 @@ src/agent_platform/dummy_data/analytics/*
 src/agent_platform/db/*.sqlite*
 src/customer_support_agent/data/evals/workspace/
 
-# Every database is runtime state or rebuilt from its seed (make data csa, the
+# Every database is runtime state or rebuilt from its seed (make dummy-data csa, the
 # knowledge ingest at start-up, the eval fixture builder): never versioned, anywhere.
 *.db
 *.db-wal

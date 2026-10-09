@@ -33,8 +33,6 @@ from agent_platform.context import (
     StrategySelector,
     WorkingMemoryContextSource,
 )
-from agent_platform.control_loop import BudgetGuard
-from agent_platform.control_loop.types import ControlLoopReport
 from agent_platform.durability import (
     DurableGraphRunner,
     RunRegistry,
@@ -63,7 +61,10 @@ from agent_platform.llm.local_embeddings import LocalSentenceEmbedder
 from agent_platform.llm.observer import ModelCallObserver
 from agent_platform.llm.roles import RoleModelRouter
 from agent_platform.logging import get_logger
+from agent_platform.loop_control import BudgetGuard
+from agent_platform.loop_control.types import LoopControlReport
 from agent_platform.memory import EpisodicStore, MemoryFacade, SemanticStore, WorkingMemoryStore
+from agent_platform.memory.procedural.memory import ProceduralStore
 from agent_platform.observability import StageReporter, checks
 from agent_platform.observability.facts import create_fact_store, install_fact_store
 from agent_platform.observability.langsmith import build_trace_exporter
@@ -83,6 +84,7 @@ from agent_platform.security import (
 from agent_platform.security.pii import PIIFilterImpl
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
 from agent_platform.security.prompt_injection.hosted import HostedJailbreakGuard
+from agent_platform.skills import build_agent_instructions
 from agent_platform.tools.path import ToolPath
 from agent_platform.web import WebGateway, create_web_gateway
 from research_agent.archive.store import ResearchArchive
@@ -164,6 +166,8 @@ def build_agent(
     telemetry = RunTelemetry(reporter, ledger, trace_id=settings.agent.id)
     roles = clients or role_clients(StageReporterModelObserver(lambda: telemetry.reporter))
     _require_independent_judge(roles, posture, agent)
+    # Authored procedures only (ra-0021): synced at start-up, selected by role.
+    procedural = ProceduralStore(platform) if posture.is_on("memory.procedural") else None
     caller = StructuredCaller(
         roles,
         PydanticValidator(),
@@ -171,8 +175,12 @@ def build_agent(
         role_max_tokens=agent.calls.role_max_tokens,
         truncation_retries=agent.calls.truncation_retries,
         truncation_retry_factor=agent.calls.truncation_retry_factor,
+        instructions=build_agent_instructions(
+            settings.skills, store=procedural, audit=ledger, reporter=reporter
+        ),
+        profile=agent.instructions,
     )
-    memory = _memory(agent, posture, platform, ledger, reporter, episodic)
+    memory = _memory(agent, posture, platform, ledger, reporter, episodic, procedural)
     backend = kind_backend(agent, posture)
     archive = ResearchArchive(
         artifacts or DirectoryArtifactStore(settings.artifacts.resolved_root),
@@ -380,9 +388,11 @@ def _direct_answerer(
     )
     # The answer tools read; they still take the platform's one tool path, so their
     # proposals are measured and each run is audited (UNGOVERNED: this agent declares
-    # no Gatekeeper) and executed under a deadline.
+    # no Gatekeeper) and executed under a deadline — with the EXECUTOR card every agent draws.
     executor = ToolExecutorImpl(
-        RegistryToolHandler(registry), timeout_seconds=agent.answer.tool_timeout_seconds
+        RegistryToolHandler(registry),
+        reporter=telemetry.reporter,
+        timeout_seconds=agent.answer.tool_timeout_seconds,
     )
     path = ToolPath(registry, executor, ledger)
     return DirectAnswerer(
@@ -394,6 +404,7 @@ def _direct_answerer(
         grounding,
         context,
         recency_guard(agent),
+        instructions=caller.instructions,
     )
 
 
@@ -680,7 +691,7 @@ def _resources_factory(
 
 
 def _announce_cap(
-    telemetry: RunTelemetry, report: ControlLoopReport, agent: ResearchAgentSettings
+    telemetry: RunTelemetry, report: LoopControlReport, agent: ResearchAgentSettings
 ) -> None:
     """A budget limit hit mid-run, as a card — but not a counter the plan is meant to use up.
 
@@ -731,8 +742,9 @@ def _memory(
     audit: AuditLedger,
     reporter: StageReporter | None,
     episodic: EpisodicStore | None,
+    procedural: ProceduralStore | None,
 ) -> MemoryFacade | None:
-    """Working, episodic and semantic as declared; procedural is never built (by design)."""
+    """Every CoALA class as declared. Procedural holds authored skills only (ra-0021)."""
     if not posture.is_on("memory"):
         return None
     return MemoryFacade(
@@ -741,7 +753,7 @@ def _memory(
         else None,
         episodic=(episodic or EpisodicStore()) if posture.is_on("memory.episodic") else None,
         semantic=SemanticStore(platform) if posture.is_on("memory.semantic") else None,
-        procedural=None,
+        procedural=procedural,
         platform_store=platform,
         redactor=PIIFilterImpl() if posture.is_on("pii") else None,
         audit=audit,

@@ -17,7 +17,7 @@ Episodes demonstrate a pattern by running this agent, not a separate reference c
 | reflection | research/reflector.py · reflect_gap_analysis | after each batch, gaps against the rubric become follow-up nodes or a stop decision |
 | evaluator_optimizer | graph/run_nodes.py · synthesize → independent_audit → gap_fill → batch_start | an independent audit scores the report against the frozen rubric; must-pass gaps drive one bounded gap-fill round |
 | orchestrator_subagent | audit/independent.py · IndependentAuditor (agent_platform.durability.IsolatedGraphRunner) | the independent audit runs as an isolated sub-graph that receives only (contract, report, ledger_snapshot) |
-| memory_systems | archive/store.py · archive node | each run leaves an episodic index row and a semantic fact; working memory carries session status; procedural is disabled by design |
+| memory_systems | archive/store.py · archive node | each run leaves an episodic index row and a semantic fact; working memory carries session status; procedural holds authored role skills only (`prompts/skills/`, ra-0021), prompted below the ROLE line with the profile |
 
 ## LLD and resilience patterns
 

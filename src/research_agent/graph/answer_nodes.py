@@ -56,6 +56,11 @@ THOUGHT, ACTION, OBSERVATION, REVISE, ANSWER = (
 )
 HALLUCINATION_CHECK = "hallucination_check"
 LOOP_STAGES = frozenset({THOUGHT, ACTION, OBSERVATION})
+# The loop's nodes, as LOOP CONTROL names where it goes next (words: `messages.loop_next`).
+ACT, GROUND, FINAL, REASON, FINALIZE = "act", "ground", "final", "reason", "finalize"
+# Why, when no budget forced it (the platform's `loop_control.because` words).
+_TOOL_REQUESTED, _NO_TOOL_CALL, _ROUNDS_REMAIN = "tool_requested", "no_tool_call", "rounds_remain"
+_SECONDS = "seconds"
 # Why a model call was made, as the card and the log say it.
 ANSWER_PURPOSE, REVISE_PURPOSE = "answer", "grounding_repair"
 _URL = re.compile(r"https?://\S+")
@@ -92,21 +97,29 @@ class AnswerNodes:
         turn = turn_of(config)
         turn.budget.charge(STEPS, 1)
         turn.loop.begin(int(turn.spent(STEPS)))
+        turn.steps.begin(int(turn.spent(STEPS)))
         limit = self._limit(turn)
-        if limit == "seconds":
+        if limit == _SECONDS:
             # Too little time left for a model call: answer with what there is.
+            self._report_loop(turn, next_step=GROUND, because=limit)
             return {"stop": limit}
         if limit:
+            self._report_loop(turn, next_step=FINAL, because=limit)
             return await self._final(turn, state, limit)
         try:
             result = await self._think(turn, state["messages"], self._registry.to_openai_tools())
         except Exception as exc:
             return self._failed(turn, exc)
-        wanted = (result.tool_calls or [])[: int(turn.budget.remaining(TOOL_CALLS))]
+        asked = result.tool_calls or []
+        wanted = asked[: int(turn.budget.remaining(TOOL_CALLS))]
         if wanted:
+            self._report_loop(
+                turn, next_step=ACT, because=_TOOL_REQUESTED, asked=len(asked), kept=len(wanted)
+            )
             return {
                 "messages": [Message(role="assistant", content=result.content, tool_calls=wanted)]
             }
+        self._report_loop(turn, next_step=GROUND, because=_NO_TOOL_CALL)
         return {"text": result.content.strip(), "stop": ""}
 
     async def _final(self, turn: Turn, state: AnswerState, limit: str) -> dict[str, Any]:
@@ -232,7 +245,7 @@ class AnswerNodes:
         """The cap that forbids another tool call now ("" while tools are still allowed)."""
         budget = turn.budget
         if budget.expired() or self._time_left(turn) < self._settings.min_call_seconds:
-            return "seconds"
+            return _SECONDS
         if budget.remaining(TOKENS) <= 0:
             return TOKENS
         if budget.remaining(STEPS) <= 1:
@@ -264,9 +277,9 @@ class AnswerNodes:
 
     def after_reason(self, state: AnswerState) -> str:
         if state["failure"]:
-            return "finalize"
+            return FINALIZE
         last = state["messages"][-1]
-        return "act" if last.role == "assistant" and last.tool_calls else "ground"
+        return ACT if last.role == "assistant" and last.tool_calls else GROUND
 
     # -- ACTION and OBSERVATION -------------------------------------------------------------
 
@@ -280,7 +293,46 @@ class AnswerNodes:
             replies.append(reply)
             sources.extend(urls)
             observations.extend(seen)
+        self._report_after_act(turn)
         return {"messages": replies, "sources": sources, "observations": observations}
+
+    # -- LOOP CONTROL -----------------------------------------------------------------------------
+
+    def _report_after_act(self, turn: Turn) -> None:
+        """The decision `after_act` will route on, shown here: edges run off the event loop."""
+        spent = turn.budget.exhausted_counters()
+        stopped = next((c for c in (STEPS, TOKENS) if c in spent), "")
+        if turn.budget.expired():
+            stopped = _SECONDS
+        next_step = FINALIZE if stopped else REASON
+        self._report_loop(turn, next_step=next_step, because=stopped or _ROUNDS_REMAIN)
+
+    def _report_loop(
+        self, turn: Turn, *, next_step: str, because: str, asked: int = 0, kept: int = 0
+    ) -> None:
+        """LOOP CONTROL: every budget the loop weighs, its value now, and the step it chose."""
+        criteria: dict[str, Any] = {
+            "model_requested_tools": next_step == ACT,
+            "steps": self._used(turn, STEPS),
+            "tool_calls": self._used(turn, TOOL_CALLS),
+            "tokens_left": int(turn.budget.remaining(TOKENS)),
+            "seconds_left": max(0, round(self._time_left(turn))),
+        }
+        if asked > kept:
+            criteria["dropped_tool_calls"] = asked - kept
+        fields = turn.steps.loop_control(
+            round_number=int(turn.spent(STEPS)),
+            criteria=criteria,
+            next_step=self._notes.loop_next.get(next_step, next_step),
+            because=because,
+            because_words=self._notes.loop_because,
+        )
+        self._logger.info("Loop control status", **fields)
+
+    @staticmethod
+    def _used(turn: Turn, counter: str) -> str:
+        state = turn.budget.snapshot()[counter]
+        return f"{state.spent:g} of {state.cap:g}"
 
     async def _run(
         self, call: ModelToolCall, turn: Turn
@@ -373,7 +425,7 @@ class AnswerNodes:
         """Back to the model while any budget remains; an exhausted one ends the loop."""
         budget = turn_of(config).budget
         spent = budget.exhausted_counters()
-        return "finalize" if budget.expired() or STEPS in spent or TOKENS in spent else "reason"
+        return FINALIZE if budget.expired() or STEPS in spent or TOKENS in spent else REASON
 
     # -- HALLUCINATION CHECK and REVISE -----------------------------------------------------------------
 

@@ -712,7 +712,7 @@ class StageEventWidget(Collapsible):
                 return "Tool Requested"
             return "Response Generated"
 
-        if stage == "control_loop":
+        if stage == "loop_control":
             # A round's status card: its own summary says the round and the next step.
             if "criteria" in fields and self.event.summary:
                 return self.event.summary
@@ -1398,15 +1398,15 @@ class ResponseNote(Static):
         self.plain_text = text
 
 
-def _merge_control_loop_events(
+def _merge_loop_control_events(
     previous: StatusEvent,
     current: StatusEvent,
 ) -> StatusEvent:
-    """Coalesce adjacent control-loop facts into one operator card.
+    """Coalesce adjacent loop-control facts into one operator card.
 
     The graph may emit the loop decision before and the draft-check result
-    after the model turn. They describe one control-loop round, so the TUI
-    should render one card rather than two consecutive CONTROL LOOP sections.
+    after the model turn. They describe one loop-control round, so the TUI
+    should render one card rather than two consecutive LOOP CONTROL sections.
     """
     fields = dict(previous.fields)
     fields.update(current.fields)
@@ -1471,15 +1471,15 @@ class LiveStatusPanel(VerticalScroll):
             return
 
         if (
-            event.stage == "control_loop"
-            and event.event_kind == "control_loop"
+            event.stage == "loop_control"
+            and event.event_kind == "loop_control"
             and self._entries
             and isinstance(self._entries[-1], StageEventWidget)
-            and self._entries[-1].event.stage == "control_loop"
-            and self._entries[-1].event.event_kind == "control_loop"
+            and self._entries[-1].event.stage == "loop_control"
+            and self._entries[-1].event.event_kind == "loop_control"
         ):
             previous = self._entries[-1]
-            merged = _merge_control_loop_events(previous.event, event)
+            merged = _merge_loop_control_events(previous.event, event)
             try:
                 previous.remove()
             except Exception:

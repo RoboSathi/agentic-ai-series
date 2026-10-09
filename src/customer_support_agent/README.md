@@ -18,7 +18,7 @@ with `make eval` (see [evals](evals/README.md)).
 | [config](config/README.md) | This agent's overlay and settings |
 | [console](console/README.md) | `CustomerSupportHost`, `/queue` |
 | [context](context/README.md) | (empty — context sources are platform components) |
-| [control_loop](control_loop/README.md) | Tool-use loop and output quality gate |
+| [loop_control](loop_control/README.md) | Tool-use loop and output quality gate |
 | [domain](domain/README.md) | Orders, customers, identity, the refund policy |
 | [dummy_data](dummy_data/README.md) | The demo shop and `make dummy-data` |
 | [evals](evals/README.md) | Golden set, oracle, rubric, security suite |

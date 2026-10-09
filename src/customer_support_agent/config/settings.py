@@ -223,11 +223,9 @@ class ConsoleSettings(BaseModel):
     cancel_key: str
 
 
-class ControlLoopStatusSettings(BaseModel):
-    """The control loop's per-round card: its title, and why each next step was taken."""
+class LoopControlStatusSettings(BaseModel):
+    """Why this agent's loop stopped, beyond the platform's reasons (the LOOP CONTROL card)."""
 
-    # `{round}`, `{max_rounds}`, `{next_step}`.
-    summary: str
     # Reason key -> the sentence the card shows for it.
     because: dict[str, str]
 
@@ -267,7 +265,7 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
 
     _yaml_section = "customer_support_agent"
     max_tool_iterations: int
-    control_loop_status: ControlLoopStatusSettings
+    loop_control_status: LoopControlStatusSettings
     # The most orders one `list_orders` call returns, newest first.
     list_orders_max_rows: int
     intents: list[IntentSettings]
@@ -287,12 +285,15 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     user_code_length: int
     user_code_alphabet: str
     user_code_placeholder: str
+    unseeded_database: str
     messages: CsaMessages
     console: ConsoleSettings
     order_table: OrderTableSettings
     order_sentences: OrderSentenceSettings
     demo_user_code: str
     policy_path: str
+    # State metadata key → signal template (`intent:{value}`), ADR 0010.
+    instruction_signals: dict[str, str]
     grounding_facts: dict[str, str]
     # Who the console acts as when it approves or denies a queued refund.
     console_reviewer: str

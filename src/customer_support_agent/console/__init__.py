@@ -16,6 +16,7 @@ from typing import Any
 
 from agent_platform.commands.knowledge import KnowledgeBaseCommand
 from agent_platform.commands.runs import CancelCommand
+from agent_platform.commands.skills import SkillsCommand
 from agent_platform.commands.types import Command
 from agent_platform.config import FeatureSet, get_settings
 from agent_platform.durability.controls import run_actions
@@ -139,6 +140,10 @@ class CustomerSupportHost:
             CancelCommand(lambda: self.agent),
             KnowledgeBaseCommand(lambda: self.knowledge_base),
             DreamCommand(build_dream_service),
+            SkillsCommand(
+                lambda: self.agent.skill_catalog if self.agent else None,
+                lambda: self.agent.curator if self.agent else None,
+            ),
         ]
 
     def stage_labels(self) -> Mapping[str, str]:

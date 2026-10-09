@@ -39,7 +39,9 @@ class DuckDbObservabilityStore:
                 "Install the project dependencies before starting an observed agent."
             ) from exc
 
-        configured = db_path if db_path is not None else get_settings().analytics.resolved_db_path
+        configured = (
+            db_path if db_path is not None else get_settings().analytics.recording.resolved_db_path
+        )
         self._db_path = str(configured)
         if self._db_path != ":memory:":
             Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)

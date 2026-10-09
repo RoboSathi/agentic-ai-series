@@ -88,7 +88,7 @@ def _drop_legacy() -> int:
 
 
 def _dummy() -> int:
-    """A fresh generated world, and its Parquet: what `SOURCE=dummy` points everything at."""
+    """A fresh generated world, and its Parquet: what `SOURCE=dummy` points the readers at."""
     settings = get_settings().analytics
     source = settings.sources[settings.dummy.source]
     summary = generate_world()
@@ -110,9 +110,9 @@ def _dummy() -> int:
 
 
 def _store() -> DuckDbObservabilityStore | None:
-    """The observability database, or None (said) when an agent holds its lock."""
+    """The source readers read (`SOURCE`), or None (said) when an agent holds its lock."""
     try:
-        return DuckDbObservabilityStore()
+        return DuckDbObservabilityStore(get_settings().analytics.resolved_db_path)
     except Exception as exc:  # noqa: BLE001 - the lock error is DuckDB's own type
         print(get_settings().analytics.words.locked.format(error=exc))
         return None

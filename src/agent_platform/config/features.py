@@ -3,7 +3,7 @@
 A *feature* is a control you can remove and still get an agent that runs —
 just a worse or more dangerous one. That is the whole definition, and it is
 what separates the toggleable features from the plumbing that is always on:
-without the control loop, resilience or logging you do not get a reckless
+without the loop control, resilience or logging you do not get a reckless
 agent, you get a broken program. Only the first kind is worth a switch,
 because only the first kind has something instructive to show when it is
 missing.

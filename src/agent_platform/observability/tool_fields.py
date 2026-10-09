@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 from agent_platform.config import get_settings
-from agent_platform.control_loop import ControlLoopReport
+from agent_platform.loop_control import LoopControlReport
 from agent_platform.primitives.money import money_or_none
 from agent_platform.tools.types import WIRE_SEPARATOR
 
@@ -106,8 +106,8 @@ def tool_result_fields(
     return fields
 
 
-def control_loop_fields(report: ControlLoopReport) -> dict[str, Any]:
-    """A control-loop intervention with its evidence and limits."""
+def loop_control_fields(report: LoopControlReport) -> dict[str, Any]:
+    """A loop-control intervention with its evidence and limits."""
     fields: dict[str, Any] = {
         "decision": report.decision,
         "reason_code": report.reason_code,
@@ -131,7 +131,7 @@ def parse_arguments(raw: str) -> dict[str, Any]:
 
 
 __all__ = [
-    "control_loop_fields",
+    "loop_control_fields",
     "display_tool_name",
     "parse_arguments",
     "tool_request_fields",

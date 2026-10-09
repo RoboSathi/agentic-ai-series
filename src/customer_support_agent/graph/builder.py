@@ -55,6 +55,7 @@ from agent_platform.memory import (
 )
 from agent_platform.memory.consolidation import ConsolidationService, SessionSummarizer
 from agent_platform.memory.context_source import MemoryRecallContextSource
+from agent_platform.memory.procedural.memory import ProceduralStore
 from agent_platform.memory.semantic.rag import (
     KnowledgeBase,
     KnowledgeBaseContextSource,
@@ -82,6 +83,7 @@ from agent_platform.security import (
 from agent_platform.security.auth.memory_authorizer import PolicyMemoryAuthorizer
 from agent_platform.security.auth.policy import AgentPolicy, AgentPolicyRepository
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
+from agent_platform.skills import build_agent_instructions
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from agent_platform.verification import ReadBackVerifier
 from customer_support_agent.basic_sanity.order_validator import OrderSanityCheck
@@ -107,7 +109,7 @@ from customer_support_agent.persistence.repositories import (
     RefundLedgerRepository,
     UsersRepository,
 )
-from customer_support_agent.persistence.schema import ensure_schema
+from customer_support_agent.persistence.schema import ensure_schema, require_seeded
 from customer_support_agent.presentation.orders import order_sentence
 from customer_support_agent.resilience.cancellation_saga import CancellationSaga
 from customer_support_agent.resilience.refund_saga import RefundSaga
@@ -281,6 +283,8 @@ def build_agent(
     connection = pool or SqliteConnectionPool(agent_settings.resolved_db_path)
     # Idempotent; upgrades a database built before reply reviews shared the queue.
     ensure_schema(connection)
+    if pool is None:
+        require_seeded(connection, agent_settings.resolved_db_path)
     platform_store = SqlitePlatformStore(connection, agent_id=agent_id)
     policy_repo = AgentPolicyRepository(platform_store)
     agent_policy = policy_repo.get()
@@ -366,10 +370,19 @@ def build_agent(
     # governed — provenance derived from who is speaking, RBAC against the
     # agent's persisted policy plus the platform's role grants, audited,
     # and shown as a card. Redaction happens at the write, when PII is on.
+    # Procedural memory: the agent's skills and the lessons a curator
+    # approved. One store, shared by the facade (approvals land in it) and
+    # the instructions (each turn's procedures are read from it).
+    procedural = (
+        ProceduralStore(platform_store)
+        if memory_enabled and features.is_on("memory.procedural")
+        else None
+    )
     long_term = long_term_memory(
         platform_store,
         semantic=memory_enabled and features.is_on("memory.semantic"),
         episodic=memory_enabled and features.is_on("memory.episodic"),
+        procedural=procedural,
         redactor=redactor,
         policy=agent_policy,
         audit=ledger,
@@ -474,6 +487,9 @@ def build_agent(
             else None
         ),
         context=context,
+        instructions=build_agent_instructions(
+            settings.skills, store=procedural, audit=ledger, reporter=reporter
+        ),
         # Retrieval-based tool selection narrows within what the intent
         # already permits. Without it the agent is offered every tool the
         # intent allows, which is the pre-E22 behaviour and exactly what
@@ -531,6 +547,7 @@ def long_term_memory(
     semantic: bool,
     episodic: bool,
     redactor: PIIFilterImpl | None,
+    procedural: ProceduralStore | None = None,
     policy: AgentPolicy,
     audit: AuditLedger,
     relevance: NollmScoringCascadeImpl,
@@ -542,11 +559,12 @@ def long_term_memory(
     `episodic_store` replaces the configured on-disk log — an eval gives
     each case its own, so no case recalls another's conversation.
     """
-    if not (semantic or episodic):
+    if not (semantic or episodic or procedural):
         return None
     return MemoryFacade(
         episodic=(episodic_store or EpisodicStore()) if episodic else None,
         semantic=SemanticStore(platform_store) if semantic else None,
+        procedural=procedural,
         platform_store=platform_store,
         redactor=redactor,
         relevance=relevance,
@@ -624,10 +642,14 @@ def build_dream_service(
     connection = pool or SqliteConnectionPool(get_agent_settings().resolved_db_path)
     platform_store = SqlitePlatformStore(connection, agent_id=settings.agent.id)
     episodic = EpisodicStore()
+    procedural = active_features(settings.features).is_on("memory.procedural")
     memory = long_term_memory(
         platform_store,
         semantic=True,
         episodic=True,
+        # A proposed lesson is queued, not written; the store exists so a
+        # curator's approval has somewhere to land.
+        procedural=ProceduralStore(platform_store) if procedural else None,
         redactor=PIIFilterImpl(),
         policy=AgentPolicyRepository(platform_store).get(),
         audit=audit or create_audit_ledger(platform_store, agent_id=settings.agent.id),

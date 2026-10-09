@@ -24,6 +24,7 @@ from agent_platform.commands.knowledge import KnowledgeBaseCommand
 from agent_platform.commands.registry import PREFIX, CommandRegistry
 from agent_platform.commands.runs import AbortCommand, CancelCommand, ResumeCommand
 from agent_platform.commands.scope import ConsoleScope, ScopedCommand
+from agent_platform.commands.skills import CuratorPipeline, SkillsCommand
 from agent_platform.commands.system import (
     ClearCommand,
     HelpCommand,
@@ -57,4 +58,6 @@ __all__ = [
     "HelpCommand",
     "KnowledgeBaseCommand",
     "MemoryCommand",
+    "CuratorPipeline",
+    "SkillsCommand",
 ]

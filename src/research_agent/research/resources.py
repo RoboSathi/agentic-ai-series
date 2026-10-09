@@ -10,8 +10,8 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from agent_platform.control_loop import BudgetGuard
 from agent_platform.evidence import EvidenceLedger
+from agent_platform.loop_control import BudgetGuard
 from agent_platform.resilience import Bulkhead, ResourcePoolBulkhead
 from agent_platform.web import FetchedPage, WebGateway
 from research_agent.config.settings import ResearchSettings

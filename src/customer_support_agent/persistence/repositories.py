@@ -317,6 +317,11 @@ class UsersRepository:
         row = self._pool.query_one(f"SELECT {_USER_COLUMNS} FROM users WHERE user_id = ?", (id,))
         return User.model_validate(row) if row else None
 
+    def count(self) -> int:
+        """How many customers the database holds."""
+        row = self._pool.query_one("SELECT COUNT(*) AS n FROM users")
+        return int(row["n"]) if row else 0
+
     def order_count_for(self, user_id: int) -> int:
         """How many orders a customer has — shown in the verified read-back."""
         row = self._pool.query_one("SELECT COUNT(*) AS n FROM orders WHERE user_id = ?", (user_id,))

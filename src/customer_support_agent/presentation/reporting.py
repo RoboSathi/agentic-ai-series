@@ -15,9 +15,12 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from agent_platform.observability.step_events import (
+    gatekeeper_fields as platform_gatekeeper_fields,
+)
 from agent_platform.observability.tool_fields import (
-    control_loop_fields,
     display_tool_name,
+    loop_control_fields,
     parse_arguments,
     tool_request_fields,
 )
@@ -31,11 +34,12 @@ __all__ = [
     "FALLBACK_REPLY",
     "asks_for_the_list",
     "basic_sanity_fields",
-    "control_loop_fields",
+    "loop_control_fields",
     "display_tool_name",
     "gatekeeper_fields",
     "is_customer_ready",
     "memory_fact_fields",
+    "order_fields",
     "parse_arguments",
     "tool_request_fields",
     "tool_result_fields",
@@ -119,33 +123,19 @@ def basic_sanity_fields(result: Any) -> dict[str, Any]:
 
 
 def gatekeeper_fields(decision: Any, call: Any) -> dict[str, Any]:
-    """Expose the exact proposal and deterministic checks behind the ruling."""
-    fields: dict[str, Any] = {
-        "decision": decision.verdict,
-        "standing": decision.standing,
-        "action": display_tool_name(decision.action),
-        "effect": "write" if call.side_effecting else "read",
-        "reason_code": decision.reason_code,
-        "question": decision.question,
-        "checks": [check.model_dump(mode="json") for check in decision.checks],
-    }
+    """The platform's Gatekeeper fields, plus the order and amount the call acts on."""
+    return {**platform_gatekeeper_fields(call, decision), **order_fields(call)}
+
+
+def order_fields(call: Any) -> dict[str, Any]:
+    """The order and amount a proposed call names: what a support operator reads first."""
+    fields: dict[str, Any] = {}
     order_id = call.params.get("order_id")
     if isinstance(order_id, (str, int)) and not isinstance(order_id, bool):
         fields["order_id"] = order_id
     amount = money_or_none(call.params.get("amount"))
     if amount is not None:
         fields["amount"] = str(amount)
-
-    for check in decision.checks:
-        if check.check_id == "gatekeeper.actor_authorization":
-            permission = check.observed.get("required_permission")
-            role = check.observed.get("role")
-            if permission:
-                fields["permission"] = permission
-            if role:
-                fields["role"] = role
-            break
-
     return fields
 
 

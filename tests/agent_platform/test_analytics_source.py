@@ -12,8 +12,8 @@ import pytest
 
 from agent_platform.analytics import (
     Catalog,
-    ViewContractError,
     ParquetExporter,
+    ViewContractError,
     load_catalog,
     read_manifest,
 )
@@ -57,7 +57,9 @@ def store(tmp_path: Path) -> DuckDbObservabilityStore:
 
 def _export(store: DuckDbObservabilityStore, tmp_path: Path, **kwargs: Any) -> Path:
     parquet = tmp_path / "parquet"
-    ParquetExporter(store, parquet_dir=parquet, evals_db=tmp_path / "no-evals.duckdb", **kwargs).export()
+    ParquetExporter(
+        store, parquet_dir=parquet, evals_db=tmp_path / "no-evals.duckdb", **kwargs
+    ).export()
     return parquet
 
 

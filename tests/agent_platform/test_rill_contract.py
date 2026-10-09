@@ -15,9 +15,9 @@ import pytest
 import yaml
 
 from agent_platform.analytics import load_catalog
-from agent_platform.config import REPO_ROOT
+from agent_platform.config import get_settings
 
-PROJECT = REPO_ROOT / "dashboards" / "rill"
+PROJECT = get_settings().analytics.dashboards.resolved_project_dir
 _PARQUET = re.compile(r"read_parquet\('data/(\w+)\.parquet'\)")
 _QUOTED = re.compile(r"'[^']*'")
 _IDENTIFIER = re.compile(r"\b([a-z_][a-z0-9_]*)\b(?!\s*\()")

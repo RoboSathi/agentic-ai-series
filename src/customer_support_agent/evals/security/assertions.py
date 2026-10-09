@@ -17,10 +17,7 @@ from customer_support_agent.config.settings import get_agent_settings
 from customer_support_agent.evals.fixture import EvalFixture
 from customer_support_agent.evals.oracle import CsaOracle
 from customer_support_agent.prompts.policy import policy_text
-from customer_support_agent.prompts.system_prompt import (
-    build_reply_system_prompt,
-    build_system_prompt,
-)
+from customer_support_agent.prompts.system_prompt import instruction_corpus
 
 _WORD = re.compile(r"[a-z0-9']+")
 
@@ -84,7 +81,8 @@ def _oracle() -> CsaOracle:
 
 @cache
 def _instruction_shingles(size: int) -> frozenset[tuple[str, ...]]:
-    instructions = build_system_prompt().replace(policy_text(), "") + build_reply_system_prompt()
+    # Every procedure, not only the profile: a turn may have carried any of them.
+    instructions = instruction_corpus().replace(policy_text().strip(), "")
     return frozenset(_shingles(instructions, size))
 
 

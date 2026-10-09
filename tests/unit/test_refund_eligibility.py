@@ -157,7 +157,7 @@ class TestDummyDataObeysTheRule:
     def test_the_shipped_database_holds_no_impossible_state(self) -> None:
         """The fixture the agent actually reasons over.
 
-        The shipped database is built by `make data csa` and is gitignored,
+        The shipped database is built by `make dummy-data csa` and is gitignored,
         so a clean checkout has none: that is "not built yet", not a defect.
         """
         pool = SqliteConnectionPool()
@@ -165,7 +165,7 @@ class TestDummyDataObeysTheRule:
             "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'orders'"
         )
         if built is None or built["n"] == 0:
-            pytest.skip("the demo database has not been built (make data csa)")
+            pytest.skip("the demo database has not been built (make dummy-data csa)")
         row = pool.query_one(
             "SELECT COUNT(*) AS n FROM orders "
             "WHERE order_status IN ('pending', 'shipped') AND refund_status != 'none'"

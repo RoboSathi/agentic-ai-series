@@ -5,10 +5,17 @@ Each test scripts the model; everything between the model and the source is real
 
 from typing import Any
 
+from agent_platform.config import get_settings
 from agent_platform.llm.types import ModelToolCall
 from tests.ops_agent.conftest import COUNT_SQL, Harness, query_call
 
 ANSWER = "There were 2 allows and 1 deny."
+
+
+def _tool_decisions() -> str:
+    """Audit rows for tool calls — not the procedures each turn records (ADR 0010)."""
+    audit = get_settings().skills.audit
+    return f"FROM platform_audit_entries WHERE action NOT IN ('{audit.sync_action}', '{audit.activation_action}')"
 
 
 async def test_an_answer_carries_the_sql_and_rows_it_rests_on(harness: Any) -> None:
@@ -47,7 +54,7 @@ async def test_each_call_is_authorized_audited_and_recorded(harness: Any) -> Non
     await run.agent.handle("How many decisions?", "s1")
     standings = run.rows(
         "SELECT action, decision, json_extract_string(authority_context, '$.standing') "
-        "FROM platform_audit_entries"
+        + _tool_decisions()
     )
     assert standings == [("analytics.run_query", "allow", "VALID")]
     assert run.rows("SELECT action, succeeded FROM platform_tool_calls") == [
@@ -64,7 +71,7 @@ async def test_without_the_gatekeeper_the_call_runs_ungoverned_and_says_so(harne
     result = await run.agent.handle("How many decisions?", "s1")
     assert result.outcome == "answered"
     assert run.rows(
-        "SELECT json_extract_string(authority_context, '$.standing') FROM platform_audit_entries"
+        "SELECT json_extract_string(authority_context, '$.standing') " + _tool_decisions()
     ) == [("UNGOVERNED",)]
 
 

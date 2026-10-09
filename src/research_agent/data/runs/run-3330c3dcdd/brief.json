@@ -1,0 +1,43 @@
+{
+  "kind": "brief",
+  "artifact_id": "run-3330c3dcdd",
+  "payload": {
+    "archetype": "explainer",
+    "topic": "Implementing loop control in agentic AI applications",
+    "purpose": "",
+    "decision": "",
+    "criteria": [],
+    "options": [],
+    "claims": [],
+    "concepts": [
+      "implementing loop control in agentic AI applications"
+    ],
+    "constraints": [],
+    "source_policy": {
+      "preferred_domains": [],
+      "blocked_domains": [],
+      "primary_sources_preferred": false,
+      "min_distinct_domains": 1
+    },
+    "recency_days": 90,
+    "period_start": "2026-07-11",
+    "period_end": "2026-10-09",
+    "geography": "",
+    "depth": "small",
+    "deliverable_format": "",
+    "budget": {
+      "max_searches": 3,
+      "max_fetches": 6,
+      "max_tokens": 60000,
+      "max_seconds": 300.0,
+      "max_rounds": 1,
+      "max_dag_nodes": 2,
+      "max_gap_fill_rounds": 0,
+      "concurrency": 2
+    },
+    "known_unknowns": [],
+    "private_terms": []
+  },
+  "content_hash": "b139bfc691155e45d34a9f3915ef3d8c94b16c88d3f1adda51542eaa92606a73",
+  "frozen_at": "2026-10-09T16:14:19.617028Z"
+}

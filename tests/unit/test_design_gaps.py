@@ -24,7 +24,7 @@ from agent_platform.observability.postmortem import Postmortem, PostmortemRegist
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.security import PIIFilterImpl
 from agent_platform.tools import NamespacedToolRegistry, ToolDefinition
-from customer_support_agent.control_loop import (
+from customer_support_agent.loop_control import (
     GroundedCritic,
     IndependentScorer,
     OutputQualityGate,
@@ -291,12 +291,16 @@ class TestPromptIsVersioned:
 
     The procedural-artifact tests that used to live here covered a
     versioned-prompt store the agent no longer writes (`build_system_prompt`
-    takes no store); they were removed with that feature.
+    takes no store); they were removed with that feature. Procedures are
+    versioned in procedural memory now (ADR 0010), but the profile is read
+    from its file, so the prompt still builds with no database.
     """
 
     def test_no_store_means_no_database(self) -> None:
         """An episode should not need persistence to build a prompt."""
-        assert build_system_prompt().startswith("You are a customer support agent")
+        prompt = build_system_prompt()
+        assert prompt.startswith("# Customer Support Agent")
+        assert "You are a customer support agent" in prompt
 
 
 class TestRetrievalOverTheOrderCorpus:

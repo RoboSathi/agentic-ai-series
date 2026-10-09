@@ -9,7 +9,7 @@ top-level [`design_docs/`](../../../design_docs/README.md).
 ## Running it
 
 ```
-make data csa       # rebuild the agent database (KEEP_MEMORY=1 keeps memory)
+make dummy-data csa       # rebuild the agent database (KEEP_MEMORY=1 keeps memory)
 make agent csa        # the operator console
 make eval csa       # generate → oracle → security (Promptfoo) → judge → deepeval
 ```
@@ -23,7 +23,7 @@ From `graph/agent.py` and `graph/edges.py`:
 
 ```
 authenticate → choose_order → [pii_filtering → prompt_injection →
-content_moderation → classify_intent → assemble_context] → reason ⇄ act
+content_moderation → classify_intent → assemble_context] → propose ⇄ execute
 → finalize [→ await_approval]
 ```
 
@@ -35,12 +35,12 @@ content_moderation → classify_intent → assemble_context] → reason ⇄ act
   never reaches screening, intent, retrieval or the model.
 - **Front-door stages are built only when their feature is on** and their
   collaborator exists; edges connect each to the next one that exists.
-- **`reason ⇄ act` is the Tool-Use Loop**, bounded by
+- **`propose ⇄ execute` is the Tool-Use Loop**, bounded by
   `max_tool_iterations`: the model proposes a typed tool call; the harness
   (Gatekeeper, executor) decides whether it happens. It is deliberately
   not ReAct.
 - The model call goes through a timeout, a retry under an idempotency key
-  and a circuit breaker (`graph/nodes/reason.py`).
+  and a circuit breaker (`graph/nodes/propose.py`).
 
 ## Where things are
 
@@ -50,7 +50,7 @@ content_moderation → classify_intent → assemble_context] → reason ⇄ act
 | `intent/router.py` | out-of-scope rejection → classifier → one clarification question |
 | `basic_sanity/order_validator.py` | `OrderSanityCheck`, csa's business-logic seam into the platform's `BasicSanityChecker` |
 | `gatekeeper/` | csa's business rules and mandates for the platform Gatekeeper |
-| `control_loop/quality_gate.py` | the Output Quality Gate: `PlanLookup`, `GroundedCritic`, `IndependentScorer` |
+| `loop_control/quality_gate.py` | the Output Quality Gate: `PlanLookup`, `GroundedCritic`, `IndependentScorer` |
 | `resilience/` | the refund and cancellation sagas (compensating steps, notification last) |
 | `review/` | the human review queue and referral |
 | `domain/` | orders, identity, refund and cancellation policy |

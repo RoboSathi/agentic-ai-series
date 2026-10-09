@@ -24,12 +24,12 @@ from agent_platform.config import get_settings
 from agent_platform.evals import create_scoring_cascade
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.tools import NamespacedToolRegistry, ToolCall, ToolRetrievalSelector
-from customer_support_agent.control_loop import (
+from customer_support_agent.graph import build_agent
+from customer_support_agent.loop_control import (
     DuplicateActionDetector,
-    ToolControlLoop,
+    ToolLoopControl,
     action_fingerprint,
 )
-from customer_support_agent.graph import build_agent
 from customer_support_agent.persistence import HitlQueueRepository, OrdersRepository
 from customer_support_agent.persistence.repositories import RefundLedgerRepository
 from customer_support_agent.resilience.refund_saga import RefundSaga
@@ -175,7 +175,7 @@ class TestARefusedCallIsNotRetried:
         assert detector.seen_before(call) is not None
 
     def test_the_second_attempt_is_suppressed(self) -> None:
-        loop = ToolControlLoop()
+        loop = ToolLoopControl()
         call = ToolCall(
             action="support.queue_for_approval",
             params={"order_id": 10979, "amount": 56.86},
@@ -188,7 +188,7 @@ class TestARefusedCallIsNotRetried:
 
     def test_the_model_is_told_the_refusal_is_final(self) -> None:
         """Not just that it failed — that trying again cannot help."""
-        loop = ToolControlLoop()
+        loop = ToolLoopControl()
         call = ToolCall(
             action="support.process_refund", params={"order_id": 1}, side_effecting=True
         )
@@ -199,7 +199,7 @@ class TestARefusedCallIsNotRetried:
 
     def test_a_different_call_is_still_allowed_after_a_refusal(self) -> None:
         """A refusal ends that proposal, not every remaining option."""
-        loop = ToolControlLoop()
+        loop = ToolLoopControl()
         refused = ToolCall(
             action="support.process_refund", params={"order_id": 1}, side_effecting=True
         )

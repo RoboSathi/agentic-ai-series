@@ -3,7 +3,7 @@
 The agent itself: its state, nodes, edges, and the composition root.
 Order: authenticate → choose order → screening (basic sanity, PII,
 prompt injection, content moderation — only those declared) → intent →
-context → reason ⇄ act → finalize → await approval. A deterministic read
+context → propose ⇄ execute → finalize → await approval. A deterministic read
 route answers straight from the database with no model call.
 
 ## Vocabulary

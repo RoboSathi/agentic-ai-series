@@ -32,22 +32,13 @@ class Words(BaseModel):
 class Stages(BaseModel):
     """The feed's stage key for each node's cards."""
 
-    screen: str
     server: str
-    llm_request: str
-    llm_response: str
-    request: str
-    gatekeeper: str
-    act: str
-    ground: str
 
 
 class Cards(BaseModel):
     """Card headings on the live feed."""
 
     purpose: str
-    requested: str
-    gatekeeper: str
     result_rows: str
     result_metrics: str
     result_views: str
@@ -83,7 +74,6 @@ class OpsAgentSettings(YamlBackedSettings):
     cell_chars: int = Field(ge=4)
     number_tolerance: float = Field(ge=0)
     free_numbers: list[float]
-    system_prompt: str
     words: Words
     stages: Stages
     stage_labels: dict[str, str]

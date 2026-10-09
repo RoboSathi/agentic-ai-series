@@ -3,7 +3,7 @@ card that names who judged and how the score was reached."""
 
 import pytest
 
-from agent_platform.control_loop import BudgetGuard
+from agent_platform.loop_control import BudgetGuard
 from agent_platform.verification.acceptance import CheckVerdict
 from research_agent.audit.verdict import decide
 from research_agent.config import get_agent_settings

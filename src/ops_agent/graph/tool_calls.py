@@ -2,7 +2,7 @@
 
 The MCP server's tools are ordinary `ToolDefinition`s, so they take the same
 path as any agent's (`agent_platform.tools.path`): the registry validates the
-arguments; the turn's control loop suppresses a repeated query; the Gatekeeper
+arguments; the turn's loop control suppresses a repeated query; the Gatekeeper
 rules on the call against this agent's policy (and writes the audit entry); the
 Executor runs it under its deadline. With the Gatekeeper withheld the call still
 goes through the Executor, and the audit entry says UNGOVERNED. The path records
@@ -14,10 +14,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from agent_platform.control_loop.types import ControlLoopReport
-from agent_platform.control_loop.watchdogs import ToolControlLoop
 from agent_platform.gatekeeper.types import AuthorityContext, AuthorityDecision
 from agent_platform.llm.types import ModelToolCall
+from agent_platform.loop_control.types import LoopControlReport
+from agent_platform.loop_control.watchdogs import ToolLoopControl
 from agent_platform.tools import NamespacedToolRegistry
 from agent_platform.tools.path import DUPLICATE, ToolOutcome, ToolPath, ToolTurn
 from agent_platform.tools.types import ToolCall, ToolResult
@@ -41,7 +41,7 @@ class CallOutcome(BaseModel):
 
 
 class GovernedCalls:
-    """Runs the model's tool calls through the platform tool path, one control loop a turn."""
+    """Runs the model's tool calls through the platform tool path, one loop control a turn."""
 
     def __init__(
         self,
@@ -54,13 +54,13 @@ class GovernedCalls:
         self._path = path
         self._settings = settings
         self._actor = actor
-        self._loop = ToolControlLoop()
+        self._loop = ToolLoopControl()
 
     def begin_turn(self) -> None:
         """A new question: nothing it asks for has been asked before; the step cap is declared."""
-        self._loop = ToolControlLoop(step_cap=self._settings.max_steps)
+        self._loop = ToolLoopControl(step_cap=self._settings.max_steps)
 
-    def check_step(self, step: int, wants_tools: bool) -> ControlLoopReport:
+    def check_step(self, step: int, wants_tools: bool) -> LoopControlReport:
         """Whether the turn's step cap allows another round of tools (reported to the bracket)."""
         return self._loop.evaluate_round(
             step + 1 if wants_tools else step, self._settings.max_steps

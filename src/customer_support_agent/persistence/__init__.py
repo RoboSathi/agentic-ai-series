@@ -11,13 +11,19 @@ from customer_support_agent.persistence.repositories import (
     UsersRepository,
     order_turn_scope,
 )
-from customer_support_agent.persistence.schema import ensure_schema
+from customer_support_agent.persistence.schema import (
+    AgentDatabaseNotSeededError,
+    ensure_schema,
+    require_seeded,
+)
 
 __all__ = [
+    "AgentDatabaseNotSeededError",
     "HitlQueueRepository",
     "OrdersRepository",
     "RefundLedgerRepository",
     "UsersRepository",
     "ensure_schema",
     "order_turn_scope",
+    "require_seeded",
 ]

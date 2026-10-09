@@ -1,6 +1,8 @@
 # ADR 0008 — MCP unparked: the analytics server, the client, and the ops agent
 
 > Since (ADR 0009 notes): "mart" became **analytics source**; `mart://manifest` is `source://manifest`; `make analytics-mcp` was removed. An MCP client launches `python -m agent_platform.analytics.mcp_server`, and `ANALYTICS__SOURCE` picks the source. The body below is kept as decided.
+>
+> Since (2026-10-09): all MCP code lives under `agent_platform.mcp` — `common/` (the protocol's vocabulary, stdio), `client/` (the governed client) and `server/` (one package per server). The analytics server is `agent_platform.mcp.server.analytics`: `python -m agent_platform.mcp.server.analytics`.
 
 - Status: accepted
 - Date: 2026-10-08

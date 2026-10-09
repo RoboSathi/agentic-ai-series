@@ -16,7 +16,7 @@ floor, so a chatty message is never handed something that moves money.
 - `ToolRetrievalSelector`, `SelectionMetrics` (`selector.py`)
 - `ToolDefinition`, `ToolCall`, `ToolResult`, `ToolHandler`, `ToolSource` (`types.py`)
 - `ToolPath`, `ToolTurn`, `ToolOutcome` (`path.py`) — the single path every model-proposed
-  call takes: registry (`resolve`: unknown vs invalid) → control loop → Gatekeeper (or
+  call takes: registry (`resolve`: unknown vs invalid) → loop control → Gatekeeper (or
   UNGOVERNED, audited) → Executor, recording the stage it stopped at (`fact_tool_call`)
 
 ## Configuration

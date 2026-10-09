@@ -1,4 +1,13 @@
-# mcp — Model Context Protocol client
+# mcp — Model Context Protocol, client and servers
+
+All MCP code, by side of the wire:
+
+```
+mcp/
+  common/   types.py (TransportKind, McpToolInfo, McpServerInfo, McpCallResult) · stdio.py (silence_console)
+  client/   contracts.py · sdk_session.py · sdk_transport.py · governed_source.py · schema.py · presentation.py
+  server/   analytics/ (server.py build_server · __main__.py: python -m agent_platform.mcp.server.analytics)
+```
 
 Tools that arrive over MCP rather than being written as Python functions.
 Whatever an MCP server offers enters as an ordinary `ToolDefinition` through
@@ -33,7 +42,7 @@ permission).
 ## Seams
 
 - Plugs into `tools.NamespacedToolRegistry` via `McpToolSource.tools()`.
-- The platform's own server is `agent_platform.analytics.mcp_server`
+- The platform's own server is `agent_platform.mcp.server.analytics`
   (list_metrics, compute_metric, list_views, describe_view, run_query).
 
 ## Collaborators

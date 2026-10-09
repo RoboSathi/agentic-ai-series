@@ -13,6 +13,8 @@ opened by this version.
 from pathlib import Path
 
 from agent_platform.persistence import SqliteConnectionPool
+from customer_support_agent.config import get_agent_settings
+from customer_support_agent.persistence.repositories import UsersRepository
 
 _SCHEMA_FILE = Path(__file__).resolve().parent / "schema.sql"
 # The column a queue built by this version has and an older one lacks.
@@ -22,6 +24,23 @@ _QUEUE_COLUMNS = "id, order_id, user_id, requested_amount_cents, action, status,
 # Order columns added after databases were already built. `CREATE TABLE IF NOT
 # EXISTS` leaves an existing table as it was, so each is added in place, once.
 _ADDED_ORDER_COLUMNS = {"carrier_note": "TEXT", "refund_settles_at": "TEXT"}
+
+
+class AgentDatabaseNotSeededError(RuntimeError):
+    """The agent's own database has its tables but no customers in them."""
+
+
+def require_seeded(pool: SqliteConnectionPool, path: Path) -> None:
+    """Refuse a database with no customers, rather than answer every code as unknown.
+
+    `ensure_schema` makes an empty file a valid database, so a deleted one comes
+    back as tables with nobody in them: the agent would start, look healthy, and
+    reject every customer. Only the agent's own file is checked; a pool a caller
+    injects is that caller's fixture.
+    """
+    if UsersRepository(pool).count() == 0:
+        message = get_agent_settings().unseeded_database.format(path=path)
+        raise AgentDatabaseNotSeededError(message)
 
 
 def ensure_schema(pool: SqliteConnectionPool) -> None:

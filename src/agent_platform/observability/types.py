@@ -28,7 +28,7 @@ EventKind = Literal[
     "gatekeeper",
     "executor",
     "resilience",
-    "control_loop",
+    "loop_control",
     "grounding",
     "escalation",
     "system",

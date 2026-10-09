@@ -4,7 +4,7 @@ The boundary test is the regression guard for a failure this repo has
 had: agent vocabulary leaking into the shared library. Research words are
 banned from all of `agent_platform`. `rubric` and `report` predate the
 research agent (the eval judge's rubric, `StageReporter`), and `report`
-is the platform's own word for a status record (`ControlLoopReport`, which
+is the platform's own word for a status record (`LoopControlReport`, which
 the new budget guard must reuse rather than duplicate), so only `rubric` is
 banned inside the modules added for the research agent (ADR 0003).
 """
@@ -30,7 +30,7 @@ NEW_MODULES = (
     "evidence",
     "web",
     "primitives/hashing.py",
-    "control_loop/budget.py",
+    "loop_control/budget.py",
     "durability/isolated.py",
     "durability/hitl.py",
     "llm/roles.py",

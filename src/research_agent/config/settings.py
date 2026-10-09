@@ -344,6 +344,9 @@ class AnswerMessages(BaseModel):
     tool_failed: str
     # One loop step's description beside its number: `{step}`, `{max}`.
     loop_step_detail: str
+    # LOOP CONTROL: the next step's words, by node, and why a budget forced it, by counter.
+    loop_next: dict[str, str]
+    loop_because: dict[str, str]
     # THOUGHT: `{calls}` the tools it chose, `{tokens}`, `{seconds}`.
     # The pending THOUGHT card while its model call runs: `{role}`.
     thought_waiting: str
@@ -602,10 +605,26 @@ class ResearchTaskSettings(BaseModel):
         ]
 
 
+class RunLoopWords(BaseModel):
+    """LOOP CONTROL for a research run: the next step's words, and why, by key."""
+
+    next: dict[str, str]
+    because: dict[str, str]
+
+
+class InstructionSettings(BaseModel):
+    """Which roles carry the profile and their procedures (ADR 0010, ra-0021)."""
+
+    profile_roles: list[str]
+    # How a role is written as a procedure signal (`role:{role}`).
+    role_signal: str
+
+
 class ResearchAgentSettings(YamlBackedSettings):
     """The research agent's own wiring values."""
 
     _yaml_section = "research_agent"
+    instructions: InstructionSettings
     # The tasks this agent opens and the outcomes it closes them with (ADR 0009).
     tasks: ResearchTaskSettings
 
@@ -624,6 +643,7 @@ class ResearchAgentSettings(YamlBackedSettings):
     matching: MatchingSettings
     research: ResearchSettings
     calls: CallSettings
+    run_loop: RunLoopWords
     reflection: ReflectionSettings
     synthesis: SynthesisSettings
     audit: AuditSettings

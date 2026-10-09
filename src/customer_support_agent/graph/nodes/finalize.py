@@ -10,13 +10,14 @@ from typing import Any
 from agent_platform.guardrails import CustomerResponse, ResponseGuardrailResult
 from agent_platform.hallucination_protection.checker import Resampler
 from agent_platform.llm.types import CompletionRequest, Message
+from agent_platform.observability.types import StatusKind
 from agent_platform.resilience import (
     external_api_error_fields,
 )
 from customer_support_agent.config import get_agent_settings
-from customer_support_agent.control_loop.quality_gate import Critique
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
+from customer_support_agent.loop_control.quality_gate import Critique
 from customer_support_agent.presentation.reporting import (
     FALLBACK_REPLY,
     is_customer_ready,
@@ -46,7 +47,7 @@ class FinalizeNodes(NodeSupport):
         control, not an excuse to hand the customer an empty reply.
         """
         # The loop is over; the reply is composed outside it.
-        self._loop_step = None
+        self._steps.begin(None)
         self._report(
             "finalize",
             summary="Preparing the customer-facing response",
@@ -337,14 +338,10 @@ class FinalizeNodes(NodeSupport):
         if review is not None:
             fields["review_request"] = review
         summary = _grounding_headline(result, review)
-        report = (
-            self._reporter_blocked
-            if result.withheld
-            else self._reporter_warning
-            if result.escalated
-            else self._done
+        status: StatusKind = (
+            "blocked" if result.withheld else "warning" if result.escalated else "completed"
         )
-        report("hallucination_check", summary=summary, event_kind="grounding", fields=fields)
+        self._steps.hallucination_check(status, summary, fields)
 
     def _refer_reply(self, state: AgentState, result: ResponseGuardrailResult) -> int | None:
         """The review request a cut reply was queued as, when there is a queue to put it in."""

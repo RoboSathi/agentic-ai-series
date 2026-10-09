@@ -12,12 +12,20 @@ authenticated customer.
 
 ## Public interface
 
-- `ensure_schema(pool)` (`schema.py`)
+- `ensure_schema(pool)`, `require_seeded(pool, path)`, `AgentDatabaseNotSeededError` (`schema.py`)
 - `OrdersRepository`, `UsersRepository`, `HitlQueueRepository`, `RefundLedgerRepository` (`repositories.py`)
 
 ## Configuration
 
-`persistence.db_path` (the agent overlays it).
+`persistence.db_path` (the agent overlays it); `customer_support_agent.unseeded_database`
+(the start-up refusal's wording).
+
+The database is gitignored and built by `make dummy-data csa`. `ensure_schema` turns a
+missing file into empty tables, so the composition root also calls `require_seeded` on
+the agent's own database: with no customers it refuses to start rather than answer every
+code as unknown. To stop versioning a database, untrack it with `git rm --cached`: a plain
+`git rm` deletes the local file too, which is how an unseeded database once reached a
+running console.
 
 ## Seams
 

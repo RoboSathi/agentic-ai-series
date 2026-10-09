@@ -21,7 +21,6 @@ from agent_platform.context import (
     StrategySelector,
 )
 from agent_platform.context.types import Chunk
-from agent_platform.control_loop import ToolControlLoop
 from agent_platform.durability import DurableGraphRunner, RunRegistry, SqliteCheckpointer
 from agent_platform.evals import NollmScoringCascadeImpl
 from agent_platform.executor import ToolExecutor
@@ -37,14 +36,15 @@ from agent_platform.hallucination_protection import (
 )
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
+from agent_platform.loop_control import ToolLoopControl
 from agent_platform.memory import MemoryFacade, WorkingMemoryStore
 from agent_platform.memory.semantic.rag import KNOWLEDGE_SOURCE_PREFIX, markdown_sections
 from agent_platform.observability import (
     StageReporter,
     Tracer,
 )
-from agent_platform.observability.llm_fields import llm_request_fields, llm_response_fields
 from agent_platform.observability.loop_reporter import mark_step
+from agent_platform.observability.step_events import LOOP_STAGES, StepEvents
 from agent_platform.observability.types import EventKind
 from agent_platform.primitives.money import money_or_none
 from agent_platform.resilience import (
@@ -52,11 +52,11 @@ from agent_platform.resilience import (
 )
 from agent_platform.security import MessageScreener, SecuritySuite
 from agent_platform.security.auth.policy import AgentPolicy
+from agent_platform.skills import AgentInstructions
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from agent_platform.tools.path import ToolPath
 from agent_platform.verification import EffectVerifier
 from customer_support_agent.config.settings import get_agent_settings
-from customer_support_agent.control_loop import OutputQualityGate
 from customer_support_agent.domain.identity import (
     Customer,
 )
@@ -68,6 +68,7 @@ from customer_support_agent.gatekeeper.business_rules import REFUND_ACTION_CLASS
 from customer_support_agent.graph.loop_decision import duplicate_suppressed
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.intent.router import CustomerSupportIntentRouter, Intent
+from customer_support_agent.loop_control import OutputQualityGate
 from customer_support_agent.observability.accounting import TurnAccountant
 from customer_support_agent.persistence.repositories import OrdersRepository
 from customer_support_agent.presentation.orders import (
@@ -112,6 +113,8 @@ class NodeSupport:
     _working_memory: WorkingMemoryStore | None
     _long_term: MemoryFacade | None
     _context: FiveStagePipeline | None
+    # The profile, plus the procedures a turn's signals select (ADR 0010).
+    _instructions: AgentInstructions
     _selector: ToolRetrievalSelector | None
     _cascade: NollmScoringCascadeImpl | None
     _reporter: StageReporter | None
@@ -136,13 +139,13 @@ class NodeSupport:
     # Absent when `context.failure_detection` is withheld.
     _context_health: ContextFailureDetector | None
     # Which tool-use loop iteration is running (None outside the loop).
-    _loop_step: int | None
+    _steps: StepEvents
     _diagnoser: GroundingReasoningDiagnoser
     _response_guardrail: ResponseGuardrail
     _sessions: dict[str, Customer]
     _menus: dict[str, OrderMenu]
     _last_supported_intent: dict[str, Intent]
-    _control_loop: ToolControlLoop
+    _loop_control: ToolLoopControl
     _deliberation: OutputQualityGate
     _accountant: TurnAccountant
     # Durable execution. Absent only for an agent constructed by hand
@@ -198,11 +201,11 @@ class NodeSupport:
         """Build the window the model is handed."""
         raise NotImplementedError
 
-    async def reason(self, state: AgentState) -> dict[str, Any]:
+    async def propose(self, state: AgentState) -> dict[str, Any]:
         """Ask the model what to do next."""
         raise NotImplementedError
 
-    async def act(self, state: AgentState) -> dict[str, Any]:
+    async def execute(self, state: AgentState) -> dict[str, Any]:
         """Execute what the model proposed, under governance."""
         raise NotImplementedError
 
@@ -540,42 +543,13 @@ class NodeSupport:
             },
         }
 
-    def _report_llm_request(
-        self,
-        request: CompletionRequest,
-        *,
-        purpose: str,
-    ) -> None:
-        """Expose the important inputs sent to the model as a feed event."""
-        self._done(
-            "llm_request",
-            event_kind="model",
-            summary=get_settings().observability.llm_request_heading.format(purpose=purpose),
-            fields={
-                **llm_request_fields(request, model=self._llm.model),
-                "purpose": purpose,
-            },
-        )
+    def _report_llm_request(self, request: CompletionRequest, *, purpose: str) -> None:
+        """LLM REQUEST: the platform's card for what the model is handed."""
+        self._steps.llm_request(request, purpose=purpose)
 
-    def _report_llm_response(
-        self,
-        result: CompletionResult,
-        *,
-        purpose: str,
-    ) -> None:
-        """Expose the exact provider-neutral response and its accounting."""
-        fields = {**llm_response_fields(result), "purpose": purpose}
-        headings = get_settings().observability
-        self._done(
-            "llm_response_received",
-            event_kind="model",
-            summary=(
-                headings.llm_tool_requested_heading.format(tool=result.tool_calls[0].name)
-                if result.tool_calls
-                else headings.llm_response_heading.format(purpose=purpose)
-            ),
-            fields=fields,
-        )
+    def _report_llm_response(self, result: CompletionResult, *, purpose: str) -> None:
+        """LLM RESPONSE: the platform's card for what came back."""
+        self._steps.llm_response(result, purpose=purpose)
 
     def _report(
         self,
@@ -663,23 +637,20 @@ class NodeSupport:
         every round, not only when a criterion fires: a card that appears
         only on failure leaves a passing round unexplained.
         """
-        words = get_agent_settings().control_loop_status
-        fields: dict[str, Any] = {
-            "criteria": {
+        fields = self._steps.loop_control(
+            round_number=tool_rounds,
+            criteria={
                 "model_requested_tools": tools_requested,
                 "iteration_limit": f"{tool_rounds} of {self._max_rounds}",
                 "duplicate_action": duplicate_suppressed(invocations),
                 "escalated_to_human": escalated,
                 "final_refusal": refusal_final,
             },
-            "next_step": next_step,
-            "because": words.because.get(because, because),
-        }
-        summary = words.summary.format(
-            round=tool_rounds, max_rounds=self._max_rounds, next_step=next_step
+            next_step=next_step,
+            because=because,
+            because_words=get_agent_settings().loop_control_status.because,
         )
-        self._logger.info("Control loop status", **fields)
-        self._done("control_loop", summary=summary, event_kind="control_loop", fields=fields)
+        self._logger.info("Loop control status", **fields)
 
     def _stepped(
         self, stage: str, summary: str | None, fields: dict[str, Any] | None
@@ -697,9 +668,9 @@ class NodeSupport:
             stage,
             summary,
             fields,
-            step=self._loop_step,
+            step=self._steps.step,
             max_steps=self._max_rounds,
-            stages=_LOOP_STAGES,
+            stages=LOOP_STAGES,
         )
 
     def _reporter_blocked(
@@ -762,20 +733,6 @@ class NodeSupport:
 
 # Where the context node leaves the window's grounding sources for finalize.
 GROUNDING_EVIDENCE = "grounding_evidence"
-
-# The cards that belong to one iteration of the tool-use loop.
-_LOOP_STAGES = frozenset(
-    {
-        "llm_request",
-        "llm_call",
-        "llm_response_received",
-        "tool_request",
-        "gatekeeper_evaluation",
-        "control_loop",
-        "tool_result",
-        "executor",
-    }
-)
 
 
 # A sentence boundary inside a rule: terminal punctuation, then a capital.

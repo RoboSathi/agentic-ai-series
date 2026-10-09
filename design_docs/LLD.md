@@ -388,6 +388,18 @@ artifacts, DSPy-compiled prompts land here — links to
 `CompositeRetrievalScorer` (relevance + recency + importance + authority
 + temporal validity — Park et al. extended, E13).
 
+**Procedural memory in the prompt (ADR 0010).** An agent's `AGENT.md`
+(the *profile*) is always in its system prompt. Its `skills/<name>/SKILL.md`
+files (*skills*) are synced into `ProceduralStore` at build time, as one
+version per change. Each turn's *procedures* are selected by
+`agent_platform.skills`, with no model call: `always`, then frontmatter
+`triggers` matched against the turn's *signals*, then BM25 over description
+and keywords. They are rendered as `# Procedure: <name>` sections outside the
+context window, and audited as a `procedure_activation` entry
+(`name@version`). Gated by `memory.procedural`. Dream lessons enter the same
+store only through a curator's `/skills approve`, as `consolidated`
+procedures.
+
 **LLD patterns applied.** Strategy (`MemoryStore` implementations,
 selected by fact nature — E13's "type is semantic, not convenience"
 rule); Chain of Responsibility (write pipeline stages); Facade
@@ -1010,7 +1022,7 @@ opens stdio or HTTP servers named in an agent's `mcp.servers`;
 arguments validated by a model built from each tool's schema, envelope from
 `ConfiguredGovernancePolicy` (`mcp.servers[].envelope`, else the most
 restrictive `mcp.default_envelope`). First consumer: the ops agent, over
-the platform's own analytics MCP server (`agent_platform.analytics.mcp_server`:
+the platform's own analytics MCP server (`agent_platform.mcp.server.analytics`:
 `list_metrics`, `compute_metric`, `list_views`, `describe_view`, `run_query`).
 The session logs the protocol in full to `mcp.log`: the handshake (server name,
 version, protocol, capabilities, instructions), each tool listed (description and

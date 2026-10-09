@@ -18,6 +18,9 @@ class ToolResult(BaseModel):
     output: str = ""
     data: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
+    # How the result was obtained when it crossed a protocol (an MCP call: server,
+    # method, duration, whether the server reported an error); empty for a local tool.
+    exchange: dict[str, Any] = Field(default_factory=dict)
 
 
 ToolHandler = Union[Callable[..., ToolResult], Callable[..., Awaitable[ToolResult]]]

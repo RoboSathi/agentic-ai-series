@@ -43,8 +43,9 @@ features:
     working: true
     episodic: true
     semantic: true
-    # Disabled by design: this agent learns nothing procedural across runs.
-    procedural: false
+    # Authored procedures only (ra-0021): this agent has no dream, so it learns
+    # nothing procedural across runs; it follows the skills it was given.
+    procedural: true
   # The platform's context window for the direct answer: working memory and earlier research,
   # ranked, fitted and health-checked. The reranker is a hosted cross-encoder: off by default.
   context:
@@ -83,7 +84,7 @@ analytics:
 audit:
   policy_version: research-contract-v1
   data_version: live-web-v1
-  prompt_version: research-prompts-v1
+  prompt_version: research-prompts-v2
   tool_schema_version: research-tools-v1
   prompt_source: research_agent/prompts
   policy_source: research contract (audit)
@@ -231,7 +232,19 @@ security:
       the user's own account or details.
 
 
+# The profile and the procedures (ADR 0010, ra-0021).
+skills:
+  profile_path: src/research_agent/prompts/AGENT.md
+  skills_dir: src/research_agent/prompts/skills
+
 research_agent:
+  # Which roles are prompted with the profile (and their procedures), and how a role is
+  # written as a signal a SKILL.md trigger names. The judge is left out so its audit stays
+  # independent of the agent it audits (ra-0003); the extractor, because it runs once per
+  # page and reads untrusted text — it needs its narrow instructions, not the profile.
+  instructions:
+    profile_roles: [interviewer, planner, researcher, reflector, synthesizer, answerer]
+    role_signal: "role:{role}"
   tasks:
     research_run: research_run
     direct_answer: direct_answer
@@ -425,6 +438,25 @@ research_agent:
       news: [announced, launched, released, approved, registry, raised]
       important: [announced, launched, released, approved]
 
+  # LOOP CONTROL for a research run (graph/run_loop.py): where each round goes next, and why.
+  # A `because` not listed here is the reflector's own stop sentence, shown as written.
+  run_loop:
+    next:
+      batch_start: research another round
+      synthesize: write the report
+      gap_fill: fill the audit's gaps
+      finalize: finish the run
+    because:
+      another_round: the reflector planned follow-ups and the budget allows them
+      cancelled: the run was stopped
+      no_gaps: the audit found no must-pass gaps
+      gap_fill_exhausted: must-pass gaps remain but no gap-fill round is left
+      budget_spent: must-pass gaps remain but a budget is spent
+      reflection_off: must-pass gaps remain but reflection is withheld
+      gaps_to_fill: the audit found must-pass gaps and a gap-fill round is left
+      gap_fill_planned: follow-ups were planned for the gaps
+      no_follow_up: no follow-up fits what is left
+
   calls:
     # The roles run on a reasoning model: its hidden reasoning counts against the cap,
     # so the default 3000 tokens can leave an empty answer on a long page.
@@ -593,6 +625,19 @@ research_agent:
       bad_arguments: "The arguments for '{tool}' were not valid."
       tool_failed: "'{tool}' failed: {error}"
       loop_step_detail: "{step} of {max} (thought → action → observation)"
+      # LOOP CONTROL (the platform card): where the loop goes next, and why. `because` keys are
+      # the budget counter that forced the step; the rest are the platform's own reasons.
+      loop_next:
+        act: run the tools
+        ground: check the answer
+        final: answer without tools
+        reason: think again
+        finalize: give the answer
+      loop_because:
+        seconds: too little time is left for another model call
+        tokens: the token budget is spent
+        steps: this is the last step
+        tool_calls: the tool-call budget is spent
       thought_waiting: "waiting for the {role}…"
       thought_tools: "decided to call {calls} · {tokens} tokens · {seconds:.1f}s"
       thought_answer: "ready to answer · {tokens} tokens · {seconds:.1f}s"

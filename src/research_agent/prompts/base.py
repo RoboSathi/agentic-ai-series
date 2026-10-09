@@ -46,9 +46,14 @@ class RolePrompt(BaseModel):
     instructions: str
     payload: dict[str, Any]
 
-    def messages(self, schema: type[BaseModel]) -> list[Message]:
+    def messages(self, schema: type[BaseModel], preamble: str = "") -> list[Message]:
+        """System and user messages; `preamble` (the profile) goes just below the role line.
+
+        Below it, never above: `role_of` reads the role back from the first line.
+        """
         rule = f"\n\n{TODAY_RULE}" if TODAY_KEY in self.payload else ""
-        system = f"{ROLE_HEADER.format(role=self.role)}\n{self.instructions.strip()}{rule}"
+        lead = f"{preamble.strip()}\n\n" if preamble.strip() else ""
+        system = f"{ROLE_HEADER.format(role=self.role)}\n{lead}{self.instructions.strip()}{rule}"
         body = json.dumps(self.payload, indent=2, sort_keys=True, default=str)
         schema_text = json.dumps(schema.model_json_schema(), sort_keys=True)
         user = f"{PAYLOAD_OPEN}{body}{PAYLOAD_CLOSE}{SCHEMA_INTRO}{schema_text}"

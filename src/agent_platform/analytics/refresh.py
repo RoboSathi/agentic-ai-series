@@ -41,7 +41,11 @@ class ParquetRefresher:
 
     def _export(self) -> SourceManifest:
         if self._exporter is None:
-            self._exporter = ParquetExporter(DuckDbObservabilityStore())
+            # What this console records is what it exports, whatever `SOURCE` readers use.
+            recording = get_settings().analytics.recording
+            self._exporter = ParquetExporter(
+                DuckDbObservabilityStore(), parquet_dir=recording.resolved_parquet_dir
+            )
         return self._exporter.export()
 
 

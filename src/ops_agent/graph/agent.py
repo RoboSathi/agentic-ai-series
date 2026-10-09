@@ -16,11 +16,12 @@ from agent_platform.config import get_settings
 from agent_platform.llm.types import Message
 from agent_platform.logging import get_current_trace_id, get_logger, instrument
 from agent_platform.mcp import McpToolSource
-from agent_platform.mcp.presentation import server_card
+from agent_platform.mcp.client.presentation import server_card
 from agent_platform.observability import StageReporter
 from agent_platform.observability.langsmith import NullTraceExporter, TraceExporter, turn_trace
 from agent_platform.observability.units import close_task
 from agent_platform.security import MessageScreener, ScreenSubject
+from agent_platform.skills import AgentInstructions, SkillCatalog, build_agent_instructions
 from agent_platform.tools import NamespacedToolRegistry
 from ops_agent.config.settings import OpsAgentSettings
 from ops_agent.graph.state import OpsState, initial_state
@@ -52,6 +53,7 @@ class OpsAgent:
         reporter: StageReporter | None = None,
         screen: MessageScreener | None = None,
         trace_exporter: TraceExporter | None = None,
+        instructions: AgentInstructions | None = None,
     ) -> None:
         self._graph = graph
         self._registry = registry
@@ -60,9 +62,18 @@ class OpsAgent:
         self._reporter = reporter
         self._screen = screen
         self._exporter = trace_exporter or NullTraceExporter()
+        # The profile always; procedures when procedural memory was built.
+        self._instructions = instructions or build_agent_instructions(
+            get_settings().skills, store=None, audit=None, reporter=None
+        )
         self._history: dict[str, list[Message]] = {}
         self._connected = False
         self._logger = get_logger("ops_agent")
+
+    @property
+    def skill_catalog(self) -> SkillCatalog | None:
+        """The procedures `/skills` lists (None when procedural memory is withheld)."""
+        return self._instructions.catalog
 
     async def handle(self, query: str, session_id: str) -> TurnResult:
         """One turn, under a trace of its own."""
@@ -153,7 +164,7 @@ class OpsAgent:
 
     def _messages(self, query: str, session_id: str) -> list[Message]:
         return [
-            Message(role="system", content=self._settings.system_prompt),
+            Message(role="system", content=self._instructions.compose(frozenset(), query).text),
             *self._history.get(session_id, []),
             Message(role="user", content=query),
         ]

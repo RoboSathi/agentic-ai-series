@@ -67,7 +67,7 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-"*" = ["*.yaml", "*.yaml.example", "*.sql", "*.md", "py.typed"]
+"*" = ["*.yaml", "*.yaml.example", "*.sql", "*.md", "py.typed", "skills/*/*.md", "skills/*/references/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

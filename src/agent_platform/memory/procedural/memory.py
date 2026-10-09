@@ -135,6 +135,19 @@ class ProceduralStore:
         self._logger.info("Rolled back procedure", procedure=name, version=version)
         return target
 
+    def retire(self, name: str) -> int:
+        """Deactivate every version of a procedure, keeping its history.
+
+        A procedure whose authored source was removed must stop being
+        selectable without losing the record of what it used to say.
+        """
+        result = self._store.execute(
+            "UPDATE platform_procedures SET active = 0 WHERE agent_id = ? AND name = ?",
+            (self._agent_id, name),
+        )
+        self._logger.info("Retired procedure", procedure=name, versions=result.affected)
+        return result.affected
+
     def latest_version(self, name: str) -> int:
         """Highest version number recorded for a procedure (0 if none)."""
         row = self._store.query_one(

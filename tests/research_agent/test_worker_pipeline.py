@@ -5,8 +5,8 @@ from typing import Any
 
 import pytest
 
-from agent_platform.control_loop import BudgetGuard
 from agent_platform.evidence import EvidenceLedger, VerbatimSpanValidator
+from agent_platform.loop_control import BudgetGuard
 from agent_platform.primitives.hashing import text_hash
 from agent_platform.security.guard_types import GuardVerdict
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator

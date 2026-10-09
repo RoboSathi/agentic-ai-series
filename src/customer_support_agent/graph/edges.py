@@ -10,7 +10,7 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
-from customer_support_agent.graph.loop_decision import after_act_step, after_reason_step
+from customer_support_agent.graph.loop_decision import after_execute_step, after_propose_step
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.nodes.review_wait import AWAITING_REVIEW
 from customer_support_agent.graph.state import AgentState
@@ -41,8 +41,8 @@ class GraphWiring(NodeSupport):
         graph.add_node("authenticate", self.authenticate)
         graph.add_node("choose_order", self.choose_order)
         graph.add_node("read_intent", self.read_intent)
-        graph.add_node("reason", self.reason)
-        graph.add_node("act", self.act)
+        graph.add_node("propose", self.propose)
+        graph.add_node("execute", self.execute)
         graph.add_node("finalize", self.finalize)
 
         # The screening-and-routing run, in order, each present only if
@@ -81,7 +81,7 @@ class GraphWiring(NodeSupport):
         # Resolve deterministic menu choices before anything model-driven,
         # then hand to the first stage this agent actually has.
         names = [name for name, _ in front_door]
-        first = names[0] if names else "reason"
+        first = names[0] if names else "propose"
         graph.add_conditional_edges(
             "choose_order", self._after_choose, {"next": first, "done": END}
         )
@@ -89,7 +89,7 @@ class GraphWiring(NodeSupport):
         # Each stage continues to the next one that exists. Every one of
         # them can halt the turn, so each edge carries a `done` branch.
         for position, name in enumerate(names):
-            following = names[position + 1] if position + 1 < len(names) else "reason"
+            following = names[position + 1] if position + 1 < len(names) else "propose"
             if name == "classify_intent":
                 graph.add_conditional_edges(
                     name,
@@ -103,10 +103,10 @@ class GraphWiring(NodeSupport):
 
         graph.add_edge("read_intent", END)
         graph.add_conditional_edges(
-            "reason", self._after_reason, {"act": "act", "finalize": "finalize"}
+            "propose", self._after_propose, {"execute": "execute", "finalize": "finalize"}
         )
         graph.add_conditional_edges(
-            "act", self._after_act, {"reason": "reason", "finalize": "finalize"}
+            "execute", self._after_execute, {"propose": "propose", "finalize": "finalize"}
         )
         # A turn that queued a refund for a person pauses after replying,
         # checkpointed, until the decision resumes it. Only a durable agent
@@ -169,18 +169,18 @@ class GraphWiring(NodeSupport):
         """A menu choice is answered from the database and finishes here."""
         return "done" if state.metadata.get("halted") else "next"
 
-    def _after_reason(self, state: AgentState) -> str:
-        """Act on requested tools, or finish. The `reason` node reported why."""
+    def _after_propose(self, state: AgentState) -> str:
+        """Act on requested tools, or finish. The `propose` node reported why."""
         last = self._current_messages(state)[-1] if self._current_messages(state) else None
-        return after_reason_step(last is not None and bool(last.tool_calls))[0]
+        return after_propose_step(last is not None and bool(last.tool_calls))[0]
 
-    def _after_act(self, state: AgentState) -> str:
-        """Go round again only while permitted. The `act` node reported why.
+    def _after_execute(self, state: AgentState) -> str:
+        """Go round again only while permitted. The `execute` node reported why.
 
         Pure: LangGraph runs a routing function off the event loop, where a
         card cannot be drawn, so it decides and says nothing.
         """
-        return after_act_step(
+        return after_execute_step(
             state.tool_rounds,
             self._max_rounds,
             state.escalated,

@@ -3,14 +3,14 @@
 Nodes, in order:
 
     authenticate → choose_order → screening → classify_intent →
-    assemble_context → reason ⇄ act → finalize [→ await_approval]
+    assemble_context → propose ⇄ execute → finalize [→ await_approval]
 
 Every turn is a durable run: its own checkpointed thread. A node that
 fails leaves the thread resumable from the node that did not finish, and
 a turn that queued a refund for a person pauses in `await_approval` until
 the reviewer's decision resumes it.
 
-The `reason ⇄ act` cycle is the **Tool-Use Loop**, bounded by
+The `propose ⇄ execute` cycle is the **Tool-Use Loop**, bounded by
 `max_tool_iterations`. It is not ReAct: the model proposes a typed tool
 call rather than a natural-language thought, and the harness — not the
 model — decides whether that call happens.
@@ -47,7 +47,6 @@ from agent_platform.context import (
     FiveStagePipeline,
     StrategySelector,
 )
-from agent_platform.control_loop import ToolControlLoop
 from agent_platform.durability import (
     CheckpointInfo,
     DurableGraphRunner,
@@ -66,6 +65,7 @@ from agent_platform.hallucination_protection import DetectionLadder, GroundingRe
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import Message, TokenUsage
 from agent_platform.logging import get_logger
+from agent_platform.loop_control import ToolLoopControl
 from agent_platform.memory import (
     MemoryAction,
     MemoryCommand,
@@ -78,6 +78,7 @@ from agent_platform.memory import (
     WorkingMemoryStore,
     WriteResult,
 )
+from agent_platform.memory.write_pipeline import MemoryWritePipelineImpl
 from agent_platform.observability import (
     SLORegistry,
     StageReporter,
@@ -89,17 +90,18 @@ from agent_platform.observability.langsmith import (
     TurnTrace,
     turn_trace,
 )
+from agent_platform.observability.step_events import StepEvents
 from agent_platform.observability.units import declare_screens, mark_cancelled
 from agent_platform.resilience import (
     DeadLetterQueue,
 )
 from agent_platform.security import MessageScreener, SecuritySuite
 from agent_platform.security.auth.policy import AgentPolicy
+from agent_platform.skills import AgentInstructions, SkillCatalog, build_agent_instructions
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from agent_platform.tools.path import ToolPath
 from agent_platform.verification import EffectVerifier
 from customer_support_agent.config import get_agent_settings
-from customer_support_agent.control_loop import IndependentScorer, OutputQualityGate
 from customer_support_agent.domain.identity import (
     Customer,
     bound_customer,
@@ -108,16 +110,17 @@ from customer_support_agent.domain.identity import (
 from customer_support_agent.domain.order_reference import OrderReferenceResolver
 from customer_support_agent.graph.edges import GraphWiring
 from customer_support_agent.graph.nodes._support import NodeSupport
-from customer_support_agent.graph.nodes.act import ToolUseNodes
 from customer_support_agent.graph.nodes.authenticate import JUST_VERIFIED, AuthenticationNodes
 from customer_support_agent.graph.nodes.context import ContextNodes
+from customer_support_agent.graph.nodes.execute import ExecutionNodes
 from customer_support_agent.graph.nodes.finalize import FinalizeNodes
 from customer_support_agent.graph.nodes.intent import IntentNodes
-from customer_support_agent.graph.nodes.reason import ReasoningNodes
+from customer_support_agent.graph.nodes.propose import ProposalNodes
 from customer_support_agent.graph.nodes.review_wait import ReviewWaitNodes
 from customer_support_agent.graph.nodes.screening import ScreeningNodes
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.intent.router import CustomerSupportIntentRouter, Intent
+from customer_support_agent.loop_control import IndependentScorer, OutputQualityGate
 from customer_support_agent.observability.accounting import TurnAccountant, TurnOutcome
 from customer_support_agent.persistence.repositories import OrdersRepository, order_turn_scope
 from customer_support_agent.presentation.orders import (
@@ -144,8 +147,8 @@ class CustomerSupportAgent(
     ScreeningNodes,
     IntentNodes,
     ContextNodes,
-    ReasoningNodes,
-    ToolUseNodes,
+    ProposalNodes,
+    ExecutionNodes,
     FinalizeNodes,
     ReviewWaitNodes,
     GraphWiring,
@@ -188,6 +191,7 @@ class CustomerSupportAgent(
         long_term_memory: MemoryFacade | None = None,
         context_health: ContextFailureDetector | None = None,
         trace_exporter: TraceExporter | None = None,
+        instructions: AgentInstructions | None = None,
     ) -> None:
         settings = get_agent_settings()
         # Which stages this agent has. Read once, here, because the graph
@@ -213,6 +217,11 @@ class CustomerSupportAgent(
         self._working_memory = working_memory
         self._memory_event_sink = memory_event_sink
         self._long_term = long_term_memory
+        # The profile always; procedures only when the composition root
+        # built procedural memory. A hand-built agent gets the profile.
+        self._instructions = instructions or build_agent_instructions(
+            get_settings().skills, store=None, audit=None, reporter=None
+        )
         self._context = context
         self._selector = selector
         self._cascade = cascade
@@ -277,7 +286,7 @@ class CustomerSupportAgent(
         # resolves back to an order.
         self._menus: dict[str, OrderMenu] = {}
         self._last_supported_intent: dict[str, Intent] = {}
-        self._control_loop = ToolControlLoop()
+        self._loop_control = ToolLoopControl()
         # Plan, reflect, evaluate (E06). Injected as one composition so a
         # deployment can swap any of the three; deterministic by default,
         # so deliberating about a reply costs no completions.
@@ -292,7 +301,7 @@ class CustomerSupportAgent(
         # so the runner and the graph must share it.
         self._checkpointer = checkpointer
         self._runs = runs
-        self._loop_step: int | None = None
+        self._steps = StepEvents(reporter, max_steps=self._max_rounds, model=llm.model)
         # The durable thread running now, so the console can cancel it.
         self._active_thread: str | None = None
         self._graph = self._build()
@@ -365,7 +374,7 @@ class CustomerSupportAgent(
         # Context variables copy into a task when it starts and do not
         # propagate back out, and LangGraph runs each node in its own
         # task — so a customer bound inside `authenticate` would be
-        # invisible to `act`, and every lookup would silently scope to
+        # invisible to `execute`, and every lookup would silently scope to
         # nobody.
         customer = customer or self._sessions.get(session_id) or current_customer()
         # One turn, one trace: every line any subsystem logs for this turn
@@ -385,8 +394,8 @@ class CustomerSupportAgent(
         self, query: str, session_id: str, customer: Customer | None
     ) -> AgentState:
         """One turn, with the customer already bound for exactly its duration."""
-        self._control_loop = ToolControlLoop(step_cap=self._max_rounds)
-        self._loop_step = None
+        self._loop_control = ToolLoopControl(step_cap=self._max_rounds)
+        self._steps.begin(None)
         await self._recover_conversation(session_id)
         initial = AgentState(
             query=query,
@@ -422,6 +431,17 @@ class CustomerSupportAgent(
         )
         return state
 
+    def _preview(self, query: str) -> str:
+        """The turn as the run registry keeps it: PII redacted, and any typed code masked.
+
+        A customer code is a credential, not PII, so redaction alone left it in
+        `platform_runs` in plain text.
+        """
+        redacted = self._security.redact(query)
+        if self._authenticator is None:
+            return redacted
+        return self._authenticator.mask_code(redacted)
+
     async def _run_turn(
         self, initial: AgentState, thread_id: str
     ) -> tuple[AgentState, RunOutcome | None]:
@@ -435,7 +455,7 @@ class CustomerSupportAgent(
                 initial,
                 session_id=initial.session_id,
                 subject_id=str(initial.customer_id or ""),
-                preview=self._security.redact(initial.query),
+                preview=self._preview(initial.query),
                 reporter=self._reporter,
             )
         finally:
@@ -544,7 +564,7 @@ class CustomerSupportAgent(
 
         What a run needs that is not graph state is re-bound first: who
         the customer is (from the record the run already authenticated
-        against) and a fresh per-turn control loop. The pending node then
+        against) and a fresh per-turn loop control. The pending node then
         runs again; any side effect it had already committed replays from
         its idempotency record instead of happening twice.
         """
@@ -636,7 +656,7 @@ class CustomerSupportAgent(
             customer = self._authenticator.customer_for(prior.customer_id)
             if customer is not None:
                 self._sessions[prior.session_id] = customer
-        self._control_loop = ToolControlLoop(step_cap=self._max_rounds)
+        self._loop_control = ToolLoopControl(step_cap=self._max_rounds)
         if (
             self._working_memory is not None
             and not self._working_memory.get(prior.session_id).history
@@ -772,6 +792,16 @@ class CustomerSupportAgent(
     def working_memory(self) -> WorkingMemoryStore | None:
         """Working memory available to the live agent and operator console."""
         return self._working_memory
+
+    @property
+    def skill_catalog(self) -> SkillCatalog | None:
+        """The procedures `/skills` lists (None when procedural memory is withheld)."""
+        return self._instructions.catalog
+
+    @property
+    def curator(self) -> MemoryWritePipelineImpl | None:
+        """The governed write pipeline a curator approves a queued lesson through."""
+        return self._long_term.pipeline if self._long_term is not None else None
 
     def history_for(self, session_id: str) -> list[Message]:
         """The bounded conversation history from common working memory."""

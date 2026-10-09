@@ -19,7 +19,7 @@ module, config file or document here names one.
 | [commands](commands/README.md) | Operator slash commands |
 | [config](config/README.md) | Layered YAML, typed settings, the feature tree |
 | [context](context/README.md) | Context assembly, strategies, failure detection |
-| [control_loop](control_loop/README.md) | Loop watchdogs and contracts |
+| [loop_control](loop_control/README.md) | Loop watchdogs and contracts |
 | [durability](durability/README.md) | Checkpointed, resumable runs; HITL interrupts |
 | [evals](evals/README.md) | NOLLM cascade, eval pyramid, and the eval pipeline |
 | [executor](executor/README.md) | Running approved tool calls |

@@ -20,15 +20,17 @@ from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from pydantic import BaseModel
 
-from agent_platform.control_loop import BudgetGuard
 from agent_platform.guardrails.guards import PydanticValidator
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
 from agent_platform.logging import describe_error, get_logger
+from agent_platform.loop_control import BudgetGuard
 from agent_platform.observability import StageReporter
 from agent_platform.observability.step_card import ModelCall
 from agent_platform.presentation.text_tree import value_lines
 from agent_platform.resilience import AsyncTimeoutGuard
+from agent_platform.skills import AgentInstructions
+from research_agent.config.settings import InstructionSettings
 from research_agent.domain.budget import TOKENS
 from research_agent.presentation.narration import role_title, say, toned
 from research_agent.prompts.base import RolePrompt
@@ -75,8 +77,13 @@ class StructuredCaller:
         role_max_tokens: Mapping[str, int] | None = None,
         truncation_retries: int = 0,
         truncation_retry_factor: float = 2.0,
+        instructions: AgentInstructions | None = None,
+        profile: InstructionSettings | None = None,
     ) -> None:
         self._clients = clients
+        # The profile and the role's procedures, for the roles configured to carry them.
+        self._instructions = instructions
+        self._profile = profile
         self._role_max_tokens = dict(role_max_tokens or {})
         self._retries = truncation_retries
         self._retry_factor = truncation_retry_factor
@@ -87,6 +94,11 @@ class StructuredCaller:
             lambda: {"tokens": 0.0, "seconds": 0.0, "calls": 0.0}
         )
         self._logger = get_logger("research_agent")
+
+    @property
+    def instructions(self) -> AgentInstructions | None:
+        """The profile and procedures the roles are prompted with, if any."""
+        return self._instructions
 
     def usage(self) -> dict[str, dict[str, float]]:
         """Tokens, model seconds and calls per role since this caller was built."""
@@ -187,11 +199,20 @@ class StructuredCaller:
     ) -> CompletionResult:
         """One structured model call, charged to the budget and the role's meter."""
         request = CompletionRequest(
-            messages=prompt.messages(schema),
+            messages=prompt.messages(schema, self._preamble(prompt.role)),
             json_schema=schema.model_json_schema(),
             max_tokens=cap,
         )
         return await self._send(client, prompt.role, request, True, quiet=quiet)
+
+    def _preamble(self, role: str) -> str:
+        """The profile and this role's procedures — or nothing, for a role kept narrow."""
+        if self._instructions is None or self._profile is None:
+            return ""
+        if role not in self._profile.profile_roles:
+            return ""
+        signal = self._profile.role_signal.format(role=role)
+        return self._instructions.compose(frozenset({signal}), "").text
 
     async def _send(
         self,

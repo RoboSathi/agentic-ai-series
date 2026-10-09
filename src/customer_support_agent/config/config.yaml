@@ -73,9 +73,9 @@ logging:
 audit:
   policy_version: refund-policy-v1
   data_version: dummy-data-v1
-  prompt_version: support-prompt-v1
+  prompt_version: support-prompt-v2
   tool_schema_version: support-tools-v1
-  prompt_source: customer_support_agent/prompts
+  prompt_source: customer_support_agent/prompts (AGENT.md + skills/)
   policy_source: gatekeeper + customer_policy.md
 
 llm:
@@ -90,6 +90,12 @@ llm:
   check:
     local:
       intent_text: "I want a refund for my order"
+
+# The profile and the procedures (ADR 0010): synced into procedural memory
+# at start-up when memory.procedural is on, selected per turn by intent.
+skills:
+  profile_path: src/customer_support_agent/prompts/AGENT.md
+  skills_dir: src/customer_support_agent/prompts/skills
 
 memory:
   episodic:
@@ -288,17 +294,12 @@ customer_support_agent:
   grounding_facts:
     verified_customer: "You are {value}."
   max_tool_iterations: 5
-  # The CONTROL LOOP card, shown at each point the loop decides whether to go round again:
-  # every criterion it weighs, its current value, the next step, and why.
-  control_loop_status:
-    summary: "Round {round} of {max_rounds} · next: {next_step}"
+  # The LOOP CONTROL card is the platform's (`observability.step_events.loop_control`);
+  # these are the reasons only this agent's loop has for stopping.
+  loop_control_status:
     because:
-      tool_requested: the model asked for a tool
-      no_tool_call: the model replied without asking for a tool
-      rounds_remain: the tools ran and rounds remain
       escalated: an action was handed to a person; the agent stops acting
       final_refusal: a refusal no other arguments can turn into an allow
-      iteration_limit: the iteration limit is reached
   list_orders_max_rows: 20
   # Tool -> budget class. A tool absent from this map is not financially
   # budgeted; whether it is allowed at all is the permission check's
@@ -503,6 +504,9 @@ customer_support_agent:
   # What history, memory and logs keep in place of a typed login code. The
   # code is a credential: it is checked once and never replayed to the model.
   user_code_placeholder: "[customer code]"
+  # Start-up refuses an agent database with no customers: an empty schema authenticates
+  # nobody, and every code would be answered as unknown. `{path}` is the database file.
+  unseeded_database: "The agent database {path} has no customers: run `make dummy-data csa`."
   # Fixed wording the agent says itself. `{length}` is user_code_length.
   messages:
     auth:
@@ -557,6 +561,11 @@ customer_support_agent:
       delivered: " on {value}"
   demo_user_code: 2HEDZTV
   policy_path: src/customer_support_agent/prompts/customer_policy.md
+  # Which turn facts become procedure signals (ADR 0010): a state metadata
+  # key, and how its value is written as a signal a SKILL.md trigger names.
+  instruction_signals:
+    intent: "intent:{value}"
+    intent_execution_route: "route:{value}"
   console_reviewer: console_operator
   # A refund is issued first and settles later, as a card payment does: until
   # it settles it can be voided (`/void`), after that only refunded. Settling is

@@ -15,7 +15,7 @@ These names are used as written in code, logs, stage labels and docs.
 | **Scope Brief** | the typed, frozen output of scoping: archetype, purpose/decision, criteria, constraints, source policy, recency/geography, depth, deliverable, budget, known unknowns | `domain/scope.py::ScopeBrief` |
 | **Rubric** / **Rubric Item** | the acceptance criteria; each item has an id, text, a check (`deterministic`, `nli` or `judge` + name + params), a threshold, `must_pass`, an origin and what it maps to | `domain/rubric.py` |
 | **Research Contract** | Brief + Rubric + Budget, frozen at `/approve` and identified by its canonical hash — the only thing the autonomous phase receives | `domain/rubric.py::Contract` |
-| **Budget** | the run's hard caps: searches, fetches, tokens, seconds, rounds, DAG nodes, gap-fill rounds, concurrency | `domain/budget.py`, enforced by `agent_platform.control_loop.BudgetGuard` |
+| **Budget** | the run's hard caps: searches, fetches, tokens, seconds, rounds, DAG nodes, gap-fill rounds, concurrency | `domain/budget.py`, enforced by `agent_platform.loop_control.BudgetGuard` |
 | **Plan DAG** / **sub-question** | the planner's decomposition; every node traces to at least one Rubric Item | `domain/plan.py` |
 | **Round** | one plan → research → reflect cycle | `RunState.round` |
 | **Batch** | one set of concurrently-runnable DAG nodes (a LangGraph superstep) | `graph/run_graph.py` |

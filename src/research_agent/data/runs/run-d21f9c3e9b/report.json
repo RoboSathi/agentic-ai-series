@@ -1,0 +1,249 @@
+{
+  "kind": "report",
+  "artifact_id": "run-d21f9c3e9b",
+  "payload": {
+    "title": "Impact of Agentic AI and Coding Agents on Software Jobs",
+    "status": "PARTIAL",
+    "sections": [
+      {
+        "heading": "Summary",
+        "body": "Agentic AI is an advanced AI form focused on autonomous decision-making and action, capable of goal-setting, planning, and task execution with minimal human intervention [E1][E5][E6][E7][E8][E9][E10][E12]. Coding agents and agentic AI are reshaping software employment: job listings for software engineers increased 11% annually, outpacing overall postings [E13]; companies are expanding software budgets and engineer headcounts [E14]; software developer employment is projected to grow 15% by 2034 [E15]; and IBM is tripling entry-level US hiring, shifting roles from routine coding to customer-facing AI-specified features [E16]. Meanwhile, AI agents now autonomously resolve over 70% of software issues, up from under 20% a year prior [E17], and 30–40% of code in leading repositories is AI-written [E18]. AI replacement risk scores place software developers among the highest-risk occupations [E19], with the most AI-exposed engineers earning a 47% premium but facing structural disruption risk [E20]. A productivity–experience paradox exists: 84% report productivity gains, yet worsened developer experience nearly doubled from 14% to 27% [E21][E23]. Supervisory engineering work—direction, evaluation, and correction of AI output—is emerging as a new category [E22]. Only 9 of 30 agents provide system cards, and performance benchmarks are reported by a minority [E24][E25]."
+      },
+      {
+        "heading": "Concepts",
+        "body": "Agentic AI refers to AI systems with autonomous software agents that reason, plan, and take multi-step action toward goals with limited human input [E1]. Five characteristics define enterprise agentic AI: autonomy, tool use, memory and persistence, proactive planning, and orchestration [E3]. EY defines agentic AI systems with four key components: planning and reasoning, and tools [E4]. Agentic AI is built on perception, reasoning using a large language model, planning, action, and reflection, forming a continuous cycle of perception, planning, action, and reflection that allows agentic AI to learn and improve over time [E8]. Modern systems are defined by proactive planning, contextual memory, sophisticated tool use, and adaptation based on environmental feedback [E9]. AI agents are self-contained autonomous systems designed to accomplish goals, defined by autonomy, proactivity, and end-to-end task completion [E11]. Agentic AI synthesises autonomy and agency through task initiation, dynamic goal ranking, progress monitoring, and feedback loops parallel to human executive functions [E12]."
+      },
+      {
+        "heading": "Examples",
+        "body": "Evidence from 2025–2026 shows agentic AI adoption accelerating: Gartner predicts 40% of enterprise applications will embed task-specific AI agents by end-2026 [E2]. EY’s four-component framework (planning, tools, memory, orchestration) [E4] and Springer’s five characteristics [E9] illustrate the technical profile. Only ChatGPT Agent, OpenAI Codex, Claude Code, and Gemini 2.5 Computer Use provide agent-specific system cards among 30 indexed agents [E24], and only 9 of 30 companies report benchmark performance [E25]."
+      },
+      {
+        "heading": "Known unknowns",
+        "body": "- None declared during scoping."
+      },
+      {
+        "heading": "Coverage & Limits",
+        "body": "- R7: Cited sources fall within the 365-day recency window. — 16/25, scored 0.64 of the 1 required; found: https://arxiv.org/html/2602.17753v1, https://arxiv.org/html/2605.23135v1, https://cloud.google.com/discover/what-is-agentic-ai; run stopped: every sub-concept is covered in two sources; the critique agrees the evidence answers the question. Tried: agentic AI definition characteristics autonomous decision-making 2025-2026, what is agentic AI explained technical overview recent, coding agents impact software engineering jobs employment 2025-2026, AI coding assistants effect developer productivity hiring trends recent, agentic AI primary source documentation research paper benchmarks 2025-2026.\n- 2 source(s) rejected — blocked or paywalled. e.g. https://medium.com/@gaddamnaveen192/the-software-engineering-job-market-is-collapsing-in-2026-heres-why-4900e0da5c24, https://nextagile.ai/blogs/ai/agentic-ai-projects\n- Budget: Q3: searches exhausted."
+      }
+    ],
+    "citations": [
+      {
+        "entry_id": "E1",
+        "url": "https://atlan.com/know/what-is-agentic-ai",
+        "span": "Agentic AI refers to AI systems with autonomous software agents that reason, plan, and take multi-step action toward goals with limited human input.",
+        "page_hash": "855a1d31c925aea521c05f80be41194d153a9bd040c19c51849c080ac46d1f03",
+        "retrieved_at": "2026-10-09T16:34:43.093373Z"
+      },
+      {
+        "entry_id": "E5",
+        "url": "https://cloud.google.com/discover/what-is-agentic-ai",
+        "span": "Agentic AI is an advanced form of artificial intelligence focused on autonomous decision-making and action.",
+        "page_hash": "03c6fbac8d96e4ef614a03efb278964d0fa8278aed52674b2ec0d8add6aac40b",
+        "retrieved_at": "2026-10-09T16:34:44.049526Z"
+      },
+      {
+        "entry_id": "E6",
+        "url": "https://cloud.google.com/discover/what-is-agentic-ai",
+        "span": "Unlike traditional AI, which primarily responds to commands or analyzes data, agentic AI can set goals, plan, and execute tasks with minimal human intervention.",
+        "page_hash": "03c6fbac8d96e4ef614a03efb278964d0fa8278aed52674b2ec0d8add6aac40b",
+        "retrieved_at": "2026-10-09T16:34:44.049526Z"
+      },
+      {
+        "entry_id": "E7",
+        "url": "https://cloud.google.com/discover/what-is-agentic-ai",
+        "span": "Agentic AI systems are designed to operate with a higher degree of autonomy. It works by using AI agents, which are essentially autonomous entities designed to perform specific tasks.",
+        "page_hash": "03c6fbac8d96e4ef614a03efb278964d0fa8278aed52674b2ec0d8add6aac40b",
+        "retrieved_at": "2026-10-09T16:34:44.049526Z"
+      },
+      {
+        "entry_id": "E8",
+        "url": "https://cloud.google.com/discover/what-is-agentic-ai",
+        "span": "At its core, this technology is built on several key components:\nPerception: Agentic AI starts by gathering information from its surroundings and different sources, such as sensors, databases, and user interfaces. This could involve analyzing text, images, or other forms of data to understand the situation.\nReasoning: Using a large language model (LLM), agentic AI analyzes the gathered data to understand the context, identify relevant information, and formulate potential solutions. For example, if the goal is to schedule a meeting, the LLM can parse the text of emails to identify attendees, available times, and the meeting's purpose.\nPlanning: The AI then uses the information it gathered to develop a plan. This involves setting goals, breaking them down into smaller steps, and figuring out the best way to achieve them.\nAction: Based on its plan, the AI takes action. This could involve performing tasks, making decisions, or interacting with other systems.\nReflection: After taking action, the AI learns from the results. It evaluates whether its actions were successful and uses this feedback to adjust its plans and actions in the future. This continuous cycle of perception, planning, action, and reflection allows agentic AI to learn and improve over time.",
+        "page_hash": "03c6fbac8d96e4ef614a03efb278964d0fa8278aed52674b2ec0d8add6aac40b",
+        "retrieved_at": "2026-10-09T16:34:44.049526Z"
+      },
+      {
+        "entry_id": "E9",
+        "url": "https://link.springer.com/article/10.1007/s10462-025-11422-4",
+        "span": "Modern Agentic AI systems (Wissuchek and Zschech 2025; Viswanathan et al. 2025) are defined by capabilities such as proactive planning, contextual memory, sophisticated tool use, and the ability to adapt their behavior based on environmental feedback.",
+        "page_hash": "68d9701ddbf0365dd4c88f252468afe3127eae3e6103b5ef3be3b81ebc8fb11e",
+        "retrieved_at": "2026-10-09T16:34:46.663165Z"
+      },
+      {
+        "entry_id": "E10",
+        "url": "https://link.springer.com/article/10.1007/s10462-025-11422-4",
+        "span": "These systems operate not as mere solvers but as collaborative partners, capable of dynamically perceiving complex environments, reasoning about abstract goals, and orchestrating sequences of actions—either independently or as part of a sophisticated multi-agent ecosystem (Xie et al. 2024; Du et al. 2025).",
+        "page_hash": "68d9701ddbf0365dd4c88f252468afe3127eae3e6103b5ef3be3b81ebc8fb11e",
+        "retrieved_at": "2026-10-09T16:34:46.663165Z"
+      },
+      {
+        "entry_id": "E12",
+        "url": "https://link.springer.com/article/10.1007/s10462-025-11422-4",
+        "span": "Agentic AI synthesizes these traits by initiating tasks, dynamically ranking goals, monitoring progress, and adjusting behavior through feedback loops (Trencsenyi et al. 2025).\nThese mechanisms parallel human executive functions such as planning, inhibition, and cognitive flexibility.",
+        "page_hash": "68d9701ddbf0365dd4c88f252468afe3127eae3e6103b5ef3be3b81ebc8fb11e",
+        "retrieved_at": "2026-10-09T16:34:46.663165Z"
+      },
+      {
+        "entry_id": "E13",
+        "url": "https://www.cnn.com/2026/04/08/tech/ai-software-developer-jobs",
+        "span": "Listings for software engineer jobs on Indeed are up 11% annually, a faster clip than postings overall, according to analysis by Citadel Securities.",
+        "page_hash": "8b8d0e5ce47aba5c563555f09b81f0de2c78ea65ae8b8dc0b7073dd3a190f0f5",
+        "retrieved_at": "2026-10-09T16:35:03.820723Z"
+      },
+      {
+        "entry_id": "E14",
+        "url": "https://www.cnn.com/2026/04/08/tech/ai-software-developer-jobs",
+        "span": "Companies are expanding their software budgets and increasing engineer headcounts, a Bank of America survey found.",
+        "page_hash": "8b8d0e5ce47aba5c563555f09b81f0de2c78ea65ae8b8dc0b7073dd3a190f0f5",
+        "retrieved_at": "2026-10-09T16:35:03.820723Z"
+      },
+      {
+        "entry_id": "E15",
+        "url": "https://www.cnn.com/2026/04/08/tech/ai-software-developer-jobs",
+        "span": "The long-term outlook for the job appears strong, too. Software developer employment will grow 15% by 2034, the Bureau of Labor Statistics projects.",
+        "page_hash": "8b8d0e5ce47aba5c563555f09b81f0de2c78ea65ae8b8dc0b7073dd3a190f0f5",
+        "retrieved_at": "2026-10-09T16:35:03.820723Z"
+      },
+      {
+        "entry_id": "E16",
+        "url": "https://www.cnn.com/2026/04/08/tech/ai-software-developer-jobs",
+        "span": "IBM, for example, is tripling entry-level hiring in the United States, including software developers.\n\n Junior engineers are now capable with AI of taking on tasks that once required experienced developers, Neel Sundaresan, IBM’s general manager of automation and AI, said in an email.\n\n The job at IBM has shifted from routine coding tasks to working directly with customers and specifying features that can be created with AI.",
+        "page_hash": "8b8d0e5ce47aba5c563555f09b81f0de2c78ea65ae8b8dc0b7073dd3a190f0f5",
+        "retrieved_at": "2026-10-09T16:35:03.820723Z"
+      },
+      {
+        "entry_id": "E17",
+        "url": "https://www.sundeepteki.org/advice/the-impact-of-ai-on-the-software-engineering-job-market-in-2026",
+        "span": "AI agents now autonomously resolve over 70% of software issues - up from under 20% just 12 months ago. The leading models from Anthropic and OpenAI crossed the 50% threshold on SWE-bench in mid-2025. By early 2026 they surpassed 70%.",
+        "page_hash": "96458ea70caf78ac989f57b8c6eeee37f665e1f9535417e4f3a967679b4963df",
+        "retrieved_at": "2026-10-09T16:34:50.072824Z"
+      },
+      {
+        "entry_id": "E18",
+        "url": "https://www.sundeepteki.org/advice/the-impact-of-ai-on-the-software-engineering-job-market-in-2026",
+        "span": "30–40% of code in active repositories at the world's leading engineering organisations is now written by AI. This is not a projection - it is an operational reality at the companies setting the pace for the rest of the industry.",
+        "page_hash": "96458ea70caf78ac989f57b8c6eeee37f665e1f9535417e4f3a967679b4963df",
+        "retrieved_at": "2026-10-09T16:34:50.072824Z"
+      },
+      {
+        "entry_id": "E19",
+        "url": "https://www.sundeepteki.org/advice/the-impact-of-ai-on-the-software-engineering-job-market-in-2026",
+        "span": "Software developers scored 8–9 out of 10 on AI replacement risk - among the highest of any professional category. Andrej Karpathy's 2026 AI job risk map, evaluating 342 US occupations against BLS data, placed software engineering in the cohort most exposed to structural displacement. The average across all occupations was 5.3.",
+        "page_hash": "96458ea70caf78ac989f57b8c6eeee37f665e1f9535417e4f3a967679b4963df",
+        "retrieved_at": "2026-10-09T16:34:50.072824Z"
+      },
+      {
+        "entry_id": "E20",
+        "url": "https://www.sundeepteki.org/advice/the-impact-of-ai-on-the-software-engineering-job-market-in-2026",
+        "span": "The most AI-exposed engineers currently earn 47% more than their unexposed peers - but that premium comes with structural risk attached. Anthropic's Economic Index shows the disruption is concentrated among highly skilled, well-compensated engineers - not lower-wage roles.",
+        "page_hash": "96458ea70caf78ac989f57b8c6eeee37f665e1f9535417e4f3a967679b4963df",
+        "retrieved_at": "2026-10-09T16:34:50.072824Z"
+      },
+      {
+        "entry_id": "E21",
+        "url": "https://arxiv.org/html/2605.23135v1",
+        "span": "Participants reported spending less time on most development tasks, with 82% reporting less on writing code.",
+        "page_hash": "fa54b7454697ed16c27b43b34453c198f8c848d07f7e82830480fa4c34db08b7",
+        "retrieved_at": "2026-10-09T16:36:17.112743Z"
+      },
+      {
+        "entry_id": "E23",
+        "url": "https://arxiv.org/html/2605.23135v1",
+        "span": "We also identified a productivity-experience paradox: productivity perceptions held stable, with 84% reporting improvement at both time points, yet among matched participants, the proportion reporting worsened developer experience in at least one dimension nearly doubled from 14% to 27%, with flow state and cognitive load eroding while feedback loops improved.",
+        "page_hash": "fa54b7454697ed16c27b43b34453c198f8c848d07f7e82830480fa4c34db08b7",
+        "retrieved_at": "2026-10-09T16:36:17.112743Z"
+      },
+      {
+        "entry_id": "E22",
+        "url": "https://arxiv.org/html/2605.23135v1",
+        "span": "We propose a new category of work we term supervisory engineering work, encompassing the direction, evaluation, and correction of AI output.",
+        "page_hash": "fa54b7454697ed16c27b43b34453c198f8c848d07f7e82830480fa4c34db08b7",
+        "retrieved_at": "2026-10-09T16:36:17.112743Z"
+      },
+      {
+        "entry_id": "E24",
+        "url": "https://arxiv.org/html/2602.17753v1",
+        "span": "Developers rarely publish agent-specific evaluations. In the Index, only ChatGPT Agent, OpenAI Codex, Claude Code, and Gemini 2.5 Computer Use provide agent-specific system cards, though some Chinese agents have research papers focused on computer-use capabilities.",
+        "page_hash": "a0c7736e763b9c809f69dc7a16e7dbfb4be250e857d6f584edb3d0153f6016f9",
+        "retrieved_at": "2026-10-09T16:34:44.449707Z"
+      },
+      {
+        "entry_id": "E25",
+        "url": "https://arxiv.org/html/2602.17753v1",
+        "span": "Meanwhile, only some companies report performance on capability benchmarks (9/30).",
+        "page_hash": "a0c7736e763b9c809f69dc7a16e7dbfb4be250e857d6f584edb3d0153f6016f9",
+        "retrieved_at": "2026-10-09T16:34:44.449707Z"
+      },
+      {
+        "entry_id": "E3",
+        "url": "https://atlan.com/know/what-is-agentic-ai",
+        "span": "Five characteristics define enterprise agentic AI: autonomy, tool use, memory and persistence, proactive planning, and orchestration.",
+        "page_hash": "855a1d31c925aea521c05f80be41194d153a9bd040c19c51849c080ac46d1f03",
+        "retrieved_at": "2026-10-09T16:34:43.093373Z"
+      },
+      {
+        "entry_id": "E4",
+        "url": "https://atlan.com/know/what-is-agentic-ai",
+        "span": "EY defines agentic AI systems with four key components:\n\nPlanning and reasoning: Use frameworks like “chain of thoughts” or “tree of thoughts” to create optimal plans based on context and input data, apply reasoning through reflection loops and iterate actions until goals are met.\n\nTools: Agents interact with external systems using tools to execute planned activities, utilizing APIs or GUI-based task capabilities.",
+        "page_hash": "855a1d31c925aea521c05f80be41194d153a9bd040c19c51849c080ac46d1f03",
+        "retrieved_at": "2026-10-09T16:34:43.093373Z"
+      },
+      {
+        "entry_id": "E11",
+        "url": "https://link.springer.com/article/10.1007/s10462-025-11422-4",
+        "span": "An AI Agent (or a single-agent system) is a self-contained autonomous system designed to accomplish a goal. It operates primarily in isolation, though it may interact with tools and APIs. Its agency is defined by its autonomy, proactivity, and its ability to complete a task from start to finish independently.",
+        "page_hash": "68d9701ddbf0365dd4c88f252468afe3127eae3e6103b5ef3be3b81ebc8fb11e",
+        "retrieved_at": "2026-10-09T16:34:46.663165Z"
+      },
+      {
+        "entry_id": "E2",
+        "url": "https://atlan.com/know/what-is-agentic-ai",
+        "span": "Gartner predicts 40% of enterprise applications will embed task-specific AI agents by the end of 2026.",
+        "page_hash": "855a1d31c925aea521c05f80be41194d153a9bd040c19c51849c080ac46d1f03",
+        "retrieved_at": "2026-10-09T16:34:43.093373Z"
+      }
+    ],
+    "limits": [
+      {
+        "item_id": "R7",
+        "text": "Cited sources fall within the 365-day recency window.",
+        "tried_queries": [
+          "agentic AI definition characteristics autonomous decision-making 2025-2026",
+          "what is agentic AI explained technical overview recent",
+          "coding agents impact software engineering jobs employment 2025-2026",
+          "AI coding assistants effect developer productivity hiring trends recent",
+          "agentic AI primary source documentation research paper benchmarks 2025-2026"
+        ],
+        "sources_examined": [
+          "https://atlan.com/know/what-is-agentic-ai",
+          "https://cloud.google.com/discover/what-is-agentic-ai",
+          "https://arxiv.org/html/2602.17753v1",
+          "https://link.springer.com/article/10.1007/s10462-025-11422-4",
+          "https://www.sundeepteki.org/advice/the-impact-of-ai-on-the-software-engineering-job-market-in-2026",
+          "https://www.faros.ai/blog/best-ai-coding-agents-2026",
+          "https://medium.com/@gaddamnaveen192/the-software-engineering-job-market-is-collapsing-in-2026-heres-why-4900e0da5c24",
+          "https://www.cnn.com/2026/04/08/tech/ai-software-developer-jobs",
+          "https://arxiv.org/html/2605.23135v1",
+          "https://nextagile.ai/blogs/ai/agentic-ai-projects",
+          "https://labs.cloudsecurityalliance.org/research/csa-research-note-nist-ai-agent-standards-federal-framework",
+          "https://cdn.openai.com/pdf/5d1e1489-21c0-43e4-9d42-f87efdbf0082/the-shift-to-agentic-ai-evidence-from-codex.pdf"
+        ],
+        "reason": "16/25, scored 0.64 of the 1 required; found: https://arxiv.org/html/2602.17753v1, https://arxiv.org/html/2605.23135v1, https://cloud.google.com/discover/what-is-agentic-ai; run stopped: every sub-concept is covered in two sources; the critique agrees the evidence answers the question"
+      }
+    ],
+    "rejected_sources": [
+      "https://medium.com/@gaddamnaveen192/the-software-engineering-job-market-is-collapsing-in-2026-heres-why-4900e0da5c24",
+      "https://nextagile.ai/blogs/ai/agentic-ai-projects"
+    ],
+    "rejected_codes": {
+      "https://medium.com/@gaddamnaveen192/the-software-engineering-job-market-is-collapsing-in-2026-heres-why-4900e0da5c24": "blocked",
+      "https://nextagile.ai/blogs/ai/agentic-ai-projects": "blocked"
+    },
+    "budget_notes": [
+      "Q3: searches exhausted"
+    ],
+    "known_unknowns": []
+  },
+  "content_hash": "fdd2066fe9ceff26f5b17354a433fd3c7a65ce8e964aa11aae61bc23b5decb91",
+  "frozen_at": "2026-10-09T16:39:43.406027Z"
+}

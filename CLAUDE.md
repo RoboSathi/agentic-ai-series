@@ -22,7 +22,8 @@ the standard of Anthropic, OpenAI, or Google, not tutorial-grade scaffolding.
   - `src/ops_agent/` — the third agent: answers questions about how the
     agents are running from the analytics mart, through the platform's
     analytics MCP server (its only tools). See ADRs 0007 and 0008.
-  - `dashboards/rill/` — Rill dashboards over the same mart (`make dashboard`).
+  - `src/agent_platform/dashboards/rill/` — Rill dashboards over the same analytics
+    source (`make dashboard`).
   - Episodes are demonstrated by running these agents under config overlays
     (features, profiles, ablations), not by separate per-episode scripts.
     Each agent's `design_docs/patterns.md` maps the WF/AG patterns the series

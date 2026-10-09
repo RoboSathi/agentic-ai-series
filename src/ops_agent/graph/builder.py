@@ -5,6 +5,7 @@ Each declared feature builds a stage; a withheld one is never built:
     prompt_injection     the message is screened before the model reads it
     gatekeeper           each MCP call is authorized against `ops_agent.policy`
     hallucination_guard  every figure in the answer is checked against the query results
+    memory.procedural    the agent's skills are synced into procedural memory and selected per turn
 
 Everything else is always on: the MCP client (governed by the local envelope),
 the Executor (deadline, facts), the audit trail, the fact ledger, tracing.
@@ -24,6 +25,7 @@ from agent_platform.mcp import (
     SdkMcpTransport,
     server_spec,
 )
+from agent_platform.memory.procedural.memory import ProceduralStore
 from agent_platform.observability import StageReporter
 from agent_platform.observability.facts import create_fact_store, install_fact_store
 from agent_platform.observability.langsmith import build_trace_exporter
@@ -37,6 +39,7 @@ from agent_platform.security import MessageScreener, PromptInjectionGuard, Secur
 from agent_platform.security.auth.auth import Authorizer
 from agent_platform.security.auth.policy import AgentPolicy
 from agent_platform.security.pii import PIIFilterImpl
+from agent_platform.skills import build_agent_instructions
 from agent_platform.tools import NamespacedToolRegistry
 from agent_platform.tools.path import ToolPath
 from ops_agent.config import get_agent_settings
@@ -79,6 +82,9 @@ def build_agent(
         gatekeeper=_gatekeeper(agent, platform, audit) if posture.is_on("gatekeeper") else None,
     )
     calls = GovernedCalls(registry, path, agent, actor=settings.agent.id)
+    # Procedural memory is the only memory this agent has: its skills,
+    # versioned in the platform store. Withheld, it runs on its profile.
+    procedural = ProceduralStore(platform) if posture.is_on("memory.procedural") else None
     screen = _screen(platform) if posture.is_on("prompt_injection") else None
     declare_screens(settings.agent.id, screen.declared_checks() if screen else [])
     nodes = OpsNodes(
@@ -97,6 +103,9 @@ def build_agent(
         agent,
         reporter=reporter,
         screen=screen,
+        instructions=build_agent_instructions(
+            settings.skills, store=procedural, audit=audit, reporter=reporter
+        ),
         # Exported traces are always PII-redacted, whatever the `pii` feature says.
         trace_exporter=build_trace_exporter(settings.agent.id, lambda: PIIFilterImpl().redact),
     )
