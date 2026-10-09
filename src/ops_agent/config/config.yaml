@@ -10,7 +10,7 @@
 agent:
   id: ops_agent
   # How dashboards and reports title this agent.
-  display_name: Ops Analyst
+  display_name: Analytics Support Agent
   version: 0.1.0
   host: ops_agent.console:OpsHost
 
