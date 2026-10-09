@@ -79,7 +79,6 @@ from agent_platform.memory import (
     WriteResult,
 )
 from agent_platform.observability import (
-    FactRecorder,
     SLORegistry,
     StageReporter,
     Tracer,
@@ -90,12 +89,14 @@ from agent_platform.observability.langsmith import (
     TurnTrace,
     turn_trace,
 )
+from agent_platform.observability.units import declare_screens, mark_cancelled
 from agent_platform.resilience import (
     DeadLetterQueue,
 )
-from agent_platform.security import SecuritySuite
+from agent_platform.security import MessageScreener, SecuritySuite
 from agent_platform.security.auth.policy import AgentPolicy
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
+from agent_platform.tools.path import ToolPath
 from agent_platform.verification import EffectVerifier
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.control_loop import IndependentScorer, OutputQualityGate
@@ -187,7 +188,6 @@ class CustomerSupportAgent(
         long_term_memory: MemoryFacade | None = None,
         context_health: ContextFailureDetector | None = None,
         trace_exporter: TraceExporter | None = None,
-        facts: FactRecorder | None = None,
     ) -> None:
         settings = get_agent_settings()
         # Which stages this agent has. Read once, here, because the graph
@@ -203,7 +203,13 @@ class CustomerSupportAgent(
         self._registry = registry
         self._tools = tools
         self._executor = executor
+        # Every model-proposed call takes this one path (ADR 0009 D9): it also
+        # writes the UNGOVERNED audit entry when the Gatekeeper is withheld.
+        self._tool_path = ToolPath(registry, executor, self._audit, gatekeeper)
         self._security = security
+        # One screener for the agent's life; the screens it runs are declared for analytics.
+        self._message_screener = MessageScreener(security, dead_letter_queue)
+        declare_screens(get_settings().agent.id, self._message_screener.declared_checks())
         self._working_memory = working_memory
         self._memory_event_sink = memory_event_sink
         self._long_term = long_term_memory
@@ -244,6 +250,7 @@ class CustomerSupportAgent(
         # failure modes, checked on what was actually assembled.
         self._context_health = context_health
         self._diagnoser = GroundingReasoningDiagnoser()
+        # Token confidence (step 1) draws its card on this agent's feed.
         self._response_guardrail = ResponseGuardrail(self._grounding)
         if intent_router is None:
             raise ValueError(
@@ -279,7 +286,7 @@ class CustomerSupportAgent(
         )
         # Eight SLOs are configured; this is what actually observes them,
         # once per turn.
-        self._accountant = TurnAccountant(slos=slos, facts=facts)
+        self._accountant = TurnAccountant(slos=slos)
         self._logger = get_logger("customer_support_agent")
         # Durable execution. The graph is compiled against the checkpointer,
         # so the runner and the graph must share it.
@@ -378,7 +385,7 @@ class CustomerSupportAgent(
         self, query: str, session_id: str, customer: Customer | None
     ) -> AgentState:
         """One turn, with the customer already bound for exactly its duration."""
-        self._control_loop = ToolControlLoop()
+        self._control_loop = ToolControlLoop(step_cap=self._max_rounds)
         self._loop_step = None
         await self._recover_conversation(session_id)
         initial = AgentState(
@@ -449,6 +456,7 @@ class CustomerSupportAgent(
         """A cancelled turn: where it stopped, how far it got, and the two ways on."""
         step = outcome.next_nodes[0] if outcome.next_nodes else ""
         reply = stop_report(step, self.describe_progress(state.model_dump()))
+        mark_cancelled()
         self._end_turn(
             "warning",
             _CANCELLED_OUTCOME,
@@ -489,7 +497,6 @@ class CustomerSupportAgent(
         )
 
     def _begin_turn(self, thread_id: str, session_id: str) -> None:
-        self._accountant.begin()
         if self._reporter is not None:
             self._reporter.begin_turn(thread=thread_id, session=session_id)
 
@@ -548,21 +555,25 @@ class CustomerSupportAgent(
         prior = AgentState.model_validate(await self._runner.values(thread_id))
         customer = self._rebind(prior)
         inputs = {"resume": thread_id, "decision": str(decision or "")}
-        with bound_customer(customer), self._turn_trace(prior.session_id, inputs) as trace:
+        with (
+            bound_customer(customer),
+            self._turn_trace(prior.session_id, inputs, message=False) as trace,
+        ):
             result = await self._resume_bound(thread_id, decision, prior, waiting)
             trace.annotate({"resumed": True, "run_status": result.status})
             trace.finish({"response": result.response})
             return result
 
     def _turn_trace(
-        self, session_id: str, inputs: Mapping[str, Any]
+        self, session_id: str, inputs: Mapping[str, Any], message: bool = True
     ) -> AbstractContextManager[TurnTrace]:
-        """A fresh trace for one turn (a resume is a turn of its own), logged and exported."""
+        """A fresh trace for one turn (a resume is a turn of its own, with no message in it)."""
         return turn_trace(
             self._trace_exporter,
             agent=get_settings().agent.id,
             session=session_id,
             inputs=inputs,
+            message=message,
         )
 
     async def _resume_bound(
@@ -625,7 +636,7 @@ class CustomerSupportAgent(
             customer = self._authenticator.customer_for(prior.customer_id)
             if customer is not None:
                 self._sessions[prior.session_id] = customer
-        self._control_loop = ToolControlLoop()
+        self._control_loop = ToolControlLoop(step_cap=self._max_rounds)
         if (
             self._working_memory is not None
             and not self._working_memory.get(prior.session_id).history

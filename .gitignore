@@ -45,6 +45,36 @@ reports/
 # and the repo-local Rill binary.
 data/analytics/
 dashboards/rill/data
+# Generated from the semantic layer by `make dashboard` (analytics/dashboards.py).
+dashboards/rill/models/
+dashboards/rill/metrics/
+dashboards/rill/dashboards/
 dashboards/rill/tmp/
 dashboards/rill/.env
 .tools/
+
+# Runtime databases (ADR 0009 hygiene): the platform's own stores and eval workspaces.
+src/agent_platform/db/*.duckdb*
+# The generated analytics world (`make dummy-data analytics`): regenerated, never versioned.
+src/agent_platform/dummy_data/analytics/*
+!src/agent_platform/dummy_data/analytics/README.md
+src/agent_platform/db/*.sqlite*
+src/customer_support_agent/data/evals/workspace/
+
+# Every database is runtime state or rebuilt from its seed (make data csa, the
+# knowledge ingest at start-up, the eval fixture builder): never versioned, anywhere.
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+
+# Models downloaded from Hugging Face (NLI, summariser, spaCy) and HF caches.
+local_models/
+**/local_models/
+.cache/huggingface/

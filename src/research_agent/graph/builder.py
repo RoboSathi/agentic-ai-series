@@ -49,9 +49,12 @@ from agent_platform.evals.entailment import (
 )
 from agent_platform.evals.scoring import create_scoring_cascade
 from agent_platform.evidence import EvidenceLedger, NonEmptySpanValidator, VerbatimSpanValidator
+from agent_platform.executor import ToolExecutorImpl
+from agent_platform.executor.registry_handler import RegistryToolHandler
 from agent_platform.guardrails.guards import PydanticValidator
 from agent_platform.guardrails.response import ResponseGuardrail
 from agent_platform.hallucination_protection.checker import DetectionLadder
+from agent_platform.hallucination_protection.confidence import ConfidenceCheck
 from agent_platform.intent.exemplar import ExemplarIntentClassifier
 from agent_platform.llm.embeddings import EmbeddingClient, create_embedding_client
 from agent_platform.llm.encoders import create_reranker
@@ -61,12 +64,13 @@ from agent_platform.llm.observer import ModelCallObserver
 from agent_platform.llm.roles import RoleModelRouter
 from agent_platform.logging import get_logger
 from agent_platform.memory import EpisodicStore, MemoryFacade, SemanticStore, WorkingMemoryStore
-from agent_platform.observability import StageReporter
-from agent_platform.observability.facts import FactRecorder, create_fact_recorder
+from agent_platform.observability import StageReporter, checks
+from agent_platform.observability.facts import create_fact_store, install_fact_store
 from agent_platform.observability.langsmith import build_trace_exporter
 from agent_platform.observability.model_observer import StageReporterModelObserver
 from agent_platform.observability.store import DuckDbObservabilityStore
 from agent_platform.observability.types import utc_now
+from agent_platform.observability.units import OutcomeCatalog, declare_screens
 from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agent_platform.resilience import ResilientCaller, ResourcePoolBulkhead
 from agent_platform.resilience.dead_letter_queue import DeadLetterQueue
@@ -79,6 +83,7 @@ from agent_platform.security import (
 from agent_platform.security.pii import PIIFilterImpl
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
 from agent_platform.security.prompt_injection.hosted import HostedJailbreakGuard
+from agent_platform.tools.path import ToolPath
 from agent_platform.web import WebGateway, create_web_gateway
 from research_agent.archive.store import ResearchArchive
 from research_agent.audit.checks import build_registry
@@ -151,14 +156,13 @@ def build_agent(
     )
     store = DuckDbObservabilityStore()
     ledger = audit or create_audit_ledger(store=store, agent_id=settings.agent.id)
-    # Model calls, tool calls and turns, as rows the analytics mart aggregates.
-    facts = create_fact_recorder(
-        store if settings.observability.enabled else None, settings.agent.id
+    # Model calls, tool calls and turns, as rows the analytics source aggregates.
+    install_fact_store(
+        create_fact_store(store if settings.observability.enabled else None, settings.agent.id)
     )
-    telemetry = RunTelemetry(reporter, ledger, trace_id=settings.agent.id, facts=facts)
-    roles = clients or role_clients(
-        StageReporterModelObserver(lambda: telemetry.reporter), recorder=facts
-    )
+    OutcomeCatalog().require(kinds=agent.tasks.kinds(), outcomes=agent.tasks.outcomes())
+    telemetry = RunTelemetry(reporter, ledger, trace_id=settings.agent.id)
+    roles = clients or role_clients(StageReporterModelObserver(lambda: telemetry.reporter))
     _require_independent_judge(roles, posture, agent)
     caller = StructuredCaller(
         roles,
@@ -176,7 +180,7 @@ def build_agent(
         agent.archive.run_id_prefix,
         semantic_pointer=agent.archive.semantic_pointer,
     )
-    answerer = _direct_answerer(agent, posture, caller, telemetry, gateway, memory, archive)
+    answerer = _direct_answerer(agent, posture, caller, telemetry, ledger, gateway, memory, archive)
     saver = checkpointer or create_checkpointer(state_types=model_types(StateTypes))
     registry = RunRegistry(platform)
     run_nodes = RunNodes(_run_parts(agent, posture, caller, roles, archive, entailment))
@@ -220,21 +224,22 @@ def _input_screen(
         moderator=TermContentModerator() if posture.is_on("content_moderation") else None,
     )
     if suite.pii is None and not suite.enabled:
+        declare_screens(get_settings().agent.id, [])
         return None
     quarantine = DeadLetterQueue(
         platform,
         agent_id=get_settings().agent.id,
         enabled=get_settings().resilience.dead_letter_queue.enabled,
     )
-    return InputScreen(MessageScreener(suite, quarantine), telemetry)
+    screener = MessageScreener(suite, quarantine)
+    declare_screens(get_settings().agent.id, screener.declared_checks())
+    return InputScreen(screener, telemetry)
 
 
-def role_clients(
-    observer: ModelCallObserver | None = None, recorder: FactRecorder | None = None
-) -> RoleClients:
+def role_clients(observer: ModelCallObserver | None = None) -> RoleClients:
     """`llm.roles` through the router: each role on its model, protected and backed up by the
-    platform, its backup events told to `observer` and each call recorded to `recorder`."""
-    return RoleModelRouter(get_settings().llm.roles, observer=observer, recorder=recorder)
+    platform, its backup events told to `observer` (each call is recorded as a fact)."""
+    return RoleModelRouter(get_settings().llm.roles, observer=observer)
 
 
 def _require_independent_judge(
@@ -316,6 +321,7 @@ def intent_embedder() -> EmbeddingClient:
 
 
 @cache
+@checks.recorded_dependency(checks.EMBEDDING, "embed", lambda _model: checks.LOCAL_MODEL)
 def _local_embedder() -> LocalSentenceEmbedder:
     """One embedder per process: the console warms it before its event loop starts."""
     return LocalSentenceEmbedder()
@@ -344,6 +350,7 @@ def _direct_answerer(
     posture: FeatureSet,
     caller: StructuredCaller,
     telemetry: RunTelemetry,
+    ledger: AuditLedger,
     gateway: GatewayFactory | None,
     memory: MemoryFacade | None,
     archive: ResearchArchive,
@@ -371,8 +378,22 @@ def _direct_answerer(
         window=_context_window(posture, memory, earlier),
         reporter=lambda: telemetry.reporter,
     )
+    # The answer tools read; they still take the platform's one tool path, so their
+    # proposals are measured and each run is audited (UNGOVERNED: this agent declares
+    # no Gatekeeper) and executed under a deadline.
+    executor = ToolExecutorImpl(
+        RegistryToolHandler(registry), timeout_seconds=agent.answer.tool_timeout_seconds
+    )
+    path = ToolPath(registry, executor, ledger)
     return DirectAnswerer(
-        caller, registry, agent.answer, telemetry, grounding, context, recency_guard(agent)
+        caller,
+        registry,
+        path,
+        agent.answer,
+        telemetry,
+        grounding,
+        context,
+        recency_guard(agent),
     )
 
 
@@ -422,11 +443,15 @@ def _context_window(
 
 
 def _answer_grounding(agent: ResearchAgentSettings, posture: FeatureSet) -> AnswerGrounding | None:
-    """The answer's grounding check, wired as the support agent wires its own — or None."""
+    """The answer's grounding check, wired as the support agent wires its own — or None.
+
+    Level 1 (token confidence) travels inside its HALLUCINATION CHECK card, first.
+    """
     if not posture.is_on("direct_answer.grounding"):
         return None
     ladder = DetectionLadder(create_scoring_cascade(), entailment=entailment_for(agent))
-    return AnswerGrounding(ResponseGuardrail(ladder), agent.answer.grounding, agent.answer.messages)
+    guardrail = ResponseGuardrail(ladder)
+    return AnswerGrounding(guardrail, agent.answer.grounding, agent.answer.messages)
 
 
 def _scoping_parts(
@@ -509,6 +534,7 @@ def _run_parts(
         nli_model=str(getattr(nli, "model_name", "")) if nli is not None else "",
         judge_role=JUDGE,
         citation_guard=_citation_guard(agent, caller, nli),
+        confidence=ConfidenceCheck(),
     )
 
 

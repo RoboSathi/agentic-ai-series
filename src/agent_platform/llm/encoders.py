@@ -42,6 +42,7 @@ from agent_platform.evals.entailment import (
 from agent_platform.llm.http import create_http_client
 from agent_platform.logging import get_logger
 from agent_platform.memory.store import RelevanceScorer
+from agent_platform.observability import checks
 from agent_platform.resilience import ResilientCaller, external_api_error_fields
 
 
@@ -273,6 +274,7 @@ def _top_score(labels: list[LabelScore]) -> float:
     return max((item.score for item in labels), default=0.5)
 
 
+@checks.recorded_dependency(checks.RERANK, "rank", lambda _ranker: checks.HOSTED_MODEL)
 def create_reranker(fallback: RelevanceScorer | None = None) -> HostedCrossEncoderRanker | None:
     """A cross-encoder reranker, when one can actually be reached (Factory).
 

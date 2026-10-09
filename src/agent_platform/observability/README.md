@@ -18,6 +18,10 @@ and a shared DuckDB analytics store for traces and audit data.
 - `LoopReporter`, `mark_step` (`loop_reporter.py`): a reasoning loop's cards numbered "Step N", with the cap beside it
 - `LocalTracer`, `traced` (`tracer.py`, `tracing.py`); `LangSmithExporter`, `turn_trace` (`langsmith.py`)
 - `DuckDbObservabilityStore` (`store.py`) — shared analytics file
+- Analytics facts (ADR 0009): `FactStore`, `install_fact_store`, the Tier-1 fact models (`facts.py`);
+  the turn bracket and task API `open_task`/`close_task`/`mark_cancelled`/`end_session`,
+  `OutcomeCatalog` (`units.py`, context in `unit_context.py`); the check recorder
+  `record_check`/`record_screen`/`recorded_dependency` (`checks.py`)
 - `CostAggregatorImpl` (`cost.py`), `SLORegistry`/`SLOTracker` (`slo.py`), `LittlesLawQueueModel` (`queue.py`), `PostmortemRegister` (`postmortem.py`)
 
 ## Configuration

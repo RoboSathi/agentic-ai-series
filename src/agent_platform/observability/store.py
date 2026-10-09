@@ -10,9 +10,12 @@ access.
 
 from __future__ import annotations
 
+import json
+import tempfile
 import threading
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from agent_platform.config import get_settings
 from agent_platform.persistence.types import ExecutionResult
@@ -36,9 +39,7 @@ class DuckDbObservabilityStore:
                 "Install the project dependencies before starting an observed agent."
             ) from exc
 
-        configured = (
-            db_path if db_path is not None else get_settings().observability.analytics_db_path
-        )
+        configured = db_path if db_path is not None else get_settings().analytics.resolved_db_path
         self._db_path = str(configured)
         if self._db_path != ":memory:":
             Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -67,6 +68,31 @@ class DuckDbObservabilityStore:
             self._connection.commit()
             affected = cursor.rowcount if cursor.rowcount is not None else len(seq_of_params)
             return ExecutionResult(rows=[], affected=affected)
+
+    def bulk_insert(
+        self, table: str, columns: Mapping[str, str], rows: Sequence[Mapping[str, Any]]
+    ) -> int:
+        """Append many rows in one statement (`columns`: name → DuckDB type).
+
+        `executemany` inserts row by row; for a backfill of hundreds of thousands of
+        rows the rows are staged as newline-delimited JSON and read in one scan.
+        """
+        if not rows:
+            return 0
+        names = ", ".join(f'"{name}"' for name in columns)
+        types = ", ".join(f"'{name}': '{kind}'" for name, kind in columns.items())
+        with tempfile.TemporaryDirectory() as folder:
+            staged = Path(folder) / f"{table}.jsonl"
+            with staged.open("w", encoding="utf-8") as handle:
+                for row in rows:
+                    handle.write(json.dumps({name: row.get(name) for name in columns}, default=str))
+                    handle.write("\n")
+            literal = str(staged).replace("'", "''")
+            self.execute_script(
+                f"INSERT INTO {table} ({names}) SELECT {names} FROM read_json('{literal}', "
+                f"format = 'newline_delimited', columns = {{{types}}})"
+            )
+        return len(rows)
 
     def execute_script(self, script: str) -> None:
         """Execute a DDL/data script."""

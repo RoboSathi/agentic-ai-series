@@ -11,6 +11,8 @@ belong here; the common Executor is the only execution boundary.
 import json
 from typing import Any, Protocol, runtime_checkable
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from agent_platform.guardrails import PydanticValidator
 from agent_platform.logging import get_logger, instrument, logged
 from agent_platform.tools.types import (
@@ -29,6 +31,17 @@ class ToolRegistry(Protocol):
     def get(self, name: str) -> ToolDefinition | None: ...
 
     def all_tools(self) -> list[ToolDefinition]: ...
+
+
+class ToolResolution(BaseModel):
+    """What a wire-level request resolved to: a call, an unknown tool, or invalid arguments."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    tool: ToolDefinition | None = None
+    call: ToolCall | None = None
+    unknown: bool = False
+    errors: list[str] = Field(default_factory=list)
 
 
 @instrument("tools")
@@ -108,7 +121,14 @@ class NamespacedToolRegistry:
         return [tool.to_openai_schema() for tool in selected]
 
     def build_call(self, name: str, raw_arguments: str | dict[str, Any]) -> ToolCall | None:
-        """Turn a wire-level request into a validated, governed `ToolCall`.
+        """The validated call, or None when the tool is unknown or its arguments invalid.
+
+        A thin reading of `resolve` for callers that do not need to know which.
+        """
+        return self.resolve(name, raw_arguments).call
+
+    def resolve(self, name: str, raw_arguments: str | dict[str, Any]) -> ToolResolution:
+        """Turn a wire-level request into a validated, governed `ToolCall`, or say why not.
 
         The validation is `guardrails`', not a second implementation of
         it living here. That matters for more than tidiness: the
@@ -119,23 +139,23 @@ class NamespacedToolRegistry:
         output reaches a side-effecting executor") is enforced by the
         component the invariant is written about.
 
-        Returns None when the tool is unknown or its arguments cannot be
-        made to validate — both are the model's error to see and recover
-        from, not the harness's to crash on.
+        An unknown tool and invalid arguments are told apart — both are the
+        model's error to see and recover from, but they are different errors,
+        and tool-call validity is measured by which one it made.
         """
         tool = self.get(name)
         if tool is None:
             self._logger.warning("Model asked for an unregistered tool", tool=name)
-            return None
+            return ToolResolution(unknown=True)
         result = self._validator.validate(_as_json(raw_arguments), tool.args_schema)
         if not result.valid or result.value is None:
             self._logger.warning(
                 "Tool arguments failed validation", tool=name, errors=result.errors
             )
-            return None
+            return ToolResolution(tool=tool, errors=list(result.errors))
         if result.repaired:
             self._logger.info("Repaired the model's tool arguments", tool=name)
-        return ToolCall(
+        call = ToolCall(
             action=tool.qualified_name,
             params=result.value,
             surface=tool.surface,
@@ -145,6 +165,7 @@ class NamespacedToolRegistry:
             requires_authority_rank=tool.requires_authority_rank,
             required_permission=tool.required_permission,
         )
+        return ToolResolution(tool=tool, call=call)
 
 
 def _as_json(raw_arguments: str | dict[str, Any]) -> str:

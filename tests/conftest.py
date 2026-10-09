@@ -41,7 +41,7 @@ from customer_support_agent.domain.identity import Customer, set_current_custome
 from customer_support_agent.domain.models import Order, User
 from customer_support_agent.persistence.schema import ensure_schema
 
-_ANALYTICS_PATH_VAR = "OBSERVABILITY__ANALYTICS_DB_PATH"
+_ANALYTICS_PATH_VAR = "ANALYTICS__SOURCES__LIVE__DB_PATH"
 _CHECKPOINTS_PATH_VAR = "DURABILITY__DB_PATH"
 _RATE_LIMIT_PATH_VAR = "RESILIENCE__RATE_LIMIT__STORE_PATH"
 
@@ -191,7 +191,7 @@ def isolated_analytics_store(tmp_path_factory: pytest.TempPathFactory) -> Iterat
     This file's first principle is that no test touches a real database,
     and the SQLite half has always honoured it. The DuckDB half did not:
     `DuckDbObservabilityStore()` opens the configured
-    `observability.analytics_db_path`, which is the dev file. DuckDB
+    the live analytics source's `db_path`, which is the dev file. DuckDB
     takes an exclusive lock, so a developer with the TUI open watched
     ninety tests fail on `Could not set lock` — a failure that says
     nothing about the code and moves whenever someone opens a terminal.
@@ -204,8 +204,8 @@ def isolated_analytics_store(tmp_path_factory: pytest.TempPathFactory) -> Iterat
         # A test must never spend (or wait on) the developer's real
         # provider budget, which the TUI may be drawing on right now.
         _RATE_LIMIT_PATH_VAR: tmp_path_factory.mktemp("rate_limit") / "rate_limits.sqlite",
-        # The analytics mart is the developer's dashboard data.
-        "ANALYTICS__MART_DIR": tmp_path_factory.mktemp("mart"),
+        # The analytics source is the developer's dashboard data.
+        "ANALYTICS__SOURCES__LIVE__PARQUET_DIR": tmp_path_factory.mktemp("parquet"),
         # Eval history, reports and fixtures are developer data too.
         **_eval_paths(tmp_path_factory.mktemp("evals")),
     }

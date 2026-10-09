@@ -1,39 +1,50 @@
-# mcp — Model Context Protocol (parked)
+# mcp — Model Context Protocol client
 
-Interface-only. The contracts for tools that arrive over MCP rather than
-being written as Python functions. Whatever an MCP server offers must enter
-as an ordinary `ToolDefinition` through the same registry, so the
-Gatekeeper sees one kind of proposal, never a side door.
+Tools that arrive over MCP rather than being written as Python functions.
+Whatever an MCP server offers enters as an ordinary `ToolDefinition` through
+the same registry, so it takes the platform's single tool path
+(`tools/path.py`): validated, duplicate-checked, ruled on by the Gatekeeper
+(or run UNGOVERNED, audited), executed by the Executor, recorded as a
+`fact_tool_call`. There is no side door.
 
 ## Vocabulary
 
-- **McpToolSource** — a tool source backed by an MCP session
-- **ToolGovernancePolicy** — which remote tools may be exposed at all
+- **McpToolSource** — a tool source backed by an MCP session (`GovernedMcpToolSource`)
+- **ToolGovernancePolicy** — the envelope this deployment grants a server's tools,
+  whatever the server says about itself (`ConfiguredGovernancePolicy`)
+- **McpSession** — one live client session (`SdkMcpSession`, an Active Object owning
+  the SDK client in its own task)
+- **McpTransport** — how a session is opened (`SdkMcpTransport`: stdio, or an
+  injected resolver for an in-process server)
 
 ## Public interface
 
-- `McpServerSpec`, `McpSession`, `McpToolInfo`, `McpToolSource`, `McpTransport`, `ToolGovernancePolicy`, `TransportKind` (contracts only)
+- `McpServerSpec`, `McpSession`, `McpToolInfo`, `McpCallResult`, `McpToolSource`,
+  `McpTransport`, `ToolGovernancePolicy`
+- `SdkMcpSession`, `SdkMcpTransport`, `server_spec`, `GovernedMcpToolSource`,
+  `ConfiguredGovernancePolicy`
 
 ## Configuration
 
-No config surface until an implementation lands.
+`mcp.servers[]` in an agent's overlay: name, transport, command (`{python}` is
+this interpreter), namespace and envelope (surface, side effects, required
+permission).
 
 ## Seams
 
-- Would plug into `tools.NamespacedToolRegistry` as a `ToolSource`.
+- Plugs into `tools.NamespacedToolRegistry` via `McpToolSource.tools()`.
+- The platform's own server is `agent_platform.analytics.mcp_server`
+  (list_metrics, compute_metric, list_views, describe_view, run_query).
 
 ## Collaborators
 
-- `tools`, `gatekeeper`.
-
-## Episodes
-
-Planned with the tools episodes.
+- `tools`, `gatekeeper`, `executor`, `analytics`.
 
 ## Tests
 
-Run with `./venv/bin/pytest tests/unit/test_platform_boundary.py -q` (or `make test` for everything).
+`tests/agent_platform/test_mcp_client.py` (in-process server; owed a rewrite for
+the ADR 0009 analytics source).
 
 ## Status and limits
 
-**Parked.** No transport is implemented and nothing calls these contracts. The boundary test only checks the package imports.
+Implemented (ADR 0008). Used by the ops agent against the analytics server.

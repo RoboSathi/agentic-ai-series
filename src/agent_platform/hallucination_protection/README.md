@@ -20,6 +20,25 @@ well confidence predicts correctness.
 
 ## How a claim is grounded
 
+**The check runs in levels** (`levels.py`). Level 1 is the platform's and the same for
+every agent; level 2 is the agent's own grounding. Both travel inside the agent's one
+`hallucination_check` event, level 1 first: in its `levels` field, on its card, and in
+its log line ("Response grounding checked").
+
+- **Level 1, token confidence** (`confidence.py`). The reply's sentences are scored by
+  the token log-probabilities of the completion that wrote them (`llm.logprobs`; the
+  turn keeps them, so no agent passes them along). A sentence is *low* below
+  `confidence.sentence_mean_prob`, or when too many of its tokens fall below
+  `min_token_prob`. Confidence is not truth, so every claim still goes to level 2.
+  A claim level 2 leaves undetermined in a low-confidence sentence counts as
+  unsupported (`promote`). Each run writes a `logprob` check row. A model that returns
+  no logprobs makes it `skipped`.
+- **Level 2, the agent's grounding.**
+  - Support and research replies: NLI entailment (`ResponseGuardrail`).
+  - The research report: the citation guard.
+  - The ops analyst: every figure found in a query result. There, level 1 is shown as a
+    signal only, because a figure is either found or it is not.
+
 ```
 record claim  →  direct check  →  tool_result
 rule claim    →  direct check* →  policy → system prompt → memory

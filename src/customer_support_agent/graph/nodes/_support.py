@@ -50,9 +50,10 @@ from agent_platform.primitives.money import money_or_none
 from agent_platform.resilience import (
     DeadLetterQueue,
 )
-from agent_platform.security import SecuritySuite
+from agent_platform.security import MessageScreener, SecuritySuite
 from agent_platform.security.auth.policy import AgentPolicy
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
+from agent_platform.tools.path import ToolPath
 from agent_platform.verification import EffectVerifier
 from customer_support_agent.config.settings import get_agent_settings
 from customer_support_agent.control_loop import OutputQualityGate
@@ -105,7 +106,9 @@ class NodeSupport:
     _registry: NamespacedToolRegistry
     _tools: SupportTools
     _executor: ToolExecutor
+    _tool_path: ToolPath
     _security: SecuritySuite
+    _message_screener: MessageScreener
     _working_memory: WorkingMemoryStore | None
     _long_term: MemoryFacade | None
     _context: FiveStagePipeline | None

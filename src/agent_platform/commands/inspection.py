@@ -77,7 +77,7 @@ class ConfigCommand:
 class AuditCommand:
     """Show recent decisions from the audit ledger the agents write.
 
-    The live ledger is the shared DuckDB one (`observability.analytics_db_path`),
+    The live ledger is the shared DuckDB one (the active analytics source's `db_path`),
     so that is what this reads: a command reading any other store reports an
     empty trail while every decision is being recorded somewhere else. Within
     one process DuckDB shares the database instance, so reading alongside the

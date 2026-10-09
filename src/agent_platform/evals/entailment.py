@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from agent_platform.config import get_settings
 from agent_platform.llm.embeddings import tokenize
+from agent_platform.observability import checks
 
 
 class EntailmentResult(BaseModel):
@@ -169,6 +170,14 @@ def entailment_from_probabilities(probabilities: dict[str, float], model: str) -
     )
 
 
+def entailment_backend(model: object) -> str:
+    """How an entailment model answers: a lexical rule, a local or a hosted cross-encoder."""
+    if isinstance(model, LexicalEntailmentModel) or getattr(model, "_unavailable", False):
+        return checks.RULE
+    return checks.HOSTED_MODEL if type(model).__name__.startswith("Hosted") else checks.LOCAL_MODEL
+
+
+@checks.recorded_dependency(checks.NLI, "entails", entailment_backend)
 def create_entailment_model() -> EntailmentModel:
     """The best entailment model this deployment can reach (Factory).
 

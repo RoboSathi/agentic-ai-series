@@ -13,8 +13,11 @@ from typing import Any, NamedTuple
 
 from pydantic import BaseModel, Field
 
+from agent_platform.config import get_settings
 from agent_platform.evidence import LedgerSnapshot
 from agent_platform.evidence.types import EvidenceEntry
+from agent_platform.hallucination_protection.levels import CheckLevel
+from agent_platform.observability import checks
 from agent_platform.observability.step_card import Line as StepLine
 from agent_platform.observability.step_card import ModelCall, StepCard
 from agent_platform.verification.acceptance import CheckVerdict
@@ -479,8 +482,15 @@ def synthesize_card(
 _GUARD_TONES = {SUPPORTED: "pass", REWRITTEN: "warn", DROPPED: "fail"}
 
 
-def guard_card(guarded: GuardedReport, ledger: LedgerSnapshot, nli_model: str, limit: int) -> Card:
-    """REPORT CHECK as a step card: each cited sentence, what became of it, and what backs it."""
+def guard_card(
+    guarded: GuardedReport,
+    ledger: LedgerSnapshot,
+    nli_model: str,
+    limit: int,
+    first: CheckLevel | None = None,
+) -> Card:
+    """REPORT CHECK as a step card: level 1 (token confidence) first, then each cited sentence,
+    what became of it, and what backs it."""
     clean = not guarded.dropped
     heading = say(
         "guard.heading" if clean else "guard.heading_dropped",
@@ -489,7 +499,10 @@ def guard_card(guarded: GuardedReport, ledger: LedgerSnapshot, nli_model: str, l
         rewritten=len(guarded.rewritten),
         dropped=len(guarded.dropped),
     )
-    evidence = [line for check in guarded.checks for line in _sentence_lines(check, ledger, limit)]
+    evidence = [
+        *_level_lines(first),
+        *(line for check in guarded.checks for line in _sentence_lines(check, ledger, limit)),
+    ]
     card = (
         StepCard()
         .asked(say("guard.asked"), say("guard.how", model=nli_model))
@@ -498,6 +511,17 @@ def guard_card(guarded: GuardedReport, ledger: LedgerSnapshot, nli_model: str, l
         .evidence(*evidence)
     )
     return heading, card.fields()
+
+
+def _level_lines(level: CheckLevel | None) -> list[StepLine]:
+    """`level 1 · token confidence = …`, then one line per sentence it scored."""
+    if level is None:
+        return []
+    row = get_settings().hallucination_protection.levels.row.format(
+        level=level.level, name=level.name
+    )
+    tone = {checks.PASS: "pass", checks.FLAG: "warn"}.get(level.verdict, "dim")
+    return [toned(f"{row} = {level.summary}", tone), *(f"   {line}" for line in level.lines)]
 
 
 def _sentence_lines(check: SentenceCheck, ledger: LedgerSnapshot, limit: int) -> list[StepLine]:

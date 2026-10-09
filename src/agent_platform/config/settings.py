@@ -75,6 +75,8 @@ class AgentIdentitySettings(YamlBackedSettings):
     _yaml_section = "agent"
 
     id: str
+    # How dashboards and reports title the agent ("" → its id).
+    display_name: str
     version: str
     # `module.path:attribute` naming this agent's `AgentHost`. Empty in the
     # platform defaults on purpose: the platform must not name an agent, so
@@ -368,6 +370,13 @@ class RoleModelSettings(ModelRef, ModelChainSettings):
     """Which model plays one named role, and how its calls are protected."""
 
 
+class LogprobSettings(BaseModel):
+    """Whether completions ask for token log-probabilities, and how many alternatives each."""
+
+    enabled: bool
+    top_logprobs: int = Field(ge=0, le=20)
+
+
 class LLMSettings(YamlBackedSettings):
     """LLM adapters — the only place a provider SDK is used (LLD §3)."""
 
@@ -380,6 +389,7 @@ class LLMSettings(YamlBackedSettings):
     # Where a provider returns the model's reasoning beside its answer
     # (`reasoning_content` on NIM). Read in order; the first present wins.
     reasoning_fields: list[str] = Field(default_factory=list)
+    logprobs: LogprobSettings
     providers: dict[str, LLMProviderSettings]
     # The default client's protection (`create_llm_client`): backups, timeout, hedge.
     chain: ModelChainSettings = Field(default_factory=ModelChainSettings)
@@ -570,11 +580,10 @@ class ObservabilitySettings(YamlBackedSettings):
 
     _yaml_section = "observability"
     enabled: bool
-    analytics_db_path: str
     langsmith: LangSmithSettings
     persist_traces: bool
     # One row per model call, tool call and turn (`observability/facts.py`):
-    # what the analytics mart and the dashboards aggregate.
+    # what the analytics source and the dashboards aggregate.
     persist_facts: bool
     slo_targets: dict[str, float]
     review_queue: ReviewQueueSettings
@@ -600,7 +609,7 @@ class ObservabilitySettings(YamlBackedSettings):
 
 
 class RedactPattern(BaseModel):
-    """One regex the analytics mart masks in free text before it leaves the database."""
+    """One regex the analytics source masks in free text before it leaves the database."""
 
     pattern: str
     replacement: str
@@ -616,13 +625,15 @@ class QueryRejectionWords(BaseModel):
     qualified_name: str
     unknown_view: str
     denied_function: str
+    unknown_metric: str
+    unknown_dimension: str
 
 
 class AnalyticsQuerySettings(BaseModel):
-    """The limits every NL-to-SQL query over the mart runs under (`analytics/query_guard.py`)."""
+    """The limits every NL-to-SQL query over the source runs under (`analytics/query_guard.py`)."""
 
     dialect: str
-    # The session time zone results are reported in (the mart's timestamps are UTC).
+    # The session time zone results are reported in (the source's timestamps are UTC).
     timezone: str
     max_rows: int = Field(ge=1)
     timeout_seconds: float = Field(gt=0)
@@ -642,42 +653,238 @@ class AnalyticsMcpServerSettings(BaseModel):
     manifest_uri: str
 
 
+class PlatformDashboardSettings(BaseModel):
+    """The Agent Platform dashboard: every agent together, and side by side."""
+
+    name: str
+    display_name: str
+    about: str
+
+
+class ByAgentSettings(BaseModel):
+    """The platform page's per-section table of agents."""
+
+    dimension: str
+    title: str
+    measures: int = Field(ge=1)
+
+
+class DashboardRanking(BaseModel):
+    """A leaderboard: one view, ranked by one dimension, showing some of its measures."""
+
+    view: str
+    by: str
+    measures: list[str]
+
+
+class DashboardKpis(BaseModel):
+    """A titled KPI grid: some measures of one view, shown when the agent runs `requires`."""
+
+    title: str
+    view: str
+    measures: list[str]
+    # Check names at least one of which the scope must have run (e.g. its screens); empty: always.
+    requires: list[str] = Field(default_factory=list)
+
+
+class DashboardTable(BaseModel):
+    """A table: one view, a row per combination of `by`, a column per measure."""
+
+    view: str
+    by: list[str]
+    measures: list[str]
+    title: str = ""
+
+
+class DashboardGroup(BaseModel):
+    """One dashboard section: its heading, KPI grids, trend charts, rankings and table."""
+
+    title: str
+    about: str = ""
+    # Explicit KPI grids; without them, one grid per view the section's metrics read.
+    kpis: list[DashboardKpis] = Field(default_factory=list)
+    trends: list[str] = Field(default_factory=list)
+    rankings: list[DashboardRanking] = Field(default_factory=list)
+    table: DashboardTable | None = None
+
+
+class DashboardLayout(BaseModel):
+    """Sizes and KPI options of the generated canvases."""
+
+    columns: int = Field(ge=1)
+    title_height: str
+    header_height: str
+    kpi_height: str
+    chart_height: str
+    ranking_rows: int = Field(ge=1)
+    comparison: list[str]
+    sparkline: str
+
+
+class DummyIncidentSettings(BaseModel):
+    """The one bad day in the generated world."""
+
+    days_ago: int = Field(ge=0)
+    crash_rate: float = Field(ge=0, le=1)
+    retry_rate: float = Field(ge=0, le=1)
+    backup_rate: float = Field(ge=0, le=1)
+    latency_factor: float = Field(gt=0)
+    guard_failure_rate: float = Field(ge=0, le=1)
+
+
+class DummyAnalyticsSettings(BaseModel):
+    """A generated analytics world for demos (`analytics/dummy.py`)."""
+
+    # The analytics source (`analytics.sources`) the world is written to.
+    source: str
+    profiles_glob: str
+    days: int = Field(ge=1)
+    seed: int
+    eval_share: float = Field(ge=0, le=1)
+    growth: float = Field(ge=0)
+    weekend_factor: float = Field(gt=0)
+    active_hours: tuple[int, int]
+    turn_gap_seconds: tuple[int, int]
+    crash_rate: float = Field(ge=0, le=1)
+    cancel_rate: float = Field(ge=0, le=1)
+    retry_rate: float = Field(ge=0, le=1)
+    backup_rate: float = Field(ge=0, le=1)
+    incident: DummyIncidentSettings
+
+
+class DashboardSettings(BaseModel):
+    """The Rill project generated from the semantic layer (`analytics/dashboards.py`)."""
+
+    project_dir: str
+    # The first line of every generated file: what marks it safe to regenerate.
+    marker: str
+    data_link: str
+    time_range: str
+    platform: PlatformDashboardSettings
+    agent_configs_glob: str
+    agent_about: str
+    by_agent: ByAgentSettings
+    groups: dict[str, DashboardGroup]
+    layout: DashboardLayout
+    # Format preset by the metric name's ending.
+    formats: dict[str, str]
+    default_format: str
+
+    @property
+    def resolved_project_dir(self) -> Path:
+        return resolve_path(self.project_dir)
+
+
 class AnalyticsWords(BaseModel):
     """What `make analytics-export` says (`analytics/cli.py`)."""
 
     usage: str
+    dashboards_written: str
+    dropped: str
+    dummy_written: str
     title: str
     rows: str
     skipped: str
-    # A fact-backed view with no rows yet, and the line closing a mart that has none at all.
+    # A fact-backed view with no rows yet, and the line closing a source that has none at all.
     empty_hint: str
     no_facts: str
     locked: str
     time_format: str
 
 
+class OutcomeFlags(BaseModel):
+    """What an outcome means for the fleet (ADR 0009 D4)."""
+
+    # Did the person get what they asked for.
+    success: bool
+    # Does the task end here.
+    terminal: bool
+
+
+class ReservedOutcomes(BaseModel):
+    """The outcomes the platform assigns itself, never an agent (UL: implicit task, abandoned)."""
+
+    unclassified: str
+    crashed: str
+    cancelled: str
+    abandoned: str
+
+
+class TaskSettings(BaseModel):
+    """Task kinds and outcomes: the platform's reserved ones, plus each agent's (D2, D4).
+
+    An agent's overlay adds its kinds and outcomes under `analytics.tasks`; the
+    outcome mapping merges with the platform's reserved outcomes.
+    """
+
+    implicit_kind: str
+    kinds: list[str]
+    reserved: ReservedOutcomes
+    outcomes: dict[str, OutcomeFlags]
+    # An open task older than this is reported `abandoned` by the source.
+    abandon_after_hours: float = Field(gt=0)
+
+
+class AnalyticsSource(BaseModel):
+    """One analytics dataset: the DuckDB facts go to, and the Parquet its views export to."""
+
+    db_path: str
+    parquet_dir: str
+
+    @property
+    def resolved_db_path(self) -> Path:
+        return resolve_path(self.db_path)
+
+    @property
+    def resolved_parquet_dir(self) -> Path:
+        return resolve_path(self.parquet_dir)
+
+
 class AnalyticsSettings(YamlBackedSettings):
-    """The analytics mart: curated views over the facts, exported as Parquet (LLD §6)."""
+    """Analytics sources: curated views over the facts, exported as Parquet (LLD §6)."""
 
     _yaml_section = "analytics"
-    mart_dir: str
-    mart_version: int
+    # The active source, by name (`ANALYTICS__SOURCE`), and every source there is.
+    source: str
+    sources: dict[str, AnalyticsSource]
+    schema_version: int
     manifest_file: str
-    # How often a running console refreshes the mart; 0 exports only on demand.
+    # How often a running console re-exports its source's Parquet; 0 exports only on demand.
     export_interval_seconds: float = Field(ge=0)
     semantic_layer: str
+    # Agents' Tier-2 semantic layers, found by convention (D7): each file names its agent.
+    agent_layers_glob: str
     evals_alias: str
     slo_windows_days: list[int]
+    # The channel a fact is stamped with when no surface bound one (a script, a make target).
+    default_channel: str
+    tasks: TaskSettings
     redact_patterns: list[RedactPattern]
     query: AnalyticsQuerySettings
     mcp_server: AnalyticsMcpServerSettings
+    legacy_tables: list[str]
+    dummy: DummyAnalyticsSettings
+    dashboards: DashboardSettings
     words: AnalyticsWords
 
     model_config = SettingsConfigDict(env_prefix="ANALYTICS__")
 
     @property
-    def resolved_mart_dir(self) -> Path:
-        return resolve_path(self.mart_dir)
+    def active(self) -> AnalyticsSource:
+        """The active source (an unknown name fails loudly, naming the ones there are)."""
+        if self.source not in self.sources:
+            raise ValueError(
+                f"analytics.source '{self.source}' is not one of {sorted(self.sources)}"
+            )
+        return self.sources[self.source]
+
+    @property
+    def resolved_db_path(self) -> Path:
+        return self.active.resolved_db_path
+
+    @property
+    def resolved_parquet_dir(self) -> Path:
+        return self.active.resolved_parquet_dir
 
     @property
     def resolved_semantic_layer(self) -> Path:
@@ -1009,11 +1216,45 @@ class RecordStatesSettings(BaseModel):
     phrases: list[StatePhraseSettings]
 
 
+class ConfidenceCardWords(BaseModel):
+    """Level 1's wording: its summary and one line per sentence (`confidence.py`)."""
+
+    heading: str
+    heading_clean: str
+    skipped: str
+    no_logprobs: str
+    no_match: str
+    sentence_line: str
+    low_mark: str
+    ok_mark: str
+
+
+class HallucinationLevelWords(BaseModel):
+    """How the hallucination check's levels are named (`hallucination_protection/levels.py`)."""
+
+    row: str
+    confidence: str
+    entailment: str
+
+
+class ConfidenceSettings(BaseModel):
+    """Step 1 of the hallucination check: sentence confidence from token logprobs."""
+
+    enabled: bool
+    sentence_mean_prob: float = Field(ge=0, le=1)
+    min_token_prob: float = Field(ge=0, le=1)
+    max_low_token_share: float = Field(ge=0, le=1)
+    ignore_token_pattern: str
+    card: ConfidenceCardWords
+
+
 class HallucinationProtectionSettings(YamlBackedSettings):
     """Detection ladder thresholds (LLD)."""
 
     _yaml_section = "hallucination_protection"
     enforce_grounding: bool
+    confidence: ConfidenceSettings
+    levels: HallucinationLevelWords
     confidence_threshold: float
     # The reply when the gate refuses every sentence of an answer.
     withheld_reply: str
@@ -1560,6 +1801,8 @@ class EvalsSettings(YamlBackedSettings):
 
     _yaml_section = "evals"
     enabled: bool
+    # The channel eval traffic is stamped with, so runtime metrics can exclude it.
+    channel: str
     manifest_version: str
     manifest_path: str
     # Further manifests merged over the platform's, in order. Empty here:
@@ -1635,6 +1878,23 @@ class McpServerSettings(BaseModel):
     envelope: McpToolEnvelope | None = None
 
 
+class McpCardWords(BaseModel):
+    """How an MCP server is drawn on a card (`mcp/presentation.py`)."""
+
+    heading: str
+    server_title: str
+    instructions_title: str
+    tools_title: str
+    server_line: str
+    transport_line: str
+    tool_line: str
+    argument_line: str
+    required: str
+    optional: str
+    governance_line: str
+    no_instructions: str
+
+
 class McpSettings(YamlBackedSettings):
     """MCP servers an agent consumes as tools (`agent_platform.mcp`)."""
 
@@ -1648,6 +1908,7 @@ class McpSettings(YamlBackedSettings):
     python_placeholder: str
     # Characters of a tool's text result handed on; 0 keeps all of it.
     result_text_limit: int = Field(ge=0)
+    card: McpCardWords
 
     model_config = SettingsConfigDict(env_prefix="MCP__")
 
@@ -1704,11 +1965,15 @@ class StatsCommandWords(BaseModel):
     usage: str
     title: str
     no_session: str
+    tasks: str
+    task_line: str
     turns: str
     models: str
     model_line: str
     tools: str
     tool_line: str
+    checks: str
+    check_line: str
     decisions: str
     slos: str
     slo_line: str

@@ -130,8 +130,11 @@ has a Gatekeeper.
 
 **Fact.** One row at one grain (task event, turn, attempt, proposal, check),
 appended once by its choke point and never updated. A task is two events
-(`opened`, `closed`); the mart joins them, so a process that dies mid-task
+(`opened`, `closed`); the source joins them, so a process that dies mid-task
 leaves an open task, not a lost one.
 
-**Mart.** The curated, documented views over the facts, exported as Parquet.
-The only thing readers (MCP server, dashboards) see.
+**Source** (analytics source). One analytics dataset: the DuckDB that agents write
+facts to, and the Parquet export of its curated, documented views. Readers (the MCP
+server, dashboards) only read the Parquet. `analytics.source` picks the active one
+(`live`, or `dummy` for the generated demo world; `SOURCE=dummy` on make). Retired
+term: "mart".

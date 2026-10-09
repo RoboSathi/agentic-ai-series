@@ -499,6 +499,8 @@ class AnswerSettings(BaseModel):
     # one slow site cannot spend half the turn (the model reads another result instead).
     fetch_timeout_seconds: float = Field(gt=0)
     fetch_max_attempts: int = Field(ge=1)
+    # The Executor's deadline for one answer tool (a search, a fetch, a forecast).
+    tool_timeout_seconds: float = Field(gt=0)
     # strftime format for the date the prompt carries ("Today is ...").
     date_format: str
     # strftime format of the clock tool's answer.
@@ -574,10 +576,38 @@ class TurnSummarySettings(BaseModel):
     crashed: str
 
 
+class ResearchTaskSettings(BaseModel):
+    """This agent's task kinds and the outcomes it closes them with (`analytics.tasks`)."""
+
+    research_run: str
+    direct_answer: str
+    # A finished run's status (`RunStatus`) → its outcome.
+    run_status: dict[str, str]
+    scope_refused: str
+    answered: str
+    answer_failed: str
+    refused: str
+
+    def kinds(self) -> list[str]:
+        return [self.research_run, self.direct_answer]
+
+    def outcomes(self) -> list[str]:
+        """Every outcome this agent closes a task with, for start-up validation."""
+        return [
+            *self.run_status.values(),
+            self.scope_refused,
+            self.answered,
+            self.answer_failed,
+            self.refused,
+        ]
+
+
 class ResearchAgentSettings(YamlBackedSettings):
     """The research agent's own wiring values."""
 
     _yaml_section = "research_agent"
+    # The tasks this agent opens and the outcomes it closes them with (ADR 0009).
+    tasks: ResearchTaskSettings
 
     title: str
     placeholder: str

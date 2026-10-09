@@ -1,4 +1,4 @@
-"""`python -m agent_platform.analytics.mcp_server` — serve the mart over stdio.
+"""`python -m agent_platform.analytics.mcp_server` — serve the source over stdio.
 
 On stdio, stdout *is* the protocol, so console logging is switched off before
 settings load; everything is still logged to the files under `logging.dir`.

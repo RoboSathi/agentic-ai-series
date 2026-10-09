@@ -232,6 +232,36 @@ class ControlLoopStatusSettings(BaseModel):
     because: dict[str, str]
 
 
+class TaskKindSettings(BaseModel):
+    """One kind of task this agent does: what opens it, and how it ends well (ADR 0009)."""
+
+    # The intent that opens the task, and the write that carries it out.
+    intent: str
+    action: str
+    # The outcome when that write lands and is verified.
+    done: str
+
+
+class TaskOutcomeSettings(BaseModel):
+    """Which declared task kind and outcome each of this agent's endings is."""
+
+    kinds: dict[str, TaskKindSettings]
+    queued: str
+    refused: str
+    failed: str
+    unverified: str
+
+    def outcomes(self) -> list[str]:
+        """Every outcome this agent closes a task with, for start-up validation."""
+        return [
+            *(kind.done for kind in self.kinds.values()),
+            self.queued,
+            self.refused,
+            self.failed,
+            self.unverified,
+        ]
+
+
 class CustomerSupportAgentSettings(YamlBackedSettings):
     """The running product's own wiring values (LLD §21)."""
 
@@ -246,6 +276,8 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     # budgets by class and does not know this agent's verbs, so the mapping
     # is declared here rather than as a literal in the composition root.
     action_classes: dict[str, str]
+    # The tasks a request opens and the outcomes they close with (`analytics.tasks`).
+    tasks: TaskOutcomeSettings
     plans: dict[str, list[PlanStepSettings]]
     intent_router: IntentRouterSettings
     order_reference: OrderReferenceSettings

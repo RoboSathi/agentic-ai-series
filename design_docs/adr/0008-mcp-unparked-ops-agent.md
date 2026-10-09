@@ -1,5 +1,7 @@
 # ADR 0008 — MCP unparked: the analytics server, the client, and the ops agent
 
+> Since (ADR 0009 notes): "mart" became **analytics source**; `mart://manifest` is `source://manifest`; `make analytics-mcp` was removed. An MCP client launches `python -m agent_platform.analytics.mcp_server`, and `ANALYTICS__SOURCE` picks the source. The body below is kept as decided.
+
 - Status: accepted
 - Date: 2026-10-08
 - Supersedes: LLD §16.1 "parked, interface-only"

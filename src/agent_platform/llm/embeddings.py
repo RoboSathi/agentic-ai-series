@@ -17,6 +17,7 @@ from agent_platform.config import get_settings
 from agent_platform.config.settings import LLMSettings
 from agent_platform.llm.http import create_sdk_http_client
 from agent_platform.logging import get_logger
+from agent_platform.observability import checks
 from agent_platform.resilience import external_api_error_fields
 
 # The embedding backend that calls a provider (`llm.embedding.backend`); any other is local.
@@ -170,6 +171,12 @@ class HostedEmbeddingClient:
         return vectors
 
 
+def _embedding_backend(client: object) -> str:
+    """A hosted embedding model, or the local hashing embedder."""
+    return checks.HOSTED_MODEL if isinstance(client, HostedEmbeddingClient) else checks.RULE
+
+
+@checks.recorded_dependency(checks.EMBEDDING, "embed", _embedding_backend)
 def create_embedding_client(settings: LLMSettings | None = None) -> EmbeddingClient:
     """Build the configured embedding client (Factory)."""
     resolved = settings or get_settings().llm

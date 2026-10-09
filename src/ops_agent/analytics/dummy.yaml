@@ -1,0 +1,31 @@
+# This agent's simulated traffic for the generated analytics world (`make dummy-data
+# analytics`, platform `analytics/dummy.py`). One question is one implicit task, closed
+# with the outcomes this agent declares under `analytics.tasks.outcomes`.
+agent_id: ops_agent
+overlay: src/ops_agent/config/config.yaml
+sessions_per_day: 6
+tasks:
+  implicit:
+    weight: 1.0
+    turns: [1, 4]
+    outcomes: {answered: 0.82, stopped: 0.07, blocked: 0.04, unavailable: 0.07}
+steps: [2, 8]
+step_cap: 8
+cap_abort_rate: 0.5
+roles:
+  nim: {provider: nim, primary: nvidia/nemotron-3.5-lightning-30b-a3b, backups: [openai/gpt-oss-20b], latency_ms: 2200, prompt_tokens: [2200, 6500], completion_tokens: [80, 500]}
+tool_step_rate: 0.75
+tools_per_step: [1, 1]
+tools:
+  analytics.list_metrics: {weight: 0.15, duration_ms: 25}
+  analytics.compute_metric: {weight: 0.4, failure_rate: 0.03, duration_ms: 60}
+  analytics.run_query: {weight: 0.3, failure_rate: 0.08, timeout_rate: 0.01, duration_ms: 140}
+  analytics.describe_view: {weight: 0.15, duration_ms: 30}
+stage_rates: {invalid: 0.04, refused: 0.01, duplicate: 0.05}
+governed: true
+screens:
+  injection: {backend: rule, latency_ms: 2, block_rate: 0.02}
+  jailbreak: {backend: hosted_model, model: nvidia/nemoguard-jailbreak-detect, latency_ms: 420, block_rate: 0.01, failure_rate: 0.01}
+# Figures in the answer checked against the tool results (a deterministic rule).
+grounding: {backend: rule, latency_ms: 3, claims: [1, 4], unsupported_rate: 0.06, low_confidence_rate: 0.06, writer_model: nvidia/nemotron-3.5-lightning-30b-a3b}
+turn_overhead_ms: 250

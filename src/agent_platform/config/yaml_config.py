@@ -29,6 +29,7 @@ must not erase `gatekeeper.authority_hierarchy` alongside it, which is
 exactly what a shallow merge would do.
 """
 
+import copy
 import os
 from pathlib import Path
 from typing import Any
@@ -82,7 +83,11 @@ def clear_overlays() -> None:
     _run_overlays.clear()
 
 
-class _StrictLoader(yaml.SafeLoader):
+# libyaml's parser when it is installed (an order of magnitude faster), else the pure-Python one.
+_BaseLoader: type[yaml.SafeLoader] = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+class _StrictLoader(_BaseLoader):  # type: ignore[valid-type,misc]
     """A loader that refuses to silently drop a repeated key.
 
     Plain YAML keeps the last of two identical keys and says nothing. In a
@@ -98,9 +103,7 @@ class _StrictLoader(yaml.SafeLoader):
 _MERGE_TAG = "tag:yaml.org,2002:merge"
 
 
-def _no_duplicate_keys(
-    loader: yaml.SafeLoader, node: yaml.MappingNode, deep: bool = False
-) -> dict[Any, Any]:
+def _no_duplicate_keys(loader: Any, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
     """Construct a mapping, raising if any key appears twice.
 
     YAML merge keys (`<<: *anchor`) are honoured: the anchor's keys come first and a key written
@@ -127,7 +130,7 @@ def _no_duplicate_keys(
     return mapping
 
 
-def _merged(loader: yaml.SafeLoader, node: yaml.Node) -> dict[Any, Any]:
+def _merged(loader: Any, node: yaml.Node) -> dict[Any, Any]:
     """What a merge key brings in: one anchored mapping, or a list of them (first wins)."""
     sources = node.value if isinstance(node, yaml.SequenceNode) else [node]
     merged: dict[Any, Any] = {}
@@ -139,10 +142,25 @@ def _merged(loader: yaml.SafeLoader, node: yaml.Node) -> dict[Any, Any]:
 _StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicate_keys)
 
 
+# Each file parsed once per version of it: every settings section reads the merged
+# configuration, and re-parsing every layer for each of them made start-up take seconds.
+_parsed: dict[Path, tuple[tuple[int, int], dict[str, Any]]] = {}
+
+
 def _read_yaml(path: Path) -> dict[str, Any]:
-    """Read a YAML file into a dict, or {} if it doesn't exist."""
+    """Read a YAML file into a dict, or {} if it doesn't exist (a private copy each call)."""
     if not path.exists():
         return {}
+    stat = path.stat()
+    version = (stat.st_mtime_ns, stat.st_size)
+    cached = _parsed.get(path)
+    if cached is None or cached[0] != version:
+        cached = (version, _parse(path))
+        _parsed[path] = cached
+    return copy.deepcopy(cached[1])
+
+
+def _parse(path: Path) -> dict[str, Any]:
     with path.open() as handle:
         try:
             loaded = yaml.load(handle, Loader=_StrictLoader)

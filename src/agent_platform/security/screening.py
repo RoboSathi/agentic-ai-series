@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from agent_platform.config import get_settings
 from agent_platform.config.settings import ScreeningMessages
 from agent_platform.logging import get_logger, instrument
+from agent_platform.observability import checks
 from agent_platform.observability.status_feed import StageReporter
 from agent_platform.observability.types import EventKind
 from agent_platform.resilience.dead_letter_queue.queue import DeadLetterQueue, DeadLetterReason
@@ -84,6 +85,28 @@ class MessageScreener:
         self._quarantine = quarantine
         self._logger = get_logger("security")
 
+    def declared_checks(self) -> list[str]:
+        """The checks this screener runs on every message: what `screen_coverage` expects.
+
+        A composition root declares these for its agent (`units.declare_screens`).
+        """
+        guards = get_settings().security.guards
+        hosted = guards.enabled
+        declared = {
+            checks.PII: self._suite.pii is not None,
+            checks.INJECTION: self._suite.injection is not None,
+            checks.JAILBREAK: self._suite.injection is not None
+            and hosted
+            and guards.jailbreak.enabled
+            and self._suite.jailbreak_guard is not None,
+            checks.MODERATION: self._suite.moderator is not None,
+            checks.CONTENT_SAFETY: self._suite.moderator is not None
+            and hosted
+            and guards.content_safety.enabled
+            and self._suite.content_safety_guard is not None,
+        }
+        return [check for check, built in declared.items() if built]
+
     @property
     def suite(self) -> SecuritySuite:
         return self._suite
@@ -118,6 +141,8 @@ class MessageScreener:
             )
             for span in spans
         ]
+        model, unavailable = self._suite.pii_model()
+        checks.record_pii(model, unavailable, len(spans), latency_ms)
         fields = {
             **self._pii_checks(spans, latency_ms, words),
             "matches": len(spans),
@@ -173,7 +198,18 @@ class MessageScreener:
             return ScreenOutcome(allowed_actions=[tool.name for tool in tools])
         words = _messages()
         _started(reporter, INJECTION_STAGE, words.injection_started)
+        started = time.perf_counter()
         assessment = await self._suite.prepare_untrusted_async(instructions, text, list(tools))
+        rule = get_settings().security.guards.rule_checks.injection
+        checks.record_screen(
+            assessment.checks,
+            rule=checks.INJECTION,
+            rule_hit=any(
+                entry.get("name") == rule and entry.get("status") == FAIL
+                for entry in assessment.checks
+            ),
+            elapsed_ms=(time.perf_counter() - started) * 1000,
+        )
         status, summary, fields = _injection_card(assessment, words)
         _emit(reporter, INJECTION_STAGE, status, summary, fields)
         outcome = ScreenOutcome(
@@ -192,7 +228,14 @@ class MessageScreener:
             return ScreenOutcome()
         words = _messages()
         _started(reporter, MODERATION_STAGE, words.moderation_started)
+        started = time.perf_counter()
         verdict = await self._suite.moderate_async(text)
+        checks.record_screen(
+            verdict.checks,
+            rule=checks.MODERATION,
+            rule_hit=bool(verdict.matched_terms),
+            elapsed_ms=(time.perf_counter() - started) * 1000,
+        )
         status, summary, fields = _moderation_card(verdict, words)
         _emit(reporter, MODERATION_STAGE, status, summary, fields)
         outcome = ScreenOutcome(

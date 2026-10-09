@@ -1,5 +1,0 @@
-# The mart's 'turns' view (semantic layer: src/agent_platform/analytics/semantic_layer.yaml).
-version: 1
-type: model
-connector: duckdb
-sql: SELECT * FROM read_parquet('data/turns.parquet')

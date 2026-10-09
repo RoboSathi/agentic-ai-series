@@ -54,6 +54,14 @@ class CompletionRequest(BaseModel):
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
+class TokenLogprob(BaseModel):
+    """One generated token, the log-probability the model gave it, and its top alternatives."""
+
+    token: str
+    logprob: float
+    top: dict[str, float] = Field(default_factory=dict)
+
+
 class CompletionResult(BaseModel):
     """One completion, plus the accounting the harness needs downstream."""
 
@@ -69,6 +77,8 @@ class CompletionResult(BaseModel):
     latency_ms: float = 0.0
     # Attempts the model's resilience stack made for this answer (1: it worked first time).
     attempts: int = 1
+    # Per-token confidence of `content`, when the provider returned it (None otherwise).
+    logprobs: list[TokenLogprob] | None = None
 
 
 class HealthCheckResult(BaseModel):

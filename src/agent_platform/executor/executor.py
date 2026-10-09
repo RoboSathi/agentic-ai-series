@@ -20,7 +20,6 @@ from agent_platform.config import get_settings
 from agent_platform.executor.types import ApprovedToolCall, ExecutionAuditEvent, ExecutionOutcome
 from agent_platform.logging import get_logger, instrument, logged
 from agent_platform.observability import StageReporter
-from agent_platform.observability.facts import FactRecorder, NullFactRecorder, ToolCallFact
 from agent_platform.observability.langsmith import tool_run
 from agent_platform.observability.types import utc_now
 from agent_platform.resilience.idempotency.guard import IdempotencyGuard
@@ -69,10 +68,8 @@ class ToolExecutorImpl:
         audit_hook: ExecutionAuditHook | None = None,
         reporter: StageReporter | None = None,
         timeout_seconds: float | None = None,
-        recorder: FactRecorder | None = None,
     ) -> None:
         self._handler = handler
-        self._recorder = recorder or NullFactRecorder()
         self._idempotency = idempotency
         timeout = get_settings().resilience.timeout
         self._timeout_enabled = timeout.enabled if timeout_seconds is None else timeout_seconds > 0
@@ -250,19 +247,6 @@ class ToolExecutorImpl:
             error=outcome.result.error,
         )
         self._emit(event)
-        self._recorder.record(
-            ToolCallFact(
-                action=approved.call.action,
-                actor=approved.authority.actor,
-                status=outcome.status,
-                succeeded=outcome.result.success,
-                side_effecting=approved.call.side_effecting,
-                replayed=outcome.replayed,
-                timed_out=outcome.timed_out,
-                duration_ms=outcome.duration_ms,
-                error=outcome.result.error or "",
-            )
-        )
         if self._reporter is not None:
             method = self._reporter.completed if outcome.result.success else self._reporter.failed
             method(

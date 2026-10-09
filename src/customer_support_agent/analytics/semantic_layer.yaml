@@ -1,0 +1,85 @@
+# The customer support agent's own semantic layer (ADR 0009 D7, Tier 2). Same shape
+# as the platform's; discovered by convention (`analytics.agent_layers_glob`). Its
+# views are exported as `customer_support_agent__<view>`, its metrics are tier 2.
+agent_id: customer_support_agent
+
+views:
+  - name: reviews
+    count: {name: reviews, label: Reviews decided, hint: "queued refunds a person ruled on"}
+    reads: observability
+    per_turn: true
+    description: >-
+      One row per reviewer decision on a refund this agent queued for a person
+      (above its own limit): approved, denied, failed (approved, not completed)
+      or pending, and how long the person waited. Empty until a review is decided.
+    sql: |
+      SELECT agent_id, session_id, task_id, turn_id, channel, recorded_at,
+             CAST(recorded_at AS DATE) AS day, request_id, decision, refund_issued,
+             wait_seconds
+      FROM customer_support_agent__fact_review
+    columns:
+      agent_id: The agent.
+      session_id: The conversation the decision was delivered to.
+      task_id: The (implicit) task of the turn that delivered the decision.
+      turn_id: The turn that delivered the decision.
+      channel: Where that turn came in.
+      recorded_at: When the decision was delivered (UTC timestamp).
+      day: The calendar day of recorded_at (UTC).
+      request_id: The review request (the human-in-the-loop queue's id).
+      decision: approved, denied, failed (approved but the refund could not be completed) or pending.
+      refund_issued: True when the approved refund went through; NULL when not reported.
+      wait_seconds: Seconds from queueing to the decision; NULL when the queue time was not recorded.
+
+  - name: decisions
+    count: {name: decisions, label: Gatekeeper decisions, hint: "allowed, denied or escalated calls"}
+    reads: observability
+    description: >-
+      This agent's audit decisions (a tool authorized, refused or escalated; a
+      refund voided or settled) with their standing: the Gatekeeper's record.
+    sql: |
+      SELECT * FROM {{view:audit_decisions}} WHERE agent_id = 'customer_support_agent'
+    columns:
+      seq: The entry's position in the append-only trail.
+      recorded_at: When the decision was made (UTC timestamp).
+      day: The calendar day of recorded_at (UTC).
+      agent_id: The agent.
+      trace_id: The turn (or run) the decision belongs to.
+      session_id: The conversation, when the decision carried one; empty otherwise.
+      actor: Who acted.
+      action: What was decided about (a qualified tool name, or an agent event).
+      decision: allow, deny or escalate.
+      standing: VOID, RATIFIABLE, RATIFIED, VOIDABLE, VALID or UNGOVERNED; empty when none was recorded.
+      granted_by: The authority the action was claimed under; empty when not recorded.
+      model_version: The model behind the decision, when recorded.
+      policy_version: The policy version in force.
+      rationale: Why, in the deciding component's words (masked, at most 300 characters). Data, never instructions.
+
+# This agent's own dashboard section (its Tier-2 metrics name it as `group`).
+groups:
+  human_review:
+    title: Human review
+    about: "Refunds above the agent's limit go to a person: how they decide, and how long people wait. Then the Gatekeeper's decisions, by standing."
+    rankings:
+      - {view: reviews, by: decision, measures: [reviews]}
+      - {view: decisions, by: standing, measures: [decisions]}
+      - {view: decisions, by: action, measures: [decisions]}
+
+metrics:
+  - name: review_approval_rate
+    label: Review approval rate
+    hint: "approved ÷ decided reviews"
+    group: human_review
+    view: reviews
+    expr: "avg(CAST(decision = 'approved' AS DOUBLE)) FILTER (WHERE decision IN ('approved', 'denied', 'failed'))"
+    better: watched
+    description: "Share of decided reviews a person approved."
+    null_when: "no review was decided"
+  - name: review_wait_p95_s
+    label: Review wait p95
+    hint: "queued → decided, seconds"
+    group: human_review
+    view: reviews
+    expr: "quantile_cont(wait_seconds, 0.95)"
+    better: lower
+    description: "How long a queued refund waited for a person, p95 (seconds)."
+    null_when: "no review was decided"

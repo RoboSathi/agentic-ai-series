@@ -17,8 +17,10 @@ from agent_platform.config.settings import McpServerSettings
 from agent_platform.logging import get_logger
 from agent_platform.mcp.schema import arguments_model
 from agent_platform.mcp.types import (
+    McpServerDescription,
     McpServerSpec,
     McpSession,
+    McpToolDescription,
     McpToolInfo,
     McpTransport,
     ToolGovernancePolicy,
@@ -49,15 +51,46 @@ class GovernedMcpToolSource:
         self._transport = transport
         self._policy = policy
         self._session: McpSession | None = None
+        self._listed: list[McpToolInfo] = []
         self._logger = get_logger("mcp")
 
     async def tools(self) -> list[ToolDefinition]:
         session = await self._open()
-        listed = await session.list_tools()
-        self._logger.info(
-            "MCP tools listed", server=self._server.name, tools=[tool.name for tool in listed]
+        self._listed = await session.list_tools()
+        definitions = [self._definition(tool) for tool in self._listed]
+        for definition in definitions:
+            self._logger.info(
+                "MCP tool registered",
+                server=self._server.name,
+                tool=definition.qualified_name,
+                offered_as=definition.wire_name,
+                envelope=self._policy.envelope_for(self._server, self._tool(definition.name)),
+            )
+        return definitions
+
+    def describe(self) -> McpServerDescription | None:
+        """The connected server and the tools it offered (None before it connected)."""
+        if self._session is None:
+            return None
+        return McpServerDescription(
+            server=self._server,
+            info=self._session.server_info(),
+            tools=[
+                McpToolDescription(
+                    name=tool.name,
+                    qualified_name=f"{self._server.namespace}.{tool.name}"
+                    if self._server.namespace
+                    else tool.name,
+                    description=tool.description,
+                    input_schema=tool.input_schema,
+                    envelope=self._policy.envelope_for(self._server, tool),
+                )
+                for tool in self._listed
+            ],
         )
-        return [self._definition(tool) for tool in listed]
+
+    def _tool(self, name: str) -> McpToolInfo:
+        return next(tool for tool in self._listed if tool.name == name)
 
     async def close(self) -> None:
         if self._session is not None:

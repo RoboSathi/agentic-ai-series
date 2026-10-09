@@ -1,6 +1,6 @@
 # ADR 0009 — Analytics is a platform contract
 
-- Status: proposed (design review before any code)
+- Status: accepted; implemented 2026-10-09 (see Implementation notes)
 - Date: 2026-10-08
 - Supersedes: the fact tables, mart views and dashboards of ADR 0007 (the
   Parquet mart, the exporter, the MCP server and the client of ADR 0008 stand)
@@ -56,3 +56,80 @@ its outcomes, optionally its own domain tables, and its eval suite.
 - Releases cannot be compared (D5); if needed later, a fingerprint column is an additive change.
 - Human review outcomes, intent classification and Gatekeeper standings are not
   Tier 1: they belong to the agents that have them (Tier 2), or come later.
+
+## Implementation notes (2026-10-09)
+
+Built as specified in `analytics_schema.md`, which has been updated in place. Where
+the build differs from the design, these are the reasons:
+
+- **`check` is `check_name`.** `check` is a reserved word in DuckDB, so every query
+  over it, whether hand-written or model-written, would need quoting.
+- **`fact_turn.screens`** (added). This is the list of screens the composition root
+  declared (`units.declare_screens`). `screen_coverage` needs the declared set,
+  because a screen that never ran leaves no row to infer it from. A turn that carries
+  no message from a person (a resumed or aborted run) has none.
+- **"Offered" stays with the Gatekeeper.** It is a fact about the instruction, which
+  CLAUDE.md assigns to the Gatekeeper. `ToolPath.run(proposal, turn)` records
+  `not_offered` when the Gatekeeper rules on its `offered` question, and with the
+  Gatekeeper withheld, nothing checks it. `ToolTurn` carries the caller's authority
+  builder, control loop, step budget and card hooks.
+- **Agent layers are found by convention** (`analytics.agent_layers_glob`), not
+  registered per overlay. The source holds every agent, whichever process exports it;
+  per-overlay registration would make it depend on which agent last ran. Each
+  layer names its `agent_id`. An agent view whose tables do not exist yet is skipped
+  with its reason, together with the metrics over it.
+- **Metrics have one form,** `{view, expr, by}`, rendered per day (`metric_daily`), per
+  SLO window (`metric_window`) and per period (`compute_metric`). Two helper shapes make
+  that possible: `tasks` carries tokens per task, and the `screen_coverage` view expands
+  each turn's declared screens.
+- **Reserved outcomes.** `unclassified` (not success, not terminal), and `crashed`,
+  `cancelled`, `abandoned` (not success, terminal). An implicit task the agent does not
+  close is `unclassified`, so it never counts toward resolution.
+- **Steps** are counted by `SteppedClient`, the outermost wrapper the chain builder
+  applies. A fact written outside a model call takes the turn's latest step: a tool
+  proposal belongs to the step that proposed it, and a screen before the first step
+  has none. The step *cap* is declared by the loop guard built for the turn
+  (`ToolControlLoop(step_cap=...)`, or `BudgetGuard(step_counter=...)`).
+- **Eval traffic** is bound to `channel = eval` (`evals.channel`). The CSA eval runner
+  still builds with observability off, because the console holds the DuckDB lock, so
+  eval facts arrive with the evals rework (D8), together with `eval_score`.
+- **MCP:** `list_metrics` and `compute_metric(name, agent_id, days, by)` join the three
+  view tools. A computed metric comes back in the query result's shape, so a client's
+  figure check reads it like any query.
+- **Dashboards are generated** (`python -m agent_platform.analytics dashboards`) and
+  not versioned. D3's "Fleet page" is the **Agent Platform** dashboard. There is one
+  dashboard per agent, and every dashboard is a Rill canvas with the same sections:
+  outcomes, reliability, cost, tools, safety, grounding, plus the agent's own groups.
+  Each measure is the catalogue's own `expr`, computed over the scope's raw rows, so it is
+  exact for any range. Metrics carry a `label`, `hint` and `group`, and each view names its
+  `count`.
+- **Security and per-model metrics:** per-screen security metrics (PII, prompt injection,
+  content moderation) and a `model_usage` view (every LLM and check model, with
+  per-model latency and failures) feed the Security and Models sections. Models are
+  plain views (materializing them only slowed start-up), and KPI tiles carry no sparklines
+  (each section's trend charts do), to keep the pages light in the browser.
+- **`hallucination_rate`** (unsupported ÷ checked claims) was added to the catalogue, next to
+  `hallucination_turn_rate` (turns with at least one unsupported claim).
+- **Legacy tables** are dropped by `make analytics-drop-legacy`, never by an export.
+- **"Mart" is now "source".** An analytics source is a named dataset (`analytics.sources`):
+  `live`, or `dummy`, the generated demo. Each is a DuckDB plus its Parquet export, and
+  `analytics.source` picks the active one (`SOURCE=` on make). Identifiers were renamed
+  to match (`ParquetExporter`, `SourceDatabase`, `parquet_dir`, `schema_version`,
+  `source://manifest`), and the view field `source` became `reads`.
+  `make analytics-mcp` was removed.
+- **MCP transparency:** the platform's MCP client logs the handshake, the tool listing
+  (descriptions and schemas), registration, and each call with its arguments, result and
+  timing (`mcp.log`). `mcp/presentation.server_card` draws the MCP SERVER card.
+- **Token-confidence step (logprobs):** `llm.logprobs` asks every completion for token
+  log-probabilities. All three hosted NIM chat models in use return them (probed
+  2026-10-09). `hallucination_protection/confidence.py` scores each reply sentence as the
+  first step of the hallucination check, for CSA and RA (`ResponseGuardrail`) and for ops
+  (before its figure check). A claim left undetermined in a low-confidence sentence counts
+  as unsupported. It is level 1 of the hallucination check (`levels.py`), and travels
+  first inside each agent's one `hallucination_check` event, before the agent's own
+  level 2 (NLI entailment, the citation guard, or the ops figure check). Results: the
+  level on that card and log line, a `logprob` check row, and the
+  `low_confidence_rate` metric.
+- **Ops cards follow CSA's.** The ops agent emits `llm_request` / `llm_response_received`,
+  then `tool_request` · `gatekeeper_evaluation` · `tool_result`, then `hallucination_check`.
+  Its own MODEL STEP, PROMPT, CONFIDENCE and FIGURES CHECK cards are gone; MCP SERVER stays.

@@ -1,5 +1,7 @@
 # ADR 0007 — Analytic facts, and a Parquet mart every reader shares
 
+> Renamed since (ADR 0009 notes): the "mart" is now an **analytics source** (`analytics.sources`), and its Parquet is the source's export. The body below is kept as decided.
+
 - Status: accepted
 - Date: 2026-10-08
 

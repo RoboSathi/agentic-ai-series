@@ -9,11 +9,14 @@ waiting: whatever happens, the user gets a reply that says what happened.
 from datetime import datetime
 from typing import Any
 
+from pydantic import BaseModel
+
 from agent_platform.control_loop import BudgetGuard
 from agent_platform.control_loop.types import ControlLoopReport
 from agent_platform.control_loop.watchdogs import ToolControlLoop
 from agent_platform.logging import describe_error, get_logger, instrument
 from agent_platform.observability.loop_reporter import LoopReporter
+from agent_platform.tools.path import ToolPath
 from agent_platform.tools.registry import NamespacedToolRegistry
 from research_agent.config.settings import AnswerSettings
 from research_agent.context.session import AnswerContext, SessionContext
@@ -29,6 +32,13 @@ from research_agent.research.cards import cap_reached_card
 from research_agent.research.recency import RecencyGuard
 
 
+class DirectAnswer(BaseModel):
+    """A direct answer's text, and whether the loop failed to produce a real one."""
+
+    text: str
+    failed: bool = False
+
+
 @instrument("research_agent")
 class DirectAnswerer:
     """Answers a plain question, calling tools when the model asks for them."""
@@ -37,6 +47,7 @@ class DirectAnswerer:
         self,
         caller: StructuredCaller,
         registry: NamespacedToolRegistry,
+        tools: ToolPath,
         settings: AnswerSettings,
         telemetry: RunTelemetry,
         grounding: AnswerGrounding | None = None,
@@ -47,11 +58,16 @@ class DirectAnswerer:
         self._settings = settings
         self._telemetry = telemetry
         self._graph = build_answer_graph(
-            AnswerNodes(caller, registry, settings, telemetry, grounding, recency)
+            AnswerNodes(caller, registry, tools, settings, telemetry, grounding, recency)
         )
         self._logger = get_logger("research_agent")
 
     async def answer(self, question: str, session_id: str = "") -> str:
+        """The answer's text (what the shell shows)."""
+        return (await self.respond(question, session_id)).text
+
+    async def respond(self, question: str, session_id: str = "") -> DirectAnswer:
+        """The answer, and whether the loop failed to produce one."""
         context = (
             await self._context.assemble(session_id, question)
             if self._context
@@ -69,13 +85,14 @@ class DirectAnswerer:
             cause = describe_error(exc)
             self._logger.error("Direct answer crashed", cause=cause, question=question)
             self._telemetry.audit("answer.failed", "deny", cause, question=question)
-            return self._settings.messages.failed.format(
+            failed = self._settings.messages.failed.format(
                 cause=cause, step=int(turn.spent(STEPS)), seconds=turn.budget.elapsed()
             )
+            return DirectAnswer(text=failed, failed=True)
         text: str = final["text"]
         if not final["failure"] and self._context is not None:
             self._context.remember(session_id, question, self._without_sources(text))
-        return text
+        return DirectAnswer(text=text, failed=bool(final["failure"]))
 
     def _turn(self, question: str, context: SessionContext) -> Turn:
         loop = LoopReporter(
@@ -102,6 +119,8 @@ class DirectAnswerer:
             {STEPS: caps.max_steps, TOOL_CALLS: caps.max_tool_calls, TOKENS: caps.max_total_tokens},
             max_seconds=caps.max_seconds,
             on_exhausted=self._announce,
+            # The step budget is the turn's step cap: reaching it forces the final answer.
+            step_counter=STEPS,
         )
 
     def _announce(self, report: ControlLoopReport) -> None:
@@ -111,4 +130,4 @@ class DirectAnswerer:
         )
 
 
-__all__ = ["DirectAnswerer"]
+__all__ = ["DirectAnswer", "DirectAnswerer"]

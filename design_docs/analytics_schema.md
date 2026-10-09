@@ -8,7 +8,7 @@ adds its own tables; what an eval reports; and the modules that implement this.
 ## 1. Conventions
 
 - **Store:** the shared observability DuckDB (one writer: the agent's process).
-  Readers use the Parquet mart only.
+  Readers use the Parquet export only.
 - **Append-only.** No fact row is updated. Schema evolution is additive
   (`ADD COLUMN IF NOT EXISTS`); a column is never repurposed.
 - **Common keys** (D5), first on every fact, stamped by the fact store from the
@@ -44,7 +44,7 @@ Written by the **task API** (`open_task`, `close_task`) and by the turn bracket 
 | `success` | BOOLEAN | On `closed`: the outcome's declared flag |
 | `terminal` | BOOLEAN | On `closed`: the outcome's declared flag |
 
-The mart view `tasks` joins opened and closed into one row per task: duration,
+The source view `tasks` joins opened and closed into one row per task: duration,
 turns, steps, tokens and model calls rolled up from the facts below by `task_id`.
 `status` is one of `closed`, `open` or `abandoned` (open longer than
 `analytics.task_abandon_after`).
@@ -63,9 +63,10 @@ Written by the **turn bracket** when the turn ends, whatever ended it.
 | `claims_checked` | INTEGER | Claims the grounding check judged | grounding withheld |
 | `claims_supported` | INTEGER | Judged supported | grounding withheld |
 | `claims_unsupported` | INTEGER | Judged unsupported (kept-and-flagged, repaired or removed) | grounding withheld |
+| `screens` | VARCHAR[] | The screens the agent's composition root declares (`units.declare_screens`) | the agent declares none, or the turn carries no message (a resumed run) |
 | `error` | VARCHAR | The exception type and message when `crashed` | otherwise `''` |
 
-Totals per turn (tokens, calls, proposals, checks) are *not* stored here. The mart rolls them up from their own facts by `turn_id`, so there is one source per number.
+Totals per turn (tokens, calls, proposals, checks) are *not* stored here. The source rolls them up from their own facts by `turn_id`, so there is one source per number.
 
 ### `fact_model_call` — grain: one attempt
 Written by the **LLM adapter** (`RecordedClient` inside each model's resilience stack).
@@ -104,7 +105,7 @@ Written by the **check recorder** at three places: `MessageScreener`, the ground
 | Column | Type | Meaning | NULL when |
 |---|---|---|---|
 | *common keys* | | | |
-| `check` | VARCHAR | `pii`, `injection`, `jailbreak`, `moderation`, `content_safety`, `grounding`, `nli`, `embedding`, `rerank`, `intent_model` | never |
+| `check_name` | VARCHAR | `pii`, `injection`, `jailbreak`, `moderation`, `content_safety`, `grounding`, `logprob`, `nli`, `embedding`, `rerank`, `intent_model` | never |
 | `purpose` | VARCHAR | `screen` (on the person's message), `grounding`, `dependency` | never |
 | `backend` | VARCHAR | `rule`, `local_model`, `hosted_model`, `llm` | never |
 | `model` | VARCHAR | The model that answered (`''` for a rule) | never |
@@ -125,7 +126,7 @@ Written by the **check recorder** at three places: `MessageScreener`, the ground
 Each metric is defined once, in the platform semantic layer, by name, SQL,
 direction and default SLO target. The Fleet page, the MCP `describe` output and
 the ops agent all read this catalogue. Runtime metrics filter
-`channel <> 'eval'` by default. In the formulas below, `t` is the mart's `turns`
+`channel <> 'eval'` by default. In the formulas below, `t` is the source's `turns`
 view, `k` is `tasks`, `m` is `model_calls`, `p` is `tool_calls` and `c` is `checks`.
 
 | Metric | SQL (per `agent_id`, per period) | Better | NULL when |
@@ -147,14 +148,19 @@ view, `k` is `tasks`, `m` is `model_calls`, `p` is `tool_calls` and `c` is `chec
 | `tool_call_validity` | `avg((stage='executed')::DOUBLE)` over `p` (+ breakdown by `stage`) | higher | no proposals |
 | `tool_error_rate` | `avg((NOT succeeded)::DOUBLE) FILTER (WHERE stage='executed')` over `p` (by `tool`) | lower | nothing executed |
 | `duplicate_call_rate` | `avg((stage='duplicate')::DOUBLE)` over `p` | lower | no proposals |
-| `dependency_error_rate` | `avg((verdict IN ('error','fail_open'))::DOUBLE) FILTER (WHERE purpose='dependency')` over `c` (by `check`, `model`) | lower | no dependency calls |
+| `dependency_error_rate` | `avg((verdict IN ('error','fail_open'))::DOUBLE) FILTER (WHERE purpose='dependency')` over `c` (by `check_name`, `model`) | lower | no dependency calls |
 | `dependency_latency_p95_ms` | same filter, `quantile_cont(latency_ms, 0.95)` | lower | — |
 | `screen_coverage` | turns with ≥1 `purpose='screen'` row for check X ÷ turns, for the checks the agent declares | higher | screen withheld |
-| `block_rate` | `avg((verdict='block')::DOUBLE) FILTER (WHERE purpose='screen')` (by `check`, `backend`) | — (watched) | screen withheld |
+| `block_rate` | `avg((verdict='block')::DOUBLE) FILTER (WHERE purpose='screen')` (by `check_name`, `backend`) | — (watched) | screen withheld |
 | `flag_rate` | `avg((verdict='flag')::DOUBLE)`, same filter | — (watched) | screen withheld |
 | `guard_failure_rate` | `avg((verdict IN ('error','fail_open'))::DOUBLE) FILTER (WHERE purpose='screen')` | lower | screen withheld |
 | `groundedness` | `sum(claims_supported) / sum(claims_checked)` over `t` | higher | grounding withheld |
+| `pii_detection_rate`, `injection_block_rate`, `injection_guard_failure_rate`, `moderation_block_rate`, `moderation_flag_rate`, `moderation_guard_failure_rate` | per screen family, per message (distinct turns) over `c` | watched / lower | that screen withheld |
+| `pii_coverage`, `injection_coverage`, `moderation_coverage` | `avg(ran)` per screen family over `screen_coverage` | higher | that screen withheld |
+| `call_latency_p50/p95/p99_ms`, `call_failure_rate`, `tokens_per_call` | over `model_usage` (every LLM attempt + every model a check consulted), by `model`, `kind` | lower | — |
+| `hallucination_rate` | `sum(claims_unsupported) / sum(claims_checked)` over `t` | lower | grounding withheld |
 | `hallucination_turn_rate` | `avg((claims_unsupported > 0)::DOUBLE) FILTER (WHERE claims_checked > 0)` over `t` | lower | grounding withheld |
+| `low_confidence_rate` | `flagged / items` of `logprob` checks over `c`: sentences the model wrote with low token confidence | lower | logprobs not returned |
 
 SLO targets per metric live in `observability.slo_targets`, keyed by these names.
 Error budgets are computed over `analytics.slo_windows_days` exactly as today.
@@ -166,10 +172,11 @@ Error budgets are computed over `analytics.slo_windows_days` exactly as today.
 - The agent writes them through the platform **fact store** (§6.4), so stamping,
   additive evolution and never-raise behaviour are shared. The table definitions
   and the decision about what to record are the agent's.
-- The agent's overlay registers its semantic layer:
-  `analytics.agent_layers: [src/<pkg>/analytics/semantic_layer.yaml]`. The file has the
-  same shape as the platform's (views, SQL, column docs) plus its metrics
-  (`dim_metric` rows with `tier: 2` and `owner: <agent_id>`).
+- The agent ships its semantic layer at `src/<pkg>/analytics/semantic_layer.yaml`, found
+  by convention (`analytics.agent_layers_glob`) so the source holds every agent whichever
+  process exports it. The file has the same shape as the platform's (views, SQL, column
+  docs, metrics) plus `agent_id`; its metrics become `dim_metric` rows with `tier: 2` and
+  `owner: <agent_id>`. A view whose tables do not exist yet is skipped with its reason.
 - The exporter, the MCP server (views namespaced `<agent_id>__<view>`) and the
   dashboard generator read registered layers next to the platform's. The
   boundary test still forbids agent names in platform files.
@@ -193,6 +200,16 @@ Error budgets are computed over `analytics.slo_windows_days` exactly as today.
 Every agent's eval page shows the four core metrics in the same place. Its own
 metrics appear below them.
 
+### 3.1 How a metric is defined (as built)
+Each catalogue entry is `{name, label, hint, group, view, expr, better, description, null_when, by}`
+(`label (hint)` is how a dashboard names it, and `group` is its dashboard section): one
+aggregate over one view, reported per `agent_id` and per breakdown in `by`. It is
+rendered three ways from that one definition: per day (`metric_daily`), per SLO
+window (`metric_window` → `slo_error_budget`), and per period on demand (MCP
+`compute_metric`, `/stats`). Two helper shapes keep every metric in this one form:
+`tasks` carries each task's tokens, and the `screen_coverage` view has one row per
+turn per declared screen. The Fleet dashboard is generated from the same entries.
+
 ## 6. Modules (deep, small interfaces)
 
 ### 6.1 Turn and task bracket (`agent_platform/observability/units.py`)
@@ -207,7 +224,12 @@ metrics appear below them.
   `next_step()`, and the loop guards report `step_cap_hit`.
 
 ### 6.2 Single tool path (`agent_platform/tools/path.py`)
-- **Interface:** `ToolPath.run(proposal: ModelToolCall, offered: set[str]) -> ToolOutcome`.
+- **Interface:** `ToolPath.run(proposal: ModelToolCall, turn: ToolTurn) -> ToolOutcome`.
+  `ToolTurn` carries what the caller owns: the turn's control loop and step budget, the
+  authority builder (which names what was offered), an optional argument preparation,
+  card hooks, and whether a failed read may be retried. "Offered" is ruled on by the
+  Gatekeeper (its `offered` question → stage `not_offered`); a withheld Gatekeeper
+  checks nothing (CLAUDE.md).
 - **Hides:** registry lookup (unknown vs invalid, with the validator's reason);
   offered-set check; duplicate suppression (`ToolControlLoop`); the optional
   Gatekeeper and audit (including UNGOVERNED); the Executor (deadline,
@@ -217,12 +239,15 @@ metrics appear below them.
 
 ### 6.3 Check recorder (`agent_platform/observability/checks.py`)
 - **Interface:** `record_check(check, purpose, backend, model, verdict, latency_ms, score=None, items=None, flagged=None)`,
-  and a decorator `recorded_dependency(check)` for the four model factories.
+  `record_screen`, `record_pii`, `record_grounding`, and a decorator
+  `recorded_dependency(check, method, backend)` for the four model factories.
 - **Hides:** mapping `ScreenOutcome.checks` dicts and `ResponseGuardrailResult`
   onto rows; timing; fail-open detection.
 
 ### 6.4 Fact store (`agent_platform/observability/facts.py`, reworked)
-- **Interface:** `FactStore.append(fact)`, plus typed fact models.
+- **Interface:** `FactStore.append(fact)` (and `open_task(agent, session)`, the one read
+  the bracket needs), plus typed fact models. The composition root installs the process's
+  store (`install_fact_store`); choke points append to it.
 - **Hides:** stamping the common keys from context; the table DDL derived from
   the model; additive evolution; never-raise.
 - It is used by §6.1–6.3 and by agents for their Tier-2 tables.
@@ -242,7 +267,7 @@ metrics appear below them.
   - NULL vs 0 for withheld features;
   - each Tier-1 formula against hand-computed values on a fixture fleet of two fake agents (one with every feature, one with none), which also proves the "any agent" claim.
 - **Contract tests:**
-  - every `dim_metric` row's SQL runs on the fixture mart;
+  - every `dim_metric` row's SQL runs on the fixture source;
   - every documented column exists;
   - the Rill Fleet page names only catalogue metrics;
   - no platform file names an agent.

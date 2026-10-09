@@ -16,18 +16,11 @@ changes, and wrong in the direction that flatters it. The token count is
 the honest measure the harness actually observes.
 """
 
-import time
-
 from pydantic import BaseModel, Field
 
 from agent_platform.llm.types import TokenUsage
 from agent_platform.logging import get_logger, instrument
-from agent_platform.observability import (
-    FactRecorder,
-    NullFactRecorder,
-    SLORegistry,
-    TurnOutcomeFact,
-)
+from agent_platform.observability import SLORegistry
 
 # The SLOs this agent is in a position to observe, and what each means
 # here. Named as constants so a metric can never be recorded under a
@@ -41,8 +34,6 @@ LOOP_ABORT = "loop_abort_rate"
 TOOL_FAILURE = "tool_failure_rate"
 RECOVERY_SUCCESS = "recovery_success_rate"
 POLICY_VIOLATION = "policy_violation_rate"
-# How a turn ended, as its outcome fact names it.
-ANSWERED, ESCALATED, UNANSWERED = "answered", "escalated", "unanswered"
 
 
 class TurnOutcome(BaseModel):
@@ -77,22 +68,15 @@ class TurnOutcome(BaseModel):
 class TurnAccountant:
     """Scores one finished turn against the SLOs and the cost model."""
 
-    def __init__(self, slos: SLORegistry | None = None, facts: FactRecorder | None = None) -> None:
+    def __init__(self, slos: SLORegistry | None = None) -> None:
+        # This process's live view. The source computes windowed metrics from the
+        # platform's own facts (ADR 0009), not from this.
         self._slos = slos
-        # The same observations, kept: the registry is this process's view,
-        # the fact is what the mart computes windowed SLOs from.
-        self._facts = facts or NullFactRecorder()
-        self._started = time.perf_counter()
         self._logger = get_logger("customer_support_agent")
 
-    def begin(self) -> None:
-        """Start timing a turn."""
-        self._started = time.perf_counter()
-
     def settle(self, outcome: TurnOutcome) -> None:
-        """Record every SLO observation for one turn, live and as a fact."""
+        """Record every SLO observation for one turn, live."""
         self._record_slos(outcome)
-        self._facts.record(self._fact(outcome))
         self._logger.info(
             "Turn settled",
             session_id=outcome.session_id,
@@ -100,26 +84,6 @@ class TurnAccountant:
             escalated=outcome.escalated,
             tool_calls=outcome.tool_calls,
             total_tokens=outcome.usage.total_tokens,
-        )
-
-    def _fact(self, outcome: TurnOutcome) -> TurnOutcomeFact:
-        """The turn as the mart reads it; every field here is one this agent observes."""
-        return TurnOutcomeFact(
-            session_id=outcome.session_id,
-            outcome=(
-                ESCALATED if outcome.escalated else ANSWERED if outcome.answered else UNANSWERED
-            ),
-            latency_ms=(time.perf_counter() - self._started) * 1000,
-            answered=outcome.answered,
-            escalated=outcome.escalated,
-            unauthorized_attempts=outcome.unauthorized_attempts,
-            policy_refusals=outcome.policy_refusals,
-            loop_aborted=outcome.loop_aborted,
-            hallucination_rate=outcome.hallucination_rate,
-            tool_calls=outcome.tool_calls,
-            tool_failures=outcome.tool_failures,
-            recoveries_attempted=outcome.recoveries_attempted,
-            recoveries_succeeded=outcome.recoveries_succeeded,
         )
 
     def _record_slos(self, outcome: TurnOutcome) -> None:

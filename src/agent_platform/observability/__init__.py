@@ -2,14 +2,18 @@
 
 from agent_platform.observability.cost import CostAggregator, CostAggregatorImpl
 from agent_platform.observability.facts import (
-    DuckDbFactLedger,
+    CheckFact,
+    DuckDbFactStore,
     Fact,
-    FactRecorder,
-    LlmCallFact,
-    NullFactRecorder,
+    FactStore,
+    ModelCallFact,
+    NullFactStore,
+    TaskEventFact,
     ToolCallFact,
-    TurnOutcomeFact,
-    create_fact_recorder,
+    TurnFact,
+    create_fact_store,
+    fact_store,
+    install_fact_store,
 )
 from agent_platform.observability.postmortem import Postmortem, PostmortemRegister
 from agent_platform.observability.queue import (
@@ -45,14 +49,18 @@ from agent_platform.observability.types import (
 
 __all__ = [
     "CostAggregator",
-    "DuckDbFactLedger",
+    "CheckFact",
+    "DuckDbFactStore",
     "Fact",
-    "FactRecorder",
-    "LlmCallFact",
-    "NullFactRecorder",
+    "FactStore",
+    "ModelCallFact",
+    "NullFactStore",
+    "TaskEventFact",
     "ToolCallFact",
-    "TurnOutcomeFact",
-    "create_fact_recorder",
+    "TurnFact",
+    "create_fact_store",
+    "fact_store",
+    "install_fact_store",
     "DuckDbObservabilityStore",
     "CostAggregatorImpl",
     "CostComponent",
