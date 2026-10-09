@@ -15,24 +15,22 @@ check refutes a claim is the model asked once to REVISE it. Every step is a card
 numbered "Step N", and every payload is in the log and the audit trail.
 """
 
-import inspect
 import json
 import re
-import time
 from collections.abc import Mapping
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
 
 from agent_platform.context.types import Chunk
+from agent_platform.gatekeeper.types import AuthorityContext
 from agent_platform.hallucination_protection import Observation, tool_evidence
 from agent_platform.llm.embeddings import tokenize
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message, ModelToolCall
 from agent_platform.logging import describe_error, get_logger, instrument
-from agent_platform.observability.facts import TOOL_COMPLETED, TOOL_FAILED, ToolCallFact
-from agent_platform.observability.langsmith import tool_run
 from agent_platform.observability.llm_fields import llm_request_fields, llm_response_fields
 from agent_platform.observability.tool_fields import display_tool_name, tool_request_fields
+from agent_platform.tools.path import DUPLICATE, INVALID, UNKNOWN, ToolPath, ToolTurn
 from agent_platform.tools.registry import NamespacedToolRegistry
 from agent_platform.tools.types import ToolResult
 from research_agent.config import get_agent_settings
@@ -71,11 +69,13 @@ class AnswerNodes:
         self,
         caller: StructuredCaller,
         registry: NamespacedToolRegistry,
+        tools: ToolPath,
         settings: AnswerSettings,
         telemetry: RunTelemetry,
         grounding: AnswerGrounding | None = None,
         recency: RecencyGuard | None = None,
     ) -> None:
+        self._tools = tools
         self._grounding = grounding
         self._recency = recency
         self._caller = caller
@@ -294,30 +294,12 @@ class AnswerNodes:
             tool_request_fields(call.name, call.arguments),
             event_kind="tool_request",
         )
-        started = time.perf_counter()
         result = await self._execute(call, turn)
-        self._telemetry.fact(
-            ToolCallFact(
-                action=call.name,
-                actor=ACTOR,
-                status=TOOL_COMPLETED if result.success else TOOL_FAILED,
-                succeeded=result.success,
-                duration_ms=(time.perf_counter() - started) * 1000,
-                error=result.error or "",
-            )
-        )
         text = result.output if result.success else result.error or self._notes.empty
         note = self._recency_note(turn, result)
         if note:
             text = f"{text}\n\n{note}"
         self._observe(turn, name, text, result)
-        self._telemetry.audit(
-            "answer.tool",
-            "allow" if result.success else "deny",
-            f"{call.name}: {'ok' if result.success else 'failed'}",
-            arguments=call.arguments,
-            result=text,
-        )
         urls = [str(url) for url in result.data.get(URLS_KEY, [])]
         # Only what a tool actually returned can ground a claim; an error or a refusal cannot.
         seen = [Observation(text, source=urls[0] if urls else call.name)] if result.success else []
@@ -336,25 +318,40 @@ class AnswerNodes:
         )
 
     async def _execute(self, call: ModelToolCall, turn: Turn) -> ToolResult:
-        """The tool, after the watchdog: an unknown tool or bad arguments are said, not raised."""
-        tool = self._registry.get(call.name)
-        built = self._registry.build_call(call.name, call.arguments)
-        if tool is None or built is None:
-            text = self._notes.unknown_tool if tool is None else self._notes.bad_arguments
-            return ToolResult(error=text.format(tool=call.name))
-        report = turn.control.before_action(
-            built,
-            round_number=int(turn.spent(STEPS)),
-            max_rounds=self._settings.budget.max_steps,
+        """The tool, through the platform's one tool path; anything short of a run is said.
+
+        The path validates, suppresses a repeat, audits the run (UNGOVERNED: no Gatekeeper)
+        and executes under the Executor's deadline, recording where the proposal stopped.
+        """
+        outcome = await self._tools.run(
+            call,
+            ToolTurn(
+                loop=turn.control,
+                round_number=int(turn.spent(STEPS)),
+                max_rounds=self._settings.budget.max_steps,
+                authority=lambda _built: AuthorityContext(actor=ACTOR),
+                # The answer tools read: a failed read asked again fails again.
+                remember_failures=True,
+            ),
         )
-        if report.decision == "abort":
-            return ToolResult(success=True, output=turn.control.reject_message(built))
-        result = await self._invoke(tool.handler, built.params, call.name)
+        if outcome.stage == UNKNOWN:
+            return ToolResult(error=self._notes.unknown_tool.format(tool=call.name))
+        if outcome.stage == INVALID:
+            return ToolResult(error=self._notes.bad_arguments.format(tool=call.name))
+        if outcome.call is not None and outcome.stage == DUPLICATE:
+            # Said to the model, but not evidence: a repeat proved nothing new.
+            return ToolResult(error=turn.control.reject_message(outcome.call))
+        if outcome.execution is None:
+            return ToolResult(
+                error=self._notes.tool_failed.format(tool=call.name, error=outcome.reason)
+            )
+        result = outcome.execution.result
         if result.success:
-            turn.control.record_success(built, result.output)
-        else:
-            turn.control.record_refusal(built, result.error or "")
-        return result
+            return result
+        detail = result.error or outcome.reason
+        return result.model_copy(
+            update={"error": self._notes.tool_failed.format(tool=call.name, error=detail)}
+        )
 
     def _observe(self, turn: Turn, tool: str, text: str, result: ToolResult) -> None:
         limit = get_agent_settings().tui.clip_chars
@@ -371,16 +368,6 @@ class AnswerNodes:
         }
         status = "completed" if result.success else "failed"
         self._emit(turn, OBSERVATION, heading, fields, event_kind="tool_result", status=status)
-
-    async def _invoke(self, handler: Any, params: Mapping[str, Any], name: str) -> ToolResult:
-        try:
-            # Inside a turn's trace the call is reported as a tool run; elsewhere inert.
-            outcome = tool_run(name, handler)(**params)
-            return await outcome if inspect.isawaitable(outcome) else outcome  # type: ignore[no-any-return]
-        except Exception as exc:
-            detail = describe_error(exc)
-            self._logger.warning("Answer tool failed", tool=name, error=detail)
-            return ToolResult(error=self._notes.tool_failed.format(tool=name, error=detail))
 
     def after_act(self, state: AnswerState, config: RunnableConfig) -> str:
         """Back to the model while any budget remains; an exhausted one ends the loop."""

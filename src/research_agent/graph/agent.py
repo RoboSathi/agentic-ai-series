@@ -12,7 +12,6 @@ so the caller (the console, or an eval's ScriptedUser) sees one turn that
 began with approval and ended with a delivered report.
 """
 
-import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
@@ -33,13 +32,18 @@ from agent_platform.durability import (
 from agent_platform.durability.stop_report import stop_report
 from agent_platform.logging import get_logger
 from agent_platform.memory import MemoryFacade
-from agent_platform.observability.facts import TurnOutcomeFact
 from agent_platform.observability.langsmith import (
     NullTraceExporter,
     TraceExporter,
     turn_trace,
 )
 from agent_platform.observability.types import StatusKind
+from agent_platform.observability.units import (
+    close_task,
+    current_task_kind,
+    mark_cancelled,
+    open_task,
+)
 from research_agent.archive.store import ResearchArchive
 from research_agent.config.settings import ResearchAgentSettings
 from research_agent.domain.report import COVERAGE_AND_LIMITS, Report, SessionPhase
@@ -148,24 +152,10 @@ class ResearchAgent:
             session=session_id,
             inputs={"query": query},
         ) as trace:
-            started = time.perf_counter()
             result = await self._summarised(query, session_id)
-            self._record_outcome(result, session_id, started)
             trace.annotate({"phase": result.phase, "run_id": result.run_id})
             trace.finish({"response": result.response, "phase": result.phase})
             return result
-
-    def _record_outcome(self, result: TurnResult, session_id: str, started: float) -> None:
-        """The turn as a fact; only what this agent observes is filled, the rest stays unknown."""
-        failed = result.phase in self._settings.turn_summary.failed
-        self._telemetry.fact(
-            TurnOutcomeFact(
-                session_id=session_id,
-                outcome=result.phase,
-                latency_ms=(time.perf_counter() - started) * 1000,
-                answered=bool(result.response) and not failed,
-            )
-        )
 
     async def _summarised(self, query: str, session_id: str) -> TurnResult:
         """The turn, ended by the same TURN SUMMARY card csa's turns end with."""
@@ -216,6 +206,7 @@ class ResearchAgent:
         """
         if self._refusal is not None and self._refusal.refused(query):
             self._telemetry.audit("answer.refused", "deny", "matches a refusal pattern")
+            close_task(self._settings.tasks.refused)
             return TurnResult(response=self._settings.messages.refuse, phase=record.phase)
         if self._answerer is None:
             return await self._new_scope(query, session_id, record)
@@ -226,9 +217,11 @@ class ResearchAgent:
         assert self._answerer is not None
         record.last_question = query
         self._telemetry.retrace(f"answer-{uuid.uuid4().hex[:8]}")
-        return TurnResult(
-            response=await self._answerer.answer(query, session_id), phase=record.phase
-        )
+        tasks = self._settings.tasks
+        open_task(tasks.direct_answer)
+        answer = await self._answerer.respond(query, session_id)
+        close_task(tasks.answer_failed if answer.failed else tasks.answered)
+        return TurnResult(response=answer.text, phase=record.phase)
 
     async def _research(self, query: str, session_id: str, record: SessionRecord) -> TurnResult:
         """`/research [question]` starts a research scope.
@@ -288,6 +281,8 @@ class ResearchAgent:
         record.scope_thread = f"{session_id}-scope-{record.scopes}-{uuid.uuid4().hex[:6]}"
         record.phase = "SCOPING"
         record.last_question = query
+        # The research run is one task from the first scoping question to its report.
+        open_task(self._settings.tasks.research_run)
         payload = {"session_id": session_id, "first_message": query}
         try:
             outcome = await self._scoping.start(
@@ -317,6 +312,7 @@ class ResearchAgent:
         instead of resuming a thread whose step failed.
         """
         record.phase = "FAILED"
+        self._close_run(self._settings.tasks.run_status.get("FAILED", ""))
         self._telemetry.audit("scope.failed", "deny", str(exc), node=exc.node, error=exc.error)
         self._logger.error("Scoping failed", node=exc.node, error=exc.error)
         return TurnResult(
@@ -339,6 +335,8 @@ class ResearchAgent:
         if scope.phase == "APPROVED" and scope.contract is not None:
             return await self._run(scope.contract, session_id, record)
         record.phase = "DELIVERED"
+        # Scoping ended without a contract to run: the request was not taken on.
+        self._close_run(self._settings.tasks.scope_refused)
         return TurnResult(response=scope.reply, phase=record.phase)
 
     def _choices(self, scope: ScopingState) -> list[Choice]:
@@ -399,6 +397,8 @@ class ResearchAgent:
     def _paused(self, outcome: RunOutcome, record: SessionRecord) -> TurnResult:
         """Stopped at its last checkpoint: where, how far it got, and the two ways on."""
         record.phase = "STOPPED"
+        # The turn was stopped by the operator; the run's task stays open, resumable.
+        mark_cancelled()
         step = outcome.next_nodes[0] if outcome.next_nodes else ""
         self._telemetry.audit("run.stopped", "allow", "operator stopped the run", node=step)
         return TurnResult(
@@ -410,6 +410,20 @@ class ResearchAgent:
     async def resume(self, thread_id: str, decision: Any | None = None) -> ResumeResult:
         """Continue a stopped run from its checkpoint, its ledger, budget and trace restored."""
         session_id, record = self._owner(thread_id)
+        with turn_trace(
+            self._trace_exporter,
+            agent=get_settings().agent.id,
+            session=session_id,
+            inputs={"resume": thread_id},
+            message=False,
+        ) as trace:
+            result = await self._resumed(thread_id, decision, session_id, record)
+            trace.finish({"response": result.response, "status": result.status})
+            return result
+
+    async def _resumed(
+        self, thread_id: str, decision: Any | None, session_id: str, record: SessionRecord
+    ) -> ResumeResult:
         values = await self._runs.values(thread_id)
         resources = self._resources(values["contract"])
         if values.get("ledger") is not None:
@@ -433,9 +447,17 @@ class ResearchAgent:
     async def abort(self, thread_id: str) -> ResumeResult:
         """End a stopped run for good: its record is kept; the session can start afresh."""
         session_id, record = self._owner(thread_id)
-        outcome = await self._runs.abort(thread_id, self._telemetry.reporter)
-        record.phase = "CANCELLED"
-        self._telemetry.audit("run.aborted", "allow", "operator aborted the stopped run")
+        with turn_trace(
+            self._trace_exporter,
+            agent=get_settings().agent.id,
+            session=session_id,
+            inputs={"abort": thread_id},
+            message=False,
+        ):
+            outcome = await self._runs.abort(thread_id, self._telemetry.reporter)
+            record.phase = "CANCELLED"
+            self._close_run(self._settings.tasks.run_status.get("CANCELLED", ""))
+            self._telemetry.audit("run.aborted", "allow", "operator aborted the stopped run")
         return ResumeResult(
             thread_id=thread_id,
             session_id=session_id,
@@ -482,6 +504,7 @@ class ResearchAgent:
         record.last_report = report if isinstance(report, Report) else None
         record.run_values = dict(values)
         record.phase = "DELIVERED" if status in ("COMPLETE", "PARTIAL") else status  # type: ignore[assignment]
+        self._close_run(self._settings.tasks.run_status.get(status, ""))
         self._note(session_id, "run_status", status)
         summary = (
             self._reader_text(record.last_report)
@@ -504,6 +527,16 @@ class ResearchAgent:
             run_id=record.run_thread,
             report=record.last_report,
         )
+
+    def _close_run(self, outcome: str) -> None:
+        """Close the research run's task with `outcome` (a run resumed after its task was
+        abandoned — the session moved on meanwhile — reopens it first, so the ending counts)."""
+        if not outcome:
+            return
+        kind = self._settings.tasks.research_run
+        if current_task_kind() != kind:
+            open_task(kind)
+        close_task(outcome)
 
     def _remember_run(self, session_id: str, record: SessionRecord, status: str) -> None:
         """Working memory keeps a pointer to the run, so a follow-up has something to refer to."""

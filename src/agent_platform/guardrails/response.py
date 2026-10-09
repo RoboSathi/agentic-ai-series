@@ -8,6 +8,7 @@ when none survive, the configured withheld reply goes instead. Whether a
 person then reviews it is the agent's decision, not this module's.
 """
 
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -22,15 +23,23 @@ from agent_platform.hallucination_protection.checker import (
     Resampler,
 )
 from agent_platform.hallucination_protection.claims import sentence_pieces
+from agent_platform.hallucination_protection.confidence import (
+    ConfidenceCheck,
+    promote,
+    report_confidence,
+)
 from agent_platform.hallucination_protection.direct import (
     NOT_EXECUTED_MARKER,
     amounts,
     numbers,
     record_ids,
 )
+from agent_platform.hallucination_protection.levels import CheckLevel, grounding_level
 from agent_platform.hallucination_protection.resolver import DIRECT_TIER, RESTATEMENT_MODEL
 from agent_platform.hallucination_protection.types import DetectionVerdict, GenerationAssessment
 from agent_platform.logging import get_logger
+from agent_platform.observability import checks
+from agent_platform.observability.units import report_grounding
 
 __all__ = [
     "NOT_EXECUTED_MARKER",
@@ -50,6 +59,8 @@ class ResponseGuardrailResult(BaseModel):
     """Auditable result of structural + factual response protection."""
 
     response: str
+    # The check's levels, level 1 (token confidence) first: they lead the card and the log.
+    levels: list[CheckLevel] = Field(default_factory=list)
     schema_valid: bool = True
     grounded: bool = True
     repaired: bool = False
@@ -126,6 +137,7 @@ class ResponseGuardrail:
         validator: PydanticValidator | None = None,
         enforce_grounding: bool | None = None,
         max_repair_attempts: int | None = None,
+        confidence: ConfidenceCheck | None = None,
     ) -> None:
         """Structural validation and factual grounding, wired independently.
 
@@ -152,6 +164,10 @@ class ResponseGuardrail:
             settings.max_repair_attempts if max_repair_attempts is None else max_repair_attempts
         )
         self._repair_direct = settings.repair_direct_refutations
+        # Level 1: the model's confidence in its own tokens, scored before grounding (level 2).
+        # Withheld with `hallucination_protection.confidence`.
+        check = confidence or ConfidenceCheck()
+        self._confidence = check if check.enabled else None
         self._logger = get_logger("guardrails")
 
     def validate_schema(self, raw: str) -> tuple[str | None, dict[str, Any]]:
@@ -190,7 +206,11 @@ class ResponseGuardrail:
         """
         if self._grounding is None or not self._enforce_grounding:
             return ResponseGuardrailResult(response=response)
+        started = time.perf_counter()
+        first = self._first_level(response)
         result = await self._enforce(response, evidence, revise, resample)
+        result = result.model_copy(update={"levels": [*first, _entailment_level(result)]})
+        self._record(result, self._grounding, (time.perf_counter() - started) * 1000)
         checked = result.model_copy(
             update={
                 "provenance_checks": _provenance_report(response, evidence),
@@ -199,12 +219,34 @@ class ResponseGuardrail:
         )
         self._logger.info(
             "Response grounding checked",
+            levels=[level.model_dump() for level in checked.levels],
             reason_code=checked.reason_code,
             evidence_searched=checked.evidence_searched,
             provenance=checked.provenance_checks,
             claims=checked.claim_checks,
         )
         return checked
+
+    def _first_level(self, response: str) -> list[CheckLevel]:
+        """Level 1: the reply's sentences scored by token confidence (none when withheld)."""
+        if self._confidence is None:
+            return []
+        return [report_confidence(self._confidence.assess(response))]
+
+    def _doubted(self, candidate: str, last: GenerationAssessment) -> GenerationAssessment:
+        """A claim left undetermined in a sentence the model wrote unsure is unsupported."""
+        if self._confidence is None:
+            return last
+        return promote(last, self._confidence.assess(candidate))
+
+    @staticmethod
+    def _record(
+        result: ResponseGuardrailResult, grounding: DetectionLadder, latency_ms: float
+    ) -> None:
+        """The grounding check, kept: one check row, and the claims on the turn."""
+        backend, model = grounding.identity
+        checks.record_grounding(backend, model, result.claims, result.unsupported, latency_ms)
+        report_grounding(result.claims, result.supported, result.unsupported)
 
     async def _enforce(
         self,
@@ -220,11 +262,16 @@ class ResponseGuardrail:
         candidate = response
         repaired = False
         attempts_made = 0
-        last = await self._grounding.assess(candidate, evidence, resample=resample)
+        last = self._doubted(
+            candidate, await self._grounding.assess(candidate, evidence, resample=resample)
+        )
         for attempt in range(self._max_repairs + 1):
             attempts_made = attempt
             if attempt:
-                last = await self._grounding.assess(candidate, evidence, resample=resample)
+                last = self._doubted(
+                    candidate,
+                    await self._grounding.assess(candidate, evidence, resample=resample),
+                )
             if last.clean:
                 return self._passed(candidate, last, repaired, attempt)
             if attempt >= self._max_repairs or revise is None or self._final(last):
@@ -336,6 +383,12 @@ class ResponseGuardrail:
 
 
 BLOCK_CODE = "HALLUCINATION_GUARD_BLOCK"
+
+
+def _entailment_level(result: ResponseGuardrailResult) -> CheckLevel:
+    """Level 2 for a reply grounded by NLI entailment: its claims tally, flagged when any failed."""
+    name = get_settings().hallucination_protection.levels.entailment
+    return grounding_level(name, result.tally, flagged=result.escalated)
 
 
 def _refuted(verdict: DetectionVerdict) -> bool:

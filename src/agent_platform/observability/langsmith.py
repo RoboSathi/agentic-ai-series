@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from agent_platform.config import get_settings
 from agent_platform.config.settings import LangSmithSettings
 from agent_platform.logging import bound_log_context, get_logger, new_trace_id
+from agent_platform.observability.units import turn_bracket
 
 T = TypeVar("T")
 TextRedactor = Callable[[str], str]
@@ -341,15 +342,20 @@ def turn_trace(
     agent: str,
     session: str,
     inputs: Mapping[str, Any],
+    message: bool = True,
 ) -> Iterator[TurnTrace]:
-    """One turn: its log context and its root run, under one id.
+    """One turn: its log context, its root run and its analytics bracket, under one id.
 
     While the block runs, `current_trace_url()` answers with the turn's link,
-    which the turn summary carries; the link is logged once the turn ends.
+    which the turn summary carries; the link is logged once the turn ends. The
+    bracket (`units.turn_bracket`) times the turn and appends its turn and task
+    facts however it ends, so no agent writes them. `message` is False for a turn
+    with no message from a person in it (a resumed run).
     """
     trace_id = new_trace_id()
     with (
         bound_log_context(agent=agent, session=session, trace_id=trace_id),
+        turn_bracket(agent=agent, session=session, turn_id=trace_id, message=message),
         exporter.turn(trace_id, inputs, _turn_metadata(agent, session)) as root,
     ):
         token = _current_turn.set((exporter, trace_id))

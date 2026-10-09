@@ -45,6 +45,18 @@ reports/
 # and the repo-local Rill binary.
 data/analytics/
 dashboards/rill/data
+# Generated from the semantic layer by `make dashboard` (analytics/dashboards.py).
+dashboards/rill/models/
+dashboards/rill/metrics/
+dashboards/rill/dashboards/
 dashboards/rill/tmp/
 dashboards/rill/.env
 .tools/
+
+# Runtime databases (ADR 0009 hygiene): the platform's own stores and eval workspaces.
+src/agent_platform/db/*.duckdb*
+# The generated analytics world (`make dummy-data analytics`): regenerated, never versioned.
+src/agent_platform/dummy_data/analytics/*
+!src/agent_platform/dummy_data/analytics/README.md
+src/agent_platform/db/*.sqlite*
+src/customer_support_agent/data/evals/workspace/

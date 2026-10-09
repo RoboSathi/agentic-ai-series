@@ -19,6 +19,7 @@ from typing import Any
 from langgraph.types import interrupt
 
 from agent_platform.durability import SUMMARY, WAITING_ON
+from customer_support_agent.analytics import record_review
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 
@@ -62,6 +63,7 @@ class ReviewWaitNodes(NodeSupport):
             }
         )
         verdict = dict(decision) if isinstance(decision, dict) else {"decision": str(decision)}
+        record_review(pending, verdict)
         follow_up = _reply(pending, verdict)
         self._done(
             "review_decision",

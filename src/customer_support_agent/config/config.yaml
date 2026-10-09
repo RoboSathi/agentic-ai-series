@@ -1,5 +1,7 @@
 agent:
   id: customer_support_agent
+  # How dashboards and reports title this agent.
+  display_name: Customer Support Agent
   version: 0.1.0
   # The operator shell runs whatever host this names. The platform never
   # names an agent; the agent names itself.
@@ -33,6 +35,33 @@ features:
     enabled: true
     rerank: true
     failure_detection: true
+
+# This agent's tasks (ADR 0009 D2, D4): a refund or a cancellation, opened when the
+# request is classified and closed by the write that carries it out. Every other
+# turn is an implicit task. The platform adds its reserved outcomes to these.
+analytics:
+  tasks:
+    kinds: [refund, cancellation]
+    outcomes:
+      refund_issued: {success: true, terminal: true}
+      order_cancelled: {success: true, terminal: true}
+      # The request is in a person's hands: the agent did what it should.
+      refund_queued_for_review: {success: true, terminal: true}
+      action_refused: {success: false, terminal: true}
+      action_failed: {success: false, terminal: true}
+      action_unverified: {success: false, terminal: true}
+
+# This agent's live, in-process SLO registry (`observability/accounting.py`) observes
+# these per turn; they merge with the platform's catalogue targets.
+observability:
+  slo_targets:
+    task_success_rate: 0.95
+    unauthorized_action_rate: 0.0
+    hallucination_rate: 0.05
+    escalation_rate: 0.20
+    tool_failure_rate: 0.05
+    recovery_success_rate: 0.90
+    policy_violation_rate: 0.0
 
 logging:
   # This agent's own subsystem, coloured on the console beside the platform's.
@@ -234,6 +263,14 @@ durability:
   db_path: src/customer_support_agent/db/checkpoints.db
 
 customer_support_agent:
+  tasks:
+    kinds:
+      refund: {intent: REQUEST_REFUND, action: support.process_refund, done: refund_issued}
+      cancellation: {intent: CANCEL_ORDER, action: support.cancel_order, done: order_cancelled}
+    queued: refund_queued_for_review
+    refused: action_refused
+    failed: action_failed
+    unverified: action_unverified
   # How the customer's own words name an order. One reader, used by the
   # graph, BasicSanity and the mandate that scopes a write, so the path that
   # answers and the path that acts cannot read one message two ways.

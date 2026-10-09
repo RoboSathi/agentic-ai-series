@@ -18,7 +18,7 @@ from typing import Protocol, runtime_checkable
 from agent_platform.config import get_settings
 from agent_platform.context.retrieval import RelevanceRanker
 from agent_platform.context.types import Chunk
-from agent_platform.evals.entailment import EntailmentModel
+from agent_platform.evals.entailment import EntailmentModel, entailment_backend
 from agent_platform.evals.types import Claim, Verdict
 from agent_platform.hallucination_protection.claims import ClaimDecomposer
 from agent_platform.hallucination_protection.resolver import GroundingResolver
@@ -73,6 +73,12 @@ class DetectionLadder:
         self._resolver = GroundingResolver(cascade, entailment)
         self._decomposer = decomposer or ClaimDecomposer()
         self._logger = get_logger("hallucination_protection")
+
+    @property
+    def identity(self) -> tuple[str, str]:
+        """(backend, model) of the entailment model that judges this ladder's claims."""
+        model = self._resolver.entailment
+        return entailment_backend(model), str(getattr(model, "model_name", ""))
 
     @logged("hallucination_protection")
     async def score(self, claim: str, evidence: list[Chunk]) -> DetectionVerdict:

@@ -21,7 +21,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Button, Footer, Header, OptionList, TextArea
 
-from agent_platform.analytics.refresh import MartRefresher
+from agent_platform.analytics.refresh import ParquetRefresher
 from agent_platform.commands import (
     PREFIX,
     AbortCommand,
@@ -49,6 +49,7 @@ from agent_platform.llm.metering import metered
 from agent_platform.logging import bound_channel, get_logger, new_session_id
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.types import StatusEvent
+from agent_platform.observability.units import end_session
 from agent_platform.tui.clipboard import Osc52ClipboardService
 from agent_platform.tui.command_view import CommandView
 from agent_platform.tui.completion import TabCompleter
@@ -277,7 +278,7 @@ class AgenticTuiApp(App[None]):
         self._follow_latest = True
         self._history_pending = 0
         self._journal = get_logger("tui")
-        self._mart = MartRefresher()
+        self._parquet = ParquetRefresher()
 
         # Whose records a command may show: this session's verified subject,
         # when the agent can say who that is. Read live, so a session switch
@@ -360,12 +361,16 @@ class AgenticTuiApp(App[None]):
             self.set_interval(get_settings().tui.status_refresh_ms / 1000, self._refresh_status)
         if isinstance(self._host, HousekeepingHost):
             self.set_interval(self._host.housekeeping_interval(), self._housekeep)
-        if self._mart.interval_seconds() > 0:
-            self.set_interval(self._mart.interval_seconds(), self._refresh_mart)
+        if self._parquet.interval_seconds() > 0:
+            self.set_interval(self._parquet.interval_seconds(), self._refresh_parquet)
 
-    def _refresh_mart(self) -> None:
-        """Re-export the analytics mart from this process, which holds the database lock."""
-        self.run_worker(self._mart.refresh(), name="mart", group="mart", exclusive=True)
+    def on_unmount(self) -> None:
+        """The console is closing: this session ends, and an open task in it is abandoned."""
+        end_session(get_settings().agent.id, self._session_id)
+
+    def _refresh_parquet(self) -> None:
+        """Re-export the analytics source from this process, which holds the database lock."""
+        self.run_worker(self._parquet.refresh(), name="parquet", group="parquet", exclusive=True)
 
     def _housekeep(self) -> None:
         """Run the host's clock-driven work, one run at a time, off the input path."""
@@ -544,6 +549,8 @@ class AgenticTuiApp(App[None]):
         if effect.rebuild_agent:
             self._rebuild_agent()
         if effect.session_id and effect.session_id != self._session_id:
+            # The session being left is over: a task still open in it is abandoned.
+            end_session(get_settings().agent.id, self._session_id)
             self._session_id = effect.session_id
             self._panel.note(f"Session switched to {effect.session_id}", style=palette("info"))
         if effect.agent_turn:

@@ -151,7 +151,7 @@ class ScreeningNodes(NodeSupport):
 
     def _screener(self) -> MessageScreener:
         """The platform's screener, quarantining what it blocks in this agent's queue."""
-        return MessageScreener(self._security, self._dead_letter_queue)
+        return self._message_screener
 
     @staticmethod
     def _subject(state: AgentState) -> ScreenSubject:

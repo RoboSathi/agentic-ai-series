@@ -270,8 +270,27 @@ aggregates all E37 metrics behind one query surface).
 **Sequence.** See HLD §4 — `observability` is invoked on every branch,
 including denials.
 
+**Analytics facts (ADR 0009).** Every agent gets the Tier-1 metrics without
+writing analytics code, because each fact is appended by a platform choke point
+the agent cannot bypass:
+
+| Choke point | Fact |
+|---|---|
+| `units.turn_bracket` (inside `turn_trace`) + task API `open_task` / `close_task` | `fact_turn`, `fact_task_event` |
+| `llm.call_log.SteppedClient` / `RecordedClient` (applied by `ModelChainBuilder`) | `fact_model_call` (steps, attempts, backups) |
+| `tools.path.ToolPath` (the single tool path) | `fact_tool_call` (invalid, unknown, not_offered, refused, duplicate, executed) |
+| `observability.checks` (screener, grounding, the four dependency factories) | `fact_check` |
+
+`FactStore` (`facts.py`) stamps the common keys (agent, session, task, turn, step,
+channel) from the bound context and never raises. An agent declares only its
+outcomes (`analytics.tasks` in its overlay, each with `success` / `terminal`
+flags) and, optionally, its own Tier-2 facts and semantic layer. The metric
+catalogue, analytics sources, MCP tools and generated dashboards are in
+`design_docs/analytics_schema.md`.
+
 **Config surface.** `OBSERVABILITY__LANGSMITH_ENABLED`,
-`OBSERVABILITY__SLO_TARGETS` (per-metric thresholds).
+`OBSERVABILITY__SLO_TARGETS` (per-metric thresholds, keyed by catalogue metric),
+`ANALYTICS__*` (sources, tasks and reserved outcomes, default channel, dashboards).
 
 **Test strategy.** Unit: `LittlesLawQueueModel` against the E38 worked
 example (100 cases/hr × 2 min ⇒ >3.3 reviewer-hours/hr). Unit:
@@ -991,7 +1010,13 @@ opens stdio or HTTP servers named in an agent's `mcp.servers`;
 arguments validated by a model built from each tool's schema, envelope from
 `ConfiguredGovernancePolicy` (`mcp.servers[].envelope`, else the most
 restrictive `mcp.default_envelope`). First consumer: the ops agent, over
-the platform's own analytics MCP server (`agent_platform.analytics.mcp_server`).
+the platform's own analytics MCP server (`agent_platform.analytics.mcp_server`:
+`list_metrics`, `compute_metric`, `list_views`, `describe_view`, `run_query`).
+The session logs the protocol in full to `mcp.log`: the handshake (server name,
+version, protocol, capabilities, instructions), each tool listed (description and
+input schema), each registration, and each call (arguments, result, duration).
+`mcp/presentation.server_card` turns a `describe()` into the MCP SERVER card any
+consuming agent draws.
 
 ---
 

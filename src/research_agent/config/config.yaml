@@ -7,6 +7,8 @@
 
 agent:
   id: research_agent
+  # How dashboards and reports title this agent.
+  display_name: Research Agent
   version: 0.1.0
   host: research_agent.console:ResearchHost
 
@@ -61,6 +63,22 @@ logging:
   # This agent's own subsystem, coloured on the console beside the platform's.
   subsystem_colors:
     research_agent: light_goldenrod1
+
+# This agent's tasks (ADR 0009 D2, D4): a research run, which spans the scoping
+# interview, the run and any stop/resume, and a direct answer, which is one turn.
+analytics:
+  tasks:
+    kinds: [research_run, direct_answer]
+    outcomes:
+      run_complete: {success: true, terminal: true}
+      # A report was delivered, with its gaps stated: the person has an answer.
+      run_partial: {success: true, terminal: true}
+      run_cancelled: {success: false, terminal: true}
+      run_failed: {success: false, terminal: true}
+      scope_refused: {success: false, terminal: true}
+      answered: {success: true, terminal: true}
+      answer_failed: {success: false, terminal: true}
+      refused_out_of_scope: {success: false, terminal: true}
 
 audit:
   policy_version: research-contract-v1
@@ -214,6 +232,14 @@ security:
 
 
 research_agent:
+  tasks:
+    research_run: research_run
+    direct_answer: direct_answer
+    run_status: {COMPLETE: run_complete, PARTIAL: run_partial, CANCELLED: run_cancelled, FAILED: run_failed}
+    scope_refused: scope_refused
+    answered: answered
+    answer_failed: answer_failed
+    refused: refused_out_of_scope
   title: Research Agent
   placeholder: "Ask a question · /research for deep research · /help"
   # The greeting: one line. Notes (a missing key) follow it only when there are any.
@@ -502,6 +528,8 @@ research_agent:
     # with its own, shorter limits; a page it gives up on is one of several results.
     fetch_timeout_seconds: 8
     fetch_max_attempts: 1
+    # Each answer tool runs through the platform Executor under this deadline.
+    tool_timeout_seconds: 30
     date_format: "%A, %d %B %Y, %H:%M %Z"
     clock_format: "%A, %d %B %Y, %H:%M:%S %Z (UTC%z)"
     context:

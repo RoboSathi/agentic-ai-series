@@ -15,7 +15,7 @@ from agent_platform.audit import AuditEntry, AuditLedger
 from agent_platform.audit.types import Decision
 from agent_platform.config import get_settings
 from agent_platform.logging import get_current_trace_id, get_logger
-from agent_platform.observability import Fact, FactRecorder, NullFactRecorder, StageReporter
+from agent_platform.observability import StageReporter
 from agent_platform.observability.types import StatusKind
 
 ACTOR = "research_agent"
@@ -31,11 +31,9 @@ class RunTelemetry:
         reporter: StageReporter | None,
         audit: AuditLedger,
         trace_id: str,
-        facts: FactRecorder | None = None,
     ) -> None:
         self._reporter = reporter
         self._audit = audit
-        self._facts = facts or NullFactRecorder()
         self._trace_id = trace_id
         self._versions = get_settings().audit
         self._logger = get_logger("research_agent")
@@ -93,10 +91,6 @@ class RunTelemetry:
     def started(self, stage: str, summary: str) -> None:
         if self._reporter is not None:
             self._reporter.started(stage, summary=summary)
-
-    def fact(self, fact: Fact) -> None:
-        """One analytic fact (a tool call, a turn), stamped with the turn it happened in."""
-        self._facts.record(fact)
 
     def audit(self, action: str, decision: Decision, rationale: str, **context: Any) -> None:
         """One audit entry, under the turn that caused it, naming the run it belongs to.

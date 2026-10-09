@@ -28,6 +28,7 @@ from pydantic import BaseModel
 
 from agent_platform.control_loop.types import ControlCheck, ControlLoopReport, WatchdogLayer
 from agent_platform.logging import get_logger
+from agent_platform.observability.units import report_loop
 
 Clock = Callable[[], float]
 ExhaustionHandler = Callable[[ControlLoopReport], None]
@@ -85,6 +86,7 @@ class BudgetGuard:
         on_exhausted: ExhaustionHandler | None = None,
         clock: Clock = time.monotonic,
         layer: WatchdogLayer = "token_budget",
+        step_counter: str | None = None,
     ) -> None:
         self._counters = {name: CounterState(name=name, cap=cap) for name, cap in caps.items()}
         self._max_seconds = max_seconds
@@ -95,6 +97,9 @@ class BudgetGuard:
         self._held: dict[int, Reservation] = {}
         self._ids = count(1)
         self._announced: set[str] = set()
+        # The counter that is the turn's step cap, if this guard bounds a model loop:
+        # its cap and whether it ran out are reported to the turn bracket.
+        self._step_counter = step_counter
         self._logger = get_logger("budget")
 
     # -- reserve / commit / release ------------------------------------------------
@@ -138,6 +143,8 @@ class BudgetGuard:
         """Record spend known only afterwards; False once the counter is exhausted."""
         state = self._state(counter)
         state.spent += amount
+        if counter == self._step_counter:
+            report_loop(int(state.cap), state.exhausted)
         if state.exhausted:
             self._announce(counter)
             return False

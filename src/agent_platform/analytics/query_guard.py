@@ -1,4 +1,4 @@
-"""Which SQL a model may run over the mart: one SELECT, over the curated views only.
+"""Which SQL a model may run over the source: one SELECT, over the curated views only.
 
 A model writes the SQL, so the SQL is untrusted input. It is parsed (never
 pattern-matched) and refused unless it is a single query statement whose every
@@ -7,7 +7,7 @@ no denied functions. The query is then wrapped in an outer LIMIT, so no answer
 is larger than `analytics.query.max_rows` whatever the model asked for.
 
 This is one of two walls. The database the server queries is in memory, loaded
-from the mart, with external access disabled and its configuration locked, so a
+from the source, with external access disabled and its configuration locked, so a
 query the parser misjudged still cannot reach a file, a setting or the network.
 """
 

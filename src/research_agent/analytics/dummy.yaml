@@ -1,0 +1,52 @@
+# This agent's simulated traffic for the generated analytics world (`make dummy-data
+# analytics`, platform `analytics/dummy.py`). Outcomes are the ones this agent declares
+# under `analytics.tasks.outcomes` in its overlay.
+agent_id: research_agent
+overlay: src/research_agent/config/config.yaml
+sessions_per_day: 14
+tasks:
+  direct_answer:
+    weight: 0.55
+    turns: [1, 1]
+    outcomes: {answered: 0.86, answer_failed: 0.09, refused_out_of_scope: 0.05}
+  research_run:
+    weight: 0.30
+    turns: [3, 8]
+    outcomes: {run_complete: 0.58, run_partial: 0.24, run_cancelled: 0.10, run_failed: 0.08}
+    open_rate: 0.12
+  implicit:
+    weight: 0.15
+    turns: [1, 1]
+    outcomes: {unclassified: 1.0}
+steps: [1, 6]
+step_cap: 6
+cap_abort_rate: 0.3
+roles:
+  answerer: {provider: nim, primary: nvidia/nemotron-3.5-lightning-30b-a3b, backups: [openai/gpt-oss-20b], weight: 0.4, latency_ms: 2600, prompt_tokens: [2500, 9000], completion_tokens: [150, 900]}
+  interviewer: {provider: nim, primary: nvidia/nemotron-3.5-lightning-30b-a3b, weight: 0.15, latency_ms: 1200, prompt_tokens: [900, 2400], completion_tokens: [40, 200]}
+  planner: {provider: nim, primary: nvidia/nemotron-3-ultra-550b-a55b, backups: [nvidia/nemotron-3.5-lightning-30b-a3b], weight: 0.15, latency_ms: 6500, prompt_tokens: [3000, 8000], completion_tokens: [400, 1500]}
+  extractor: {provider: nim, primary: nvidia/nemotron-3.5-lightning-30b-a3b, weight: 0.2, latency_ms: 2100, prompt_tokens: [4000, 12000], completion_tokens: [200, 800]}
+  reflector: {provider: nim, primary: nvidia/nemotron-3-ultra-550b-a55b, weight: 0.1, latency_ms: 5200, prompt_tokens: [3000, 9000], completion_tokens: [200, 900]}
+tool_step_rate: 0.6
+tools_per_step: [1, 2]
+tools:
+  answer.web_search: {weight: 0.5, failure_rate: 0.06, timeout_rate: 0.02, duration_ms: 1400}
+  answer.fetch_url: {weight: 0.3, failure_rate: 0.12, timeout_rate: 0.04, duration_ms: 2300}
+  answer.weather: {weight: 0.1, failure_rate: 0.02, duration_ms: 600}
+  answer.current_datetime: {weight: 0.1, duration_ms: 1}
+stage_rates: {invalid: 0.02, unknown: 0.01, duplicate: 0.06}
+# This agent declares no Gatekeeper: every executed call is audited UNGOVERNED.
+governed: false
+screens:
+  pii: {backend: local_model, model: en_core_web_lg-3.8.0, latency_ms: 35, flag_rate: 0.06}
+  injection: {backend: rule, latency_ms: 2, block_rate: 0.01}
+  jailbreak: {backend: hosted_model, model: nvidia/nemoguard-jailbreak-detect, latency_ms: 420, block_rate: 0.01, failure_rate: 0.01}
+  moderation: {backend: rule, latency_ms: 1, block_rate: 0.01}
+  content_safety: {backend: hosted_model, model: nvidia/nemotron-3.5-content-safety, latency_ms: 520, flag_rate: 0.03, failure_rate: 0.01}
+unscreened_rate: 0.05
+dependencies:
+  embedding: {backend: local_model, model: all-MiniLM-L6-v2, latency_ms: 30, per_step: 1.0}
+  nli: {backend: local_model, model: cross-encoder/nli-deberta-v3-base, latency_ms: 90, per_step: 0.6}
+  rerank: {backend: hosted_model, model: cross-encoder/ms-marco-MiniLM-L-6-v2, latency_ms: 210, per_step: 0.2, failure_rate: 0.03}
+grounding: {backend: local_model, model: cross-encoder/nli-deberta-v3-base, latency_ms: 380, claims: [2, 6], unsupported_rate: 0.08, low_confidence_rate: 0.12, writer_model: nvidia/nemotron-3.5-lightning-30b-a3b}
+turn_overhead_ms: 600

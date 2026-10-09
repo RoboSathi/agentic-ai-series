@@ -10,6 +10,8 @@ import json
 import re
 from typing import Any, get_args
 
+from agent_platform.observability.units import current_task_kind, open_task
+from customer_support_agent.config.settings import get_agent_settings
 from customer_support_agent.domain.models import OrderStatus
 from customer_support_agent.graph.nodes._support import TOOL_BLOCKED, TOOL_COMPLETED, NodeSupport
 from customer_support_agent.graph.state import AgentState
@@ -102,6 +104,7 @@ class IntentNodes(NodeSupport):
 
         if state.session_id and intent.name != "UNKNOWN":
             self._last_supported_intent[state.session_id] = intent
+        self._open_task_for(intent.name)
         plan = self._deliberation.plan(state.query, intent.name, list(intent.allowed_tools))
         intent_route = intent_route or self._intent_route(intent)
         if intent.name == "UNKNOWN":
@@ -132,6 +135,13 @@ class IntentNodes(NodeSupport):
                 "plan": [step.model_dump() for step in plan.steps],
             },
         }
+
+    @staticmethod
+    def _open_task_for(intent: str) -> None:
+        """A refund or cancellation request opens its task; one already open carries on."""
+        for kind, spec in get_agent_settings().tasks.kinds.items():
+            if spec.intent == intent and current_task_kind() != kind:
+                open_task(kind)
 
     async def read_intent(self, state: AgentState) -> dict[str, Any]:
         """Execute a classified read capability without an LLM completion.

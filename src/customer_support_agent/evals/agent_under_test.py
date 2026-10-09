@@ -20,10 +20,12 @@ from pathlib import Path
 from typing import Any
 
 from agent_platform.audit import SqliteAuditLedger
+from agent_platform.config import get_settings
 from agent_platform.durability import create_checkpointer, model_types
 from agent_platform.evals.contracts import GoldenCase, ToolCallRecord, Transcript, UsageRecord
 from agent_platform.llm.client import LLMClient, create_llm_client
 from agent_platform.llm.recording import RecordingLLMClient
+from agent_platform.logging.trace_context import bound_channel
 from agent_platform.memory import EpisodicStore
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.types import StatusEvent
@@ -104,7 +106,11 @@ class CsaAgentUnderTest:
         states: list[AgentState] = []
         try:
             for turn in case.turns:
-                state = await agent.handle(turn, session_id=self._session(case), customer=customer)
+                # Eval traffic is told apart by its channel (ADR 0009 D5).
+                with bound_channel(get_settings().evals.channel):
+                    state = await agent.handle(
+                        turn, session_id=self._session(case), customer=customer
+                    )
                 states.append(state)
                 replies.append(state.response)
             return self._transcript(case, replies, states, feed.events, llm, pool, started)

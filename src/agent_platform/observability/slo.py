@@ -12,7 +12,8 @@ from agent_platform.logging import get_logger
 from agent_platform.observability.types import SLOMeasurement, SLOStatus
 
 # Metrics where a *lower* observed value is better (rates of bad outcomes).
-# Public: the analytics mart computes error budgets with the same rule.
+# The live, in-process view; the analytics source reads each metric's direction from its
+# catalogue entry (`better`), not from this.
 LOWER_IS_BETTER = frozenset(
     {
         "unauthorized_action_rate",

@@ -1,4 +1,4 @@
-"""The Rill dashboards read only what the mart exports.
+"""The Rill dashboards read only what the source exports.
 
 Rill itself is not under test (it is a binary; `make dashboard` validates the
 project at start-up). What is: every model reads a view the semantic layer
@@ -34,11 +34,11 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 def _model_views() -> dict[str, str]:
-    """Each Rill model's name → the mart view it reads."""
+    """Each Rill model's name → the source view it reads."""
     views = {}
     for path in _files("models"):
         match = _PARQUET.search(_load(path)["sql"])
-        assert match, f"{path.name} does not read a mart view"
+        assert match, f"{path.name} does not read a source view"
         views[path.stem] = match.group(1)
     return views
 

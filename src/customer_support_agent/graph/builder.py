@@ -65,10 +65,11 @@ from agent_platform.observability import (
     SLORegistry,
     StageReporter,
 )
-from agent_platform.observability.facts import create_fact_recorder
+from agent_platform.observability.facts import create_fact_store, install_fact_store
 from agent_platform.observability.langsmith import build_trace_exporter
 from agent_platform.observability.model_observer import StageReporterModelObserver
 from agent_platform.observability.tracer import LocalTracer
+from agent_platform.observability.units import OutcomeCatalog
 from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agent_platform.resilience import CompensatingSaga, DeadLetterQueue, SqliteIdempotencyGuard
 from agent_platform.security import (
@@ -293,8 +294,12 @@ def build_agent(
     # records with agent_id.
     audit_needs_store = audit is None and settings.audit.enabled
     observability_store = DuckDbObservabilityStore() if (observing or audit_needs_store) else None
-    # Model calls, tool calls and turns, as rows the analytics mart aggregates.
-    facts = create_fact_recorder(observability_store if observing else None, agent_id)
+    # Tasks, turns, model calls, tool proposals and checks, as rows the analytics
+    # source aggregates: written by the platform's choke points, never by this agent.
+    install_fact_store(create_fact_store(observability_store if observing else None, agent_id))
+    # Every task kind and outcome this agent names is declared, or it does not start.
+    tasks = get_agent_settings().tasks
+    OutcomeCatalog().require(kinds=list(tasks.kinds), outcomes=tasks.outcomes())
 
     orders = OrdersRepository(connection)
     hitl = HitlQueueRepository(connection)
@@ -430,9 +435,7 @@ def build_agent(
     )
 
     return CustomerSupportAgent(
-        llm=llm
-        or create_llm_client(observer=StageReporterModelObserver(lambda: reporter), recorder=facts),
-        facts=facts,
+        llm=llm or create_llm_client(observer=StageReporterModelObserver(lambda: reporter)),
         gatekeeper=governed,
         # Only a Gatekeeper escalates, so only a governed agent refers.
         referral=ReviewReferral() if governed is not None else None,
@@ -448,7 +451,6 @@ def build_agent(
             handler=tool_handler,
             idempotency=idempotency,
             reporter=reporter,
-            recorder=facts,
         ),
         dead_letter_queue=dead_letter_queue,
         # Each screening detector is wired only if this agent declared

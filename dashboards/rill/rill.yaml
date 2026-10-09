@@ -1,9 +1,9 @@
-# The platform's analytics dashboards (Rill), over the Parquet mart.
+# The platform's analytics dashboards (Rill), over the Parquet export.
 #
-# The mart is exported by a running console every analytics.export_interval_seconds,
+# The source is exported by a running console every analytics.export_interval_seconds,
 # or by `make analytics-export`; `make dashboard` links it here as `data/` and starts
 # Rill. Every column used below is documented in the semantic layer
 # (src/agent_platform/analytics/semantic_layer.yaml), and a test fails if a
-# dashboard names a column the mart does not have.
+# dashboard names a column the source does not have.
 display_name: Agentic Platform Analytics
 olap_connector: duckdb

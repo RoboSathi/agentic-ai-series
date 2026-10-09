@@ -4,7 +4,14 @@ import time
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
-from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, omit
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncOpenAI,
+    BadRequestError,
+    omit,
+)
 from openai.types.chat import (
     ChatCompletionAssistantMessageParam,
     ChatCompletionMessageFunctionToolCallParam,
@@ -29,6 +36,7 @@ from agent_platform.llm.types import (
     HealthCheckResult,
     Message,
     ModelToolCall,
+    TokenLogprob,
     TokenUsage,
 )
 from agent_platform.llm.typography import TypographyNormaliser
@@ -36,10 +44,12 @@ from agent_platform.observability.langsmith import instrument_sdk_client
 
 if TYPE_CHECKING:
     from agent_platform.llm.observer import ModelCallObserver
-    from agent_platform.observability.facts import FactRecorder
 from agent_platform.logging import get_logger
 
 _PLACEHOLDER_API_KEY = "not-needed"
+# Models that rejected the logprobs parameter in this process (`provider:model`).
+_NO_LOGPROBS: set[str] = set()
+_LOGPROBS = "logprob"
 
 
 class LLMClient(ABC):
@@ -144,17 +154,12 @@ class OpenAICompatibleClient(LLMClient):
         """Run one completion; max_tokens is always bounded by config."""
         started = time.perf_counter()
         self._log_request(request)
-        completion = await self._client.chat.completions.create(
-            model=self._provider.model,
-            messages=[to_provider_message(m) for m in request.messages],
-            temperature=request.temperature if request.temperature is not None else omit,
-            max_tokens=request.max_tokens or self._settings.max_tokens,
-            # ToolRegistry emits plain wire-format dicts so that
-            # agent_platform.tools stays provider-neutral.
-            tools=request.tools if request.tools else omit,  # type: ignore[arg-type]
-            **self._structured_output_kwargs(request),
-            extra_body=request.extra_body or None,
-        )
+        try:
+            completion = await self._create(request, self._logprob_kwargs())
+        except BadRequestError as exc:
+            if not self._rejects_logprobs(exc):
+                raise
+            completion = await self._create(request, {})
         choice = completion.choices[0]
         usage = self._usage_from(completion.usage)
         content, tool_calls, normalised = self._plain_text(
@@ -170,10 +175,68 @@ class OpenAICompatibleClient(LLMClient):
             cost_usd=self.cost_for(usage),
             tier=self.tier,
             latency_ms=(time.perf_counter() - started) * 1000,
+            logprobs=self._logprobs_of(choice),
         )
         self._log_response(result, normalised)
         record_usage(usage)
         return result
+
+    async def _create(self, request: CompletionRequest, logprobs: dict[str, Any]) -> Any:
+        return await self._client.chat.completions.create(
+            model=self._provider.model,
+            messages=[to_provider_message(m) for m in request.messages],
+            temperature=request.temperature if request.temperature is not None else omit,
+            max_tokens=request.max_tokens or self._settings.max_tokens,
+            # ToolRegistry emits plain wire-format dicts so that
+            # agent_platform.tools stays provider-neutral.
+            tools=request.tools if request.tools else omit,  # type: ignore[arg-type]
+            **self._structured_output_kwargs(request),
+            **logprobs,
+            extra_body=request.extra_body or None,
+        )
+
+    def _logprob_kwargs(self) -> dict[str, Any]:
+        """Ask for token log-probabilities, unless off, or this model has refused them."""
+        settings = self._settings.logprobs
+        if not settings.enabled or self._model_key in _NO_LOGPROBS:
+            return {}
+        kwargs: dict[str, Any] = {"logprobs": True}
+        if settings.top_logprobs:
+            kwargs["top_logprobs"] = settings.top_logprobs
+        return kwargs
+
+    def _rejects_logprobs(self, exc: BadRequestError) -> bool:
+        """A 400 about logprobs: remember the model refuses them, and say so once."""
+        if _LOGPROBS not in str(exc).lower() or not self._logprob_kwargs():
+            return False
+        _NO_LOGPROBS.add(self._model_key)
+        self._logger.warning(
+            "Model does not return logprobs; asking without them from now on",
+            model=self._provider.model,
+            error=str(exc),
+        )
+        return True
+
+    @property
+    def _model_key(self) -> str:
+        return f"{self.provider_name}:{self._provider.model}"
+
+    def _logprobs_of(self, choice: Any) -> list[TokenLogprob] | None:
+        """The answer's tokens with their log-probabilities (None when none came back)."""
+        content = getattr(getattr(choice, "logprobs", None), "content", None)
+        if not content:
+            return None
+        return [
+            TokenLogprob(
+                token=self._typography.normalise(item.token)[0],
+                logprob=float(item.logprob),
+                top={
+                    self._typography.normalise(alt.token)[0]: float(alt.logprob)
+                    for alt in (getattr(item, "top_logprobs", None) or [])
+                },
+            )
+            for item in content
+        ]
 
     def _reasoning_of(self, message: Any) -> str:
         """The model's reasoning, from the first configured attribute the provider filled."""
@@ -250,6 +313,11 @@ class OpenAICompatibleClient(LLMClient):
             normalised_chars=normalised,
             content=self._clip(result.content),
             reasoning=self._clip(result.reasoning),
+            # Every token's confidence, as the model gave it (the check reads these).
+            logprobs=[
+                {"token": item.token, "logprob": round(item.logprob, 4)}
+                for item in result.logprobs or []
+            ],
             tool_calls=[
                 {
                     "id": call.id,
@@ -347,7 +415,6 @@ def create_llm_client(
     settings: LLMSettings | None = None,
     provider: ProviderName | None = None,
     observer: "ModelCallObserver | None" = None,
-    recorder: "FactRecorder | None" = None,
 ) -> LLMClient:
     """Build the configured LLM client (Factory).
 
@@ -356,17 +423,21 @@ def create_llm_client(
     `llm.chain.fallbacks` (`ModelChainBuilder`) — so even a plain call has a second model.
     """
     from agent_platform.config.settings import ModelRef
+    from agent_platform.llm.call_log import RecordedClient, SteppedClient
     from agent_platform.llm.cascade import CascadingLLMClient
     from agent_platform.llm.chain import ModelChainBuilder
 
     resolved = settings or get_settings().llm
     if provider is None and resolved.cascade.enabled:
-        tiers: list[LLMClient] = [_client_for(resolved, name) for name in resolved.cascade.tiers]
-        return CascadingLLMClient(tiers, resolved.cascade)
+        tiers: list[LLMClient] = [
+            RecordedClient(_client_for(resolved, name), role=name, position=position)
+            for position, name in enumerate(resolved.cascade.tiers)
+        ]
+        return SteppedClient(CascadingLLMClient(tiers, resolved.cascade))
     name = provider or resolved.provider
     primary = ModelRef(provider=name, model=resolved.provider_settings(name).model)
     builder = ModelChainBuilder(
-        lambda p, m: create_pinned_llm_client(p, m, resolved), observer, resolved, recorder
+        lambda p, m: create_pinned_llm_client(p, m, resolved), observer, resolved
     )
     return builder.build(primary, resolved.chain, label=name)
 

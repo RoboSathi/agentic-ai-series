@@ -25,6 +25,8 @@ from langgraph.types import Send
 
 from agent_platform.config import FeatureSet
 from agent_platform.control_loop import BudgetGuard
+from agent_platform.hallucination_protection.confidence import ConfidenceCheck, report_confidence
+from agent_platform.hallucination_protection.levels import CheckLevel
 from agent_platform.logging import describe_error
 from agent_platform.observability.types import StatusKind
 from agent_platform.scheduling import AsyncDagScheduler, TaskGraph
@@ -83,6 +85,8 @@ class RunParts:
     judge_role: str = ""
     # Checks every cited sentence against its spans before the audit; None: withheld.
     citation_guard: CitationGuard | None = None
+    # Level 1 of the report's hallucination check (token confidence); None: withheld.
+    confidence: ConfidenceCheck | None = None
 
 
 # Rejection codes that mean "the filter could not read the result", not "the result is
@@ -435,10 +439,20 @@ class RunNodes:
         )
         return {"report": report, "ledger": ledger}
 
+    def _first_level(self, guarded: GuardedReport) -> CheckLevel | None:
+        """Level 1: the cited sentences scored by the writer's token confidence."""
+        check = self._p.confidence
+        if check is None or not check.enabled:
+            return None
+        return report_confidence(check.assess(" ".join(c.sentence for c in guarded.checks)))
+
     def _guard_card(self, guarded: GuardedReport, ledger: Any) -> None:
         """What the citation guard did to the draft, sentence by sentence, before the audit."""
         clean = not guarded.dropped
-        heading, sections = cards.guard_card(guarded, ledger, self._p.nli_model, self._p.clip_chars)
+        first = self._first_level(guarded)
+        heading, sections = cards.guard_card(
+            guarded, ledger, self._p.nli_model, self._p.clip_chars, first=first
+        )
         r = self.resources
         r.telemetry.card(
             "citation_guard", heading, sections, status="completed" if clean else "warning"

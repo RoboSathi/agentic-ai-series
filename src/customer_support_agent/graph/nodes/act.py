@@ -4,12 +4,12 @@ Every proposal passes the control loop, then the Gatekeeper, then the
 executor; and only a result that actually succeeded becomes an
 authoritative fact the reply may be grounded on.
 
-`_execute_ungoverned` is the path taken when the Gatekeeper has been
-withheld. It exists to be *seen*: the same refund that was escalated a
-moment ago simply happens. Only the authority decision is gone — the call
-still runs through the Executor, the audit entry is still written (its
-standing is UNGOVERNED), and no budget is committed, because no budget was
-consulted.
+The order is the platform's single tool path (`agent_platform.tools.path`),
+which also records where each proposal stopped. With the Gatekeeper withheld
+the same refund that was escalated a moment ago simply happens: only the
+authority decision is gone — the call still runs through the Executor, the
+audit entry is still written (its standing is UNGOVERNED), and no budget is
+committed, because no budget was consulted.
 """
 
 from typing import Any
@@ -21,9 +21,12 @@ from agent_platform.executor import (
 )
 from agent_platform.gatekeeper import AuthorityContext, AuthorityDecision
 from agent_platform.gatekeeper.mandate import MandateSet
-from agent_platform.llm.types import Message
+from agent_platform.llm.types import Message, ModelToolCall
 from agent_platform.logging.trace_context import get_current_trace_id
-from agent_platform.tools.types import ToolResult
+from agent_platform.observability.types import utc_now
+from agent_platform.observability.units import close_task, current_task_kind, open_task
+from agent_platform.tools.path import DUPLICATE, NOT_OFFERED, ToolOutcome, ToolTurn
+from agent_platform.tools.types import ToolCall, ToolResult
 from agent_platform.verification import VerificationReport
 from customer_support_agent.config.settings import get_agent_settings
 from customer_support_agent.graph.loop_decision import ITERATION_LIMIT, after_act_step
@@ -51,6 +54,9 @@ _FINAL = (
 )
 
 _ESCALATE = "escalate"
+
+# A tool's status beyond the shared ones: it ran and failed, or ran and did not read back.
+TOOL_FAILED, TOOL_UNVERIFIED = "failed", "unverified"
 
 # Verdicts that cannot become an allow by re-proposing with different
 # arguments. `escalate` is already terminal for the turn; these are the
@@ -87,6 +93,8 @@ def _queued_review(invocations: list[dict[str, Any]]) -> dict[str, Any] | None:
                 "request_id": result["request_id"],
                 "order_id": result.get("order_id"),
                 "amount": result.get("amount"),
+                # When the wait began, so the review's wait time can be recorded.
+                "queued_at": utc_now().isoformat(),
             }
     return None
 
@@ -204,68 +212,85 @@ class ToolUseNodes(NodeSupport):
                 fields=control_loop_fields(report),
             )
 
-    async def _execute_ungoverned(
-        self,
-        call: Any,
-        authority: AuthorityContext,
-        control_fields: dict[str, Any],
-    ) -> tuple[str, str, str, dict[str, Any]]:
-        """Run a tool with no authority decision in front of it.
-
-        Reachable only where the `gatekeeper` feature has been withheld,
-        which is what an episode does to show the difference. Only the
-        decision is missing: the call still goes through the Executor, so
-        it keeps its idempotency key and its deadline, and the audit entry
-        is still written, with the standing UNGOVERNED, so the trail shows
-        an execution nobody ruled on rather than showing nothing at all.
-        No budget is committed, because no budget was consulted.
-        """
-        # No GATEKEEPER card. A stage that was not built has nothing to
-        # say; the absence is the demonstration. The audit row records it.
-        approved = ApprovedToolCall.ungoverned(call, authority)
-        self._audit.record(
-            AuditEntry(
-                trace_id=get_current_trace_id() or "",
-                actor=authority.actor,
-                action=call.action,
-                authority_context={
-                    **authority.model_dump(mode="json"),
-                    "standing": approved.decision.standing,
-                },
-                decision="allow",
-                rationale=approved.decision.reason,
-            )
-        )
-        outcome = await self._executor.execute(approved)
-        return await self._after_execution(call, outcome, control_fields, decision_fields={})
-
     async def _invoke(
         self, name: str, arguments: str, state: AgentState, offered: set[str]
     ) -> tuple[str, str, str, dict[str, Any]]:
-        """Validate, control, authorize, approve and execute one tool call."""
-        call = self._registry.build_call(name, arguments)
-        if call is None:
-            blocked_fields = {
-                "tool": name,
-                "result": "invalid_request",
-                "reason_code": "TOOL_CALL_INVALID",
-                "reason": "tool is unknown or arguments failed validation",
-            }
-            self._reporter_blocked(
-                "tool_result",
-                summary=f"Tool request rejected: {name}",
-                event_kind="tool_result",
-                fields=blocked_fields,
-            )
-            return (
-                f"Tool '{name}' is unavailable or its arguments were invalid.",
-                f"{name}: invalid",
-                "tool_refused",
-                {"tool_result": blocked_fields, "tool_status": TOOL_BLOCKED},
-            )
+        """One tool call through the platform's single tool path, drawn as this agent draws it.
 
-        call = call.model_copy(update={"params": self._security.minimize(call.params)})
-        authority = AuthorityContext(
+        The path validates, suppresses duplicates, asks the Gatekeeper (or runs
+        UNGOVERNED, audited, when it is withheld) and executes; this method only
+        turns where the call stopped into the cards and the text the model reads.
+        """
+        outcome = await self._tool_path.run(
+            ModelToolCall(name=name, arguments=arguments),
+            ToolTurn(
+                loop=self._control_loop,
+                round_number=state.tool_rounds,
+                max_rounds=self._max_rounds,
+                authority=lambda call: self._authority(call, state, offered),
+                prepare=lambda call: call.model_copy(
+                    update={"params": self._security.minimize(call.params)}
+                ),
+                on_authorizing=self._authorizing,
+                on_decision=self._decided,
+            ),
+        )
+        result = await self._described(name, outcome)
+        self._settle_task(outcome, result[3])
+        return result
+
+    async def _described(
+        self, name: str, outcome: ToolOutcome
+    ) -> tuple[str, str, str, dict[str, Any]]:
+        """Where the call stopped, as cards, model text and invocation fields."""
+        if outcome.call is None:
+            return self._rejected(name, outcome)
+        control_fields = control_loop_fields(outcome.control) if outcome.control else {}
+        if outcome.decision is None and outcome.execution is None:
+            return self._suppressed(outcome.call, outcome, control_fields)
+        if outcome.decision is not None and not outcome.decision.allowed:
+            return await self._refused(outcome, control_fields)
+        decision_fields = (
+            gatekeeper_fields(outcome.decision, outcome.call) if outcome.decision else {}
+        )
+        return await self._after_execution(
+            outcome.call, outcome.execution, control_fields, decision_fields
+        )
+
+    @staticmethod
+    def _settle_task(outcome: ToolOutcome, fields: dict[str, Any]) -> None:
+        """A write ends the task it carries out: issued, queued for review, refused or failed.
+
+        A write the model made with no task open (the intent was unclear) opens
+        the task its action belongs to first, so the outcome is never lost to
+        an implicit task. A refusal the model may still recover from by asking
+        differently leaves the task open.
+        """
+        call = outcome.call
+        if call is None or not call.side_effecting:
+            return
+        words = get_agent_settings().tasks
+        kind = next((k for k, spec in words.kinds.items() if spec.action == call.action), None)
+        if kind is None:
+            return
+        status = fields.get("tool_status")
+        ending = {
+            TOOL_COMPLETED: words.kinds[kind].done,
+            TOOL_REFERRED: words.queued,
+            TOOL_FAILED: words.failed,
+            TOOL_UNVERIFIED: words.unverified,
+        }.get(str(status))
+        if ending is None and _has_terminal_denial([fields]):
+            ending = words.refused
+        if ending is None:
+            return
+        if current_task_kind() != kind:
+            open_task(kind)
+        close_task(ending)
+
+    def _authority(self, call: ToolCall, state: AgentState, offered: set[str]) -> AuthorityContext:
+        """Who is asking, what they were offered, and what they actually asked for."""
+        return AuthorityContext(
             actor=state.actor or self._actor,
             granted_by="user_task",
             session_id=state.session_id,
@@ -286,145 +311,153 @@ class ToolUseNodes(NodeSupport):
             turn=state.tool_rounds,
         )
 
-        control_report = self._control_loop.before_action(
-            call, round_number=state.tool_rounds, max_rounds=self._max_rounds
-        )
-        control_fields = control_loop_fields(control_report)
-        if control_report.decision == "abort":
-            self._reporter_blocked(
-                "control_loop",
-                summary=(
-                    "Duplicate action suppressed"
-                    if control_report.reason_code == "DUPLICATE_ACTION"
-                    else "Control loop aborted the action"
-                ),
-                event_kind="control_loop",
-                fields=control_fields,
-            )
-            result_fields = {
-                "tool": call.action,
-                "result": (
-                    "suppressed_duplicate"
-                    if control_report.reason_code == "DUPLICATE_ACTION"
-                    else "control_loop_aborted"
-                ),
-                "execution_status": "not_executed",
-            }
-            self._reporter_blocked(
-                "tool_result",
-                summary=f"Tool not executed: {call.action}",
-                event_kind="tool_result",
-                fields=result_fields,
-            )
-            return (
-                self._control_loop.reject_message(call)
-                if control_report.reason_code == "DUPLICATE_ACTION"
-                else "The control loop stopped this action before execution.",
-                (
-                    f"{call.action}: suppressed (duplicate)"
-                    if control_report.reason_code == "DUPLICATE_ACTION"
-                    else f"{call.action}: control loop aborted"
-                ),
-                "tool_suppressed",
-                {
-                    "control_loop": control_fields,
-                    "control_loop_status": "blocked",
-                    "tool_result": result_fields,
-                    "tool_status": TOOL_BLOCKED,
-                },
-            )
-
-        if self._gatekeeper is None:
-            return await self._execute_ungoverned(call, authority, control_fields)
-
+    def _authorizing(self, call: ToolCall) -> None:
         self._report(
             "gatekeeper_evaluation",
             event_kind="gatekeeper",
             summary="Checking deterministic execution admissibility",
             fields={"requested_action": call.action},
         )
-        decision = await self._gatekeeper.evaluate(call, authority)
-        decision_fields = gatekeeper_fields(decision, call)
-        if not decision.allowed:
-            # An escalation is the harness working as designed — a person
-            # takes over — so it reads as a caution, not as a refusal.
-            report = (
-                self._reporter_warning if decision.verdict == _ESCALATE else self._reporter_blocked
-            )
-            report(
-                "gatekeeper_evaluation",
-                summary=f"Gatekeeper: {decision.verdict.upper()}",
-                event_kind="gatekeeper",
-                fields=decision_fields,
-            )
-            if decision.question == "offered":
-                self._logger.warning("Model called a tool it was not offered", tool=call.action)
-                evidence = f"'{call.action}' is not available for this request."
-                result_fields = {
-                    "tool": call.action,
-                    "result": "not_offered",
-                    "execution_status": "not_executed",
-                }
-                tool_status = TOOL_BLOCKED
-            elif decision.verdict == _ESCALATE:
-                evidence, result_fields, tool_status = await self._refer_for_review(
-                    call, decision, authority
-                )
-            else:
-                # Say that it is final. The previous wording read like a
-                # transient failure, and the model answered it the way it
-                # answers those — by trying again, three times, until the
-                # iteration cap. A deterministic verdict does not move.
-                evidence = f"That action was not permitted: {decision.reason}"
-                result_fields = {
-                    "tool": call.action,
-                    "result": "not_executed",
-                    "execution_status": "not_executed",
-                }
-                tool_status = TOOL_BLOCKED
-            # `_FINAL` steers the model; it is not a fact, so the evidence
-            # the reply is grounded on stops before it.
-            text = f"{evidence} {_FINAL}"
-            # Remember the refusal so an identical retry is caught by the
-            # duplicate detector, which otherwise only knows about calls
-            # that succeeded.
-            self._control_loop.record_refusal(call, text)
-            if tool_status != TOOL_REFERRED:
-                self._reporter_blocked(
-                    "tool_result",
-                    summary=f"Tool not executed: {call.action}",
-                    event_kind="tool_result",
-                    fields=result_fields,
-                )
-            return (
-                text,
-                f"{call.action}: {decision.verdict} ({decision.question}) — {decision.reason}",
-                "tool_refused",
-                {
-                    "control_loop": control_fields,
-                    "control_loop_status": "completed",
-                    "gatekeeper": decision_fields,
-                    "gatekeeper_status": "escalated"
-                    if decision.verdict == _ESCALATE
-                    else "blocked",
-                    "tool_result": result_fields,
-                    "tool_status": tool_status,
-                    "evidence": evidence,
-                },
-            )
 
-        self._done(
+    def _decided(self, call: ToolCall, decision: AuthorityDecision) -> None:
+        """The Gatekeeper's card: an allow, a caution (escalate) or a refusal."""
+        fields = gatekeeper_fields(decision, call)
+        if decision.allowed:
+            self._done(
+                "gatekeeper_evaluation",
+                event_kind="gatekeeper",
+                summary="Gatekeeper: ALLOW",
+                fields=fields,
+            )
+            return
+        # An escalation is the harness working as designed — a person
+        # takes over — so it reads as a caution, not as a refusal.
+        report = self._reporter_warning if decision.verdict == _ESCALATE else self._reporter_blocked
+        report(
             "gatekeeper_evaluation",
+            summary=f"Gatekeeper: {decision.verdict.upper()}",
             event_kind="gatekeeper",
-            summary="Gatekeeper: ALLOW",
-            fields=decision_fields,
+            fields=fields,
         )
-        approved = ApprovedToolCall.from_decision(call, decision, authority)
-        outcome = await self._executor.execute(approved)
-        if outcome.result.success and not outcome.replayed:
-            # Budget is charged only for a real completion, not a replay.
-            self._gatekeeper.commit(call, authority)
-        return await self._after_execution(call, outcome, control_fields, decision_fields)
+
+    def _rejected(self, name: str, outcome: ToolOutcome) -> tuple[str, str, str, dict[str, Any]]:
+        """An unknown tool, or arguments its schema refused."""
+        blocked_fields = {
+            "tool": name,
+            "result": "invalid_request",
+            "reason_code": "TOOL_CALL_INVALID",
+            "reason": outcome.reason or f"tool is {outcome.stage}",
+            "stage": outcome.stage,
+        }
+        self._reporter_blocked(
+            "tool_result",
+            summary=f"Tool request rejected: {name}",
+            event_kind="tool_result",
+            fields=blocked_fields,
+        )
+        return (
+            f"Tool '{name}' is unavailable or its arguments were invalid.",
+            f"{name}: invalid",
+            "tool_refused",
+            {"tool_result": blocked_fields, "tool_status": TOOL_BLOCKED},
+        )
+
+    def _suppressed(
+        self, call: ToolCall, outcome: ToolOutcome, control_fields: dict[str, Any]
+    ) -> tuple[str, str, str, dict[str, Any]]:
+        """The control loop stopped the call: a duplicate, or the iteration ceiling."""
+        duplicate = outcome.stage == DUPLICATE
+        self._reporter_blocked(
+            "control_loop",
+            summary="Duplicate action suppressed"
+            if duplicate
+            else "Control loop aborted the action",
+            event_kind="control_loop",
+            fields=control_fields,
+        )
+        result_fields = {
+            "tool": call.action,
+            "result": "suppressed_duplicate" if duplicate else "control_loop_aborted",
+            "execution_status": "not_executed",
+        }
+        self._reporter_blocked(
+            "tool_result",
+            summary=f"Tool not executed: {call.action}",
+            event_kind="tool_result",
+            fields=result_fields,
+        )
+        return (
+            self._control_loop.reject_message(call)
+            if duplicate
+            else "The control loop stopped this action before execution.",
+            f"{call.action}: suppressed (duplicate)"
+            if duplicate
+            else f"{call.action}: control loop aborted",
+            "tool_suppressed",
+            {
+                "control_loop": control_fields,
+                "control_loop_status": "blocked",
+                "tool_result": result_fields,
+                "tool_status": TOOL_BLOCKED,
+            },
+        )
+
+    async def _refused(
+        self, outcome: ToolOutcome, control_fields: dict[str, Any]
+    ) -> tuple[str, str, str, dict[str, Any]]:
+        """The Gatekeeper denied or escalated the call (the path already audited it)."""
+        call, decision, authority = outcome.call, outcome.decision, outcome.authority
+        if call is None or decision is None or authority is None:
+            raise RuntimeError("A refused tool outcome carries its call, decision and authority")
+        if outcome.stage == NOT_OFFERED:
+            self._logger.warning("Model called a tool it was not offered", tool=call.action)
+            evidence = f"'{call.action}' is not available for this request."
+            result_fields = {
+                "tool": call.action,
+                "result": "not_offered",
+                "execution_status": "not_executed",
+            }
+            tool_status = TOOL_BLOCKED
+        elif decision.verdict == _ESCALATE:
+            evidence, result_fields, tool_status = await self._refer_for_review(
+                call, decision, authority
+            )
+        else:
+            # Say that it is final. The previous wording read like a
+            # transient failure, and the model answered it the way it
+            # answers those — by trying again, three times, until the
+            # iteration cap. A deterministic verdict does not move.
+            evidence = f"That action was not permitted: {decision.reason}"
+            result_fields = {
+                "tool": call.action,
+                "result": "not_executed",
+                "execution_status": "not_executed",
+            }
+            tool_status = TOOL_BLOCKED
+        # `_FINAL` steers the model; it is not a fact, so the evidence
+        # the reply is grounded on stops before it.
+        text = f"{evidence} {_FINAL}"
+        if tool_status != TOOL_REFERRED:
+            self._reporter_blocked(
+                "tool_result",
+                summary=f"Tool not executed: {call.action}",
+                event_kind="tool_result",
+                fields=result_fields,
+            )
+        return (
+            text,
+            f"{call.action}: {decision.verdict} ({decision.question}) — {decision.reason}",
+            "tool_refused",
+            {
+                "control_loop": control_fields,
+                "control_loop_status": "completed",
+                "gatekeeper": gatekeeper_fields(decision, call),
+                "gatekeeper_status": "escalated" if decision.verdict == _ESCALATE else "blocked",
+                "tool_result": result_fields,
+                "tool_status": tool_status,
+                "evidence": evidence,
+            },
+        )
 
     async def _refer_for_review(
         self, call: Any, decision: AuthorityDecision, authority: AuthorityContext
@@ -504,7 +537,6 @@ class ToolUseNodes(NodeSupport):
             call, result, outcome=outcome, redact=self._security.redact
         )
         if result.success:
-            self._control_loop.record_success(call, result.output)
             self._done(
                 "tool_result",
                 event_kind="tool_result",
@@ -519,7 +551,7 @@ class ToolUseNodes(NodeSupport):
                     # Not "failed": the call did run, and may well have
                     # done something. It is *unverified*, which means no
                     # customer-facing claim may rest on it.
-                    tool_status = "unverified"
+                    tool_status = TOOL_UNVERIFIED
         else:
             self._done_failed(
                 "tool_result",
@@ -527,7 +559,7 @@ class ToolUseNodes(NodeSupport):
                 event_kind="tool_result",
                 fields=result_fields,
             )
-            tool_status = "failed"
+            tool_status = TOOL_FAILED
         return (
             result.output if result.success else f"Tool failed: {result.error}",
             f"{call.action}: {'ok' if result.success else 'failed'}",

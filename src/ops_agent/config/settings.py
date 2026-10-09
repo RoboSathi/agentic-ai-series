@@ -33,7 +33,11 @@ class Stages(BaseModel):
     """The feed's stage key for each node's cards."""
 
     screen: str
-    reason: str
+    server: str
+    llm_request: str
+    llm_response: str
+    request: str
+    gatekeeper: str
     act: str
     ground: str
 
@@ -41,14 +45,25 @@ class Stages(BaseModel):
 class Cards(BaseModel):
     """Card headings on the live feed."""
 
-    thinking: str
-    answered: str
-    calling: str
-    called: str
+    purpose: str
+    requested: str
+    gatekeeper: str
+    result_rows: str
+    result_metrics: str
+    result_views: str
+    result_columns: str
+    result_done: str
+    not_run: str
     failed: str
     refused: str
     grounded: str
     ungrounded: str
+    figure_level: str
+    figure_tally: str
+    no_figures: str
+    figure_found: str
+    confidence_signal: str
+    queries_searched: str
 
 
 class OpsAgentSettings(YamlBackedSettings):

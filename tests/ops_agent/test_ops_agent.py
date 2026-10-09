@@ -1,6 +1,6 @@
-"""The ops agent: questions answered from the mart over MCP, governed, grounded and recorded.
+"""The ops agent: questions answered from the source over MCP, governed, grounded and recorded.
 
-Each test scripts the model; everything between the model and the mart is real.
+Each test scripts the model; everything between the model and the source is real.
 """
 
 from typing import Any

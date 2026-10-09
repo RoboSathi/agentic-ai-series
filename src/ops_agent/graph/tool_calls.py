@@ -1,107 +1,113 @@
-"""One tool call, the governed way: validated, authorized, executed, audited.
+"""One tool call, the governed way: the platform's single tool path, read as this agent reads it.
 
 The MCP server's tools are ordinary `ToolDefinition`s, so they take the same
-path as any agent's: the registry validates the arguments; the Gatekeeper rules
-on the call against this agent's policy (and writes the audit entry); the
-Executor runs it under its deadline and records the fact. With the Gatekeeper
-withheld the call still goes through the Executor, and the audit entry says
-UNGOVERNED — an execution nobody ruled on is still on the record.
+path as any agent's (`agent_platform.tools.path`): the registry validates the
+arguments; the turn's control loop suppresses a repeated query; the Gatekeeper
+rules on the call against this agent's policy (and writes the audit entry); the
+Executor runs it under its deadline. With the Gatekeeper withheld the call still
+goes through the Executor, and the audit entry says UNGOVERNED. The path records
+where every proposal stopped; this class turns that into what the model reads.
 """
 
-from pydantic import BaseModel, ValidationError
+from collections.abc import Callable
+from typing import Any
 
-from agent_platform.audit import STANDING_FIELD, AuditEntry, AuditLedger
-from agent_platform.executor import ApprovedToolCall, ToolExecutor
-from agent_platform.gatekeeper import Gatekeeper
-from agent_platform.gatekeeper.types import AuthorityContext
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from agent_platform.control_loop.types import ControlLoopReport
+from agent_platform.control_loop.watchdogs import ToolControlLoop
+from agent_platform.gatekeeper.types import AuthorityContext, AuthorityDecision
 from agent_platform.llm.types import ModelToolCall
-from agent_platform.logging import get_current_trace_id, get_logger
 from agent_platform.tools import NamespacedToolRegistry
+from agent_platform.tools.path import DUPLICATE, ToolOutcome, ToolPath, ToolTurn
 from agent_platform.tools.types import ToolCall, ToolResult
 from ops_agent.config.settings import OpsAgentSettings
 from ops_agent.domain import QueryRecord
 
 
 class CallOutcome(BaseModel):
-    """What one call told the model, and the query it answered, if it was one."""
+    """What one call told the model, the query it answered (if one), and how far it got."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     text: str
     succeeded: bool
     refused: bool = False
     query: QueryRecord | None = None
+    # Where the platform tool path stopped the call, and everything it learned on the way.
+    path: ToolOutcome | None = None
+    # The tool's structured result (rows, metrics, views, columns), for the result card.
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 class GovernedCalls:
-    """Runs the model's tool calls through registry, Gatekeeper and Executor."""
+    """Runs the model's tool calls through the platform tool path, one control loop a turn."""
 
     def __init__(
         self,
         registry: NamespacedToolRegistry,
-        executor: ToolExecutor,
-        audit: AuditLedger,
+        path: ToolPath,
         settings: OpsAgentSettings,
         actor: str,
-        gatekeeper: Gatekeeper | None = None,
     ) -> None:
         self._registry = registry
-        self._executor = executor
-        self._audit = audit
+        self._path = path
         self._settings = settings
         self._actor = actor
-        self._gatekeeper = gatekeeper
-        self._logger = get_logger("ops_agent")
+        self._loop = ToolControlLoop()
 
-    async def run(self, call: ModelToolCall, session_id: str) -> CallOutcome:
-        built = self._registry.build_call(call.name, call.arguments)
-        if built is None:
-            text = self._settings.words.invalid_call.format(tool=call.name)
-            return CallOutcome(text=text, succeeded=False)
-        authority = AuthorityContext(
+    def begin_turn(self) -> None:
+        """A new question: nothing it asks for has been asked before; the step cap is declared."""
+        self._loop = ToolControlLoop(step_cap=self._settings.max_steps)
+
+    def check_step(self, step: int, wants_tools: bool) -> ControlLoopReport:
+        """Whether the turn's step cap allows another round of tools (reported to the bracket)."""
+        return self._loop.evaluate_round(
+            step + 1 if wants_tools else step, self._settings.max_steps
+        )
+
+    async def run(
+        self,
+        call: ModelToolCall,
+        session_id: str,
+        step: int,
+        on_decision: Callable[[ToolCall, AuthorityDecision], None] | None = None,
+    ) -> CallOutcome:
+        outcome = await self._path.run(
+            call,
+            ToolTurn(
+                loop=self._loop,
+                round_number=step,
+                max_rounds=self._settings.max_steps,
+                authority=lambda built: self._authority(built, session_id),
+                on_decision=on_decision,
+            ),
+        )
+        return self._read(call.name, outcome).model_copy(update={"path": outcome})
+
+    def _authority(self, call: ToolCall, session_id: str) -> AuthorityContext:
+        return AuthorityContext(
             actor=self._actor,
             session_id=session_id,
             offered_actions=[tool.qualified_name for tool in self._registry.all_tools()],
         )
-        approved = await self._approve(built, authority)
-        if isinstance(approved, CallOutcome):
-            return approved
-        outcome = await self._executor.execute(approved)
-        return _outcome(outcome.result)
 
-    async def _approve(
-        self, call: ToolCall, authority: AuthorityContext
-    ) -> ApprovedToolCall | CallOutcome:
-        if self._gatekeeper is None:
-            return self._ungoverned(call, authority)
-        decision = await self._gatekeeper.evaluate(call, authority)
-        if not decision.allowed:
-            text = self._settings.words.refused_tool.format(
-                action=call.action, reason=decision.reason
-            )
+    def _read(self, name: str, outcome: ToolOutcome) -> CallOutcome:
+        words = self._settings.words
+        if outcome.call is None:
+            return CallOutcome(text=words.invalid_call.format(tool=name), succeeded=False)
+        if outcome.stage == DUPLICATE:
+            return CallOutcome(text=self._loop.reject_message(outcome.call), succeeded=False)
+        if outcome.execution is None:
+            text = words.refused_tool.format(action=outcome.call.action, reason=outcome.reason)
             return CallOutcome(text=text, succeeded=False, refused=True)
-        return ApprovedToolCall.from_decision(call, decision, authority)
-
-    def _ungoverned(self, call: ToolCall, authority: AuthorityContext) -> ApprovedToolCall:
-        approved = ApprovedToolCall.ungoverned(call, authority)
-        self._audit.record(
-            AuditEntry(
-                trace_id=get_current_trace_id() or "",
-                actor=authority.actor,
-                action=call.action,
-                authority_context={
-                    **authority.model_dump(mode="json"),
-                    STANDING_FIELD: approved.decision.standing,
-                },
-                decision="allow",
-                rationale=approved.decision.reason,
-            )
-        )
-        return approved
+        return _outcome(outcome.execution.result)
 
 
 def _outcome(result: ToolResult) -> CallOutcome:
     if not result.success:
-        return CallOutcome(text=result.error or result.output, succeeded=False)
-    return CallOutcome(text=result.output, succeeded=True, query=_query(result))
+        return CallOutcome(text=result.error or result.output, succeeded=False, data=result.data)
+    return CallOutcome(text=result.output, succeeded=True, query=_query(result), data=result.data)
 
 
 def _query(result: ToolResult) -> QueryRecord | None:

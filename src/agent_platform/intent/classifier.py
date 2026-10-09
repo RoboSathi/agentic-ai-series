@@ -8,6 +8,7 @@ from pathlib import Path
 from agent_platform.config import get_settings
 from agent_platform.intent.types import IntentCandidate, IntentClassifierInterface
 from agent_platform.llm.local_models import LocalSequenceClassifier
+from agent_platform.observability import checks
 
 
 class HuggingFaceIntentClassifier(IntentClassifierInterface):
@@ -105,6 +106,7 @@ class HuggingFaceIntentClassifier(IntentClassifierInterface):
             raise RuntimeError("intent classifier disabled")
 
 
+@checks.recorded_dependency(checks.INTENT_MODEL, "classify", lambda _model: checks.LOCAL_MODEL)
 def create_intent_classifier() -> IntentClassifierInterface:
     """Create the configured shared intent-classifier provider."""
     settings = get_settings().llm.intent_classifier

@@ -48,6 +48,35 @@ class ToolGovernancePolicy(Protocol):
         ...
 
 
+class McpServerInfo(BaseModel):
+    """What the server said about itself in the handshake."""
+
+    name: str = ""
+    version: str = ""
+    protocol_version: str = ""
+    instructions: str = ""
+    # The capabilities it declared (tools, resources, prompts, logging, ...).
+    capabilities: list[str] = Field(default_factory=list)
+
+
+class McpToolDescription(BaseModel):
+    """One tool as an agent is offered it: the server's description, the local governance."""
+
+    name: str
+    qualified_name: str
+    description: str = ""
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+    envelope: dict[str, Any] = Field(default_factory=dict)
+
+
+class McpServerDescription(BaseModel):
+    """A connected server, everything an operator needs to understand what it offers."""
+
+    server: McpServerSpec
+    info: McpServerInfo
+    tools: list[McpToolDescription] = Field(default_factory=list)
+
+
 class McpCallResult(BaseModel):
     """What a remote tool returned: its text, its structured content, and whether it failed."""
 
@@ -59,6 +88,8 @@ class McpCallResult(BaseModel):
 @runtime_checkable
 class McpSession(Protocol):
     """An open conversation with one MCP server."""
+
+    def server_info(self) -> McpServerInfo: ...
 
     async def list_tools(self) -> list[McpToolInfo]: ...
 
@@ -85,9 +116,16 @@ class McpToolSource(Protocol):
 
     async def tools(self) -> list[ToolDefinition]: ...
 
+    def describe(self) -> McpServerDescription | None:
+        """The connected server and the tools it offered (None before it connected)."""
+        ...
+
 
 __all__ = [
     "McpCallResult",
+    "McpServerDescription",
+    "McpServerInfo",
+    "McpToolDescription",
     "McpServerSpec",
     "McpSession",
     "McpToolInfo",

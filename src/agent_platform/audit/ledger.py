@@ -6,6 +6,7 @@ platform persistence contract rather than touching an agent's domain tables.
 """
 
 import json
+from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from agent_platform.audit.types import STANDING_FIELD, AuditEntry, Decision
@@ -57,6 +58,22 @@ CREATE INDEX IF NOT EXISTS idx_platform_audit_decision
     ON platform_audit_entries (agent_id, decision, seq);
 """
 
+_TABLE = "platform_audit_entries"
+# The columns a batch append writes, with their types (`seq` is assigned by the table).
+_BULK_COLUMNS = {
+    "agent_id": "VARCHAR",
+    "trace_id": "VARCHAR",
+    "actor": "VARCHAR",
+    "action": "VARCHAR",
+    "authority_context": "VARCHAR",
+    "model_version": "VARCHAR",
+    "policy_version": "VARCHAR",
+    "data_version": "VARCHAR",
+    "decision": "VARCHAR",
+    "rationale": "VARCHAR",
+    "timestamp": "VARCHAR",
+}
+
 _INSERT = """
 INSERT INTO platform_audit_entries (
     agent_id, trace_id, actor, action, authority_context, model_version,
@@ -101,9 +118,18 @@ class DuckDbAuditLedger:
         self._logger = get_logger("audit")
         self._store.execute_script(_DUCKDB_SCHEMA)
 
+    def record_many(self, entries: Sequence[AuditEntry]) -> None:
+        """Append many events in one batch (a backfill, a generated world)."""
+        rows = [dict(zip(_BULK_COLUMNS, self._row(entry), strict=True)) for entry in entries]
+        self._store.bulk_insert(_TABLE, _BULK_COLUMNS, rows)
+        self._logger.info("Audit entries appended", count=len(rows))
+
     @logged("audit")
     def record(self, entry: AuditEntry) -> None:
         """Append one shared audit event, stamping the owning agent."""
+        self._store.execute(_INSERT, self._row(entry))
+
+    def _row(self, entry: AuditEntry) -> tuple[Any, ...]:
         stamped = entry.model_copy(
             update={
                 "agent_id": entry.agent_id or self._agent_id,
@@ -111,21 +137,18 @@ class DuckDbAuditLedger:
                 "data_version": entry.data_version or self._data_version,
             }
         )
-        self._store.execute(
-            _INSERT,
-            (
-                stamped.agent_id,
-                stamped.trace_id,
-                stamped.actor,
-                stamped.action,
-                json.dumps(stamped.authority_context, default=str),
-                stamped.model_version,
-                stamped.policy_version,
-                stamped.data_version,
-                stamped.decision,
-                stamped.rationale,
-                stamped.timestamp.isoformat(),
-            ),
+        return (
+            stamped.agent_id,
+            stamped.trace_id,
+            stamped.actor,
+            stamped.action,
+            json.dumps(stamped.authority_context, default=str),
+            stamped.model_version,
+            stamped.policy_version,
+            stamped.data_version,
+            stamped.decision,
+            stamped.rationale,
+            stamped.timestamp.isoformat(),
         )
 
     def reconstruct(self, trace_id: str) -> list[AuditEntry]:

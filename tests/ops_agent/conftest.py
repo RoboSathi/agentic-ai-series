@@ -3,7 +3,7 @@
 The shared conftest runs every test under the customer support overlay; these
 tests layer the ops agent's overlay on top for their duration. The model is
 scripted, the MCP server is the platform's real analytics server over a real
-exported mart, connected in-process; every ledger is a real DuckDB in tmp.
+exported Parquet, connected in-process; every ledger is a real DuckDB in tmp.
 """
 
 import json
@@ -14,8 +14,8 @@ from typing import Any
 
 import pytest
 
-from agent_platform.analytics import MartExporter
-from agent_platform.analytics.mart_db import MartDatabase
+from agent_platform.analytics import ParquetExporter
+from agent_platform.analytics.source_db import SourceDatabase
 from agent_platform.analytics.mcp_server import build_server
 from agent_platform.audit import AuditEntry, DuckDbAuditLedger
 from agent_platform.config import (
@@ -54,14 +54,14 @@ def ops_config() -> Iterator[None]:
 
 
 @pytest.fixture
-def mart(tmp_path: Path, ops_config: None) -> Path:
-    """A mart holding three audit decisions: two allows and a deny."""
+def parquet(tmp_path: Path, ops_config: None) -> Path:
+    """A source holding three audit decisions: two allows and a deny."""
     store = DuckDbObservabilityStore(tmp_path / "source.duckdb")
     ledger = DuckDbAuditLedger(store, agent_id="some_agent")
     for decision in ("allow", "allow", "deny"):
         ledger.record(AuditEntry(trace_id="t", actor="a", action="x.y", decision=decision))
-    directory = tmp_path / "mart"
-    MartExporter(store, mart_dir=directory, evals_db=tmp_path / "none.duckdb").export()
+    directory = tmp_path / "parquet"
+    ParquetExporter(store, parquet_dir=directory, evals_db=tmp_path / "none.duckdb").export()
     return directory
 
 
@@ -83,14 +83,14 @@ class Harness:
 
 
 @pytest.fixture
-async def harness(mart: Path, tmp_path: Path) -> AsyncIterator[Any]:
+async def harness(parquet: Path, tmp_path: Path) -> AsyncIterator[Any]:
     agents: list[OpsAgent] = []
 
     def build(
         script: list[dict[str, Any]], features: dict[str, bool] | None = None, down: bool = False
     ) -> Harness:
         def target(spec: McpServerSpec) -> Any:
-            return "http://127.0.0.1:9/mcp" if down else build_server(MartDatabase(mart))
+            return "http://127.0.0.1:9/mcp" if down else build_server(SourceDatabase(parquet))
 
         store = DuckDbObservabilityStore(tmp_path / f"ops-{len(agents)}.duckdb")
         feed = InMemoryLiveStatusFeed()

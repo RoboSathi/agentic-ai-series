@@ -2,6 +2,7 @@
 
 from agent_platform.control_loop.types import ControlCheck, ControlLoopReport
 from agent_platform.logging import get_logger
+from agent_platform.observability.units import report_loop
 from agent_platform.tools.types import ToolCall
 
 
@@ -71,12 +72,25 @@ class DuplicateActionDetector:
 class ToolControlLoop:
     """Deterministic trajectory boundary used immediately before execution."""
 
-    def __init__(self, duplicate_detector: DuplicateActionDetector | None = None) -> None:
+    def __init__(
+        self,
+        duplicate_detector: DuplicateActionDetector | None = None,
+        step_cap: int | None = None,
+    ) -> None:
         self._duplicates = duplicate_detector or DuplicateActionDetector()
         self._logger = get_logger("control_loop")
+        # A loop built for a turn declares that turn's step cap, so a turn that never
+        # reaches it is recorded as such rather than as having no cap.
+        if step_cap is not None:
+            report_loop(step_cap, False)
 
     def evaluate_round(self, round_number: int, max_rounds: int) -> ControlLoopReport:
-        """Check the iteration ceiling when the caller needs a standalone decision."""
+        """Check the iteration ceiling when the caller needs a standalone decision.
+
+        The ceiling is the turn's step cap; reaching it is the turn's loop abort,
+        reported to the turn bracket either way so `loop_abort_rate` sees every turn.
+        """
+        report_loop(max_rounds, round_number > max_rounds)
         if round_number <= max_rounds:
             report = ControlLoopReport(
                 decision="continue",

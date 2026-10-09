@@ -161,6 +161,11 @@ class GroundingResolver:
         ]
         return self._settle(claim, kind, outcomes)
 
+    @property
+    def entailment(self) -> EntailmentModel:
+        """The entailment model this resolver judges claims with."""
+        return self._entailment
+
     def _settled_by_record(
         self, claim: str, kind: ClaimClass, record: list[Chunk]
     ) -> tuple[str, Chunk] | None:

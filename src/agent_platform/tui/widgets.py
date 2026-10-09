@@ -971,7 +971,11 @@ def _append_grounding(body: Text, fields: Mapping[str, Any]) -> None:
     passage with its cosine and NLI scores, the diagnostics, the per-tier
     counts — is in `guardrails.log`. The card answers three questions: what
     was sent, what was it checked against, and what decided each sentence.
+    Level 1 (token confidence) and level 2 (the agent's own grounding) lead the card.
     """
+    for level in fields.get("levels") or []:
+        if isinstance(level, Mapping):
+            _append_level(body, level)
     _append_outcome(body, str(fields.get("outcome") or ""))
     # The agent's deterministic pre-filter, when it has one: how the reply reached this check.
     if fields.get("pre_check"):
@@ -993,6 +997,21 @@ def _append_grounding(body: Text, fields: Mapping[str, Any]) -> None:
     # Each claim as a check line under the rows, the way a guardrail card lists its checks.
     for check in checks:
         _append_claim(body, check)
+
+
+def _append_level(body: Text, level: Mapping[str, Any]) -> None:
+    """`level 1 · token confidence = …`, toned by its verdict, then its proof lines."""
+    words = get_settings().hallucination_protection.levels
+    key = words.row.format(level=level.get("level"), name=level.get("name"))
+    body.append("\n  " if body else "  ")
+    _append_pair(body, key, " = ", str(level.get("summary") or ""), _verdict_style(level))
+    for line in level.get("lines") or []:
+        body.append(f"\n      {line}", style=get_settings().tui.body_styles["muted"])
+
+
+def _verdict_style(level: Mapping[str, Any]) -> str:
+    """A level's tone: pass, flagged (warn) or skipped (dim)."""
+    return _state_style(str(level.get("verdict") or "")) or get_settings().tui.body_styles["value"]
 
 
 def _append_grounding_row(body: Text, key: str, value: str) -> None:

@@ -1,6 +1,6 @@
 """The MCP client: a remote server's tools, arriving as ordinary governed tool definitions.
 
-The server is the platform's real analytics server over a real exported mart,
+The server is the platform's real analytics server over a real exported Parquet,
 connected in-process through the SDK; only the transport's target is substituted.
 """
 
@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from agent_platform.analytics import MartExporter
-from agent_platform.analytics.mart_db import MartDatabase
+from agent_platform.analytics import ParquetExporter
+from agent_platform.analytics.source_db import SourceDatabase
 from agent_platform.analytics.mcp_server import build_server
 from agent_platform.config import get_settings
 from agent_platform.config.settings import McpServerSettings, McpToolEnvelope
@@ -38,23 +38,23 @@ SERVER = McpServerSettings(name="analytics", namespace="analytics", envelope=REA
 
 
 @pytest.fixture
-def mart(tmp_path: Path) -> Path:
+def parquet(tmp_path: Path) -> Path:
     store = DuckDbObservabilityStore(tmp_path / "observability.duckdb")
     DuckDbFactLedger(store).record(LlmCallFact(model="m"))
-    directory = tmp_path / "mart"
-    MartExporter(store, mart_dir=directory, evals_db=tmp_path / "none.duckdb").export()
+    directory = tmp_path / "parquet"
+    ParquetExporter(store, parquet_dir=directory, evals_db=tmp_path / "none.duckdb").export()
     return directory
 
 
-def _source(mart: Path, server: McpServerSettings = SERVER) -> GovernedMcpToolSource:
-    transport = SdkMcpTransport(lambda spec: build_server(MartDatabase(mart)))
+def _source(parquet: Path, server: McpServerSettings = SERVER) -> GovernedMcpToolSource:
+    transport = SdkMcpTransport(lambda spec: build_server(SourceDatabase(parquet)))
     return GovernedMcpToolSource(
         server_spec(server), transport, ConfiguredGovernancePolicy([server])
     )
 
 
-async def test_the_servers_tools_arrive_namespaced_under_the_local_envelope(mart: Path) -> None:
-    source = _source(mart)
+async def test_the_servers_tools_arrive_namespaced_under_the_local_envelope(parquet: Path) -> None:
+    source = _source(parquet)
     try:
         tools = {tool.qualified_name: tool for tool in await source.tools()}
     finally:
@@ -68,9 +68,9 @@ async def test_the_servers_tools_arrive_namespaced_under_the_local_envelope(mart
     )
 
 
-async def test_an_undeclared_server_gets_the_most_restrictive_envelope(mart: Path) -> None:
+async def test_an_undeclared_server_gets_the_most_restrictive_envelope(parquet: Path) -> None:
     undeclared = McpServerSettings(name="other", namespace="other")
-    source = _source(mart, undeclared)
+    source = _source(parquet, undeclared)
     try:
         tool = (await source.tools())[0]
     finally:
@@ -83,8 +83,8 @@ async def test_an_undeclared_server_gets_the_most_restrictive_envelope(mart: Pat
     )
 
 
-async def test_a_call_goes_to_the_server_and_comes_back_as_a_tool_result(mart: Path) -> None:
-    source = _source(mart)
+async def test_a_call_goes_to_the_server_and_comes_back_as_a_tool_result(parquet: Path) -> None:
+    source = _source(parquet)
     try:
         registry = NamespacedToolRegistry()
         registry.register_all(await source.tools())
@@ -98,8 +98,8 @@ async def test_a_call_goes_to_the_server_and_comes_back_as_a_tool_result(mart: P
     assert not refused.success and refused.error
 
 
-async def test_the_registry_validates_arguments_against_the_tools_schema(mart: Path) -> None:
-    source = _source(mart)
+async def test_the_registry_validates_arguments_against_the_tools_schema(parquet: Path) -> None:
+    source = _source(parquet)
     try:
         registry = NamespacedToolRegistry()
         registry.register_all(await source.tools())
@@ -109,8 +109,8 @@ async def test_the_registry_validates_arguments_against_the_tools_schema(mart: P
     assert registry.build_call("analytics.run_query", {}) is None
 
 
-async def test_a_closed_session_refuses_calls(mart: Path) -> None:
-    transport = SdkMcpTransport(lambda spec: build_server(MartDatabase(mart)))
+async def test_a_closed_session_refuses_calls(parquet: Path) -> None:
+    transport = SdkMcpTransport(lambda spec: build_server(SourceDatabase(parquet)))
     session = await transport.connect(McpServerSpec(name="analytics", namespace="analytics"))
     await session.close()
     with pytest.raises(McpSessionClosedError):

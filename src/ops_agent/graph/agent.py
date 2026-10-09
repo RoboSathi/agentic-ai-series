@@ -3,12 +3,11 @@
 `handle(query, session_id)` is the shell's contract. A turn is traced (one trace
 id for its log lines, facts and audit entries), screened (when the
 `prompt_injection` feature is declared), answered by the graph, and recorded as
-a turn fact. The MCP server is connected on the first turn, not at build time:
+the outcome of its task (the bracket writes the turn and task facts). The MCP server is connected on the first turn, not at build time:
 building an agent must stay offline, and a server that is down should cost one
 turn an explanation, not the console its start-up.
 """
 
-import time
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -17,16 +16,19 @@ from agent_platform.config import get_settings
 from agent_platform.llm.types import Message
 from agent_platform.logging import get_current_trace_id, get_logger, instrument
 from agent_platform.mcp import McpToolSource
-from agent_platform.observability import FactRecorder, NullFactRecorder, StageReporter
-from agent_platform.observability.facts import TurnOutcomeFact
+from agent_platform.mcp.presentation import server_card
+from agent_platform.observability import StageReporter
 from agent_platform.observability.langsmith import NullTraceExporter, TraceExporter, turn_trace
+from agent_platform.observability.units import close_task
 from agent_platform.security import MessageScreener, ScreenSubject
 from agent_platform.tools import NamespacedToolRegistry
 from ops_agent.config.settings import OpsAgentSettings
 from ops_agent.graph.state import OpsState, initial_state
 
-# How a turn ended, as its summary card and its outcome fact name it.
+# How a question ended, as its summary card and its task outcome name it. Each is
+# declared, with its flags, under `analytics.tasks.outcomes` in this agent's config.
 ANSWERED, STOPPED, BLOCKED, UNAVAILABLE = "answered", "stopped", "blocked", "unavailable"
+OUTCOMES = (ANSWERED, STOPPED, BLOCKED, UNAVAILABLE)
 
 
 class TurnResult(BaseModel):
@@ -39,7 +41,7 @@ class TurnResult(BaseModel):
 
 @instrument("ops_agent")
 class OpsAgent:
-    """Answers questions about the agents from the analytics mart, over MCP."""
+    """Answers questions about the agents from the analytics source, over MCP."""
 
     def __init__(
         self,
@@ -49,7 +51,6 @@ class OpsAgent:
         settings: OpsAgentSettings,
         reporter: StageReporter | None = None,
         screen: MessageScreener | None = None,
-        facts: FactRecorder | None = None,
         trace_exporter: TraceExporter | None = None,
     ) -> None:
         self._graph = graph
@@ -58,7 +59,6 @@ class OpsAgent:
         self._settings = settings
         self._reporter = reporter
         self._screen = screen
-        self._facts = facts or NullFactRecorder()
         self._exporter = trace_exporter or NullTraceExporter()
         self._history: dict[str, list[Message]] = {}
         self._connected = False
@@ -72,9 +72,9 @@ class OpsAgent:
             session=session_id,
             inputs={"query": query},
         ) as trace:
-            started = time.perf_counter()
-            result, state = await self._summarised(query, session_id)
-            self._record(result, state, session_id, started)
+            result = await self._summarised(query, session_id)
+            # One question is one (implicit) task; its outcome is how the turn ended.
+            close_task(result.outcome)
             trace.finish({"response": result.response, "outcome": result.outcome})
             return result
 
@@ -85,37 +85,33 @@ class OpsAgent:
             if closer is not None:
                 await closer()
 
-    async def _summarised(self, query: str, session_id: str) -> tuple[TurnResult, OpsState | None]:
+    async def _summarised(self, query: str, session_id: str) -> TurnResult:
         if self._reporter is not None:
             self._reporter.begin_turn(session=session_id)
         try:
-            result, state = await self._turn(query, session_id)
+            result = await self._turn(query, session_id)
         except Exception:
             if self._reporter is not None:
                 self._reporter.end_turn("failed", UNAVAILABLE)
             raise
         if self._reporter is not None:
             self._reporter.end_turn("completed", result.outcome)
-        return result, state
+        return result
 
-    async def _turn(self, query: str, session_id: str) -> tuple[TurnResult, OpsState | None]:
+    async def _turn(self, query: str, session_id: str) -> TurnResult:
         words = self._settings.words
         refusal = await self._screened(query, session_id)
         if refusal is not None:
-            return TurnResult(response=refusal, outcome=BLOCKED), None
+            return TurnResult(response=refusal, outcome=BLOCKED)
         problem = await self._connect()
         if problem is not None:
-            return TurnResult(
-                response=words.no_tools.format(error=problem), outcome=UNAVAILABLE
-            ), None
+            return TurnResult(response=words.no_tools.format(error=problem), outcome=UNAVAILABLE)
         state: OpsState = await self._graph.ainvoke(
             initial_state(session_id, self._messages(query, session_id))
         )
         self._remember(session_id, query, state["answer"])
         stopped = bool(state["messages"][-1].tool_calls)
-        return TurnResult(
-            response=state["response"], outcome=STOPPED if stopped else ANSWERED
-        ), state
+        return TurnResult(response=state["response"], outcome=STOPPED if stopped else ANSWERED)
 
     async def _screened(self, query: str, session_id: str) -> str | None:
         """The refusal, when a declared screen stops the message; None when it may go on."""
@@ -134,11 +130,26 @@ class OpsAgent:
         try:
             for source in self._sources:
                 self._registry.register_all(await source.tools())
+                self._show_server(source)
         except Exception as exc:  # noqa: BLE001 - said to the operator, retried next turn
             self._logger.warning("MCP tools unavailable", error=repr(exc))
             return str(exc) or repr(exc)
         self._connected = True
         return None
+
+    def _show_server(self, source: McpToolSource) -> None:
+        """The MCP SERVER card: the handshake, and every tool the server offered."""
+        description = source.describe()
+        if description is None or self._reporter is None:
+            return
+        heading, sections = server_card(description)
+        self._reporter.emit(
+            self._settings.stages.server,
+            "completed",
+            event_kind="narrative",
+            summary=heading,
+            fields=sections,
+        )
 
     def _messages(self, query: str, session_id: str) -> list[Message]:
         return [
@@ -153,26 +164,5 @@ class OpsAgent:
                 Message(role="assistant", content=answer)]  # fmt: skip
         self._history[session_id] = kept[-2 * turns :] if turns else []
 
-    def _record(
-        self, result: TurnResult, state: OpsState | None, session_id: str, started: float
-    ) -> None:
-        latency = (time.perf_counter() - started) * 1000
-        if state is None:
-            fact = TurnOutcomeFact(
-                session_id=session_id, outcome=result.outcome, latency_ms=latency, answered=False
-            )
-        else:
-            fact = TurnOutcomeFact(
-                session_id=session_id,
-                outcome=result.outcome,
-                latency_ms=latency,
-                answered=result.outcome == ANSWERED,
-                loop_aborted=result.outcome == STOPPED,
-                tool_calls=state["tool_calls"],
-                tool_failures=state["tool_failures"],
-                unverified_claims=state["unverified"],
-            )
-        self._facts.record(fact)
 
-
-__all__ = ["ANSWERED", "BLOCKED", "STOPPED", "UNAVAILABLE", "OpsAgent", "TurnResult"]
+__all__ = ["ANSWERED", "BLOCKED", "OUTCOMES", "STOPPED", "UNAVAILABLE", "OpsAgent", "TurnResult"]
