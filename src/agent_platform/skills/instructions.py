@@ -129,6 +129,7 @@ class InstructionBuilder:
         summary = words.joiner.join(_line(item, words.activated) for item in activation.skills)
         if prefetched:
             summary += words.prefetched.format(tools=", ".join(prefetched))
+        summary += words.offered.format(tools=", ".join(offered)) if offered else words.offered_none
         self._reporter.emit(
             words.activation_stage,
             "completed",
@@ -136,9 +137,10 @@ class InstructionBuilder:
             summary=summary,
             fields={
                 "procedures": [_card_fields(item) for item in activation.skills],
-                # Drawn before any of them runs: the reads the procedures do first.
-                "reads_first": prefetched,
-                "tools_offered": offered,
+                # Drawn before any of them runs: what the harness reads before the model is
+                # asked, and what the model may then call (a read already made is not offered).
+                "harness_reads_first": prefetched,
+                "model_may_call": offered,
             },
         )
 
@@ -167,18 +169,15 @@ class InstructionBuilder:
 
 def _line(item: ActivatedSkill, template: str) -> str:
     skill = item.skill
-    return template.format(
-        name=skill.name, version=skill.version, reason=item.reason, steps=skill.document.steps
-    )
+    return template.format(name=skill.name, version=skill.version, reason=item.reason)
 
 
 def _card_fields(item: ActivatedSkill) -> dict[str, Any]:
     skill = item.skill
     return {
-        "procedure": skill.name,
-        "version": skill.version,
-        "matched": item.reason,
-        "steps": skill.document.steps,
+        "procedure": f"{skill.name} v{skill.version}",
+        "chosen_because": item.reason,
+        "steps": list(skill.document.steps),
     }
 
 

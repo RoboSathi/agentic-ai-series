@@ -15,13 +15,16 @@ from typing import Any
 import pytest
 
 from agent_platform.config import get_settings
+from agent_platform.context.types import Chunk
 from agent_platform.evals import create_scoring_cascade
 from agent_platform.guardrails.response import ResponseGuardrail
 from agent_platform.hallucination_protection import DetectionLadder
 from agent_platform.hallucination_protection.claims import specifics
+from agent_platform.hallucination_protection.ledger import FLAG_TRUE, facts_in
 from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.console.commands import QueueCommand
+from customer_support_agent.domain.identity import Customer, set_current_customer
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.nodes.review_wait import _reply
 from customer_support_agent.graph.state import AgentState
@@ -56,49 +59,50 @@ class _Support(NodeSupport):
         self._registry: Any = SimpleNamespace(get=lambda _name: None)
 
 
-def _state(verified: str | None) -> AgentState:
-    state = AgentState(query="who am i?", session_id="s", customer_id=12)
-    if verified:
-        state.working_memory.set("verified_customer", verified)
-    return state
+def _state() -> AgentState:
+    return AgentState(query="who am i?", session_id="s", customer_id=12)
 
 
 def _guard() -> ResponseGuardrail:
     return ResponseGuardrail(DetectionLadder(create_scoring_cascade()))
 
 
+def _evidence(customer: Customer | None) -> list[Chunk]:
+    set_current_customer(customer)
+    return _Support()._grounding_evidence(_state())
+
+
 class TestTheVerifiedCustomerIsEvidence:
-    _WHO = "Margaret Bartik (account #12)"
+    """Who the customer is comes from authentication, as typed facts — never from them."""
+
+    _WHO = Customer(customer_id=12, name="Margaret Bartik")
 
     def test_the_identity_the_harness_established_is_offered_as_evidence(self) -> None:
-        chunks = _Support()._grounding_evidence(_state(self._WHO))
-        [identity] = [c for c in chunks if c.source == "working_memory:verified_customer"]
-        assert identity.kind == "memory"
-        assert identity.content == "You are Margaret Bartik (account #12)."
+        facts = {fact.attribute: (fact, chunk) for fact, chunk in facts_in(_evidence(self._WHO))}
+        name, chunk = facts["customer_name"]
+        assert (name.value, chunk.kind) == ("Margaret Bartik", "memory")
+        assert facts["customer_id"][0].value == "12"
+        assert facts["verified"][0].value == FLAG_TRUE
 
     def test_nothing_is_offered_when_nobody_was_verified(self) -> None:
-        chunks = _Support()._grounding_evidence(_state(None))
-        assert not [c for c in chunks if c.source.startswith("working_memory:")]
+        sessions = [c for c in _evidence(None) if c.source.startswith("session:")]
+        assert sessions == []
 
     async def test_who_am_i_is_supported(self) -> None:
         result = await _guard().enforce(
-            "You are Margaret Bartik, account #12.",
-            _Support()._grounding_evidence(_state(self._WHO)),
+            "You are Margaret Bartik, account #12.", _evidence(self._WHO)
         )
         assert not result.escalated, result.claim_checks
         assert result.supported == 1
 
     async def test_a_different_account_is_still_refused(self) -> None:
         result = await _guard().enforce(
-            "You are Margaret Bartik, account #99.",
-            _Support()._grounding_evidence(_state(self._WHO)),
+            "You are Margaret Bartik, account #99.", _evidence(self._WHO)
         )
         assert result.escalated
 
     async def test_nobody_verified_means_no_identity_may_be_stated(self) -> None:
-        result = await _guard().enforce(
-            "You are Margaret Bartik, account #12.", _Support()._grounding_evidence(_state(None))
-        )
+        result = await _guard().enforce("You are Margaret Bartik, account #12.", _evidence(None))
         assert result.escalated
 
 

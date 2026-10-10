@@ -399,5 +399,7 @@ def _grounding_headline(result: ResponseGuardrailResult, review: int | None) -> 
         return str(result.tally)
     if review is None:
         return str(result.outcome)
-    queued = get_agent_settings().review_output.queued.format(id=review)
+    settings = get_agent_settings()
+    reason = settings.review_reasons.for_finding(result.reason_code)
+    queued = settings.review_output.queued.format(id=review, reason=reason)
     return f"{result.outcome} · {queued}"

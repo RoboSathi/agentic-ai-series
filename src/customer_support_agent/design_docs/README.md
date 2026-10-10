@@ -48,7 +48,7 @@ content_moderation → classify_intent → assemble_context] → propose ⇄ exe
 |---|---|
 | `graph/` | the agent, the wiring (`edges.py`), node groups (`nodes/`), the composition root (`builder.py`) |
 | `intent/router.py` | out-of-scope rejection → classifier → one clarification question |
-| `basic_sanity/order_validator.py` | `OrderSanityCheck`, csa's business-logic seam into the platform's `BasicSanityChecker` |
+| `deterministic_checks/order_validator.py` | `OrderChecks`, csa's business-logic seam into the platform's `DeterministicChecker` |
 | `gatekeeper/` | csa's business rules and mandates for the platform Gatekeeper |
 | `loop_control/quality_gate.py` | the Output Quality Gate: `PlanLookup`, `GroundedCritic`, `IndependentScorer` |
 | `resilience/` | the refund and cancellation sagas (compensating steps, notification last) |
@@ -63,7 +63,7 @@ content_moderation → classify_intent → assemble_context] → propose ⇄ exe
 
 ## Features
 
-csa's overlay turns on every platform feature (`basic_sanity`,
+csa's overlay turns on every platform feature (`deterministic_checks`,
 `prompt_injection`, `content_moderation`, `pii`, `intent_classification`,
 `hallucination_guard`, `gatekeeper`, `memory` with all four CoALA stores,
 `context` with rerank and failure detection). `/harness` moves them for

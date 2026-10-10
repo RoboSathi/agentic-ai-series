@@ -323,7 +323,7 @@ class TestPlugin:
 class TestSignals:
     def test_nested_records_count_as_evidence(self) -> None:
         event = StatusEvent(
-            stage="basic_sanity",
+            stage="deterministic_checks",
             status="blocked",
             event_kind="decision",
             fields={"findings": [{"evidence": {"order_id": 90003}}]},

@@ -506,7 +506,9 @@ def guard_card(
     card = (
         StepCard()
         .asked(say("guard.asked"), say("guard.how", model=nli_model))
-        .model(guarded.call)
+        # The rewriter's raw answer is not shown: each sentence below says what became of
+        # it and what it was rewritten to, which is all that answer was for.
+        .model(guarded.call, response=False)
         .decision(heading)
         .evidence(*evidence)
     )

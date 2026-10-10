@@ -68,7 +68,7 @@ class TestTriggers:
 
     def test_the_reason_names_the_signal(self, selector: SkillSelector) -> None:
         [chosen] = selector.select([_REFUND], frozenset({"intent:REFUND"}), "")
-        assert chosen.reason == "matched intent REFUND"
+        assert chosen.reason == "chosen for intent REFUND"
 
     def test_an_always_skill_joins_every_turn(self, selector: SkillSelector) -> None:
         chosen = selector.select([_ALWAYS, _REFUND], frozenset({"intent:REFUND"}), "")

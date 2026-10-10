@@ -9,6 +9,8 @@ of them that makes a correct reply unverifiable fails here.
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from agent_platform.config import get_settings
 from agent_platform.evals import create_scoring_cascade
 from agent_platform.evals.entailment import EntailmentResult
@@ -83,9 +85,9 @@ class TestAnEffectIsEvidenceOnlyOnceItIsReadBack:
         )
         assert result.escalated
 
-    def test_basic_sanity_is_a_gate_not_evidence(self) -> None:
+    def test_deterministic_checks_are_a_gate_not_evidence(self) -> None:
         """Pre-flight prose about the state *before* the action grounds no outcome."""
-        sanity = {
+        checks = {
             "findings": [
                 {
                     "check": "ownership",
@@ -94,7 +96,7 @@ class TestAnEffectIsEvidenceOnlyOnceItIsReadBack:
                 }
             ]
         }
-        evidence = _Support()._grounding_evidence(_state(basic_sanity=sanity))
+        evidence = _Support()._grounding_evidence(_state(deterministic_checks=checks))
         assert not any("authenticated customer" in chunk.content for chunk in evidence)
 
 
@@ -152,8 +154,8 @@ class TestTheReportedRepliesAgainstTheRealCorpus:
         assert "hear back soon" in result.response
 
     async def test_the_reply_from_the_live_run_keeps_both_sentences(self) -> None:
-        """A BasicSanity line once "contradicted" the second sentence at 0.99."""
-        sanity = {
+        """A DeterministicCheck line once "contradicted" the second sentence at 0.99."""
+        checks = {
             "findings": [
                 {
                     "check": "ownership",
@@ -168,7 +170,7 @@ class TestTheReportedRepliesAgainstTheRealCorpus:
                 "process_refund",
                 "The refund of $32.94 for order 10829 has been completed. Order 10829 refund status: completed",
             ),
-            basic_sanity=sanity,
+            deterministic_checks=checks,
         )
         reply = "Your refund for order 10829 has been completed. $32.94 has been refunded."
         result = await _guard().enforce(reply, support._grounding_evidence(state))
@@ -444,6 +446,7 @@ class TestAStateRecordIsNotSentToNli:
         )
 
 
+@pytest.mark.usefixtures("abstaining_guard")
 class TestAPromiseIsReadAsAPromise:
     """`cancel order 10193`: "will be processed once approved" was read as already processed."""
 
@@ -576,6 +579,7 @@ class _LimitedSupport(_Support):
         self._agent_policy = SimpleNamespace(per_action_limit=lambda _action: Money.parse("50.00"))
 
 
+@pytest.mark.usefixtures("abstaining_guard")
 class TestAReviewIsPromisedOnlyOnceOneIsQueued:
     """`refund order 10533` ($103.39, limit $50.00): a review was promised and none was queued.
 

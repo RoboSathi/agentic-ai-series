@@ -15,7 +15,7 @@ agent:
 # overlay overrides these in turn. Everything on: a support agent that
 # moves money talks to the public, so every control it could have, it has.
 features:
-  basic_sanity: true
+  deterministic_checks: true
   prompt_injection: true
   content_moderation: true
   pii: true
@@ -103,21 +103,11 @@ llm:
 
 # The profile and the procedures (ADR 0010): synced into procedural memory
 # at start-up when memory.procedural is on, selected per turn by intent.
-# What the model and every card call each tool (ADR 0010): verbs a person would use.
-# Policy, audit and evals keep the qualified names (`support.process_refund`).
-tools:
-  model_names:
-    support.get_order_status: look_up_order
-    support.list_orders: list_my_orders
-    support.get_refund_status: check_refund
-    support.process_refund: request_refund
-    support.cancel_order: cancel_order
-
 skills:
   profile_path: src/customer_support_agent/prompts/AGENT.md
   skills_dir: src/customer_support_agent/prompts/skills
-  # An unplaced turn (route llm_fallback) gets every procedure that may be its task:
-  # order status, refund and cancel — and is offered exactly their tools.
+  # An unplaced turn (route llm_fallback) gets the order-status procedure only, so it
+  # is offered reads: a write needs a request the router recognised as one.
   selection:
     max_active: 3
   # Profile + the three largest procedures may add at most this to a prompt (the old
@@ -128,7 +118,7 @@ memory:
   episodic:
     path: logs/memory/customer_support_agent
   dream:
-    # How this agent words a refused tool call (graph/nodes/act.py);
+    # How this agent words a refused tool call (graph/nodes/execute.py);
     # refusals repeated across sessions become procedure candidates.
     refusal_markers: ["That action was not permitted:"]
     # This agent's read-only tools: a dream summary says "looked up
@@ -184,6 +174,37 @@ hallucination_protection:
   # This agent's ids are five-digit order numbers (the same shape the
   # evals use). A record about another order cannot refute a claim.
   refute_identifier_pattern: '\b\d{5}\b'
+  # A claim nothing grounds was made up: cut, and queued for a person like a wrong one.
+  unsupported_is_hallucination: true
+  # What the customer reads when nothing of a reply survived, by why. Every cut reply is
+  # queued, so each says a person will follow up rather than "try again".
+  withheld_replies:
+    CLAIM_UNSUPPORTED: "I want to be sure I give you accurate details, so a colleague is checking my answer and will follow up shortly."
+    LOW_CONFIDENCE_DEGENERATE: "Sorry, something went wrong writing that reply. A colleague is checking it and will follow up shortly."
+    LOW_CONFIDENCE_SPECIFIC: "I want to be sure I give you accurate details, so a colleague is checking my answer and will follow up shortly."
+    HALLUCINATION_GUARD_BLOCK: "I couldn't confirm that answer against your records, so a colleague is checking it and will follow up shortly."
+  # The facts `presentation/facts.py` states, and how a claim words each. A flag's `deny`
+  # is read before its `affirm`; a value is checked only when its `terms` appear.
+  facts:
+    state_attribute: refund_status
+    attributes:
+      order_status: {type: text}
+      refund_status: {type: text}
+      product: {type: text}
+      delivered_on: {type: date, terms: ['\bdeliver']}
+      due_on: {type: date, terms: ['\bdue\b', '\barriv', '\bexpected\b', '\bestimated\b']}
+      order_total: {type: money, terms: ['\btotal', '\bamount\b', '\bcost', '\bpaid\b', '\bprice\b', '\brefund']}
+      refund_eligible:
+        type: flag
+        affirm: ['\beligible\s+for\s+(?:a\s+)?(?:full\s+)?refund', '\bcan\s+be\s+refunded\b', '\bqualifies\s+for\s+(?:a\s+)?refund', '\bis\s+refundable\b']
+        deny: ['\bnot\s+eligible\b', '\bineligible\b', '\bcannot\s+be\s+refunded\b', '\bcan[’'']?t\s+be\s+refunded\b', '\bnot\s+(?:yet\s+)?refundable\b', '\bisn[’'']?t\s+eligible\b']
+      settlement_window: {type: duration, terms: ['\bsettl']}
+      # The limit is a fact the guard reads, never one a corrected reply states.
+      refund_limit: {type: money, terms: ['\blimit\b', '\bdirectly\b', '\bmyself\b'], correctable: false}
+      support_contact: {type: text}
+      customer_name: {type: text}
+      customer_id: {type: number, terms: ['\baccount\b', '\bcustomer\s+(?:id|number)\b']}
+      verified: {type: flag, affirm: ['\bverified\b'], deny: ['\bnot\s+verified\b', '\bunverified\b']}
   # This agent's records: order ids, refund outcomes, and the refund state machine.
   # A claim naming one of these is about this case and needs a record.
   record_identifier_pattern: '\border\s*#?\s*\d{3,}\b'
@@ -206,10 +227,10 @@ hallucination_protection:
     subject: refund
     # `issued`: paid and voidable; `completed`: settled. A voided refund goes
     # back to `none`.
-    ladder: [none, pending_review, approved, issued, completed]
+    ladder: [none, pending_review, issued, completed]
     branches: {denied: pending_review}
     # From this status on, money has moved or been authorised.
-    settled_from: approved
+    settled_from: issued
     # Record wording that states a status without the status line.
     observed_as:
       none:
@@ -228,11 +249,10 @@ hallucination_protection:
       - reaches: pending_review
         exact: true
         pattern: '\b(?:pending|awaiting|under\s+review|in\s+review|human\s+review|manual\s+review)\b'
-      - reaches: approved
-        pattern: '\bapproved\b'
-      # Money has moved: true from `issued` on.
+      # Money has moved: true from `issued` on. A refund is approved by being issued
+      # (a reviewer's approval issues it), so "approved" is the same event.
       - reaches: issued
-        pattern: '\b(?:refunded|processed|issued|paid|sent\s+back|paid\s+back|credited|reimbursed|returned)\b'
+        pattern: '\b(?:approved|refunded|processed|issued|paid|sent\s+back|paid\s+back|credited|reimbursed|returned)\b'
       # Settled: true only once the window has closed.
       - reaches: completed
         pattern: '\b(?:completed?|done|finished|settled|on\s+its\s+way)\b'
@@ -305,7 +325,7 @@ customer_support_agent:
     failed: action_failed
     unverified: action_unverified
   # How the customer's own words name an order. One reader, used by the
-  # graph, BasicSanity and the mandate that scopes a write, so the path that
+  # graph, DeterministicCheck and the mandate that scopes a write, so the path that
   # answers and the path that acts cannot read one message two ways.
   order_reference:
     anchored_patterns:
@@ -316,10 +336,23 @@ customer_support_agent:
       # "refund 10786", "cancel order #10786"; "refund $20" is not an order.
       - '\b(?:refund|cancel)\b(?:\s+(?:for|on))?(?:\s+order)?\s*[#:]?\s*(?P<id>\d{4,})\b(?!\s*(?:dollars?|usd|\$))'
     id_shape: '\b\d{5}\b'
-  # Facts the harness (never the customer) writes to working memory, and the
-  # sentence each is restated as when a reply is checked against the evidence.
+  # The order, the rules and the session as typed facts (`presentation/facts.py`): the
+  # hallucination check reads their values before any model, and NLI reads these
+  # sentences. Who the customer is comes from authentication, never from the customer.
   grounding_facts:
-    verified_customer: "You are {value}."
+    statements:
+      order_status: "Order {order_id} is {value}."
+      product: "Order {order_id} is for {value}."
+      order_total: "Order {order_id} totals {value}."
+      delivered_on: "Order {order_id} was delivered on {value}."
+      due_on: "Order {order_id} is due on {value}."
+      refund_eligible: "Order {order_id} is eligible for a refund."
+      settlement_window: "An issued refund settles within {minutes} minutes."
+      support_contact: "The customer can contact {value}."
+      refund_limit: "A refund above {value} needs a person's review."
+      customer_name: "The customer is {value}."
+      customer_id: "The customer's account number is {value}."
+      verified: "The customer's identity is verified."
   max_tool_iterations: 5
   # The LOOP CONTROL card is the platform's (`observability.step_events.loop_control`);
   # these are the reasons only this agent's loop has for stopping.
@@ -419,6 +452,26 @@ customer_support_agent:
     - has my refund
     - did my refund
     - is my refund
+    - didn't get my refund
+    - didn't get the refund
+    - didn't get refund
+    - didnt get my refund
+    - didnt get refund
+    - didnt receive my refund
+    - havent received my refund
+    - did not get my refund
+    - didn't receive my refund
+    - did not receive my refund
+    - haven't received my refund
+    - have not received my refund
+    - haven't got my refund
+    - not received my refund
+    - never got my refund
+    - never received my refund
+    - still no refund
+    - no refund yet
+    - still waiting for my refund
+    - waiting for my refund
     tools:
     - get_refund_status
     description: asking where a refund stands or when it will arrive
@@ -472,6 +525,20 @@ customer_support_agent:
     UNKNOWN: []
   intent_router:
     clarification_top_k: 2
+    # A turn no phrase or classifier placed, that names an order the deterministic
+    # checks proved is the customer's, is a question about that order: answered from
+    # the record with no model call, not handed to the model as UNKNOWN.
+    # A phrase counts only when asserted: "I don't want a refund" is not a refund request,
+    # and "I didn't get my refund" asks where one is (REFUND_STATUS's own phrases). An
+    # intent the customer refused is never granted, whatever the classifier says.
+    negation:
+      markers: ["don't", "dont", "do not", "didn't", "didnt", "did not", "doesn't", "does not", "won't", "wont", "will not", "haven't", "havent", "have not", "hasn't", "has not", "isn't", "is not", "not", "no", "never", "without", "can't", "cannot"]
+      window_words: 4
+      refused_reason: "The customer said they do not want {intent}."
+    order_reference:
+      intent: ORDER_STATUS
+      source: order_reference
+      reason: The turn names an order the customer owns and no other request was recognised.
     # Route a turn by `intents[].phrases` before the classifier sees it (on: a phrase
     # match is decided without a model call). Off sends every turn to the classifier
     # (profiles/no_phrase_rules.yaml). The order validator reads the same phrases
@@ -614,20 +681,22 @@ customer_support_agent:
   demo_user_code: 2HEDZTV
   policy_path: src/customer_support_agent/prompts/customer_policy.md
   # The one sentence that tells the model its refund limit, rendered from the DB row
-  # (`platform_agent_budgets`) when the agent is built. It is a prompt rule, not a control:
-  # the Gatekeeper still enforces the same limit, and with it off this sentence is all
-  # that stands between a persuasive customer and the money.
+  # (`platform_agent_budgets`) when the agent is built. It is not a control and does not
+  # stop the call: every refund goes through `process_refund`, so through the Gatekeeper,
+  # which escalates one above the limit to the review queue. With the Gatekeeper off
+  # nothing does, and the money moves.
   refund_limit_notice: >-
-    You may refund at most {limit} yourself. For a larger refund, do not call
-    request_refund: tell the customer the refund for that order needs a person's review
-    and that they can contact {contact}. Nothing is queued for them. Never tell the
-    customer the amount of this limit.
+    You may refund at most {limit} yourself. A larger refund still goes through
+    process_refund with the order's full total: the result says whether it was issued or
+    sent to a person for review. Never tell the customer the amount of this limit.
   # What the customer is sent instead when a reply states the limit anyway
   # (`security/limit_disclosure.py`), checked after grounding.
   refund_limit_withheld:
     with_order: "The refund for order {order_id} needs a person's review; please contact {contact}."
     without_order: "That refund needs a person's review; please contact {contact}."
   support_contact: *support_contact
+  # A refund a reviewer declined is final; this is how the customer escalates it.
+  refund_declined_escalation: "To escalate, email {contact}."
   # A procedure's prefetch reads (ADR 0010): each tool argument, from the turn-state key that
   # holds it; a read whose required arguments are not all known is skipped, never guessed.
   # `call_id` names the tool call the model is shown, so its result pairs with it.
@@ -635,6 +704,11 @@ customer_support_agent:
     arguments:
       order_id: order_under_discussion
     call_id: "prefetch-{tool}"
+    served_from: deterministic checks
+    # The model is offered only what the turn still needs: a read prefetch already
+    # answered is not offered again, and a tool whose only job is to find the order
+    # is not offered once the order is known.
+    needless_when_order_known: [list_orders]
   # Which turn facts become procedure signals (ADR 0010): a state metadata
   # key, and how its value is written as a signal a SKILL.md trigger names.
   instruction_signals:
@@ -664,10 +738,21 @@ customer_support_agent:
       not_issued: "Order {order_id} has no issued refund to void."
       already_settled: "Order {order_id}'s refund has already settled; it can no longer be voided."
       nothing_due: Nothing was waiting to settle.
+  # Why a request is queued (`hitl_queue.reason`): a refund or cancellation a person must
+  # approve, or a reply the hallucination check cut — by what it found.
+  review_reasons:
+    by_action:
+      refund: refund
+      cancel_and_refund: cancellation
+    by_finding:
+      CLAIM_UNSUPPORTED: hallucination_unsupported
+      LOW_CONFIDENCE_DEGENERATE: low_confidence
+      LOW_CONFIDENCE_SPECIFIC: low_confidence
+    hallucination: hallucination_contradicted
   # One human review queue: refunds above the limit, and replies the hallucination check cut.
   review_output:
     # Appended to the HALLUCINATION CHECK card when a cut reply was queued.
-    queued: "queued for review #{id}"
+    queued: "queued for review #{id} · {reason}"
     # What the model reads when an escalated call could not be queued. The
     # Gatekeeper's own reason names the limit, and the model must never hold it;
     # that reason goes to the log and the audit trail only.

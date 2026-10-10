@@ -41,4 +41,4 @@ E01, E35, E38, E48b, E48c.
 
 ## Tests
 
-Run with `./venv/bin/pytest tests/unit/test_authentication_and_scope.py tests/unit/test_basic_sanity.py -q` (or `make test` for everything).
+Run with `./venv/bin/pytest tests/unit/test_authentication_and_scope.py tests/unit/test_deterministic_checks.py -q` (or `make test` for everything).

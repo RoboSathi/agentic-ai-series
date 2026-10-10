@@ -20,7 +20,7 @@ from agent_platform.primitives.money import Money
 OrderStatus = Literal["pending", "shipped", "delivered", "cancelled"]
 # `issued`: paid, but not yet settled — still voidable until the batch closes
 # (the payments sense of void: undo before settlement, refund after it).
-RefundStatus = Literal["none", "pending_review", "approved", "denied", "issued", "completed"]
+RefundStatus = Literal["none", "pending_review", "denied", "issued", "completed"]
 HitlStatus = Literal["pending", "approved", "denied"]
 # What a reviewer's approval will do. A cancellation that moves money is
 # reviewed as one decision, so approving it cancels *and* refunds. A reply
@@ -36,6 +36,9 @@ REPLY_REVIEW: ReviewAction = "reply"
 REFUNDABLE_ORDER_STATUSES: frozenset[str] = frozenset({"delivered", "cancelled"})
 # A refund in either state has paid out; it cannot be refunded again.
 PAID_REFUND_STATUSES: frozenset[str] = frozenset({"issued", "completed"})
+# A refund a reviewer declined is final: it cannot be requested again. A customer who
+# disagrees escalates by email, outside the agent.
+FINAL_REFUND_STATUSES: frozenset[str] = frozenset({"denied"})
 # An order can be cancelled only before it leaves the warehouse. Once it
 # has shipped, stopping it is a carrier recall this business does not do.
 CANCELLABLE_ORDER_STATUSES: frozenset[str] = frozenset({"pending"})
@@ -116,6 +119,11 @@ class Order(BaseModel):
         return self.refund_status in PAID_REFUND_STATUSES
 
     @property
+    def refund_declined(self) -> bool:
+        """Whether a reviewer declined this order's refund, which is final."""
+        return self.refund_status in FINAL_REFUND_STATUSES
+
+    @property
     def is_refund_eligible(self) -> bool:
         """Whether this order has reached a state a refund can apply to.
 
@@ -131,6 +139,11 @@ class Order(BaseModel):
         """Why this order cannot be refunded, in words a customer can read."""
         if self.already_refunded:
             return f"Order {self.order_id} has already been refunded in full"
+        if self.refund_declined:
+            return (
+                f"The refund request for order {self.order_id} was declined by a reviewer, "
+                "and that decision is final"
+            )
         if not self.is_refund_eligible:
             return (
                 f"Order {self.order_id} is still {self.order_status}, so there is "
@@ -207,6 +220,9 @@ class HitlRequest(BaseModel):
     created_at: str = Field(default_factory=lambda: utc_now().isoformat())
     session_id: str | None = None
     detail: ReplyReview | None = None
+    # Why it was queued (`review_reasons`): a refund, a cancellation, or what the
+    # hallucination check found in a reply. The action says what approval does.
+    reason: str = ""
 
     @property
     def is_reply(self) -> bool:

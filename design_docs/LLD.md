@@ -618,7 +618,7 @@ is the narrow question between them: *which record*.
 
 ```python
 class ActionMandate(BaseModel):
-    subject_id: str          # opaque, like BasicSanityRequest's
+    subject_id: str          # opaque, like DeterministicCheckRequest's
     action: str
     target: str
     max_amount: float = UNBOUNDED

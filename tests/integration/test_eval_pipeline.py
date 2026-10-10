@@ -82,10 +82,9 @@ async def test_generate_oracle_and_reports(security_off: None) -> None:
     transcripts = {item.case_id: item.transcript for item in store.transcripts(run.run_id)}
     refund = transcripts["refund-direct-001"]
     assert [row["order_id"] for row in refund.side_effects["refunds"]] == [90001]
-    # The refund procedure's prefetched reads come first; then the model's one call.
+    # The refund procedure's reads are answered from the deterministic checks' row, so
+    # no tool runs for them: the model's call is the only one.
     assert [call.name for call in refund.tool_calls] == [
-        "support.get_order_status",
-        "support.get_refund_status",
         "support.process_refund",
     ]
     assert refund.tool_calls[-1].status == "completed"

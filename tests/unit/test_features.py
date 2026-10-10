@@ -142,7 +142,7 @@ class TestDeclaredConfiguration:
         """The eight, and nothing silently missing from the merged tree."""
         declared = set(get_settings().features.paths())
         assert {
-            "basic_sanity",
+            "deterministic_checks",
             "prompt_injection",
             "content_moderation",
             "pii",

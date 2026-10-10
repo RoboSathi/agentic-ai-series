@@ -188,6 +188,11 @@ def _normalised(value: str) -> str:
     return plain
 
 
+def specific_spans(text: str) -> list[tuple[int, int]]:
+    """Where each identifier, amount, date or weekday sits in `text`, as (start, end)."""
+    return [match.span() for match in _SPECIFIC.finditer(text)]
+
+
 def specifics(text: str) -> set[str]:
     """The identifiers, amounts, dates and weekdays a text names, normalised for comparison."""
     return {form for value in _SPECIFIC.findall(text) for form in _forms(value)} - {""}
@@ -237,6 +242,10 @@ class ClaimClassifier:
         if self._identifier.search(claim) or money_pattern().search(claim):
             return True
         return bool(self._outcome.search(claim)) and not self._promise.search(claim)
+
+    def promises(self, claim: str) -> bool:
+        """Whether the claim promises ("will", "once", "'ll") rather than reports."""
+        return bool(self._promise.search(claim))
 
     def _is_conversation(self, claim: str) -> bool:
         text = claim.strip().casefold()

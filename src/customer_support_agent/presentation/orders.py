@@ -85,6 +85,34 @@ def render_order_list(orders: list[Order]) -> str:
 # about where a refund stands, so every record of an order ends with it.
 REFUND_STATUS_LINE = "Order {order_id} refund status: {status}"
 
+# A waiting review, as its own sentence so it is its own premise. The earlier
+# "(a review request is already pending)" read to NLI as *contradicting* "a
+# review request has been submitted" — pending and submitted are the same
+# fact in two words, and a parenthesis gave it nothing to hold on to.
+_REVIEW_PENDING = (
+    "A refund review request for order {order_id} has been submitted and is awaiting a decision"
+)
+# Each refund state in words. With REFUND_STATUS answered straight from this
+# tool, the sentence is the customer's reply; the status line after it is
+# what the guard's deterministic refund-state check reads. No arrival date is
+# promised: the record holds none.
+_REFUND_STATE_SENTENCES: dict[str, str] = {
+    "none": "No refund has been requested for order {order_id}",
+    "pending_review": _REVIEW_PENDING,
+    "issued": (
+        "The refund of {amount} for order {order_id} has been issued and is waiting to settle"
+    ),
+    "completed": "The refund of {amount} for order {order_id} has been completed",
+    "denied": "The refund request for order {order_id} was declined by a reviewer",
+}
+
+
+def refund_state_sentence(order: Order) -> str:
+    """Where this order's refund stands, as a sentence a customer can read."""
+    template = _REFUND_STATE_SENTENCES.get(order.refund_status, REFUND_STATUS_LINE)
+    return template.format(order_id=order.order_id, amount=order.amount, status=order.refund_status)
+
+
 # The order under discussion, read fresh from the database for a reply to be
 # grounded on. It ranks with tool results (the guard's record tier) and its
 # source says a record, not a tool, established it.
@@ -234,7 +262,7 @@ def resolve_selection(message: str, menu: OrderMenu) -> int | None:
     Menu interaction is deliberately separate from conversation. A bare
     number is the UI gesture described by the menu ("Reply with a number"),
     while text such as "order 10560" is a conversational order reference and
-    must continue through BasicSanity → Intent → the normal agent path.
+    must continue through DeterministicCheck → Intent → the normal agent path.
 
     This distinction matters when the assistant has just asked which order
     should be refunded: showing order details would answer a different

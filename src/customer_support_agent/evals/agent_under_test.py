@@ -222,7 +222,7 @@ def tool_calls_from(events: list[StatusEvent]) -> list[ToolCallRecord]:
 def record_evidence(events: list[StatusEvent]) -> list[str]:
     """Every record the agent looked up, including deterministic (no-LLM) answers.
 
-    A record can sit anywhere in an event — a sanity finding nests the
+    A record can sit anywhere in an event — a deterministic-check finding nests the
     order it checked inside its evidence — so the whole field tree is searched.
     """
     return [

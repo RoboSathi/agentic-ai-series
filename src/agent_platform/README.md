@@ -15,7 +15,7 @@ module, config file or document here names one.
 | Module | Owns |
 |---|---|
 | [audit](audit/README.md) | Append-only decision trail |
-| [basic_sanity](basic_sanity/README.md) | Pre-LLM check contract (the business-logic seam) |
+| [deterministic_checks](deterministic_checks/README.md) | Pre-LLM check contract (the business-logic seam) |
 | [commands](commands/README.md) | Operator slash commands |
 | [config](config/README.md) | Layered YAML, typed settings, the feature tree |
 | [context](context/README.md) | Context assembly, strategies, failure detection |

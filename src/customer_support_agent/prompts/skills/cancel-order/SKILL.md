@@ -1,10 +1,10 @@
 ---
 name: cancel-order
 description: Cancel an order that has not shipped yet, refunding its full total, and report what the result says.
-triggers: [intent:CANCEL_ORDER, route:llm_fallback]
+triggers: [intent:CANCEL_ORDER]
 keywords: [cancel, cancel my order, cancel order, stop my order]
-prefetch: [look_up_order]
-tools: [look_up_order, cancel_order, list_my_orders]
+prefetch: [get_order_status]
+tools: [get_order_status, cancel_order, list_orders]
 ---
 
 ## Preconditions
@@ -12,7 +12,7 @@ tools: [look_up_order, cancel_order, list_my_orders]
 
 ## Procedure
 1. The order's record is already above when the order is known; otherwise call
-   `list_my_orders` and use the one they mean.
+   `list_orders` and use the one they mean.
 2. A shipped or delivered order cannot be cancelled — say so.
 3. Otherwise call `cancel_order` with its full total; cancelling refunds it.
 

@@ -27,9 +27,8 @@ order_status_weights:
 refund_status_weights:
   none: 0.70
   pending_review: 0.08
-  approved: 0.06
   denied: 0.06
-  completed: 0.10
+  completed: 0.16
 # The only refund status an in-flight order can carry.
 in_flight_refund_status: none
 quantity_weights:

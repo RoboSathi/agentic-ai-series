@@ -173,7 +173,7 @@ class TestWhatTheModelReads:
         assert "## Boundaries" in document.prompt
         assert "Preconditions" not in document.prompt and "Completion" not in document.prompt
         assert "Preconditions" in document.body
-        assert document.steps == 1
+        assert len(document.steps) == 1
 
     def test_prefetch_and_tools_are_read(self, tmp_path: Path) -> None:
         _skill(tmp_path, "refund-flow", _VALID + "prefetch: [look_up]\ntools: [look_up, pay]\n")

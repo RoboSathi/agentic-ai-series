@@ -3,8 +3,8 @@ name: order-status
 description: Answer where an order is — whether it has shipped, where the parcel was last seen, and when it is expected to arrive.
 triggers: [intent:ORDER_STATUS, route:llm_fallback]
 keywords: [where is my order, track, tracking, parcel, shipped, arrived, delivery, arrive]
-prefetch: [look_up_order]
-tools: [look_up_order, list_my_orders]
+prefetch: [get_order_status]
+tools: [get_order_status, list_orders]
 ---
 
 ## Preconditions
@@ -12,7 +12,7 @@ tools: [look_up_order, list_my_orders]
 
 ## Procedure
 1. The order's record is already above when the order is known; otherwise call
-   `list_my_orders` and use the one they mean.
+   `list_orders` and use the one they mean.
 2. Answer from the record: status, last known location, carrier and tracking number,
    estimated delivery date.
 

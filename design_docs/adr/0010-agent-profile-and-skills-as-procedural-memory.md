@@ -125,17 +125,19 @@ still took 4 model calls (read the order, read the refund, request it, reply), a
   - Ops prefetches `list_metrics` and `list_views`.
   - A refund turn is now 2 model calls.
 - **Tools.** A skill declares the `tools:` it uses. On an intent-routed turn the model is
-  offered only those, intersected with the intent's tools; the unrouted path keeps the full
-  set.
+  offered only those, intersected with the intent's tools; an unrouted turn is narrowed by
+  its procedures too (order-status only, so reads). A read prefetch already answered is
+  not offered again, nor is `list_orders` once the order is known.
   - Every tool has a *model name* (`tools.model_names`, else its bare name). The model and
     the cards never see `namespace__name`.
   - Qualified names stay in policy, audit, facts and evals; `qualified_tool` is resolved
     back from the model name.
   - The build refuses a procedure that names a tool the agent does not offer, prefetches one
     with an effect, or writes an internal `namespace.name`.
-- **The PROCEDURE card** is drawn only when a procedure is used, once per turn, as one line:
-  `refund-workflow v1 · matched intent REQUEST_REFUND · 4 steps · prefetched look_up_order,
-  check_refund`. Nothing is drawn when none matched. A sync card appears only when
+- **The PROCEDURE card** is drawn only when a procedure is used, once per turn. Its heading:
+  `refund-workflow v3 · chosen for intent REQUEST_REFUND · harness reads first: get_order_status,
+  get_refund_status · model may call: process_refund`; its body lists each procedure's steps as
+  written, then `harness_reads_first` and `model_may_call`. Nothing is drawn when none matched. A sync card appears only when
   something changed.
 - **Research agent**: its role skills duplicated each role's own instructions, so they are
   removed (ra-0021, amended). The profile goes on the direct answer only.

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent_platform.intent import IntentCandidate, IntentDisposition
+from customer_support_agent.config import get_agent_settings
 from customer_support_agent.intent.router import CustomerSupportIntentRouter, Intent
 
 
@@ -49,6 +50,7 @@ def _settings() -> SimpleNamespace:
                 confidence_threshold=0.75, model_label_mapping=labels
             ),
             deterministic_rejects=[],
+            negation=get_agent_settings().intent_router.negation,
         ),
     )
 

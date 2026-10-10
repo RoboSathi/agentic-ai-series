@@ -321,7 +321,7 @@ class TestAWithheldFeatureLeavesNoStage:
     """
 
     STAGES = [
-        ("basic_sanity", "basic_sanity"),
+        ("deterministic_checks", "deterministic_checks"),
         ("prompt_injection", "prompt_injection"),
         ("content_moderation", "content_moderation"),
         ("intent_classification", "classify_intent"),

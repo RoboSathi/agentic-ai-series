@@ -383,7 +383,7 @@ class HitlQueueRepository:
         """Enqueue a request for human review."""
         self._pool.execute(
             "INSERT INTO hitl_queue (order_id, user_id, requested_amount_cents, action, "
-            "status, created_at, session_id, detail) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "status, created_at, session_id, detail, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 entity.order_id,
                 entity.user_id,
@@ -393,6 +393,7 @@ class HitlQueueRepository:
                 entity.created_at,
                 entity.session_id,
                 None if entity.detail is None else entity.detail.model_dump_json(),
+                entity.reason,
             ),
         )
 

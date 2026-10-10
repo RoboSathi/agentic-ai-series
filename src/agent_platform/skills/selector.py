@@ -15,7 +15,7 @@ from agent_platform.context.retrieval import LexicalRetriever
 from agent_platform.context.types import Chunk
 from agent_platform.skills.types import ActivatedSkill, Skill
 
-# A signal is `kind:value`; its reason reads "matched intent REQUEST_REFUND".
+# A signal is `kind:value`; its reason reads "chosen for intent REQUEST_REFUND".
 _SIGNAL_SEPARATOR = ":"
 
 

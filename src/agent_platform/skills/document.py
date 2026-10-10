@@ -102,9 +102,25 @@ def _parse(raw: str, settings: SkillSettings, origin: str) -> SkillDocument:
         tools=tuple(front.tools),
         body=body.strip(),
         prompt=prompt,
-        steps=len(re.findall(settings.step_pattern, prompt, flags=re.MULTILINE)),
+        steps=_steps(prompt, settings.step_pattern),
         raw=raw,
     )
+
+
+def _steps(prompt: str, step_pattern: str) -> tuple[str, ...]:
+    """Each numbered step as one line: its first line and the lines that continue it."""
+    start = re.compile(step_pattern)
+    steps: list[str] = []
+    for line in prompt.splitlines():
+        if start.match(line):
+            steps.append(line.strip())
+        elif steps and line.startswith((" ", "\t")) and line.strip():
+            steps[-1] = f"{steps[-1]} {line.strip()}"
+        elif steps and not line.strip():
+            continue
+        elif steps:
+            break
+    return tuple(steps)
 
 
 def _sent_sections(body: str, settings: SkillSettings) -> str:

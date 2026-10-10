@@ -1,12 +1,15 @@
-"""Generic BasicSanity interface used by agent-specific preflight checks."""
+"""Generic DeterministicCheck interface used by agent-specific preflight checks."""
 
 from typing import Protocol, runtime_checkable
 
-from agent_platform.basic_sanity.types import BasicSanityRequest, BasicSanityResult
+from agent_platform.deterministic_checks.types import (
+    DeterministicCheckRequest,
+    DeterministicCheckResult,
+)
 
 
 @runtime_checkable
-class BasicSanityChecker(Protocol):
+class DeterministicChecker(Protocol):
     """Deterministic checks that should run before an LLM/model call.
 
     The platform owns the contract; the agent owns the implementation. The
@@ -14,4 +17,4 @@ class BasicSanityChecker(Protocol):
     platform never needs to know the agent's schema or domain vocabulary.
     """
 
-    def check(self, request: BasicSanityRequest) -> BasicSanityResult: ...
+    def check(self, request: DeterministicCheckRequest) -> DeterministicCheckResult: ...

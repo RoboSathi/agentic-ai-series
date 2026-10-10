@@ -167,9 +167,12 @@ class TestTheProcedureCard:
             instructions.announce(activation, prefetched=["look_up"])
         [card] = screen.of(settings.observability.activation_stage)
         assert card["summary"] == (
-            "refund-flow v1 · matched intent REFUND · 2 steps · reads first: look_up"
+            "refund-flow v1 · chosen for intent REFUND · harness reads first: look_up"
+            " · model may call: nothing"
         )
-        assert card["fields"]["procedures"][0]["matched"] == "matched intent REFUND"
+        procedure = card["fields"]["procedures"][0]
+        assert procedure["chosen_because"] == "chosen for intent REFUND"
+        assert len(procedure["steps"]) == 2 and procedure["steps"][0].startswith("1.")
         assert "profile" not in card["fields"] and "signals" not in card["fields"]
 
     def test_nothing_is_shown_or_recorded_when_no_procedure_is_used(

@@ -12,7 +12,6 @@ wiring that ships.
 """
 
 from agent_platform.audit import AuditLedger, create_audit_ledger
-from agent_platform.basic_sanity import BasicSanityChecker
 from agent_platform.config import (
     FeatureSet,
     active_features,
@@ -31,6 +30,7 @@ from agent_platform.context import (
     WorkingMemoryContextSource,
 )
 from agent_platform.context.failure import ContextFailureDetector
+from agent_platform.deterministic_checks import DeterministicChecker
 from agent_platform.durability import (
     RunRegistry,
     SqliteCheckpointer,
@@ -86,8 +86,8 @@ from agent_platform.security.prompt_injection.detector import InstructionDataSep
 from agent_platform.skills import build_agent_instructions
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from agent_platform.verification import ReadBackVerifier
-from customer_support_agent.basic_sanity.order_validator import OrderSanityCheck
 from customer_support_agent.config import get_agent_settings
+from customer_support_agent.deterministic_checks.order_validator import OrderChecks
 from customer_support_agent.domain.identity import current_customer_id
 from customer_support_agent.domain.models import Order
 from customer_support_agent.domain.order_reference import (
@@ -242,7 +242,7 @@ def build_agent(
     reporter: StageReporter | None = None,
     with_memory: bool | None = None,
     observe: bool | None = None,
-    basic_sanity: BasicSanityChecker | None = None,
+    deterministic_checks: DeterministicChecker | None = None,
     intent_router: CustomerSupportIntentRouter | None = None,
     features: FeatureSet | None = None,
     knowledge_base: KnowledgeBase | None = None,
@@ -336,17 +336,17 @@ def build_agent(
     registry.register_all(tools.definitions())
     authorizer = Authorizer(policy=agent_policy)
 
-    # BasicSanity is the one feature whose *rules* are the agent's own.
-    # `agent_platform` owns only the contract — `BasicSanityChecker`, a
+    # DeterministicCheck is the one feature whose *rules* are the agent's own.
+    # `agent_platform` owns only the contract — `DeterministicChecker`, a
     # Protocol taking a request and returning findings — and never learns
     # what an order or a refund is. Customer Support supplies
-    # `OrderSanityCheck`; another agent built on this platform declares
-    # `basic_sanity` in its own config and injects its own checker here,
+    # `OrderChecks`; another agent built on this platform declares
+    # `deterministic_checks` in its own config and injects its own checker here,
     # with nothing in the platform to change.
     tool_handler = CustomerSupportToolHandler(tools)
-    sanity_checker = (
-        basic_sanity or OrderSanityCheck(orders, refund_policy=refund_policy)
-        if features.is_on("basic_sanity")
+    deterministic_checker = (
+        deterministic_checks or OrderChecks(orders, refund_policy=refund_policy)
+        if features.is_on("deterministic_checks")
         else None
     )
     # Intent routing is an agent-owned component, but the concrete provider is
@@ -530,7 +530,7 @@ def build_agent(
         mandate_issuer=EstablishedOrderScope(orders) if governed is not None else None,
         authenticator=CustomerAuthenticator(UsersRepository(connection)),
         orders=orders,
-        basic_sanity=sanity_checker,
+        deterministic_checks=deterministic_checker,
         agent_policy=agent_policy,
         intent_router=resolved_intent_router,
         # Durable execution is not a feature: without it a crash loses the

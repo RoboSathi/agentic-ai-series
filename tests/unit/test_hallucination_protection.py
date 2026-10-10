@@ -204,7 +204,9 @@ class TestAThresholdIsJudgedOnItsOwnScale:
     paraphrases, and the trace then blamed "NLI".
     """
 
-    EVIDENCE = [Chunk(content="Order 10864 refund status: approved", kind="tool_result")]
+    # `approved` is no longer a refund status (a reviewer's approval issues the refund),
+    # so the record now says `issued`; "approved" is the same event on the ladder.
+    EVIDENCE = [Chunk(content="Order 10864 refund status: issued", kind="tool_result")]
 
     async def _assess(self, claim: str) -> Any:
         return await DetectionLadder(create_scoring_cascade()).assess(claim, self.EVIDENCE)
@@ -271,6 +273,7 @@ class TestAThresholdIsJudgedOnItsOwnScale:
         assert verdict.tier in NOLLM_TIERS
 
 
+@pytest.mark.usefixtures("abstaining_guard")
 class TestAnAbstentionIsNotAHallucination:
     """Found in a live run: a true, tool-grounded reply was blocked.
 

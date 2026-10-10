@@ -12,8 +12,13 @@ from typing import Any, get_args
 
 from agent_platform.observability.units import current_task_kind, open_task
 from customer_support_agent.config.settings import get_agent_settings
-from customer_support_agent.domain.models import OrderStatus
-from customer_support_agent.graph.nodes._support import TOOL_BLOCKED, TOOL_COMPLETED, NodeSupport
+from customer_support_agent.domain.models import Order, OrderStatus
+from customer_support_agent.graph.nodes._support import (
+    ORDER_SNAPSHOT,
+    TOOL_BLOCKED,
+    TOOL_COMPLETED,
+    NodeSupport,
+)
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.intent.router import Intent
 
@@ -45,6 +50,8 @@ class IntentNodes(NodeSupport):
         intent = await self._intents.classify_async(
             state.query, previous=self._last_supported_intent.get(state.session_id)
         )
+        if isinstance(state.metadata.get(ORDER_SNAPSHOT), dict):
+            intent = self._intents.placed_by_order(intent)
         self._logger.info(
             "Customer Support intent resolved",
             **self._intent_status_fields(intent),
@@ -180,7 +187,7 @@ class IntentNodes(NodeSupport):
             summary="Checking customer access to the requested order",
             fields={"order_id": order_id, "intent": state.metadata.get("intent", "")},
         )
-        owned = self._orders.get_for_customer(order_id, state.customer_id) if self._orders else None
+        owned = self._owned_for_read(state, order_id)
         if owned is None:
             fields = {
                 "order_id": order_id,
@@ -220,6 +227,13 @@ class IntentNodes(NodeSupport):
         if denied is not None:
             return denied
         return await self._run_read(state, tool, {"order_id": order_id}, f"for order {order_id}")
+
+    def _owned_for_read(self, state: AgentState, order_id: int) -> Order | None:
+        """The order if this customer owns it — from the checks' read when they made it."""
+        row = state.metadata.get(ORDER_SNAPSHOT)
+        if isinstance(row, dict) and row.get(_ORDER_ID) == order_id:
+            return Order.model_validate(row)
+        return self._orders.get_for_customer(order_id, state.customer_id) if self._orders else None
 
     async def _read_account(self, state: AgentState, tool: Any) -> dict[str, Any]:
         """Run an account-wide read, narrowed to an order state the customer named."""

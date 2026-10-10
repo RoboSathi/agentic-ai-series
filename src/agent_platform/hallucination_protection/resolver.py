@@ -31,6 +31,14 @@ from agent_platform.hallucination_protection.direct import (
     DirectFinding,
     numbers,
 )
+from agent_platform.hallucination_protection.ledger import (
+    FACT_MISMATCH,
+    FACT_MODEL,
+    FACT_TIER,
+    FactLedger,
+    LedgerFinding,
+)
+from agent_platform.hallucination_protection.states import StateModel
 from agent_platform.hallucination_protection.types import (
     ClaimClass,
     DetectionVerdict,
@@ -55,6 +63,8 @@ RECORD_LABEL = "record"
 # What decided a claim with no evidence tier: the direct check, or nothing.
 DIRECT_TIER = "deterministic"
 NO_TIER = "none"
+# A verifiable claim no evidence grounds, when the agent counts that as a hallucination.
+CLAIM_UNSUPPORTED = "CLAIM_UNSUPPORTED"
 
 ENTAILMENT_LABEL = "entailment"
 _DECIDING_LABELS = frozenset({ENTAILMENT_LABEL, "contradiction"})
@@ -109,6 +119,9 @@ class GroundingResolver:
         self._entailment = entailment or create_entailment_model()
         self._classifier = classifier or ClaimClassifier()
         self._direct = DirectChecker()
+        self._states = StateModel()
+        self._ledger = FactLedger()
+        self._unsupported_blocks = settings.unsupported_is_hallucination
         # A state record ("Order N refund status: X") is read by the state
         # model. NLI cannot: it took `pending_review` to contradict "submitted".
         self._state_line = re.compile(settings.record_state_pattern, re.IGNORECASE)
@@ -140,6 +153,7 @@ class GroundingResolver:
                 rationale="conversation, not a claim",
             )
         evidence = self._current(evidence)
+        kind = self._about_this_case(claim, kind, evidence)
         finding = self._direct_finding(claim, kind, evidence)
         if finding is not None:
             return self._read(
@@ -150,6 +164,9 @@ class GroundingResolver:
                 rationale=finding.rationale,
                 reason_code=finding.reason_code,
             )
+        facts = self._ledger.judge(claim, evidence)
+        if facts is not None:
+            return self._from_facts(claim, kind, facts)
         record = [chunk for chunk in evidence if chunk.kind in self._record_kinds]
         settled = self._settled_by_record(claim, kind, record)
         if settled is not None:
@@ -165,6 +182,34 @@ class GroundingResolver:
     def entailment(self) -> EntailmentModel:
         """The entailment model this resolver judges claims with."""
         return self._entailment
+
+    def _about_this_case(self, claim: str, kind: ClaimClass, evidence: list[Chunk]) -> ClaimClass:
+        """A rule claim the record's state decides is a fact about this case, checked as one.
+
+        "No refund has been requested yet" names no order, so it reads as a rule, and a
+        rule is checked against policy and knowledge — where an FAQ line about refunds
+        "contradicted" it. It states where this refund stands, which only the record can
+        show. A promise stays a rule: what will happen is the business's to state.
+        """
+        if kind != "rule" or self._classifier.promises(claim):
+            return kind
+        record = [chunk for chunk in evidence if chunk.kind in self._record_kinds]
+        return "record" if self._states.judge(claim, record) is not None else kind
+
+    def _from_facts(self, claim: str, kind: ClaimClass, finding: LedgerFinding) -> DetectionVerdict:
+        """A verdict the typed facts decided, quoting every fact they read."""
+        return self._verdict(
+            claim,
+            kind,
+            FACT_TIER,
+            None,
+            finding.chunks,
+            supported=finding.holds,
+            rationale=finding.rationale,
+            reason_code="" if finding.holds else FACT_MISMATCH,
+            checks=[self._record_check(chunk) for chunk in finding.chunks],
+            detector=FACT_MODEL,
+        )
 
     def _settled_by_record(
         self, claim: str, kind: ClaimClass, record: list[Chunk]
@@ -243,16 +288,20 @@ class GroundingResolver:
                         supported=supported,
                         checks=checks,
                     )
+        why = "no tier decided: " + " · ".join(
+            f"{outcome.tier.name}: {outcome.note}" for outcome in outcomes
+        )
         return self._verdict(
             claim,
             kind,
             NO_TIER,
             None,
             retrieved,
-            undetermined=True,
+            # Made up, when the agent counts a claim nothing grounds as a hallucination.
+            undetermined=not self._unsupported_blocks,
+            reason_code=CLAIM_UNSUPPORTED if self._unsupported_blocks else "",
             checks=checks,
-            rationale="no tier decided: "
-            + " · ".join(f"{outcome.tier.name}: {outcome.note}" for outcome in outcomes),
+            rationale=why,
         )
 
     def _current(self, evidence: list[Chunk]) -> list[Chunk]:
@@ -512,6 +561,7 @@ class GroundingResolver:
         rationale: str = "",
         reason_code: str = "",
         checks: list[EvidenceCheck] | None = None,
+        detector: str = "",
     ) -> DetectionVerdict:
         """An auditable verdict: who decided, on what, and everything retrieved."""
         return DetectionVerdict(
@@ -523,7 +573,8 @@ class GroundingResolver:
             tier=tier,
             rationale=rationale or (result.rationale if result else ""),
             reason_code=reason_code,
-            detector_model=(result.model if result else "")
+            detector_model=detector
+            or (result.model if result else "")
             or (DIRECT_TIER if tier == DIRECT_TIER else self._detector_model),
             retrieval_top_k=self._top_k,
             retrieval_method=self._retrieval_method,
