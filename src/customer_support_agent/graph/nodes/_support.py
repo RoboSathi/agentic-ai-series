@@ -46,7 +46,7 @@ from agent_platform.observability import (
 from agent_platform.observability.loop_reporter import mark_step
 from agent_platform.observability.step_events import LOOP_STAGES, StepEvents
 from agent_platform.observability.types import EventKind
-from agent_platform.primitives.money import money_or_none
+from agent_platform.primitives.money import Money, money_or_none
 from agent_platform.resilience import (
     DeadLetterQueue,
 )
@@ -80,9 +80,11 @@ from customer_support_agent.prompts.system_prompt import (
     build_reply_instruction,
     build_reply_system_prompt,
     build_system_prompt,
+    refund_limit_notice,
 )
 from customer_support_agent.review.referral import ReplyReferral, ReviewReferral
 from customer_support_agent.security.authentication import CustomerAuthenticator
+from customer_support_agent.security.limit_disclosure import LimitDisclosureCheck
 from customer_support_agent.tools.definitions import SupportTools
 
 # How a tool call ended, as working memory records it and grounding reads
@@ -146,6 +148,7 @@ class NodeSupport:
     _steps: StepEvents
     _diagnoser: GroundingReasoningDiagnoser
     _response_guardrail: ResponseGuardrail
+    _limit_disclosure: LimitDisclosureCheck
     _sessions: dict[str, Customer]
     _menus: dict[str, OrderMenu]
     _last_supported_intent: dict[str, Intent]
@@ -228,6 +231,10 @@ class NodeSupport:
     def _system_prompt(self) -> str:
         """The system prompt this turn is run under."""
         raise NotImplementedError
+
+    def _refund_limit(self) -> Money | None:
+        """The per-refund limit the prompt states: the DB row, read when the agent was built."""
+        return self._agent_policy.per_action_limit(REFUND_ACTION_CLASS)
 
     def _prompt_messages(self, state: AgentState) -> list[Message]:
         """The transcript handed to the model this turn."""
@@ -342,10 +349,18 @@ class NodeSupport:
         rather than taken back out of the window. Only that one order: a
         refund or cancellation is never about any other.
         """
-        order_id = state.metadata.get(ORDER_UNDER_DISCUSSION)
-        if isinstance(order_id, bool) or not isinstance(order_id, int) or self._orders is None:
+        order_id = self._order_under_discussion(state)
+        if order_id is None or self._orders is None:
             return None
         return order_record(self._orders, order_id, state.customer_id)
+
+    @staticmethod
+    def _order_under_discussion(state: AgentState) -> int | None:
+        """The order this turn settled on, if it settled on one."""
+        order_id = state.metadata.get(ORDER_UNDER_DISCUSSION)
+        if isinstance(order_id, bool) or not isinstance(order_id, int):
+            return None
+        return order_id
 
     def _evidence_sources(self, state: AgentState) -> list[str]:
         """Where this turn's record evidence came from: the order record, then each tool."""
@@ -405,10 +420,6 @@ class NodeSupport:
         # read as *neutral* on "your order has been cancelled", and an earlier
         # read of the still-pending order was left to contradict it. A refusal
         # stays whole, so its marker is never parted from what was refused.
-        tools = tool_evidence([Observation(*observed) for observed in self._observations(state)])
-        # The order record goes first: it was read for the turn, and anything
-        # this turn's tools wrote after it supersedes it in the guard's order.
-        record = self._order_record(state)
         # What the customer said, as the model saw it. A reply may echo it
         # ("I can't issue a $1 refund") but it proves nothing, so its tier
         # is configured support-only.
@@ -425,14 +436,23 @@ class NodeSupport:
             if not str(item.get("source", "")).startswith(KNOWLEDGE_SOURCE_PREFIX)
         ]
         return [
-            *([record] if record is not None else []),
-            *tools,
+            *self._record_evidence(state),
             *self._policy_evidence(),
             *_knowledge_evidence(),
             *self._session_facts(state),
             *asked,
             *seen,
         ]
+
+    def _record_evidence(self, state: AgentState) -> list[Chunk]:
+        """The order record, then this turn's tool results: what the turn actually read.
+
+        The order record goes first: it was read for the turn, and anything
+        this turn's tools wrote after it supersedes it in the guard's order.
+        """
+        record = self._order_record(state)
+        tools = tool_evidence([Observation(*observed) for observed in self._observations(state)])
+        return [*([record] if record is not None else []), *tools]
 
     @staticmethod
     def _session_facts(state: AgentState) -> list[Chunk]:
@@ -469,15 +489,19 @@ class NodeSupport:
         "do not"s) cannot read as contradicting it.
         """
         policy = _prompt_rules(policy_text())
-        limit = self._agent_policy.per_action_limit(REFUND_ACTION_CLASS)
+        limit = self._refund_limit()
         if limit:
-            policy.append(f"Direct refund limit: {limit}; refunds above {limit} need human review.")
+            policy.append(refund_limit_notice(limit).strip())
         # Every prompt a reply is written under, not only the one that chose
         # the tools: the final call is made under the reply prompt, and the
         # manner it asks for is what a courteous sentence restates.
         given = _prompt_rules(
             "\n\n".join(
-                (build_system_prompt(), build_reply_system_prompt(), build_reply_instruction())
+                (
+                    build_system_prompt(refund_limit=limit),
+                    build_reply_system_prompt(),
+                    build_reply_instruction(),
+                )
             )
         )
         instructions = list(dict.fromkeys(rule for rule in given if rule not in policy))

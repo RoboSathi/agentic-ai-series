@@ -131,7 +131,7 @@ class TestARefundTurn:
         system = (await _refund_turn(seeded_pool, audit, procedural=True)).system()
         assert system.startswith("# Customer Support Agent")
         assert "# Procedure: refund-workflow" in system
-        assert "whatever its size" in system
+        assert "above the refund limit in the policy" in system
         assert "## Preconditions" not in system  # the people's sections are not sent
 
     async def test_one_procedure_card_says_what_ran_and_why(

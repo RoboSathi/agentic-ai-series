@@ -174,40 +174,25 @@ class EmbeddingSettings(BaseModel):
 
 
 class EncoderSettings(BaseModel):
-    """BERT-family encoders for entailment and reranking (LLD §3).
-
-    NLI runs locally or hosted (`nli_provider`); the reranker is hosted.
-    """
+    """BERT-family cross-encoders for entailment and reranking, run in-process (LLD §3)."""
 
     enabled: bool
-    base_url: str
-    nli_provider: Literal["huggingface_local", "huggingface_hosted"]
     nli_model: str
     nli_local_model_dir: str
     nli_max_length: int
-    download_if_missing: bool
     reranker_model: str
-    timeout_seconds: float
-    wait_for_model: bool
+    reranker_local_model_dir: str
+    # Query plus one candidate passage, in tokens.
+    reranker_max_length: int
+    download_if_missing: bool
 
     @property
     def resolved_nli_local_model_dir(self) -> Path:
         return resolve_path(self.nli_local_model_dir)
 
     @property
-    def api_key(self) -> str:
-        """The Hugging Face token, from its bare environment variable.
-
-        A property rather than a field, like every other credential here:
-        it never appears in `model_dump()`, so it cannot reach a log line
-        or a settings dump.
-        """
-        return os.environ.get("hf_api_key", "")
-
-    @property
-    def usable(self) -> bool:
-        """Whether a hosted encoder can be called at all."""
-        return self.enabled and bool(self.api_key)
+    def resolved_reranker_local_model_dir(self) -> Path:
+        return resolve_path(self.reranker_local_model_dir)
 
 
 class LayaIntentSettings(BaseModel):
@@ -298,6 +283,9 @@ class LocalCheckSettings(BaseModel):
 
     nli_premise: str
     nli_hypothesis: str
+    # The reranker scores each passage against the query; the first should win.
+    reranker_query: str
+    reranker_passages: list[str]
     intent_text: str
     # A classifier that reads label descriptions (`laya_local`) is asked this, over these
     # options: the probe's own, since the platform knows no agent's intents.

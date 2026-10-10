@@ -7,17 +7,10 @@ failures a unit test of the module itself cannot catch, because the
 module was always fine; the wiring was missing.
 """
 
-from typing import Any
-
 import pytest
 
+from agent_platform.config import get_settings
 from agent_platform.evals.entailment import LexicalEntailmentModel, create_entailment_model
-from agent_platform.llm.encoders import (
-    HostedCrossEncoderRanker,
-    HostedNliModel,
-    HuggingFaceEncoderClient,
-    LabelScore,
-)
 from agent_platform.memory import MemoryFacade
 from agent_platform.observability.postmortem import Postmortem, PostmortemRegister
 from agent_platform.persistence import SqliteConnectionPool
@@ -32,73 +25,11 @@ from customer_support_agent.prompts.system_prompt import build_system_prompt
 from tests.conftest import ScriptedLLM
 
 
-class StubEncoder:
-    """A hosted encoder that answers without a network."""
-
-    def __init__(self, labels: list[LabelScore] | None = None) -> None:
-        self.labels = labels or []
-        self.calls = 0
-        self.model = "stub/encoder"
-
-    async def score_pairs(self, pairs: list[tuple[str, str]]) -> list[list[LabelScore]]:
-        self.calls += 1
-        return [self.labels for _ in pairs] if self.labels else []
-
-
-class TestHostedEncoders:
+class TestEntailmentFactory:
     """FR-36/FR-38: the NLI tier had no model behind it."""
 
-    @pytest.mark.asyncio
-    async def test_entailment_reads_the_models_labels(self) -> None:
-        model = HostedNliModel(
-            client=StubEncoder(  # type: ignore[arg-type]
-                [
-                    LabelScore(label="entailment", score=0.91),
-                    LabelScore(label="contradiction", score=0.02),
-                ]
-            )
-        )
-        result = await model.entails("the refund was approved today", "the refund was approved")
-        assert result.entailed is True
-        assert result.score == pytest.approx(0.91)
-
-    @pytest.mark.asyncio
-    async def test_contradiction_is_reported_as_such(self) -> None:
-        """The case similarity cannot see: same words, opposite fact."""
-        model = HostedNliModel(
-            client=StubEncoder(  # type: ignore[arg-type]
-                [
-                    LabelScore(label="entailment", score=0.04),
-                    LabelScore(label="contradiction", score=0.88),
-                ]
-            )
-        )
-        result = await model.entails("the refund was denied", "the refund was approved")
-        assert result.entailed is False
-
-    @pytest.mark.asyncio
-    async def test_an_unreachable_model_falls_back_rather_than_failing(self) -> None:
-        model = HostedNliModel(client=StubEncoder([]))  # type: ignore[arg-type]
-        result = await model.entails("the refund was approved", "the refund was approved")
-        assert result.rationale.startswith("coverage")
-
-    @pytest.mark.asyncio
-    async def test_a_client_with_no_key_never_calls_out(self, monkeypatch: Any) -> None:
-        """No credential is a configuration state, not an error to raise."""
-        monkeypatch.delenv("hf_api_key", raising=False)
-        client = HuggingFaceEncoderClient("some/model")
-        assert client.available is False
-        assert await client.score_pairs([("a", "b")]) == []
-
-    @pytest.mark.asyncio
-    async def test_the_reranker_leaves_the_order_alone_when_it_cannot_score(self) -> None:
-        """An unavailable reranker must not reorder what retrieval ranked."""
-        ranker = HostedCrossEncoderRanker(client=StubEncoder([]))  # type: ignore[arg-type]
-        scores = await ranker.rank("query", ["first", "second", "third"])
-        assert len(set(scores)) == 1
-
-    def test_the_factory_falls_back_without_a_key(self, monkeypatch: Any) -> None:
-        monkeypatch.delenv("hf_api_key", raising=False)
+    def test_with_encoders_off_the_factory_is_lexical(self, restore_settings: None) -> None:
+        get_settings().llm.encoders.enabled = False
         assert isinstance(create_entailment_model(), LexicalEntailmentModel)
 
 

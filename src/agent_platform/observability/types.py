@@ -1,9 +1,12 @@
 """Observability value types (LLD §6)."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+# Re-exported: most of the platform still reads the clock from here.
+from agent_platform.primitives.clock import utc_now as utc_now
 
 StatusKind = Literal[
     "started",
@@ -47,11 +50,6 @@ CostComponent = Literal[
     "orchestration",
     "infrastructure",
 ]
-
-
-def utc_now() -> datetime:
-    """Timezone-aware now — never a naive timestamp in a trace or ledger."""
-    return datetime.now(timezone.utc)
 
 
 class StatusEvent(BaseModel):

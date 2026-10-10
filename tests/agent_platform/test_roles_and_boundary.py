@@ -10,6 +10,8 @@ banned inside the modules added for the research agent (ADR 0003).
 """
 
 import re
+import subprocess
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -38,6 +40,23 @@ NEW_MODULES = (
 )
 # A pre-existing use of the English word "brief" (a lock held briefly).
 ALLOWED = {("evals/store/duckdb_store.py", "brief")}
+
+
+@cache
+def _generated() -> frozenset[Path]:
+    """Gitignored files under the platform: build output (`make dashboard`), not its source.
+
+    A Rill dashboard is generated per agent and names it; it lives beside the
+    tracked project only because Rill reads it from there.
+    """
+    listed = subprocess.run(
+        ["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--", str(COMMONS)],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return frozenset(REPO_ROOT / line for line in listed.stdout.splitlines())
 
 
 def _router(**roles: tuple[ProviderName, str]) -> tuple[RoleModelRouter, list[tuple[str, str]]]:
@@ -94,6 +113,7 @@ class TestNoAgentVocabularyInThePlatform:
             for path in COMMONS.rglob("*")
             if path.is_file()
             and path.suffix in {".py", ".yaml", ".md"}
+            and path not in _generated()
             and pattern.search(path.read_text())
             and (str(path.relative_to(COMMONS)), word) not in ALLOWED
         ]

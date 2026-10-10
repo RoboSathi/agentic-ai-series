@@ -55,9 +55,9 @@ from agent_platform.hallucination_protection.checker import DetectionLadder
 from agent_platform.hallucination_protection.confidence import ConfidenceCheck
 from agent_platform.intent.exemplar import ExemplarIntentClassifier
 from agent_platform.llm.embeddings import EmbeddingClient, create_embedding_client
-from agent_platform.llm.encoders import create_reranker
 from agent_platform.llm.http import create_http_client
 from agent_platform.llm.local_embeddings import LocalSentenceEmbedder
+from agent_platform.llm.local_reranker import create_reranker
 from agent_platform.llm.observer import ModelCallObserver
 from agent_platform.llm.roles import RoleModelRouter
 from agent_platform.logging import get_logger

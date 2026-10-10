@@ -157,6 +157,14 @@ class TestD3BeyondTheAgentsBound:
         await _turn(seeded_pool, False, _refund(10002, 210.0), self._CLAIM)
         assert _status(seeded_pool, 10002) == "issued"
 
+    async def test_a_paying_turn_keeps_the_decisions_made_before_it(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        """Executing a tool appends to the turn's decisions; it once restarted them."""
+        state = await _turn(seeded_pool, False, _refund(10002, 210.0), self._CLAIM)
+        executed = [line for line in state.decisions if line.startswith("support.process_refund")]
+        assert executed and state.decisions.index(executed[0]) > 0
+
 
 class TestD4WithinBoundsButVoidable:
     def _settlement(self, pool: SqliteConnectionPool) -> RefundSettlement:

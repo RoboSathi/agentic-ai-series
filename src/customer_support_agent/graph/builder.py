@@ -44,7 +44,7 @@ from agent_platform.gatekeeper import Gatekeeper, GatekeeperImpl
 from agent_platform.gatekeeper.ledger import CumulativeLedger
 from agent_platform.hallucination_protection import DetectionLadder
 from agent_platform.llm.client import LLMClient, create_llm_client
-from agent_platform.llm.encoders import create_reranker
+from agent_platform.llm.local_reranker import create_reranker
 from agent_platform.llm.local_summarizer import LocalDialogueSummarizer
 from agent_platform.memory import (
     DreamInbox,

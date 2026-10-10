@@ -82,6 +82,7 @@ def build_local_probes(settings: AppConfig | None = None) -> list[LocalProbe]:
         probe
         for probe in (
             _nli_probe(config),
+            _reranker_probe(config),
             _intent_probe(config),
             _embedder_probe(config),
             _summarizer_probe(config),
@@ -96,7 +97,7 @@ def _nli_probe(config: AppConfig) -> LocalProbe | None:
     path = encoders.nli_local_model_dir
     if not path:
         return None
-    if not encoders.enabled or encoders.nli_provider != "huggingface_local":
+    if not encoders.enabled:
         return None
     from agent_platform.llm.local_nli import shared_local_nli_model
 
@@ -110,6 +111,28 @@ def _nli_probe(config: AppConfig) -> LocalProbe | None:
     # A model that needs no loading (the lexical fallback a test substitutes) loads instantly.
     load = getattr(model, "ensure_loaded_sync", _nothing_to_load)
     return LocalModelProbe("nli", encoders.nli_model, path, load, infer)
+
+
+def _reranker_probe(config: AppConfig) -> LocalProbe | None:
+    encoders = config.llm.encoders
+    if not encoders.enabled or not encoders.reranker_local_model_dir:
+        return None
+    from agent_platform.llm.local_reranker import LocalCrossEncoderRanker
+
+    ranker = LocalCrossEncoderRanker()
+    check = config.llm.check.local
+
+    async def infer() -> str:
+        scores = await ranker.rank(check.reranker_query, list(check.reranker_passages))
+        return " · ".join(f"{score:.2f}" for score in scores)
+
+    return LocalModelProbe(
+        "reranker",
+        encoders.reranker_model,
+        encoders.reranker_local_model_dir,
+        ranker.ensure_loaded_sync,
+        infer,
+    )
 
 
 def _intent_probe(config: AppConfig) -> LocalProbe | None:

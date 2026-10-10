@@ -1,5 +1,5 @@
 # Tracked defaults for every live subsystem. Never put API keys here — those
-# come from bare environment variables (nvidia_api_key, hf_api_key).
+# come from bare environment variables (nvidia_api_key).
 #
 # Governance capabilities are declared in the `features:` block below and
 # by each agent in its own config. `/harness` flips them live — a hot
@@ -227,35 +227,27 @@ llm:
       query: query
       passage: passage
     truncate: END
-  # Hosted BERT-family encoders. These answer questions a generative
-  # model answers worse and dearer: does this evidence *entail* this
-  # claim, and which of these ten passages actually answers the query.
-  # The key comes from the bare `hf_api_key` environment variable; with
-  # no key, every caller silently uses its deterministic fallback.
+  # BERT-family cross-encoders, run in-process. These answer questions a
+  # generative model answers worse and dearer: does this evidence *entail*
+  # this claim, and which of these ten passages actually answers the query.
+  # Both used to be hosted; that host (api-inference.huggingface.co) no
+  # longer resolves, and every call was silently falling back.
   encoders:
     enabled: true
-    base_url: https://api-inference.huggingface.co/models
     # A cross-encoder trained on NLI. It reads premise and hypothesis
     # together, which is what lets it separate "refund approved" from
     # "refund denied" — two strings a bi-encoder scores as near-identical.
-    # Runs in-process by default: the hosted inference host this used to
-    # call (api-inference.huggingface.co) no longer resolves, and every
-    # claim check was silently falling back to token coverage.
-    nli_provider: huggingface_local   # huggingface_local | huggingface_hosted
     nli_model: cross-encoder/nli-deberta-v3-base
     # Downloaded once into the repository (gitignored), then loaded with
     # local_files_only, like the intent classifier.
     nli_local_model_dir: local_models/nli/nli-deberta-v3-base
     # Premise (one evidence chunk) plus hypothesis (one claim) in tokens.
     nli_max_length: 512
-    download_if_missing: true
     # A reranking cross-encoder, run only over a retrieved shortlist.
     reranker_model: cross-encoder/ms-marco-MiniLM-L-6-v2
-    timeout_seconds: 10
-    # Hosted models scale to zero. Waiting is right for an eval run and
-    # wrong for a customer waiting on a reply, so the caller that cannot
-    # afford the cold start gets the fallback instead.
-    wait_for_model: false
+    reranker_local_model_dir: local_models/reranker/ms-marco-MiniLM-L-6-v2
+    reranker_max_length: 512
+    download_if_missing: true
 
   # Semantic intent classifier. The current implementation runs a fine-tuned
   # BERT sequence classifier locally. Agent-specific labels, mappings and the
@@ -324,6 +316,10 @@ llm:
     local:
       nli_premise: "The forecast for Pune on 2 October is light drizzle with a high of 32.5 °C."
       nli_hypothesis: "It will drizzle in Pune on 2 October."
+      reranker_query: "Will it rain in Pune on 2 October?"
+      reranker_passages:
+        - "The forecast for Pune on 2 October is light drizzle with a high of 32.5 °C."
+        - "The Pune railway station has six platforms."
       intent_text: "I have a question about my account"
       intent_question: "Is this message asking for information or asking for something to be done?"
       intent_choices:

@@ -16,6 +16,7 @@ for no visible reason.
 import json
 import os
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -46,9 +47,9 @@ _ANALYTICS_PATH_VAR = "ANALYTICS__SOURCES__LIVE__DB_PATH"
 _CHECKPOINTS_PATH_VAR = "DURABILITY__DB_PATH"
 _RATE_LIMIT_PATH_VAR = "RESILIENCE__RATE_LIMIT__STORE_PATH"
 # Settings fields naming a credential's environment variables, and the two provider
-# keys read by bare name (`llm.encoders.api_key`, `web_search` Tavily).
+# key read by bare name (`web_search` Tavily).
 _KEY_ENV_VARS = "key_env_vars"
-_BARE_PROVIDER_KEYS = ("hf_api_key", "tavily_api_key")
+_BARE_PROVIDER_KEYS = ("tavily_api_key",)
 _HOSTED_GUARDS_VAR = "SECURITY__GUARDS__ENABLED"
 
 
@@ -187,6 +188,32 @@ def offline_nli_model() -> Iterator[None]:
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr("agent_platform.llm.local_nli.shared_local_nli_model", LexicalEntailmentModel)
+        yield
+
+
+class OfflineArtifact:
+    """A local checkpoint that is never on disk: every load fails, as offline."""
+
+    model_name = "offline/reranker"
+    local_dir = Path("offline")
+
+    def load_sync(self) -> Any:
+        raise RuntimeError("tests never load a local checkpoint")
+
+    async def load(self) -> Any:
+        return self.load_sync()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def offline_reranker() -> Iterator[None]:
+    """Tests never load or download the local reranker.
+
+    Every ranker shares one checkpoint through `shared_reranker_artifact`;
+    replacing that seam leaves each ranker on its fallback, which is what
+    a CI gate can rely on. A test that needs real scores injects an artifact.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("agent_platform.llm.local_reranker.shared_reranker_artifact", OfflineArtifact)
         yield
 
 

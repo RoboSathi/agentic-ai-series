@@ -17,9 +17,9 @@ tools: [look_up_order, check_refund, request_refund, list_my_orders]
    pending or shipped order has nothing to refund yet; a pending one can be cancelled.
 3. An order already refunded (`refund_status` issued or completed) cannot be refunded
    again — say so and call nothing.
-4. Otherwise call `request_refund` with the order's full total, whatever its size. You
-   are not told when a person must approve: the result says whether it was issued or
-   sent for review.
+4. A total above the refund limit in the policy: do what the policy says, call nothing.
+5. Otherwise call `request_refund` with the order's full total. The result says whether
+   it was issued or sent for review.
 
 ## Boundaries
 - When the result says it was queued for review, say so, say they will hear back soon,

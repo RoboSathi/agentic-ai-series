@@ -16,7 +16,7 @@ provider budget is enforced here rather than remembered at each call site.
 - `LLMClient` (ABC): `complete`, `health_check`, `model`, `tier`; `OpenAICompatibleClient`, `NvidiaNimClient`, `LocalLlamaCppClient`; `CascadingLLMClient`
 - `create_llm_client()`, `create_pinned_llm_client(provider, model)` (`client.py`)
 - Embeddings: `EmbeddingClient`, `NimEmbeddingClient`, `HashingEmbeddingClient` (offline) (`embeddings.py`)
-- Encoders: hosted NLI/reranker (`encoders.py`), local NLI (`local_nli.py`), shared local-model loader (`local_models.py`)
+- Encoders: local NLI (`local_nli.py`), local reranker (`local_reranker.py`), shared local-model loader (`local_models.py`)
 - `create_http_client` / `create_sdk_http_client` (`http.py`) — `httpx` and `httpx2` clients wrapped by the rate limiter
 - `RecordingLLMClient` (`recording.py`) — decorator that records requests, usage and cost (used by evals)
 - `build_probes` (`probes.py`), `build_local_probes` (`local_probes.py`), `benchmark` (`benchmark.py`) and `python -m agent_platform.llm.cli` (`make model-check [agent]`, `BENCH=1` to time each chat model)

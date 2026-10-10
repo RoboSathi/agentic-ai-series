@@ -129,6 +129,7 @@ from customer_support_agent.presentation.orders import (
 )
 from customer_support_agent.review.referral import ReplyReferral, ReviewReferral
 from customer_support_agent.security.authentication import CustomerAuthenticator
+from customer_support_agent.security.limit_disclosure import LimitDisclosureCheck
 from customer_support_agent.tools.definitions import SupportTools
 
 # Set by screening when a message is quarantined as hostile.
@@ -263,6 +264,7 @@ class CustomerSupportAgent(
         self._diagnoser = GroundingReasoningDiagnoser()
         # Token confidence (step 1) draws its card on this agent's feed.
         self._response_guardrail = ResponseGuardrail(self._grounding)
+        self._limit_disclosure = LimitDisclosureCheck(self._refund_limit())
         if intent_router is None:
             raise ValueError(
                 "CustomerSupportAgent requires an intent_router from the composition root"

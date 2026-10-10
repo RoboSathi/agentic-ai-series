@@ -19,7 +19,9 @@ for the final, customer-facing turn.
 """
 
 from agent_platform.config import get_settings
+from agent_platform.primitives.money import Money
 from agent_platform.skills import load_skill_documents, render_profile
+from customer_support_agent.config import get_agent_settings
 from customer_support_agent.prompts.policy import policy_text
 
 _REPLY_SYSTEM = """You are a customer support agent for an online store,
@@ -70,8 +72,8 @@ def build_reply_instruction() -> str:
     return _REPLY_INSTRUCTION
 
 
-def build_system_prompt(instructions: str | None = None) -> str:
-    """The working system prompt: the turn's instructions, then the refund policy.
+def build_system_prompt(instructions: str | None = None, refund_limit: Money | None = None) -> str:
+    """The working system prompt: the turn's instructions, the refund policy, the limit.
 
     `instructions` is what `AgentInstructions.compose` rendered for this
     turn — the profile plus the procedures its intent selected. Without
@@ -85,14 +87,25 @@ def build_system_prompt(instructions: str | None = None) -> str:
     contributes no policy chunk, because a second verbatim copy teaches
     the model nothing and costs a third of the window.
 
-    The refund limit is deliberately absent. A number in the context
-    window can be asked for, injected out or simply repeated, and a model
-    told to stay under it skips the call whose escalation is what queues
-    the review. The Gatekeeper holds the limit; the prompt holds the
-    procedure (call, then report what the result says).
+    `refund_limit` is the DB's per-refund limit, read once when the agent
+    is built. Stated here, the model holds to it on a plain request —
+    and can be talked past it, which is the point: a rule in the prompt
+    is a request, and the Gatekeeper, which enforces the same limit, is
+    the control. With the Gatekeeper off, this sentence is all that is left.
     """
     given = instructions if instructions is not None else render_profile(get_settings().skills)
-    return f"{given}\n\n{policy_text().strip()}\n"
+    return f"{given}\n\n{policy_text().strip()}\n{refund_limit_notice(refund_limit)}"
+
+
+def refund_limit_notice(refund_limit: Money | None) -> str:
+    """The prompt's limit sentence, or nothing when no limit is declared."""
+    if refund_limit is None:
+        return ""
+    settings = get_agent_settings()
+    notice = settings.refund_limit_notice.format(
+        limit=refund_limit, contact=settings.support_contact
+    )
+    return f"\n{notice}\n"
 
 
 def instruction_corpus() -> str:

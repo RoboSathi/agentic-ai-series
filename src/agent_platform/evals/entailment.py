@@ -4,9 +4,9 @@ Entailment is the tier that separates *sounds alike* from *means the
 same*. The lexical model here is deliberately modest — it is the fallback that
 works offline and states its own limits, not a claim to have
 reimplemented an NLI model in fifty lines. The model that actually
-answers the question is a hosted cross-encoder
-(`llm.encoders.HostedNliModel`); this one is what the harness uses when
-that cannot be reached.
+answers the question is a local cross-encoder
+(`llm.local_nli.LocalNliModel`); this one is what the harness uses when
+that cannot be loaded, or encoders are switched off.
 """
 
 import re
@@ -171,33 +171,27 @@ def entailment_from_probabilities(probabilities: dict[str, float], model: str) -
 
 
 def entailment_backend(model: object) -> str:
-    """How an entailment model answers: a lexical rule, a local or a hosted cross-encoder."""
+    """How an entailment model answers: a lexical rule, or the local cross-encoder."""
     if isinstance(model, LexicalEntailmentModel) or getattr(model, "_unavailable", False):
         return checks.RULE
-    return checks.HOSTED_MODEL if type(model).__name__.startswith("Hosted") else checks.LOCAL_MODEL
+    return checks.LOCAL_MODEL
 
 
 @checks.recorded_dependency(checks.NLI, "entails", entailment_backend)
 def create_entailment_model() -> EntailmentModel:
     """The best entailment model this deployment can reach (Factory).
 
-    The local cross-encoder when configured, a hosted one when configured
-    and credentialed, the lexical model otherwise. Callers never choose:
-    the decision is a deployment fact, and a component that picked its own
-    model would make "which NLI ran?" un-answerable from config.
+    The local cross-encoder when encoders are on, the lexical model
+    otherwise. Callers never choose: the decision is a deployment fact, and
+    a component that picked its own model would make "which NLI ran?"
+    un-answerable from config.
     """
     settings = get_settings().llm.encoders
     if not settings.enabled:
         return LexicalEntailmentModel()
-    if settings.nli_provider == "huggingface_local":
-        from agent_platform.llm.local_nli import shared_local_nli_model
+    from agent_platform.llm.local_nli import shared_local_nli_model
 
-        return shared_local_nli_model()
-    if not settings.usable:
-        return LexicalEntailmentModel()
-    from agent_platform.llm.encoders import HostedNliModel
-
-    return HostedNliModel()
+    return shared_local_nli_model()
 
 
 def preload_entailment_model() -> None:

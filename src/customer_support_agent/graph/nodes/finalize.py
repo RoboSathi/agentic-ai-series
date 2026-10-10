@@ -45,7 +45,20 @@ class FinalizeNodes(NodeSupport):
         Without this, hitting the tool-iteration cap returns whatever the
         last turn happened to contain — often nothing. A cap is a
         control, not an excuse to hand the customer an empty reply.
+
+        Every way out of composing a reply passes the limit check once,
+        here: it sat on one path, and the common one sent "$50.00".
         """
+        update = await self._compose(state)
+        reply = update.get("response")
+        if not isinstance(reply, str):
+            return update
+        decisions = list(update.get("decisions", state.decisions))
+        sent = self._without_the_limit(state, reply, decisions)
+        return {**update, "response": sent, "decisions": decisions}
+
+    async def _compose(self, state: AgentState) -> dict[str, Any]:
+        """The reply and its grounding, by whichever path the draft check chose."""
         # The loop is over; the reply is composed outside it.
         self._steps.begin(None)
         self._report(
@@ -243,6 +256,23 @@ class FinalizeNodes(NodeSupport):
             "response": reply,
             "decisions": decisions,
         }
+
+    def _without_the_limit(self, state: AgentState, reply: str, decisions: list[str]) -> str:
+        """The reply, or the configured decline when it states the refund limit."""
+        shown = [chunk.content for chunk in self._record_evidence(state)]
+        withheld = self._limit_disclosure.withhold(
+            reply, shown, self._order_under_discussion(state)
+        )
+        if withheld is None:
+            return reply
+        decisions.append("disclosure: refund limit withheld")
+        self._reporter_warning(
+            "finalize",
+            event_kind="grounding",
+            summary="Reply stated the refund limit; the decline was sent instead",
+            fields={"drafted": reply, "sent": withheld},
+        )
+        return withheld
 
     def _report_draft_check(
         self, state: AgentState, draft: str, critique: Critique, next_step: str
