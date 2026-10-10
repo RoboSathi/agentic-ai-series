@@ -18,6 +18,7 @@ from agent_platform.config import get_settings
 from agent_platform.guardrails import ResponseGuardrailResult
 from agent_platform.logging import get_logger, instrument
 from agent_platform.tools import ToolCall
+from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.models import REPLY_REVIEW, HitlRequest, ReplyReview
 from customer_support_agent.persistence.repositories import HitlQueueRepository
 from customer_support_agent.tools.definitions import (
@@ -97,6 +98,7 @@ class ReplyReferral:
                     reason=reasons.get(result.reason_code, result.reason_code),
                     withheld=result.withheld,
                 ),
+                reason=get_agent_settings().review_reasons.for_finding(result.reason_code),
             )
         )
         return self._queue.last_id()

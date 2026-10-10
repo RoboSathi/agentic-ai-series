@@ -44,7 +44,7 @@ UNBOUNDED: Money | None = None
 class ActionMandate(BaseModel):
     """Permission to take one action, granted by one request.
 
-    `subject_id` is opaque, like `BasicSanityRequest`'s: an agent built on
+    `subject_id` is opaque, like `DeterministicCheckRequest`'s: an agent built on
     this platform need not have customers, or number them.
 
     `turn` is what stops a mandate outliving the proposal it covers: it

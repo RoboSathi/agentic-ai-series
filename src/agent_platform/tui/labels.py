@@ -35,7 +35,7 @@ _DISPLAY_NAMES = {
     "prompt_injection_check": "PROMPT INJECTION",
     "pii_filtering": "PII FILTER",
     "content_moderation": "CONTENT POLICY",
-    "basic_sanity": "BASIC SANITY",
+    "deterministic_checks": "DETERMINISTIC CHECKS",
     "intent_classification": "INTENT",
     "memory_recall": "MEMORY RECALL",
     "memory_write": "MEMORY UPDATED",

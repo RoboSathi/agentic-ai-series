@@ -1,9 +1,9 @@
 """Single source of truth for customer-support refund business rules.
 
-The Gatekeeper, BasicSanity, tool handlers and the refund Saga need the same
+The Gatekeeper, DeterministicCheck, tool handlers and the refund Saga need the same
 facts to agree on what a refund means. This module owns those domain rules and
 returns a domain-level result; each caller remains responsible for presenting
-that result through its own contract (sanity findings, governance checks, or
+that result through its own contract (deterministic-check findings, governance checks, or
 tool errors).
 """
 
@@ -16,6 +16,10 @@ from customer_support_agent.domain.models import Order
 from customer_support_agent.domain.ports import OrderLookup
 
 RefundAction = Literal["request", "process_refund", "queue_for_approval"]
+
+
+# A refund a reviewer declined cannot be requested again.
+REFUND_DECLINED_FINAL = "REFUND_DECLINED_FINAL"
 
 
 class RefundValidationResult(BaseModel):
@@ -59,6 +63,11 @@ class RefundPolicy:
                 "ORDER_ALREADY_REFUNDED",
                 f"Order {order_id} has already been refunded in full.",
                 order=order,
+            )
+
+        if order.refund_declined:
+            return self._reject(
+                REFUND_DECLINED_FINAL, order.refund_ineligibility_reason, order=order
             )
 
         if not order.is_refund_eligible:

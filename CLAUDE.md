@@ -93,18 +93,18 @@ building anything non-trivial.
   `features:` block in its *own* `config.yaml`; `agent_platform` ships
   defaults and the `FeatureSet` mechanism (`config/features.py`) and
   never learns which agent is asking. Nine are toggleable —
-  `basic_sanity`, `prompt_injection`, `content_moderation`, `pii`,
+  `deterministic_checks`, `prompt_injection`, `content_moderation`, `pii`,
   `intent_classification`, `hallucination_guard`, `gatekeeper`,
   `memory` (+ its four CoALA children), `context` (+ `rerank`,
   `failure_detection`). Sub-features are parent-gated.
 
-  **`basic_sanity` is the seam for an agent's own business logic.** The
-  platform owns only `BasicSanityChecker` — a request in, findings out —
-  and `BasicSanityRequest` carries `subject_id`, an opaque string, rather
+  **`deterministic_checks` is the seam for an agent's own business logic.** The
+  platform owns only `DeterministicChecker` — a request in, findings out —
+  and `DeterministicCheckRequest` carries `subject_id`, an opaque string, rather
   than a `customer_id`, so no agent is obliged to have customers or to
-  number them. Customer Support supplies `OrderSanityCheck`; a new agent
+  number them. Customer Support supplies `OrderChecks`; a new agent
   declares the feature in its own config and injects its own checker
-  through `build_agent(basic_sanity=...)`, changing nothing here.
+  through `build_agent(deterministic_checks=...)`, changing nothing here.
 
   **The harness is the set of declared features**: the controls you can
   remove and still get an agent that runs, just a worse or more

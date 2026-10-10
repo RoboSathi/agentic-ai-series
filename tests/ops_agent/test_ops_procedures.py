@@ -57,7 +57,7 @@ async def test_the_procedure_card_names_what_was_prefetched(harness: Any) -> Non
     stage = get_settings().skills.observability.activation_stage
     [card] = [e for e in events if e.stage == stage]
     assert card.summary.startswith("analytics-investigation v1 · always used")
-    assert card.summary.endswith("reads first: list_metrics, list_views")
+    assert "harness reads first: list_metrics, list_views · model may call:" in card.summary
 
 
 async def test_the_card_lists_exactly_the_tools_the_model_was_offered(harness: Any) -> None:
@@ -68,7 +68,7 @@ async def test_the_card_lists_exactly_the_tools_the_model_was_offered(harness: A
     stage = get_settings().skills.observability.activation_stage
     [card] = [e for e in events if e.stage == stage]
     sent = [tool["function"]["name"] for tool in run.llm.requests[0].tools or []]
-    assert sorted(card.fields["tools_offered"]) == sorted(sent)
+    assert sorted(card.fields["model_may_call"]) == sorted(sent)
 
 
 async def test_the_card_comes_before_the_reads_it_explains(harness: Any) -> None:

@@ -49,10 +49,30 @@ class ClassifierRoutingSettings(BaseModel):
     model_label_mapping: dict[str, list[str]]
 
 
+class PhraseNegationSettings(BaseModel):
+    """When a phrase in a message is denied rather than asked for (`intent/phrases.py`)."""
+
+    markers: list[str]
+    # How many words before a phrase are read for a negation.
+    window_words: int = Field(gt=0)
+    # Why an intent the customer refused was not granted, as the INTENT card says it.
+    refused_reason: str
+
+
+class OrderReferencePlacement(BaseModel):
+    """Where an unplaced turn that names an owned order goes, and how its card says so."""
+
+    intent: str
+    source: str
+    reason: str
+
+
 class IntentRouterSettings(BaseModel):
     """Customer Support intent routing policy."""
 
     clarification_top_k: int
+    order_reference: OrderReferencePlacement
+    negation: PhraseNegationSettings
     # Whether `intents[].phrases` route a turn before the classifier sees it. The phrases
     # stay in force for the order validator either way.
     phrase_rules: bool
@@ -238,6 +258,25 @@ class OrderSentenceSettings(BaseModel):
     details: OrderDetailPhrases
 
 
+class ReviewReasonSettings(BaseModel):
+    """Why a request is in the review queue, as the queue records it (`hitl_queue.reason`).
+
+    What approval *does* is the request's action; why it was queued is this: a refund
+    the agent may not issue alone, or a reply the hallucination check cut, by finding.
+    """
+
+    by_action: dict[str, str]
+    by_finding: dict[str, str]
+    # A cut reply whose finding is not listed: a claim the evidence contradicted.
+    hallucination: str
+
+    def for_action(self, action: str) -> str:
+        return self.by_action.get(action, action)
+
+    def for_finding(self, reason_code: str) -> str:
+        return self.by_finding.get(reason_code, self.hallucination)
+
+
 class ReviewOutputSettings(BaseModel):
     """How a review request reads: queued on a card, decided at the console, sent to a customer.
 
@@ -312,11 +351,21 @@ class TaskOutcomeSettings(BaseModel):
         ]
 
 
+class GroundingFactSettings(BaseModel):
+    """The sentence each typed fact is stated as (`presentation/facts.py`), by attribute."""
+
+    statements: dict[str, str]
+
+
 class PrefetchSettings(BaseModel):
     """How a procedure's prefetch reads are filled and shown to the model (ADR 0010)."""
 
     arguments: dict[str, str]
     call_id: str
+    # How a read answered from the deterministic checks' order names its source on its card.
+    served_from: str
+    # Tools that only find an order: not offered once the turn's order is known.
+    needless_when_order_known: list[str]
 
 
 class CustomerSupportAgentSettings(YamlBackedSettings):
@@ -355,14 +404,17 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     refund_limit_notice: str
     refund_limit_withheld: RefundLimitWithheldSettings
     support_contact: str
+    # Added to a declined refund's refusal: how a customer who disagrees escalates.
+    refund_declined_escalation: str
     # State metadata key → signal template (`intent:{value}`), ADR 0010.
     instruction_signals: dict[str, str]
     # A procedure's prefetch reads: argument → state key, and the shown call id (ADR 0010).
     prefetch: PrefetchSettings
-    grounding_facts: dict[str, str]
+    grounding_facts: GroundingFactSettings
     # Who the console acts as when it approves or denies a queued refund.
     console_reviewer: str
     review_output: ReviewOutputSettings
+    review_reasons: ReviewReasonSettings
     # An issued refund's void window, before it settles (VOIDABLE).
     settlement: SettlementSettings
     evals: CsaEvalSettings

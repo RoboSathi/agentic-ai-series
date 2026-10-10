@@ -55,7 +55,7 @@ features:
   # Platform features this agent does not compose. Declared false because
   # an overlay cannot delete keys the platform default declares; moving
   # them with /harness changes nothing for this agent (ADR ra-0016).
-  basic_sanity: false
+  deterministic_checks: false
   intent_classification: false
   hallucination_guard: false
   gatekeeper: false

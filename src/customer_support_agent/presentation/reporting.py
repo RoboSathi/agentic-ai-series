@@ -33,7 +33,7 @@ from agent_platform.primitives.money import money_or_none
 __all__ = [
     "FALLBACK_REPLY",
     "asks_for_the_list",
-    "basic_sanity_fields",
+    "deterministic_check_fields",
     "loop_control_fields",
     "display_tool_name",
     "gatekeeper_fields",
@@ -68,8 +68,8 @@ def memory_fact_fields(fact: Any, *, score: float | None = None) -> dict[str, An
 memory_facts_field = memory_fact_fields
 
 
-def basic_sanity_fields(result: Any) -> dict[str, Any]:
-    """Render BasicSanity findings consistently with the TUI check contract."""
+def deterministic_check_fields(result: Any) -> dict[str, Any]:
+    """Render DeterministicCheck findings consistently with the TUI check contract."""
     fields: dict[str, Any] = {
         "passed": result.passed,
         "reason_code": result.reason_code,
@@ -99,9 +99,9 @@ def basic_sanity_fields(result: Any) -> dict[str, Any]:
                 "name": finding.check.replace("_", " ").title(),
                 "status": status,
                 "reason_code": (
-                    f"BASIC_SANITY_{finding.check.upper()}_DEFERRED"
+                    f"DETERMINISTIC_CHECK_{finding.check.upper()}_DEFERRED"
                     if not finding.applicable
-                    else f"BASIC_SANITY_{finding.check.upper()}_PASS"
+                    else f"DETERMINISTIC_CHECK_{finding.check.upper()}_PASS"
                     if finding.passed
                     else result.reason_code
                 ),
@@ -112,7 +112,7 @@ def basic_sanity_fields(result: Any) -> dict[str, Any]:
     if not fields["checks"]:
         fields["checks"].append(
             {
-                "name": "Basic sanity",
+                "name": "Deterministic checks",
                 "status": "PASS" if result.passed else "FAIL",
                 "reason_code": result.reason_code,
                 "reason": result.message or result.reason_code,

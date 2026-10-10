@@ -77,7 +77,7 @@ async def _refund_turn(
 ) -> _Turn:
     llm = ScriptedLLM(
         [
-            {"tool_calls": tool_call("request_refund", order_id=10001, amount=32.0)},
+            {"tool_calls": tool_call("process_refund", order_id=10001, amount=32.0)},
             {"content": "Your refund has been issued and settles shortly."},
         ]
     )
@@ -112,18 +112,26 @@ class TestARefundTurn:
         assert len(turn.llm.requests) == 2
         first = turn.llm.requests[0].messages
         asked = [c.name for m in first if m.tool_calls for c in m.tool_calls]
-        assert asked == ["look_up_order", "check_refund"]
+        assert asked == ["get_order_status", "get_refund_status"]
         assert all("not permitted" not in str(m.content) for m in first if m.role == "tool")
 
-    async def test_it_is_offered_only_the_procedures_tools_by_their_model_names(
+    async def test_it_is_offered_only_what_the_turn_still_needs(
         self, seeded_pool: SqliteConnectionPool, audit: DuckDbAuditLedger
     ) -> None:
+        """The reads are already answered and the order is known: only the write is left."""
         turn = await _refund_turn(seeded_pool, audit, procedural=True)
-        offered = set(turn.offered())
-        # The intent plan's tools are always offered; retrieval may narrow the optional one
-        # (`list_my_orders`, needless when the message names its order) — never widen.
-        assert {"look_up_order", "check_refund", "request_refund"} <= offered
-        assert offered <= {"look_up_order", "check_refund", "request_refund", "list_my_orders"}
+        assert turn.offered() == ["process_refund"]
+
+    async def test_the_order_the_checks_read_is_not_read_again(
+        self, seeded_pool: SqliteConnectionPool, audit: DuckDbAuditLedger
+    ) -> None:
+        """Prefetch answers both reads from the deterministic checks' row; no tool runs for them."""
+        turn = await _refund_turn(seeded_pool, audit, procedural=True)
+        served = [e for e in turn.stage("tool_result") if e.fields.get("served_from")]
+        requested = [e.fields["tool"] for e in turn.stage("tool_request")]
+        assert [e.fields["tool"] for e in served] == ["get_order_status", "get_refund_status"]
+        assert requested == ["process_refund"]
+        assert "10001" in served[0].fields["output"]
 
     async def test_it_carries_the_profile_and_the_refund_procedure(
         self, seeded_pool: SqliteConnectionPool, audit: DuckDbAuditLedger
@@ -131,7 +139,7 @@ class TestARefundTurn:
         system = (await _refund_turn(seeded_pool, audit, procedural=True)).system()
         assert system.startswith("# Customer Support Agent")
         assert "# Procedure: refund-workflow" in system
-        assert "above the refund limit in the policy" in system
+        assert "full total, whatever it is" in system
         assert "## Preconditions" not in system  # the people's sections are not sent
 
     async def test_one_procedure_card_says_what_ran_and_why(
@@ -141,10 +149,18 @@ class TestARefundTurn:
         stage = get_settings().skills.observability.activation_stage
         [card] = turn.stage(stage)
         assert card.summary is not None
-        assert card.summary.startswith("refund-workflow v1 · matched intent REQUEST_REFUND")
-        assert "reads first: look_up_order, check_refund" in card.summary
-        prefetched = [e for e in turn.stage("tool_request") if e.fields.get("prefetched_for")]
-        assert len(prefetched) == 2
+        assert card.summary.startswith("refund-workflow v1 · chosen for intent REQUEST_REFUND")
+        assert "harness reads first: get_order_status, get_refund_status" in card.summary
+        assert card.summary.endswith("model may call: process_refund")
+        prefetched = [
+            e
+            for e in [*turn.stage("tool_request"), *turn.stage("tool_result")]
+            if e.fields.get("prefetched_for")
+        ]
+        assert sorted(e.fields["tool"] for e in prefetched) == [
+            "get_order_status",
+            "get_refund_status",
+        ]
 
     async def test_the_audit_trail_names_the_version_used(
         self, seeded_pool: SqliteConnectionPool, audit: DuckDbAuditLedger
@@ -164,40 +180,38 @@ class TestTheCardTellsTheTruth:
         stage = get_settings().skills.observability.activation_stage
         order = [e.stage for e in turn.events if e.status != "started"]
         assert order.index(stage) < order.index("tool_request")
-        assert turn.card().fields["reads_first"] == ["look_up_order", "check_refund"]
+        assert turn.card().fields["harness_reads_first"] == [
+            "get_order_status",
+            "get_refund_status",
+        ]
 
     async def test_it_lists_exactly_the_tools_the_model_was_offered(
         self, seeded_pool: SqliteConnectionPool, audit: DuckDbAuditLedger
     ) -> None:
         turn = await _refund_turn(seeded_pool, audit, procedural=True)
-        assert sorted(turn.card().fields["tools_offered"]) == sorted(turn.offered())
+        assert sorted(turn.card().fields["model_may_call"]) == sorted(turn.offered())
 
 
 class TestAnUnplacedTurn:
-    """The classifier could not place it: its procedures still bound what it is offered."""
+    """The classifier could not place it and it names no order: reads only."""
 
     _UNPLACED = "something is not right, can you look into it"
 
-    async def test_it_gets_every_procedure_that_may_be_its_task(
+    async def test_it_gets_the_order_status_procedure_only(
         self, seeded_pool: SqliteConnectionPool, audit: DuckDbAuditLedger
     ) -> None:
         turn = await _refund_turn(seeded_pool, audit, procedural=True, query=self._UNPLACED)
         assert turn.route == "llm_fallback"
-        names = [p["procedure"] for p in turn.card().fields["procedures"]]
-        assert sorted(names) == ["cancel-order", "order-status", "refund-workflow"]
+        names = [p["procedure"].split(" v")[0] for p in turn.card().fields["procedures"]]
+        assert names == ["order-status"]
 
-    async def test_it_is_offered_their_tools_and_the_card_says_so(
+    async def test_it_is_offered_reads_and_the_card_says_so(
         self, seeded_pool: SqliteConnectionPool, audit: DuckDbAuditLedger
     ) -> None:
+        """A write needs a request the router recognised as one."""
         turn = await _refund_turn(seeded_pool, audit, procedural=True, query=self._UNPLACED)
-        assert sorted(turn.offered()) == [
-            "cancel_order",
-            "check_refund",
-            "list_my_orders",
-            "look_up_order",
-            "request_refund",
-        ]
-        assert sorted(turn.card().fields["tools_offered"]) == sorted(turn.offered())
+        assert sorted(turn.offered()) == ["get_order_status", "list_orders"]
+        assert sorted(turn.card().fields["model_may_call"]) == sorted(turn.offered())
 
 
 class TestWithoutProceduralMemory:

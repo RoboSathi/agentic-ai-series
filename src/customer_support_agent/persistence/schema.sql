@@ -79,7 +79,10 @@ CREATE TABLE IF NOT EXISTS hitl_queue (
     -- The conversation a decision is reported back into.
     session_id TEXT,
     -- A reply review's case, as JSON (domain.models.ReplyReview).
-    detail TEXT
+    detail TEXT,
+    -- Why it was queued: refund, cancellation, or what the hallucination check
+    -- found (hallucination_contradicted, hallucination_unsupported, low_confidence).
+    reason TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_hitl_status ON hitl_queue (status);

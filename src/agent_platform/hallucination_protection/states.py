@@ -8,7 +8,7 @@ model that reasons about sentences was asked to reason about a state
 machine.
 
 The record has an explicit one — a refund is `none`, then `pending_review`,
-then `approved`, then `completed`, or it is `denied` after it was asked
+then `issued`, then `completed`, or it is `denied` after it was asked
 for — so a claim about where the refund stands is judged against it, in
 both directions, and the record line is never sent to NLI.
 

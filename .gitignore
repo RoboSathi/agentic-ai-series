@@ -31,6 +31,7 @@ data/observability.duckdb*
 data/agent.db
 data/*
 src/customer_support_agent/dummy_data/*.db*
+src/research_agent/data/runs/*
 
 # Local Models
 local_models/*

@@ -30,7 +30,7 @@ No section of its own; the direct limit comes from the database policy, not conf
 
 ## Collaborators
 
-- Used by `basic_sanity`, `gatekeeper`, `tools`, `resilience` (the saga). The eval oracle deliberately does *not* use `RefundPolicy` — it checks side effects against the fixture, so the policy code is what is under test.
+- Used by `deterministic_checks`, `gatekeeper`, `tools`, `resilience` (the saga). The eval oracle deliberately does *not* use `RefundPolicy` — it checks side effects against the fixture, so the policy code is what is under test.
 
 ## Episodes
 

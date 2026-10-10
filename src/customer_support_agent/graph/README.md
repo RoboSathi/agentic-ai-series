@@ -1,10 +1,13 @@
 # graph — the LangGraph application
 
 The agent itself: its state, nodes, edges, and the composition root.
-Order: authenticate → choose order → screening (basic sanity, PII,
-prompt injection, content moderation — only those declared) → intent →
-context → propose ⇄ execute → finalize → await approval. A deterministic read
-route answers straight from the database with no model call.
+Order: authenticate → choose order → screening (PII, prompt injection,
+content moderation — only those declared) → deterministic checks → intent →
+context → prefetch → propose ⇄ execute → finalize → await approval. A
+deterministic read route answers straight from the database with no model
+call; an unplaced turn that names an owned order is read as that order's
+status. The order row the deterministic checks read is reused by prefetch and
+the read path rather than read again.
 
 ## Vocabulary
 
@@ -14,7 +17,7 @@ route answers straight from the database with no model call.
 
 ## Public interface
 
-- `build_agent(llm=, pool=, gatekeeper=, working_memory=, cascade=, audit=, reporter=, with_memory=, observe=, basic_sanity=, intent_router=, features=, knowledge_base=, checkpointer=, episodic_store=)` (`builder.py`) — anything injected is used as is
+- `build_agent(llm=, pool=, gatekeeper=, working_memory=, cascade=, audit=, reporter=, with_memory=, observe=, deterministic_checks=, intent_router=, features=, knowledge_base=, checkpointer=, episodic_store=)` (`builder.py`) — anything injected is used as is
 - `CustomerSupportAgent.handle(query, session_id, customer)` → `AgentState`; `resume(thread_id, decision)` (`agent.py`)
 - `build_review_service()` — the operator side of HITL
 - Nodes (`nodes/`): authenticate, screening, intent, context, reason, act, finalize, review_wait

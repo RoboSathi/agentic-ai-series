@@ -13,7 +13,6 @@ from functools import cache
 from typing import Any
 
 from agent_platform.audit import AuditLedger
-from agent_platform.basic_sanity import BasicSanityChecker
 from agent_platform.config import FeatureSet, get_settings
 from agent_platform.context import (
     ContextFailureDetector,
@@ -21,6 +20,7 @@ from agent_platform.context import (
     StrategySelector,
 )
 from agent_platform.context.types import Chunk
+from agent_platform.deterministic_checks import DeterministicChecker
 from agent_platform.durability import DurableGraphRunner, RunRegistry, SqliteCheckpointer
 from agent_platform.evals import NollmScoringCascadeImpl
 from agent_platform.executor import ToolExecutor
@@ -59,7 +59,9 @@ from agent_platform.verification import EffectVerifier
 from customer_support_agent.config.settings import get_agent_settings
 from customer_support_agent.domain.identity import (
     Customer,
+    current_customer,
 )
+from customer_support_agent.domain.models import Order
 from customer_support_agent.domain.order_reference import (
     ORDER_UNDER_DISCUSSION,
     OrderReferenceResolver,
@@ -71,6 +73,7 @@ from customer_support_agent.intent.router import CustomerSupportIntentRouter, In
 from customer_support_agent.loop_control import OutputQualityGate
 from customer_support_agent.observability.accounting import TurnAccountant
 from customer_support_agent.persistence.repositories import OrdersRepository
+from customer_support_agent.presentation.facts import order_facts, policy_facts, session_facts
 from customer_support_agent.presentation.orders import (
     OrderMenu,
     order_record,
@@ -98,6 +101,9 @@ TOOL_BLOCKED = "blocked"
 PREFETCHED = "prefetched"
 # The tools this turn offers the model (qualified names), settled once before any read.
 TURN_OFFERED_TOOLS = "turn_offered_tools"
+# The owned order row the deterministic checks read this turn (JSON), so later
+# stages answer from it instead of reading the same order again.
+ORDER_SNAPSHOT = "order_snapshot"
 # The outcomes whose recorded result is itself the evidence.
 _GROUNDED_AS_STATED = frozenset({TOOL_COMPLETED, TOOL_REFERRED})
 
@@ -137,7 +143,7 @@ class NodeSupport:
     _authenticator: CustomerAuthenticator | None
     _orders: OrdersRepository | None
     _order_reference: OrderReferenceResolver
-    _basic_sanity: BasicSanityChecker | None
+    _deterministic_checks: DeterministicChecker | None
     _deliberation_markers: list[str]
     _max_rounds: int
     _actor: str
@@ -180,7 +186,7 @@ class NodeSupport:
         """Resolve which order the customer means."""
         raise NotImplementedError
 
-    async def basic_sanity(self, state: AgentState) -> dict[str, Any]:
+    async def deterministic_checks(self, state: AgentState) -> dict[str, Any]:
         """Run this agent's own pre-flight checks."""
         raise NotImplementedError
 
@@ -269,7 +275,7 @@ class NodeSupport:
         """Settle the order under discussion for every stage after this one.
 
         Resolved once, early, and carried in the turn's metadata, because
-        three components need the same answer: BasicSanity, which will
+        three components need the same answer: DeterministicCheck, which will
         not guess an identifier; retrieval, which otherwise ranks eleven
         near-identical orders against a query that names none; and the
         mandate issuer, which must know what the customer asked about
@@ -439,7 +445,7 @@ class NodeSupport:
             *self._record_evidence(state),
             *self._policy_evidence(),
             *_knowledge_evidence(),
-            *self._session_facts(state),
+            *self._typed_facts(state),
             *asked,
             *seen,
         ]
@@ -454,26 +460,26 @@ class NodeSupport:
         tools = tool_evidence([Observation(*observed) for observed in self._observations(state)])
         return [*([record] if record is not None else []), *tools]
 
-    @staticmethod
-    def _session_facts(state: AgentState) -> list[Chunk]:
-        """Facts the harness established for this session, restated as sentences.
+    def _typed_facts(self, state: AgentState) -> list[Chunk]:
+        """The order, the rules and the session as typed facts the guard reads first.
 
-        Only keys the agent configures, and only those the harness set (the
-        customer cannot write working memory), so "You are Margaret Bartik"
-        is grounded by authentication, not by the customer's say-so.
+        Who the customer is comes from authentication (the customer cannot set it),
+        so "You're Dennis Johnson" is grounded by the session, not by their say-so.
+        The order is read as it stands now: a write this turn evicted the cached row.
         """
-        facts = []
-        for key, template in get_agent_settings().grounding_facts.items():
-            value = state.working_memory.get(key)
-            if value:
-                facts.append(
-                    Chunk(
-                        content=template.format(value=value),
-                        kind="memory",
-                        source=f"working_memory:{key}",
-                    )
-                )
-        return facts
+        order = self._discussed_order(state)
+        return [
+            *(order_facts(order) if order is not None else []),
+            *policy_facts(self._refund_limit()),
+            *session_facts(current_customer()),
+        ]
+
+    def _discussed_order(self, state: AgentState) -> Order | None:
+        """The order under discussion, if this customer owns it."""
+        order_id = self._order_under_discussion(state)
+        if order_id is None or self._orders is None or state.customer_id is None:
+            return None
+        return self._orders.get_for_customer(order_id, state.customer_id)
 
     def _policy_evidence(self) -> list[Chunk]:
         """Every rule the model was given, one chunk per rule, in two tiers.

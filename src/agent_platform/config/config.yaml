@@ -66,7 +66,7 @@ features:
   # model call on a question the database had already settled, and leans
   # on the Gatekeeper and business rules downstream instead of stopping
   # early. The implementation is the agent's; only the contract is here.
-  basic_sanity: true
+  deterministic_checks: true
   prompt_injection: true
   content_moderation: true
   pii: true
@@ -479,6 +479,8 @@ observability:
     tool_requested: "Requested: {tool}"
     # A read a procedure ran before the first model call (ADR 0010).
     tool_prefetched: "Prefetched: {tool} · for {procedure}"
+    # A prefetch read answered from a row an earlier stage already read: no tool ran.
+    tool_served: "Prefetched: {tool} · for {procedure} · from {source}"
     gatekeeper: "Gatekeeper: {verdict} · {standing}"
     # Shown at each point the loop decides whether to go round again.
     loop_control:
@@ -853,16 +855,19 @@ skills:
   reasons:
     always: always used
     # `{kind}`, `{value}`: the signal split at its first ':' (`intent:REQUEST_REFUND`).
-    trigger: "matched {kind} {value}"
+    trigger: "chosen for {kind} {value}"
     lexical: "the question mentions it (score {score:.1f})"
   observability:
     activation_stage: skill_activation
     sync_stage: skill_sync
-    # One procedure on the card: `{name}`, `{version}`, `{reason}`, `{steps}`.
-    activated: "{name} v{version} · {reason} · {steps} steps"
+    # One procedure on the card: `{name}`, `{version}`, `{reason}`; its steps are listed below.
+    activated: "{name} v{version} · {reason}"
     joiner: "; "
-    # The reads the procedure runs before the model is asked (the card is drawn first).
-    prefetched: " · reads first: {tools}"
+    # The reads the harness runs before the model is asked (the card is drawn first), and
+    # the tools the model may then call: what the harness read, it is not offered again.
+    prefetched: " · harness reads first: {tools}"
+    offered: " · model may call: {tools}"
+    offered_none: " · model may call: nothing"
     synced: "Procedures synced · {added} added · {updated} updated · {retired} retired"
     unchanged: "Procedures unchanged"
   audit:
@@ -1045,6 +1050,10 @@ guardrails:
     TOOL_EVIDENCE_NOT_EXECUTED: claims an action the tool call never executed
     CLAIM_DETAIL_UNSOURCED: states a date or number found in no evidence
     HALLUCINATION_GUARD_BLOCK: a claim is contradicted by the evidence
+    FACT_MISMATCH: states a detail the record disagrees with
+    CLAIM_UNSUPPORTED: states something no evidence supports
+    LOW_CONFIDENCE_DEGENERATE: a sentence written with very low confidence
+    LOW_CONFIDENCE_SPECIFIC: a detail written with low confidence that no record confirms
   # What the customer received, as the card's result line says it. The first word is the state
   # the card is coloured by (`tui.state_words`): sentences removed is a warning, nothing sent a block.
   outcomes:
@@ -1068,6 +1077,15 @@ hallucination_protection:
     max_low_token_share: 0.25
     # Tokens that carry no content (whitespace, punctuation, markup) are not scored.
     ignore_token_pattern: '^[\s\W_]*$'
+    # Grammar, not content: a low probability on these means another phrasing, not a guess,
+    # so they are left out of the content mean that decides a degenerate sentence.
+    function_token_pattern: '(?i)^\s*(?:a|an|the|and|or|but|so|of|to|for|in|on|at|by|with|as|is|are|was|were|be|been|being|has|have|had|do|does|did|it|its|this|that|these|those|i|you|your|we|our|they|their|he|she|his|her|please|will|can|would|could|should|may|just|also|then|there|here|not|no)\s*$'
+    # A sentence whose content tokens average below this was not written, it was guessed
+    # ("The-something entirely" at 39%): it is cut whatever grounding says.
+    degenerate_mean_prob: 0.5
+    # An id, amount, date or number written below this is the made-up-number signature;
+    # it is cut unless a record confirms it.
+    slot_min_prob: 0.2
     card:
       heading: "{low} of {scored} sentence(s) written with low confidence (by token logprobs) · {model}"
       heading_clean: "All {scored} sentence(s) written with confidence (by token logprobs) · {model}"
@@ -1083,8 +1101,36 @@ hallucination_protection:
     row: "level {level} · {name}"
     confidence: token confidence
     entailment: NLI entailment
+  # What decided a claim, as its card line names it.
+  methods:
+    record: record
+    logprobs: "logprobs {prob:.0%}"
+    restated: rule restated
+    nothing: no evidence
+    nli: "NLI {score:.2f}"
   # What is said instead when nothing in an answer could be verified.
   withheld_reply: "I couldn't verify all of the details in that response. Please try again."
+  # By the reason the reply was cut (an agent's overlay words these for its customers).
+  withheld_replies: {}
+  # A verifiable claim nothing grounds: an abstention that stays in the reply (false), or a
+  # made-up claim that is cut and queued like a contradicted one (true; an agent opts in).
+  unsupported_is_hallucination: false
+  # The fact ledger (`hallucination_protection/ledger.py`): typed facts an agent puts in its
+  # evidence are read before any model. The attributes are the agent's; how two values are
+  # compared, and what a duration's unit is worth, is language, shipped here.
+  facts:
+    attributes: {}
+    comparisons:
+      ">": ['\bexceeds?\b', '\bexceeding\b', '\bmore\s+than\b', '\bover\b', '\babove\b', '\bgreater\s+than\b', '\bhigher\s+than\b', '\blarger\s+than\b']
+      "<": ['\bbelow\b', '\bunder\b', '\bless\s+than\b', '\blower\s+than\b', '\bsmaller\s+than\b']
+      "<=": ['\bwithin\b', '\bup\s+to\b', '\bat\s+most\b', '\bno\s+more\s+than\b']
+      ">=": ['\bat\s+least\b', '\bno\s+less\s+than\b']
+    duration_units:
+      'seconds?|secs?': 1
+      'minutes?|mins?': 60
+      'hours?|hrs?': 3600
+      'days?': 86400
+    state_attribute: ""
   # The lexical fallback's contradictions refute (true) or only leave a claim unverified.
   uncalibrated_may_refute: true
   # A claim a rule refuted (an id, amount or date in no evidence) is removed without asking
@@ -1096,7 +1142,6 @@ hallucination_protection:
   claim_conjunctions: [and, but, however, although, while, because, since, so]
   claim_min_content_tokens: 3
   money_scales: [k, m, mn, mm, b, bn, t, tn, thousand, million, billion, trillion, lakh, lac, crore, cr]
-  confidence_threshold: 0.7
   # Minimum NLI probability required to accept an entailment as grounded.
   # This is separate from the generic cascade confidence threshold so the
   # hallucination guard can be calibrated independently. 0.60 is the initial
@@ -1828,6 +1873,18 @@ tui:
     fail: "#FF5C5C"
     warn: "#F4D35E"
     dim: "#77736A"
+  # The HALLUCINATION CHECK card: the result, the model's confidence in each sentence
+  # (coloured by band, its least sure words marked), and one line per claim saying what
+  # decided it. Everything else — every passage retrieved, every score — is in the log.
+  grounding_card:
+    result: result
+    confidence: "confidence · {model} · content-token mean"
+    confidence_skipped: "confidence · skipped: {reason}"
+    claims: claims
+    corrected: corrected from the record
+    no_evidence: no evidence states this
+    no_evidence_either_way: no evidence states or contradicts this
+    confidence_bands: {pass: 0.85, warn: 0.6}
   # Words that name a state, wherever a card shows them as a value -> their tone.
   state_words:
     PASS: pass
@@ -1852,6 +1909,8 @@ tui:
     SUPPORTED: pass
     CONTRADICTED: fail
     UNVERIFIED: warn
+    UNSUPPORTED: fail
+    LOW CONFIDENCE: fail
     SKIPPED: dim
     NO_MATCH: pass
   response_styles:

@@ -102,6 +102,36 @@ class StepEvents:
             fields["prefetched_for"] = prefetched_for
         self._loop.emit(TOOL_REQUEST, summary=heading, fields=fields, event_kind="tool_request")
 
+    def served_read(
+        self,
+        name: str,
+        arguments: str,
+        output: str,
+        *,
+        procedure: str,
+        source: str,
+        redact: Any = None,
+    ) -> None:
+        """TOOL RESULT for a prefetch read answered from a row an earlier stage already read.
+
+        No tool ran, so there is no request, verdict or execution to draw: one card says
+        what the model is handed, for which procedure, and which stage's read it reuses.
+        """
+        heading = self._words().tool_served.format(
+            tool=display_tool_name(name), procedure=procedure, source=source
+        )
+        fields = tool_request_fields(name, arguments, redact)
+        fields.update(
+            {
+                "prefetched_for": procedure,
+                "served_from": source,
+                "output": redact(output) if redact is not None else output,
+            }
+        )
+        self._loop.emit(
+            TOOL_RESULT, "completed", summary=heading, fields=fields, event_kind="tool_result"
+        )
+
     def gatekeeper(
         self,
         call: "ToolCall",

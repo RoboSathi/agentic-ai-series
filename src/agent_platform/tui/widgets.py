@@ -125,6 +125,11 @@ FIELD_PRIORITY = (
     "requested_tool_calls",
     "tools_available",
     "tools_offered",
+    # The procedure card: what was chosen and why, then what the harness read, then what
+    # the model may call.
+    "procedures",
+    "harness_reads_first",
+    "model_may_call",
     "input_tokens",
     "output_tokens",
     "total_tokens",
@@ -196,12 +201,16 @@ AMOUNT_FIELDS = {
 _CLAIM_MARKS = {
     "supported": ("✓", "pass", "supported"),
     "undetermined": ("?", "warn", "unverified"),
+    "unsupported": ("✗", "fail", "unsupported"),
+    "low_confidence": ("✗", "fail", "low confidence"),
     "refuted": ("✗", "fail", "contradicted"),
 }
 # The NLI result each verdict is decided by, and its display name.
 _DECIDING_LABEL = {"supported": "entailment", "refuted": "contradiction"}
 _REFUTED = "refuted"
 _UNDETERMINED = "undetermined"
+_UNSUPPORTED = "unsupported"
+_LOW_CONFIDENCE = "low_confidence"
 _NLI_NAMES = {"unknown": "neutral"}
 # A line of the record read directly, not scored by a model.
 _RECORD_LABEL = "record"
@@ -595,14 +604,18 @@ class StageEventWidget(Collapsible):
         if stage == "authentication":
             return "PASS · Identity Verified" if fields.get("verified") else "Verification Required"
 
-        if stage == "basic_sanity":
+        if stage == "deterministic_checks":
             summary = get_settings().tui.reason_summaries.get(str(fields.get("reason_code")))
             if summary:
                 return summary
-            return "PASS · Deterministic checks" if fields.get("passed") else "Blocked"
+            return "PASS · Valid Request" if fields.get("passed") else "Invalid Request"
 
         if stage == "prompt_injection_check":
-            return "Blocked" if fields.get("detected") else "PASS · No prompt injection attempt"
+            return (
+                "Prompt injection blocked"
+                if fields.get("detected")
+                else "PASS · No prompt injection attempt"
+            )
 
         if stage == "pii_filtering":
             if fields.get("detected"):
@@ -956,39 +969,100 @@ def _narrative_line(item: Any) -> tuple[str, str]:
 
 
 def _append_grounding(body: Text, fields: Mapping[str, Any]) -> None:
-    """The hallucination check, as a verdict and one line of proof per claim.
+    """The hallucination check: what was sent, how sure the model was, what decided each claim.
 
-    Drawn like every other card: `key = value` rows, then one check line
-    per claim. Everything else the guardrail reports — every retrieved
-    passage with its cosine and NLI scores, the diagnostics, the per-tier
-    counts — is in `guardrails.log`. The card answers three questions: what
-    was sent, what was it checked against, and what decided each sentence.
-    Level 1 (token confidence) and level 2 (the agent's own grounding) lead the card.
+    Three parts and nothing else. The result row says what reached the customer. The
+    confidence block shows each sentence's content-token mean, coloured by band, with
+    the words the model was least sure of marked in the sentence itself. Then one
+    line per claim: its verdict, what decided it (the record, a rule, NLI, logprobs),
+    and the line of evidence that did. The claim tally is the title; every passage
+    retrieved, every score, the evidence counts and the draft check are in
+    `guardrails.log`. A payload with no token confidences (an agent drawing its own
+    levels) shows its level rows instead.
     """
-    for level in fields.get("levels") or []:
-        if isinstance(level, Mapping):
-            _append_level(body, level)
-    _append_outcome(body, str(fields.get("outcome") or ""))
-    # The agent's deterministic pre-filter, when it has one: how the reply reached this check.
-    if fields.get("pre_check"):
-        _append_grounding_row(body, "pre-check", str(fields["pre_check"]))
+    words = get_settings().tui.grounding_card
+    _append_grounding_row(body, words.result, "")
+    _append_outcome_value(body, str(fields.get("outcome") or ""))
+    confidence = fields.get("confidence")
+    if isinstance(confidence, Mapping) and confidence:
+        _append_confidence(body, confidence)
+    else:
+        for level in fields.get("levels") or []:
+            if isinstance(level, Mapping):
+                _append_level(body, level)
     checks = [c for c in fields.get("claim_checks") or [] if isinstance(c, Mapping)]
     if checks:
-        unverified = any(c.get("verdict") == _UNDETERMINED for c in checks)
-        note = " (unverified does not block)" if unverified else ""
-        _append_grounding_row(body, "claims", str(fields.get("tally") or "") + note)
-    _append_grounding_row(
-        body, "checked against", str(fields.get("evidence_searched") or "no evidence")
-    )
-    provenance = [str(line) for line in fields.get("provenance_checks") or []]
-    if provenance:
-        _append_grounding_row(body, "ids & amounts", "  ".join(provenance))
-    checker = next((c for c in checks if c.get("decided_by") != "deterministic_provenance"), None)
-    if checker is not None:
-        _append_grounding_row(body, "checker", _checker_line(checker))
-    # Each claim as a check line under the rows, the way a guardrail card lists its checks.
+        _append_heading(body, words.claims)
     for check in checks:
         _append_claim(body, check)
+    corrected = [str(line) for line in fields.get("corrected_sentences") or []]
+    if corrected:
+        _append_grounding_row(body, words.corrected, " ".join(corrected))
+
+
+def _append_heading(body: Text, heading: str) -> None:
+    """A section of the card (`claims`), in the key colour, with what it lists below it."""
+    body.append("\n  " if body else "  ")
+    body.append(heading, style=get_settings().tui.body_styles["key"])
+
+
+def _append_outcome_value(body: Text, outcome: str) -> None:
+    """`TRIMMED · removed 1 of 2 …` after its key: only the state word takes its tone."""
+    word, separator, rest = outcome.partition(" ")
+    body.append(word, style=_state_style(word) or get_settings().tui.body_styles["value"])
+    body.append(separator + rest, style=get_settings().tui.body_styles["value"])
+
+
+def _append_confidence(body: Text, confidence: Mapping[str, Any]) -> None:
+    """Each sentence by the model's confidence in it: its mean coloured, its weak words marked."""
+    words = get_settings().tui.grounding_card
+    if not confidence.get("available"):
+        reason = str(confidence.get("reason") or "")
+        body.append(
+            "\n  " + words.confidence_skipped.format(reason=reason),
+            style=_tone("dim"),
+        )
+        return
+    _append_heading(body, words.confidence.format(model=confidence.get("model")))
+    for sentence in confidence.get("sentences") or []:
+        if isinstance(sentence, Mapping):
+            _append_confident_sentence(body, sentence)
+
+
+def _append_confident_sentence(body: Text, sentence: Mapping[str, Any]) -> None:
+    """`94% Order 10245 has been cancelled…`, the percent by band, each weak token by its tone."""
+    mean = float(sentence.get("content_mean") or 0.0)
+    body.append(f"\n    {mean:>4.0%} ", style=_band_style(mean))
+    text = str(sentence.get("sentence") or "")
+    position = 0
+    for token in sentence.get("tokens") or []:
+        if not isinstance(token, Mapping):
+            continue
+        start, end = int(token.get("start") or 0), int(token.get("end") or 0)
+        if start < position or end <= start:
+            continue
+        body.append(text[position:start], style=get_settings().tui.body_styles["value"])
+        body.append(text[start:end], style=_token_style(token))
+        position = end
+    body.append(text[position:], style=get_settings().tui.body_styles["value"])
+
+
+def _band_style(prob: float) -> str:
+    """A confidence's tone: sure (pass), hesitant (warn), guessed (fail)."""
+    bands = get_settings().tui.grounding_card.confidence_bands
+    tone = "pass" if prob >= bands["pass"] else "warn" if prob >= bands["warn"] else "fail"
+    return _tone(tone)
+
+
+def _token_style(token: Mapping[str, Any]) -> str:
+    """A token the model was unsure of takes a tone; a guessed specific is marked as a failure."""
+    prob = float(token.get("prob") or 0.0)
+    slot_floor = get_settings().hallucination_protection.confidence.slot_min_prob
+    if token.get("slot") and prob < slot_floor:
+        return f"{_tone('fail')} underline"
+    if prob < get_settings().tui.grounding_card.confidence_bands["warn"]:
+        return _tone("warn")
+    return get_settings().tui.body_styles["value"]
 
 
 def _append_level(body: Text, level: Mapping[str, Any]) -> None:
@@ -1011,33 +1085,18 @@ def _append_grounding_row(body: Text, key: str, value: str) -> None:
     _append_pair(body, key, " = ", value)
 
 
-def _append_outcome(body: Text, outcome: str) -> None:
-    """`result = TRIMMED · removed 1 of 2 …`: only the state word takes its tone."""
-    word, separator, rest = outcome.partition(" ")
-    body.append("  ")
-    _append_pair(body, "result", " = ", word, _state_style(word))
-    body.append(separator + rest, style=get_settings().tui.body_styles["value"])
-
-
-def _checker_line(check: Mapping[str, Any]) -> str:
-    """`cross-encoder/nli-deberta-v3-base · supports at ≥ 0.6 · top-3 by embedding`."""
-    threshold = check.get("threshold")
-    bar = (
-        f"supports at ≥ {threshold}" if threshold is not None else "uncalibrated: its label decides"
-    )
-    return f"{check.get('detector')} · {bar} · {check.get('retrieval')}"
-
-
 def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
-    """`✗ claim [CONTRADICTED]`, as a check line, then the one line that decided it.
+    """`✗ claim [CONTRADICTED] · record`, as a check line, then the one line that decided it.
 
-        contradicted by [Tool Result]: "Order 10665 refund status: pending_review."
+        supported by [Tool Result · cancel_order]: "Cancelled and refunded order 10245."
         supported by [Policy] (Entailment 0.99): "…"
         contradicted: Amount(s) ['$99.00'] appear in the reply but in no tool result.
-        unverified: no evidence states or contradicts this
+        unsupported: no evidence states this
+        low confidence: '67' written at 4% and no record confirms it
 
-    A probability appears only where a model gave one. Everything else about
-    how the claim was checked is in `guardrails.log`.
+    A probability appears only where a model gave one; the claim line names what
+    decided it otherwise (`record`, `logprobs 4%`). Everything else about how the
+    claim was checked is in `guardrails.log`.
     """
     styles = get_settings().tui.body_styles
     verdict = str(check.get("verdict") or _UNDETERMINED)
@@ -1046,20 +1105,28 @@ def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
     body.append(f"\n    {mark} ", style=style)
     body.append(str(check.get("claim") or ""), style=styles["value"])
     body.append(f" [{name.upper()}]", style=style)
+    basis = str(check.get("basis") or "")
+    method = str(check.get("method") or "")
+    if method and not basis:
+        body.append(f" · {method}", style=styles["muted"])
     evidence = [item for item in check.get("evidence") or [] if isinstance(item, Mapping)]
-    if verdict == _UNDETERMINED:
-        _append_unverified(body, evidence)
+    if verdict in (_UNDETERMINED, _UNSUPPORTED):
+        _append_unverified(body, evidence, name)
         return
     item = _deciding_evidence(verdict, evidence)
     lead = "supported by" if verdict == "supported" else "contradicted by"
-    if item is None or not _decided(verdict, evidence):
-        # Decided by a rule that found no line to quote — an amount or id no
-        # evidence states. Naming the nearest passage as the contradiction
-        # sent readers after the wrong cause.
-        _append_proof(body, lead.split()[0], str(check.get("rationale") or ""), styles["value"])
+    read = [i for i in evidence if i.get("decisive") and i.get("nli_label") == _RECORD_LABEL]
+    if verdict == _LOW_CONFIDENCE or item is None or not _decided(verdict, evidence):
+        # Decided by a rule or by logprobs, with no line to quote: say why instead.
+        head = name if verdict == _LOW_CONFIDENCE else lead.split()[0]
+        _append_proof(body, head, str(check.get("rationale") or ""), styles["value"])
         return
-    basis = str(check.get("basis") or "")
     key = f"{lead} [{_where(item)}]{f' ({basis})' if basis else ''}"
+    if len(read) > 1:
+        # Several facts decided it together ("$67.27 (order_total) is > $50.00 (refund_limit)"):
+        # the relation they were read in says more than any one of them.
+        _append_proof(body, key, str(check.get("rationale") or ""), styles["muted"])
+        return
     _append_proof(body, key, f'"{_excerpt(item)}"', styles["muted"])
 
 
@@ -1069,17 +1136,19 @@ def _append_proof(body: Text, key: str, value: str, style: str) -> None:
     _append_pair(body, key, ": ", value, style)
 
 
-def _append_unverified(body: Text, evidence: list[Mapping[str, Any]]) -> None:
+def _append_unverified(body: Text, evidence: list[Mapping[str, Any]], name: str) -> None:
     """Why nothing decided the claim: a line the model read and found neutral, or nothing near it."""
     styles = get_settings().tui.body_styles
     scored = [item for item in evidence if _was_scored(item)]
     best = max(scored, key=lambda item: float(item.get("nli_score") or 0), default=None)
     if best is None:
-        _append_proof(body, "unverified", "no evidence states or contradicts this", styles["value"])
+        words = get_settings().tui.grounding_card
+        nothing = words.no_evidence if name == _UNSUPPORTED else words.no_evidence_either_way
+        _append_proof(body, name, nothing, styles["value"])
         return
     label = str(best.get("nli_label"))
     key = (
-        f"unverified [{_where(best)}] read as "
+        f"{name} [{_where(best)}] read as "
         f"{_NLI_NAMES.get(label, label)} ({float(best.get('nli_score') or 0):.2f})"
     )
     _append_proof(body, key, f'"{_excerpt(best)}"', styles["muted"])

@@ -110,6 +110,7 @@ class TestAMixedClaimIsSplitByClass:
         ]
 
 
+@pytest.mark.usefixtures("abstaining_guard")
 class TestTheReportedReplies:
     async def test_a_completed_refund_and_where_it_went(self) -> None:
         reply = "$18.70 has been refunded to your original payment method."
@@ -147,6 +148,7 @@ class TestTheReportedReplies:
         assert not result.escalated
 
 
+@pytest.mark.usefixtures("abstaining_guard")
 class TestTheGuardStillGuards:
     async def test_a_wrong_amount_is_refuted(self) -> None:
         result = await _guard().enforce(
@@ -179,6 +181,7 @@ class TestTheGuardStillGuards:
         assert result.undetermined == 1
 
 
+@pytest.mark.usefixtures("abstaining_guard")
 class TestFailClosedKeepsWhatWasNotRefuted:
     async def test_an_unverified_sentence_survives_a_refuted_neighbour(self) -> None:
         reply = (
@@ -236,6 +239,7 @@ class TestARefusalIsGroundedByTheCallThatWasRefused:
         assert result.escalated
 
 
+@pytest.mark.usefixtures("abstaining_guard")
 class TestAnUnverifiedClaimSaysWhy:
     async def test_each_tier_gives_its_reason(self) -> None:
         result = await _guard().enforce("Refunds take a while to arrive.", [_ARTICLE, _POLITE])
@@ -346,6 +350,7 @@ class TestAReadBeforeAWriteIsStale:
         assert result.escalated
 
 
+@pytest.mark.usefixtures("abstaining_guard")
 class TestASettledRefundIsSupportedByTheRecord:
     """The amount was in the record and the sentence was still "unverified"."""
 

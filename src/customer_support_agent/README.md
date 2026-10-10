@@ -14,7 +14,7 @@ with `make eval` (see [evals](evals/README.md)).
 
 | Module | Owns |
 |---|---|
-| [basic_sanity](basic_sanity/README.md) | `OrderSanityCheck` — pre-LLM order checks |
+| [deterministic_checks](deterministic_checks/README.md) | `OrderChecks` — pre-LLM order checks |
 | [config](config/README.md) | This agent's overlay and settings |
 | [console](console/README.md) | `CustomerSupportHost`, `/queue` |
 | [context](context/README.md) | (empty — context sources are platform components) |

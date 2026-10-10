@@ -17,7 +17,7 @@ from customer_support_agent.graph.state import AgentState
 
 # Each optional stage and the feature that decides whether it is built.
 _STAGE_FEATURES = {
-    "basic_sanity": "basic_sanity",
+    "deterministic_checks": "deterministic_checks",
     "prompt_injection": "prompt_injection",
     "content_moderation": "content_moderation",
     "pii_filtering": "pii",
@@ -52,9 +52,6 @@ class GraphWiring(NodeSupport):
         front_door = [
             stage
             for stage in (
-                # Deliberately first: deterministic domain contradictions are
-                # settled from the database before anything spends a model call.
-                ("basic_sanity", self.basic_sanity),
                 # Before both hosted guards, not after them. The
                 # injection and moderation detectors call a provider of
                 # their own, so redacting after they ran would mean the
@@ -63,6 +60,11 @@ class GraphWiring(NodeSupport):
                 ("pii_filtering", self.pii_filtering),
                 ("prompt_injection", self.prompt_injection),
                 ("content_moderation", self.content_moderation),
+                # After the security screens, so untrusted text is vetted before
+                # anything reads the database on its behalf; before intent, so a
+                # turn's domain contradictions are settled without a model call
+                # and the order it resolves can place an unclassified turn.
+                ("deterministic_checks", self.deterministic_checks),
                 ("classify_intent", self.classify_intent),
                 ("assemble_context", self.assemble_context),
             )
@@ -133,7 +135,7 @@ class GraphWiring(NodeSupport):
         compile a node that raises on its first turn.
         """
         required = {
-            "basic_sanity": self._basic_sanity,
+            "deterministic_checks": self._deterministic_checks,
             "assemble_context": self._context,
             # The suite is always present; its filter is not. Without one
             # there is nothing to redact with, and a stage that narrated
@@ -164,7 +166,7 @@ class GraphWiring(NodeSupport):
 
         A turn that newly supplies a valid customer code ends after the
         authentication read-back.  The next customer turn then enters the
-        deterministic order/menu and sanity path before security/intent.
+        deterministic order/menu path, then security screening.
         """
         return "done" if state.metadata.get("halted") else "choose_order"
 

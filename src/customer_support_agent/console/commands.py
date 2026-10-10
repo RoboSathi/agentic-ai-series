@@ -216,6 +216,7 @@ class QueueCommand(PoolBackedCommand):
             result.headers = [
                 "id",
                 "request",
+                "reason",
                 *(["customer"] if customer is None else []),
                 "raised",
             ]
@@ -223,6 +224,7 @@ class QueueCommand(PoolBackedCommand):
                 result.row(
                     str(request.id),
                     _request_line(request),
+                    request.reason,
                     *([str(request.user_id)] if customer is None else []),
                     request.created_at[:16],
                 )
@@ -235,6 +237,8 @@ class QueueCommand(PoolBackedCommand):
         # A hardcoded 4.0 meant `minutes_per_review` was config nothing read.
         minutes = float(args[1]) if len(args) > 1 else review.minutes_per_review
         capacity = LittlesLawQueueModel().capacity_for(arrivals, minutes)
+        result.line("")
+        result.line("/queue approve/deny id to approve or deny the request.")
         result.line("")
         result.line(
             f"Little's Law at {arrivals:g}/hr × {minutes:g} min: "

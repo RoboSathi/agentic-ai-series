@@ -31,6 +31,7 @@ from customer_support_agent.presentation.orders import (
     customer_orders,
     describe_orders,
     order_state_sentence,
+    refund_state_sentence,
 )
 from customer_support_agent.resilience.cancellation_saga import CancellationSaga
 from customer_support_agent.resilience.refund_saga import RefundSaga
@@ -42,31 +43,12 @@ _NOT_AUTHENTICATED = "No authenticated customer; nothing can be read or changed"
 # this field to decide whether a "your refund is done" reply is true, so a
 # write must state the state it left behind, not only what it did.
 _REFUND_STATUS = REFUND_STATUS_LINE
-# A waiting review, as its own sentence so it is its own premise. The earlier
-# "(a review request is already pending)" read to NLI as *contradicting* "a
-# review request has been submitted" — pending and submitted are the same
-# fact in two words, and a parenthesis gave it nothing to hold on to.
-_REVIEW_PENDING = (
-    "A refund review request for order {order_id} has been submitted and is awaiting a decision"
-)
-# Each refund state in words. With REFUND_STATUS answered straight from this
-# tool, the sentence is the customer's reply; the status line after it is
-# what the guard's deterministic refund-state check reads. No arrival date is
-# promised: the record holds none.
-_REFUND_STATE_SENTENCES: dict[str, str] = {
-    "none": "No refund has been requested for order {order_id}",
-    "pending_review": _REVIEW_PENDING,
-    "approved": "The refund for order {order_id} has been approved",
-    "issued": (
-        "The refund of {amount} for order {order_id} has been issued and is waiting to settle"
-    ),
-    "completed": "The refund of {amount} for order {order_id} has been completed",
-    "denied": "The refund request for order {order_id} was declined by a reviewer",
-}
 # What a refund that just ran left behind: issued, settling at the end of
 # its window. The conditional write that issued it is what makes this true;
 # it is not read back.
 _ISSUED_STATUS = "issued"
+# The refund status a review request leaves an order in (`queue_for_approval`).
+_PENDING_REVIEW = "pending_review"
 # The `settlement.lines` entry that tells the customer when it settles: a
 # sentence naming its refund, since each sentence is checked on its own.
 _SETTLES = "settles"
@@ -269,38 +251,14 @@ class SupportTools:
         order = self._owned_order(order_id)
         if order is None:
             return ToolResult(success=False, error=_NOT_FOUND.format(order_id=order_id))
-        tracking = (
-            f", tracking {order.carrier} {order.tracking_number}"
-            if order.tracking_number and order.carrier
-            else ""
-        )
-        # The carrier's own words, quoted and attributed: third-party text the
-        # customer may ask about, never an instruction to this agent.
-        note = _CARRIER_NOTE.format(note=order.carrier_note) if order.carrier_note else ""
-        return ToolResult(
-            success=True,
-            output=f"{order_state_sentence(order)}{tracking}, total {order.amount}{note}",
-            data={
-                **order.model_dump(exclude={"amount", "unit_price"}),
-                "amount": str(order.amount),
-                "unit_price": str(order.unit_price),
-            },
-        )
+        return order_status_result(order)
 
     def get_refund_status(self, order_id: int) -> ToolResult:
         """Read one order's refund state."""
         order = self._owned_order(order_id)
         if order is None:
             return ToolResult(success=False, error=_NOT_FOUND.format(order_id=order_id))
-        pending = self._hitl.pending_for_order(order_id)
-        return ToolResult(
-            success=True,
-            output=(
-                f"{_refund_state_sentence(order)}. "
-                + _REFUND_STATUS.format(order_id=order.order_id, status=order.refund_status)
-            ),
-            data={"refund_status": order.refund_status, "pending_review": pending is not None},
-        )
+        return refund_status_result(order, self._hitl.pending_for_order(order_id) is not None)
 
     def list_orders(self, order_status: OrderStatus | None = None) -> ToolResult:
         """The current customer's orders, newest first, optionally one state only.
@@ -427,9 +385,10 @@ class SupportTools:
                 user_id=validation.order.user_id,
                 requested_amount=requested,
                 action=action,
+                reason=get_agent_settings().review_reasons.for_action(action),
             )
         )
-        self._orders.set_refund_status(order_id, "pending_review")
+        self._orders.set_refund_status(order_id, _PENDING_REVIEW)
         status = self._settled_status(order_id)
         return ToolResult(
             success=True,
@@ -491,12 +450,6 @@ class SupportTools:
         )
 
 
-def _refund_state_sentence(order: Order) -> str:
-    """Where this order's refund stands, as a sentence a customer can read."""
-    template = _REFUND_STATE_SENTENCES.get(order.refund_status, _REFUND_STATUS)
-    return template.format(order_id=order.order_id, amount=order.amount, status=order.refund_status)
-
-
 def _order_summary(order: Order) -> dict[str, Any]:
     """One listed order, as data: what it is and where it stands — no customer details."""
     return {
@@ -531,3 +484,52 @@ class CustomerSupportToolHandler(ToolExecutionHandler):
         if isinstance(result, ToolResult):
             return result
         return ToolResult(success=True, output=str(result))
+
+
+def order_status_result(order: Order) -> ToolResult:
+    """What `get_order_status` answers for an order already read and owned.
+
+    One rendering, whoever read the row: the tool, or the deterministic checks
+    whose read the turn reuses so prefetch need not read it again.
+    """
+    tracking = (
+        f", tracking {order.carrier} {order.tracking_number}"
+        if order.tracking_number and order.carrier
+        else ""
+    )
+    # The carrier's own words, quoted and attributed: third-party text the
+    # customer may ask about, never an instruction to this agent.
+    note = _CARRIER_NOTE.format(note=order.carrier_note) if order.carrier_note else ""
+    return ToolResult(
+        success=True,
+        output=f"{order_state_sentence(order)}{tracking}, total {order.amount}{note}",
+        data={
+            **order.model_dump(exclude={"amount", "unit_price"}),
+            "amount": str(order.amount),
+            "unit_price": str(order.unit_price),
+        },
+    )
+
+
+def refund_status_result(order: Order, pending_review: bool) -> ToolResult:
+    """What `get_refund_status` answers for an order already read and owned."""
+    return ToolResult(
+        success=True,
+        output=(
+            f"{refund_state_sentence(order)}. "
+            + _REFUND_STATUS.format(order_id=order.order_id, status=order.refund_status)
+        ),
+        data={"refund_status": order.refund_status, "pending_review": pending_review},
+    )
+
+
+def _refund_status_from_row(order: Order) -> ToolResult:
+    """The refund read from the row alone: a queued review is what `pending_review` records."""
+    return refund_status_result(order, order.refund_status == _PENDING_REVIEW)
+
+
+# The reads an order the deterministic checks already hold can answer, by tool name.
+SNAPSHOT_READS: dict[str, Callable[[Order], ToolResult]] = {
+    "get_order_status": order_status_result,
+    "get_refund_status": _refund_status_from_row,
+}

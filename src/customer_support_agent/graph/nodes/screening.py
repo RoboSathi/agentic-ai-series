@@ -8,14 +8,14 @@ quarantined, and the audit trail says why.
 
 from typing import Any
 
-from agent_platform.basic_sanity import BasicSanityRequest
+from agent_platform.deterministic_checks import DeterministicCheckRequest
 from agent_platform.security import MessageScreener, ScreenOutcome, ScreenSubject
-from customer_support_agent.basic_sanity import owned_order_id
+from customer_support_agent.deterministic_checks import checked_order, owned_order_id
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
-from customer_support_agent.graph.nodes._support import NodeSupport
+from customer_support_agent.graph.nodes._support import ORDER_SNAPSHOT, NodeSupport
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.reporting import (
-    basic_sanity_fields,
+    deterministic_check_fields,
 )
 
 
@@ -62,7 +62,7 @@ class ScreeningNodes(NodeSupport):
             ],
         }
 
-    async def basic_sanity(self, state: AgentState) -> dict[str, Any]:
+    async def deterministic_checks(self, state: AgentState) -> dict[str, Any]:
         """Run cheap, deterministic domain checks before any model call.
 
         Reached only when this agent was given a checker — `_build` omits
@@ -72,14 +72,14 @@ class ScreeningNodes(NodeSupport):
         re-ask the same questions. Withholding this stage therefore costs
         a model call and a cheap refusal, it does not open a hole.
         """
-        assert self._basic_sanity is not None
+        assert self._deterministic_checks is not None
         self._report(
-            "basic_sanity",
+            "deterministic_checks",
             event_kind="stage",
-            summary="Running deterministic pre-LLM sanity checks",
+            summary="Running deterministic checks before any model call",
         )
-        result = self._basic_sanity.check(
-            BasicSanityRequest(
+        result = self._deterministic_checks.check(
+            DeterministicCheckRequest(
                 query=state.query,
                 agent_id=self._actor,
                 session_id=state.session_id,
@@ -88,7 +88,7 @@ class ScreeningNodes(NodeSupport):
                 metadata=state.metadata,
             )
         )
-        fields = basic_sanity_fields(result)
+        fields = deterministic_check_fields(result)
 
         # The order the customer named is now the one under discussion —
         # passed or refused. "Refund order 10823" refused because it has
@@ -104,47 +104,50 @@ class ScreeningNodes(NodeSupport):
         if result.passed:
             deferred = result.reason_code == "ORDER_REFERENCE_NOT_PRESENT"
             self._done(
-                "basic_sanity",
+                "deterministic_checks",
                 summary=(
                     "Order reference not provided · validation deferred"
                     if deferred
-                    else "Basic sanity checks passed"
+                    else "Deterministic checks passed"
                 ),
                 fields=fields,
             )
             metadata = {
                 **state.metadata,
-                "basic_sanity": result.model_dump(mode="json"),
+                "deterministic_checks": result.model_dump(mode="json"),
             }
             if order_id is not None:
                 metadata[ORDER_UNDER_DISCUSSION] = order_id
+            order = checked_order(result)
+            if order is not None:
+                metadata[ORDER_SNAPSHOT] = order.model_dump(mode="json")
             return {
                 "decisions": [
                     *state.decisions,
                     (
-                        f"basic_sanity: deferred ({result.reason_code})"
+                        f"deterministic_checks: deferred ({result.reason_code})"
                         if deferred
-                        else f"basic_sanity: pass ({result.reason_code})"
+                        else f"deterministic_checks: pass ({result.reason_code})"
                     ),
                 ],
                 "metadata": metadata,
             }
 
         self._reporter_blocked(
-            "basic_sanity",
-            summary=f"Basic sanity blocked: {result.reason_code}",
+            "deterministic_checks",
+            summary=f"Invalid Request: {result.reason_code}",
             fields=fields,
         )
         return {
             "response": result.message or "I couldn't safely continue with that request.",
             "decisions": [
                 *state.decisions,
-                f"basic_sanity: blocked ({result.reason_code})",
+                f"deterministic_checks: blocked ({result.reason_code})",
             ],
             "metadata": {
                 **state.metadata,
-                "basic_sanity": result.model_dump(mode="json"),
-                "halted": "basic_sanity",
+                "deterministic_checks": result.model_dump(mode="json"),
+                "halted": "deterministic_checks",
                 **({ORDER_UNDER_DISCUSSION: order_id} if order_id is not None else {}),
             },
         }

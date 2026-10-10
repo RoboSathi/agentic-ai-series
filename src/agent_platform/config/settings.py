@@ -604,6 +604,7 @@ class StepEventWords(BaseModel):
 
     tool_requested: str
     tool_prefetched: str
+    tool_served: str
     gatekeeper: str
     loop_control: LoopControlWords
 
@@ -1207,6 +1208,8 @@ class SkillObservabilitySettings(BaseModel):
     activated: str
     joiner: str
     prefetched: str
+    offered: str
+    offered_none: str
     synced: str
     unchanged: str
 
@@ -1358,6 +1361,16 @@ class ConfidenceCardWords(BaseModel):
     ok_mark: str
 
 
+class HallucinationMethodWords(BaseModel):
+    """What decided a claim, as its card line says it (`guardrails/response.py`)."""
+
+    record: str
+    logprobs: str
+    restated: str
+    nothing: str
+    nli: str
+
+
 class HallucinationLevelWords(BaseModel):
     """How the hallucination check's levels are named (`hallucination_protection/levels.py`)."""
 
@@ -1374,7 +1387,40 @@ class ConfidenceSettings(BaseModel):
     min_token_prob: float = Field(ge=0, le=1)
     max_low_token_share: float = Field(ge=0, le=1)
     ignore_token_pattern: str
+    # Tokens that carry grammar, not content ("the", "and", "please"): left out of the
+    # content mean, where a low probability means another phrasing, not a guess.
+    function_token_pattern: str
+    # A sentence whose content tokens average below this is degenerate and is cut.
+    degenerate_mean_prob: float = Field(ge=0, le=1)
+    # An id, amount, date or number written below this, and confirmed by no record, is cut.
+    slot_min_prob: float = Field(ge=0, le=1)
     card: ConfidenceCardWords
+
+
+class FactAttributeSettings(BaseModel):
+    """How a claim talks about one typed fact (`hallucination_protection/ledger.py`)."""
+
+    type: Literal["text", "money", "date", "duration", "number", "flag"]
+    # Patterns that say a claim is about this attribute ("delivered", "settle").
+    terms: list[str] = Field(default_factory=list)
+    # A flag: wording that asserts it, and wording that denies it (checked first).
+    affirm: list[str] = Field(default_factory=list)
+    deny: list[str] = Field(default_factory=list)
+    # Whether a reply that got this fact wrong may be corrected with its sentence.
+    correctable: bool = True
+
+
+class FactSettings(BaseModel):
+    """The fact ledger: an agent's typed facts, and the words that compare them."""
+
+    # Attribute name -> how a claim states it. The agent's overlay names its own.
+    attributes: dict[str, FactAttributeSettings] = Field(default_factory=dict)
+    # Operator (`>`, `<`, `>=`, `<=`) -> phrases that state it between two values.
+    comparisons: dict[str, list[str]] = Field(default_factory=dict)
+    # Duration unit pattern -> seconds ("minutes?" -> 60).
+    duration_units: dict[str, int] = Field(default_factory=dict)
+    # The attribute whose fact restates the record's state, for a corrected reply.
+    state_attribute: str = ""
 
 
 class HallucinationProtectionSettings(YamlBackedSettings):
@@ -1384,9 +1430,15 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     enforce_grounding: bool
     confidence: ConfidenceSettings
     levels: HallucinationLevelWords
-    confidence_threshold: float
+    methods: HallucinationMethodWords
+    facts: FactSettings
+    # Whether a verifiable claim no evidence grounds is a hallucination (cut and queued),
+    # or an abstention left in the reply.
+    unsupported_is_hallucination: bool
     # The reply when the gate refuses every sentence of an answer.
     withheld_reply: str
+    # The same, by the reason the reply was cut; a reason not listed gets `withheld_reply`.
+    withheld_replies: dict[str, str] = Field(default_factory=dict)
     # Whether an uncalibrated detector (the lexical fallback) may refute a claim, or only
     # support it. Off: its contradictions leave the claim unverified.
     uncalibrated_may_refute: bool
@@ -2219,6 +2271,21 @@ class RunControl(BaseModel):
     variant: str
 
 
+class GroundingCardSettings(BaseModel):
+    """The HALLUCINATION CHECK card's own words, and how its confidences are coloured."""
+
+    result: str
+    confidence: str
+    confidence_skipped: str
+    claims: str
+    corrected: str
+    no_evidence: str
+    no_evidence_either_way: str
+    # A sentence's content-token mean at or above `pass` reads as sure, at or above
+    # `warn` as hesitant, below as guessed; a token below `warn` is marked in its line.
+    confidence_bands: dict[str, float]
+
+
 class TuiSettings(YamlBackedSettings):
     """Live status feed (LLD §20)."""
 
@@ -2228,7 +2295,7 @@ class TuiSettings(YamlBackedSettings):
     # One style per console role (banner, user, assistant, metrics, notice, muted, ...).
     palette: dict[str, str]
     refresh_interval_ms: int
-    # A stage's one-line summary for an agent's own reason code (BasicSanity's, say).
+    # A stage's one-line summary for an agent's own reason code (DeterministicCheck's, say).
     reason_summaries: dict[str, str] = Field(default_factory=dict)
     show_token_count: bool
     copy_method: Literal["osc52", "file"]
@@ -2264,6 +2331,7 @@ class TuiSettings(YamlBackedSettings):
     body_styles: dict[str, str]
     tone_styles: dict[str, str]
     state_words: dict[str, str]
+    grounding_card: GroundingCardSettings
     # How the final answer's light Markdown is coloured (h1, h2, bold, bullet, citation, ...).
     response_styles: dict[str, str]
     # More of the answer coloured by pattern, in order: an agent's own vocabulary ("[must]",

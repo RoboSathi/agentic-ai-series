@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from agent_platform.guardrails import PydanticValidator
 from agent_platform.logging import get_logger, instrument, logged
-from agent_platform.tools.names import configured_model_name
+from agent_platform.tools.names import configured_model_name, remember_model_name
 from agent_platform.tools.types import (
     WIRE_NAME_PATTERN,
     ToolCall,
@@ -79,6 +79,7 @@ class NamespacedToolRegistry:
                 f"only letters, digits, underscores and dashes are allowed"
             )
         self._tools[named.qualified_name] = named
+        remember_model_name(named.qualified_name, named.model_name)
 
     def _named(self, tool: ToolDefinition) -> ToolDefinition:
         """The tool under the name it is offered by — never one another tool already has.

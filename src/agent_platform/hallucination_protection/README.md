@@ -13,10 +13,12 @@ well confidence predicts correctness.
 - **claim class** — `record` (a fact about this case: an order, an amount, an outcome stated as done), `rule` (how things work, and every promise: "you'll hear back soon"), `conversational` ("Thanks for reaching out" — not a claim, never scored)
 - **tier** — one stage of the cascade: which evidence kinds it reads, which claim classes it may ground, whether it may refute
 - **direct check** — the model-free step for a claim about the case: an id or amount the record lacks, the refund state machine, and the record of a refused call. It refutes, and it supports what it can place
-- **state model** (`states.py`) — the refund state machine (`none → pending_review → approved → completed`, or `denied`). A claim about where the refund stands is judged against the *latest* recorded status for the order it names; "submitted" is true once the refund has got there, "pending review" only while it is there. A state record is read here and never sent to NLI, which took `pending_review` to contradict "submitted"
+- **fact** (`ledger.py`) — a typed value an agent puts in its evidence (a delivery date, a total, a settlement window, the verified customer): a self-contained sentence for NLI, and the value in the chunk's metadata for the ledger
+- **fact ledger** — reads a claim against the facts before any model: computes comparisons ("$67.27 exceeds the $50.00 limit"), reads flags asserted or denied ("eligible for a refund"), and values stated beside their attribute's words ("delivered on …"). Any disagreement refutes (`FACT_MISMATCH`); support needs every specific the claim names to come from a fact that held
+- **state model** (`states.py`) — the refund state machine (`none → pending_review → issued → completed`, or `denied`). A claim about where the refund stands is judged against the *latest* recorded status for the order it names; "submitted" is true once the refund has got there, "pending review" only while it is there. A state record is read here and never sent to NLI, which took `pending_review` to contradict "submitted"
 - **refusal** — a record claim that the agent did not act ("I'm unable to process a refund for order N"); supported by the `NOT EXECUTED` entry for that order, not by NLI
 - **rule phrase** — a phrase carved out of an outcome and checked as the rule it states ("… to your original payment method")
-- **undetermined** — nothing decided it; counted and shown, never blocking
+- **undetermined** — nothing decided it; counted and shown, never blocking — unless the agent sets `unsupported_is_hallucination`, when it is **unsupported** (`CLAIM_UNSUPPORTED`): cut and queued like a contradiction
 
 ## How a claim is grounded
 
@@ -29,10 +31,14 @@ its log line ("Response grounding checked").
   the token log-probabilities of the completion that wrote them (`llm.logprobs`; the
   turn keeps them, so no agent passes them along). A sentence is *low* below
   `confidence.sentence_mean_prob`, or when too many of its tokens fall below
-  `min_token_prob`. Confidence is not truth, so every claim still goes to level 2.
-  A claim level 2 leaves undetermined in a low-confidence sentence counts as
-  unsupported (`promote`). Each run writes a `logprob` check row. A model that returns
-  no logprobs makes it `skipped`.
+  `min_token_prob`. Confidence is not truth, so every claim still goes to level 2. Two
+  things logprobs decide on their own (`gate`): a sentence whose *content* tokens
+  (grammar words left out) average below `degenerate_mean_prob` is cut whatever level 2
+  says (`LOW_CONFIDENCE_DEGENERATE`), and an id, amount, date or number written below
+  `slot_min_prob` cuts its claim unless the record confirmed it
+  (`LOW_CONFIDENCE_SPECIFIC`). Each becomes a verdict, so the trimming removes its
+  sentence and the reason says why. Each run writes a `logprob` check row. A model that
+  returns no logprobs makes it `skipped`.
 - **Level 2, the agent's grounding.**
   - A reply grounded on tool results and documents: NLI entailment (`ResponseGuardrail`).
   - A cited report: the agent's own citation guard.
@@ -40,10 +46,14 @@ its log line ("Response grounding checked").
     signal only, because a figure is either found or it is not.
 
 ```
-record claim  →  direct check  →  tool_result
-rule claim    →  direct check* →  policy → system prompt → memory
+record claim  →  direct check  →  fact ledger  →  state model  →  tool_result (NLI)
+rule claim    →  direct check* →  fact ledger  →  policy → system prompt → memory (NLI)
 conversation  →  not checked
 ```
+
+A contradicted claim whose fact the ledger (or the state model) read is *corrected*:
+its sentence is replaced with the fact's own sentence, so the customer gets what the
+record says rather than a gap (`corrected_sentences`).
 
 \* a date, weekday or number the claim brings that no evidence contains.
 
@@ -51,7 +61,7 @@ The deterministic system-of-record tier is one of **admission**, not of
 prose: `EffectVerifier` re-reads the record after a write, and a call whose
 effect did not take reaches grounding as `NOT EXECUTED` rather than as a
 result to believe, so the direct check refutes any claim that it happened.
-BasicSanity is a pre-flight gate on the state *before* the action; it halts a
+DeterministicCheck is a pre-flight gate on the state *before* the action; it halts a
 bad turn and is not evidence, because it grounds no outcome and is stale by
 reply time.
 

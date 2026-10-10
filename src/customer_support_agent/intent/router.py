@@ -30,6 +30,7 @@ from agent_platform.intent import (
 from agent_platform.logging import get_logger
 from agent_platform.observability import traced
 from customer_support_agent.config import get_agent_settings
+from customer_support_agent.intent.phrases import PhraseReader
 
 
 class Intent:
@@ -58,6 +59,7 @@ class CustomerSupportIntentRouter:
         self._intents = {item.name: item for item in settings.intents}
         self._default = settings.default_intent
         self._followup_phrases = [phrase.casefold() for phrase in settings.followup.phrases]
+        self._phrases = PhraseReader(settings.intent_router.negation)
         self._reference = re.compile(settings.followup.reference_pattern)
         self._logger = get_logger("customer_support_agent")
         # The composition root supplies the agent-owned router; the router
@@ -144,7 +146,33 @@ class CustomerSupportIntentRouter:
         deterministic_supported = self._deterministic_supported(text)
         if deterministic_supported is not None:
             return deterministic_supported
+        return self._unless_refused(text, await self._from_classifier(text, previous))
 
+    def _unless_refused(self, text: str, intent: Intent) -> Intent:
+        """The classifier's intent, unless the customer said they do not want it.
+
+        "I don't want a refund for 10487" reads to a classifier like a refund request.
+        A phrase of that intent appearing only negated is the customer's own answer,
+        and no score overrules it: the turn is left unplaced (and, naming an order, is
+        read as that order's status).
+        """
+        refused = self._refused_intents(text)
+        if intent.name not in refused:
+            return intent
+        reason = self._settings.intent_router.negation.refused_reason.format(intent=intent.name)
+        return self._unknown_for_llm(candidates=list(intent.candidates), reason=reason)
+
+    def _refused_intents(self, text: str) -> set[str]:
+        """Intents whose phrases the message uses only negated, and never asserts."""
+        return {
+            configured.name
+            for configured in self._settings.intents
+            if any(self._phrases.refused(text, phrase) for phrase in configured.phrases)
+            and not any(self._phrases.asserted(text, phrase) for phrase in configured.phrases)
+        }
+
+    async def _from_classifier(self, text: str, previous: Intent | None) -> Intent:
+        """What the classifier makes of a turn no phrase placed, with context as a fallback."""
         try:
             await self.ensure_ready()
         except Exception:
@@ -264,17 +292,13 @@ class CustomerSupportIntentRouter:
         """Resolve high-precision phrases, or clarify when one phrase maps to multiple intents."""
         if not self._phrase_rules:
             return None
-        lowered = text.casefold()
         matches: list[tuple[int, int, str, str]] = []
         for configured in self._settings.intents:
             if configured.name == self._default:
                 continue
             for phrase in configured.phrases:
                 candidate = phrase.strip().casefold()
-                if not candidate:
-                    continue
-                pattern = rf"\b{re.escape(candidate)}\b"
-                if re.search(pattern, lowered):
+                if candidate and self._phrases.asserted(text, candidate):
                     matches.append(
                         (len(candidate.split()), len(candidate), configured.name, phrase.strip())
                     )
@@ -444,6 +468,33 @@ class CustomerSupportIntentRouter:
                     "establish a new intent, so the previous supported intent was "
                     "used only as context fallback."
                 ),
+            )
+        )
+
+    def placed_by_order(self, intent: Intent) -> Intent:
+        """An unplaced turn that names an order the customer owns, read as that order's status.
+
+        "When will I get my order 10943" is about the order even when no phrase or
+        classifier placed it: the configured read intent answers it from the record,
+        with no model call. Only an UNKNOWN turn is moved; one that was rejected,
+        or placed, keeps its verdict.
+        """
+        placement = self._settings.intent_router.order_reference
+        if intent.name != self._default or intent.disposition == IntentDisposition.OUT_OF_SCOPE:
+            return intent
+        configured = self._intents[placement.intent]
+        return Intent(
+            IntentAssessment(
+                intent=configured.name,
+                confidence=intent.confidence,
+                disposition=IntentDisposition.SUPPORTED,
+                source=placement.source,
+                matched_rule=placement.source,
+                allowed_tools=list(configured.tools),
+                candidates=intent.candidates,
+                model=intent.model,
+                score_type=intent.score_type,
+                reason=placement.reason,
             )
         )
 

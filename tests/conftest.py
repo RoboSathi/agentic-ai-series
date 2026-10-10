@@ -451,3 +451,19 @@ def security_off(restore_settings: None) -> Iterator[None]:
     """Withhold them, for the degraded-mode tests."""
     _set_content_features(False)
     yield
+
+
+@pytest.fixture
+def abstaining_guard() -> Iterator[None]:
+    """The platform's default: a claim nothing grounds is an abstention, not a hallucination.
+
+    The support agent opts in to cutting such claims (`unsupported_is_hallucination`).
+    Tests of the guard's own tier and abstention rules, written with a stubbed or lexical
+    NLI that cannot entail a paraphrase, run under the platform default so they keep
+    testing what they were written for; the agent's opt-in has tests of its own.
+    """
+    settings = get_settings().hallucination_protection
+    previous = settings.unsupported_is_hallucination
+    settings.unsupported_is_hallucination = False
+    yield
+    settings.unsupported_is_hallucination = previous

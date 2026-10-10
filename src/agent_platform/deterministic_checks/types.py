@@ -1,6 +1,6 @@
-"""Generic BasicSanity value types.
+"""Generic DeterministicCheck value types.
 
-BasicSanity is deliberately narrower than business policy. It answers only
+DeterministicCheck is deliberately narrower than business policy. It answers only
 cheap, deterministic, authoritative questions that can be settled before the
 agent spends an LLM/model call.
 """
@@ -10,8 +10,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
-class BasicSanityRequest(BaseModel):
-    """Information available to an agent-specific sanity checker.
+class DeterministicCheckRequest(BaseModel):
+    """Information available to an agent-specific deterministic checker.
 
     `actor` is who is asking; `subject_id` is whose records the request
     concerns, as an opaque string. Deliberately not `customer_id`: the
@@ -32,8 +32,8 @@ class BasicSanityRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class BasicSanityFinding(BaseModel):
-    """One deterministic sanity check and its evidence.
+class DeterministicCheckFinding(BaseModel):
+    """One deterministic deterministic check and its evidence.
 
     ``applicable=False`` means the finding was deliberately not evaluated
     because its prerequisite was absent. This is different from a PASS: the
@@ -47,11 +47,11 @@ class BasicSanityFinding(BaseModel):
     evidence: dict[str, Any] = Field(default_factory=dict)
 
 
-class BasicSanityResult(BaseModel):
-    """Result of the pre-LLM sanity pass."""
+class DeterministicCheckResult(BaseModel):
+    """Result of the pre-LLM deterministic checks."""
 
     passed: bool
-    reason_code: str = "BASIC_SANITY_PASSED"
+    reason_code: str = "DETERMINISTIC_CHECKS_PASSED"
     message: str = ""
-    findings: list[BasicSanityFinding] = Field(default_factory=list)
+    findings: list[DeterministicCheckFinding] = Field(default_factory=list)
     facts: dict[str, Any] = Field(default_factory=dict)

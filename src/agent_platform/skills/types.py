@@ -31,8 +31,8 @@ class SkillDocument(BaseModel):
     body: str
     # What the model reads: only the configured sections (`skills.render.sections_sent`).
     prompt: str = ""
-    # How many numbered steps the procedure has.
-    steps: int = 0
+    # The procedure's numbered steps, one line each (what its card lists).
+    steps: tuple[str, ...] = ()
     # What is stored and digested: the file as written, references included.
     raw: str
 

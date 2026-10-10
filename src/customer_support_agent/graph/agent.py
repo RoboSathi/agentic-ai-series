@@ -40,13 +40,13 @@ from contextlib import AbstractContextManager
 from typing import Any
 
 from agent_platform.audit import AuditLedger, NullAuditLedger
-from agent_platform.basic_sanity import BasicSanityChecker
 from agent_platform.config import FeatureSet, get_settings
 from agent_platform.context import (
     ContextFailureDetector,
     FiveStagePipeline,
     StrategySelector,
 )
+from agent_platform.deterministic_checks import DeterministicChecker
 from agent_platform.durability import (
     CheckpointInfo,
     DurableGraphRunner,
@@ -180,7 +180,7 @@ class CustomerSupportAgent(
         grounding: DetectionLadder | None = None,
         authenticator: CustomerAuthenticator | None = None,
         orders: OrdersRepository | None = None,
-        basic_sanity: BasicSanityChecker | None = None,
+        deterministic_checks: DeterministicChecker | None = None,
         agent_policy: AgentPolicy | None = None,
         intent_router: CustomerSupportIntentRouter | None = None,
         features: FeatureSet | None = None,
@@ -281,7 +281,7 @@ class CustomerSupportAgent(
             if orders is not None
             else OrderReferenceResolver(rules)
         )
-        self._basic_sanity = basic_sanity
+        self._deterministic_checks = deterministic_checks
         # Who each session has proved itself to be. Authentication is per
         # conversation: a customer verifies once and stays verified for
         # that session, rather than retyping a code every turn.

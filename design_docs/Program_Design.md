@@ -55,7 +55,7 @@ agentic-harness-core/
 │       ├── verification/  # refund_effects — the read-back for this agent
 │       ├── tools/         # definitions, handler
 │       ├── intent/        # router
-│       ├── basic_sanity/  # order_validator
+│       ├── deterministic_checks/  # order_validator
 │       ├── context/       # context sources
 │       ├── control_loop/  # quality_gate (was deliberation)
 │       ├── observability/ # accounting

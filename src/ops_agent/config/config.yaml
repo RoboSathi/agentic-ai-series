@@ -22,7 +22,7 @@ features:
   gatekeeper: true                   # each MCP call is authorized against this agent's policy
   # Platform features this agent does not compose. Declared false because an
   # overlay cannot delete keys the platform default declares.
-  basic_sanity: false
+  deterministic_checks: false
   content_moderation: false
   pii: false
   intent_classification: false

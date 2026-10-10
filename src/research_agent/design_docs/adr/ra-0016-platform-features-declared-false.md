@@ -2,7 +2,7 @@
 
 ## Context
 
-An agent's overlay deep-merges over the platform's feature tree, so it cannot delete keys the platform declares (`basic_sanity`, `gatekeeper`, `intent_classification`, `hallucination_guard`, `prompt_injection`, `content_moderation`, `context`).
+An agent's overlay deep-merges over the platform's feature tree, so it cannot delete keys the platform declares (`deterministic_checks`, `gatekeeper`, `intent_classification`, `hallucination_guard`, `prompt_injection`, `content_moderation`, `context`).
 
 ## Decision
 
@@ -12,7 +12,7 @@ ra declares them **false**. It has no tool calls for a Gatekeeper to authorize. 
 
 ## Consequences
 
-- `/harness` shows four inert keys for ra (`basic_sanity`, `intent_classification`, `hallucination_guard`, `gatekeeper`). `context` (+ `rerank`, `failure_detection`) is composed since 2026-10-02: the direct answer's window goes through the platform's `ContextWindow`.
+- `/harness` shows four inert keys for ra (`deterministic_checks`, `intent_classification`, `hallucination_guard`, `gatekeeper`). `context` (+ `rerank`, `failure_detection`) is composed since 2026-10-02: the direct answer's window goes through the platform's `ContextWindow`.
 - Each message costs up to two hosted guard calls (jailbreak, content safety) against the NVIDIA rate-limit bucket; with `security.guards.fail_open_on_unavailable: false`, a guard outage blocks the turn.
 
 ## Alternatives rejected

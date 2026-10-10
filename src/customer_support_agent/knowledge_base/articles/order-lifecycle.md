@@ -13,8 +13,8 @@ An order's refund status is separate from its order status.
 
 - None: no refund has been requested.
 - Pending review: a refund or cancellation is waiting for a human reviewer.
-- Approved or denied: a reviewer has decided the request.
-- Issued: the refund has been paid and is waiting to settle; until then it can be voided.
+- Denied: a reviewer declined the request. The decision is final; the customer can escalate by email to the support contact.
+- Issued: the refund has been paid (within the agent's limit, or approved by a reviewer) and is waiting to settle; until then it can be voided.
 - Completed: the refund has settled. The order cannot be refunded again.
 
 ## Tracking a shipment

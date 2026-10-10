@@ -1,8 +1,8 @@
-"""BasicSanity: the platform's contract, the agent's rules (LLD §21).
+"""DeterministicCheck: the platform's contract, the agent's rules (LLD §21).
 
-The split is the point. `agent_platform` owns `BasicSanityChecker` — a
+The split is the point. `agent_platform` owns `DeterministicChecker` — a
 request in, findings out — and knows nothing about orders or refunds.
-Customer Support supplies `OrderSanityCheck`. Another agent declares the
+Customer Support supplies `OrderChecks`. Another agent declares the
 same feature and injects its own checker, changing nothing in the
 platform. These tests assert both halves, because a contract that quietly
 grew domain vocabulary would still pass every behavioural test this agent
@@ -11,14 +11,14 @@ has.
 
 from typing import Any
 
-from agent_platform.basic_sanity import (
-    BasicSanityChecker,
-    BasicSanityRequest,
-    BasicSanityResult,
-)
 from agent_platform.config import get_settings
+from agent_platform.deterministic_checks import (
+    DeterministicChecker,
+    DeterministicCheckRequest,
+    DeterministicCheckResult,
+)
 from agent_platform.persistence import SqliteConnectionPool
-from customer_support_agent.basic_sanity.order_validator import OrderSanityCheck
+from customer_support_agent.deterministic_checks.order_validator import OrderChecks
 from customer_support_agent.graph import build_agent
 from customer_support_agent.persistence.repositories import OrdersRepository
 from tests.conftest import ScriptedLLM
@@ -27,20 +27,20 @@ from tests.conftest import ScriptedLLM
 class _AnotherAgentsRules:
     """A second agent's business logic, speaking none of Customer Support's."""
 
-    def check(self, request: BasicSanityRequest) -> BasicSanityResult:
+    def check(self, request: DeterministicCheckRequest) -> DeterministicCheckResult:
         if request.subject_id == "":
-            return BasicSanityResult(passed=False, reason_code="NO_SUBJECT")
-        return BasicSanityResult(passed=True, reason_code="TENANT_IN_GOOD_STANDING")
+            return DeterministicCheckResult(passed=False, reason_code="NO_SUBJECT")
+        return DeterministicCheckResult(passed=True, reason_code="TENANT_IN_GOOD_STANDING")
 
 
 class TestThePlatformOwnsOnlyTheContract:
     def test_any_object_with_check_satisfies_the_protocol(self) -> None:
-        assert isinstance(_AnotherAgentsRules(), BasicSanityChecker)
-        assert isinstance(OrderSanityCheck(orders=None), BasicSanityChecker)  # type: ignore[arg-type]
+        assert isinstance(_AnotherAgentsRules(), DeterministicChecker)
+        assert isinstance(OrderChecks(orders=None), DeterministicChecker)  # type: ignore[arg-type]
 
     def test_the_request_carries_no_domain_vocabulary(self) -> None:
         """`customer_id` here would oblige every agent to have customers."""
-        fields = set(BasicSanityRequest.model_fields)
+        fields = set(DeterministicCheckRequest.model_fields)
         assert fields == {"query", "agent_id", "session_id", "actor", "subject_id", "metadata"}
 
     def test_a_second_agent_can_supply_its_own_rules(
@@ -55,16 +55,18 @@ class TestThePlatformOwnsOnlyTheContract:
         agent = build_agent(
             llm=ScriptedLLM(),
             pool=seeded_pool,
-            basic_sanity=_AnotherAgentsRules(),
-            features=get_settings().features.with_override("basic_sanity", True),
+            deterministic_checks=_AnotherAgentsRules(),
+            features=get_settings().features.with_override("deterministic_checks", True),
         )
-        assert isinstance(agent._basic_sanity, _AnotherAgentsRules)
+        assert isinstance(agent._deterministic_checks, _AnotherAgentsRules)
 
 
 class TestCustomerSupportRules:
-    def _check(self, pool: SqliteConnectionPool, query: str, subject: str) -> BasicSanityResult:
-        return OrderSanityCheck(OrdersRepository(pool)).check(
-            BasicSanityRequest(query=query, subject_id=subject)
+    def _check(
+        self, pool: SqliteConnectionPool, query: str, subject: str
+    ) -> DeterministicCheckResult:
+        return OrderChecks(OrdersRepository(pool)).check(
+            DeterministicCheckRequest(query=query, subject_id=subject)
         )
 
     def test_an_unidentified_subject_fails_closed(self, seeded_pool: SqliteConnectionPool) -> None:
@@ -96,22 +98,22 @@ class TestTheFeature:
         return build_agent(
             llm=ScriptedLLM([{"content": "Order 10001 was delivered."}]),
             pool=pool,
-            features=settings.features.with_override("basic_sanity", on),
+            features=settings.features.with_override("deterministic_checks", on),
         )
 
     def test_the_stage_is_built_when_declared(
         self, seeded_pool: SqliteConnectionPool, restore_settings: None
     ) -> None:
         agent = self._agent(True, seeded_pool)
-        assert agent._basic_sanity is not None
-        assert "basic_sanity" in agent._graph.get_graph().nodes
+        assert agent._deterministic_checks is not None
+        assert "deterministic_checks" in agent._graph.get_graph().nodes
 
     def test_the_stage_is_absent_when_withheld(
         self, seeded_pool: SqliteConnectionPool, restore_settings: None
     ) -> None:
         agent = self._agent(False, seeded_pool)
-        assert agent._basic_sanity is None
-        assert "basic_sanity" not in agent._graph.get_graph().nodes
+        assert agent._deterministic_checks is None
+        assert "deterministic_checks" not in agent._graph.get_graph().nodes
 
     async def test_the_turn_still_completes_without_it(
         self, seeded_pool: SqliteConnectionPool, restore_settings: None

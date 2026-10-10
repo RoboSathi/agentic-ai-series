@@ -14,8 +14,8 @@ import pytest
 
 from agent_platform.memory.working import WorkingMemory
 from agent_platform.primitives.money import Money
-from customer_support_agent.basic_sanity.order_validator import OrderSanityCheck
 from customer_support_agent.config import get_agent_settings
+from customer_support_agent.deterministic_checks.order_validator import OrderChecks
 from customer_support_agent.domain.order_reference import (
     ORDER_UNDER_DISCUSSION,
     OrderReferenceResolver,
@@ -66,7 +66,7 @@ class TestTheCustomerNamesAnOrderInTheirOwnWords:
         assert _resolve("10786 please") == 10786
 
     def test_an_order_named_but_not_theirs_still_resolves_so_it_can_be_refused(self) -> None:
-        """BasicSanity says "not on your account"; it cannot if nothing is named."""
+        """DeterministicCheck says "not on your account"; it cannot if nothing is named."""
         assert _resolve("order 99999") == 99999
 
 
@@ -104,7 +104,7 @@ class TestThePathThatMovesMoney:
         assert {m.max_amount for m in mandates} == {Money.parse("90.93")}
 
 
-class TestBasicSanityReadsTheSameReference:
+class TestDeterministicChecksReadTheSameReference:
     """Two extractors that disagree is how an agent answers about one order and acts on another."""
 
     @pytest.mark.parametrize(
@@ -120,23 +120,23 @@ class TestBasicSanityReadsTheSameReference:
     )
     def test_it_agrees_with_the_resolver_on_what_the_message_names(self, query: str) -> None:
         resolver = OrderReferenceResolver(_RULES, owns=_owns)
-        assert self._sanity(resolver).order_id(query, {}, _CUSTOMER) == resolver.resolve(
+        assert self._checks(resolver).order_id(query, {}, _CUSTOMER) == resolver.resolve(
             query, {}, None, customer_id=_CUSTOMER
         )
 
     def test_it_reads_the_reference_the_turn_already_settled(self) -> None:
-        sanity = self._sanity(OrderReferenceResolver(_RULES, owns=_owns))
+        checks = self._checks(OrderReferenceResolver(_RULES, owns=_owns))
         assert (
-            sanity.order_id("yes, refund it", {ORDER_UNDER_DISCUSSION: 10781}, _CUSTOMER) == 10781
+            checks.order_id("yes, refund it", {ORDER_UNDER_DISCUSSION: 10781}, _CUSTOMER) == 10781
         )
 
     def test_the_gatekeepers_final_recheck_still_reads_the_validated_call(self) -> None:
-        sanity = self._sanity(OrderReferenceResolver(_RULES, owns=_owns))
-        assert sanity.order_id("", {"tool_params": {"order_id": 10786}}, _CUSTOMER) == 10786
+        checks = self._checks(OrderReferenceResolver(_RULES, owns=_owns))
+        assert checks.order_id("", {"tool_params": {"order_id": 10786}}, _CUSTOMER) == 10786
 
     @staticmethod
-    def _sanity(resolver: OrderReferenceResolver) -> OrderSanityCheck:
-        return OrderSanityCheck(
+    def _checks(resolver: OrderReferenceResolver) -> OrderChecks:
+        return OrderChecks(
             SimpleNamespace(),  # type: ignore[arg-type]
             refund_policy=SimpleNamespace(),  # type: ignore[arg-type]
             cancellation_policy=SimpleNamespace(),  # type: ignore[arg-type]

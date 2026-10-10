@@ -1,4 +1,4 @@
-"""Customer Support's implementation of the generic BasicSanity contract.
+"""Customer Support's implementation of the generic DeterministicCheck contract.
 
 This module deliberately owns Customer Support domain knowledge. It knows
 about orders, customers and refund state; ``agent_platform`` does not.
@@ -13,11 +13,11 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
-from agent_platform.basic_sanity import (
-    BasicSanityChecker,
-    BasicSanityFinding,
-    BasicSanityRequest,
-    BasicSanityResult,
+from agent_platform.deterministic_checks import (
+    DeterministicChecker,
+    DeterministicCheckFinding,
+    DeterministicCheckRequest,
+    DeterministicCheckResult,
 )
 from agent_platform.logging import get_logger
 from agent_platform.primitives.money import Money, money_or_none
@@ -28,7 +28,8 @@ from customer_support_agent.domain.order_reference import (
     OrderReferenceResolver,
 )
 from customer_support_agent.domain.ports import OrderLookup
-from customer_support_agent.domain.refund_policy import RefundPolicy
+from customer_support_agent.domain.refund_policy import REFUND_DECLINED_FINAL, RefundPolicy
+from customer_support_agent.intent.phrases import PhraseReader
 
 # The finding that proves an order exists and belongs to this customer. A
 # request about that order may still be refused, but the order it names is
@@ -45,9 +46,12 @@ _CANCEL_TOOL = "cancel_order"
 _CANCELLABLE_CHECK = "order_cancellable"
 # "cancel 10022": the compact form no configured phrase covers.
 _CANCEL_BY_ID = re.compile(r"\bcancel\s+(?:order\s*)?#?\s*\d{4,}\b", re.IGNORECASE)
+# The fact that carries the whole order row the checks read, so the turn's
+# later stages answer from it instead of reading the same order again.
+ORDER_FACT = "order"
 
 
-class OrderSanityCheck(BasicSanityChecker):
+class OrderChecks(DeterministicChecker):
     """Deterministic Customer Support preflight for explicit order requests."""
 
     def __init__(
@@ -60,7 +64,7 @@ class OrderSanityCheck(BasicSanityChecker):
         references: OrderReferenceResolver | None = None,
     ) -> None:
         self._orders = orders
-        # The one reader of which order a message names. BasicSanity used to
+        # The one reader of which order a message names. DeterministicCheck used to
         # carry its own, and two readers that disagree are how an agent
         # validates one order and acts on another.
         self._references = references or OrderReferenceResolver.from_orders(
@@ -68,6 +72,8 @@ class OrderSanityCheck(BasicSanityChecker):
         )
         self._refund_policy = refund_policy or RefundPolicy(orders)
         self._cancellation_policy = cancellation_policy or CancellationPolicy(orders)
+        # The intent router's own reader: a phrase counts only when it is asked for.
+        self._phrases = PhraseReader()
         self._cancel_markers = _markers(_configured_phrases(CANCEL_OPERATION))
         self._status_markers = _markers(_configured_phrases(REFUND_STATUS_OPERATION))
         self._refund_markers = _markers(
@@ -75,7 +81,7 @@ class OrderSanityCheck(BasicSanityChecker):
         )
         self._logger = get_logger("customer_support_agent")
 
-    def check(self, request: BasicSanityRequest) -> BasicSanityResult:
+    def check(self, request: DeterministicCheckRequest) -> DeterministicCheckResult:
         """Run only deterministic checks that are safe before the model."""
         # The platform hands over an opaque subject id; reading it back as
         # a customer number is this agent's business, not the platform's.
@@ -83,7 +89,7 @@ class OrderSanityCheck(BasicSanityChecker):
         order_id = self.order_id(request.query, request.metadata, customer_id)
         operation = self._operation(request.query, request.metadata)
         if order_id is None:
-            return BasicSanityResult(
+            return DeterministicCheckResult(
                 passed=True,
                 reason_code="ORDER_REFERENCE_NOT_PRESENT",
                 message=(
@@ -91,12 +97,12 @@ class OrderSanityCheck(BasicSanityChecker):
                     "order-state validation is deferred until an order is identified."
                 ),
                 findings=[
-                    BasicSanityFinding(
+                    DeterministicCheckFinding(
                         check="order_reference",
                         passed=True,
                         applicable=False,
                         reason=(
-                            "No explicit order reference was supplied. BasicSanity does "
+                            "No explicit order reference was supplied. DeterministicCheck does "
                             "not guess or autocorrect identifiers."
                         ),
                         evidence={
@@ -117,12 +123,12 @@ class OrderSanityCheck(BasicSanityChecker):
         if customer_id is None:
             # Fail closed. The normal graph authenticates before this node,
             # but the component remains safe when invoked independently.
-            return BasicSanityResult(
+            return DeterministicCheckResult(
                 passed=False,
                 reason_code="CUSTOMER_NOT_AUTHENTICATED",
                 message="I need to verify your account before I can look up that order.",
                 findings=[
-                    BasicSanityFinding(
+                    DeterministicCheckFinding(
                         check="customer_authenticated",
                         passed=False,
                         reason="No authenticated customer id was supplied.",
@@ -141,12 +147,12 @@ class OrderSanityCheck(BasicSanityChecker):
             )
             order = validation.order
             if order is None:
-                return BasicSanityResult(
+                return DeterministicCheckResult(
                     passed=False,
                     reason_code=validation.reason_code,
                     message=validation.reason,
                     findings=[
-                        BasicSanityFinding(
+                        DeterministicCheckFinding(
                             check="refund_policy",
                             passed=False,
                             reason=validation.reason,
@@ -169,12 +175,12 @@ class OrderSanityCheck(BasicSanityChecker):
         else:
             order = self._orders.get_for_customer(order_id, customer_id)
             if order is None:
-                return BasicSanityResult(
+                return DeterministicCheckResult(
                     passed=False,
                     reason_code="ORDER_NOT_FOUND_FOR_CUSTOMER",
                     message=f"I couldn't find order {order_id} on your account.",
                     findings=[
-                        BasicSanityFinding(
+                        DeterministicCheckFinding(
                             check=ORDER_OWNED_CHECK,
                             passed=False,
                             reason="The order does not exist for the authenticated customer.",
@@ -202,9 +208,10 @@ class OrderSanityCheck(BasicSanityChecker):
             "already_refunded": order.already_refunded,
             "refund_eligible": order.is_refund_eligible,
             "operation": operation,
+            ORDER_FACT: order.model_dump(mode="json"),
         }
         findings = [
-            BasicSanityFinding(
+            DeterministicCheckFinding(
                 check=ORDER_OWNED_CHECK,
                 passed=True,
                 reason="Order exists and belongs to the authenticated customer.",
@@ -229,6 +236,10 @@ class OrderSanityCheck(BasicSanityChecker):
                 finding_map: dict[str, tuple[str, dict[str, Any]]] = {
                     "ORDER_ALREADY_REFUNDED": (
                         "not_already_refunded",
+                        {"order_id": order_id, "refund_status": order.refund_status},
+                    ),
+                    REFUND_DECLINED_FINAL: (
+                        "refund_not_declined",
                         {"order_id": order_id, "refund_status": order.refund_status},
                     ),
                     "ORDER_NOT_REFUND_ELIGIBLE": (
@@ -263,24 +274,24 @@ class OrderSanityCheck(BasicSanityChecker):
                     ("refund_policy", {"order_id": order_id}),
                 )
                 findings.append(
-                    BasicSanityFinding(
+                    DeterministicCheckFinding(
                         check=check_name,
                         passed=False,
                         reason=validation.reason,
                         evidence=evidence,
                     )
                 )
-                return BasicSanityResult(
+                return DeterministicCheckResult(
                     passed=False,
                     reason_code=validation.reason_code,
-                    message=validation.reason,
+                    message=_customer_message(validation.reason_code, validation.reason),
                     findings=findings,
                     facts=facts,
                 )
 
             if requested_amount is not None:
                 findings.append(
-                    BasicSanityFinding(
+                    DeterministicCheckFinding(
                         check="requested_amount_positive",
                         passed=True,
                         reason="The requested refund amount is greater than zero.",
@@ -288,7 +299,7 @@ class OrderSanityCheck(BasicSanityChecker):
                     )
                 )
                 findings.append(
-                    BasicSanityFinding(
+                    DeterministicCheckFinding(
                         check="requested_amount_within_order_total",
                         passed=True,
                         reason="The requested refund does not exceed the order total.",
@@ -302,7 +313,7 @@ class OrderSanityCheck(BasicSanityChecker):
 
             findings.extend(
                 [
-                    BasicSanityFinding(
+                    DeterministicCheckFinding(
                         check="not_already_refunded",
                         passed=True,
                         reason="The order is not fully refunded.",
@@ -311,7 +322,7 @@ class OrderSanityCheck(BasicSanityChecker):
                             "already_refunded": False,
                         },
                     ),
-                    BasicSanityFinding(
+                    DeterministicCheckFinding(
                         check="refund_eligible",
                         passed=True,
                         reason="The order is in a refundable state.",
@@ -323,9 +334,9 @@ class OrderSanityCheck(BasicSanityChecker):
                 ]
             )
 
-        return BasicSanityResult(
+        return DeterministicCheckResult(
             passed=True,
-            reason_code="BASIC_SANITY_PASSED",
+            reason_code="DETERMINISTIC_CHECKS_PASSED",
             findings=findings,
             facts=facts,
         )
@@ -336,9 +347,8 @@ class OrderSanityCheck(BasicSanityChecker):
         """The order this request names, the turn settled, or an exact call re-checked.
 
         Still no guessing. The message is read by the shared resolver; the
-        fallback — used only by the Gatekeeper's final re-check — is an
-        ``order_id`` the agent has already validated, not a number inferred
-        from text.
+        fallback is an ``order_id`` the agent has already validated (a tool
+        call's parameters), not a number inferred from text.
 
         Without the carried reference, "I want a refund" one turn after
         "what about order 10301?" reads as a refund request naming no
@@ -360,10 +370,10 @@ class OrderSanityCheck(BasicSanityChecker):
         self,
         order: Order,
         customer_id: int,
-        request: BasicSanityRequest,
-        findings: list[BasicSanityFinding],
+        request: DeterministicCheckRequest,
+        findings: list[DeterministicCheckFinding],
         facts: dict[str, Any],
-    ) -> BasicSanityResult:
+    ) -> DeterministicCheckResult:
         """Whether this order can be cancelled — the same rules the Gatekeeper and the tool apply.
 
         An order already cancelled, shipped or delivered is answered here,
@@ -373,7 +383,7 @@ class OrderSanityCheck(BasicSanityChecker):
             order.order_id, customer_id, _requested_amount(request.metadata)
         )
         findings.append(
-            BasicSanityFinding(
+            DeterministicCheckFinding(
                 check=_CANCELLABLE_CHECK,
                 passed=validation.allowed,
                 reason=validation.reason or "The order has not shipped and can be cancelled.",
@@ -385,15 +395,15 @@ class OrderSanityCheck(BasicSanityChecker):
             )
         )
         if not validation.allowed:
-            return BasicSanityResult(
+            return DeterministicCheckResult(
                 passed=False,
                 reason_code=validation.reason_code,
                 message=validation.reason,
                 findings=findings,
                 facts=facts,
             )
-        return BasicSanityResult(
-            passed=True, reason_code="BASIC_SANITY_PASSED", findings=findings, facts=facts
+        return DeterministicCheckResult(
+            passed=True, reason_code="DETERMINISTIC_CHECKS_PASSED", findings=findings, facts=facts
         )
 
     def _operation(self, query: str, metadata: dict[str, object] | None = None) -> str:
@@ -408,19 +418,18 @@ class OrderSanityCheck(BasicSanityChecker):
             return CANCEL_OPERATION
         if bare_action in {"process_refund", "queue_for_approval"}:
             return "REQUEST_REFUND"
-        lowered = query.casefold()
-        if any(marker in lowered for marker in self._cancel_markers) or _CANCEL_BY_ID.search(query):
+
+        def asked(markers: tuple[str, ...]) -> bool:
+            return any(self._phrases.asserted(query, marker) for marker in markers)
+
+        if asked(self._cancel_markers) or _CANCEL_BY_ID.search(query):
             return CANCEL_OPERATION
-        if any(marker in lowered for marker in self._status_markers):
+        if asked(self._status_markers):
             return REFUND_STATUS_OPERATION
-        return (
-            "REQUEST_REFUND"
-            if any(marker in lowered for marker in self._refund_markers)
-            else "unknown"
-        )
+        return "REQUEST_REFUND" if asked(self._refund_markers) else "unknown"
 
 
-def owned_order_id(result: BasicSanityResult) -> int | None:
+def owned_order_id(result: DeterministicCheckResult) -> int | None:
     """The order this result proved is the customer's own, whether or not it passed.
 
     None when nothing was proved: no reference, no customer, or an order
@@ -429,6 +438,27 @@ def owned_order_id(result: BasicSanityResult) -> int | None:
     owned = any(f.check == ORDER_OWNED_CHECK and f.passed for f in result.findings)
     order_id = result.facts.get("order_id") if isinstance(result.facts, dict) else None
     return order_id if owned and isinstance(order_id, int) else None
+
+
+def checked_order(result: DeterministicCheckResult) -> Order | None:
+    """The owned order the checks read, as the database held it; None when none was proved.
+
+    Read once per turn: prefetch and the read path answer from it rather than
+    asking the database for the same row again.
+    """
+    if owned_order_id(result) is None:
+        return None
+    row = result.facts.get(ORDER_FACT)
+    return Order.model_validate(row) if isinstance(row, dict) else None
+
+
+def _customer_message(reason_code: str, reason: str) -> str:
+    """The refusal the customer reads: a declined refund also says how to escalate it."""
+    if reason_code != REFUND_DECLINED_FINAL:
+        return reason
+    settings = get_agent_settings()
+    escalation = settings.refund_declined_escalation.format(contact=settings.support_contact)
+    return f"{reason}. {escalation}"
 
 
 def _requested_amount(metadata: dict[str, object] | None) -> Money | None:
