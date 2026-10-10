@@ -871,11 +871,10 @@ skills:
     # One procedure on the card: `{name}`, `{version}`, `{reason}`; its steps are listed below.
     activated: "{name} v{version} · {reason}"
     joiner: "; "
-    # The reads the harness runs before the model is asked (the card is drawn first), and
-    # the tools the model may then call: what the harness read, it is not offered again.
-    prefetched: " · harness reads first: {tools}"
-    offered: " · model may call: {tools}"
-    offered_none: " · model may call: nothing"
+    # Harness reads appear in the expanded Procedure card; the compact heading only shows
+    # tools the model may then call.
+    offered: " · Offered Tools: {tools}"
+    offered_none: " · Offered Tools: None"
     synced: "Procedures synced · {added} added · {updated} updated · {retired} retired"
     unchanged: "Procedures unchanged"
   audit:

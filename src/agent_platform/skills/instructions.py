@@ -127,8 +127,7 @@ class InstructionBuilder:
             return
         words = self._settings.observability
         summary = words.joiner.join(_line(item, words.activated) for item in activation.skills)
-        if prefetched:
-            summary += words.prefetched.format(tools=", ".join(prefetched))
+        # Prefetch details belong in the expanded Procedure card, not its compact heading.
         summary += words.offered.format(tools=", ".join(offered)) if offered else words.offered_none
         self._reporter.emit(
             words.activation_stage,
@@ -139,7 +138,7 @@ class InstructionBuilder:
                 "procedures": [_card_fields(item) for item in activation.skills],
                 # Drawn before any of them runs: what the harness reads before the model is
                 # asked, and what the model may then call (a read already made is not offered).
-                # "harness_reads_first": prefetched,
+                "harness_reads_first": prefetched,
                 "model_may_call": offered,
             },
         )

@@ -1222,7 +1222,6 @@ class SkillObservabilitySettings(BaseModel):
     sync_stage: str
     activated: str
     joiner: str
-    prefetched: str
     offered: str
     offered_none: str
     synced: str
