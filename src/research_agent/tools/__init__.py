@@ -10,7 +10,19 @@ URLS_KEY = "urls"
 # A search's own query and the dates its results give themselves, for the recency check.
 QUERY_KEY = "query"
 PUBLISHED_KEY = "published"
+# A search's text per hit, in `URLS_KEY` order: each hit is evidence from its own page.
+HITS_KEY = "hits"
+# Set on a fetched page's result: that URL was read in full, not only as a search snippet.
+PAGE_KEY = "page"
 
 from research_agent.tools.registry import NAMESPACE, build_answer_registry  # noqa: E402
 
-__all__ = ["NAMESPACE", "PUBLISHED_KEY", "QUERY_KEY", "URLS_KEY", "build_answer_registry"]
+__all__ = [
+    "HITS_KEY",
+    "NAMESPACE",
+    "PAGE_KEY",
+    "PUBLISHED_KEY",
+    "QUERY_KEY",
+    "URLS_KEY",
+    "build_answer_registry",
+]

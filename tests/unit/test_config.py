@@ -90,7 +90,7 @@ class TestSettings:
             "context",
             "memory",
             "guardrails",
-            "hallucination_protection",
+            "hallucination_check",
             "gatekeeper",
             "security",
             "resilience",

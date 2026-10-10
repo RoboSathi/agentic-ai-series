@@ -10,7 +10,7 @@ Where this agent uses each design pattern, derived from the code as it stands.
 | procedural memory | prompts/AGENT.md + prompts/skills/analytics-investigation · graph/agent.py `_messages` | the profile and its one `always` procedure, versioned in `ProceduralStore` and audited per turn (ADR 0010) |
 | tool_use (MCP) | graph/builder.py · `_sources` → `GovernedMcpToolSource` | the only tools are a remote MCP server's, arriving as ordinary governed `ToolDefinition`s |
 | guardrails | graph/agent.py · `_screened` | the person's message is screened for injection before the model reads it (`prompt_injection`) |
-| hallucination_protection | graph/nodes.py · `_check` → platform `ConfidenceCheck` (level 1), then guardrails/figures.py · `FigureCheck` (level 2) | level 1: token confidence (logprobs), shown first on HALLUCINATION CHECK as a signal; level 2: every figure must appear in a query result, the rest reported as unverified (`hallucination_guard`) |
+| hallucination_check | graph/nodes.py · `_check` → platform `ConfidenceCheck` (level 1), then guardrails/figures.py · `FigureCheck` (level 2) | level 1: token confidence (logprobs), shown first on HALLUCINATION CHECK as a signal; level 2: every figure must appear in a query result, the rest reported as unverified (`hallucination_guard`) |
 | human-verifiable output | presentation/reply.py | the reply carries the SQL it ran and the rows it rests on |
 
 ## Governance and LLD patterns

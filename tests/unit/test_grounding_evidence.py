@@ -15,7 +15,7 @@ from agent_platform.config import get_settings
 from agent_platform.evals import create_scoring_cascade
 from agent_platform.evals.entailment import EntailmentResult
 from agent_platform.guardrails.response import ResponseGuardrail
-from agent_platform.hallucination_protection import NOT_EXECUTED_MARKER, DetectionLadder
+from agent_platform.hallucination_check import NOT_EXECUTED_MARKER, DetectionLadder
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 
@@ -286,10 +286,8 @@ class TestAnUnverifiedClaimIsOneLine:
                 ],
             }
         )
-        assert (
-            'unverified [Tool Result] read as neutral (0.98): "Refunded $21.35 for order 10001"'
-            in card
-        )
+        # The model that read it is named; a line logged without one reads as NLI's.
+        assert 'NLI [Tool Result] neutral 0.98: "Refunded $21.35 for order 10001"' in card
 
 
 class TestTheRefusalFromTheLiveRun:
@@ -487,7 +485,7 @@ class TestAPromiseIsReadAsAPromise:
         reply = "The $66.56 refund has been processed."
         result = await self._guard().enforce(reply, _Support()._grounding_evidence(self._turn()))
         assert result.withheld
-        assert result.response == get_settings().hallucination_protection.withheld_reply
+        assert result.response == get_settings().hallucination_check.withheld_reply
         assert result.outcome.startswith("BLOCKED · ") and result.outcome.endswith("reply withheld")
 
 
@@ -663,3 +661,21 @@ class TestAPolicyAmountIsNotAnUnsourcedOne:
             "Order 10533 cost $77.10.", evidence
         )
         assert result.reason_code == "TOOL_EVIDENCE_AMOUNT_MISMATCH"
+
+
+class TestTheKnowledgeArticlesAreOneSentencePerPremise:
+    """A whole KB section read as contradicting "I can assist with a refund for this delivered
+    order": it also says an order in flight has nothing to refund. One rule per premise."""
+
+    def test_no_premise_is_a_paragraph(self) -> None:
+        from customer_support_agent.graph.nodes._support import _knowledge_evidence
+
+        chunks = _knowledge_evidence()
+        assert chunks and all("\n" not in chunk.content for chunk in chunks)
+
+    def test_what_may_be_refunded_and_what_may_not_are_separate_premises(self) -> None:
+        from customer_support_agent.graph.nodes._support import _knowledge_evidence
+
+        contents = [chunk.content for chunk in _knowledge_evidence()]
+        delivered = next(c for c in contents if "has been delivered can be refunded" in c)
+        assert "nothing to refund" not in delivered

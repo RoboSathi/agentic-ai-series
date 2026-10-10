@@ -170,7 +170,7 @@ guardrails:
     TOOL_EVIDENCE_RECORD_STATE_MISMATCH: states a refund status the record disagrees with
     TOOL_EVIDENCE_NOT_EXECUTED: claims a refund the tool call never executed
 
-hallucination_protection:
+hallucination_check:
   # This agent's ids are five-digit order numbers (the same shape the
   # evals use). A record about another order cannot refute a claim.
   refute_identifier_pattern: '\b\d{5}\b'
@@ -629,8 +629,8 @@ customer_support_agent:
   # Fixed wording the agent says itself. `{length}` is user_code_length.
   messages:
     auth:
-      ask_for_code: "Verify your account.\nKindly enter your {length}-character user code shared over email."
-      unknown_code: "I couldn't find an account with that code. Please check it and try again — it's the {length}-character code from your order confirmation email."
+      ask_for_code: "\nVerify your account.\nKindly enter your {length}-character user code shared over email."
+      unknown_code: "\nI couldn't find an account with that code. Please check it and try again — it's the {length}-character code from your order confirmation email."
     # How far a stopped turn got, as the stop report's tree (its frame is the platform's
     # `durability.stop_report`).
     cancelled:

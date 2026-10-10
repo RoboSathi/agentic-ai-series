@@ -1,13 +1,13 @@
 """The order, the policy and the session as typed facts, for the hallucination check.
 
 The guard reads a reply's claims against these values before any model does
-(`agent_platform.hallucination_protection.ledger`): a delivery date, a total, whether
+(`agent_platform.hallucination_check.ledger`): a delivery date, a total, whether
 a refund is possible, how long one takes to settle, who the customer is. Each fact
 also carries a sentence of its own, so NLI still has a self-contained premise and a
 corrected reply has the record's words to put back.
 
 Which attributes exist and how a claim words them is configuration
-(`hallucination_protection.facts` in this agent's config); the sentences are
+(`hallucination_check.facts` in this agent's config); the sentences are
 `customer_support_agent.grounding_facts.statements`. The values come from the reads
 the turn already made: the order row, the settings, the authenticated customer.
 """
@@ -15,7 +15,7 @@ the turn already made: the order row, the settings, the authenticated customer.
 from typing import Literal
 
 from agent_platform.context.types import Chunk
-from agent_platform.hallucination_protection.ledger import FLAG_TRUE, Fact, fact_chunk
+from agent_platform.hallucination_check.ledger import FLAG_TRUE, Fact, fact_chunk
 from agent_platform.primitives.money import Money
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.identity import Customer

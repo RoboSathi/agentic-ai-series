@@ -78,7 +78,7 @@ implementation deferred to a later phase) and one (`multi_agent`) is a
 | `context` | Five-stage context assembly pipeline, context-failure detection, six management strategies, production RAG | live | E08, E17–E19 |
 | `memory` | Working/Episodic/Semantic/Procedural stores, write pipeline, poisoning defenses | live | E13–E16 |
 | `guardrails` | Pydantic validation, Outlines/LMQL constrained decoding, chaos/property tests | live | E24, E28–E29 |
-| `hallucination_protection` | Detection ladder, grounding-vs-reasoning diagnosis, SLOs | live | E25–E27 |
+| `hallucination_check` | Detection ladder, grounding-vs-reasoning diagnosis, SLOs | live | E25–E27 |
 | `gatekeeper` | Sandbox→Gatekeeper→Execution mediation, Authority Hierarchy, Surface Classes, Tier-1/Tier-2, ledger | live | E01–E03, E09, E12 |
 | `security` | RBAC/PoLP (`auth`), PII (`pii`), prompt-injection defense (`prompt_injection`), content moderation | live | E10, E30–E32 |
 | `resilience` | Circuit breaker, retry, timeout, bulkhead, saga, idempotency, pub-sub | live | E12 (general), E35 |
@@ -108,7 +108,7 @@ sequenceDiagram
     participant MEM as memory
     participant LLM as llm adapter
     participant GR as guardrails
-    participant HP as hallucination_protection
+    participant HP as hallucination_check
     participant LC as control_loop.LoopController
     participant GK as gatekeeper
     participant RES as resilience
@@ -232,7 +232,7 @@ Strict acyclic layering — a lower layer never imports a higher one:
 config, logging                          (layer 0 — no deps)
    └─ persistence, llm                    (layer 1)
         └─ security, memory, tools, resilience              (layer 2)
-             └─ context, guardrails, hallucination_protection  (layer 3)
+             └─ context, guardrails, hallucination_check  (layer 3)
                   └─ gatekeeper                              (layer 4 — depends on security, resilience, audit)
                        └─ evals, observability, audit         (layer 5 — cross-cutting, may be read by any layer ≤4, never depended on by layer 0-1)
                             └─ verification                            (layer 5b — depends on tools + logging)

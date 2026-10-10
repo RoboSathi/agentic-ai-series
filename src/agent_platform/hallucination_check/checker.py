@@ -20,9 +20,10 @@ from agent_platform.context.retrieval import RelevanceRanker
 from agent_platform.context.types import Chunk
 from agent_platform.evals.entailment import EntailmentModel, entailment_backend
 from agent_platform.evals.types import Claim, Verdict
-from agent_platform.hallucination_protection.claims import ClaimDecomposer
-from agent_platform.hallucination_protection.resolver import GroundingResolver
-from agent_platform.hallucination_protection.types import (
+from agent_platform.hallucination_check.claims import ClaimDecomposer
+from agent_platform.hallucination_check.confirmer import ClaimConfirmer
+from agent_platform.hallucination_check.resolver import GroundingResolver
+from agent_platform.hallucination_check.types import (
     DetectionVerdict,
     FailureKind,
     GenerationAssessment,
@@ -69,10 +70,11 @@ class DetectionLadder:
         cascade: RelevanceRanker,
         decomposer: ClaimDecomposer | None = None,
         entailment: EntailmentModel | None = None,
+        confirmer: ClaimConfirmer | None = None,
     ) -> None:
-        self._resolver = GroundingResolver(cascade, entailment)
+        self._resolver = GroundingResolver(cascade, entailment, confirmer=confirmer)
         self._decomposer = decomposer or ClaimDecomposer()
-        self._logger = get_logger("hallucination_protection")
+        self._logger = get_logger("hallucination_check")
 
     @property
     def identity(self) -> tuple[str, str]:
@@ -80,7 +82,7 @@ class DetectionLadder:
         model = self._resolver.entailment
         return entailment_backend(model), str(getattr(model, "model_name", ""))
 
-    @logged("hallucination_protection")
+    @logged("hallucination_check")
     async def score(self, claim: str, evidence: list[Chunk]) -> DetectionVerdict:
         """Class the claim, then ask the tiers that may ground it."""
         return await self._resolver.resolve(claim, evidence)
@@ -144,7 +146,7 @@ class DetectionLadder:
         claims, and reporting the second for the first is how a detector
         comes to look like it is working.
         """
-        settings = get_settings().hallucination_protection
+        settings = get_settings().hallucination_check
         if resample is None or not settings.consistency_enabled:
             return None
         if not any(not verdict.supported and not verdict.reason_code for verdict in verdicts):
@@ -182,10 +184,8 @@ class GroundingReasoningDiagnoser:
     """
 
     def __init__(self) -> None:
-        self._overlap_threshold = (
-            get_settings().hallucination_protection.grounding_overlap_threshold
-        )
-        self._logger = get_logger("hallucination_protection")
+        self._overlap_threshold = get_settings().hallucination_check.grounding_overlap_threshold
+        self._logger = get_logger("hallucination_check")
 
     def diagnose(self, claim: str, retrieved: list[Chunk]) -> FailureKind:
         """Classify an unsupported claim by whether its evidence was present."""

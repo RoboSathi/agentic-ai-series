@@ -38,7 +38,6 @@ class Stages(BaseModel):
 class Cards(BaseModel):
     """Card headings on the live feed."""
 
-    purpose: str
     result_rows: str
     result_metrics: str
     result_views: str

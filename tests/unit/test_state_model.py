@@ -9,7 +9,7 @@ read by a small deterministic model of that machine, in both directions.
 import pytest
 
 from agent_platform.context.types import Chunk
-from agent_platform.hallucination_protection.states import StateModel
+from agent_platform.hallucination_check.states import StateModel
 
 
 def _record(*lines: str) -> list[Chunk]:

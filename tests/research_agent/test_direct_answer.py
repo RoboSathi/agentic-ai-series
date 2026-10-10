@@ -15,7 +15,7 @@ from agent_platform.executor import ToolExecutorImpl
 from agent_platform.executor.registry_handler import RegistryToolHandler
 from agent_platform.guardrails.guards import PydanticValidator
 from agent_platform.guardrails.response import ResponseGuardrail
-from agent_platform.hallucination_protection import DetectionLadder
+from agent_platform.hallucination_check import DetectionLadder
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import ModelToolCall
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
@@ -26,6 +26,7 @@ from agent_platform.tools.types import ToolDefinition, ToolResult
 from research_agent.config import get_agent_settings
 from research_agent.graph.answerer import DirectAnswerer
 from research_agent.guardrails.answer_grounding import AnswerGrounding
+from research_agent.guardrails.page_evidence import PageEvidence
 from research_agent.llm.structured import StructuredCaller
 from research_agent.observability.telemetry import RunTelemetry
 from research_agent.prompts import answer as prompt
@@ -45,6 +46,11 @@ CALL = ModelToolCall(id="c1", name="answer__weather", arguments='{"location": "P
 
 class _WeatherArgs(BaseModel):
     location: str = Field(description="A city.")
+
+
+async def _unreachable_page(url: str) -> ToolResult:
+    """No network in tests: a cited page cannot be read, so its snippet stays the evidence."""
+    return ToolResult(error=f"offline: {url}")
 
 
 def _weather(location: str) -> ToolResult:
@@ -88,7 +94,10 @@ def _answerer_over(model: ScriptedLLM) -> tuple[DirectAnswerer, list[StatusEvent
     )
     caller = StructuredCaller(_Roles(model), PydanticValidator(), reporter)
     ladder = DetectionLadder(create_scoring_cascade(), entailment=LexicalEntailmentModel())
-    grounding = AnswerGrounding(ResponseGuardrail(ladder), settings.grounding, settings.messages)
+    pages = PageEvidence(_unreachable_page, settings.grounding)
+    grounding = AnswerGrounding(
+        ResponseGuardrail(ladder), settings.grounding, settings.messages, pages
+    )
     audit = NullAuditLedger()
     telemetry = RunTelemetry(reporter, audit, trace_id="answer-test")
     executor = ToolExecutorImpl(RegistryToolHandler(registry), reporter=reporter)

@@ -24,7 +24,7 @@ from langchain_core.runnables import RunnableConfig
 
 from agent_platform.context.types import Chunk
 from agent_platform.gatekeeper.types import AuthorityContext
-from agent_platform.hallucination_protection import Observation, tool_evidence
+from agent_platform.hallucination_check import PASSAGE, Observation
 from agent_platform.llm.embeddings import tokenize
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message, ModelToolCall
 from agent_platform.logging import describe_error, get_logger, instrument
@@ -44,7 +44,7 @@ from research_agent.observability.telemetry import ACTOR, RunTelemetry
 from research_agent.presentation.narration import clip, role_title
 from research_agent.prompts import answer as prompt
 from research_agent.research.recency import RecencyGuard
-from research_agent.tools import PUBLISHED_KEY, QUERY_KEY, URLS_KEY
+from research_agent.tools import HITS_KEY, PAGE_KEY, PUBLISHED_KEY, QUERY_KEY, URLS_KEY
 
 # The loop's cards, in the order a step emits them.
 THOUGHT, ACTION, OBSERVATION, REVISE, ANSWER = (
@@ -288,13 +288,21 @@ class AnswerNodes:
         replies: list[Message] = []
         sources: list[str] = []
         observations: list[Observation] = []
+        pages: list[str] = []
         for call in state["messages"][-1].tool_calls or []:
-            reply, urls, seen = await self._run(call, turn)
+            reply, result = await self._run(call, turn)
+            urls = [str(url) for url in result.data.get(URLS_KEY, [])]
             replies.append(reply)
             sources.extend(urls)
-            observations.extend(seen)
+            observations.extend(_observations(call.name, reply.content, result, urls))
+            pages.extend(urls if result.data.get(PAGE_KEY) else [])
         self._report_after_act(turn)
-        return {"messages": replies, "sources": sources, "observations": observations}
+        return {
+            "messages": replies,
+            "sources": sources,
+            "observations": observations,
+            "pages": pages,
+        }
 
     # -- LOOP CONTROL -----------------------------------------------------------------------------
 
@@ -334,9 +342,7 @@ class AnswerNodes:
         state = turn.budget.snapshot()[counter]
         return f"{state.spent:g} of {state.cap:g}"
 
-    async def _run(
-        self, call: ModelToolCall, turn: Turn
-    ) -> tuple[Message, list[str], list[Observation]]:
+    async def _run(self, call: ModelToolCall, turn: Turn) -> tuple[Message, ToolResult]:
         turn.budget.charge(TOOL_CALLS, 1)
         name = display_tool_name(call.name)
         self._emit(
@@ -352,10 +358,7 @@ class AnswerNodes:
         if note:
             text = f"{text}\n\n{note}"
         self._observe(turn, name, text, result)
-        urls = [str(url) for url in result.data.get(URLS_KEY, [])]
-        # Only what a tool actually returned can ground a claim; an error or a refusal cannot.
-        seen = [Observation(text, source=urls[0] if urls else call.name)] if result.success else []
-        return Message(role="tool", content=text, tool_call_id=call.id), urls, seen
+        return Message(role="tool", content=text, tool_call_id=call.id), result
 
     def _recency_note(self, turn: Turn, result: ToolResult) -> str:
         """A search pinned to the past, or with only old results, for an undated question."""
@@ -430,15 +433,21 @@ class AnswerNodes:
     # -- HALLUCINATION CHECK and REVISE -----------------------------------------------------------------
 
     async def ground(self, state: AnswerState, config: RunnableConfig) -> dict[str, Any]:
-        """Check an answer that rests on tool results against those results.
+        """Check an answer against the content its sources hold.
 
-        An answer given without a tool call rests on the model's own knowledge, which nothing
-        here can check; the prompt asks it to use a tool for anything it is unsure of.
+        The evidence is what the tools returned and the full page of every URL the answer
+        cites (`guardrails/page_evidence.py`). An answer with neither rests on the model's own
+        knowledge, which nothing here can check; the prompt asks it to use a tool for anything
+        it is unsure of.
         """
-        if self._grounding is None or not state["observations"] or not state["text"]:
+        if self._grounding is None or not state["text"]:
             return {}
         turn = turn_of(config)
-        evidence = tool_evidence(state["observations"])
+        evidence = await self._grounding.evidence(
+            state["text"], state["observations"], state["pages"], self._time_left(turn)
+        )
+        if not evidence:
+            return {}
         outcome = await self._grounding.check(
             turn.question, state["text"], evidence, self._reviser(turn, evidence)
         )
@@ -479,22 +488,34 @@ class AnswerNodes:
     def _evidence_for(self, claims: list[str], evidence: list[Chunk]) -> list[str]:
         """The evidence lines that share the most words with each claim, best first."""
         per_claim = self._settings.grounding.repair_evidence_per_claim
+        # One sentence per line: a passage repeats the sentences it is made of.
+        lines = [chunk for chunk in evidence if not chunk.metadata.get(PASSAGE)]
         chosen: list[str] = []
         for claim in claims:
             words = set(tokenize(claim))
-            ranked = sorted(evidence, key=lambda c: -len(words & set(tokenize(c.content))))
+            ranked = sorted(lines, key=lambda c: -len(words & set(tokenize(c.content))))
             chosen.extend(c.content for c in ranked[:per_claim] if c.content not in chosen)
         return chosen
 
     def _card_check(self, turn: Turn, outcome: GroundingOutcome) -> None:
         tally = str(outcome.report.get("tally", ""))
+        notes = self._notes
         heading = (
-            self._notes.grounded_heading.format(tally=tally)
-            if outcome.clean
-            else self._notes.ungrounded_heading.format(removed=len(outcome.removed), tally=tally)
+            notes.ungrounded_heading.format(removed=len(outcome.removed), tally=tally)
+            if not outcome.clean
+            else notes.marked_heading.format(count=len(outcome.unverified), tally=tally)
+            if outcome.unverified
+            else notes.grounded_heading.format(tally=tally)
         )
-        # Coloured by what was shown: the answer (done), less a detail (warning), or nothing of it.
-        status = "completed" if outcome.clean else "blocked" if outcome.withheld else "warning"
+        # Coloured by what was shown: the answer (done), less a detail or with one marked
+        # unverified (warning), or nothing of it.
+        status = (
+            "blocked"
+            if outcome.withheld
+            else "completed"
+            if outcome.clean and not outcome.unverified
+            else "warning"
+        )
         self._emit(
             turn,
             HALLUCINATION_CHECK,
@@ -577,6 +598,21 @@ class AnswerNodes:
             event_kind=event_kind,
             tokens=tokens.usage.total_tokens if tokens is not None else None,
         )
+
+
+def _observations(tool: str, text: str, result: ToolResult, urls: list[str]) -> list[Observation]:
+    """What a call returned, as grounding evidence: a search as one observation per hit.
+
+    Only what a tool actually returned can ground a claim; an error or a refusal cannot. A
+    search's hits come from different pages, so each is its own source: one page's snippet
+    never joins another's into a premise.
+    """
+    if not result.success:
+        return []
+    hits = [str(hit) for hit in result.data.get(HITS_KEY, [])]
+    if hits and len(hits) == len(urls):
+        return [Observation(hit, source=url) for hit, url in zip(hits, urls, strict=True)]
+    return [Observation(text, source=urls[0] if urls else tool)]
 
 
 __all__ = [

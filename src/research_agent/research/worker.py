@@ -30,12 +30,14 @@ from research_agent.domain.budget import FETCHES, SEARCHES
 from research_agent.domain.evidence import ClaimCandidate
 from research_agent.domain.plan import SubQuestion
 from research_agent.domain.sources import host_of, window_verdict
+from research_agent.domain.trace import SeenHit
 from research_agent.llm.structured import OutputTruncatedError
 from research_agent.presentation.narration import say
 from research_agent.research import cards
 from research_agent.research.defenses import apply_source_policy, rank_by_kind
 from research_agent.research.extractor import PageReading
 from research_agent.research.resources import RunResources
+from research_agent.research.snippets import SnippetAdmission
 from research_agent.research.spans import canonical_span, nearest_match
 
 # The rejection code of a page the model could not read (its answer was cut off or invalid).
@@ -121,8 +123,12 @@ class ResearcherWorker:
         return response
 
     def _request(self, query: str) -> SearchRequest:
-        """The approved time window goes to the provider; a short one searches news."""
-        days = self._r.contract.brief.recency_days
+        """The approved time window goes to the provider; a short one searches news.
+
+        In the rescue round the window is relaxed: the provider is asked for any date, and what
+        falls outside the window is admitted with a caveat (`_recent`).
+        """
+        days = None if self._r.recency_relaxed else self._r.contract.brief.recency_days
         news = days is not None and days <= self._r.settings.news_window_days
         return SearchRequest(
             query=query,
@@ -136,6 +142,16 @@ class ResearcherWorker:
     ) -> None:
         self._r.trace.tried(node.node_id, query)
         result.queries.append(query)
+        for hit in response.hits:
+            self._r.trace.saw(
+                SeenHit(
+                    node_id=node.node_id,
+                    url=hit.url,
+                    title=hit.title,
+                    snippet=hit.snippet,
+                    published=hit.published_date,
+                )
+            )
         if response.provider_summary:
             # Carried for display only; it never becomes a page or an entry.
             self._r.trace.provider_summaries_seen.append(response.provider_summary)
@@ -187,6 +203,9 @@ class ResearcherWorker:
         verdict = window_verdict(hit.published_date, contract.frozen_at.date(), days)
         if verdict == "in" or (verdict == "undated" and self._verify_on_page()):
             return True
+        if self._r.recency_relaxed:
+            self._caveat(hit.url, verdict, days, hit.published_date)
+            return True
         template = (
             self._r.settings.undated_rejection
             if verdict == "undated"
@@ -195,6 +214,15 @@ class ResearcherWorker:
         reason = template.format(days=days, date=hit.published_date)
         self._r.trace.reject(hit.url, reason, "undated" if verdict == "undated" else "recency")
         return False
+
+    def _caveat(self, url: str, verdict: str, days: int, published: str) -> None:
+        """Why a source the rescue round admitted is weaker: outside the window, or undated."""
+        rescue = self._r.settings.rescue
+        self._r.trace.caveats[url] = (
+            rescue.undated.format(days=days)
+            if verdict == "undated"
+            else rescue.outside_window.format(days=days, date=published)
+        )
 
     def _verify_on_page(self) -> bool:
         return self._r.settings.undated_policy == "verify_on_page"
@@ -209,7 +237,9 @@ class ResearcherWorker:
         if days is None or window_verdict(hit.published_date, self._as_of(), days) != "undated":
             return hit
         verdict = window_verdict(page.published, self._as_of(), days)
-        if verdict == "out":
+        if verdict == "out" and self._r.recency_relaxed:
+            self._caveat(hit.url, verdict, days, page.published)
+        elif verdict == "out":
             reason = self._r.settings.recency_rejection.format(days=days, date=page.published)
             self._r.trace.reject(hit.url, reason, "recency")
             return None
@@ -225,6 +255,7 @@ class ResearcherWorker:
     ) -> None:
         page = await self._fetch(hit.url, node, result)
         if page is None:
+            self._from_snippet(node, hit, result)
             return
         result.sources.append(page.url)
         self._r.trace.examined(page.url)
@@ -237,10 +268,39 @@ class ResearcherWorker:
         except Exception as exc:
             # One unreadable page must not take the node's other pages down with it.
             self._unreadable(node, page, exc)
+            self._from_snippet(node, hit, result)
             return
         admitted, refused = self._admit(node, reading.candidates, hit, page, result)
         self._page_card(node, page, reading, admitted, refused)
         await self._follow(node, reading.follow_up_queries, reading.follow_up_urls, queue, result)
+
+    def _from_snippet(self, node: SubQuestion, hit: SearchHit, result: NodeResult) -> None:
+        """A page that was refused or could not be read: its search snippet, labelled, instead.
+
+        Only for the rejections configured (`snippet_evidence.codes`): a page withheld for
+        attacking the model, or outside the approved window, is not cited through its snippet.
+        """
+        config = self._r.settings.snippet_evidence
+        code = self._r.trace.rejected_codes.get(hit.url, "")
+        if not config.enabled or self._r.snippets is None or code not in config.codes:
+            return
+        seen = SeenHit(
+            node_id=node.node_id, url=hit.url, title=hit.title, snippet=hit.snippet,
+            published=hit.published_date,
+        )  # fmt: skip
+        admission = SnippetAdmission(self._r.ledger, self._r.snippets, config.min_words)
+        admitted = admission.admit(seen, config.caveat)
+        result.entries.extend(entry.entry_id for entry in admitted)
+        if not admitted:
+            return
+        heading = say("snippet.heading", host=host_of(hit.url), kept=len(admitted))
+        sections = {
+            say("page.section.for"): [f"{node.node_id} · {node.question}"],
+            say("page.section.page"): [hit.url],
+            say("snippet.section.caveat"): [config.caveat],
+            say("snippet.section.kept"): [f"{e.entry_id} · {e.claim}" for e in admitted],
+        }
+        self._r.telemetry.card("page_result", heading, sections, status="warning")
 
     def _unreadable(self, node: SubQuestion, page: FetchedPage, exc: Exception) -> None:
         """A page the model could not turn into claims: recorded, shown, and explained."""
@@ -374,6 +434,7 @@ class ResearcherWorker:
                     retrieved_at=candidate.retrieved_at,
                     source_date=hit.published_date,
                     subject=node.node_id,
+                    caveat=self._r.trace.caveats.get(hit.url, ""),
                 )
             )
             if isinstance(outcome, EvidenceEntry):

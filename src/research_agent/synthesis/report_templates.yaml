@@ -17,3 +17,6 @@ appended:
   known_unknowns: Known unknowns
   rejected_sources: Rejected sources
   sources: Sources
+# A Coverage & Limits line for cited findings that rest on weaker evidence (a search snippet,
+# a source outside the approved window): `{count}`, `{caveat}`.
+weaker_evidence: "- {count} cited finding(s) rest on weaker evidence: {caveat}."

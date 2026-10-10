@@ -9,7 +9,7 @@ from agent_platform.context import Chunk
 from agent_platform.evals import NOLLM_TIERS, Claim, create_scoring_cascade
 from agent_platform.evals.entailment import EntailmentResult, LexicalEntailmentModel
 from agent_platform.guardrails.response import ResponseGuardrail
-from agent_platform.hallucination_protection import (
+from agent_platform.hallucination_check import (
     ClaimDecomposer,
     DetectionLadder,
     GroundingReasoningDiagnoser,
@@ -145,7 +145,7 @@ class TestSchemaValidationIsIndependentOfGrounding:
     """The coupling this replaced, asserted from both sides.
 
     `ResponseGuardrail` used to gate everything on
-    `guardrails.enabled or hallucination_protection.enabled`, so
+    `guardrails.enabled or hallucination_check.enabled`, so
     switching either off quietly took half of the other with it — a
     malformed envelope reaching the customer because grounding was off,
     or claims going unverified because schema checking was. They are

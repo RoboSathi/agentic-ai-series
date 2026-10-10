@@ -431,6 +431,9 @@ class ResearchAgent:
         resources.budget.restore(values.get("spent") or {})
         if values.get("trace") is not None:
             resources.trace = values["trace"]
+            # The rescue round's grant is on top of the size's caps, which a resume rebuilds.
+            for counter, amount in resources.trace.rescue_grant.items():
+                resources.budget.extend(counter, amount)
         result = await self._drive(
             resources,
             session_id,

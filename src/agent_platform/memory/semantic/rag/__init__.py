@@ -12,7 +12,7 @@ chunked passages, behind one interface:
 Add it to the context window with `KnowledgeBaseContextSource(kb)`.
 """
 
-from agent_platform.memory.semantic.rag.chunking import markdown_sections
+from agent_platform.memory.semantic.rag.chunking import section_sentences
 from agent_platform.memory.semantic.rag.context_source import (
     SOURCE_PREFIX as KNOWLEDGE_SOURCE_PREFIX,
 )
@@ -48,5 +48,5 @@ __all__ = [
     "SyncReport",
     "VectorIndex",
     "create_knowledge_base",
-    "markdown_sections",
+    "section_sentences",
 ]

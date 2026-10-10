@@ -16,9 +16,10 @@ ground   the hallucination check — level 1, token confidence (the platform's);
 import time
 from typing import Any
 
+from agent_platform.config import get_settings
 from agent_platform.gatekeeper.types import AuthorityDecision
-from agent_platform.hallucination_protection.confidence import ConfidenceCheck, report_confidence
-from agent_platform.hallucination_protection.levels import CheckLevel, grounding_level
+from agent_platform.hallucination_check.confidence import ConfidenceCheck, report_confidence
+from agent_platform.hallucination_check.levels import CheckLevel, grounding_level
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import CompletionRequest, Message, ModelToolCall
 from agent_platform.logging import get_logger, instrument
@@ -88,7 +89,8 @@ class OpsNodes:
             temperature=self._settings.temperature,
             max_tokens=self._settings.max_tokens,
         )
-        purpose = self._settings.cards.purpose
+        # A step may ask for tools or answer; the response card names which it did.
+        purpose = get_settings().observability.llm_purposes.next_action
         self._steps.llm_request(request, purpose=purpose)
         result = await self._llm.complete(request)
         self._steps.llm_response(result, purpose=purpose)

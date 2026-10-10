@@ -9,7 +9,7 @@ Limits is attached by `with_limits`, from verdicts.
 """
 
 import re
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -100,8 +100,12 @@ class Synthesizer:
         limits: list[LimitEntry],
         trace: RunTrace,
         status: RunStatus,
+        notice: str = "",
     ) -> Report:
-        """The deliverable: model sections, then the sections only code writes."""
+        """The deliverable: model sections, then the sections only code writes.
+
+        `notice` is said above the findings (a best-effort report's warning).
+        """
         appended = self._templates["appended"]
         body = [
             s
@@ -111,10 +115,17 @@ class Synthesizer:
         sections = [
             *body,
             ReportSection(heading=appended["known_unknowns"], body=_bullets(report.known_unknowns)),
-            render_limits(limits, trace.rejected_sources, trace.budget_stops, trace.rejected_codes),
+            render_limits(
+                limits,
+                trace.rejected_sources,
+                trace.budget_stops,
+                trace.rejected_codes,
+                self._weaker(report, ledger),
+            ),
         ]
         final = report.model_copy(
             update={
+                "notice": notice,
                 "sections": sections,
                 "limits": limits,
                 "status": status,
@@ -125,6 +136,13 @@ class Synthesizer:
         )
         return final.model_copy(update={"citations": self.citations(final, ledger)})
 
+    def _weaker(self, report: Report, ledger: LedgerSnapshot) -> list[str]:
+        """One limits line per caveat that cited findings rest on, with how many."""
+        cited = [ledger.entry(entry_id) for entry_id in cited_ids(report, self._pattern)]
+        counts = Counter(entry.caveat for entry in cited if entry is not None and entry.caveat)
+        line = self._templates["weaker_evidence"]
+        return [line.format(count=count, caveat=caveat) for caveat, count in counts.items()]
+
     def citations(self, report: Report, ledger: LedgerSnapshot) -> list[Citation]:
         entries = [ledger.entry(entry_id) for entry_id in cited_ids(report, self._pattern)]
         return [
@@ -134,6 +152,7 @@ class Synthesizer:
                 span=e.span,
                 page_hash=e.source_hash,
                 retrieved_at=e.retrieved_at,
+                caveat=e.caveat,
             )
             for e in entries
             if e is not None

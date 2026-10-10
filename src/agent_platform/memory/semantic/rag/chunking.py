@@ -136,18 +136,13 @@ class SemanticChunker:
         return math.ceil(len(text) / self._chars_per_token)
 
 
-def markdown_sections(markdown: str) -> list[str]:
-    """Each non-empty section as "Heading > Sub" plus its body — structure only.
+def section_sentences(markdown: str) -> list[list[str]]:
+    """Each non-empty section's sentences, in order: one premise each for a grounding check.
 
-    The first pass of the chunker, without the embedding pass: for a caller
-    that needs an author's sections as they stand (grounding evidence, say)
-    and must not spend an embedding call per sentence to get them.
+    A section embedded whole is a paragraph of rules, and NLI reads a paragraph that also says
+    what is *not* allowed as contradicting a claim about what is.
     """
-    return [
-        f"{HEADING_SEPARATOR.join(path)}\n{' '.join(sentences)}" if path else " ".join(sentences)
-        for path, sentences in _sections(markdown)
-        if sentences
-    ]
+    return [sentences for _, sentences in _sections(markdown) if sentences]
 
 
 def _sections(markdown: str) -> list[Section]:

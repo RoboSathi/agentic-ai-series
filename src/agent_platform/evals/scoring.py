@@ -2,7 +2,7 @@
 
 One implementation, six tiers, four consumers. `context` retrieval
 tiering, `tools` selection, `llm` model cascading and
-`hallucination_protection` detection all resolve claims *here* rather
+`hallucination_check` detection all resolve claims *here* rather
 than each growing its own scorer — which is the only way
 `nollm_scorer_ratio` means anything across the system.
 

@@ -192,9 +192,9 @@ checkpointer directly as a tracked interim state.
 | FR-35 | Four-level Eval Pyramid: component / integration / E2E golden-task / production shadow | `evals` | E09 |
 | FR-36 | NOLLM Scoring Cascade: exact assertion → deterministic rule → embedding similarity → NLI entailment → calibrated LLM judge → human adjudication, with `nollm_scorer_ratio` tracked | `evals` | E10 |
 | FR-37 | Eval integrity: poisoned-label detection, pairwise judge comparison, Cohen's kappa calibration | `evals` | E11 |
-| FR-38 | Hallucination detection ladder (confidence → consistency/entropy → NLI → judge → human), claim-level verification | `hallucination_protection` | E25 |
-| FR-39 | Grounding-failure vs. reasoning-failure differential diagnosis | `hallucination_protection` | E26 |
-| FR-40 | Hallucination SLO / error budget, reviewer-calibration tracking (automation bias & algorithm aversion) | `hallucination_protection`, `observability` | E27 |
+| FR-38 | Hallucination detection ladder (confidence → consistency/entropy → NLI → judge → human), claim-level verification | `hallucination_check` | E25 |
+| FR-39 | Grounding-failure vs. reasoning-failure differential diagnosis | `hallucination_check` | E26 |
+| FR-40 | Hallucination SLO / error budget, reviewer-calibration tracking (automation bias & algorithm aversion) | `hallucination_check`, `observability` | E27 |
 | FR-41 | Generate-under-constraint vs. generate-validate-retry, both available, latency difference measured | `guardrails` | E28 |
 | FR-42 | Guardrail system tested via chaos injection, property-based tests, adversarial attack-path tests | `guardrails`, tests | E29 |
 

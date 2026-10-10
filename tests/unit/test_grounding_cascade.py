@@ -13,7 +13,7 @@ from agent_platform.context.types import Chunk
 from agent_platform.evals import create_scoring_cascade
 from agent_platform.evals.entailment import EntailmentResult
 from agent_platform.guardrails.response import ResponseGuardrail, ResponseGuardrailResult
-from agent_platform.hallucination_protection import (
+from agent_platform.hallucination_check import (
     ClaimClassifier,
     ClaimDecomposer,
     DetectionLadder,

@@ -21,7 +21,7 @@ Any rule that finds the claim at odds with a fact refutes it. Support needs ever
 specific the claim names (ids, amounts, dates, numbers) to be accounted for by a fact
 that held; otherwise the ledger says nothing and the claim goes on to the state model
 and NLI. Which attributes exist and the words for them are the agent's configuration
-(`hallucination_protection.facts`); the platform never learns what an order is.
+(`hallucination_check.facts`); the platform never learns what an order is.
 """
 
 import operator
@@ -35,7 +35,7 @@ from pydantic import BaseModel
 from agent_platform.config import get_settings
 from agent_platform.config.settings import FactAttributeSettings, FactSettings
 from agent_platform.context.types import Chunk, ChunkKind
-from agent_platform.hallucination_protection.claims import money_pattern, specifics
+from agent_platform.hallucination_check.claims import money_pattern, specifics
 from agent_platform.primitives.money import money_or_none
 
 # `Chunk.metadata` key holding the fact a chunk states.
@@ -132,7 +132,7 @@ class FactLedger:
     """Reads a claim against the typed facts in its evidence."""
 
     def __init__(self, settings: FactSettings | None = None, identifier: str | None = None) -> None:
-        config = get_settings().hallucination_protection
+        config = get_settings().hallucination_check
         self._settings = settings or config.facts
         pattern = identifier if identifier is not None else config.refute_identifier_pattern
         self._identifier = re.compile(pattern) if pattern else None

@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from agent_platform.config import get_settings
 from agent_platform.evidence import LedgerSnapshot
 from agent_platform.evidence.types import EvidenceEntry
-from agent_platform.hallucination_protection.levels import CheckLevel
+from agent_platform.hallucination_check.levels import CheckLevel
 from agent_platform.observability import checks
 from agent_platform.observability.step_card import Line as StepLine
 from agent_platform.observability.step_card import ModelCall, StepCard
@@ -519,9 +519,7 @@ def _level_lines(level: CheckLevel | None) -> list[StepLine]:
     """`level 1 · token confidence = …`, then one line per sentence it scored."""
     if level is None:
         return []
-    row = get_settings().hallucination_protection.levels.row.format(
-        level=level.level, name=level.name
-    )
+    row = get_settings().hallucination_check.levels.row.format(level=level.level, name=level.name)
     tone = {checks.PASS: "pass", checks.FLAG: "warn"}.get(level.verdict, "dim")
     return [toned(f"{row} = {level.summary}", tone), *(f"   {line}" for line in level.lines)]
 

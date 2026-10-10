@@ -25,7 +25,7 @@ module, config file or document here names one.
 | [executor](executor/README.md) | Running approved tool calls |
 | [gatekeeper](gatekeeper/README.md) | Deterministic authorization of every action |
 | [guardrails](guardrails/README.md) | Structured output and the response guardrail |
-| [hallucination_protection](hallucination_protection/README.md) | Claim-level grounding |
+| [hallucination_check](hallucination_check/README.md) | Claim-level grounding |
 | [intent](intent/README.md) | Intent-classification contracts and provider |
 | [llm](llm/README.md) | Model adapters, rate-limited HTTP, `make llm-check` |
 | [logging](logging/README.md) | File/console logs and traced calls |

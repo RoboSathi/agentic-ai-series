@@ -13,8 +13,8 @@ import pytest
 
 from agent_platform.evals import create_scoring_cascade
 from agent_platform.guardrails import ResponseGuardrail
-from agent_platform.hallucination_protection import DetectionLadder
-from agent_platform.hallucination_protection.confidence import (
+from agent_platform.hallucination_check import DetectionLadder
+from agent_platform.hallucination_check.confidence import (
     LOW_CONFIDENCE_DEGENERATE,
     LOW_CONFIDENCE_SPECIFIC,
     ConfidenceAssessment,
@@ -22,7 +22,7 @@ from agent_platform.hallucination_protection.confidence import (
     SentenceConfidence,
     gate,
 )
-from agent_platform.hallucination_protection.types import DetectionVerdict, GenerationAssessment
+from agent_platform.hallucination_check.types import DetectionVerdict, GenerationAssessment
 from agent_platform.observability.unit_context import (
     Generation,
     TaskBinding,

@@ -61,7 +61,7 @@ from agent_platform.executor import ToolExecutor
 from agent_platform.gatekeeper import Gatekeeper
 from agent_platform.gatekeeper.mandate import MandateIssuer
 from agent_platform.guardrails import ResponseGuardrail
-from agent_platform.hallucination_protection import DetectionLadder, GroundingReasoningDiagnoser
+from agent_platform.hallucination_check import DetectionLadder, GroundingReasoningDiagnoser
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import Message, TokenUsage
 from agent_platform.logging import get_logger

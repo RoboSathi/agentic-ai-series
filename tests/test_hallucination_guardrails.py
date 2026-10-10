@@ -23,7 +23,7 @@ async def test_response_guardrail_passes_grounded_response():
         identity = ("test", "fake-detector")
 
         async def assess(self, text, evidence, resample=None):
-            from agent_platform.hallucination_protection.types import (
+            from agent_platform.hallucination_check.types import (
                 DetectionVerdict,
                 GenerationAssessment,
             )

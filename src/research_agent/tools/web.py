@@ -17,7 +17,7 @@ from agent_platform.tools.types import ToolResult
 from agent_platform.web import SearchRequest, WebGateway
 from research_agent.config.settings import AnswerSettings
 from research_agent.guardrails.injection import InjectionScreen
-from research_agent.tools import PUBLISHED_KEY, QUERY_KEY, URLS_KEY
+from research_agent.tools import HITS_KEY, PAGE_KEY, PUBLISHED_KEY, QUERY_KEY, URLS_KEY
 
 _BLANK_RUNS = re.compile(r"\n\s*\n+")
 
@@ -58,16 +58,17 @@ class WebSearch:
         )
         if not response.hits:
             return ToolResult(success=True, output=notes.no_results)
-        blocks = [_retrieved(self._settings)]
+        hits = []
         for hit in response.hits:
             dated = notes.published.format(date=hit.published_date) if hit.published_date else ""
             snippet = _compact(hit.snippet, self._settings.snippet_max_chars)
-            blocks.append("\n".join(part for part in (hit.title, hit.url, dated, snippet) if part))
+            hits.append("\n".join(part for part in (hit.title, hit.url, dated, snippet) if part))
         return ToolResult(
             success=True,
-            output="\n\n".join(blocks),
+            output="\n\n".join([_retrieved(self._settings), *hits]),
             data={
                 URLS_KEY: [hit.url for hit in response.hits],
+                HITS_KEY: hits,
                 QUERY_KEY: query,
                 PUBLISHED_KEY: [hit.published_date for hit in response.hits],
                 "provider": response.provider,
@@ -104,4 +105,6 @@ class FetchUrl:
             if part
         )
         body = _compact(page.text, self._settings.fetch_max_chars)
-        return ToolResult(success=True, output=f"{header}\n\n{body}", data={URLS_KEY: [page.url]})
+        return ToolResult(
+            success=True, output=f"{header}\n\n{body}", data={URLS_KEY: [page.url], PAGE_KEY: True}
+        )

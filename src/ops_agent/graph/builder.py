@@ -15,7 +15,7 @@ from agent_platform.audit import AuditLedger, create_audit_ledger
 from agent_platform.config import FeatureSet, active_features, get_settings
 from agent_platform.executor import RegistryToolHandler, ToolExecutorImpl
 from agent_platform.gatekeeper import CumulativeLedger, Gatekeeper, GatekeeperImpl
-from agent_platform.hallucination_protection.confidence import ConfidenceCheck
+from agent_platform.hallucination_check.confidence import ConfidenceCheck
 from agent_platform.llm.client import LLMClient, create_llm_client
 from agent_platform.mcp import (
     ConfiguredGovernancePolicy,

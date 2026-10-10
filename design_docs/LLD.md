@@ -485,7 +485,7 @@ payoff), asserted as a regression bound, not just eyeballed.
 
 ---
 
-## 10. `hallucination_protection`
+## 10. `hallucination_check`
 
 **Purpose.** Measurement-first hallucination handling — detection
 ladder, grounding-vs-reasoning diagnosis, trust calibration.
@@ -1106,7 +1106,7 @@ comparison per E11), `GoldenDatasetProvenanceLedger`.
 **LLD patterns applied.** Chain of Responsibility (the NOLLM cascade,
 the single implementation four other subsystems depend on — `context`
 retrieval tiering, `tools` selection, `llm` model cascading,
-`hallucination_protection` detection ladder, all call *this*
+`hallucination_check` detection ladder, all call *this*
 implementation rather than each having their own).
 
 **Test strategy.** The eval manifest itself is the test plan — checked

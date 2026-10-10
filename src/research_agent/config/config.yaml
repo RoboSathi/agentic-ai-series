@@ -166,7 +166,7 @@ tui:
 # What grounds a claim in a research answer. The platform's tiers are the support agent's
 # (a tool result grounds only a fact about the case); here every factual claim in an answer
 # is about what the tools returned, so the tool-result tier grounds rule claims too.
-hallucination_protection:
+hallucination_check:
   # A research answer is checked by NLI; the lexical fallback (if NLI cannot load) may only
   # support a claim, never remove it.
   uncalibrated_may_refute: false
@@ -179,6 +179,28 @@ hallucination_protection:
   # not refuted by the line for 2 October (NLI calls that a contradiction: the numbers differ).
   refute_identifier_pattern: '\b\d{4}-\d{2}-\d{2}\b'
   withheld_reply: "I could not verify an answer from the sources I found. Try again, or use /research for a fuller run."
+  # A web page states one fact across short lines (a name, then a title, then a past role):
+  # four consecutive sentences of a result are also one premise, and an undecided claim gets
+  # its source's relevant lines joined. Both support only.
+  passage_window: 4
+  tool_results_are_pages: true
+  joined_premise:
+    enabled: true
+    max_chars: 1500
+  embedding_top_k: 6
+  # NLI cannot confirm a sentence that joins several of a page's lines ("Kumar Karan, a former
+  # Engineering Manager at Turing and Lead Instructor at Scaler"): no one line states it. A
+  # local decision model reads the claim beside the page's own text and may confirm it; it never
+  # refutes. Measured 2026-10-10 on the RoboSathi turn, as the resolver asks it: true claims
+  # 0.48-0.63 "supported" (its choice), invented ones 0.30-0.31 (its choice "not stated"), so
+  # the platform's 0.45 bar sits in the gap. Wrong relations and figures stay NLI's to refute.
+  confirmer:
+    enabled: true
+    model: convaiinnovations/laya
+    subfolder: typed-decisions
+    local_model_dir: local_models/intent_classifier/laya-typed-decisions
+  # A claim the sources neither confirm nor contradict stays, marked for the reader.
+  undetermined_marker: " (unverified)"
   tiers:
     - {name: tool_result, kinds: [tool_result], claims: [record, rule], may_refute: true}
 
@@ -263,7 +285,7 @@ research_agent:
   placeholder: "Ask a question · /research for deep research · /help"
   # The greeting: one line. Notes (a missing key) follow it only when there are any.
   greeting:
-    line: "Ask me anything · /research <question> for an audited deep-research report · /help for commands"
+    line: "\nAsk me anything · /research <question> for an audited deep-research report · /help for commands"
   # What start-up says when the live posture lacks a credential.
   setup:
     missing_model_key: >-
@@ -462,6 +484,7 @@ research_agent:
       gaps_to_fill: the audit found must-pass gaps and a gap-fill round is left
       gap_fill_planned: follow-ups were planned for the gaps
       no_follow_up: no follow-up fits what is left
+      rescue: nothing was admitted, so one rescue round searches again without the time window
 
   calls:
     # The roles run on a reasoning model: its hidden reasoning counts against the cap,
@@ -505,6 +528,26 @@ research_agent:
       press release: [prnewswire.com, businesswire.com, globenewswire.com, accesswire.com, einpresswire.com]
     news_topic: news
     quota_stop: "search quota for this month is used up (it resets on the 1st)"
+    # A page that was blocked, paywalled or unreadable is not nothing: the search engine's
+    # snippet of it is the page's own words. Each snippet sentence becomes an entry, under the
+    # verbatim rule against the snippet, labelled so the report says how little it rests on.
+    snippet_evidence:
+      enabled: true
+      codes: [blocked, error, empty, unreadable]
+      min_words: 6
+      caveat: search snippet only (the page itself could not be read)
+    # A run whose ledger is still empty when it would stop gets one more round, granted on top
+    # of its size: the plan's sub-questions searched again without the time window, and what
+    # falls outside the window admitted with a caveat instead of rejected. Still empty at the
+    # end, the report is written from the search results themselves, as a best effort.
+    rescue:
+      enabled: true
+      searches: 2
+      fetches: 4
+      outside_window: "outside the approved {days}-day window (published {date})"
+      undated: "no readable date, so not shown to be inside the {days}-day window"
+      best_effort_caveat: search result only (nothing could be admitted from the pages)
+      best_effort_note: "Best effort: nothing could be established from the pages this run read, so this summary rests on search results alone. Treat it as a starting point, not a finding."
 
   reflection:
     max_followups_per_round: 4
@@ -582,6 +625,10 @@ research_agent:
       name_unknown_share: 0.5
       sources_pattern: "(?im)^\\s*(?:\\*\\*)?sources?(?:\\*\\*)?\\s*:"
       repair_evidence_per_claim: 3
+      # An answer written from search snippets is checked against the pages it cites: up to
+      # this many cited pages the loop never fetched are read in full first.
+      cited_fetch_max: 3
+      cited_fetch_seconds: 10
     weather:
       geocode_url: https://geocoding-api.open-meteo.com/v1/search
       forecast_url: https://api.open-meteo.com/v1/forecast
@@ -662,6 +709,8 @@ research_agent:
       outcome_repaired: "PASSED after a rewrite · the rewritten answer was sent"
       outcome_filtered: "TRIMMED · unsupported sentences removed before sending"
       outcome_withheld: "BLOCKED · nothing in the answer could be verified · answer withheld"
+      outcome_marked: "PASSED · {count} sentence(s) the sources neither confirm nor contradict marked (unverified)"
+      marked_heading: "Checked against the sources · {count} marked unverified · {tally}"
       filtered_note: "(I removed details I could not verify against the sources.)"
       withheld: "I could not verify an answer from the sources I found. Try again, or use /research for a fuller run."
       session_state_heading: "# Session state"
@@ -917,6 +966,17 @@ research_agent:
       stop.undated: "no evidence admitted: all {count} result(s) had no readable publication date, so none could be checked against the recency window"
       stop.unreadable: "no evidence admitted: none of the {count} page(s) could be read, so searching more cannot help"
       node.failed: "{node} · research stopped by an error"
+      snippet.heading: "{host} · page not read · {kept} snippet sentence(s) kept as weaker evidence"
+      snippet.section.caveat: Caveat
+      snippet.section.kept: Kept as evidence
+      rescue.heading: "Rescue round · nothing admitted yet · {nodes} sub-question(s) searched again without the time window"
+      rescue.section.why: Why
+      rescue.why: "No evidence was admitted from the planned searches, so the run searches again rather than report nothing."
+      rescue.section.grant: Granted on top of the budget
+      rescue.grant: "{counter}: +{amount:g}"
+      rescue.section.questions: Sub-questions
+      stop.rescue: "nothing admitted: one rescue round runs without the time window"
+      best_effort.heading: "Best effort · {count} search result(s) used as evidence · no page could be admitted"
       node.section.error: Error
       page.unreadable: "{host} · could not be read"
       page.unreadable_cut_off: "The model ran out of output budget before it could write the claims for this page."

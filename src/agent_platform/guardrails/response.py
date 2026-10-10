@@ -8,6 +8,7 @@ when none survive, the configured withheld reply goes instead. Whether a
 person then reviews it is the agent's decision, not this module's.
 """
 
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -17,13 +18,13 @@ from pydantic import BaseModel, Field, computed_field
 from agent_platform.config import get_settings
 from agent_platform.context.types import Chunk
 from agent_platform.guardrails.guards import PydanticValidator
-from agent_platform.hallucination_protection.checker import (
+from agent_platform.hallucination_check.checker import (
     DetectionLadder,
     GroundingReasoningDiagnoser,
     Resampler,
 )
-from agent_platform.hallucination_protection.claims import sentence_pieces
-from agent_platform.hallucination_protection.confidence import (
+from agent_platform.hallucination_check.claims import sentence_pieces
+from agent_platform.hallucination_check.confidence import (
     LOGPROB_TIER,
     LOW_CONFIDENCE_DEGENERATE,
     LOW_CONFIDENCE_SPECIFIC,
@@ -31,21 +32,23 @@ from agent_platform.hallucination_protection.confidence import (
     gate,
     report_confidence,
 )
-from agent_platform.hallucination_protection.direct import (
+from agent_platform.hallucination_check.direct import (
     NOT_EXECUTED_MARKER,
     RECORD_STATE_MISMATCH,
     amounts,
     numbers,
     record_ids,
 )
-from agent_platform.hallucination_protection.ledger import FACT_MISMATCH, FACT_TIER, facts_in
-from agent_platform.hallucination_protection.levels import CheckLevel, grounding_level
-from agent_platform.hallucination_protection.resolver import (
+from agent_platform.hallucination_check.evidence import TOOL_RESULT_KIND
+from agent_platform.hallucination_check.ledger import FACT_MISMATCH, FACT_TIER, facts_in
+from agent_platform.hallucination_check.levels import CheckLevel, grounding_level
+from agent_platform.hallucination_check.resolver import (
     CLAIM_UNSUPPORTED,
+    CONFIRM_TIER,
     DIRECT_TIER,
     RESTATEMENT_MODEL,
 )
-from agent_platform.hallucination_protection.types import DetectionVerdict, GenerationAssessment
+from agent_platform.hallucination_check.types import DetectionVerdict, GenerationAssessment
 from agent_platform.logging import get_logger
 from agent_platform.observability import checks
 from agent_platform.observability.units import report_grounding
@@ -103,6 +106,8 @@ class ResponseGuardrailResult(BaseModel):
     evidence_searched: str = ""
     # Sentences the record's own statement replaced, because a claim in them was wrong.
     corrected_sentences: list[str] = Field(default_factory=list)
+    # Kept sentences holding a claim nothing verified, as sent (marked when the agent marks them).
+    unverified_sentences: list[str] = Field(default_factory=list)
     # Level 1 in full: the model, and each sentence with every scored token's span and
     # probability, so a card can colour the words and a log keeps all of it.
     confidence: dict[str, Any] = Field(default_factory=dict)
@@ -161,7 +166,7 @@ class ResponseGuardrail:
 
         Schema validation deliberately does not depend on it. The two
         used to share a single flag computed as `guardrails OR
-        hallucination_protection`, which meant switching either off took
+        hallucination_check`, which meant switching either off took
         half of the other with it — a malformed envelope reaching the
         customer because grounding was disabled, or claims going
         unverified because schema checking was. They are different
@@ -170,7 +175,7 @@ class ResponseGuardrail:
         self._grounding = grounding
         self._validator = validator or PydanticValidator()
         self._diagnoser = GroundingReasoningDiagnoser()
-        settings = get_settings().hallucination_protection
+        settings = get_settings().hallucination_check
         self._enforce_grounding = (
             settings.enforce_grounding if enforce_grounding is None else enforce_grounding
         )
@@ -178,8 +183,9 @@ class ResponseGuardrail:
             settings.max_repair_attempts if max_repair_attempts is None else max_repair_attempts
         )
         self._repair_direct = settings.repair_direct_refutations
+        self._marker = settings.undetermined_marker
         # Level 1: the model's confidence in its own tokens, scored before grounding (level 2).
-        # Withheld with `hallucination_protection.confidence`.
+        # Withheld with `hallucination_check.confidence`.
         check = confidence or ConfidenceCheck()
         self._confidence = check if check.enabled else None
         self._logger = get_logger("guardrails")
@@ -312,8 +318,13 @@ class ResponseGuardrail:
     def _passed(
         self, candidate: str, last: GenerationAssessment, repaired: bool, attempt: int
     ) -> ResponseGuardrailResult:
+        unverified = _unverified(last.verdicts)
+        marked = self._marker and unverified
         return ResponseGuardrailResult(
-            response=candidate,
+            response=_surviving_sentences(candidate, last.verdicts, marker=self._marker)
+            if marked
+            else candidate,
+            unverified_sentences=_marked_sentences(candidate, unverified, self._marker),
             repaired=repaired,
             repair_attempts=attempt,
             claims=len(last.verdicts),
@@ -350,16 +361,23 @@ class ResponseGuardrail:
             attempts=attempts,
         )
         corrections = _corrections(refuted, evidence)
-        surviving = _surviving_sentences(candidate, last.verdicts, corrections)
+        surviving = _surviving_sentences(candidate, last.verdicts, corrections, self._marker)
         sentences = [
             piece.strip() for piece, _ in sentence_pieces(candidate) if _is_sentence(piece)
         ]
-        kept = {piece.strip() for piece, _ in sentence_pieces(surviving)}
+        rejected = {verdict.sentence for verdict in refuted}
+        unverified = _unverified(last.verdicts) - rejected
         reason_code = next((v.reason_code for v in refuted if v.reason_code), BLOCK_CODE)
         return ResponseGuardrailResult(
             response=surviving or _withheld_reply(reason_code),
             withheld=not surviving,
-            removed_sentences=[sentence for sentence in sentences if sentence not in kept],
+            # By index, not by text: a kept sentence may carry the unverified marker.
+            removed_sentences=[
+                piece.strip()
+                for index, (piece, _) in enumerate(sentence_pieces(candidate))
+                if index in rejected and _is_sentence(piece)
+            ],
+            unverified_sentences=_marked_sentences(candidate, unverified, self._marker),
             corrected_sentences=list(dict.fromkeys(corrections.values())),
             total_sentences=len(sentences),
             # Not fully grounded when any claim was rejected, even if
@@ -413,7 +431,7 @@ BLOCK_CODE = "HALLUCINATION_GUARD_BLOCK"
 
 def _entailment_level(result: ResponseGuardrailResult) -> CheckLevel:
     """Level 2 for a reply grounded by NLI entailment: its claims tally, flagged when any failed."""
-    name = get_settings().hallucination_protection.levels.entailment
+    name = get_settings().hallucination_check.levels.entailment
     return grounding_level(name, result.tally, flagged=result.escalated)
 
 
@@ -437,7 +455,7 @@ def _decided_directly(assessment: GenerationAssessment) -> bool:
 
 def _withheld_reply(reason_code: str) -> str:
     """What the customer is sent when nothing survived, in the words for why."""
-    settings = get_settings().hallucination_protection
+    settings = get_settings().hallucination_check
     return settings.withheld_replies.get(reason_code, settings.withheld_reply)
 
 
@@ -458,7 +476,7 @@ def _corrections(refuted: list[DetectionVerdict], evidence: list[Chunk]) -> dict
 
 def _correction(verdict: DetectionVerdict, evidence: list[Chunk]) -> str | None:
     """The fact a contradicted claim got wrong, as the record states it."""
-    facts = get_settings().hallucination_protection.facts
+    facts = get_settings().hallucination_check.facts
     if verdict.reason_code == FACT_MISMATCH and verdict.evidence_checks:
         excerpt = verdict.evidence_checks[0].excerpt
         held = next((fact for fact, chunk in facts_in(evidence) if chunk.content == excerpt), None)
@@ -483,25 +501,40 @@ def _basis(verdict: DetectionVerdict) -> str:
     if (
         verdict.undetermined
         or verdict.reason_code == CLAIM_UNSUPPORTED
-        or verdict.tier in (DIRECT_TIER, FACT_TIER, LOGPROB_TIER)
+        or verdict.tier in (DIRECT_TIER, FACT_TIER, LOGPROB_TIER, CONFIRM_TIER)
         or verdict.detector_model == RESTATEMENT_MODEL
     ):
         return ""
-    return f"{'Entailment' if verdict.supported else 'Contradiction'} {verdict.confidence:.2f}"
+    reading = "Entailment" if verdict.supported else "Contradiction"
+    return f"{model_label(verdict.detector_model)} {reading} {verdict.confidence:.2f}"
+
+
+def model_label(model: str) -> str:
+    """A model as the card and the log name it: `NLI DeBERTa`, `Laya` (`model_labels`)."""
+    labels = get_settings().hallucination_check.model_labels
+    return labels.get(model) or model.rsplit("/", 1)[-1]
 
 
 def _method(verdict: DetectionVerdict) -> str:
     """What decided the claim, in a word or two: the record, a rule, NLI, or logprobs."""
-    words = get_settings().hallucination_protection.methods
+    words = get_settings().hallucination_check.methods
     if verdict.tier in (DIRECT_TIER, FACT_TIER):
         return words.record
     if verdict.tier == LOGPROB_TIER:
         return words.logprobs.format(prob=verdict.confidence)
+    if verdict.tier == CONFIRM_TIER:
+        return words.confirmed.format(
+            model=model_label(verdict.detector_model), prob=verdict.confidence
+        )
     if verdict.detector_model == RESTATEMENT_MODEL:
-        return words.restated
+        # A tool result restating the claim is the source saying it, not a rule.
+        from_tool = any(c.decisive and c.tier == TOOL_RESULT_KIND for c in verdict.evidence_checks)
+        return words.restated_source if from_tool else words.restated
     if verdict.undetermined or verdict.reason_code == CLAIM_UNSUPPORTED:
-        return words.nothing
-    return words.nli.format(score=verdict.confidence)
+        # When a model read evidence, its readings say why; "no evidence" would be untrue.
+        read = any(check.model for check in verdict.evidence_checks)
+        return "" if read else words.nothing
+    return words.nli.format(model=model_label(verdict.detector_model), score=verdict.confidence)
 
 
 def _status(verdict: DetectionVerdict) -> str:
@@ -570,15 +603,40 @@ def _claim_check(verdict: DetectionVerdict) -> dict[str, Any]:
                 "nli_score": check.nli_score,
                 "decisive": check.decisive,
                 "source": check.source,
+                "model": model_label(check.model) if check.model else "",
             }
             for check in verdict.evidence_checks
         ],
+        "scores": _scores(verdict),
     }
+
+
+def _scores(verdict: DetectionVerdict) -> dict[str, str]:
+    """Each model's reading of the claim, in one line: its deciding answer, else its surest.
+
+    `{"NLI DeBERTa": "neutral 1.00", "Laya": "supported 0.46"}` — which model said what, so
+    a claim confirmed by the second opinion still shows what NLI made of it.
+    """
+    best: dict[str, Any] = {}
+    for check in verdict.evidence_checks:
+        if not check.model:
+            continue
+        held = best.get(check.model)
+        if held is None or (check.decisive, check.nli_score) > (held.decisive, held.nli_score):
+            best[check.model] = check
+    return {
+        model_label(model): f"{_NLI_WORDS.get(c.nli_label, c.nli_label)} {c.nli_score:.2f}"
+        for model, c in best.items()
+    }
+
+
+# The NLI model's third label, as a reader should meet it.
+_NLI_WORDS = {"unknown": "neutral"}
 
 
 def _provenance_report(response: str, evidence: list[Chunk]) -> list[str]:
     """Each record id and amount the reply states, and which tier (if any) has it."""
-    label = get_settings().hallucination_protection.record_identifier_label
+    label = get_settings().hallucination_check.record_identifier_label
     orders = [
         _found(f"{label} {record_id}", [c for c in evidence if record_id in numbers(c.content)])
         for record_id in sorted(record_ids(response))
@@ -618,7 +676,10 @@ def _is_sentence(piece: str) -> bool:
 
 
 def _surviving_sentences(
-    response: str, verdicts: list[DetectionVerdict], corrections: dict[int, str] | None = None
+    response: str,
+    verdicts: list[DetectionVerdict],
+    corrections: dict[int, str] | None = None,
+    marker: str = "",
 ) -> str:
     """The reply's own sentences that carry no refuted claim, verbatim.
 
@@ -628,18 +689,55 @@ def _surviving_sentences(
     claim removes its sentence — found by the index the claim came from,
     because a carved rule is restated and its words are not in the reply.
     One nothing could verify is an abstention, and a courteous closing is
-    no reason to lose the answer beside it. A bare list marker ("1.") is
-    not a sentence.
+    no reason to lose the answer beside it — though with a `marker` it is
+    marked as unverified. A bare list marker ("1.") is not a sentence.
     """
     rejected = {verdict.sentence for verdict in verdicts if _refuted(verdict)}
+    unverified = _unverified(verdicts) if marker else set()
     fixes = corrections or {}
     kept = [
-        _ended(fixes[index], separator) if index in rejected else (sentence.strip(), separator)
+        _ended(fixes[index], separator)
+        if index in rejected
+        else (
+            _with_marker(sentence.strip(), marker) if index in unverified else sentence.strip(),
+            separator,
+        )
         for index, (sentence, separator) in enumerate(sentence_pieces(response))
         if (index not in rejected or index in fixes) and _is_sentence(sentence)
     ]
     # Each kept sentence keeps the break that followed it, so a list stays a list.
     return "".join(sentence + separator for sentence, separator in kept).strip()
+
+
+# A sentence's closing punctuation (and any markdown emphasis after it), kept after a marker.
+_CLOSING = re.compile(r"[.!?…:;*_]*$")
+
+
+def _unverified(verdicts: list[DetectionVerdict]) -> set[int]:
+    """The sentences holding a verifiable claim that nothing verified, by index."""
+    return {
+        verdict.sentence
+        for verdict in verdicts
+        if verdict.undetermined and verdict.claim_class != "conversational"
+    }
+
+
+def _with_marker(sentence: str, marker: str) -> str:
+    """The sentence with the marker before its closing punctuation ("… free (unverified).")."""
+    if not marker:
+        return sentence
+    closing = _CLOSING.search(sentence)
+    cut = closing.start() if closing else len(sentence)
+    return f"{sentence[:cut]}{marker}{sentence[cut:]}"
+
+
+def _marked_sentences(response: str, indices: set[int], marker: str) -> list[str]:
+    """The unverified sentences of a reply, as it shows them."""
+    return [
+        _with_marker(piece.strip(), marker)
+        for index, (piece, _) in enumerate(sentence_pieces(response))
+        if index in indices and _is_sentence(piece)
+    ]
 
 
 def _ended(sentence: str, separator: str) -> tuple[str, str]:

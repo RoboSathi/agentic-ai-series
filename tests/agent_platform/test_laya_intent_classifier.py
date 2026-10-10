@@ -11,8 +11,8 @@ import pytest
 from agent_platform.config import get_settings
 from agent_platform.config.settings import IntentClassifierSettings
 from agent_platform.intent import IntentClassifierInterface, create_intent_classifier
-from agent_platform.intent import laya as laya_module
 from agent_platform.intent.laya import LayaIntentClassifier
+from agent_platform.llm import local_laya
 
 CHOICES = {
     "ORDER_STATUS": "where an order is",
@@ -158,7 +158,7 @@ def test_says_how_to_install_laya_when_it_is_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setitem(sys.modules, "laya", None)
-    laya_module._resident.cache_clear()
+    local_laya.resident_laya.cache_clear()
     _artifact(tmp_path / "laya")
     classifier = LayaIntentClassifier(CHOICES, INSTRUCTIONS, settings=_settings(tmp_path))
 
@@ -191,7 +191,7 @@ def test_one_checkpoint_is_loaded_once_per_process(
     fake = type(sys)("laya")
     fake.load = lambda path, device: loads.append(path) or FakeAgent({})  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "laya", fake)
-    laya_module._resident.cache_clear()
+    local_laya.resident_laya.cache_clear()
     _artifact(tmp_path / "laya")
 
     for _ in range(2):
@@ -200,7 +200,7 @@ def test_one_checkpoint_is_loaded_once_per_process(
         ).ensure_loaded_sync()
 
     assert loads == [str(tmp_path / "laya")]
-    laya_module._resident.cache_clear()
+    local_laya.resident_laya.cache_clear()
 
 
 def test_model_check_probes_the_classifier_in_use(

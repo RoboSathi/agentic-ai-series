@@ -170,6 +170,34 @@ class MatchingSettings(BaseModel):
     synonyms: dict[str, list[str]]
 
 
+class SnippetEvidenceSettings(BaseModel):
+    """A page that could not be read leaves its search snippet as weaker, labelled evidence."""
+
+    enabled: bool
+    # The rejection codes whose snippet is admitted in the page's place (blocked, error, …).
+    # Never an injection: a page withheld for attacking the model is not cited at all.
+    codes: list[str]
+    # A snippet sentence shorter than this many words is not a claim.
+    min_words: int = Field(ge=1)
+    # The entry's caveat, as the writer and the reader see it.
+    caveat: str
+
+
+class RescueSettings(BaseModel):
+    """One more round for a run whose ledger is still empty when it would stop."""
+
+    enabled: bool
+    # Granted on top of the size's budget, for this round only.
+    searches: int = Field(ge=1)
+    fetches: int = Field(ge=0)
+    # Caveats on what the relaxed window admits: `{days}`, `{date}`; `{days}`.
+    outside_window: str
+    undated: str
+    # A best-effort report's entries (search results only), and the line atop its report.
+    best_effort_caveat: str
+    best_effort_note: str
+
+
 class ResearchSettings(BaseModel):
     """The researcher worker and its defences."""
 
@@ -205,6 +233,8 @@ class ResearchSettings(BaseModel):
     news_topic: str
     # The budget stop recorded when every search provider is out of quota.
     quota_stop: str
+    snippet_evidence: SnippetEvidenceSettings
+    rescue: RescueSettings
 
 
 class CallSettings(BaseModel):
@@ -374,6 +404,9 @@ class AnswerMessages(BaseModel):
     outcome_repaired: str
     outcome_filtered: str
     outcome_withheld: str
+    # Sent with `{count}` sentence(s) marked as unverified (nothing in the sources decided them).
+    outcome_marked: str
+    marked_heading: str
     # Appended when details were removed; and the whole reply when nothing could be verified.
     filtered_note: str
     withheld: str
@@ -449,6 +482,10 @@ class AnswerGroundingSettings(BaseModel):
     sources_pattern: str
     # Evidence lines handed to the rewrite for each refuted claim (the closest by shared words).
     repair_evidence_per_claim: int = Field(ge=1)
+    # Cited URLs the loop saw only as a search snippet, fetched in full to ground the answer:
+    # at most this many, within this many seconds (never more than the turn has left).
+    cited_fetch_max: int = Field(ge=0)
+    cited_fetch_seconds: float = Field(gt=0)
 
 
 class RecencyMessages(BaseModel):

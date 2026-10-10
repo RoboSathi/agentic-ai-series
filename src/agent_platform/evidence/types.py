@@ -30,6 +30,10 @@ class EvidenceCandidate(BaseModel):
     source_date: str = ""
     # What the claim is evidence *for* — an opaque key the caller chooses.
     subject: str = ""
+    # Why this entry is weaker than a span of a page read in full and in scope ("search
+    # snippet only", "outside the approved window"); "" for an ordinary entry. The reader and
+    # the writer of a report are told; the verbatim rule applies all the same.
+    caveat: str = ""
 
 
 class EvidenceEntry(EvidenceCandidate):

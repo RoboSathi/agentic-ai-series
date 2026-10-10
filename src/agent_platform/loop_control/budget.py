@@ -150,6 +150,16 @@ class BudgetGuard:
             return False
         return True
 
+    def extend(self, counter: str, amount: float) -> None:
+        """Raise a counter's cap by `amount`: a grant the caller decided this run may have.
+
+        An exhausted counter that the grant revives may be announced again when it runs out.
+        """
+        state = self._state(counter)
+        state.cap += amount
+        if not state.exhausted:
+            self._announced.discard(counter)
+
     # -- reading -------------------------------------------------------------------
 
     def remaining(self, counter: str) -> float:

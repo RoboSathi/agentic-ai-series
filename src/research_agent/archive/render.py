@@ -11,11 +11,14 @@ from research_agent.domain.rubric import Contract
 
 def render_report(report: Report) -> str:
     lines = [f"# {report.title}", "", f"**Status:** {report.status}", ""]
+    if report.notice:
+        lines.extend([f"> {report.notice}", ""])
     for section in report.sections:
         lines.extend([f"## {section.heading}", "", section.body, ""])
     lines.extend(["## Citations", ""])
     lines.extend(
         f"- [{c.entry_id}] {c.url} — retrieved {c.retrieved_at.isoformat()} — page sha256 {c.page_hash[:16]}… — “{c.span}”"
+        + (f" — {c.caveat}" if c.caveat else "")
         for c in report.citations
     )
     return "\n".join(lines).rstrip() + "\n"

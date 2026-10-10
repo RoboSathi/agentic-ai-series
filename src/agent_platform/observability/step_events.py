@@ -52,6 +52,14 @@ _ACTOR_FIELDS = {"permission": "required_permission", "role": "role"}
 _WRITE, _READ = "write", "read"
 
 
+def _produced(purpose: str, asked_for_tools: bool) -> str:
+    """A next-action call's purpose as what it produced; any other purpose as it was."""
+    words = get_settings().observability.llm_purposes
+    if purpose != words.next_action:
+        return purpose
+    return words.tool_selection if asked_for_tools else words.reply
+
+
 class StepEvents:
     """Emits a tool-use loop's cards, each numbered by the step it belongs to."""
 
@@ -75,8 +83,13 @@ class StepEvents:
         self._loop.emit(LLM_REQUEST, summary=heading, fields=fields, event_kind="model")
 
     def llm_response(self, result: Any, *, purpose: str) -> None:
-        """LLM RESPONSE: the tool calls it asked for, or its answer."""
+        """LLM RESPONSE: the tool calls it asked for, or its answer.
+
+        A loop step's call is made to choose the next action, so its response is named by what
+        it chose: a tool, or the reply. The request could not know which.
+        """
         words = get_settings().observability
+        purpose = _produced(purpose, bool(result.tool_calls))
         heading = (
             words.llm_tool_requested_heading.format(
                 tool=display_tool_name(result.tool_calls[0].name)

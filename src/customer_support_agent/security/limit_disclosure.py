@@ -13,7 +13,7 @@ record has it.
 
 from collections.abc import Iterable
 
-from agent_platform.hallucination_protection.direct import amounts
+from agent_platform.hallucination_check.direct import amounts
 from agent_platform.logging import get_logger
 from agent_platform.primitives.money import Money
 from customer_support_agent.config import get_agent_settings

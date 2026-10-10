@@ -22,7 +22,7 @@ agentic-harness-core/
 │   │   ├── memory/
 │   │   │   ├── working/  ├── episodic/  ├── semantic/  └── procedural/
 │   │   ├── guardrails/
-│   │   ├── hallucination_protection/
+│   │   ├── hallucination_check/
 │   │   ├── gatekeeper/
 │   │   ├── security/
 │   │   │   ├── auth/  ├── pii/  ├── prompt_injection/  └── content_moderation/
@@ -106,7 +106,7 @@ series is a naming bug).
 | **Working / Episodic / Semantic / Procedural memory** | The four CoALA stores (E13) — Working = active context (a pointer, not a store), Episodic = what happened, Semantic = what's generally true, Procedural = how to do things. |
 | **Context Assembly pipeline** | gather_candidates → score_relevance → fit_to_budget → format → order (E08). |
 | **Context failure** | Rot, Distraction, Confusion, Clash, Poisoning — five distinct degradation modes (E17). |
-| **NOLLM Scoring Cascade** | exact_assertion → deterministic_rule → embedding_similarity → nli_entailment → calibrated_llm_judge → human_adjudication (E10). One implementation, reused by evals/context/tools/hallucination_protection/llm (model cascading). |
+| **NOLLM Scoring Cascade** | exact_assertion → deterministic_rule → embedding_similarity → nli_entailment → calibrated_llm_judge → human_adjudication (E10). One implementation, reused by evals/context/tools/hallucination_check/llm (model cascading). |
 | **Eval Pyramid** | component → integration → E2E golden-task → production shadow (E09). |
 | **LoopController** | Six-layer watchdog: step_count, wall_clock, token_budget, cost_budget, duplicate_action, semantic_stagnation (E20). |
 | **FSM state table** | IDLE → PLANNING → ACTING → WAITING_TOOL → WAITING_HUMAN → DONE → FAILED (E23). |
@@ -174,7 +174,7 @@ the agent under that episode's config overlay, visible in the TUI
 | **8 — Prompt compilation** | `agent_platform/prompt_compilation` built for real (unparks it) | E21 | One production prompt re-implemented as a compiled module with a regression-tested eval score |
 | **9 — Tool registry at scale** | `tools` retrieval-based selection | E22 | 50-tool degradation/recovery demo passes numerically |
 | **10 — Output guarantees** | `guardrails` (Pydantic + Outlines/LMQL) | E24, E28-E29 | Constrained-decoding path shows flat latency vs. retry-loop tail latency, measured |
-| **11 — Hallucination protection** | `hallucination_protection` | E25-E27 | Grounding-vs-reasoning diagnoser correctly routes both fixtures |
+| **11 — Hallucination protection** | `hallucination_check` | E25-E27 | Grounding-vs-reasoning diagnoser correctly routes both fixtures |
 | **12 — Security** | `security/pii`, `security/prompt_injection`, `security/content_moderation` | E30-E33 | E31's OWASP control-mapping table passes as an actual test suite |
 | **13 — Sandbox execution** | `agent_platform/sandbox` built for real (unparks it) — Docker-container tier only | E34 | `docker_container` tier exercised against a real container round-trip |
 | **14 — Resilience** | `resilience` (all 7 patterns) | E35 | Bulkhead isolation and saga compensating-rollback both pass as regression tests |

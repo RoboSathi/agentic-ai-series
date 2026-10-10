@@ -70,6 +70,8 @@ def render_reader_view(
         blocks.append("\n".join([*head, *(f"• {item}" for item in items)]))
 
     lines = [f"# {report.title}", _status_line(report, len(numbers), wording)]
+    if report.notice:
+        lines += ["", report.notice]
     if blocks:
         lines += ["", *("\n\n".join(blocks).splitlines())]
     else:
@@ -140,14 +142,15 @@ def _sources(
     wording: ReaderViewWording,
 ) -> list[str]:
     retrieved = {c.url: c.retrieved_at.date().isoformat() for c in cited.values()}
+    caveats = {c.url: c.caveat for c in cited.values() if c.caveat}
     lines = []
     for url, n in sorted(numbers.items(), key=lambda item: item[1]):
-        kind = label_for(url, labels)
+        kinds = [kind for kind in (label_for(url, labels), caveats.get(url, "")) if kind]
         lines.append(
             wording.source_line.format(
                 number=n,
                 host=host_of(url),
-                label=f" ({kind})" if kind else "",
+                label=f" ({'; '.join(kinds)})" if kinds else "",
                 url=url,
                 date=retrieved.get(url, wording.unknown_date),
             )

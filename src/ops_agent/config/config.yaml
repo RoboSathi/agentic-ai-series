@@ -129,9 +129,6 @@ ops_agent:
   # Only what the platform's labels do not already name (agent_platform/tui/labels.py).
   stage_labels: {}
   cards:
-    # The purpose an LLM REQUEST / RESPONSE card names (the support agent's word for a step
-    # that may call tools or answer).
-    purpose: tool_selection
     result_rows: "{tool} → {rows} rows"
     result_metrics: "{tool} → {count} metrics"
     result_views: "{tool} → {count} views"

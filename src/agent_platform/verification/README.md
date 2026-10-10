@@ -24,7 +24,7 @@ No section of its own.
 
 ## Collaborators
 
-- Feeds the evidence tiers of `hallucination_protection`.
+- Feeds the evidence tiers of `hallucination_check`.
 
 ## Episodes
 
