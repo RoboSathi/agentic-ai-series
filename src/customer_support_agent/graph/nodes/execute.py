@@ -108,7 +108,8 @@ class ExecutionNodes(NodeSupport):
         messages = self._current_messages(state)
         last = messages[-1] if messages else Message()
         requests = last.tool_calls or []
-        decisions: list[str] = []
+        # Appended to, never restarted: the turn's screening and intent lines stay.
+        decisions: list[str] = [*state.decisions]
         invocation_fields_history: list[dict[str, Any]] = []
         offered = set(state.metadata.get("offered_actions", []))
         for requested in requests:

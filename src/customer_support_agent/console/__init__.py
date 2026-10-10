@@ -243,7 +243,7 @@ class CustomerSupportHost:
     @staticmethod
     def _opened_knowledge_base() -> KnowledgeBase:
         from agent_platform.evals import create_scoring_cascade
-        from agent_platform.llm.encoders import create_reranker
+        from agent_platform.llm.local_reranker import create_reranker
         from agent_platform.memory.semantic.rag import create_knowledge_base
 
         return create_knowledge_base(reranker=create_reranker(fallback=create_scoring_cascade()))

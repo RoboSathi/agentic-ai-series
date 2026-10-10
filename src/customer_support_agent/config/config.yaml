@@ -152,7 +152,7 @@ security:
     tool_call_allowed_fields: [order_id, user_id, amount, reason, status]
     # The business's own support address, not a customer's, so it is never redacted.
     allow_list:
-      - contact@robosathi.com
+      - &support_contact contact@robosathi.com
     presidio:
       # A customer's name and address are personal data here, beside the platform's contact and
       # financial identifiers.
@@ -613,6 +613,21 @@ customer_support_agent:
       delivered: " on {value}"
   demo_user_code: 2HEDZTV
   policy_path: src/customer_support_agent/prompts/customer_policy.md
+  # The one sentence that tells the model its refund limit, rendered from the DB row
+  # (`platform_agent_budgets`) when the agent is built. It is a prompt rule, not a control:
+  # the Gatekeeper still enforces the same limit, and with it off this sentence is all
+  # that stands between a persuasive customer and the money.
+  refund_limit_notice: >-
+    You may refund at most {limit} yourself. For a larger refund, do not call
+    request_refund: tell the customer the refund for that order needs a person's review
+    and that they can contact {contact}. Nothing is queued for them. Never tell the
+    customer the amount of this limit.
+  # What the customer is sent instead when a reply states the limit anyway
+  # (`security/limit_disclosure.py`), checked after grounding.
+  refund_limit_withheld:
+    with_order: "The refund for order {order_id} needs a person's review; please contact {contact}."
+    without_order: "That refund needs a person's review; please contact {contact}."
+  support_contact: *support_contact
   # A procedure's prefetch reads (ADR 0010): each tool argument, from the turn-state key that
   # holds it; a read whose required arguments are not all known is skipped, never guessed.
   # `call_id` names the tool call the model is shown, so its result pairs with it.

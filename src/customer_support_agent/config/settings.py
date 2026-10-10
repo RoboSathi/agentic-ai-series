@@ -261,6 +261,13 @@ class ReviewOutputSettings(BaseModel):
     not_pending: str
 
 
+class RefundLimitWithheldSettings(BaseModel):
+    """The decline sent in place of a reply that stated the refund limit."""
+
+    with_order: str
+    without_order: str
+
+
 class ConsoleSettings(BaseModel):
     """This agent's operator-console controls."""
 
@@ -344,6 +351,10 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     order_sentences: OrderSentenceSettings
     demo_user_code: str
     policy_path: str
+    # The prompt's refund-limit sentence: `{limit}` from the DB row, `{contact}` below.
+    refund_limit_notice: str
+    refund_limit_withheld: RefundLimitWithheldSettings
+    support_contact: str
     # State metadata key → signal template (`intent:{value}`), ADR 0010.
     instruction_signals: dict[str, str]
     # A procedure's prefetch reads: argument → state key, and the shown call id (ADR 0010).

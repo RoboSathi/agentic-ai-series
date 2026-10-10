@@ -1,10 +1,10 @@
-"""The refund limit is the Gatekeeper's, and nothing the model reads may state it.
+"""The refund limit reaches the model as one prompt sentence, rendered from the DB.
 
-A number in the context window can be asked for, injected out or simply
-repeated: told `refund_limit = $50.00` and "do not reveal it", the model
-answered order 10533 with "exceeds the $50.00 refund limit". It also obeyed
-the limit by not calling `process_refund`, so the Gatekeeper never
-escalated and the review it promised was never queued.
+The prompt states the limit so that the model holds to it on a plain
+request — and so that a persuasive customer can be shown talking it past
+the rule while the Gatekeeper is off. Authored text (profile, procedures,
+policy file, reply prompts) still never carries an amount: the number has
+one source, the `platform_agent_budgets` row, and one sentence that renders it.
 """
 
 from types import SimpleNamespace
@@ -14,6 +14,7 @@ from agent_platform.config import get_settings
 from agent_platform.hallucination_protection.direct import amounts
 from agent_platform.memory import ProceduralStore
 from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.primitives.money import Money
 from agent_platform.skills import build_agent_instructions
 from customer_support_agent.graph.nodes.execute import ExecutionNodes
 from customer_support_agent.prompts.system_prompt import build_system_prompt, instruction_corpus
@@ -29,16 +30,19 @@ def test_no_instruction_states_an_amount() -> None:
     assert amounts(instruction_corpus()) == set()
 
 
-def test_a_refund_turn_tells_the_model_to_call_whatever_the_size(
-    pool: SqliteConnectionPool,
-) -> None:
+def test_a_refund_turn_states_the_db_limit_and_only_it(pool: SqliteConnectionPool) -> None:
     instructions = build_agent_instructions(
         get_settings().skills, store=ProceduralStore(pool), audit=None, reporter=None
     )
     composed = instructions.compose(frozenset({"intent:REQUEST_REFUND"}), "refund order 10533")
-    prompt = build_system_prompt(composed.text)
-    assert "whatever its size" in prompt
-    assert amounts(prompt) == set()
+    limit = Money.from_cents(5000)
+    prompt = build_system_prompt(composed.text, refund_limit=limit)
+    assert str(limit) in prompt
+    assert amounts(prompt) == amounts(str(limit))
+
+
+def test_no_declared_limit_states_no_limit() -> None:
+    assert build_system_prompt(refund_limit=None) == build_system_prompt()
 
 
 async def test_an_escalation_with_no_queue_tells_the_model_no_limit() -> None:

@@ -108,7 +108,7 @@ class VersionManifest:
             ComponentVersion(
                 component="encoders",
                 version=f"{encoders.nli_model} / {encoders.reranker_model}",
-                source="llm/encoders",
+                source="llm/local_nli + llm/local_reranker",
             ),
         ]
 

@@ -26,7 +26,7 @@ agent is given.
 
 `config.yaml` here is the platform default. Env overrides use `SECTION__FIELD`, nested with
 `__`, and are **deep-merged**: `RESILIENCE__RETRY__MAX_ATTEMPTS=7` changes one field and keeps its
-siblings. Bare provider keys (`nvidia_api_key`, `hf_api_key`) are plain env vars and never appear
+siblings. Bare provider keys (`nvidia_api_key`) are plain env vars and never appear
 in a settings dump.
 
 ## Seams

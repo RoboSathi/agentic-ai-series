@@ -254,11 +254,15 @@ class ProposalNodes(NodeSupport):
 
     def _system_prompt(self) -> str:
         """The profile and policy, without per-turn procedures — what a screen sees."""
-        return build_system_prompt(self._instructions.profile_section())
+        return build_system_prompt(
+            self._instructions.profile_section(), refund_limit=self._refund_limit()
+        )
 
     def _prompt_messages(self, state: AgentState) -> list[Message]:
         """Build the small provider payload from working memory and context."""
-        system = build_system_prompt(self._instructions.render(self._activation(state)))
+        system = build_system_prompt(
+            self._instructions.render(self._activation(state)), refund_limit=self._refund_limit()
+        )
         if state.context is not None and state.context.text:
             system = f"{system}\n\n# Retrieved context\n{state.context.text}"
         if state.metadata.get("intent_execution_route") == "llm_fallback":

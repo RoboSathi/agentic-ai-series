@@ -13,8 +13,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from agent_platform.logging import get_logger, instrument
-from agent_platform.observability.types import utc_now
 from agent_platform.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
+from agent_platform.primitives.clock import utc_now
 
 DeadLetterReason = Literal["prompt_injection", "content_moderation", "security_policy"]
 DeadLetterStatus = Literal["pending", "in_review", "resolved", "discarded"]

@@ -5,7 +5,7 @@ from typing import Any, Awaitable, Callable, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agent_platform.observability.types import utc_now
+from agent_platform.primitives.clock import utc_now
 
 T = TypeVar("T")
 
