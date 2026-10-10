@@ -1389,6 +1389,45 @@ class HallucinationMethodWords(BaseModel):
     confirmed: str
 
 
+class EvidenceSourceNames(BaseModel):
+    """How a line of evidence is named on the card and in the log: by its source's prefix,
+    else by its kind. `{source}` is the whole source, `{id}` what follows the prefix."""
+
+    prefixes: dict[str, str] = Field(default_factory=dict)
+    kinds: dict[str, str] = Field(default_factory=dict)
+    default: str
+
+
+class ReadingWords(BaseModel):
+    """How a claim's check steps read on the card and in the log (`hallucination_check/readings.py`)."""
+
+    # The order the check runs in, atop the card: `{nli}`, `{confirmer}`, `{bar}`; `{nli}`.
+    rule: str
+    rule_nli_only: str
+    supported: str
+    contradicted: str
+    undecided: str
+    nothing_related: str
+    confirmed: str
+    not_confirmed: str
+    # A score against the second opinion's bar: `{bar}`.
+    at_least: str
+    below: str
+    # The second opinion chose another answer than "supported": `{answer}`, `{score}`.
+    its_choice: str
+    # A report's repair: the rewrite (`{role}`), and the sentence taken out.
+    rewrite: str
+    rewritten: str
+    removed: str
+    # The line under a rewrite: what the sentence became.
+    rewritten_to: str
+    # The evidence line of a step that read no line, only a rule: its rationale.
+    why: str
+    # How an evidence line opens, by what its step decided: supported, contradicted, undecided,
+    # confirmed, not_confirmed, rewritten, removed, not_found.
+    leads: dict[str, str]
+
+
 class HallucinationLevelWords(BaseModel):
     """How the hallucination check's levels are named (`hallucination_check/levels.py`)."""
 
@@ -1535,6 +1574,8 @@ class HallucinationCheckSettings(YamlBackedSettings):
     # The card's and the log's name for a model, by its id (`model_labels`); unlisted: its
     # id's last part.
     model_labels: dict[str, str] = Field(default_factory=dict)
+    readings: ReadingWords
+    evidence_sources: EvidenceSourceNames
     # Appended to a kept sentence that holds a claim nothing verified ("" leaves it unmarked).
     undetermined_marker: str
     # What an identifier looks like to this agent. When set, evidence may
@@ -2360,6 +2401,10 @@ class GroundingCardSettings(BaseModel):
     no_evidence_either_way: str
     # Beside a model that read several lines at once (the second opinion): `{count}`.
     lines_read: str
+    # Level 1 in one line atop the card: `{mean}`, `{lowest}`, `{sentence}`.
+    logprobs_summary: str
+    # The row naming the order the claims were checked in.
+    rule: str
     # A sentence's content-token mean at or above `pass` reads as sure, at or above
     # `warn` as hesitant, below as guessed; a token below `warn` is marked in its line.
     confidence_bands: dict[str, float]

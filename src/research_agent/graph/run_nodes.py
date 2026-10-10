@@ -31,10 +31,11 @@ from typing import Any
 from langgraph.types import Send
 
 from agent_platform.config import FeatureSet
-from agent_platform.hallucination_check.confidence import ConfidenceCheck, report_confidence
-from agent_platform.hallucination_check.levels import CheckLevel
+from agent_platform.hallucination_check.confidence import ConfidenceCheck
+from agent_platform.hallucination_check.readings import check_rule
 from agent_platform.logging import describe_error
 from agent_platform.loop_control import BudgetGuard
+from agent_platform.observability.step_events import HALLUCINATION_CHECK
 from agent_platform.observability.types import StatusKind
 from agent_platform.scheduling import AsyncDagScheduler, TaskGraph
 from agent_platform.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
@@ -56,7 +57,7 @@ from research_agent.research.reflector import FollowUpProposal, GapAnalyzer, Ref
 from research_agent.research.resources import RunResources
 from research_agent.research.snippets import SnippetAdmission
 from research_agent.research.worker import UNREADABLE, ResearcherWorker
-from research_agent.synthesis.citation_guard import CitationGuard, GuardedReport
+from research_agent.synthesis.citation_guard import CitationGuard, GuardedReport, SentenceCheck
 from research_agent.synthesis.limits import build_limits, unmet_must_pass
 from research_agent.synthesis.synthesizer import Synthesizer
 
@@ -570,23 +571,21 @@ class RunNodes:
         )
         return rescue.best_effort_note
 
-    def _first_level(self, guarded: GuardedReport) -> CheckLevel | None:
-        """Level 1: the cited sentences scored by the writer's token confidence."""
-        check = self._p.confidence
-        if check is None or not check.enabled:
-            return None
-        return report_confidence(check.assess(" ".join(c.sentence for c in guarded.checks)))
-
     def _guard_card(self, guarded: GuardedReport, ledger: Any) -> None:
-        """What the citation guard did to the draft, sentence by sentence, before the audit."""
+        """The report's HALLUCINATION CHECK, drawn as every agent's is: logprobs first, the
+        order the claims were checked in, then each cited sentence and its steps."""
         clean = not guarded.dropped
-        first = self._first_level(guarded)
-        heading, sections = cards.guard_card(
-            guarded, ledger, self._p.nli_model, self._p.clip_chars, first=first
-        )
+        heading = cards.guard_heading(guarded)
+        fields = {
+            "outcome": say("guard.outcome" if clean else "guard.outcome_dropped", heading=heading),
+            "confidence": self._confidence(guarded),
+            "rule": check_rule(),
+            "claim_checks": [_sentence_check(check) for check in guarded.checks],
+            **({"rewrite_call": guarded.call.model_dump()} if guarded.call is not None else {}),
+        }
         r = self.resources
-        r.telemetry.card(
-            "citation_guard", heading, sections, status="completed" if clean else "warning"
+        r.telemetry.stage(
+            HALLUCINATION_CHECK, heading, fields, status="completed" if clean else "warning"
         )
         r.telemetry.audit(
             "report.citation_guard",
@@ -595,6 +594,13 @@ class RunNodes:
             rewritten=guarded.rewritten,
             dropped=guarded.dropped,
         )
+
+    def _confidence(self, guarded: GuardedReport) -> dict[str, Any]:
+        """Level 1: the cited sentences scored by the writer's token confidence ({} if off)."""
+        check = self._p.confidence
+        if check is None or not check.enabled:
+            return {}
+        return check.assess(" ".join(c.sentence for c in guarded.checks)).model_dump()
 
     async def _self_check(self, contract: Any, ledger: Any, report: Report) -> list[CheckVerdict]:
         ctx = self._p.context(contract, ledger, report)
@@ -939,6 +945,21 @@ class RunNodes:
         meters = {name: (c.spent, c.cap) for name, c in r.budget.snapshot().items()}
         heading, sections = cards.budget_card(label, meters, self._p.budget_headline)
         r.telemetry.card("budget_tick", heading, sections)
+
+
+# What became of a cited sentence, as the shared card names a claim's verdict.
+_GUARD_VERDICTS = {"supported": "supported", "rewritten": "rewritten", "dropped": "removed"}
+
+
+def _sentence_check(check: SentenceCheck) -> dict[str, Any]:
+    """One cited sentence as a claim of the shared card: its verdict and the steps behind it."""
+    return {
+        "claim": check.sentence,
+        "verdict": _GUARD_VERDICTS[check.outcome],
+        "cited": check.cited,
+        **({"rewrite": check.rewrite} if check.rewrite else {}),
+        "readings": [reading.model_dump() for reading in check.readings],
+    }
 
 
 def _spent(budget: BudgetGuard) -> dict[str, float]:

@@ -13,11 +13,7 @@ from typing import Any, NamedTuple
 
 from pydantic import BaseModel, Field
 
-from agent_platform.config import get_settings
-from agent_platform.evidence import LedgerSnapshot
 from agent_platform.evidence.types import EvidenceEntry
-from agent_platform.hallucination_check.levels import CheckLevel
-from agent_platform.observability import checks
 from agent_platform.observability.step_card import Line as StepLine
 from agent_platform.observability.step_card import ModelCall, StepCard
 from agent_platform.verification.acceptance import CheckVerdict
@@ -38,11 +34,7 @@ from research_agent.presentation.narration import (
 )
 from research_agent.research.reflector import FollowUpProposal
 from research_agent.synthesis.citation_guard import (
-    DROPPED,
-    REWRITTEN,
-    SUPPORTED,
     GuardedReport,
-    SentenceCheck,
 )
 
 Card = tuple[str, dict[str, Any]]
@@ -479,87 +471,15 @@ def synthesize_card(
 # -- the report's hallucination check ---------------------------------------------------------
 
 
-_GUARD_TONES = {SUPPORTED: "pass", REWRITTEN: "warn", DROPPED: "fail"}
-
-
-def guard_card(
-    guarded: GuardedReport,
-    ledger: LedgerSnapshot,
-    nli_model: str,
-    limit: int,
-    first: CheckLevel | None = None,
-) -> Card:
-    """REPORT CHECK as a step card: level 1 (token confidence) first, then each cited sentence,
-    what became of it, and what backs it."""
-    clean = not guarded.dropped
-    heading = say(
-        "guard.heading" if clean else "guard.heading_dropped",
+def guard_heading(guarded: GuardedReport) -> str:
+    """The report check's heading: how many cited sentences held, were rewritten, were removed."""
+    return say(
+        "guard.heading" if not guarded.dropped else "guard.heading_dropped",
         supported=guarded.supported,
         checked=guarded.checked,
         rewritten=len(guarded.rewritten),
         dropped=len(guarded.dropped),
     )
-    evidence = [
-        *_level_lines(first),
-        *(line for check in guarded.checks for line in _sentence_lines(check, ledger, limit)),
-    ]
-    card = (
-        StepCard()
-        .asked(say("guard.asked"), say("guard.how", model=nli_model))
-        # The rewriter's raw answer is not shown: each sentence below says what became of
-        # it and what it was rewritten to, which is all that answer was for.
-        .model(guarded.call, response=False)
-        .decision(heading)
-        .evidence(*evidence)
-    )
-    return heading, card.fields()
-
-
-def _level_lines(level: CheckLevel | None) -> list[StepLine]:
-    """`level 1 · token confidence = …`, then one line per sentence it scored."""
-    if level is None:
-        return []
-    row = get_settings().hallucination_check.levels.row.format(level=level.level, name=level.name)
-    tone = {checks.PASS: "pass", checks.FLAG: "warn"}.get(level.verdict, "dim")
-    return [toned(f"{row} = {level.summary}", tone), *(f"   {line}" for line in level.lines)]
-
-
-def _sentence_lines(check: SentenceCheck, ledger: LedgerSnapshot, limit: int) -> list[StepLine]:
-    """`✓ sentence [SUPPORTED]`, then each span it cites with its source, as the CSA check does."""
-    tone = _GUARD_TONES[check.outcome]
-    lines: list[StepLine] = [
-        toned(
-            say(
-                "guard.sentence",
-                mark=say(f"guard.mark.{check.outcome}"),
-                sentence=clip(check.sentence, limit),
-                outcome=check.outcome.upper(),
-            ),
-            tone,
-        )
-    ]
-    verb = say(f"guard.verb.{check.outcome}")
-    for entry_id in check.cited:
-        entry = ledger.entry(entry_id)
-        lines.append(
-            "   "
-            + (
-                say(
-                    "guard.source",
-                    verb=verb,
-                    id=entry_id,
-                    host=host_of(entry.source_url),
-                    span=clip(entry.span, limit),
-                )
-                if entry is not None
-                else say("guard.unknown_source", id=entry_id)
-            )
-        )
-    if check.outcome == REWRITTEN:
-        lines.append("   " + say("guard.rewritten_to", text=clip(check.rewrite, limit)))
-    elif check.outcome == DROPPED:
-        lines.append("   " + say("guard.dropped_why"))
-    return lines
 
 
 # -- the independent QA check --------------------------------------------------------------

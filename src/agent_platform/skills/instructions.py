@@ -139,7 +139,7 @@ class InstructionBuilder:
                 "procedures": [_card_fields(item) for item in activation.skills],
                 # Drawn before any of them runs: what the harness reads before the model is
                 # asked, and what the model may then call (a read already made is not offered).
-                "harness_reads_first": prefetched,
+                # "harness_reads_first": prefetched,
                 "model_may_call": offered,
             },
         )

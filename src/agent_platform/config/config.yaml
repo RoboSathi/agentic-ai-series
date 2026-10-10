@@ -1120,6 +1120,52 @@ hallucination_check:
     nothing: no evidence
     nli: "{model} {score:.2f}"
     confirmed: "{model} {prob:.0%}"
+  # A claim's check, step by step, as the card and the log say it (`readings.py`). Each
+  # step's decision sets its colour: supported pass, contradicted/removed fail, undecided
+  # warn. A model a claim never reached is not named. The claim's own words are never coloured.
+  readings:
+    rule: "{nli} first · {confirmer} only where {nli} does not support a claim · it confirms at ≥ {bar}"
+    rule_nli_only: "{nli} decides each claim"
+    supported: supported
+    contradicted: contradicted
+    undecided: not decided
+    nothing_related: no related evidence
+    confirmed: confirmed
+    not_confirmed: not confirmed
+    at_least: "≥ {bar}"
+    below: "< {bar}"
+    its_choice: "{answer} {score:.3f} (its answer)"
+    rewrite: "rewrite · {role}"
+    rewritten: rewritten
+    removed: removed
+    rewritten_to: rewritten to
+    why: rule
+    leads:
+      supported: Supported by
+      contradicted: Contradicted by
+      undecided: Not decided by
+      confirmed: Supported by
+      not_confirmed: Not confirmed by
+      rewritten: Rewritten to
+      removed: Removed
+      not_found: Not found in
+  # What each line of evidence is, as the card names it: by the source's prefix (longest
+  # first), else by the line's kind. An agent's overlay adds its own sources (a DB record, a
+  # policy file). A web page is named by its full URL.
+  evidence_sources:
+    prefixes:
+      "http://": "Web page · {source}"
+      "https://": "Web page · {source}"
+      "kb:": "KB article · {id}"
+    kinds:
+      tool_result: "Tool result · {source}"
+      policy: "Policy · {source}"
+      system: "System prompt · {source}"
+      retrieved: "Knowledge · {source}"
+      memory: "Memory · {source}"
+      history: "Customer message"
+      query_result: "Query result · {source}"
+    default: "{kind} · {source}"
   # How the card and the log name the models that read a line, by the model's id. A model
   # not listed is named by the last part of its id.
   model_labels:
@@ -1943,7 +1989,9 @@ tui:
   # decided it. Everything else — every passage retrieved, every score — is in the log.
   grounding_card:
     result: result
-    confidence: "confidence · {model} · content-token mean"
+    confidence: "logprobs · {model}"
+    logprobs_summary: "{mean:.0%} mean · lowest {lowest:.0%} (sentence {sentence})"
+    rule: check
     confidence_skipped: "confidence · skipped: {reason}"
     claims: claims
     corrected: corrected from the record

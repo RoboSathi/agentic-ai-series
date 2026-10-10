@@ -1105,20 +1105,9 @@ research_agent:
       plan.check.acyclic: "✓ acyclic: every sub-question can run once its dependencies have"
       plan.check.traced: "✓ traced: every acceptance criterion is answered by a sub-question"
       guard.heading: "Every cited sentence checked against its sources · {supported}/{checked} supported as written · {rewritten} rewritten"
+      guard.outcome: "PASSED · {heading}"
+      guard.outcome_dropped: "TRIMMED · {heading}"
       guard.heading_dropped: "Cited sentences checked against their sources · {supported}/{checked} supported as written · {rewritten} rewritten · {dropped} removed"
-      guard.asked: Is every cited sentence supported by the exact spans it cites?
-      guard.sentence: "{mark} {sentence} [{outcome}]"
-      guard.source: '{verb} [{id} · {host}]: "{span}"'
-      guard.unknown_source: "cites {id}, which is not in the evidence ledger"
-      guard.rewritten_to: "rewritten to: {text}"
-      guard.dropped_why: "removed: not supported by its sources, even after one rewrite"
-      guard.verb.supported: supported by
-      guard.verb.rewritten: rewritten from
-      guard.verb.dropped: cited
-      guard.mark.supported: "✓"
-      guard.mark.rewritten: "↻"
-      guard.mark.dropped: "✗"
-      guard.how: "Each sentence is checked by {model} against the exact spans it cites; a sentence that fails is rewritten once from those spans, and removed if it still fails."
       gap_fill.heading: "Gap fill · round {round} · gaps {gaps} · {nodes} sub-question(s)"
       gap_fill.question: "Which follow-up questions could close the criteria the audit found unmet?"
       stop.cancelled: cancelled

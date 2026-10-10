@@ -113,6 +113,7 @@ from research_agent.guardrails.refusal import RefusalRule
 from research_agent.llm.structured import RoleClients, StructuredCaller
 from research_agent.observability.telemetry import RunTelemetry
 from research_agent.planning.planner import Planner
+from research_agent.prompts import extractor as extractor_prompt
 from research_agent.research.cards import cap_reached_card
 from research_agent.research.defenses import OutboundGuard
 from research_agent.research.extractor import QuarantinedExtractor, UnquarantinedReader
@@ -559,6 +560,8 @@ def _citation_guard(
         re.compile(agent.synthesis.citation_pattern),
         appended_headings(agent),
         agent.synthesis.max_guard_rewrites,
+        confirmer=create_claim_confirmer(),
+        rewrite_role=extractor_prompt.ROLE,
     )
 
 

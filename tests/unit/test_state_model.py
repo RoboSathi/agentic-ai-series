@@ -148,11 +148,17 @@ class TestACommitmentNeedsAProcessAlreadyUnderWay:
             ("pending_review", "This refund request will be sent for human review", True),
             ("none", "You'll hear back soon", False),
             ("pending_review", "You'll hear back soon", True),
+            # Order 10805: the review was queued, and this promise was cut as unsupported.
+            ("pending_review", "You'll receive an update once a decision is made", True),
+            ("none", "You'll receive an update once a decision is made", False),
             ("none", "Your refund for order 10665 will be issued", False),
         ],
     )
     def test_a_commitment(self, status: str, claim: str, expected: bool) -> None:
         assert _holds(status, claim) is expected
+
+    def test_a_shipping_promise_is_not_a_review(self) -> None:
+        assert _holds("none", "I'll let you know when your order ships") is None
 
     def test_a_conditional_offer_is_not_a_commitment(self) -> None:
         """ "Once you confirm" offers; it does not say anything is under way."""

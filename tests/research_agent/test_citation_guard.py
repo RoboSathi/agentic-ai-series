@@ -2,6 +2,7 @@
 
 import json
 import re
+from typing import Any
 
 import pytest
 
@@ -127,3 +128,46 @@ async def test_a_supported_report_is_left_exactly_as_written() -> None:
     )
     guarded = await guard.guard(report, LEDGER)
     assert guarded.report == report and not guarded.dropped and not llm.requests
+
+
+class _Confirms:
+    """A second opinion that confirms what it is told to, and records what it was asked."""
+
+    model_name = "stub-confirmer"
+
+    def __init__(self, confirm: set[str]) -> None:
+        self._confirm = confirm
+        self.asked: list[str] = []
+
+    async def confirm(self, claim: str, evidence: str) -> Any:
+        from agent_platform.hallucination_check.confirmer import Confirmation
+
+        self.asked.append(claim)
+        ok = any(word in claim for word in self._confirm)
+        return Confirmation(confirmed=ok, score=0.6 if ok else 0.3,
+                            label="supported" if ok else "not_stated")  # fmt: skip
+
+
+@pytest.mark.asyncio
+async def test_nli_first_then_the_second_opinion_only_where_nli_did_not_support() -> None:
+    llm = ScriptedLLM([{"content": json.dumps({"rewrites": [{"index": 0, "text": ""}]})}])
+    caller = StructuredCaller(_Roles(llm), PydanticValidator())
+    confirmer = _Confirms({"laptop"})
+    guard = CitationGuard(LexicalEntailmentModel(), caller, PATTERN, frozenset({"Sources"}), 1,
+                          confirmer=confirmer, rewrite_role="extractor")  # fmt: skip
+    guarded = await guard.guard(_report(), LEDGER)
+    by_sentence = {check.sentence: check for check in guarded.checks}
+    # NLI supported the first sentence: the second opinion was never asked about it.
+    course = by_sentence["The B.Tech course lasts four years [E1]."]
+    assert course.outcome == "supported" and [r.decision for r in course.readings][:1] == [
+        "supported"
+    ]
+    assert not any("four years" in claim for claim in confirmer.asked)
+    # NLI did not support the laptop sentence; the second opinion confirmed it: no rewrite.
+    laptop = next(c for s, c in by_sentence.items() if "laptop" in s)
+    assert laptop.outcome == "supported"
+    assert [r.check for r in laptop.readings] == ["NLI lexical fallback", "stub-confirmer"]
+    assert [r.decision for r in laptop.readings] == ["not decided", "confirmed"]
+    # Neither supported the Google sentence: rewritten (here to nothing), so removed.
+    google = next(c for s, c in by_sentence.items() if "Google" in s)
+    assert google.outcome == "dropped" and google.readings[-1].decision == "removed"

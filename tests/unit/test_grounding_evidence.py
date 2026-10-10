@@ -439,9 +439,10 @@ class TestAStateRecordIsNotSentToNli:
         body = Text()
         _append_claim(body, result.claim_checks[0])
         assert (
-            'supported by [Tool Result · process_refund]: "Order 10665 refund status: pending_review."'
+            'Tool result · process_refund  "Order 10665 refund status: pending_review."'
             in body.plain
         )
+        assert "1  record" in body.plain and "supported" in body.plain
 
 
 @pytest.mark.usefixtures("abstaining_guard")

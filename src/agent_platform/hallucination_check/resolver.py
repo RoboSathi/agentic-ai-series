@@ -41,6 +41,7 @@ from agent_platform.hallucination_check.direct import (
     NOT_EXECUTED_MARKER,
     DirectChecker,
     DirectFinding,
+    amounts,
     numbers,
 )
 from agent_platform.hallucination_check.ledger import (
@@ -193,7 +194,10 @@ class GroundingResolver:
         record = [chunk for chunk in evidence if chunk.kind in self._record_kinds]
         settled = self._settled_by_record(claim, kind, record)
         if settled is not None:
-            return self._read(claim, kind, settled[1], supported=True, rationale=settled[0])
+            # The state line decided it; the lines holding the amounts it names are read too.
+            also = [c for c in record if amounts(claim) & amounts(c.content)]
+            return self._read(claim, kind, settled[1], supported=True, rationale=settled[0],
+                              also=also)  # fmt: skip
         outcomes = [
             await self._judge(claim, tier, [c for c in evidence if c.kind in tier.kinds])
             for tier in self._tiers
@@ -264,15 +268,17 @@ class GroundingResolver:
         supported: bool,
         rationale: str,
         reason_code: str = "",
+        also: list[Chunk] | None = None,
     ) -> DetectionVerdict:
-        """A verdict settled by reading the record, quoting the line it read."""
-        checks = [] if chunk is None else [self._record_check(chunk)]
+        """A verdict settled by reading the record, quoting every line it read."""
+        read = list({id(c): c for c in [*([chunk] if chunk else []), *(also or [])]}.values())
+        checks = [self._record_check(c) for c in read]
         return self._verdict(
             claim,
             kind,
             DIRECT_TIER,
             None,
-            [] if chunk is None else [chunk],
+            read,
             supported=supported,
             rationale=rationale,
             reason_code=reason_code,

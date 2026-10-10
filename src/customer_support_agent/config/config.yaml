@@ -171,6 +171,15 @@ guardrails:
     TOOL_EVIDENCE_NOT_EXECUTED: claims a refund the tool call never executed
 
 hallucination_check:
+  # This agent's sources, by name: an order's database row and the agent policy's row, the
+  # session's verified facts, and the rules of the refund policy file and the system prompt.
+  evidence_sources:
+    prefixes:
+      "order_record:": "DB record · order {id}"
+      "policy:": "DB agent policy · {id}"
+      "session:": "Session · {id}"
+      "refund_policy#": "Refund policy file · rule {id}"
+      "system_prompt#": "System prompt · rule {id}"
   # This agent's ids are five-digit order numbers (the same shape the
   # evals use). A record about another order cannot refute a claim.
   refute_identifier_pattern: '\b\d{5}\b'
@@ -241,11 +250,13 @@ hallucination_check:
         - awaiting human review
         - sent for review
     # "You'll hear back" names no refund, but in this agent the only person who
-    # follows up is a reviewer: it promises a review, so it is judged as one.
-    context_pattern: '(?:\b(?:refund|request|review|amount|money|payment|funds|hear\s+back|get\s+back\s+to\s+you|follow\s+up)|\$\s?\d)'
+    # follows up is a reviewer: it promises a review, so it is judged as one. So does
+    # "you'll receive an update once a decision is made" (a reviewer's decision). Not
+    # "let you know", which also promises a shipment, and would be refuted with no review.
+    context_pattern: '(?:\b(?:refund|request|review|amount|money|payment|funds|hear\s+back|get\s+back\s+to\s+you|follow\s+up|receive\s+an\s+update|update\s+you|keep\s+you\s+(?:posted|updated)|decision)|\$\s?\d)'
     phrases:
       - reaches: pending_review
-        pattern: '\b(?:requested|submitted|received|queued|initiated|started|created|sent\s+for\s+(?:\w+\s+)?review|referred|escalated|forwarded|hear\s+back|get\s+back\s+to\s+you|follow\s+up)\b'
+        pattern: '\b(?:requested|submitted|received|queued|initiated|started|created|sent\s+for\s+(?:\w+\s+)?review|referred|escalated|forwarded|hear\s+back|get\s+back\s+to\s+you|follow\s+up|receive\s+an\s+update|update\s+you|keep\s+you\s+(?:posted|updated)|decision\s+(?:is|has\s+been)\s+made|once\s+a\s+decision)\b'
       - reaches: pending_review
         exact: true
         pattern: '\b(?:pending|awaiting|under\s+review|in\s+review|human\s+review|manual\s+review)\b'

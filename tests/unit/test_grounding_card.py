@@ -73,7 +73,8 @@ class TestWhatTheCardSays:
     def test_the_result_the_confidence_and_each_claim(self) -> None:
         card = _card(_fields()).plain
         assert "result = TRIMMED · removed 1 of 2" in card
-        assert "confidence · test-model" in card
+        # Logprobs first, in one line: the mean, and the least sure sentence.
+        assert "logprobs · test-model = 42% mean · lowest 42% (sentence 1)" in card
         assert f"42% {_SENTENCE}" in card
         assert "✓ Order 10986 totals $67.27 [SUPPORTED] · record" in card
         assert (
@@ -110,3 +111,83 @@ class TestTheConfidenceIsColoured:
         level = {"level": 1, "name": "token confidence", "verdict": "SKIPPED", "summary": "none"}
         card = _card(_fields(confidence={}, levels=[level])).plain
         assert "level 1 · token confidence = none" in card
+
+
+def _steps_card() -> Text:
+    """A claim NLI could not decide and the second opinion confirmed, and one NLI refuted."""
+    page = "Web page · https://robosathi.com/about/"
+    claims = [
+        {
+            "claim": "Kumar Karan was an Engineering Manager at Turing",
+            "verdict": "supported",
+            "readings": [
+                {"step": 1, "check": "NLI DeBERTa", "result": "neutral 1.000",
+                 "decision": "not decided", "tone": "warn",
+                 "evidence": [{"where": page, "excerpt": "Kumar Karan"}]},
+                {"step": 2, "check": "Laya", "result": "supported 0.512 ≥ 0.45",
+                 "decision": "confirmed", "tone": "pass",
+                 "evidence": [{"where": page,
+                               "excerpt": "Kumar Karan\nEngineering Manager — AI @ Turing\nBlog"}]},
+            ],
+        },
+        {
+            "claim": "Kumar Karan was a Lead Instructor at Turing",
+            "verdict": "refuted",
+            "readings": [
+                {"step": 1, "check": "NLI DeBERTa", "result": "contradiction 0.999",
+                 "decision": "contradicted", "tone": "fail",
+                 "evidence": [{"where": page, "excerpt": "Lead Instructor @ Scaler"}]},
+            ],
+        },
+        {
+            "claim": "Your refund for order 10677 is now pending review",
+            "verdict": "supported",
+            "readings": [
+                {"step": 1, "check": "record", "decision": "supported", "tone": "pass",
+                 "evidence": [
+                     {"where": "DB record · order 10677", "excerpt": "Order 10677 totals $95.86."},
+                     {"where": "Tool result · get_refund_status",
+                      "excerpt": "Order 10677 refund status: pending_review"},
+                 ]},
+            ],
+        },
+    ]  # fmt: skip
+    return _card(_fields(claim_checks=claims, rule="NLI DeBERTa first · Laya only where …"))
+
+
+class TestEachClaimSaysWhichModelDecidedIt:
+    def test_nli_then_the_second_opinion_in_order(self) -> None:
+        card = _steps_card().plain
+        assert "check = NLI DeBERTa first · Laya only where …" in card
+        assert "1  NLI DeBERTa      neutral 1.000 → not decided" in card
+        assert "2  Laya             supported 0.512 ≥ 0.45 → confirmed" in card
+        # A model that read several lines is quoted by the one closest to the claim.
+        assert 'read 3 lines · "Engineering Manager — AI @ Turing"' in card
+
+    def test_a_model_the_claim_never_reached_is_not_named(self) -> None:
+        card = _steps_card().plain
+        refuted = card[card.index("Lead Instructor at Turing") :].split("✓")[0]
+        assert "Laya" not in refuted
+
+    def test_every_line_that_decided_it_is_named_by_kind_and_source(self) -> None:
+        card = _steps_card().plain
+        assert 'DB record · order 10677  "Order 10677 totals $95.86."' in card
+        assert (
+            'Tool result · get_refund_status  "Order 10677 refund status: pending_review"' in card
+        )
+        assert "Web page · https://robosathi.com/about/" in card
+
+    def test_the_colour_is_the_decisions_never_the_claims(self) -> None:
+        card = _steps_card()
+        tones, styles = get_settings().tui.tone_styles, get_settings().tui.body_styles
+
+        def style_of(fragment: str) -> str:
+            start = card.plain.index(fragment)
+            return next(str(s.style) for s in card.spans if s.start <= start < s.end)
+
+        assert style_of("Kumar Karan was an Engineering") == styles["value"]
+        assert style_of("NLI DeBERTa      neutral") == styles["key"]
+        assert style_of("neutral 1.000") == tones["warn"]
+        assert style_of("confirmed") == tones["pass"]
+        assert style_of("contradiction 0.999") == tones["fail"]
+        assert style_of("DB record · order 10677") == styles["value"]

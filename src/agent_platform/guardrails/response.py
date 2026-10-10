@@ -42,6 +42,7 @@ from agent_platform.hallucination_check.direct import (
 from agent_platform.hallucination_check.evidence import TOOL_RESULT_KIND
 from agent_platform.hallucination_check.ledger import FACT_MISMATCH, FACT_TIER, facts_in
 from agent_platform.hallucination_check.levels import CheckLevel, grounding_level
+from agent_platform.hallucination_check.readings import check_rule, model_label, readings
 from agent_platform.hallucination_check.resolver import (
     CLAIM_UNSUPPORTED,
     CONFIRM_TIER,
@@ -111,6 +112,8 @@ class ResponseGuardrailResult(BaseModel):
     # Level 1 in full: the model, and each sentence with every scored token's span and
     # probability, so a card can colour the words and a log keeps all of it.
     confidence: dict[str, Any] = Field(default_factory=dict)
+    # The order the claims were checked in (NLI, then the second opinion), atop the card.
+    rule: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -234,6 +237,7 @@ class ResponseGuardrail:
             update={
                 "levels": [*first, _entailment_level(result)],
                 "confidence": scored.model_dump() if scored is not None else {},
+                "rule": check_rule(),
             }
         )
         self._record(result, self._grounding, (time.perf_counter() - started) * 1000)
@@ -246,6 +250,7 @@ class ResponseGuardrail:
         self._logger.info(
             "Response grounding checked",
             levels=[level.model_dump() for level in checked.levels],
+            rule=checked.rule,
             reason_code=checked.reason_code,
             evidence_searched=checked.evidence_searched,
             provenance=checked.provenance_checks,
@@ -509,12 +514,6 @@ def _basis(verdict: DetectionVerdict) -> str:
     return f"{model_label(verdict.detector_model)} {reading} {verdict.confidence:.2f}"
 
 
-def model_label(model: str) -> str:
-    """A model as the card and the log name it: `NLI DeBERTa`, `Laya` (`model_labels`)."""
-    labels = get_settings().hallucination_check.model_labels
-    return labels.get(model) or model.rsplit("/", 1)[-1]
-
-
 def _method(verdict: DetectionVerdict) -> str:
     """What decided the claim, in a word or two: the record, a rule, NLI, or logprobs."""
     words = get_settings().hallucination_check.methods
@@ -608,6 +607,9 @@ def _claim_check(verdict: DetectionVerdict) -> dict[str, Any]:
             for check in verdict.evidence_checks
         ],
         "scores": _scores(verdict),
+        # What decided it, step by step: NLI, then (only if NLI did not support it) the
+        # second opinion — each with its answer, what that decided, and the line it read.
+        "readings": [reading.model_dump() for reading in readings(verdict)],
     }
 
 

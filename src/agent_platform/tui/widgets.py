@@ -205,6 +205,8 @@ _CLAIM_MARKS = {
     "unsupported": ("✗", "fail", "unsupported"),
     "low_confidence": ("✗", "fail", "low confidence"),
     "refuted": ("✗", "fail", "contradicted"),
+    "rewritten": ("↻", "warn", "rewritten"),
+    "removed": ("✗", "fail", "removed"),
 }
 # The NLI result each verdict is decided by, and its display name.
 _DECIDING_LABEL = {"supported": "entailment", "refuted": "contradiction"}
@@ -991,6 +993,9 @@ def _append_grounding(body: Text, fields: Mapping[str, Any]) -> None:
         for level in fields.get("levels") or []:
             if isinstance(level, Mapping):
                 _append_level(body, level)
+    rule = str(fields.get("rule") or "")
+    if rule:
+        _append_grounding_row(body, words.rule, rule)
     checks = [c for c in fields.get("claim_checks") or [] if isinstance(c, Mapping)]
     if checks:
         _append_heading(body, words.claims)
@@ -1024,10 +1029,20 @@ def _append_confidence(body: Text, confidence: Mapping[str, Any]) -> None:
             style=_tone("dim"),
         )
         return
-    _append_heading(body, words.confidence.format(model=confidence.get("model")))
-    for sentence in confidence.get("sentences") or []:
-        if isinstance(sentence, Mapping):
-            _append_confident_sentence(body, sentence)
+    sentences = [s for s in confidence.get("sentences") or [] if isinstance(s, Mapping)]
+    means = [float(s.get("content_mean") or 0.0) for s in sentences]
+    key = words.confidence.format(model=confidence.get("model"))
+    if means:
+        lowest = min(range(len(means)), key=means.__getitem__)
+        summary = words.logprobs_summary.format(
+            mean=sum(means) / len(means), lowest=means[lowest], sentence=lowest + 1
+        )
+        body.append("\n  " if body else "  ")
+        _append_pair(body, key, " = ", summary, _band_style(means[lowest]))
+    else:
+        _append_heading(body, key)
+    for sentence in sentences:
+        _append_confident_sentence(body, sentence)
 
 
 def _append_confident_sentence(body: Text, sentence: Mapping[str, Any]) -> None:
@@ -1106,6 +1121,13 @@ def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
     body.append(f"\n    {mark} ", style=style)
     body.append(str(check.get("claim") or ""), style=styles["value"])
     body.append(f" [{name.upper()}]", style=style)
+    steps = [r for r in check.get("readings") or [] if isinstance(r, Mapping)]
+    if steps:
+        # Every step that ran, in order: what read the claim, what it said, what it decided.
+        claim = str(check.get("claim") or "")
+        for step in steps:
+            _append_reading(body, step, claim)
+        return
     basis = str(check.get("basis") or "")
     method = str(check.get("method") or "")
     if method and not basis:
@@ -1134,6 +1156,52 @@ def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
         _append_proof(body, key, str(check.get("rationale") or ""), styles["muted"])
         return
     _append_proof(body, key, f'"{_excerpt(item)}"', styles["muted"])
+
+
+def _append_reading(body: Text, step: Mapping[str, Any], claim: str) -> None:
+    """One line per piece of evidence a step read, opening with what it decided:
+
+        Supported by [DB record · order 10916]: "Order 10916 totals $135.73."
+        Not decided by [Web page · https://…] (NLI DeBERTa neutral 1.000): "Kumar Karan"
+        Supported by [Web page · https://…] (Laya supported 0.512 ≥ 0.45): read 24 lines · "…"
+
+    The lead and the model's score take the decision's tone; the evidence is named in the
+    value colour and quoted muted — the same on every agent's card.
+    """
+    styles = get_settings().tui.body_styles
+    tone = _tone(str(step.get("tone") or "dim"))
+    lead = str(step.get("lead") or step.get("decision") or "")
+    basis = _basis_of(step)
+    refs = [r for r in step.get("evidence") or [] if isinstance(r, Mapping)]
+    if not refs:
+        # Nothing read: what was decided, and by what ("Not decided by NLI DeBERTa: no related
+        # evidence").
+        body.append(f"\n      {lead} {step.get('check') or ''}", style=tone)
+        body.append(f": {step.get('decision') or ''}", style=styles["muted"])
+        return
+    for ref in refs:
+        body.append(f"\n      {lead} ", style=tone)
+        body.append(f"[{ref.get('where') or ''}]", style=styles["value"])
+        if basis:
+            body.append(f" ({basis})", style=tone)
+        lines = [line for line in str(ref.get("excerpt") or "").splitlines() if line.strip()]
+        if not lines:
+            continue
+        read = get_settings().tui.grounding_card.lines_read.format(count=len(lines))
+        quoted = _closest_line(lines, claim) if len(lines) > 1 else _excerpt(ref)
+        prefix = f": {read} · " if len(lines) > 1 else ": "
+        body.append(f'{prefix}"{quoted}"', style=styles["muted"])
+
+
+def _basis_of(step: Mapping[str, Any]) -> str:
+    """What decided it, in brackets: a model and its score, or the rule that read the record.
+
+    A plain record read needs no bracket: the evidence line already says it is the record.
+    """
+    check, result = str(step.get("check") or ""), str(step.get("result") or "")
+    if result:
+        return f"{check} {result}"
+    return "" if check == get_settings().hallucination_check.methods.record else check
 
 
 def _append_proof(body: Text, key: str, value: str, style: str) -> None:

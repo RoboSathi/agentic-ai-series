@@ -209,35 +209,43 @@ def _entry(entry_id: str, url: str, span: str) -> Any:
     return EvidenceEntry(entry_id=entry_id, claim=span, span=span, source_url=url, source_hash="h")
 
 
-class TestTheReportCheckNamesTheSourceOfEverySentence:
-    def _sections(self) -> dict[str, Any]:
-        from agent_platform.evidence.types import LedgerSnapshot
-        from research_agent.research.cards import guard_card
-        from research_agent.synthesis.citation_guard import GuardedReport, SentenceCheck
+class TestTheReportCheckIsTheSharedCard:
+    """`/research`'s citation guard draws the same HALLUCINATION CHECK card as every answer."""
 
-        ledger = LedgerSnapshot(entries=(_entry("E3", "https://www.wef.org/r", "Hiring rose 4%."),))
-        guarded = GuardedReport(
-            report=__import__("research_agent.domain.report", fromlist=["Report"]).Report(
-                title="t", status="PARTIAL"
-            ),
-            checked=2,
-            supported=1,
-            dropped=["Hiring doubled [E3]."],
-            checks=[
-                SentenceCheck(sentence="Hiring rose [E3].", cited=["E3"]),
-                SentenceCheck(sentence="Hiring doubled [E3].", outcome="dropped", cited=["E3"]),
-            ],
+    def _card(self) -> str:
+        from rich.text import Text
+
+        from agent_platform.hallucination_check.readings import EvidenceRef, Reading
+        from agent_platform.tui.widgets import _append_grounding
+        from research_agent.graph.run_nodes import _sentence_check
+        from research_agent.synthesis.citation_guard import SentenceCheck
+
+        cited = EvidenceRef(
+            where="Web page · https://www.wef.org/r [E3]", excerpt="Hiring rose 4%."
         )
-        return guard_card(guarded, ledger, "nli-model", 200)[1]
+        nli = Reading(step=1, check="NLI DeBERTa", result="entailment 0.950",
+                      decision="supported", tone="pass", evidence=[cited])  # fmt: skip
+        removed = Reading(step=3, check="rewrite · extractor", decision="removed", tone="fail")
+        checks = [
+            SentenceCheck(sentence="Hiring rose [E3].", cited=["E3"], readings=[nli]),
+            SentenceCheck(sentence="Hiring doubled [E3].", outcome="dropped", cited=["E3"],
+                          readings=[removed]),
+        ]  # fmt: skip
+        body = Text()
+        _append_grounding(body, {"outcome": "TRIMMED · 1/2", "claim_checks": [
+            _sentence_check(check) for check in checks]})  # fmt: skip
+        return body.plain
 
-    def test_a_supported_sentence_names_its_entry_and_host(self) -> None:
-        text = _text(self._sections())
-        assert "✓ Hiring rose [E3]. [SUPPORTED]" in text
-        assert 'supported by [E3 · wef.org]: "Hiring rose 4%."' in text
+    def test_a_supported_sentence_names_the_model_and_its_source(self) -> None:
+        card = self._card()
+        assert "✓ Hiring rose [E3]. [SUPPORTED]" in card
+        assert "1  NLI DeBERTa      entailment 0.950 → supported" in card
+        assert 'Web page · https://www.wef.org/r [E3]  "Hiring rose 4%."' in card
 
-    def test_a_removed_sentence_says_why(self) -> None:
-        text = _text(self._sections())
-        assert "✗ Hiring doubled [E3]. [DROPPED]" in text and "removed: not supported" in text
+    def test_a_removed_sentence_says_so(self) -> None:
+        card = self._card()
+        assert "✗ Hiring doubled [E3]. [REMOVED]" in card
+        assert "3  rewrite · extractor  removed" in card
 
 
 class TestTheAuditCard:
