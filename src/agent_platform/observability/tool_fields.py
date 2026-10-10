@@ -16,16 +16,10 @@ from typing import Any
 from agent_platform.config import get_settings
 from agent_platform.loop_control import LoopControlReport
 from agent_platform.primitives.money import money_or_none
-from agent_platform.tools.types import WIRE_SEPARATOR
+from agent_platform.tools.names import display_tool_name, qualified_tool_name
 
 # The argument whose value is money, shown in currency rather than as typed.
 _AMOUNT = "amount"
-
-
-def display_tool_name(name: str) -> str:
-    """The concise tool name a card shows: `answer__weather` reads `weather`."""
-    normalized = name.replace(WIRE_SEPARATOR, ".")
-    return normalized.rsplit(".", maxsplit=1)[-1]
 
 
 def tool_request_fields(
@@ -39,7 +33,8 @@ def tool_request_fields(
     """
     fields: dict[str, Any] = {
         "tool": display_tool_name(name),
-        "qualified_tool": name.replace(WIRE_SEPARATOR, "."),
+        # The internal identity, resolved from the model name — what evals and policy key on.
+        "qualified_tool": qualified_tool_name(name),
     }
     try:
         raw = json.loads(arguments or "{}")

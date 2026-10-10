@@ -101,3 +101,41 @@ At the same time, procedural memory existed only on paper:
   audit entry carry them.
 - There is no end-to-end test of dream → `/skills approve` → lexical selection. Each step is unit
   tested.
+
+## Amendment 2026-10-10 — procedures that make agents faster
+
+The first build added procedures *on top of* the old instructions. Every system prompt
+grew by 30–70%, and nothing a procedure said saved the model any work. A CSA refund turn
+still took 4 model calls (read the order, read the refund, request it, reply), at 52–90 s.
+
+- **"Charter" is now "agent profile"** (`AgentProfile`, `skills.profile_path`,
+  `profile@<digest>`). The profile is identity and non-negotiables only. Its required
+  sections are Mission, Scope and Rules.
+- **Lean prompts.** Only `skills.render.sections_sent` (Procedure, Boundaries) reaches the
+  model; Preconditions and Completion are kept for maintainers.
+  - `skills.max_prompt_chars` per agent fails the build if the profile plus the largest
+    procedures outgrow it: CSA 2,400 (its old instructions were 3,167), ops 1,500 (old 1,493).
+  - Measured worst cases are now CSA 2,186 and ops 1,206.
+- **Prefetch.** A skill declares `prefetch:` reads. The harness runs them before the first
+  model call, through the governed tool path, and hands the model their results as its own
+  calls. The tool request cards say "Prefetched: … · for <procedure>".
+  - CSA has a `prefetch` graph node before `propose`. Arguments come from turn state
+    (`customer_support_agent.prefetch.arguments`). A read whose arguments are not known is
+    skipped.
+  - Ops prefetches `list_metrics` and `list_views`.
+  - A refund turn is now 2 model calls.
+- **Tools.** A skill declares the `tools:` it uses. On an intent-routed turn the model is
+  offered only those, intersected with the intent's tools; the unrouted path keeps the full
+  set.
+  - Every tool has a *model name* (`tools.model_names`, else its bare name). The model and
+    the cards never see `namespace__name`.
+  - Qualified names stay in policy, audit, facts and evals; `qualified_tool` is resolved
+    back from the model name.
+  - The build refuses a procedure that names a tool the agent does not offer, prefetches one
+    with an effect, or writes an internal `namespace.name`.
+- **The PROCEDURE card** is drawn only when a procedure is used, once per turn, as one line:
+  `refund-workflow v1 · matched intent REQUEST_REFUND · 4 steps · prefetched look_up_order,
+  check_refund`. Nothing is drawn when none matched. A sync card appears only when
+  something changed.
+- **Research agent**: its role skills duplicated each role's own instructions, so they are
+  removed (ra-0021, amended). The profile goes on the direct answer only.

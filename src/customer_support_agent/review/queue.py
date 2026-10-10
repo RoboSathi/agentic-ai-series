@@ -21,7 +21,6 @@ from agent_platform.audit import AuditEntry, AuditLedger, NullAuditLedger
 from agent_platform.gatekeeper.types import AuthorityContext, Standing
 from agent_platform.hallucination_protection import TrustCalibrationTracker, TrustReport
 from agent_platform.logging import get_logger, logged
-from agent_platform.observability.types import utc_now
 from agent_platform.primitives.money import Money
 from agent_platform.resilience import SagaResult
 from customer_support_agent.config import get_agent_settings
@@ -76,10 +75,6 @@ class ReviewQueueService:
     def pending(self) -> list[HitlRequest]:
         """Everything waiting on a human decision, oldest first."""
         return self._queue.pending()
-
-    def pending_count(self) -> int:
-        """Queue depth — the input to the Little's Law staffing model."""
-        return len(self._queue.pending())
 
     @logged("customer_support_agent")
     async def approve(self, request_id: int, reviewer: str) -> ReviewOutcome:
@@ -245,14 +240,6 @@ class ReviewQueueService:
                 rationale=rationale,
             )
         )
-
-
-class ReviewQueueMetrics(BaseModel):
-    """Queue health, for the SLO and staffing views (E38)."""
-
-    pending: int = 0
-    oldest_wait_hours: float = 0.0
-    measured_at: str = Field(default_factory=lambda: utc_now().isoformat())
 
 
 def _ineligibility(request: HitlRequest, order: Order) -> str:

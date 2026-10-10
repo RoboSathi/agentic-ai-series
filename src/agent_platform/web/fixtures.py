@@ -47,14 +47,6 @@ class FixtureStore:
         path = self._folder / _MANIFEST
         return FixtureManifest.model_validate_json(path.read_text()) if path.exists() else None
 
-    def write_manifest(self, version: str, description: str = "") -> FixtureManifest:
-        manifest = FixtureManifest(
-            set_name=self._set_name, version=version, description=description
-        )
-        self._folder.mkdir(parents=True, exist_ok=True)
-        (self._folder / _MANIFEST).write_text(manifest.model_dump_json(indent=2))
-        return manifest
-
     def search(self, key: str) -> SearchResponse | None:
         raw = self._read("search", key)
         return SearchResponse.model_validate_json(raw) if raw is not None else None

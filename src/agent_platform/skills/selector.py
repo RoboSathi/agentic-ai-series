@@ -15,6 +15,9 @@ from agent_platform.context.retrieval import LexicalRetriever
 from agent_platform.context.types import Chunk
 from agent_platform.skills.types import ActivatedSkill, Skill
 
+# A signal is `kind:value`; its reason reads "matched intent REQUEST_REFUND".
+_SIGNAL_SEPARATOR = ":"
+
 
 class SkillSelector:
     """always ∪ triggered, else lexical — capped."""
@@ -39,7 +42,8 @@ class SkillSelector:
             return ActivatedSkill(skill=skill, reason=self._reasons.always)
         for trigger in skill.document.triggers:
             if trigger in signals:
-                reason = self._reasons.trigger.format(signal=trigger)
+                kind, _, value = trigger.partition(_SIGNAL_SEPARATOR)
+                reason = self._reasons.trigger.format(kind=kind, value=value, signal=trigger)
                 return ActivatedSkill(skill=skill, reason=reason)
         return None
 

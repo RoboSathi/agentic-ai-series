@@ -74,6 +74,8 @@ class OpsAgentSettings(YamlBackedSettings):
     cell_chars: int = Field(ge=4)
     number_tolerance: float = Field(ge=0)
     free_numbers: list[float]
+    # The id a prefetch read's call is shown to the model with (`{tool}`).
+    prefetch_call_id: str
     words: Words
     stages: Stages
     stage_labels: dict[str, str]

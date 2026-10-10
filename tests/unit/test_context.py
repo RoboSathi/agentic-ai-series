@@ -125,7 +125,8 @@ class TestStrategies:
         strategy = CacheStrategy()
         first = strategy.apply(self._context(chunks))
         second = strategy.apply(self._context(list(reversed(chunks))))
-        assert strategy.prefix_signature(first) == strategy.prefix_signature(second)
+        prefix = [chunk.content for chunk in first.chunks if chunk.kind != "history"]
+        assert prefix == [chunk.content for chunk in second.chunks if chunk.kind != "history"]
 
     def test_pinned_chunks_survive_every_strategy(self) -> None:
         pinned = Chunk(content="x" * 4000, token_estimate=1000, pinned=True)
@@ -224,15 +225,8 @@ class TestFailureDetection:
         )
         assert ContextFailureDetector().near_duplicate_ratio(context) == 1.0
 
-    def test_degradation_is_caught_against_the_baseline(self) -> None:
-        curve = ContextFailureDetector().degradation_curve({10000: 0.92, 150000: 0.61})
-        assert curve[0].degraded is False and curve[-1].degraded is True
-
     def test_checkpoints_come_from_config(self) -> None:
         assert ContextFailureDetector().checkpoints == [10000, 30000, 60000, 100000, 150000]
-
-    def test_an_empty_curve_is_empty(self) -> None:
-        assert ContextFailureDetector().degradation_curve({}) == []
 
 
 class TestATranscriptIsNotASetOfClaims:

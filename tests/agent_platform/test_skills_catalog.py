@@ -10,6 +10,7 @@ import pytest
 from agent_platform.audit.ledger import SqliteAuditLedger
 from agent_platform.config import get_settings
 from agent_platform.config.settings import SkillSettings
+from agent_platform.logging.trace_context import set_current_trace_id
 from agent_platform.memory import MemoryFact, ProceduralStore, Provenance
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.skills import SkillDocument
@@ -111,6 +112,7 @@ class TestSync:
     def test_each_change_is_audited(
         self, catalog: SkillCatalog, audit: SqliteAuditLedger, settings: SkillSettings
     ) -> None:
+        set_current_trace_id(None)  # a start-up sync runs outside any turn
         catalog.sync([_document("refund-flow")])
         catalog.sync([_document("refund-flow")])
         entries = audit.reconstruct(settings.audit.sync_action)

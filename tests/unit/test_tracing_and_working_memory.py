@@ -130,13 +130,14 @@ class TestMemoryFacadeWindow:
     def test_note_lands_in_the_window_and_reads_back(self) -> None:
         facade = MemoryFacade.complete()
         facade.note("verified_customer", "Ada (#1)", "session-1", "agent", category="identity")
-        window = facade.active_window("session-1")
-        assert [fact.value for fact in window] == ["Ada (#1)"]
+        assert facade.working is not None
+        assert list(facade.working.get("session-1").state.values()) == ["Ada (#1)"]
 
     def test_ending_a_session_clears_its_window_only(self) -> None:
         facade = MemoryFacade.complete()
         facade.note("a", "1", "one", "agent")
         facade.note("b", "2", "two", "agent")
         facade.end_session("one")
-        assert facade.active_window("one") == []
-        assert len(facade.active_window("two")) == 1
+        assert facade.working is not None
+        assert facade.working.get("one").state == {}
+        assert len(facade.working.get("two").state) == 1

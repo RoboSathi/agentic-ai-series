@@ -26,7 +26,8 @@ class TestTheOrderList:
             "│ 1 │ 10001 │ 2026-09-22 │ Keyboard │ delivered  │ none │ $1.00 │\n"
             "Your order was delivered yesterday."
         )
-        out = render_response(text, get_settings().tui.response_styles)
+        styles = get_settings().tui.response_styles
+        out = render_response(text, styles)
         styled = {out.plain[span.start : span.end]: str(span.style) for span in out.spans}
         assert styled["delivered"] == "green"
-        assert styled["Your order was delivered yesterday."] == "default"
+        assert styled["Your order was delivered yesterday."] == styles["body"]

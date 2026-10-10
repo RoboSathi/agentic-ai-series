@@ -37,6 +37,8 @@ class _Frontmatter(BaseModel):
     description: str
     triggers: list[str] = []
     keywords: list[str] = []
+    prefetch: list[str] = []
+    tools: list[str] = []
 
 
 def load_profile(settings: SkillSettings) -> AgentProfile:
@@ -46,6 +48,7 @@ def load_profile(settings: SkillSettings) -> AgentProfile:
         raise SkillDocumentError(str(path), "no profile file (skills.profile_path)")
     text = path.read_text(encoding="utf-8")
     _require_sections(text, settings.profile_sections, settings, str(path))
+    _refuse_internal_tool_names(text, settings, str(path))
     return AgentProfile(text=text, digest=digest(text, settings))
 
 
@@ -69,13 +72,14 @@ def parse_stored(text: str, key: str, settings: SkillSettings) -> SkillDocument:
     """
     if text.startswith(settings.frontmatter_delimiter):
         return _parse(text, settings, key)
-    return SkillDocument(name=key, description=text, body=text, raw=text)
+    return SkillDocument(name=key, description=text, body=text, raw=text, prompt=text)
 
 
 def parse_skill(raw: str, settings: SkillSettings, origin: str) -> SkillDocument:
     """One authored skill's text, frontmatter validated and sections checked."""
     document = _parse(raw, settings, origin)
     _require_sections(document.body, settings.skill_sections, settings, origin)
+    _refuse_internal_tool_names(raw, settings, origin)
     return document
 
 
@@ -88,14 +92,42 @@ def _parse(raw: str, settings: SkillSettings, origin: str) -> SkillDocument:
     meta, body = _split(raw, settings.frontmatter_delimiter, origin)
     front = _frontmatter(meta, origin)
     _check_identity(front, settings, origin)
+    prompt = _sent_sections(body.strip(), settings)
     return SkillDocument(
         name=front.name,
         description=front.description.strip(),
         triggers=tuple(front.triggers),
         keywords=tuple(front.keywords),
+        prefetch=tuple(front.prefetch),
+        tools=tuple(front.tools),
         body=body.strip(),
+        prompt=prompt,
+        steps=len(re.findall(settings.step_pattern, prompt, flags=re.MULTILINE)),
         raw=raw,
     )
+
+
+def _sent_sections(body: str, settings: SkillSettings) -> str:
+    """Only the sections the model acts on, each with its heading, in file order."""
+    heading = re.compile(settings.section_pattern, flags=re.MULTILINE)
+    starts = list(heading.finditer(body))
+    if not starts:
+        return body
+    ends = [match.start() for match in starts[1:]] + [len(body)]
+    kept = [
+        body[match.start() : end].strip()
+        for match, end in zip(starts, ends, strict=True)
+        if match.group(1) in settings.render.sections_sent
+    ]
+    return settings.render.separator.join(kept)
+
+
+def _refuse_internal_tool_names(text: str, settings: SkillSettings, origin: str) -> None:
+    """The model is offered model names; a `namespace.name` in its text names nothing."""
+    found = re.findall(settings.internal_tool_reference, text)
+    if found:
+        reason = f"names tools by internal name ({', '.join(found)}); use model names"
+        raise SkillDocumentError(origin, reason)
 
 
 def _load_folder(folder: Path, settings: SkillSettings) -> SkillDocument:

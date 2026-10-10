@@ -2,8 +2,8 @@
 
 Level 1 is the platform's: how sure the model was of the tokens it wrote
 (`confidence.py`). Level 2 is whatever grounds this agent's claims — NLI
-entailment against the evidence for a support or research reply, a figure found
-in a query result for the ops analyst. Each level is reported as a `CheckLevel`,
+entailment against the evidence for a reply, a figure found in a query result
+for an answer computed from one. Each level is reported as a `CheckLevel`,
 and the levels travel, level 1 first, inside the one `hallucination_check` event
 an agent emits, so every agent's card and log line read the same way.
 """

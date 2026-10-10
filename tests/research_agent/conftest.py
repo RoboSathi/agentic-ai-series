@@ -31,6 +31,7 @@ from agent_platform.config import (
 )
 from agent_platform.durability import create_checkpointer, model_types
 from agent_platform.llm.client import LLMClient
+from agent_platform.llm.types import Message
 from agent_platform.memory import EpisodicStore
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
@@ -39,6 +40,7 @@ from research_agent.config import reload_agent_settings
 from research_agent.graph import build_agent
 from research_agent.graph.agent import ResearchAgent
 from research_agent.graph.state import StateTypes
+from research_agent.prompts.base import PAYLOAD_CLOSE, PAYLOAD_OPEN
 from tests.conftest import ScriptedLLM
 
 RA_OVERLAY = REPO_ROOT / "src" / "research_agent" / "config" / "config.yaml"
@@ -139,3 +141,13 @@ def harness(ra_config: None, tmp_path: Path) -> BuildHarness:
         return Harness(agent=agent, feed=feed, audit=audit, roles=roles)
 
     return build
+
+
+def payload_of(messages: Sequence[Message]) -> dict[str, Any]:
+    """The JSON payload a role prompt carried, read back from its user message."""
+    for message in messages:
+        if message.role == "user" and PAYLOAD_OPEN in message.content:
+            body = message.content.split(PAYLOAD_OPEN, 1)[1].split(PAYLOAD_CLOSE, 1)[0]
+            loaded = json.loads(body)
+            return loaded if isinstance(loaded, dict) else {}
+    return {}

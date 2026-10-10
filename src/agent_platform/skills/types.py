@@ -23,8 +23,16 @@ class SkillDocument(BaseModel):
     description: str
     triggers: tuple[str, ...] = ()
     keywords: tuple[str, ...] = ()
-    # What the model reads: the procedure without its frontmatter.
+    # Read tools the harness runs before the first model call, and every tool the
+    # procedure uses (what a turn running it is offered), by model name.
+    prefetch: tuple[str, ...] = ()
+    tools: tuple[str, ...] = ()
+    # The whole procedure without its frontmatter (what `/skills show` prints).
     body: str
+    # What the model reads: only the configured sections (`skills.render.sections_sent`).
+    prompt: str = ""
+    # How many numbered steps the procedure has.
+    steps: int = 0
     # What is stored and digested: the file as written, references included.
     raw: str
 
@@ -72,6 +80,14 @@ class Activation(BaseModel):
 
     profile: AgentProfile
     skills: tuple[ActivatedSkill, ...] = ()
+
+    def prefetch(self) -> list[str]:
+        """Every active procedure's prefetch tools, in order, each once."""
+        return list(dict.fromkeys(t for item in self.skills for t in item.skill.document.prefetch))
+
+    def tools(self) -> list[str]:
+        """Every tool the active procedures use, each once (empty: no narrowing)."""
+        return list(dict.fromkeys(t for item in self.skills for t in item.skill.document.tools))
 
 
 class Instructions(BaseModel):

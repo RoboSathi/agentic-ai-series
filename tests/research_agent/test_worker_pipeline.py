@@ -104,7 +104,9 @@ def _setup(
     screen: InjectionScreen | None = None,
     hits: list[SearchHit] | None = None,
 ) -> tuple[ResearcherWorker, _Web, RunResources, _Recorder]:
-    brief = ScopeBrief(archetype="qa", topic="AI news", recency_days=30, budget=BUDGET)
+    brief = ScopeBrief(
+        archetype="fact_verification", topic="AI news", recency_days=30, budget=BUDGET
+    )
     contract = Contract.freeze("run-test", brief, Rubric(), BUDGET).model_copy(
         update={"frozen_at": NOW}
     )
@@ -136,7 +138,7 @@ async def test_a_quote_with_straight_quotes_is_admitted_and_stored_as_the_pages_
     assert stored in page  # still an exact substring: the ledger's rule is unchanged
     assert stored == "said \u201cAI going rogue\u201d is not \u2018fake news\u2019"
     (card,) = rec.of("page_result")
-    assert card[1] == say("page.heading", host="a.example", kept=1)
+    assert card[1] == say("page.heading", host="a.example", kept=1, extracted=1)
     assert _section("evidence") in card[2]
 
 

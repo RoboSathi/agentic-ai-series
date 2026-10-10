@@ -13,7 +13,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 from agent_platform.config import get_settings
-from agent_platform.evals.types import EvalManifestEntry, PyramidLevel
+from agent_platform.evals.types import EvalManifestEntry
 
 
 class EvalManifest(BaseModel):
@@ -25,10 +25,6 @@ class EvalManifest(BaseModel):
         """Entries declared for one component."""
         return [entry for entry in self.entries if entry.component == component]
 
-    def for_level(self, level: PyramidLevel) -> list[EvalManifestEntry]:
-        """Entries belonging to one pyramid level."""
-        return [entry for entry in self.entries if entry.level == level]
-
     def threshold_for(self, component: str, default: float = 0.0) -> float:
         """Strictest regression threshold declared for a component."""
         thresholds = [entry.regression_threshold for entry in self.for_component(component)]
@@ -37,11 +33,6 @@ class EvalManifest(BaseModel):
     def components(self) -> list[str]:
         """Every component with at least one declared eval."""
         return sorted({entry.component for entry in self.entries})
-
-    def missing_coverage(self, expected_components: list[str]) -> list[str]:
-        """Components that ship without a declared eval — the gap report."""
-        declared = set(self.components())
-        return [name for name in expected_components if name not in declared]
 
 
 def load_manifest(path: Path | None = None) -> EvalManifest:

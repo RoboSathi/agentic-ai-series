@@ -210,6 +210,29 @@ class EncoderSettings(BaseModel):
         return self.enabled and bool(self.api_key)
 
 
+class LayaIntentSettings(BaseModel):
+    """A Laya decision checkpoint asked one choice question per message.
+
+    The labels and their descriptions are not here: they are the consuming
+    agent's intents, injected when the classifier is built.
+    """
+
+    model: str
+    # One checkpoint of a repository that bundles several (`typed-decisions`).
+    subfolder: str
+    local_model_dir: str
+    device: str
+    # Tokens of message plus question the encoder reads.
+    max_len: int = Field(ge=8)
+    # The question's id in the request, and the key the message is sent under.
+    question_id: str
+    state_key: str
+
+    @property
+    def resolved_local_model_dir(self) -> Path:
+        return resolve_path(self.local_model_dir)
+
+
 class IntentClassifierSettings(BaseModel):
     """Reusable model/provider settings for semantic intent classification.
 
@@ -219,11 +242,12 @@ class IntentClassifierSettings(BaseModel):
     """
 
     enabled: bool
-    provider: Literal["huggingface_local"]
+    provider: Literal["huggingface_local", "laya_local"]
     model: str
     local_model_dir: str
     download_if_missing: bool
     max_length: int
+    laya: LayaIntentSettings
 
     @property
     def resolved_local_model_dir(self) -> Path:
@@ -275,6 +299,10 @@ class LocalCheckSettings(BaseModel):
     nli_premise: str
     nli_hypothesis: str
     intent_text: str
+    # A classifier that reads label descriptions (`laya_local`) is asked this, over these
+    # options: the probe's own, since the platform knows no agent's intents.
+    intent_question: str
+    intent_choices: dict[str, str]
     dialogue: str
 
 
@@ -587,6 +615,7 @@ class StepEventWords(BaseModel):
     """Headings of the cards every agent's tool-use loop draws (`observability/step_events.py`)."""
 
     tool_requested: str
+    tool_prefetched: str
     gatekeeper: str
     loop_control: LoopControlWords
 
@@ -1169,6 +1198,7 @@ class SkillRenderSettings(BaseModel):
     procedure_heading: str
     reference_heading: str
     separator: str
+    sections_sent: list[str]
     ref: str
     profile_ref: str
 
@@ -1187,8 +1217,10 @@ class SkillObservabilitySettings(BaseModel):
     activation_stage: str
     sync_stage: str
     activated: str
-    none_active: str
+    joiner: str
+    prefetched: str
     synced: str
+    unchanged: str
 
 
 class SkillAuditSettings(BaseModel):
@@ -1210,6 +1242,8 @@ class SkillSettings(YamlBackedSettings):
     references_glob: str
     frontmatter_delimiter: str
     section_pattern: str
+    step_pattern: str
+    internal_tool_reference: str
     name_pattern: str
     max_name_chars: int = Field(gt=0)
     max_description_chars: int = Field(gt=0)
@@ -1220,6 +1254,7 @@ class SkillSettings(YamlBackedSettings):
     selectable_artifact_types: list[str]
     digest_chars: int = Field(gt=0)
     selection: SkillSelectionSettings
+    max_prompt_chars: int = Field(ge=0)
     render: SkillRenderSettings
     reasons: SkillReasonWords
     observability: SkillObservabilitySettings
@@ -1503,7 +1538,7 @@ class PresidioSettings(BaseModel):
     # A span Presidio scores below this is not personal data.
     score_threshold: float = Field(ge=0.0, le=1.0)
     # The entity types redacted (Presidio's names). An agent narrows or widens this in its own
-    # config: names and places are personal data to a support agent, research subjects to another.
+    # config: names and places are personal data to one agent and the subject matter of another.
     entities: list[str]
     # The score a configured `patterns` match carries inside Presidio.
     pattern_score: float = Field(ge=0.0, le=1.0)
@@ -1957,6 +1992,8 @@ class ToolsSettings(YamlBackedSettings):
     enabled: bool
     selection_k: int
     selection_min_score: float
+    # Qualified name → the name the model and the cards use (ADR 0010).
+    model_names: dict[str, str]
 
     model_config = SettingsConfigDict(env_prefix="TOOLS__")
 
@@ -2301,7 +2338,7 @@ class SearchAugmentSettings(BaseModel):
     top_k: int = Field(ge=1)
     min_term_chars: int = Field(ge=1)
     # The share of the monthly quota augmentation may spend, paced evenly over the month; the
-    # rest is kept for pure fallback and research runs.
+    # rest is kept for pure fallback and for runs that search the web.
     share: float = Field(ge=0.0, le=1.0)
 
 

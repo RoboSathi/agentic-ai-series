@@ -43,9 +43,9 @@ features:
     working: true
     episodic: true
     semantic: true
-    # Authored procedures only (ra-0021): this agent has no dream, so it learns
-    # nothing procedural across runs; it follows the skills it was given.
-    procedural: true
+    # Not composed (ra-0021): each role's own instructions are its procedure, and a second
+    # copy as a skill only cost tokens on every call. The profile goes on the answerer.
+    procedural: false
   # The platform's context window for the direct answer: working memory and earlier research,
   # ranked, fitted and health-checked. The reranker is a hosted cross-encoder: off by default.
   context:
@@ -232,18 +232,24 @@ security:
       the user's own account or details.
 
 
+# What the model and every card call each answer tool (ADR 0010).
+tools:
+  model_names:
+    answer.web_search: web_search
+    answer.fetch_url: read_page
+    answer.current_datetime: current_time
+    answer.weather: weather
+
 # The profile and the procedures (ADR 0010, ra-0021).
 skills:
   profile_path: src/research_agent/prompts/AGENT.md
-  skills_dir: src/research_agent/prompts/skills
 
 research_agent:
-  # Which roles are prompted with the profile (and their procedures), and how a role is
-  # written as a signal a SKILL.md trigger names. The judge is left out so its audit stays
-  # independent of the agent it audits (ra-0003); the extractor, because it runs once per
-  # page and reads untrusted text — it needs its narrow instructions, not the profile.
+  # Which roles are prompted with the agent profile, and how a role is written as a
+  # procedure signal. Only the direct answer: every run role's own instructions already say
+  # all it needs, and the profile on top only cost tokens on each call (ra-0021).
   instructions:
-    profile_roles: [interviewer, planner, researcher, reflector, synthesizer, answerer]
+    profile_roles: [answerer]
     role_signal: "role:{role}"
   tasks:
     research_run: research_run

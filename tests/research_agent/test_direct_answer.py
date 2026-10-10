@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field
 from agent_platform.audit.ledger import NullAuditLedger
 from agent_platform.evals.entailment import LexicalEntailmentModel
 from agent_platform.evals.scoring import create_scoring_cascade
+from agent_platform.executor import ToolExecutorImpl
+from agent_platform.executor.registry_handler import RegistryToolHandler
 from agent_platform.guardrails.guards import PydanticValidator
 from agent_platform.guardrails.response import ResponseGuardrail
 from agent_platform.hallucination_protection import DetectionLadder
@@ -18,6 +20,7 @@ from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import ModelToolCall
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.types import StatusEvent
+from agent_platform.tools.path import ToolPath
 from agent_platform.tools.registry import NamespacedToolRegistry
 from agent_platform.tools.types import ToolDefinition, ToolResult
 from research_agent.config import get_agent_settings
@@ -86,8 +89,11 @@ def _answerer_over(model: ScriptedLLM) -> tuple[DirectAnswerer, list[StatusEvent
     caller = StructuredCaller(_Roles(model), PydanticValidator(), reporter)
     ladder = DetectionLadder(create_scoring_cascade(), entailment=LexicalEntailmentModel())
     grounding = AnswerGrounding(ResponseGuardrail(ladder), settings.grounding, settings.messages)
-    telemetry = RunTelemetry(reporter, NullAuditLedger(), trace_id="answer-test")
-    return DirectAnswerer(caller, registry, settings, telemetry, grounding), events
+    audit = NullAuditLedger()
+    telemetry = RunTelemetry(reporter, audit, trace_id="answer-test")
+    executor = ToolExecutorImpl(RegistryToolHandler(registry), reporter=reporter)
+    path = ToolPath(registry, executor, audit)
+    return DirectAnswerer(caller, registry, path, settings, telemetry, grounding), events
 
 
 def _stages(events: list[StatusEvent]) -> list[str]:
@@ -104,7 +110,9 @@ async def test_each_step_is_a_numbered_thought_action_observation_card() -> None
     )
     reply = await answerer.answer("weather in Pune tomorrow?")
     stages = _stages(events)
-    assert stages[:4] == ["thought", "action", "observation", "thought"]
+    # Platform cards (loop control, executor) sit between the steps; the step order is the claim.
+    steps = [stage for stage in stages if stage in {"thought", "action", "observation"}]
+    assert steps[:4] == ["thought", "action", "observation", "thought"]
     assert "answer" in stages and "answer_context" not in stages
     # One card per model call: no separate request, response or usage cards.
     assert not {"llm_request", "llm_response_received", "llm_call"} & set(stages)

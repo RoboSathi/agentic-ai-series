@@ -16,7 +16,7 @@ becomes a conversation turn.
 """
 
 from collections.abc import Callable
-from typing import Any, Protocol, get_args, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from agent_platform.commands import CommandError, CommandResult
 from agent_platform.commands._pool import PoolBackedCommand
@@ -28,22 +28,12 @@ from agent_platform.observability.queue import LittlesLawQueueModel
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.presentation.text_tree import value_lines
 from customer_support_agent.config import get_agent_settings
-from customer_support_agent.domain.models import REPLY_REVIEW, HitlRequest, OrderStatus
+from customer_support_agent.domain.models import REPLY_REVIEW, HitlRequest
 from customer_support_agent.graph.nodes.review_wait import review_wait_key
 from customer_support_agent.persistence.repositories import (
     HitlQueueRepository,
 )
 from customer_support_agent.review.queue import ReviewOutcome
-
-
-def _order_statuses() -> frozenset[str]:
-    """The statuses an order can hold, from the domain type itself.
-
-    Taken from the `OrderStatus` literal rather than restated here: a
-    second list of statuses is a list that goes stale the first time the
-    domain gains one.
-    """
-    return frozenset(get_args(OrderStatus))
 
 
 @runtime_checkable

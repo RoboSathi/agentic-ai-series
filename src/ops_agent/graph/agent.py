@@ -21,9 +21,15 @@ from agent_platform.observability import StageReporter
 from agent_platform.observability.langsmith import NullTraceExporter, TraceExporter, turn_trace
 from agent_platform.observability.units import close_task
 from agent_platform.security import MessageScreener, ScreenSubject
-from agent_platform.skills import AgentInstructions, SkillCatalog, build_agent_instructions
+from agent_platform.skills import (
+    Activation,
+    AgentInstructions,
+    SkillCatalog,
+    build_agent_instructions,
+)
 from agent_platform.tools import NamespacedToolRegistry
 from ops_agent.config.settings import OpsAgentSettings
+from ops_agent.graph.nodes import OpsNodes
 from ops_agent.graph.state import OpsState, initial_state
 
 # How a question ended, as its summary card and its task outcome name it. Each is
@@ -47,6 +53,7 @@ class OpsAgent:
     def __init__(
         self,
         graph: Any,
+        nodes: OpsNodes,
         registry: NamespacedToolRegistry,
         sources: list[McpToolSource],
         settings: OpsAgentSettings,
@@ -56,6 +63,7 @@ class OpsAgent:
         instructions: AgentInstructions | None = None,
     ) -> None:
         self._graph = graph
+        self._nodes = nodes
         self._registry = registry
         self._sources = sources
         self._settings = settings
@@ -117,9 +125,8 @@ class OpsAgent:
         problem = await self._connect()
         if problem is not None:
             return TurnResult(response=words.no_tools.format(error=problem), outcome=UNAVAILABLE)
-        state: OpsState = await self._graph.ainvoke(
-            initial_state(session_id, self._messages(query, session_id))
-        )
+        messages = await self._opening(query, session_id)
+        state: OpsState = await self._graph.ainvoke(initial_state(session_id, messages))
         self._remember(session_id, query, state["answer"])
         stopped = bool(state["messages"][-1].tool_calls)
         return TurnResult(response=state["response"], outcome=STOPPED if stopped else ANSWERED)
@@ -162,11 +169,26 @@ class OpsAgent:
             fields=sections,
         )
 
-    def _messages(self, query: str, session_id: str) -> list[Message]:
+    async def _opening(self, query: str, session_id: str) -> list[Message]:
+        """The turn's first messages: profile and procedure, history, the question, prefetches.
+
+        The procedure is chosen first, without a model call, so its prefetch reads (the
+        metric catalogue, the view list) are already answered when the model starts.
+        """
+        activation = self._instructions.select(frozenset(), query)
+        planned = _planned(activation)
+        # The card first — the procedure, what it reads first, and what `propose` will offer
+        # (every tool the server listed) — so no read appears without the procedure behind it.
+        offered = [tool.model_name for tool in self._registry.all_tools()]
+        reads = [name for _, name in planned if self._nodes.can_prefetch(name)]
+        self._instructions.announce(activation, prefetched=reads, offered=offered)
+        self._nodes.begin_turn()
+        prefetched, _ran = await self._nodes.prefetch(planned, session_id)
         return [
-            Message(role="system", content=self._instructions.compose(frozenset(), query).text),
+            Message(role="system", content=self._instructions.render(activation)),
             *self._history.get(session_id, []),
             Message(role="user", content=query),
+            *prefetched,
         ]
 
     def _remember(self, session_id: str, query: str, answer: str) -> None:
@@ -177,3 +199,12 @@ class OpsAgent:
 
 
 __all__ = ["ANSWERED", "BLOCKED", "OUTCOMES", "STOPPED", "UNAVAILABLE", "OpsAgent", "TurnResult"]
+
+
+def _planned(activation: Activation) -> list[tuple[str, str]]:
+    """(procedure, tool) for every prefetch read, each tool once, in procedure order."""
+    seen: dict[str, str] = {}
+    for item in activation.skills:
+        for name in item.skill.document.prefetch:
+            seen.setdefault(name, item.skill.name)
+    return [(procedure, name) for name, procedure in seen.items()]

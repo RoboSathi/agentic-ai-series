@@ -3,36 +3,27 @@ name: refund-workflow
 description: Handle a customer request to refund an existing order — check it is settled and not already refunded, confirm its full total, request the refund, and report what the result says.
 triggers: [intent:REQUEST_REFUND, route:llm_fallback]
 keywords: [refund, money back, reimburse, chargeback, refund this order]
+prefetch: [look_up_order, check_refund]
+tools: [look_up_order, check_refund, request_refund, list_my_orders]
 ---
 
 ## Preconditions
-- Treat any customer request mentioning a refund as a refund request.
-- Establish which order: if the customer did not give its number, call
-  `list_orders` and use the one they mean; if more than one could match,
-  ask which.
+- Any request mentioning a refund is a refund request.
 
 ## Procedure
-1. Call `get_order_status` (or `get_refund_status`) to read the order's
-   current state and full total. Do not guess an amount.
-2. A refund applies only once an order is settled: delivered, or
-   cancelled before delivery. An order still pending or shipped has
-   nothing to refund yet; a pending order can be cancelled instead.
-3. An order already refunded (`refund_status: issued` or `completed`)
-   cannot be refunded again — say so, and call neither `process_refund`
-   nor `cancel_order`.
-4. Otherwise call `process_refund` for the full total of the eligible
-   order, whatever its size. You are not told the amount above which a
-   refund needs a person's approval: the result says whether the refund
-   was issued or sent for review.
-5. Wait for the result, and report only what it says.
+1. The order's record and refund status are already above when the order is known;
+   otherwise call `list_my_orders` and use the one they mean.
+2. Only a settled order (delivered, or cancelled before delivery) can be refunded. A
+   pending or shipped order has nothing to refund yet; a pending one can be cancelled.
+3. An order already refunded (`refund_status` issued or completed) cannot be refunded
+   again — say so and call nothing.
+4. Otherwise call `request_refund` with the order's full total, whatever its size. You
+   are not told when a person must approve: the result says whether it was issued or
+   sent for review.
 
 ## Boundaries
-- Never infer a refund limit or an approval decision.
-- Never use recalled memory to override the order's current state.
-- When the result says the refund was queued for review, tell the
-  customer what the result says was done, that the rest has been sent for
-  review and that they will hear back soon, and call nothing else.
-- Do not claim the refund was issued unless the result confirms it.
+- When the result says it was queued for review, say so, say they will hear back soon,
+  and call nothing else.
 
 ## Completion
-Stop after the result has been accurately communicated.
+Stop after the result has been communicated.

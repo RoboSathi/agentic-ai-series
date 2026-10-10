@@ -18,7 +18,7 @@ from customer_support_agent.persistence import (
 from customer_support_agent.prompts.policy import policy_text
 from customer_support_agent.resilience import RefundSaga
 from customer_support_agent.tools import SupportTools
-from tests.conftest import ScriptedLLM, tool_call
+from tests.conftest import ScriptedLLM, refunded_to, tool_call
 
 
 @pytest.fixture
@@ -101,11 +101,13 @@ class TestRepositories:
         hitl.decide(request_id, "approved")  # type: ignore[arg-type]
         assert hitl.decide(request_id, "denied") is False  # type: ignore[arg-type]
 
-    def test_the_refund_ledger_excludes_reversals(self, refunds: RefundLedgerRepository) -> None:
+    def test_the_refund_ledger_excludes_reversals(
+        self, refunds: RefundLedgerRepository, seeded_pool: SqliteConnectionPool
+    ) -> None:
         refunds.record("r1", 10001, 1, Money.parse("32.00"), "damaged")
         refunds.record("r2", 10002, 1, Money.parse("10.00"), "refund")
         refunds.reverse("r2")
-        assert refunds.total_for_user(1) == Money.parse("32.00")
+        assert refunded_to(seeded_pool, 1) == Money.parse("32.00")
 
 
 class TestTools:
@@ -193,7 +195,10 @@ class TestRefundSaga:
         assert restored.refund_settles_at is None
 
     async def test_a_stale_order_is_not_refunded(
-        self, orders: OrdersRepository, refunds: RefundLedgerRepository
+        self,
+        orders: OrdersRepository,
+        refunds: RefundLedgerRepository,
+        seeded_pool: SqliteConnectionPool,
     ) -> None:
         """The issue is one conditional write: a snapshot that no longer holds pays nothing."""
         stale = orders.get(10001)
@@ -201,7 +206,7 @@ class TestRefundSaga:
         orders.set_refund_status(10001, "completed")
         result = await RefundSaga(orders, refunds).issue(stale, 32.0, "x")
         assert result.succeeded is False
-        assert refunds.total_for_user(1) == Money.zero()
+        assert refunded_to(seeded_pool, 1) == Money.zero()
 
     async def test_a_partial_amount_is_not_issued(
         self, orders: OrdersRepository, refunds: RefundLedgerRepository
@@ -226,7 +231,7 @@ class TestRefundSaga:
         assert order is not None
         await saga.issue(order, 32.0, "damaged")
         await saga.issue(order, 32.0, "damaged")
-        assert refunds.total_for_user(1) == Money.parse("32.00")
+        assert refunded_to(seeded_pool, 1) == Money.parse("32.00")
 
 
 class TestPolicy:
@@ -409,6 +414,15 @@ class TestAWithheldStageSaysNothing:
         assert "hallucination_check" not in await self._stages(False, seeded_pool)
 
 
+def _turn_state(metadata: dict[str, Any]) -> Any:
+    """The parts of a turn `_offered_tools` reads: its metadata, and its query.
+
+    The query matters now: the turn's procedures narrow what is offered (ADR 0010), and
+    they are selected from it. An empty one selects none, so nothing extra is narrowed.
+    """
+    return SimpleNamespace(metadata=metadata, query="", model_query="")
+
+
 class TestHarnessOffLeavesTheModelFree:
     """Reported from a live run: with the harness off, no tool ever ran.
 
@@ -439,7 +453,7 @@ class TestHarnessOffLeavesTheModelFree:
         self, seeded_pool: SqliteConnectionPool, restore_settings: None
     ) -> None:
         agent = self._agent(False, seeded_pool)
-        offered = await agent._offered_tools(SimpleNamespace(metadata={}))
+        offered = await agent._offered_tools(_turn_state({}))
         assert offered, "an absent classifier narrowed nothing, so nothing is excluded"
 
     async def test_a_classifier_that_permits_nothing_still_offers_nothing(
@@ -447,9 +461,7 @@ class TestHarnessOffLeavesTheModelFree:
     ) -> None:
         """The distinction the fix turns on, asserted from the other side."""
         agent = self._agent(True, seeded_pool)
-        offered = await agent._offered_tools(
-            SimpleNamespace(metadata={"intent": "UNKNOWN", "intent_tools": []})
-        )
+        offered = await agent._offered_tools(_turn_state({"intent": "UNKNOWN", "intent_tools": []}))
         assert offered == []
 
     async def test_the_security_narrowing_still_applies_without_a_classifier(
@@ -458,6 +470,6 @@ class TestHarnessOffLeavesTheModelFree:
         """Losing intent routing must not lose the injection guard's scoping."""
         agent = self._agent(False, seeded_pool)
         offered = await agent._offered_tools(
-            SimpleNamespace(metadata={"allowed_actions": ["support.get_order_status"]})
+            _turn_state({"allowed_actions": ["support.get_order_status"]})
         )
         assert [tool.qualified_name for tool in offered] == ["support.get_order_status"]

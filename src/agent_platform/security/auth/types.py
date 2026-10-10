@@ -1,10 +1,6 @@
 """Authorization value types (LLD §12.1)."""
 
-from datetime import datetime, timedelta
-
 from pydantic import BaseModel, Field
-
-from agent_platform.observability.types import utc_now
 
 # A permission is a capability name, not a role — roles are bundles of these.
 Permission = str
@@ -20,25 +16,6 @@ class Principal(BaseModel):
 
     actor: str
     roles: list[str] = Field(default_factory=list)
-
-
-class ElevationGrant(BaseModel):
-    """A scoped, time-boxed privilege grant (never a standing elevation)."""
-
-    actor: str
-    permission: Permission
-    granted_at: datetime = Field(default_factory=utc_now)
-    ttl_seconds: int = 0
-    reason: str = ""
-
-    @property
-    def expires_at(self) -> datetime:
-        """When this grant stops being honoured."""
-        return self.granted_at + timedelta(seconds=self.ttl_seconds)
-
-    def is_active(self, now: datetime | None = None) -> bool:
-        """Whether the grant is still within its TTL."""
-        return (now or utc_now()) < self.expires_at
 
 
 class AccessDecision(BaseModel):

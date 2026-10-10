@@ -186,14 +186,6 @@ class DuckDbEvalStore:
         self.execute("DELETE FROM eval_stages WHERE batch_id = ?", (stage.batch_id,))
         self._insert("eval_stages", stage.model_dump())
 
-    def latest_stage(self, run_id: str, stage: str) -> StageRecord | None:
-        rows = self.query(
-            "SELECT * FROM eval_stages WHERE run_id = ? AND stage = ? AND status = 'completed' "
-            "ORDER BY started_at DESC LIMIT 1",
-            (run_id, stage),
-        )
-        return StageRecord(**rows[0]) if rows else None
-
     def reusable_scores(
         self, transcript_hash: str, stage: str, grader_fingerprint: str
     ) -> list[Score]:

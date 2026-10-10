@@ -304,27 +304,6 @@ class SemanticStore:
             params = (*params, subject_id)
         return self._store.execute(sql, params).affected
 
-    def revoke(self, key: str) -> int:
-        """Hard delete every fact for this agent and key."""
-        result = self._store.execute(
-            "DELETE FROM platform_semantic_facts WHERE agent_id = ? AND key = ?",
-            (self._agent_id, key),
-        )
-        self._logger.info("Revoked semantic facts", key=key, removed=result.affected)
-        return result.affected
-
-    def decay_unconfirmed(self, older_than_days: int | None = None) -> int:
-        """Expire unconfirmed self-reported facts past their confirmation window."""
-        days = older_than_days or get_settings().memory.write_pipeline.decay_if_unconfirmed_days
-        cutoff = utc_now().timestamp() - days * 86400
-        expired = 0
-        for fact in self.search(MemoryQuery(limit=10_000)):
-            if fact.provenance.confirmed or fact.provenance.kind != "self_reported":
-                continue
-            if fact.provenance.ingestion_time.timestamp() < cutoff:
-                expired += self.supersede(fact.key, "decayed_unconfirmed")
-        return expired
-
     def _migrate_columns(self) -> None:
         """Add the columns later versions introduced to an older table."""
         present = self._table_columns("platform_semantic_facts")

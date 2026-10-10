@@ -12,7 +12,7 @@ from agent_platform.tui.widgets import StatusLineWidget
 class TestTheStatusLineIsAboveTheInput:
     def test_it_is_composed_before_the_chat_bar(self) -> None:
         order = [type(widget).__name__ for widget in AgenticTuiApp().compose()]
-        assert order.index("StatusLineWidget") < order.index("Input")
+        assert order.index("StatusLineWidget") < order.index("ChatPrompt")
         assert order.index("LiveStatusPanel") < order.index("StatusLineWidget")
 
 

@@ -14,6 +14,7 @@ from agent_platform.llm.resilient import ResilientLLMClient
 from agent_platform.llm.roles import RoleModelRouter
 from agent_platform.llm.types import CompletionRequest, CompletionResult, HealthCheckResult
 from agent_platform.resilience.hedge import HedgedCall
+from tests.conftest import unwrapped
 
 REQUEST = CompletionRequest(messages=[])
 
@@ -49,9 +50,6 @@ class _Observer:
 
     def backup_started(self, label: str, primary: str, backup: str, reason: str) -> None:
         self.events.append(("started", label, primary, backup, reason))
-
-    def backup_answered(self, label: str, primary: str, backup: str) -> None:
-        self.events.append(("answered", label, primary, backup))
 
 
 def _cascade(
@@ -111,10 +109,7 @@ async def test_a_slow_model_is_answered_by_its_backup_and_the_observer_is_told()
     primary, backup = _Model("big", delay=1.0), _Model("small")
     result = await _cascade(primary, backup, hedge=0.05, observer=observer).complete(REQUEST)
     assert result.model == "small"
-    assert observer.events == [
-        ("started", "role", "big", "small", "slow"),
-        ("answered", "role", "big", "small"),
-    ]
+    assert observer.events == [("started", "role", "big", "small", "slow")]
 
 
 async def test_a_failed_model_falls_back_in_order() -> None:
@@ -137,7 +132,7 @@ def test_a_role_with_backups_is_a_cascade_of_protected_models() -> None:
         provider="nim", model="big", fallbacks=[ModelRef(provider="nim", model="small")]
     )
     router = RoleModelRouter({"writer": spec, "judge": spec}, factory=factory)
-    client = router.client_for("writer")
+    client = unwrapped(router.client_for("writer"))
     assert isinstance(client, CascadingLLMClient)
     assert all(isinstance(tier, ResilientLLMClient) for tier in client._tiers)
     router.client_for("judge")
@@ -147,7 +142,7 @@ def test_a_role_with_backups_is_a_cascade_of_protected_models() -> None:
 def test_a_model_without_backups_is_just_protected() -> None:
     builder = ModelChainBuilder(lambda provider, model: _Model(model))
     client = builder.build(ModelRef(provider="nim", model="m"), ModelChainSettings(), label="x")
-    assert isinstance(client, ResilientLLMClient)
+    assert isinstance(unwrapped(client), ResilientLLMClient)
 
 
 async def test_the_result_says_how_many_attempts_it_took() -> None:

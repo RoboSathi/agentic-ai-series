@@ -196,25 +196,6 @@ class TestProvenanceLedger:
         )
         assert ledger.get("c1") is not None
 
-    def test_relabelling_preserves_what_it_replaced(self, pool: SqliteConnectionPool) -> None:
-        """A corrected eval set whose corrections are invisible is unreviewable."""
-        ledger = GoldenDatasetProvenanceLedger(pool)
-        ledger.record(
-            LabelProvenance(
-                case_id="c1", label="deny", basis="historical_practice", labeller="legacy"
-            )
-        )
-        updated = ledger.relabel("c1", "approve", "ada", "policy says approve")
-        assert updated.superseded == "deny" and updated.basis == "written_policy"
-
-    def test_bias_report_counts_practice_based_labels(self, pool: SqliteConnectionPool) -> None:
-        ledger = GoldenDatasetProvenanceLedger(pool)
-        ledger.record(
-            LabelProvenance(case_id="a", label="x", basis="historical_practice", labeller="l")
-        )
-        ledger.record(LabelProvenance(case_id="b", label="x", basis="written_policy", labeller="l"))
-        assert ledger.bias_report().practice_ratio == 0.5
-
 
 class TestManifest:
     def test_the_manifest_is_checked_in_and_loads(self) -> None:
@@ -223,11 +204,6 @@ class TestManifest:
     def test_every_entry_declares_a_scorer_and_a_threshold(self) -> None:
         for entry in load_manifest().entries:
             assert entry.scorer and entry.regression_threshold > 0
-
-    def test_reports_components_with_no_declared_eval(self) -> None:
-        """The gap is meant to be visible, not implicit."""
-        missing = load_manifest().missing_coverage(["evals.scoring", "not_covered"])
-        assert missing == ["not_covered"]
 
 
 class TestPyramid:

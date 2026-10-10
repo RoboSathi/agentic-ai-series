@@ -29,13 +29,11 @@ class _Args(BaseModel):
 class TestIntentClassification:
     def test_an_order_enquiry_unlocks_no_money_moving_tool(self) -> None:
         """The reported bug, stated as a property."""
-        permitted = CustomerSupportIntentRouter().permitted_tools(
-            "what is the status of order 10005"
-        )
-        assert permitted.isdisjoint(MONEY_MOVING)
+        intent = CustomerSupportIntentRouter().classify("what is the status of order 10005")
+        assert set(intent.allowed_tools).isdisjoint(MONEY_MOVING)
 
     def test_a_general_enquiry_unlocks_nothing(self) -> None:
-        assert CustomerSupportIntentRouter().permitted_tools("who are you") == set()
+        assert CustomerSupportIntentRouter().classify("who are you").allowed_tools == []
 
 
 class TestProviderLegalToolNames:
@@ -51,7 +49,8 @@ class TestProviderLegalToolNames:
         assert tool.wire_name == "support__get_order_status"
         assert "." not in tool.wire_name
 
-    def test_the_schema_sent_to_the_provider_uses_the_wire_name(self) -> None:
+    def test_the_schema_sent_to_the_provider_uses_the_model_name(self) -> None:
+        """The model reads its bare name; the namespace stays internal (ADR 0010)."""
         tool = ToolDefinition(
             name="process_refund",
             namespace="support",
@@ -59,7 +58,7 @@ class TestProviderLegalToolNames:
             args_schema=_Args,
             handler=lambda **_: None,
         )
-        assert tool.to_openai_schema()["function"]["name"] == "support__process_refund"
+        assert tool.to_openai_schema()["function"]["name"] == "process_refund"
 
     def test_a_wire_name_resolves_back_to_its_tool(self) -> None:
         """The model answers with the name it was shown."""

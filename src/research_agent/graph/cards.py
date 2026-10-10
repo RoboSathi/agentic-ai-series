@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from research_agent.domain.rubric import Rubric, RubricItem
-from research_agent.domain.scope import CoverageItem, KindVerdict, ScopeBrief
+from research_agent.domain.scope import KindVerdict, ScopeBrief
 from research_agent.presentation.narration import Line, bullets, describe, say, title_of, toned
 
 Card = tuple[str, dict[str, Any]]
@@ -136,14 +136,3 @@ def rubric_card(rubric: Rubric, brief: ScopeBrief | None, edited: str = "") -> C
             say("rubric.section.unknowns"): bullets(unknowns),
         }
     )
-
-
-def coverage_lines(items: Sequence[CoverageItem]) -> list[Line]:
-    """The checklist as toned lines (covered green, waived yellow, open plain)."""
-    tone = {"covered": "pass", "waived": "warn", "open": ""}
-    return [
-        toned(
-            say("coverage.line", status=item.status, item=title_of(item.item_id)), tone[item.status]
-        )
-        for item in items
-    ]

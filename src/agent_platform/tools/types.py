@@ -45,10 +45,17 @@ class ToolDefinition(BaseModel):
     voidable: bool = False
     requires_authority_rank: int = 5
     required_permission: str | None = None
+    # The name the model is offered (`tools.model_names`); empty means the bare `name`.
+    alias: str = ""
 
     @property
     def qualified_name(self) -> str:
         return f"{self.namespace}.{self.name}"
+
+    @property
+    def model_name(self) -> str:
+        """What the model calls this tool by — never the internal `namespace__name`."""
+        return self.alias or self.name
 
     @property
     def wire_name(self) -> str:
@@ -59,7 +66,7 @@ class ToolDefinition(BaseModel):
         return {
             "type": "function",
             "function": {
-                "name": self.wire_name,
+                "name": self.model_name,
                 "description": self.description,
                 "parameters": self.args_schema.model_json_schema(),
             },

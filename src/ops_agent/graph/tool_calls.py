@@ -19,6 +19,7 @@ from agent_platform.llm.types import ModelToolCall
 from agent_platform.loop_control.types import LoopControlReport
 from agent_platform.loop_control.watchdogs import ToolLoopControl
 from agent_platform.tools import NamespacedToolRegistry
+from agent_platform.tools.names import display_tool_name
 from agent_platform.tools.path import DUPLICATE, ToolOutcome, ToolPath, ToolTurn
 from agent_platform.tools.types import ToolCall, ToolResult
 from ops_agent.config.settings import OpsAgentSettings
@@ -99,7 +100,8 @@ class GovernedCalls:
         if outcome.stage == DUPLICATE:
             return CallOutcome(text=self._loop.reject_message(outcome.call), succeeded=False)
         if outcome.execution is None:
-            text = words.refused_tool.format(action=outcome.call.action, reason=outcome.reason)
+            action = display_tool_name(outcome.call.action)
+            text = words.refused_tool.format(action=action, reason=outcome.reason)
             return CallOutcome(text=text, succeeded=False, refused=True)
         return _outcome(outcome.execution.result)
 

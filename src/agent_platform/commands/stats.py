@@ -29,6 +29,7 @@ class StatsCommand:
 
     def __init__(self, store: DuckDbObservabilityStore | None = None) -> None:
         self._store = store
+        self._tables_ready = False
         self._scope: ConsoleScope | None = None
         self._words = get_settings().commands.stats
         self.summary = self._words.summary
@@ -105,10 +106,13 @@ class StatsCommand:
         return list(self._db().iter_rows(sql, (agent, session)))
 
     def _db(self) -> DuckDbObservabilityStore:
+        """The database, with every fact table present: a session may not have written them all."""
         if self._store is None:
             self._store = DuckDbObservabilityStore()
+        if not self._tables_ready:
             for fact in TIER1_FACTS:
                 self._store.execute_script(fact_table_ddl(fact))
+            self._tables_ready = True
         return self._store
 
 

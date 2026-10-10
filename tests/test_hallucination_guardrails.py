@@ -19,6 +19,9 @@ def test_pydantic_validator_rejects_wrong_shape():
 @pytest.mark.asyncio
 async def test_response_guardrail_passes_grounded_response():
     class FakeDetection:
+        # (backend, model) the grounding check is recorded under.
+        identity = ("test", "fake-detector")
+
         async def assess(self, text, evidence, resample=None):
             from agent_platform.hallucination_protection.types import (
                 DetectionVerdict,

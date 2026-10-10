@@ -124,12 +124,6 @@ class CumulativeLedger:
             exceeded=threshold is not None and total > threshold,
         )
 
-    def would_exceed(self, ledger_key: str, action_class: str, amount: Money) -> bool:
-        """Whether adding this amount would cross the threshold."""
-        if not self._enabled:
-            return False
-        return self.state(ledger_key, action_class, pending=amount).exceeded
-
     @logged("gatekeeper")
     def record(self, entry: LedgerEntry) -> LedgerState:
         """Record a consumed amount and return the resulting state."""

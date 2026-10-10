@@ -149,13 +149,6 @@ class LocalTracer:
             if span.ended_at is None:
                 self.end_span(span, result=span.result or "ok")
 
-    def spans_for(self, trace_id: str) -> list[Span]:
-        """Every span of one trace, in causal (start-time) order."""
-        return sorted(
-            [span for span in self._spans if span.trace_id == trace_id],
-            key=lambda span: span.started_at,
-        )
-
     @property
     def spans(self) -> list[Span]:
         return list(self._spans)

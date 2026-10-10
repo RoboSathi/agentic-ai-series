@@ -13,7 +13,7 @@ from agent_platform.primitives.money import Money
 from customer_support_agent.graph import build_agent
 from customer_support_agent.graph.agent import CustomerSupportAgent
 from customer_support_agent.persistence import OrdersRepository
-from tests.conftest import ScriptedLLM, tool_call
+from tests.conftest import ScriptedLLM, refunded_to, tool_call
 
 
 class TestNoExecutionPathBypassesTheGatekeeper:
@@ -59,7 +59,7 @@ class TestEveryRetryIsIdempotent:
         assert order is not None
         for _ in range(3):
             await saga.issue(order, 32.0, "damaged")
-        assert refunds.total_for_user(1) == Money.parse("32.00")
+        assert refunded_to(seeded_pool, 1) == Money.parse("32.00")
 
     def test_the_retry_policy_cannot_run_unkeyed(self) -> None:
         """Structural, not advisory."""

@@ -25,6 +25,7 @@ from agent_platform.llm.types import Message, ModelToolCall
 from agent_platform.logging.trace_context import get_current_trace_id
 from agent_platform.observability.types import utc_now
 from agent_platform.observability.units import close_task, current_task_kind, open_task
+from agent_platform.tools.names import display_tool_name
 from agent_platform.tools.path import DUPLICATE, NOT_OFFERED, ToolOutcome, ToolTurn
 from agent_platform.tools.types import ToolCall, ToolResult
 from agent_platform.verification import VerificationReport
@@ -391,9 +392,9 @@ class ExecutionNodes(NodeSupport):
             raise RuntimeError("A refused tool outcome carries its call, decision and authority")
         if outcome.stage == NOT_OFFERED:
             self._logger.warning("Model called a tool it was not offered", tool=call.action)
-            evidence = f"'{call.action}' is not available for this request."
+            evidence = f"'{display_tool_name(call.action)}' is not available for this request."
             result_fields = {
-                "tool": call.action,
+                "tool": display_tool_name(call.action),
                 "result": "not_offered",
                 "execution_status": "not_executed",
             }

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from pathlib import Path
 
 from agent_platform.config import get_settings
+from agent_platform.intent.laya import LayaIntentClassifier
 from agent_platform.intent.types import IntentCandidate, IntentClassifierInterface
 from agent_platform.llm.local_models import LocalSequenceClassifier
 from agent_platform.observability import checks
@@ -107,9 +109,20 @@ class HuggingFaceIntentClassifier(IntentClassifierInterface):
 
 
 @checks.recorded_dependency(checks.INTENT_MODEL, "classify", lambda _model: checks.LOCAL_MODEL)
-def create_intent_classifier() -> IntentClassifierInterface:
-    """Create the configured shared intent-classifier provider."""
+def create_intent_classifier(
+    choices: Mapping[str, str] | None = None, instructions: str = ""
+) -> IntentClassifierInterface:
+    """Create the configured shared intent-classifier provider.
+
+    `choices` (label → description) and `instructions` are the consuming
+    agent's: a provider that reads label descriptions (`laya_local`) needs
+    them, and one with labels of its own ignores them.
+    """
     settings = get_settings().llm.intent_classifier
     if settings.provider == "huggingface_local":
         return HuggingFaceIntentClassifier()
+    if settings.provider == "laya_local":
+        if not choices:
+            raise ValueError("the laya_local intent classifier needs the agent's labels")
+        return LayaIntentClassifier(choices, instructions)
     raise RuntimeError(f"Unsupported intent classifier provider: {settings.provider}")

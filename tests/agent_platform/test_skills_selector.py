@@ -68,7 +68,7 @@ class TestTriggers:
 
     def test_the_reason_names_the_signal(self, selector: SkillSelector) -> None:
         [chosen] = selector.select([_REFUND], frozenset({"intent:REFUND"}), "")
-        assert chosen.reason == "trigger:intent:REFUND"
+        assert chosen.reason == "matched intent REFUND"
 
     def test_an_always_skill_joins_every_turn(self, selector: SkillSelector) -> None:
         chosen = selector.select([_ALWAYS, _REFUND], frozenset({"intent:REFUND"}), "")
@@ -93,7 +93,7 @@ class TestTheLexicalFallback:
     def test_a_query_naming_the_task_selects_it(self, selector: SkillSelector) -> None:
         chosen = selector.select([_REFUND, _TRACK], frozenset(), "where is my parcel delivery")
         assert _names(chosen) == ["track-flow"]
-        assert chosen[0].reason.startswith("lexical:")
+        assert chosen[0].reason.startswith("the question mentions it")
 
     def test_an_unrelated_query_selects_nothing(self, selector: SkillSelector) -> None:
         assert selector.select([_REFUND, _TRACK], frozenset(), "hello there") == ()

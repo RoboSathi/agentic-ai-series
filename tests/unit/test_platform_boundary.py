@@ -6,12 +6,13 @@ platform — which is the coupling these tests exist to keep out, and which
 was real: the TUI and half the console commands imported the refund agent
 directly.
 
-The parked-package tests here are the other half of the same rule. A
-module boundary that exists but has no import test is a folder, not a
-boundary.
+Only shipped files are read: output generated into the package at run time
+(the Rill project an agent's overlay renders) is gitignored, and is the
+agent's, not the platform's.
 """
 
 import pathlib
+import subprocess
 
 import pytest
 
@@ -29,6 +30,20 @@ FORBIDDEN_NAMES = tuple(
 # Words that belong to one agent's business. The platform ships mechanisms;
 # a default that says "refund" has decided what every agent does.
 DOMAIN_WORDS = ("refund",)
+
+
+def _shipped(pattern: str) -> list[pathlib.Path]:
+    """The platform's files matching `pattern`, without what git ignores (generated output)."""
+    paths = sorted(COMMONS.rglob(pattern))
+    ignored = subprocess.run(
+        ["git", "check-ignore", "--stdin"],
+        input="\n".join(str(path) for path in paths),
+        capture_output=True,
+        text=True,
+        cwd=SRC.parent,
+        check=False,
+    ).stdout.splitlines()
+    return [path for path in paths if str(path) not in set(ignored)]
 
 
 def _python_files() -> list[pathlib.Path]:
@@ -103,7 +118,7 @@ class TestTheePlatformNamesNoAgent:
 
         offenders = [
             f"{path.relative_to(COMMONS)}: {value}"
-            for path in sorted(COMMONS.rglob("*.yaml"))
+            for path in _shipped("*.yaml")
             for value in _yaml_strings(yaml.safe_load(path.read_text()))
             if word in value.casefold()
         ]
@@ -113,7 +128,7 @@ class TestTheePlatformNamesNoAgent:
     def test_no_config_file_names_a_specific_agent(self, name: str) -> None:
         offenders = [
             str(path.relative_to(COMMONS))
-            for path in sorted(COMMONS.rglob("*.yaml"))
+            for path in _shipped("*.yaml")
             if name in path.read_text()
         ]
         assert offenders == [], (
@@ -125,9 +140,7 @@ class TestTheePlatformNamesNoAgent:
     def test_no_document_or_template_names_a_specific_agent(self, name: str) -> None:
         """READMEs and report templates ship with the platform too."""
         offenders = [
-            str(path.relative_to(COMMONS))
-            for path in sorted(COMMONS.rglob("*.md"))
-            if name in path.read_text()
+            str(path.relative_to(COMMONS)) for path in _shipped("*.md") if name in path.read_text()
         ]
         assert offenders == [], f"agent_platform documents name '{name}' in: {offenders}"
 
@@ -217,14 +230,3 @@ class TestParkedPackagesAreRealBoundaries:
         from agent_platform.tools import ToolSource
 
         assert set(dir(ToolSource)) <= set(dir(McpToolSource))
-
-    def test_multi_agent_is_still_deliberately_empty(self) -> None:
-        import agent_platform.multi_agent as multi_agent
-
-        assert multi_agent.__all__ == []
-
-    def test_sandbox_and_prompt_compilation_import(self) -> None:
-        import agent_platform.prompt_compilation as prompt_compilation
-        import agent_platform.sandbox as sandbox
-
-        assert sandbox.__all__ and prompt_compilation.__all__

@@ -68,7 +68,9 @@ class _Reader:
 
 
 def _worker(hits: list[SearchHit]) -> tuple[ResearcherWorker, _Gateway, RunResources]:
-    brief = ScopeBrief(archetype="qa", topic="AI news", recency_days=30, budget=BUDGET)
+    brief = ScopeBrief(
+        archetype="fact_verification", topic="AI news", recency_days=30, budget=BUDGET
+    )
     contract = Contract.freeze("run-test", brief, Rubric(), BUDGET).model_copy(
         update={"frozen_at": NOW}
     )

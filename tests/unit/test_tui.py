@@ -40,8 +40,9 @@ class TestStageLabels:
 
     def test_a_namespaced_tool_resolves_to_the_same_wording(self) -> None:
         registry = StageLabelRegistry()
+        # Every spelling reads as the tool's model name (ADR 0010).
         assert registry.tool_label("support.process_refund") == registry.tool_label(
-            "process_refund"
+            "support__process_refund"
         )
 
 
@@ -348,7 +349,8 @@ class TestTheMultiLinePromptCompletes:
         from agent_platform.tui.app import AgenticTuiApp, ChatPrompt
 
         app = AgenticTuiApp()
-        async with app.run_test(size=(100, 20)) as pilot:
+        # Short enough that /help's output cannot fit, whatever the panel's chrome.
+        async with app.run_test(size=(100, 12)) as pilot:
             app.query_one("#query", ChatPrompt).text = "/help"
             await pilot.press("enter")
             await pilot.pause()

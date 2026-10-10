@@ -139,10 +139,4 @@ class LedgerState(BaseModel):
         )
 
 
-class AuthorityContextMeta(BaseModel):
-    """Serialized authority context for the audit trail."""
-
-    data: dict[str, Any] = Field(default_factory=dict)
-
-
 AuthorityContext.model_rebuild()

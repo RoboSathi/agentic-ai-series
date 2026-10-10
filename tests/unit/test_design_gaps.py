@@ -11,7 +11,6 @@ from typing import Any
 
 import pytest
 
-from agent_platform.config.versions import AUTHORITY_COMPONENT, VersionManifest
 from agent_platform.evals.entailment import LexicalEntailmentModel, create_entailment_model
 from agent_platform.llm.encoders import (
     HostedCrossEncoderRanker,
@@ -23,7 +22,6 @@ from agent_platform.memory import MemoryFacade
 from agent_platform.observability.postmortem import Postmortem, PostmortemRegister
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.security import PIIFilterImpl
-from agent_platform.tools import NamespacedToolRegistry, ToolDefinition
 from customer_support_agent.loop_control import (
     GroundedCritic,
     IndependentScorer,
@@ -102,40 +100,6 @@ class TestHostedEncoders:
     def test_the_factory_falls_back_without_a_key(self, monkeypatch: Any) -> None:
         monkeypatch.delenv("hf_api_key", raising=False)
         assert isinstance(create_entailment_model(), LexicalEntailmentModel)
-
-
-class TestGuardrailsOnTheToolPath:
-    """FR-8/FR-10: the registry validated arguments itself, so repair never ran."""
-
-    def _registry(self) -> NamespacedToolRegistry:
-        from pydantic import BaseModel
-
-        class Args(BaseModel):
-            order_id: int
-
-        registry = NamespacedToolRegistry()
-        registry.register(
-            ToolDefinition(
-                name="get_order",
-                namespace="support",
-                description="d",
-                args_schema=Args,
-                handler=lambda **_: None,
-            )
-        )
-        return registry
-
-    def test_clean_arguments_validate(self) -> None:
-        assert self._registry().build_call("support.get_order", '{"order_id": 10001}') is not None
-
-    def test_mechanically_malformed_arguments_are_repaired(self) -> None:
-        """A fenced JSON block is a formatting mistake, not an authority one."""
-        call = self._registry().build_call("support.get_order", '```json\n{"order_id": 10001}\n```')
-        assert call is not None and call.params == {"order_id": 10001}
-
-    def test_genuinely_invalid_arguments_are_still_refused(self) -> None:
-        """Repair is mechanical; it must never guess at what was meant."""
-        assert self._registry().build_call("support.get_order", '{"order_id": "abc"}') is None
 
 
 class TestTracesAreRedacted:
@@ -234,25 +198,6 @@ class TestDeliberation:
         assert await loop.score("Order 10001 was delivered", ["Order 10001 was delivered"]) > 0.0
 
 
-class TestVersioning:
-    """FR-48: nine components, versioned independently."""
-
-    def test_every_component_reports_a_version(self) -> None:
-        for component in VersionManifest().components():
-            assert component.version, component.component
-
-    def test_the_authority_path_never_canaries(self) -> None:
-        """Two live policies mean one action is allowed and denied at once."""
-        manifest = VersionManifest()
-        assert manifest.canaryable(AUTHORITY_COMPONENT) is False
-        policy = next(c for c in manifest.components() if c.component == AUTHORITY_COMPONENT)
-        assert policy.canaryable is False
-
-    def test_a_decision_records_the_tuple_it_was_made_under(self) -> None:
-        tuple_ = VersionManifest().decision_tuple()
-        assert {"model_version", "policy_version", "data_version", "prompt_version"} <= set(tuple_)
-
-
 class TestPostmortems:
     """FR-46: the template, and the eval it must produce."""
 
@@ -283,7 +228,6 @@ class TestPostmortems:
         register.record(self._filled())
         register.record(self._filled(permanent_eval="").model_copy(update={"incident_id": "INC-2"}))
         assert [p.incident_id for p in register.outstanding()] == ["INC-2"]
-        assert register.regression_evals() == ["eval-0042"]
 
 
 class TestPromptIsVersioned:
