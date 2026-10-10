@@ -7,8 +7,9 @@ claim no tool result supports does not reach the customer.
 
 from typing import Any
 
+from agent_platform.config import get_settings
 from agent_platform.guardrails import CustomerResponse, ResponseGuardrailResult
-from agent_platform.hallucination_protection.checker import Resampler
+from agent_platform.hallucination_check.checker import Resampler
 from agent_platform.llm.types import CompletionRequest, Message
 from agent_platform.observability.types import StatusKind
 from agent_platform.resilience import (
@@ -147,7 +148,8 @@ class FinalizeNodes(NodeSupport):
             messages=self._reply_messages(state),
             json_schema=CustomerResponse.model_json_schema(),
         )
-        self._report_llm_request(request, purpose="reply_revision")
+        purposes = get_settings().observability.llm_purposes
+        self._report_llm_request(request, purpose=purposes.reply_revision)
         try:
             result = await self._call_model(request, state)
         except Exception as exc:
@@ -168,10 +170,7 @@ class FinalizeNodes(NodeSupport):
                 "escalated": True,
                 "metadata": {**state.metadata, "external_dependency_failed": True},
             }
-        self._report_llm_response(
-            result,
-            purpose="reply_revision",
-        )
+        self._report_llm_response(result, purpose=purposes.reply_revision)
         reply, schema_fields = self._response_guardrail.validate_schema(result.content)
         if reply is None or not is_customer_ready(reply):
             reply = FALLBACK_REPLY
@@ -200,9 +199,9 @@ class FinalizeNodes(NodeSupport):
                 messages=[Message(role="user", content=repair_prompt)],
                 json_schema=CustomerResponse.model_json_schema(),
             )
-            self._report_llm_request(request, purpose="hallucination_repair")
+            self._report_llm_request(request, purpose=purposes.hallucination_repair)
             repaired_result = await self._call_model(request, state)
-            self._report_llm_response(repaired_result, purpose="hallucination_repair")
+            self._report_llm_response(repaired_result, purpose=purposes.hallucination_repair)
             repaired, _ = self._response_guardrail.validate_schema(repaired_result.content)
             return repaired or FALLBACK_REPLY
 

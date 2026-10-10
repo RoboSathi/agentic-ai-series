@@ -11,8 +11,8 @@ claim here is the record itself.
 from agent_platform.context.types import Chunk
 from agent_platform.evals import create_scoring_cascade
 from agent_platform.guardrails import ResponseGuardrail, ResponseGuardrailResult
-from agent_platform.hallucination_protection import DetectionLadder
-from agent_platform.hallucination_protection.direct import RECORD_STATE_MISMATCH
+from agent_platform.hallucination_check import DetectionLadder
+from agent_platform.hallucination_check.direct import RECORD_STATE_MISMATCH
 from agent_platform.primitives.money import Money
 from customer_support_agent.domain.identity import Customer
 from customer_support_agent.domain.models import Order

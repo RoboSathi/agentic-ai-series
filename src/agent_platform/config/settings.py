@@ -599,6 +599,20 @@ class LoopControlWords(BaseModel):
     because: dict[str, str]
 
 
+class LlmPurposeWords(BaseModel):
+    """Why a model call was made, as its LLM REQUEST / RESPONSE cards name it.
+
+    `next_action` is a loop step's call, which may ask for a tool or answer: its request says
+    so, and its response names what it produced (`tool_selection` or `reply`).
+    """
+
+    next_action: str
+    tool_selection: str
+    reply: str
+    reply_revision: str
+    hallucination_repair: str
+
+
 class StepEventWords(BaseModel):
     """Headings of the cards every agent's tool-use loop draws (`observability/step_events.py`)."""
 
@@ -631,6 +645,7 @@ class ObservabilitySettings(YamlBackedSettings):
     llm_request_heading: str
     llm_response_heading: str
     llm_tool_requested_heading: str
+    llm_purposes: LlmPurposeWords
     step_events: StepEventWords
     # What a tool card shows when the model's arguments are not JSON.
     unparseable_arguments: str
@@ -1367,12 +1382,15 @@ class HallucinationMethodWords(BaseModel):
     record: str
     logprobs: str
     restated: str
+    restated_source: str
     nothing: str
     nli: str
+    # A claim the second-opinion model confirmed: `{model}`, `{prob}`. (`nli`: `{model}`, `{score}`.)
+    confirmed: str
 
 
 class HallucinationLevelWords(BaseModel):
-    """How the hallucination check's levels are named (`hallucination_protection/levels.py`)."""
+    """How the hallucination check's levels are named (`hallucination_check/levels.py`)."""
 
     row: str
     confidence: str
@@ -1398,7 +1416,7 @@ class ConfidenceSettings(BaseModel):
 
 
 class FactAttributeSettings(BaseModel):
-    """How a claim talks about one typed fact (`hallucination_protection/ledger.py`)."""
+    """How a claim talks about one typed fact (`hallucination_check/ledger.py`)."""
 
     type: Literal["text", "money", "date", "duration", "number", "flag"]
     # Patterns that say a claim is about this attribute ("delivered", "settle").
@@ -1423,10 +1441,53 @@ class FactSettings(BaseModel):
     state_attribute: str = ""
 
 
-class HallucinationProtectionSettings(YamlBackedSettings):
+class ClaimConfirmerSettings(BaseModel):
+    """A second opinion on a claim NLI left undecided: it may confirm, never refute.
+
+    A local decision model reads the claim beside its source's text and answers one choice
+    question. Only its "supported" answer, at or above `min_score`, changes anything: the claim
+    becomes supported. Contradictions and removals stay with NLI and the deterministic checks.
+    """
+
+    enabled: bool
+    # The checkpoint (an agent's overlay names it; the platform names none).
+    model: str
+    subfolder: str
+    local_model_dir: str
+    device: str
+    download_if_missing: bool
+    # The question: its id, the state keys the claim and its evidence go under, the
+    # instruction, and each option's description. `supported_label` is the one that confirms.
+    question_id: str
+    claim_key: str
+    evidence_key: str
+    instructions: str
+    criteria: dict[str, str]
+    supported_label: str
+    min_score: float = Field(ge=0.0, le=1.0)
+    # The source text handed over with a claim: the lines most like it, in source order, up to
+    # this many characters (the model reads 512 tokens of state and question together).
+    max_evidence_chars: int = Field(ge=1)
+    # Sources asked, best first, before the claim is left unverified.
+    max_sources: int = Field(ge=1)
+
+    @property
+    def resolved_local_model_dir(self) -> Path:
+        return resolve_path(self.local_model_dir)
+
+
+class JoinedPremiseSettings(BaseModel):
+    """One more NLI call for a claim a tier left undecided: its relevant evidence from one
+    source, joined in the order the source gave it. It may support, never refute."""
+
+    enabled: bool
+    max_chars: int = Field(ge=1)
+
+
+class HallucinationCheckSettings(YamlBackedSettings):
     """Detection ladder thresholds (LLD)."""
 
-    _yaml_section = "hallucination_protection"
+    _yaml_section = "hallucination_check"
     enforce_grounding: bool
     confidence: ConfidenceSettings
     levels: HallucinationLevelWords
@@ -1463,6 +1524,19 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     # Retrieved evidence below this similarity is shown but never sent to
     # NLI: text unrelated to a claim can neither support nor refute it.
     evidence_min_similarity: float
+    # Consecutive sentences of one tool result read as one premise as well as one by one
+    # (1: one by one only). A passage may support a claim, never refute it.
+    passage_window: int = Field(ge=1)
+    # Tool results are web pages: wrapped lines rejoined, markdown marks off, a repeated line
+    # read once. Off for records, whose every line is a fact as written.
+    tool_results_are_pages: bool
+    joined_premise: JoinedPremiseSettings
+    confirmer: ClaimConfirmerSettings
+    # The card's and the log's name for a model, by its id (`model_labels`); unlisted: its
+    # id's last part.
+    model_labels: dict[str, str] = Field(default_factory=dict)
+    # Appended to a kept sentence that holds a claim nothing verified ("" leaves it unmarked).
+    undetermined_marker: str
     # What an identifier looks like to this agent. When set, evidence may
     # refute a claim that names identifiers only if it names one of them:
     # NLI reads a record about order B as contradicting a claim about
@@ -1476,6 +1550,9 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     # Business vocabulary, so an agent overrides it; the platform ships the
     # shape and one worked default.
     conversational_openers: list[str]
+    # An offer of help ("If you'd like …, I can help with that"): conversation whatever it names,
+    # because it asserts nothing. Matched at the claim's start.
+    offer_pattern: str
     record_identifier_pattern: str
     # What a record id is called in a finding or a provenance line ("order 10042").
     record_identifier_label: str
@@ -1497,7 +1574,7 @@ class HallucinationProtectionSettings(YamlBackedSettings):
     # unsupported claim must not be given an unbounded generative retry loop.
     max_repair_attempts: int = Field(default=1, ge=0, le=3)
 
-    model_config = SettingsConfigDict(env_prefix="HALLUCINATION_PROTECTION__")
+    model_config = SettingsConfigDict(env_prefix="HALLUCINATION_CHECK__")
 
 
 class LedgerSettings(BaseModel):
@@ -2281,6 +2358,8 @@ class GroundingCardSettings(BaseModel):
     corrected: str
     no_evidence: str
     no_evidence_either_way: str
+    # Beside a model that read several lines at once (the second opinion): `{count}`.
+    lines_read: str
     # A sentence's content-token mean at or above `pass` reads as sure, at or above
     # `warn` as hesitant, below as guessed; a token below `warn` is marked in its line.
     confidence_bands: dict[str, float]
@@ -2499,8 +2578,8 @@ class AppConfig(BaseSettings):
     memory: MemorySettings = Field(default_factory=lambda: MemorySettings())  # type: ignore[call-arg]
     skills: SkillSettings = Field(default_factory=lambda: SkillSettings())  # type: ignore[call-arg]
     guardrails: GuardrailsSettings = Field(default_factory=lambda: GuardrailsSettings())  # type: ignore[call-arg]
-    hallucination_protection: HallucinationProtectionSettings = Field(
-        default_factory=lambda: HallucinationProtectionSettings()  # type: ignore[call-arg]
+    hallucination_check: HallucinationCheckSettings = Field(
+        default_factory=lambda: HallucinationCheckSettings()  # type: ignore[call-arg]
     )
     gatekeeper: GatekeeperSettings = Field(default_factory=lambda: GatekeeperSettings())  # type: ignore[call-arg]
     security: SecuritySettings = Field(default_factory=lambda: SecuritySettings())  # type: ignore[call-arg]

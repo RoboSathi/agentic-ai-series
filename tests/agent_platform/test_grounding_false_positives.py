@@ -5,8 +5,8 @@ import pytest
 from agent_platform.config import get_settings
 from agent_platform.config.settings import RoleModelSettings
 from agent_platform.evals.entailment import LexicalEntailmentModel, negation_pattern
-from agent_platform.hallucination_protection.claims import ClaimDecomposer, specifics
-from agent_platform.hallucination_protection.direct import amounts
+from agent_platform.hallucination_check.claims import ClaimDecomposer, specifics
+from agent_platform.hallucination_check.direct import amounts
 from agent_platform.llm.roles import RoleModelRouter
 from agent_platform.llm.types import CompletionRequest, Message
 from agent_platform.llm.typography import TypographyNormaliser
@@ -51,7 +51,7 @@ def test_the_connectives_that_split_a_claim_are_configuration() -> None:
     sentence = "OpenAI shipped models and agents because demand grew."
     default = [c.text for c in ClaimDecomposer().decompose(sentence)]
     assert len(default) == 3  # the platform splits on "and" and on "because"
-    settings.hallucination_protection.claim_conjunctions = ["because"]
+    settings.hallucination_check.claim_conjunctions = ["because"]
     from agent_platform.config import settings as module
 
     original = module._config_instance

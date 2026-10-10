@@ -51,8 +51,9 @@ from agent_platform.executor import ToolExecutorImpl
 from agent_platform.executor.registry_handler import RegistryToolHandler
 from agent_platform.guardrails.guards import PydanticValidator
 from agent_platform.guardrails.response import ResponseGuardrail
-from agent_platform.hallucination_protection.checker import DetectionLadder
-from agent_platform.hallucination_protection.confidence import ConfidenceCheck
+from agent_platform.hallucination_check.checker import DetectionLadder
+from agent_platform.hallucination_check.confidence import ConfidenceCheck
+from agent_platform.hallucination_check.confirmer import create_claim_confirmer
 from agent_platform.intent.exemplar import ExemplarIntentClassifier
 from agent_platform.llm.embeddings import EmbeddingClient, create_embedding_client
 from agent_platform.llm.http import create_http_client
@@ -107,6 +108,7 @@ from research_agent.graph.state import StateTypes
 from research_agent.guardrails.answer_grounding import AnswerGrounding
 from research_agent.guardrails.injection import InjectionScreen
 from research_agent.guardrails.input_screen import InputScreen
+from research_agent.guardrails.page_evidence import PageEvidence
 from research_agent.guardrails.refusal import RefusalRule
 from research_agent.llm.structured import RoleClients, StructuredCaller
 from research_agent.observability.telemetry import RunTelemetry
@@ -117,6 +119,7 @@ from research_agent.research.extractor import QuarantinedExtractor, Unquarantine
 from research_agent.research.recency import RecencyGuard
 from research_agent.research.reflector import GapAnalyzer, Reflector
 from research_agent.research.resources import RunResources
+from research_agent.research.snippets import SnippetSources
 from research_agent.research.stop_rules import stop_rule_for
 from research_agent.rubric.editor import RubricEditor
 from research_agent.rubric.generator import RubricGenerator
@@ -130,6 +133,7 @@ from research_agent.scoping.window import TimeWindowParser
 from research_agent.synthesis.citation_guard import CitationGuard
 from research_agent.synthesis.synthesizer import Synthesizer
 from research_agent.tools import build_answer_registry
+from research_agent.tools.web import FetchUrl
 
 GatewayFactory = Callable[[], WebGateway]
 JUDGE, SYNTHESIZER = "judge", "synthesizer"
@@ -358,13 +362,11 @@ def _direct_answerer(
     if not posture.is_on("direct_answer"):
         return None
     web = gateway() if gateway is not None else create_web_gateway(_answer_web(agent))
+    screen = _injection_screen(agent, posture, InstructionDataSeparator())
     registry = build_answer_registry(
-        agent.answer,
-        web,
-        create_http_client(agent.answer.weather.timeout_seconds),
-        _injection_screen(agent, posture, InstructionDataSeparator()),
+        agent.answer, web, create_http_client(agent.answer.weather.timeout_seconds), screen
     )
-    grounding = _answer_grounding(agent, posture)
+    grounding = _answer_grounding(agent, posture, FetchUrl(web, agent.answer, screen))
     earlier = EarlierRunsSource(archive, agent.answer.context, agent.answer.messages)
     context = AnswerContext(
         memory,
@@ -441,16 +443,24 @@ def _context_window(
     return ContextWindow(pipeline, StrategySelector(), health)
 
 
-def _answer_grounding(agent: ResearchAgentSettings, posture: FeatureSet) -> AnswerGrounding | None:
+def _answer_grounding(
+    agent: ResearchAgentSettings, posture: FeatureSet, fetch: FetchUrl
+) -> AnswerGrounding | None:
     """The answer's grounding check, wired as the support agent wires its own — or None.
 
-    Level 1 (token confidence) travels inside its HALLUCINATION CHECK card, first.
+    Level 1 (token confidence) travels inside its HALLUCINATION CHECK card, first. `fetch`
+    reads a cited page the loop saw only as a snippet, so the claim meets the page itself.
     """
     if not posture.is_on("direct_answer.grounding"):
         return None
-    ladder = DetectionLadder(create_scoring_cascade(), entailment=entailment_for(agent))
+    ladder = DetectionLadder(
+        create_scoring_cascade(),
+        entailment=entailment_for(agent),
+        confirmer=create_claim_confirmer(),
+    )
     guardrail = ResponseGuardrail(ladder)
-    return AnswerGrounding(guardrail, agent.answer.grounding, agent.answer.messages)
+    pages = PageEvidence(fetch, agent.answer.grounding)
+    return AnswerGrounding(guardrail, agent.answer.grounding, agent.answer.messages, pages)
 
 
 def _scoping_parts(
@@ -625,8 +635,10 @@ def _resources_factory(
             on_exhausted=lambda report: _announce_cap(telemetry, report, agent),
         )
         caller.bind_budget(budget)
+        # A page that could not be read may be cited through its snippet, checked verbatim.
+        snippets = SnippetSources(web)
         validator = (
-            VerbatimSpanValidator(web)
+            VerbatimSpanValidator(snippets)
             if posture.is_on("citation_verification")
             else NonEmptySpanValidator()
         )
@@ -663,6 +675,7 @@ def _resources_factory(
             screen=_injection_screen(agent, posture, separator),
             page_reads=ResourcePoolBulkhead(agent.research.page_concurrency),
             recency=recency_guard(agent),
+            snippets=snippets,
         )
 
     return build

@@ -22,6 +22,8 @@ class Citation(BaseModel):
     span: str
     page_hash: str
     retrieved_at: datetime
+    # Why the entry is weaker evidence ("search snippet only"), or "" for a page read in full.
+    caveat: str = ""
 
 
 class ReportSection(BaseModel):
@@ -54,6 +56,9 @@ class Report(BaseModel):
     rejected_codes: dict[str, str] = Field(default_factory=dict)
     budget_notes: list[str] = Field(default_factory=list)
     known_unknowns: list[str] = Field(default_factory=list)
+    # Said above the findings when they rest on weaker evidence than the run was meant to
+    # gather (a best-effort report written from search results alone); "" otherwise.
+    notice: str = ""
 
     def section(self, heading: str) -> ReportSection | None:
         return next((section for section in self.sections if section.heading == heading), None)

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from agent_platform.config import get_settings
-from agent_platform.hallucination_protection.direct import amounts
+from agent_platform.hallucination_check.direct import amounts
 from agent_platform.memory import ProceduralStore
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.primitives.money import Money

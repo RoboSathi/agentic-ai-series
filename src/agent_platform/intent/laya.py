@@ -12,29 +12,25 @@ once into its folder, loaded from that folder ever after, resident for the proce
 from __future__ import annotations
 
 import asyncio
-import shutil
-import tempfile
 import threading
-from collections.abc import Callable, Mapping
-from functools import cache
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from agent_platform.config import get_settings
 from agent_platform.config.settings import IntentClassifierSettings
 from agent_platform.intent.types import IntentCandidate
+from agent_platform.llm.local_laya import (
+    Fetcher,
+    Loader,
+    checkpoint_folder,
+    fetch_checkpoint,
+    load_laya,
+)
 from agent_platform.logging import get_logger
 
-# Files a Laya checkpoint folder cannot load without.
-_REQUIRED_FILES = ("model.safetensors", "rl_agent_config.json")
-_INSTALL = "make install"
 _SCORE_TYPE = "laya_calibrated"
 _MIN_LABELS = 2
-
-# (checkpoint folder, device) → a loaded Laya agent.
-Loader = Callable[[Path, str], Any]
-# (repository, subfolder, destination folder) → the checkpoint written there.
-Fetcher = Callable[[str, str, Path], None]
 
 
 class LayaIntentClassifier:
@@ -59,8 +55,8 @@ class LayaIntentClassifier:
                 "criteria": dict(choices),
             }
         }
-        self._loader = loader or _load_laya
-        self._fetcher = fetcher or _fetch_checkpoint
+        self._loader = loader or load_laya
+        self._fetcher = fetcher or fetch_checkpoint
         self._agent: Any = None
         self._lock = threading.Lock()
         self._logger = get_logger("intent")
@@ -110,58 +106,14 @@ class LayaIntentClassifier:
 
     def _artifact(self) -> Path:
         """The checkpoint folder, fetched first if it is missing and fetching is allowed."""
-        folder = self.cache_path
-        if _complete(folder):
-            return folder
-        if not self._settings.download_if_missing:
-            raise RuntimeError(f"Laya checkpoint unavailable at {folder}")
-        self._logger.warning("Laya checkpoint missing; downloading", model=self.model_name)
-        self._fetcher(self._laya.model, self._laya.subfolder, folder)
-        return folder
+        return checkpoint_folder(
+            self.cache_path,
+            self._laya.model,
+            self._laya.subfolder,
+            download=self._settings.download_if_missing,
+            fetcher=self._fetcher,
+        )
 
     def _require_enabled(self) -> None:
         if not self._settings.enabled:
             raise RuntimeError("intent classifier disabled")
-
-
-def _complete(folder: Path) -> bool:
-    return all((folder / name).exists() for name in _REQUIRED_FILES)
-
-
-def _load_laya(folder: Path, device: str) -> Any:
-    """The checkpoint in this folder, loaded once per process however many routers ask.
-
-    Every `/harness` rebuild builds a new router; reloading ~800 MB of weights
-    for each would cost seconds per toggle, for weights that never change.
-    """
-    return _resident(str(folder), device)
-
-
-@cache
-def _resident(folder: str, device: str) -> Any:
-    try:
-        import laya
-    except ImportError as missing:
-        raise RuntimeError(f"Laya is not installed: run `{_INSTALL}`") from missing
-    return laya.load(folder, device=device)
-
-
-def _fetch_checkpoint(repository: str, subfolder: str, destination: Path) -> None:
-    """Download one checkpoint of a bundle into a sibling folder, then rename it into place.
-
-    A download that dies halfway leaves the staging folder, never a half-filled
-    checkpoint folder that the next start would try to load.
-    """
-    from huggingface_hub import snapshot_download
-
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=f"{destination.name}.", dir=destination.parent))
-    try:
-        snapshot_download(
-            repo_id=repository, local_dir=str(staging), allow_patterns=[f"{subfolder}/*"]
-        )
-        if destination.exists():
-            shutil.rmtree(destination)
-        (staging / subfolder).rename(destination)
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)

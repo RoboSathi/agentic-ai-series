@@ -4,7 +4,7 @@ A model that is guessing tends to spread probability over several next tokens; t
 token it emits then carries a low log-probability. Asking for `logprobs` costs nothing
 extra (`llm.logprobs`), so every reply can be scored before anything else looks at it:
 each sentence by the tokens that wrote it — their mean probability, and how many fell
-below a floor (`hallucination_protection.confidence`).
+below a floor (`hallucination_check.confidence`).
 
 Confidence is not truth: a model can be confidently wrong, so every claim still goes
 to grounding. But two things logprobs catch on their own, deterministically (`gate`):
@@ -37,10 +37,10 @@ from pydantic import BaseModel, Field
 
 from agent_platform.config import get_settings
 from agent_platform.config.settings import ConfidenceSettings
-from agent_platform.hallucination_protection.claims import sentence_pieces, specific_spans
-from agent_platform.hallucination_protection.levels import CONFIDENCE_LEVEL, CheckLevel
-from agent_platform.hallucination_protection.resolver import CLAIM_UNSUPPORTED
-from agent_platform.hallucination_protection.types import DetectionVerdict, GenerationAssessment
+from agent_platform.hallucination_check.claims import sentence_pieces, specific_spans
+from agent_platform.hallucination_check.levels import CONFIDENCE_LEVEL, CheckLevel
+from agent_platform.hallucination_check.resolver import CLAIM_UNSUPPORTED
+from agent_platform.hallucination_check.types import DetectionVerdict, GenerationAssessment
 from agent_platform.observability import checks
 from agent_platform.observability.unit_context import Generation, current_turn
 
@@ -105,7 +105,7 @@ class ConfidenceCheck:
     """Scores a reply's sentences from the turn's token log-probabilities."""
 
     def __init__(self, settings: ConfidenceSettings | None = None) -> None:
-        self._settings = settings or get_settings().hallucination_protection.confidence
+        self._settings = settings or get_settings().hallucination_check.confidence
         self._ignored = re.compile(self._settings.ignore_token_pattern)
         self._function = re.compile(self._settings.function_token_pattern)
 
@@ -195,7 +195,7 @@ def gate(
     verdicts removes its sentence. A degenerate sentence with no claim in it (too
     short to check, like "The-something entirely") gets one of its own.
     """
-    floor = (settings or get_settings().hallucination_protection.confidence).slot_min_prob
+    floor = (settings or get_settings().hallucination_check.confidence).slot_min_prob
     degenerate = {item.index: item for item in confidence.degenerate}
     shaky = {
         item.index: item
@@ -319,7 +319,7 @@ def report_confidence(confidence: ConfidenceAssessment) -> CheckLevel:
     )
     return CheckLevel(
         level=CONFIDENCE_LEVEL,
-        name=get_settings().hallucination_protection.levels.confidence,
+        name=get_settings().hallucination_check.levels.confidence,
         verdict=verdict,
         summary=_summary(confidence),
         lines=_lines(confidence),
@@ -327,7 +327,7 @@ def report_confidence(confidence: ConfidenceAssessment) -> CheckLevel:
 
 
 def _summary(confidence: ConfidenceAssessment) -> str:
-    words = get_settings().hallucination_protection.confidence.card
+    words = get_settings().hallucination_check.confidence.card
     if not confidence.available:
         return words.skipped.format(reason=confidence.reason)
     scored, low = len(confidence.sentences), len(confidence.low)
@@ -338,7 +338,7 @@ def _summary(confidence: ConfidenceAssessment) -> str:
 
 def _lines(confidence: ConfidenceAssessment) -> list[str]:
     """One line per scored sentence: its mean and lowest token probability, low ones marked."""
-    words = get_settings().hallucination_protection.confidence.card
+    words = get_settings().hallucination_check.confidence.card
     return [
         words.sentence_line.format(
             mark=words.low_mark if item.low else words.ok_mark,

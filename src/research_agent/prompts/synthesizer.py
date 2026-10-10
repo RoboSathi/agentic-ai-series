@@ -1,6 +1,7 @@
 """The synthesizer's prompt: write the report from the ledger, and only the ledger.
 
-The payload carries ledger entries as `{entry_id, claim, source, date}`.
+The payload carries ledger entries as `{entry_id, claim, source, date}`, plus a `caveat` on
+an entry that rests on weaker evidence (a search snippet, a source outside the time window).
 It has no field for a page and no field for a quoted span, so the model
 writing the report never reads text a web page chose.
 """
@@ -29,6 +30,9 @@ Write the research report from the evidence ledger only.
   qualifiers exactly as written ("Upto 1Cr" stays "up to 1 crore", never "₹1 crore
   for student startups" when the claim does not say who it is for).
 - Where entries disagree, say so and cite both sides.
+- An entry with a `caveat` is weaker evidence (a search snippet, or a source outside the
+  time window): say so in the sentence that uses it ("according to a search result", "an
+  older source reports"), and never state it as settled fact.
 - For a decision, recommend an option and state the trade-offs.
 - Do not write a Coverage & Limits, Known unknowns or Sources section;
   those are added from the run's records.
@@ -48,7 +52,13 @@ class SynthesisAnswer(BaseModel):
 def ledger_view(ledger: LedgerSnapshot) -> list[dict[str, Any]]:
     """Entries as the synthesizer sees them: claims and provenance, never spans."""
     return [
-        {"entry_id": e.entry_id, "claim": e.claim, "source": e.source_url, "date": e.source_date}
+        {
+            "entry_id": e.entry_id,
+            "claim": e.claim,
+            "source": e.source_url,
+            "date": e.source_date,
+            **({"caveat": e.caveat} if e.caveat else {}),
+        }
         for e in ledger.entries
     ]
 

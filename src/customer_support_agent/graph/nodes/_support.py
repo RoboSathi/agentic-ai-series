@@ -28,7 +28,7 @@ from agent_platform.gatekeeper import Gatekeeper
 from agent_platform.gatekeeper.mandate import MandateIssuer
 from agent_platform.guardrails import ResponseGuardrail
 from agent_platform.guardrails.response import NOT_EXECUTED_MARKER
-from agent_platform.hallucination_protection import (
+from agent_platform.hallucination_check import (
     DetectionLadder,
     GroundingReasoningDiagnoser,
     Observation,
@@ -38,7 +38,7 @@ from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
 from agent_platform.loop_control import ToolLoopControl
 from agent_platform.memory import MemoryFacade, WorkingMemoryStore
-from agent_platform.memory.semantic.rag import KNOWLEDGE_SOURCE_PREFIX, markdown_sections
+from agent_platform.memory.semantic.rag import KNOWLEDGE_SOURCE_PREFIX, section_sentences
 from agent_platform.observability import (
     StageReporter,
     Tracer,
@@ -822,19 +822,27 @@ def _prompt_rules(markdown: str) -> list[str]:
 
 @cache
 def _knowledge_evidence() -> tuple[Chunk, ...]:
-    """The agent's policy articles, one chunk per section, read once.
+    """The agent's policy articles, one chunk per sentence, read once.
 
     The articles are the business's own statement of its policy, so they
     ground what the reply says about how refunds work — whether or not
     retrieval happened to put that section in this turn's window.
+
+    One sentence per chunk, as `_policy_evidence` does for the policy file: a
+    whole section ("… a delivered order can be refunded … an order still in
+    flight has nothing to refund …") read as contradicting an offer to refund a
+    delivered order, because NLI weighs the paragraph, not the rule it is about.
     """
     rag = get_settings().memory.semantic.rag
     return tuple(
         Chunk(
-            content=section, kind="policy", source=f"{KNOWLEDGE_SOURCE_PREFIX}{path.name}#{index}"
+            content=sentence,
+            kind="policy",
+            source=f"{KNOWLEDGE_SOURCE_PREFIX}{path.name}#{index}.{number}",
         )
         for path in sorted(rag.resolved_corpus_dir.glob(rag.corpus_glob))
-        for index, section in enumerate(markdown_sections(path.read_text(encoding="utf-8")))
+        for index, sentences in enumerate(section_sentences(path.read_text(encoding="utf-8")))
+        for number, sentence in enumerate(sentences)
     )
 
 

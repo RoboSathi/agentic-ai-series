@@ -29,6 +29,7 @@ from textual.widgets.button import ButtonVariant
 from textual.widgets.option_list import Option
 
 from agent_platform.config import get_settings
+from agent_platform.hallucination_check.resolver import CONFIRM_TIER
 from agent_platform.observability.types import StatusEvent
 from agent_platform.presentation.text_tree import as_structure, value_lines
 from agent_platform.primitives.money import money_or_none
@@ -1057,7 +1058,7 @@ def _band_style(prob: float) -> str:
 def _token_style(token: Mapping[str, Any]) -> str:
     """A token the model was unsure of takes a tone; a guessed specific is marked as a failure."""
     prob = float(token.get("prob") or 0.0)
-    slot_floor = get_settings().hallucination_protection.confidence.slot_min_prob
+    slot_floor = get_settings().hallucination_check.confidence.slot_min_prob
     if token.get("slot") and prob < slot_floor:
         return f"{_tone('fail')} underline"
     if prob < get_settings().tui.grounding_card.confidence_bands["warn"]:
@@ -1067,7 +1068,7 @@ def _token_style(token: Mapping[str, Any]) -> str:
 
 def _append_level(body: Text, level: Mapping[str, Any]) -> None:
     """`level 1 · token confidence = …`, toned by its verdict, then its proof lines."""
-    words = get_settings().hallucination_protection.levels
+    words = get_settings().hallucination_check.levels
     key = words.row.format(level=level.get("level"), name=level.get("name"))
     body.append("\n  " if body else "  ")
     _append_pair(body, key, " = ", str(level.get("summary") or ""), _verdict_style(level))
@@ -1110,8 +1111,13 @@ def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
     if method and not basis:
         body.append(f" · {method}", style=styles["muted"])
     evidence = [item for item in check.get("evidence") or [] if isinstance(item, Mapping)]
+    claim = str(check.get("claim") or "")
     if verdict in (_UNDETERMINED, _UNSUPPORTED):
-        _append_unverified(body, evidence, name)
+        _append_unverified(body, evidence, name, claim)
+        return
+    if check.get("decided_by") == CONFIRM_TIER:
+        # NLI could not decide it and the second opinion confirmed it: each model's reading.
+        _append_readings(body, evidence, claim)
         return
     item = _deciding_evidence(verdict, evidence)
     lead = "supported by" if verdict == "supported" else "contradicted by"
@@ -1136,22 +1142,56 @@ def _append_proof(body: Text, key: str, value: str, style: str) -> None:
     _append_pair(body, key, ": ", value, style)
 
 
-def _append_unverified(body: Text, evidence: list[Mapping[str, Any]], name: str) -> None:
-    """Why nothing decided the claim: a line the model read and found neutral, or nothing near it."""
-    styles = get_settings().tui.body_styles
-    scored = [item for item in evidence if _was_scored(item)]
-    best = max(scored, key=lambda item: float(item.get("nli_score") or 0), default=None)
-    if best is None:
+def _append_unverified(
+    body: Text, evidence: list[Mapping[str, Any]], name: str, claim: str
+) -> None:
+    """Why nothing decided the claim: what each model read and answered, or nothing near it."""
+    if not [item for item in evidence if _was_scored(item)]:
         words = get_settings().tui.grounding_card
         nothing = words.no_evidence if name == _UNSUPPORTED else words.no_evidence_either_way
-        _append_proof(body, name, nothing, styles["value"])
+        _append_proof(body, name, nothing, get_settings().tui.body_styles["value"])
         return
-    label = str(best.get("nli_label"))
-    key = (
-        f"{name} [{_where(best)}] read as "
-        f"{_NLI_NAMES.get(label, label)} ({float(best.get('nli_score') or 0):.2f})"
-    )
-    _append_proof(body, key, f'"{_excerpt(best)}"', styles["muted"])
+    _append_readings(body, evidence, claim)
+
+
+def _append_readings(body: Text, evidence: list[Mapping[str, Any]], claim: str) -> None:
+    """One line per model that read the claim — its deciding line, else its surest:
+
+    NLI DeBERTa [Tool Result · robosathi.com] neutral 1.00: "Kumar Karan"
+    Laya [Tool Result · robosathi.com] supported 0.46 · read 21 lines: "Engineering Manager …"
+
+    A model that read many lines at once is quoted by the one closest to the claim; the log
+    keeps everything it read.
+    """
+    styles = get_settings().tui.body_styles
+    best: dict[str, Mapping[str, Any]] = {}
+    for item in (i for i in evidence if _was_scored(i)):
+        model = str(item.get("model") or "")
+        held = best.get(model)
+        if held is None or _strength(item) > _strength(held):
+            best[model] = item
+    for model, item in best.items():
+        label = str(item.get("nli_label"))
+        score = float(item.get("nli_score") or 0)
+        lines = [line for line in str(item.get("excerpt") or "").splitlines() if line.strip()]
+        read = f" · {get_settings().tui.grounding_card.lines_read.format(count=len(lines))}"
+        key = (
+            f"{model or 'NLI'} [{_where(item)}] {_NLI_NAMES.get(label, label)} {score:.2f}"
+            f"{read if len(lines) > 1 else ''}"
+        )
+        quoted = _closest_line(lines, claim) if len(lines) > 1 else _excerpt(item)
+        _append_proof(body, key, f'"{quoted}"', styles["muted"])
+
+
+def _closest_line(lines: list[str], claim: str) -> str:
+    """The line sharing most words with the claim, clipped like any excerpt."""
+    words = set(re.findall(r"\w+", claim.casefold()))
+    best = max(lines, key=lambda line: len(words & set(re.findall(r"\w+", line.casefold()))))
+    return _excerpt({"excerpt": best})
+
+
+def _strength(item: Mapping[str, Any]) -> tuple[bool, float]:
+    return bool(item.get("decisive")), float(item.get("nli_score") or 0)
 
 
 def _was_scored(item: Mapping[str, Any]) -> bool:

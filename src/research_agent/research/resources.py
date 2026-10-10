@@ -22,6 +22,7 @@ from research_agent.observability.telemetry import RunTelemetry
 from research_agent.research.defenses import OutboundGuard
 from research_agent.research.extractor import PageReading
 from research_agent.research.recency import RecencyGuard
+from research_agent.research.snippets import SnippetSources
 
 
 class PageReader(Protocol):
@@ -45,6 +46,8 @@ class RunResources:
     screen: InjectionScreen | None = None
     # No date named means the latest: a planned query pinned to the past is shown, not rewritten.
     recency: RecencyGuard | None = None
+    # The verbatim rule's texts: fetched pages, plus the snippets admitted in a page's place.
+    snippets: SnippetSources | None = None
     # Bounds how many pages the run reads at once (the platform bulkhead, one pool).
     page_reads: Bulkhead = field(default_factory=ResourcePoolBulkhead)
     cancel: asyncio.Event = field(default_factory=asyncio.Event)
@@ -53,3 +56,8 @@ class RunResources:
     @property
     def cancelled(self) -> bool:
         return self.cancel.is_set()
+
+    @property
+    def recency_relaxed(self) -> bool:
+        """Whether the rescue round has run: out-of-window sources are admitted, labelled."""
+        return self.trace.rescued

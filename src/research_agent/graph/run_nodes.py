@@ -5,12 +5,19 @@
                               └──── more ready nodes in this round ◄─────┤
                                                                          ▼
                  reflect_gap_analysis ── continue (follow-ups) ──► batch_start
+                        │      └─ nothing admitted: one rescue round ──► batch_start
                         │ stop
                         ▼
                     synthesize → independent_audit ── must-pass gaps ──► gap_fill → batch_start
                                         │ (or audit withheld)
                                         ▼
                                     finalize → archive → END
+
+A run never ends with nothing to show: a page that could not be read leaves its search
+snippet as labelled evidence (`research/snippets.py`); a ledger still empty at reflection gets
+one rescue round, granted on top of the size's budget and searched without the time window;
+and a ledger still empty at synthesis is written up from the search results themselves, as a
+best effort. Every such entry carries its caveat into the report, which is then PARTIAL.
 
 Every node that needs a live collaborator reaches it through the run's
 `RunResources`, bound by the agent before the run starts (or re-bound,
@@ -24,8 +31,8 @@ from typing import Any
 from langgraph.types import Send
 
 from agent_platform.config import FeatureSet
-from agent_platform.hallucination_protection.confidence import ConfidenceCheck, report_confidence
-from agent_platform.hallucination_protection.levels import CheckLevel
+from agent_platform.hallucination_check.confidence import ConfidenceCheck, report_confidence
+from agent_platform.hallucination_check.levels import CheckLevel
 from agent_platform.logging import describe_error
 from agent_platform.loop_control import BudgetGuard
 from agent_platform.observability.types import StatusKind
@@ -36,17 +43,18 @@ from research_agent.audit.context import CheckContext
 from research_agent.audit.independent import AuditResult, IndependentAuditor
 from research_agent.audit.verdict import AuditVerdict, decide
 from research_agent.config import get_agent_settings
-from research_agent.domain.budget import GAP_FILL_ROUNDS, ROUNDS, SEARCHES
+from research_agent.domain.budget import FETCHES, GAP_FILL_ROUNDS, ROUNDS, SEARCHES
 from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.report import LimitEntry, Report, RunStatus
 from research_agent.graph.run_loop import RunLoopReport
 from research_agent.graph.state import RunState
 from research_agent.planning.ids import renumber
 from research_agent.planning.planner import Planner, PlanRejectedError
-from research_agent.presentation.narration import say
+from research_agent.presentation.narration import clip, say
 from research_agent.research import cards
 from research_agent.research.reflector import FollowUpProposal, GapAnalyzer, Reflector
 from research_agent.research.resources import RunResources
+from research_agent.research.snippets import SnippetAdmission
 from research_agent.research.worker import UNREADABLE, ResearcherWorker
 from research_agent.synthesis.citation_guard import CitationGuard, GuardedReport
 from research_agent.synthesis.limits import build_limits, unmet_must_pass
@@ -67,6 +75,7 @@ _ANOTHER_ROUND, _CANCELLED, _NO_GAPS = "another_round", "cancelled", "no_gaps"
 _GAP_FILL_EXHAUSTED, _BUDGET_SPENT = "gap_fill_exhausted", "budget_spent"
 _REFLECTION_OFF, _GAPS_TO_FILL = "reflection_off", "gaps_to_fill"
 _GAP_FILL_PLANNED, _NO_FOLLOW_UP = "gap_fill_planned", "no_follow_up"
+_RESCUE = "rescue"
 
 
 @dataclass
@@ -288,6 +297,9 @@ class RunNodes:
     # -- reflect --------------------------------------------------------------------------
 
     async def reflect(self, state: RunState) -> Update:
+        rescue = self._rescue(state)
+        if rescue is not None:
+            return rescue
         r, contract = self.resources, state["contract"]
         ctx = self._p.context(contract, r.ledger.snapshot(), None)
         verdicts = await self._p.analyzer.verdicts(ctx)
@@ -360,6 +372,65 @@ class RunNodes:
         if r.budget.remaining(ROUNDS) <= 0:
             return True, say("stop.max_rounds"), True
         return False, decision.reason, False
+
+    def _rescue(self, state: RunState) -> Update | None:
+        """One more round for a run that admitted nothing, instead of a report of nothing.
+
+        The plan's sub-questions are searched again without the approved time window, under a
+        grant on top of the size's budget; a source outside the window is then admitted with a
+        caveat rather than rejected (`worker._recent`). Once per run, and never when the
+        operator stopped it or a cap that cuts work short (tokens, the clock) is spent.
+        """
+        r = self.resources
+        config = r.settings.rescue
+        if (
+            not config.enabled
+            or r.trace.rescued
+            or r.cancelled
+            or r.ledger.snapshot().entries
+            or truncated_by_budget(r.budget.exhausted_counters())
+        ):
+            return None
+        planned = [node for plan in state.get("plans", [])[:1] for node in plan.nodes]
+        if not planned:
+            return None
+        grant = {ROUNDS: 1.0, SEARCHES: float(config.searches), FETCHES: float(config.fetches)}
+        for counter, amount in grant.items():
+            r.budget.extend(counter, amount)
+        nodes = self._numbered(fit_to_budget(planned, r.budget.remaining(SEARCHES)), state)
+        r.trace.rescued, r.trace.rescue_grant = True, grant
+        r.budget.charge(ROUNDS, 1)
+        self._rescue_card(nodes, grant)
+        self._report_loop(state, _BATCH_START, _RESCUE, {"admitted": 0, "rescue_nodes": len(nodes)})
+        plans = [*state.get("plans", []), PlanDag(nodes=tuple(nodes), rationale=_RESCUE)]
+        return {
+            "gaps": [],
+            "round": state["round"] + 1,
+            "round_nodes": nodes,
+            "plans": plans,
+            "stop_reason": "",
+        }
+
+    def _rescue_card(self, nodes: list[SubQuestion], grant: Mapping[str, float]) -> None:
+        r = self.resources
+        sections = {
+            say("rescue.section.why"): [say("rescue.why")],
+            say("rescue.section.grant"): [
+                say("rescue.grant", counter=counter, amount=amount)
+                for counter, amount in grant.items()
+            ],
+            say("rescue.section.questions"): [f"{n.node_id} · {n.question}" for n in nodes],
+        }
+        heading = say("rescue.heading", nodes=len(nodes))
+        r.telemetry.card("reflect_gap_analysis", heading, sections, status="warning")
+        r.telemetry.audit(
+            "scope.recency_relaxed",
+            "escalate",
+            say("stop.rescue"),
+            recency_days=r.contract.brief.recency_days,
+            grant=dict(grant),
+            nodes=[node.node_id for node in nodes],
+        )
 
     def _room_for_a_round(self) -> bool:
         """Whether a follow-up round could still run: searches and rounds left."""
@@ -434,6 +505,7 @@ class RunNodes:
 
     async def synthesize(self, state: RunState) -> Update:
         r, contract = self.resources, state["contract"]
+        notice = "" if r.ledger.snapshot().entries else self._best_effort()
         ledger = r.ledger.snapshot()
         checked = await self._p.synthesizer.draft(contract, ledger, state.get("gaps", []))
         if self._p.citation_guard is not None and ledger.entries:
@@ -445,7 +517,9 @@ class RunNodes:
         limits = build_limits(
             contract, verdicts, state.get("plans", []), r.trace, state.get("stop_reason", "")
         )
-        report = self._p.synthesizer.with_limits(checked.report, ledger, limits, r.trace, status)
+        report = self._p.synthesizer.with_limits(
+            checked.report, ledger, limits, r.trace, status, notice
+        )
         plan_nodes = [node for plan in state.get("plans", []) for node in plan.nodes]
         answered = len({e.subject for e in ledger.entries} & {n.node_id for n in plan_nodes})
         heading, sections = cards.synthesize_card(
@@ -464,6 +538,37 @@ class RunNodes:
             "synthesize", heading, sections, status="warning" if checked.removed else "completed"
         )
         return {"report": report, "ledger": ledger}
+
+    def _best_effort(self) -> str:
+        """Nothing was admitted: the search results themselves, labelled, as the evidence.
+
+        Returns the notice the report opens with, or "" when there were no results at all
+        (the reader then sees that nothing was found, and what was searched).
+        """
+        r = self.resources
+        rescue = r.settings.rescue
+        if not rescue.enabled or r.snippets is None:
+            return ""
+        admission = SnippetAdmission(r.ledger, r.snippets, r.settings.snippet_evidence.min_words)
+        admitted = [
+            entry
+            for hit in r.trace.seen_hits
+            for entry in admission.admit(hit, rescue.best_effort_caveat)
+        ]
+        if not admitted:
+            return ""
+        heading = say("best_effort.heading", count=len({e.source_url for e in admitted}))
+        sections = {
+            say("snippet.section.caveat"): [rescue.best_effort_caveat],
+            say("snippet.section.kept"): [
+                f"{e.entry_id} · {clip(e.claim, self._p.clip_chars)}" for e in admitted
+            ],
+        }
+        r.telemetry.card("synthesize", heading, sections, status="warning")
+        r.telemetry.audit(
+            "report.best_effort", "escalate", heading, entries=[e.entry_id for e in admitted]
+        )
+        return rescue.best_effort_note
 
     def _first_level(self, guarded: GuardedReport) -> CheckLevel | None:
         """Level 1: the cited sentences scored by the writer's token confidence."""
@@ -500,7 +605,15 @@ class RunNodes:
     def _provisional_status(self, verdicts: list[CheckVerdict]) -> RunStatus:
         r = self.resources
         truncated = truncated_by_budget(r.budget.exhausted_counters())
-        return "PARTIAL" if truncated or unmet_must_pass(verdicts) else "COMPLETE"
+        weaker = self._rests_on_weaker_evidence()
+        return "PARTIAL" if truncated or weaker or unmet_must_pass(verdicts) else "COMPLETE"
+
+    def _rests_on_weaker_evidence(self) -> bool:
+        """Whether any admitted entry carries a caveat (a snippet, a source outside the window).
+
+        Such a report says what it found, and is PARTIAL: it did not rest on what was asked for.
+        """
+        return any(entry.caveat for entry in self.resources.ledger.snapshot().entries)
 
     async def independent_audit(self, state: RunState) -> Update:
         if self._p.auditor is None:
@@ -664,8 +777,10 @@ class RunNodes:
         # PARTIAL means the weighted score fell short, a must-pass criterion is unmet, or the
         # model or the clock was cut off mid-way. A search or page the budget refused is in the
         # report's limits; with every must-pass criterion met and the score high enough, the
-        # run is COMPLETE.
-        return "PARTIAL" if truncated or verdict.outcome != "PASS" else "COMPLETE"
+        # run is COMPLETE. Evidence admitted under a caveat (a snippet, outside the window) is
+        # what the run could find, not what it was asked for: PARTIAL.
+        weaker = self._rests_on_weaker_evidence()
+        return "PARTIAL" if truncated or weaker or verdict.outcome != "PASS" else "COMPLETE"
 
     def _final_verdicts(self, state: RunState) -> list[CheckVerdict]:
         audit = state.get("audit")

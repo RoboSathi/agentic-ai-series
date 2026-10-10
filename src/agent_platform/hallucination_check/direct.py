@@ -16,8 +16,8 @@ from typing import NamedTuple
 
 from agent_platform.config import get_settings
 from agent_platform.context.types import Chunk
-from agent_platform.hallucination_protection.claims import money_pattern, specifics
-from agent_platform.hallucination_protection.states import StateFinding, StateModel
+from agent_platform.hallucination_check.claims import money_pattern, specifics
+from agent_platform.hallucination_check.states import StateFinding, StateModel
 from agent_platform.primitives.money import Money, money_or_none
 
 # How a refused or failed tool call is written into evidence. It grounds a
@@ -43,14 +43,14 @@ class DirectFinding(NamedTuple):
 def record_ids(text: str) -> set[str]:
     """The digits of every record reference a text names."""
     pattern = re.compile(
-        get_settings().hallucination_protection.record_identifier_pattern, re.IGNORECASE
+        get_settings().hallucination_check.record_identifier_pattern, re.IGNORECASE
     )
     return {digits for found in pattern.findall(text) for digits in re.findall(r"\d+", found)}
 
 
 def _label() -> str:
-    """What a record id is called (`hallucination_protection.record_identifier_label`)."""
-    return get_settings().hallucination_protection.record_identifier_label
+    """What a record id is called (`hallucination_check.record_identifier_label`)."""
+    return get_settings().hallucination_check.record_identifier_label
 
 
 def numbers(text: str) -> set[str]:
@@ -73,7 +73,7 @@ class DirectChecker:
     """Refutes a record claim the record itself contradicts, or cannot have grounded."""
 
     def __init__(self) -> None:
-        settings = get_settings().hallucination_protection
+        settings = get_settings().hallucination_check
         self._refusal = re.compile(settings.refusal_pattern, re.IGNORECASE)
         self._states = StateModel()
 

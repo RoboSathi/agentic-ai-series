@@ -9,7 +9,7 @@ import pytest
 
 from agent_platform.config.settings import FactAttributeSettings, FactSettings
 from agent_platform.context.types import Chunk
-from agent_platform.hallucination_protection.ledger import (
+from agent_platform.hallucination_check.ledger import (
     FLAG_TRUE,
     Fact,
     FactLedger,

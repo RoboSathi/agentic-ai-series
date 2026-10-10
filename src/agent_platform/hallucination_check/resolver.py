@@ -5,8 +5,18 @@ conversation) and is then read against only the tiers that may ground its
 class, each with its own top-k, so a policy section can no longer crowd a
 tool fact out of the ranking. That is what removed the reconciliation
 machinery this module used to carry — authority ranks, support-only
-tiers, supersession, one voice per observation, a joined premise —
-all of it existed to undo the pooling.
+tiers, supersession, one voice per observation — all of it existed to
+undo the pooling.
+
+Evidence that states one fact across several lines (a web page) needs
+premises wider than a sentence, and gets two, both support-only: passage
+windows (`passage_window`, built with the evidence) and, for a claim a
+tier left undecided, the relevant evidence of one source joined in
+source order (`joined_premise`). A paragraph that also says what is not
+so reads to NLI as contradicting what is, so neither ever refutes.
+
+A claim no tier decided may get a second opinion (`confirmer.py`): a decision model reads it
+beside its best source's text. It may confirm the claim, never refute it.
 
 Embeddings have one job here: retrieve the best evidence for a claim.
 They never decide whether the claim is true. NLI makes that decision.
@@ -14,6 +24,7 @@ They never decide whether the claim is true. NLI makes that decision.
 
 import asyncio
 import re
+from typing import Literal
 
 from agent_platform.config import get_settings
 from agent_platform.config.settings import GroundingTierSettings
@@ -24,22 +35,23 @@ from agent_platform.evals.entailment import (
     EntailmentResult,
     create_entailment_model,
 )
-from agent_platform.hallucination_protection.claims import ClaimClassifier
-from agent_platform.hallucination_protection.direct import (
+from agent_platform.hallucination_check.claims import ClaimClassifier
+from agent_platform.hallucination_check.confirmer import ClaimConfirmer
+from agent_platform.hallucination_check.direct import (
     NOT_EXECUTED_MARKER,
     DirectChecker,
     DirectFinding,
     numbers,
 )
-from agent_platform.hallucination_protection.ledger import (
+from agent_platform.hallucination_check.ledger import (
     FACT_MISMATCH,
     FACT_MODEL,
     FACT_TIER,
     FactLedger,
     LedgerFinding,
 )
-from agent_platform.hallucination_protection.states import StateModel
-from agent_platform.hallucination_protection.types import (
+from agent_platform.hallucination_check.states import StateModel
+from agent_platform.hallucination_check.types import (
     ClaimClass,
     DetectionVerdict,
     EvidenceCheck,
@@ -55,6 +67,9 @@ OBSERVATION_SEQUENCE = "observation_sequence"
 # write). A read taken before a write of the same thing describes a world
 # that no longer exists.
 STATE_CHANGING = "state_changing"
+# `Chunk.metadata` key marking a premise wider than one sentence: a passage
+# window, or a joined premise. It may support a claim, never refute one.
+PASSAGE = "passage"
 # The detector name of a rule that restates the claim in nearly its own words.
 RESTATEMENT_MODEL = "rule-restatement"
 # The label a line of the record carries when it was read directly and not
@@ -63,10 +78,14 @@ RECORD_LABEL = "record"
 # What decided a claim with no evidence tier: the direct check, or nothing.
 DIRECT_TIER = "deterministic"
 NO_TIER = "none"
+# A claim no tier decided that the second-opinion model confirmed against its source.
+CONFIRM_TIER = "confirmed"
+# A line that is only a link states nothing a claim could rest on.
+_BARE_LINK = re.compile(r"\S+://\S+")
 # A verifiable claim no evidence grounds, when the agent counts that as a hallucination.
 CLAIM_UNSUPPORTED = "CLAIM_UNSUPPORTED"
 
-ENTAILMENT_LABEL = "entailment"
+ENTAILMENT_LABEL: Literal["entailment"] = "entailment"
 _DECIDING_LABELS = frozenset({ENTAILMENT_LABEL, "contradiction"})
 # The NLI model's third label, as a reader should meet it: not a failure.
 _LABEL_NAMES = {"unknown": "neutral"}
@@ -92,7 +111,7 @@ class _TierOutcome:
         self.retrieved = retrieved
 
 
-@instrument("hallucination_protection")
+@instrument("hallucination_check")
 class GroundingResolver:
     """Resolve one claim against the tiers that may ground it."""
 
@@ -101,13 +120,17 @@ class GroundingResolver:
         ranker: RelevanceRanker,
         entailment: EntailmentModel | None = None,
         classifier: ClaimClassifier | None = None,
+        confirmer: ClaimConfirmer | None = None,
     ) -> None:
-        settings = get_settings().hallucination_protection
+        settings = get_settings().hallucination_check
+        self._confirmer = confirmer
+        self._confirm_settings = settings.confirmer
         self._retriever = DenseRetriever(ranker)
         self._top_k = settings.embedding_top_k
         self._threshold = settings.nli_entailment_threshold
         self._uncalibrated_refutes = settings.uncalibrated_may_refute
         self._floor = settings.evidence_min_similarity
+        self._joined = settings.joined_premise
         self._tiers = settings.tiers
         self._restatement = settings.rule_restatement_coverage
         self._identifier = (
@@ -176,7 +199,18 @@ class GroundingResolver:
             for tier in self._tiers
             if kind in tier.claims
         ]
-        return self._settle(claim, kind, outcomes)
+        verdict = self._settle(claim, kind, outcomes)
+        if self._confirmer is None or verdict.tier != NO_TIER or verdict.supported:
+            return verdict
+        confirmed, asked, note = await self._second_opinion(claim, kind, evidence)
+        # The card shows what NLI read beside what the second opinion read, either way.
+        checks = self._ranked([*verdict.evidence_checks, *asked])
+        if confirmed is not None:
+            rationale = f"{verdict.rationale} · {confirmed.rationale}"
+            return confirmed.model_copy(update={"evidence_checks": checks, "rationale": rationale})
+        return verdict.model_copy(
+            update={"rationale": f"{verdict.rationale} · {note}", "evidence_checks": checks}
+        )
 
     @property
     def entailment(self) -> EntailmentModel:
@@ -376,10 +410,174 @@ class GroundingResolver:
         )
         judged = [(restated[0], restated[1])] if restated else list(zip(results, relevant))
         chosen = self._deciding(claim, tier, judged)
+        if chosen is None and self._joined.enabled:
+            joined = await self._joined_support(claim, relevant, chunks)
+            if joined is not None:
+                chosen, judged, retrieved = joined, [*judged, joined], [*retrieved, joined[1]]
         checks = self._checks(retrieved, judged)
         label = chosen[0].label if chosen else "abstain"
         note = "" if chosen else self._why_undecided(tier, retrieved, judged)
         return _TierOutcome(tier, label, chosen[0] if chosen else None, checks, retrieved, note)
+
+    async def _joined_support(
+        self, claim: str, relevant: list[Chunk], chunks: list[Chunk]
+    ) -> tuple[EntailmentResult, Chunk] | None:
+        """The surest support from one source's relevant evidence, joined in source order.
+
+        "Created by Kumar Karan, a former Lead Instructor at Scaler Academy" is entailed by
+        no single line of the page that states it ("Kumar Karan", "Lead Instructor @ Scaler
+        Academy"), and by the lines together. Support only: a joined paragraph also says
+        things the claim does not, which NLI reads as contradiction.
+        """
+        order = {(chunk.source, chunk.content): index for index, chunk in enumerate(chunks)}
+        by_source: dict[str, list[Chunk]] = {}
+        for chunk in relevant:
+            by_source.setdefault(chunk.source, []).append(chunk)
+        premises = [
+            self._joined_chunk(sorted(group, key=lambda c: order.get((c.source, c.content), 0)))
+            for group in by_source.values()
+            if len(group) > 1
+        ]
+        results = await asyncio.gather(
+            *(self._entailment.entails(premise.content, claim) for premise in premises)
+        )
+        supports = [
+            (result, premise)
+            for result, premise in zip(results, premises, strict=True)
+            if result.label == ENTAILMENT_LABEL
+            and self._is_decisive(result)
+            and not self._names_only_others(claim, premise)
+        ]
+        return max(supports, key=self._strength, default=None)
+
+    def _joined_chunk(self, group: list[Chunk]) -> Chunk:
+        """One premise from a source's chunks: each sentence once, up to `max_chars`."""
+        text = ""
+        for chunk in group:
+            if chunk.content in text:
+                continue  # already inside a passage window joined before it
+            joined = f"{text} {chunk.content}".strip()
+            if len(joined) > self._joined.max_chars:
+                break
+            text = joined
+        first = group[0]
+        return first.model_copy(
+            update={
+                "content": text,
+                "score": max(chunk.score for chunk in group),
+                "metadata": {**first.metadata, PASSAGE: True},
+            }
+        )
+
+    async def _second_opinion(
+        self, claim: str, kind: ClaimClass, evidence: list[Chunk]
+    ) -> tuple[DetectionVerdict | None, list[EvidenceCheck], str]:
+        """The confirmer's verdict on a claim no tier decided, source by source, best first.
+
+        Each source's text is the lines most like the claim, put back in source order, up to
+        `max_evidence_chars`: the claim's facts, with the subject they belong to around them.
+        Returns the supported verdict (or None), every answer it gave as an evidence line, and
+        what it said when it did not confirm.
+        """
+        assert self._confirmer is not None
+        kinds = {chunk_kind for t in self._tiers if kind in t.claims for chunk_kind in t.kinds}
+        lines = [
+            chunk
+            for chunk in evidence
+            if chunk.kind in kinds
+            and not chunk.metadata.get(PASSAGE)
+            and not self._is_state_record(chunk)
+            and not _BARE_LINK.fullmatch(chunk.content.strip())
+        ]
+        model = self._confirmer.model_name
+        if not lines:
+            return None, [], f"{model}: no evidence"
+        self._retriever.index(lines)
+        ranked = await self._retriever.retrieve(claim, len(lines))
+        notes: list[str] = []
+        asked: list[EvidenceCheck] = []
+        for source in self._best_sources(ranked):
+            text = self._source_text(source, ranked, lines)
+            answer = await self._confirmer.confirm(claim, text)
+            asked.append(self._confirm_check(text, source, ranked, answer.label, answer.score,
+                                             decisive=answer.confirmed))  # fmt: skip
+            if answer.confirmed:
+                verdict = self._confirmed(claim, kind, text, source, ranked, answer.score)
+                return verdict, asked, ""
+            notes.append(f"{answer.label} {answer.score:.2f} ({source or 'evidence'})")
+        return None, asked, f"{model}: {', '.join(notes) or 'nothing related'}"
+
+    def _confirm_check(
+        self,
+        text: str,
+        source: str,
+        ranked: list[Chunk],
+        label: str,
+        score: float,
+        *,
+        decisive: bool,
+    ) -> EvidenceCheck:
+        """The second opinion's answer on one source, as an evidence line of the card."""
+        assert self._confirmer is not None
+        best = next((c for c in ranked if c.source == source), None)
+        return EvidenceCheck(
+            rank=0,
+            similarity=round(best.score, 3) if best is not None else 0.0,
+            tier=best.kind if best is not None else "",
+            excerpt=text,
+            nli_label=label,
+            nli_score=round(score, 3),
+            decisive=decisive,
+            source=source,
+            model=self._confirmer.model_name,
+        )
+
+    def _best_sources(self, ranked: list[Chunk]) -> list[str]:
+        """Sources holding a line related to the claim, closest first."""
+        related = [chunk.source for chunk in ranked if chunk.score >= self._floor]
+        return list(dict.fromkeys(related))[: self._confirm_settings.max_sources]
+
+    def _source_text(self, source: str, ranked: list[Chunk], lines: list[Chunk]) -> str:
+        """The source's lines closest to the claim, in source order, within the budget."""
+        order = {(c.source, c.content): index for index, c in enumerate(lines)}
+        budget = self._confirm_settings.max_evidence_chars
+        chosen: list[Chunk] = []
+        for chunk in (c for c in ranked if c.source == source):
+            if sum(len(c.content) + 1 for c in chosen) + len(chunk.content) > budget:
+                break
+            chosen.append(chunk)
+        chosen.sort(key=lambda c: order.get((c.source, c.content), 0))
+        return "\n".join(dict.fromkeys(chunk.content for chunk in chosen))
+
+    def _confirmed(
+        self,
+        claim: str,
+        kind: ClaimClass,
+        text: str,
+        source: str,
+        ranked: list[Chunk],
+        score: float,
+    ) -> DetectionVerdict:
+        """A supported verdict the confirmer gave, quoting the text it read."""
+        assert self._confirmer is not None
+        model = self._confirmer.model_name
+        result = EntailmentResult(
+            label=ENTAILMENT_LABEL,
+            entailed=True,
+            score=score,
+            calibrated=False,
+            model=model,
+            rationale=f"{model}: {self._confirm_settings.supported_label} {score:.2f}",
+        )
+        best = next((c for c in ranked if c.source == source), None)
+        read = Chunk(
+            content=text,
+            kind=best.kind if best is not None else "tool_result",
+            source=source,
+            score=best.score if best is not None else 0.0,
+            metadata={PASSAGE: True},
+        )
+        return self._verdict(claim, kind, CONFIRM_TIER, result, [read], supported=True)
 
     def _why_undecided(
         self,
@@ -435,10 +633,14 @@ class GroundingResolver:
     def _may_decide(
         self, claim: str, tier: GroundingTierSettings, item: tuple[EntailmentResult, Chunk]
     ) -> bool:
-        """Whether this result may speak: support about this subject, refutation where allowed."""
+        """Whether this result may speak: support about this subject, refutation where allowed.
+
+        A passage (several sentences as one premise) supports only.
+        """
         if item[0].label == ENTAILMENT_LABEL:
             return not self._names_only_others(claim, item[1])
-        return tier.may_refute and self._may_refute(claim, item[1])
+        passage = bool(item[1].metadata.get(PASSAGE))
+        return tier.may_refute and not passage and self._may_refute(claim, item[1])
 
     @staticmethod
     def _strength(item: tuple[EntailmentResult, Chunk]) -> tuple[float, float]:
@@ -468,7 +670,7 @@ class GroundingResolver:
                         score=coverage,
                         calibrated=False,
                         model=RESTATEMENT_MODEL,
-                        rationale=f"a rule restates {coverage:.0%} of the claim",
+                        rationale=f"{chunk.kind} restates {coverage:.0%} of the claim",
                     ),
                     chunk,
                 )
@@ -532,15 +734,22 @@ class GroundingResolver:
                 excerpt=chunk.content,
                 nli_label=by_chunk[id(chunk)].label
                 if id(chunk) in by_chunk
-                else f"not checked (below {self._floor})",
+                else self._unchecked(chunk),
                 nli_score=round(by_chunk[id(chunk)].score, 3) if id(chunk) in by_chunk else 0.0,
                 decisive=id(chunk) in by_chunk
                 and by_chunk[id(chunk)].label in _DECIDING_LABELS
                 and self._is_decisive(by_chunk[id(chunk)]),
                 source=chunk.source,
+                model=by_chunk[id(chunk)].model if id(chunk) in by_chunk else "",
             )
             for chunk in retrieved
         ]
+
+    def _unchecked(self, chunk: Chunk) -> str:
+        """Why a retrieved item got no NLI call: unrelated, or the claim was already decided."""
+        if chunk.score < self._floor:
+            return f"not checked (below {self._floor})"
+        return f"not checked ({get_settings().hallucination_check.methods.restated})"
 
     @staticmethod
     def _ranked(checks: list[EvidenceCheck]) -> list[EvidenceCheck]:

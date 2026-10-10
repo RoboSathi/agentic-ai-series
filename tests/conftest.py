@@ -462,7 +462,7 @@ def abstaining_guard() -> Iterator[None]:
     NLI that cannot entail a paraphrase, run under the platform default so they keep
     testing what they were written for; the agent's opt-in has tests of its own.
     """
-    settings = get_settings().hallucination_protection
+    settings = get_settings().hallucination_check
     previous = settings.unsupported_is_hallucination
     settings.unsupported_is_hallucination = False
     yield

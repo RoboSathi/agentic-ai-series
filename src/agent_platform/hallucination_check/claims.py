@@ -14,7 +14,7 @@ from decimal import Decimal
 from functools import cache
 
 from agent_platform.config import get_settings
-from agent_platform.hallucination_protection.types import AtomicClaim, ClaimClass
+from agent_platform.hallucination_check.types import AtomicClaim, ClaimClass
 from agent_platform.llm.embeddings import tokenize
 
 # Sentence boundaries, and the connectives that join two claims into one
@@ -45,7 +45,7 @@ _LEAD_IN = ":"
 # result, the reason from the policy — and no single premise entails both.
 # "Totals $117.23, so I cannot issue a $1 refund" likewise: joined, NLI
 # read the pair as contradicting "a refund is always for the full total".
-# Which connectives split is configuration (`hallucination_protection.claim_conjunctions`):
+# Which connectives split is configuration (`hallucination_check.claim_conjunctions`):
 # a support reply joins an outcome and its reason, a news summary joins items of one fact.
 def conjunction_pattern(words: tuple[str, ...]) -> re.Pattern[str]:
     return _conjunction(words)
@@ -145,10 +145,10 @@ _SPECIFIC = re.compile(
 #
 # A figure with a scale ("$1.2 M", "$1.2M", "$1.2 million", "₹4 lakh") is a size, not an exact
 # amount: read as money it became "$1.20", an amount no evidence held. The scale words are
-# configuration (`hallucination_protection.money_scales`).
+# configuration (`hallucination_check.money_scales`).
 def money_pattern() -> re.Pattern[str]:
     """Exact amounts in prose, as this deployment's scale words leave them."""
-    return _money(tuple(get_settings().hallucination_protection.money_scales))
+    return _money(tuple(get_settings().hallucination_check.money_scales))
 
 
 @cache
@@ -222,16 +222,19 @@ class ClaimClassifier:
     """
 
     def __init__(self) -> None:
-        settings = get_settings().hallucination_protection
+        settings = get_settings().hallucination_check
         self._identifier = re.compile(settings.record_identifier_pattern, re.IGNORECASE)
         self._outcome = re.compile(settings.outcome_pattern, re.IGNORECASE)
         self._promise = re.compile(settings.promissory_pattern, re.IGNORECASE)
         self._openers = [
             re.compile(pattern, re.IGNORECASE) for pattern in settings.conversational_openers
         ]
+        self._offer = re.compile(settings.offer_pattern, re.IGNORECASE)
 
     def classify(self, claim: str) -> ClaimClass:
         """The class that decides which tiers may ground this claim."""
+        if self._offer.match(claim.strip()):
+            return "conversational"
         if self._is_record(claim):
             return "record"
         if self._is_conversation(claim):
@@ -258,7 +261,7 @@ class ClaimDecomposer:
 
     def __init__(self, classifier: ClaimClassifier | None = None) -> None:
         self._classifier = classifier or ClaimClassifier()
-        settings = get_settings().hallucination_protection
+        settings = get_settings().hallucination_check
         self._rule_phrases = [
             (re.compile(phrase.pattern, re.IGNORECASE), phrase) for phrase in settings.rule_phrases
         ]

@@ -121,7 +121,7 @@ logging:
     context: turquoise2
     tools: white
     gatekeeper: bright_red
-    hallucination_protection: orange3
+    hallucination_check: orange3
     scheduler: medium_purple1
     budget: salmon1
     web: deep_sky_blue1
@@ -169,7 +169,7 @@ llm:
   # THOUGHT of a reasoning loop. The first one present is used.
   reasoning_fields: [reasoning_content, reasoning]
   # Token log-probabilities: how sure the model was of each token it wrote. The first step
-  # of the hallucination check (`hallucination_protection.confidence`) reads them. A model
+  # of the hallucination check (`hallucination_check.confidence`) reads them. A model
   # that rejects the parameter is noted once and asked without it from then on.
   logprobs:
     enabled: true
@@ -474,6 +474,14 @@ observability:
   llm_request_heading: "LLM request · {purpose}"
   llm_response_heading: "LLM response · {purpose}"
   llm_tool_requested_heading: "LLM response · tool requested: {tool}"
+  # Why a model call was made. A loop step's call (`next_action`) may ask for a tool or answer;
+  # its response card names what it produced: `tool_selection` or `reply`.
+  llm_purposes:
+    next_action: next_action
+    tool_selection: tool_selection
+    reply: reply
+    reply_revision: reply_revision
+    hallucination_repair: hallucination_repair
   # The cards every agent's tool-use loop draws, built once (`observability/step_events.py`).
   step_events:
     tool_requested: "Requested: {tool}"
@@ -1062,7 +1070,7 @@ guardrails:
     trimmed: "TRIMMED · removed {removed} of {total} sentence(s) · {why}"
     withheld: "BLOCKED · {why} · reply withheld"
 
-hallucination_protection:
+hallucination_check:
   enforce_grounding: true
   # Step 1 of the check: token confidence from the model's own log-probabilities
   # (`llm.logprobs`). Each sentence of a reply is scored by the tokens that wrote it; a
@@ -1106,8 +1114,18 @@ hallucination_protection:
     record: record
     logprobs: "logprobs {prob:.0%}"
     restated: rule restated
+    # The same shortcut when the premise is a tool result: the source says it in nearly the
+    # claim's own words (a forecast line restated in the reply), not a rule.
+    restated_source: source restated
     nothing: no evidence
-    nli: "NLI {score:.2f}"
+    nli: "{model} {score:.2f}"
+    confirmed: "{model} {prob:.0%}"
+  # How the card and the log name the models that read a line, by the model's id. A model
+  # not listed is named by the last part of its id.
+  model_labels:
+    cross-encoder/nli-deberta-v3-base: NLI DeBERTa
+    convaiinnovations/laya/typed-decisions: Laya
+    lexical-entailment-fallback: NLI lexical fallback
   # What is said instead when nothing in an answer could be verified.
   withheld_reply: "I couldn't verify all of the details in that response. Please try again."
   # By the reason the reply was cut (an agent's overlay words these for its customers).
@@ -1115,7 +1133,7 @@ hallucination_protection:
   # A verifiable claim nothing grounds: an abstention that stays in the reply (false), or a
   # made-up claim that is cut and queued like a contradicted one (true; an agent opts in).
   unsupported_is_hallucination: false
-  # The fact ledger (`hallucination_protection/ledger.py`): typed facts an agent puts in its
+  # The fact ledger (`hallucination_check/ledger.py`): typed facts an agent puts in its
   # evidence are read before any model. The attributes are the agent's; how two values are
   # compared, and what a duration's unit is worth, is language, shipped here.
   facts:
@@ -1166,6 +1184,49 @@ hallucination_protection:
   # claim; it is listed on the card but not sent to NLI, so an unrelated
   # passage can neither support nor "contradict" a sentence.
   evidence_min_similarity: 0.3
+  # A tool result is read one sentence at a time. Above 1, every run of this many consecutive
+  # sentences of one result is also a premise, so a claim that combines short lines of one
+  # page ("Kumar Karan" / "Lead Instructor @ Scaler Academy") can be entailed by them. A
+  # passage may support, never refute: a paragraph that also says what is *not* so reads to
+  # NLI as contradicting what is. 1 = one sentence per premise (the support agent's facts).
+  passage_window: 1
+  # Tool results that are web pages keep the page's line breaks and markdown: a wrapped
+  # sentence arrives as fragments, and "### Heading" and "Heading" crowd retrieval twice. On,
+  # wrapped lines are rejoined, markdown marks taken off and a repeated line read once.
+  tool_results_are_pages: false
+  # A claim a tier left undecided gets one more NLI call: its relevant evidence from one
+  # source, joined in source order (support only, at most `max_chars`). Off by default.
+  joined_premise:
+    enabled: false
+    max_chars: 1500
+  # A second opinion for a claim NLI left undecided (`hallucination_check/confirmer.py`):
+  # a local decision model reads the claim beside its source's text. It may confirm, never
+  # refute. Off in the platform; an agent whose evidence states facts across lines (web pages)
+  # turns it on and names the checkpoint.
+  confirmer:
+    enabled: false
+    model: ""
+    subfolder: ""
+    local_model_dir: ""
+    device: cpu
+    download_if_missing: true
+    question_id: verdict
+    claim_key: claim
+    evidence_key: evidence
+    instructions: Does the evidence support the claim?
+    criteria:
+      supported: Every fact the claim states is stated in the evidence (paraphrase allowed).
+      contradicted: The evidence states something that makes the claim false.
+      not_stated: The evidence does not state at least one fact the claim makes.
+    supported_label: supported
+    # A three-option answer: "supported" must be the model's choice and at least this sure.
+    # Its scores are not calibrated (the checkpoint says so), so tune this per checkpoint.
+    min_score: 0.45
+    max_evidence_chars: 1800
+    max_sources: 2
+  # Appended to a kept sentence holding a claim nothing verified, before its full stop. ""
+  # leaves the sentence as written (the card still lists the claim as unverified).
+  undetermined_marker: ""
   # Identifiers are agent vocabulary, so the platform names none. An agent
   # sets the shape of its ids here, and a record about a different id can
   # no longer "contradict" a claim (it can still fail to support it).
@@ -1184,6 +1245,10 @@ hallucination_protection:
     - {name: policy, kinds: [policy, retrieved], claims: [rule], may_refute: true}
     - {name: system, kinds: [system], claims: [rule], may_refute: false}
     - {name: memory, kinds: [memory], claims: [rule], may_refute: false}
+  # An offer of help asserts nothing, so it is conversation even when it names an outcome word
+  # ("If you'd like a refund for this delivered order, I can assist you with that"). Only a
+  # bare offer of help or assistance: "I can process it" commits to an action and stays a claim.
+  offer_pattern: '(?:if\s+you(?:[''’]d|\s+would)\s+like\b[^,]*,\s*)?(?:i|we)\s+(?:can|could|would\s+be\s+(?:happy|glad)\s+to|am\s+(?:happy|glad)\s+to)\s+(?:help|assist)\b'
   # A claim opening like this, and stating no outcome, is conversation.
   conversational_openers:
     - '(?:thanks?|thank\s+you|sorry|apolog\w+|please|hello|hi|hey|welcome)\b'
@@ -1884,6 +1949,7 @@ tui:
     corrected: corrected from the record
     no_evidence: no evidence states this
     no_evidence_either_way: no evidence states or contradicts this
+    lines_read: "read {count} lines"
     confidence_bands: {pass: 0.85, warn: 0.6}
   # Words that name a state, wherever a card shows them as a value -> their tone.
   state_words:

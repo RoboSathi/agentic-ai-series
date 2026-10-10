@@ -1,4 +1,4 @@
-# hallucination_protection — claim-level grounding
+# hallucination_check — claim-level grounding
 
 Checks a draft reply claim by claim against the evidence the agent actually
 had. Each claim is first **classed**, and the class decides which tiers may
@@ -10,7 +10,12 @@ well confidence predicts correctness.
 ## Vocabulary
 
 - **atomic claim** — one checkable assertion split out of a reply
-- **claim class** — `record` (a fact about this case: an order, an amount, an outcome stated as done), `rule` (how things work, and every promise: "you'll hear back soon"), `conversational` ("Thanks for reaching out" — not a claim, never scored)
+- **claim class** — `record` (a fact about this case: an order, an amount, an outcome stated as done), `rule` (how things work, and every promise: "you'll hear back soon"), `conversational` ("Thanks for reaching out", and an offer of help — "If you'd like a refund, I can assist with that" (`offer_pattern`) — not a claim, never scored)
+- **passage** — several consecutive sentences of one tool result read as one premise (`passage_window`), so a claim that joins a page's short lines ("Kumar Karan" / "Lead Instructor @ Scaler Academy") can be entailed. It may **support, never refute**: a paragraph that also says what is *not* so reads to NLI as contradicting what is
+- **joined premise** — for a claim a tier left undecided, the relevant evidence of one source joined in source order (`joined_premise`, off by default); support only, like a passage
+- **second opinion** (`confirmer.py`) — for a claim no tier decided, a local decision model (Laya, `confirmer`) reads the claim beside its best source's text (the lines most like it, in source order) and answers supported / contradicted / not stated. Only "supported", as its choice and at least `min_score`, changes anything: the claim becomes supported (`confirmed`). It never refutes, removes or repairs — measured on a web answer it confirmed every true claim NLI could not, but it missed wrong relations that NLI refutes first
+- **page text** — with `tool_results_are_pages`, a tool result's wrapped lines are rejoined, markdown marks taken off and a repeated line read once, so a page's sentences are premises rather than its line fragments
+- **unverified marker** — appended to a kept sentence whose claim nothing decided (`undetermined_marker`, "" = unmarked), by sentence index
 - **tier** — one stage of the cascade: which evidence kinds it reads, which claim classes it may ground, whether it may refute
 - **direct check** — the model-free step for a claim about the case: an id or amount the record lacks, the refund state machine, and the record of a refused call. It refutes, and it supports what it can place
 - **fact** (`ledger.py`) — a typed value an agent puts in its evidence (a delivery date, a total, a settlement window, the verified customer): a self-contained sentence for NLI, and the value in the chunk's metadata for the ledger
@@ -46,7 +51,7 @@ its log line ("Response grounding checked").
     signal only, because a figure is either found or it is not.
 
 ```
-record claim  →  direct check  →  fact ledger  →  state model  →  tool_result (NLI)
+record claim  →  direct check  →  fact ledger  →  state model  →  tool_result (NLI)  →  second opinion*
 rule claim    →  direct check* →  fact ledger  →  policy → system prompt → memory (NLI)
 conversation  →  not checked
 ```
@@ -55,7 +60,8 @@ A contradicted claim whose fact the ledger (or the state model) read is *correct
 its sentence is replaced with the fact's own sentence, so the customer gets what the
 record says rather than a gap (`corrected_sentences`).
 
-\* a date, weekday or number the claim brings that no evidence contains.
+\* a date, weekday or number the claim brings that no evidence contains. The second opinion
+runs only when an agent turns it on, only for a claim nothing decided, and only to confirm.
 
 The deterministic system-of-record tier is one of **admission**, not of
 prose: `EffectVerifier` re-reads the record after a write, and a call whose
@@ -97,15 +103,16 @@ own words (`rule_restatement_coverage`) supports it directly: NLI on an
 ## Public interface
 
 - `ClaimClassifier`, `ClaimDecomposer`, `split_sentences`, `sentence_pieces`, `plain_text` (`claims.py`): a line break ends a claim, markdown is stripped, a lead-in line ("Tomorrow in Pune:") claims nothing; `StateModel` (`states.py`)
-- `tool_evidence`, `Observation` (`evidence.py`): tool results as one `tool_result` premise per sentence, in call order — every agent builds its grounding evidence here
+- `tool_evidence`, `Observation` (`evidence.py`): tool results as one `tool_result` premise per sentence, in call order, plus passage windows when `passage_window` > 1 — every agent builds its grounding evidence here; `PASSAGE` marks a premise wider than a sentence
 - `GroundingResolver` (`resolver.py`), `DirectChecker` (`direct.py`)
 - `DetectionLadder`, `GroundingReasoningDiagnoser`, `TrustCalibrationTracker` (`checker.py`)
 - `AtomicClaim`, `ClaimClass`, `EvidenceCheck`, `DetectionVerdict`, `GenerationAssessment`, `TrustReport` (`types.py`)
 
 ## Configuration
 
-Section `hallucination_protection:` — thresholds (`nli_entailment_threshold`,
-`evidence_min_similarity`, `embedding_top_k`, `rule_restatement_coverage`), the
+Section `hallucination_check:` — thresholds (`nli_entailment_threshold`,
+`evidence_min_similarity`, `embedding_top_k`, `rule_restatement_coverage`), the premise width
+(`passage_window`, `joined_premise`), the `undetermined_marker`, the
 `tiers` list (order, kinds, claim classes, `may_refute`), the classifier vocabulary (`conversational_openers`,
 `record_identifier_pattern`, `outcome_pattern`, `promissory_pattern`), the
 the refund state machine (`refund_states`: `ladder`, `branches`, `observed_as`, `phrases`; plus `refund_state_pattern`, `refusal_pattern`), `rule_phrases`, self-consistency
@@ -128,4 +135,4 @@ E25, E26, E27.
 
 ## Tests
 
-Run with `pytest tests/unit/test_grounding_cascade.py tests/unit/test_grounding_evidence.py tests/unit/test_hallucination_protection.py tests/test_hallucination_guardrails.py -q` (or `make test` for everything).
+Run with `pytest tests/unit/test_grounding_cascade.py tests/unit/test_grounding_evidence.py tests/unit/test_grounding_passages.py tests/unit/test_hallucination_check.py tests/test_hallucination_guardrails.py -q` (or `make test` for everything).

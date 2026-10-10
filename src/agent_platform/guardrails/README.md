@@ -28,7 +28,7 @@ Section `guardrails:` — `enabled` (schema validation), `mode`, `max_repair_att
 
 ## Collaborators
 
-- Uses `hallucination_protection`; called by the agent's `finalize` node.
+- Uses `hallucination_check`; called by the agent's `finalize` node.
 
 ## Episodes
 

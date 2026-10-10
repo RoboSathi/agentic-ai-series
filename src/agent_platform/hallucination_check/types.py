@@ -50,6 +50,9 @@ class EvidenceCheck(BaseModel):
     decisive: bool
     # Where the line came from (`Chunk.source`): a page's URL, a tool's name, an article.
     source: str = ""
+    # The model that read this line (the NLI model, or the second opinion); "" for a line of
+    # the record read directly.
+    model: str = ""
 
 
 class DetectionVerdict(BaseModel):

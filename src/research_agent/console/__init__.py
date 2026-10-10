@@ -62,16 +62,21 @@ class ResearchHost:
 
         Loaded lazily inside the TUI, a local model fails on macOS (`bad value(s) in
         fds_to_keep`): the NLI model would leave every claim to the lexical fallback. The NLI
-        model and the research-kind examples (the e5 embedder, and the examples it embeds once)
-        load in parallel; both are resident for the life of the process. A model that cannot
+        model, the claim confirmer (when the agent turns it on) and the research-kind examples
+        (the e5 embedder, and the examples it embeds once) load in parallel; all are resident
+        for the life of the process. A model that cannot
         load does not stop the console: it is logged, and its caller falls back.
         """
         from agent_platform.evals.entailment import preload_entailment_model
+        from agent_platform.hallucination_check.confirmer import preload_claim_confirmer
         from research_agent.graph.builder import warm_kind_examples
 
         _start_presidio()
         agent = get_agent_settings()
-        loads: list[Callable[[], None]] = [lambda: warm_kind_examples(agent)]
+        loads: list[Callable[[], None]] = [
+            lambda: warm_kind_examples(agent),
+            preload_claim_confirmer,
+        ]
         if nli:
             loads.append(preload_entailment_model)
         with ThreadPoolExecutor(max_workers=len(loads)) as pool:

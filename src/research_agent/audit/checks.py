@@ -15,7 +15,7 @@ from typing import Any
 
 from agent_platform.evals.entailment import EntailmentModel
 from agent_platform.evidence import EvidenceEntry
-from agent_platform.hallucination_protection import plain_text
+from agent_platform.hallucination_check import plain_text
 from agent_platform.verification.acceptance import AcceptanceCheckRegistry, CheckOutcome, CheckSpec
 from research_agent.audit.context import CheckContext, distinct_hosts, host
 from research_agent.domain.sources import is_primary

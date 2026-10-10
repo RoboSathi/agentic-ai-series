@@ -42,7 +42,7 @@ from agent_platform.evals.entailment import create_entailment_model
 from agent_platform.executor import ToolExecutorImpl
 from agent_platform.gatekeeper import Gatekeeper, GatekeeperImpl
 from agent_platform.gatekeeper.ledger import CumulativeLedger
-from agent_platform.hallucination_protection import DetectionLadder
+from agent_platform.hallucination_check import DetectionLadder
 from agent_platform.llm.client import LLMClient, create_llm_client
 from agent_platform.llm.local_reranker import create_reranker
 from agent_platform.llm.local_summarizer import LocalDialogueSummarizer
@@ -661,7 +661,7 @@ def build_dream_service(
     dream = settings.memory.dream
     summarizer = SessionSummarizer(
         entailment=create_entailment_model(),
-        threshold=settings.hallucination_protection.nli_entailment_threshold,
+        threshold=settings.hallucination_check.nli_entailment_threshold,
         outcome_chars=dream.outcome_chars,
         summarizer=LocalDialogueSummarizer() if dream.summarize_intent else None,
         lookup_tools=dream.lookup_tools,

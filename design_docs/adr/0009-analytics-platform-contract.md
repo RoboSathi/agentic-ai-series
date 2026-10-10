@@ -122,7 +122,7 @@ the build differs from the design, these are the reasons:
   timing (`mcp.log`). `mcp/presentation.server_card` draws the MCP SERVER card.
 - **Token-confidence step (logprobs):** `llm.logprobs` asks every completion for token
   log-probabilities. All three hosted NIM chat models in use return them (probed
-  2026-10-09). `hallucination_protection/confidence.py` scores each reply sentence as the
+  2026-10-09). `hallucination_check/confidence.py` scores each reply sentence as the
   first step of the hallucination check, for CSA and RA (`ResponseGuardrail`) and for ops
   (before its figure check). A claim left undetermined in a low-confidence sentence counts
   as unsupported. It is level 1 of the hallucination check (`levels.py`), and travels

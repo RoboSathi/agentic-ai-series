@@ -7,6 +7,11 @@ logging:
 web:
   mode: replay
 
+# The claim confirmer is a local checkpoint; tests inject a fake one where they need it.
+hallucination_check:
+  confirmer:
+    enabled: false
+
 research_agent:
   audit:
     entailment_model: lexical

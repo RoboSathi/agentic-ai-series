@@ -4,7 +4,7 @@ from typing import Any
 
 from agent_platform.config import get_settings
 from agent_platform.guardrails.response import _surviving_sentences
-from agent_platform.hallucination_protection import (
+from agent_platform.hallucination_check import (
     NOT_EXECUTED_MARKER,
     ClaimDecomposer,
     Observation,
@@ -13,7 +13,7 @@ from agent_platform.hallucination_protection import (
     split_sentences,
     tool_evidence,
 )
-from agent_platform.hallucination_protection.types import DetectionVerdict
+from agent_platform.hallucination_check.types import DetectionVerdict
 from agent_platform.logging import describe_error
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.loop_reporter import LOOP_STEP_FIELD, LoopReporter, mark_step

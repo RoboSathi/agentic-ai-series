@@ -18,9 +18,9 @@ from agent_platform.config import get_settings
 from agent_platform.context.types import Chunk
 from agent_platform.evals import create_scoring_cascade
 from agent_platform.guardrails.response import ResponseGuardrail
-from agent_platform.hallucination_protection import DetectionLadder
-from agent_platform.hallucination_protection.claims import specifics
-from agent_platform.hallucination_protection.ledger import FLAG_TRUE, facts_in
+from agent_platform.hallucination_check import DetectionLadder
+from agent_platform.hallucination_check.claims import specifics
+from agent_platform.hallucination_check.ledger import FLAG_TRUE, facts_in
 from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.console.commands import QueueCommand

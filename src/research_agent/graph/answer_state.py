@@ -4,7 +4,8 @@ messages       the conversation the model reads: system prompt, history, questio
                then each step's tool calls and their results
 sources        the URLs the tools read, for the reply's Sources line
 observations   what each successful tool call returned: the only thing that can ground
-               a claim (an error or a refusal grounds nothing)
+               a claim (an error or a refusal grounds nothing) — a search as one per hit
+pages          the URLs read in full (fetched), as against seen only as a search snippet
 """
 
 import operator
@@ -14,7 +15,7 @@ from typing import Annotated, TypedDict
 
 from langchain_core.runnables import RunnableConfig
 
-from agent_platform.hallucination_protection import Observation
+from agent_platform.hallucination_check import Observation
 from agent_platform.llm.types import Message
 from agent_platform.loop_control import BudgetGuard
 from agent_platform.loop_control.watchdogs import ToolLoopControl
@@ -32,6 +33,7 @@ class AnswerState(TypedDict):
     messages: Annotated[list[Message], operator.add]
     sources: Annotated[list[str], operator.add]
     observations: Annotated[list[Observation], operator.add]
+    pages: Annotated[list[str], operator.add]
     text: str
     # The budget counter that cut the loop short ("" when the model finished by itself).
     stop: str
@@ -72,6 +74,7 @@ def initial_state(system: str, question: str, history: list[Message]) -> AnswerS
         ],
         "sources": [],
         "observations": [],
+        "pages": [],
         "text": "",
         "stop": "",
         "failure": "",

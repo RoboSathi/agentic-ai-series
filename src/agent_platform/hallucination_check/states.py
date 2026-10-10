@@ -12,7 +12,7 @@ then `issued`, then `completed`, or it is `denied` after it was asked
 for — so a claim about where the refund stands is judged against it, in
 both directions, and the record line is never sent to NLI.
 
-The vocabulary is configuration (`hallucination_protection.record_states`):
+The vocabulary is configuration (`hallucination_check.record_states`):
 what the statuses are, and which words mean which. The platform owns the
 reading; the agent owns the words.
 """
@@ -42,7 +42,7 @@ class StateModel:
     """Judges a claim about where a record stands against its recorded status (configured)."""
 
     def __init__(self) -> None:
-        settings = get_settings().hallucination_protection
+        settings = get_settings().hallucination_check
         states = settings.record_states
         self._line = re.compile(settings.record_state_pattern, re.IGNORECASE)
         self._ladder = [status.casefold() for status in states.ladder]

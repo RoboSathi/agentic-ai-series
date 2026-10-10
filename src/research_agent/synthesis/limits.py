@@ -60,7 +60,13 @@ def render_limits(
     rejected: dict[str, str],
     budget_stops: list[str],
     codes: Mapping[str, str] | None = None,
+    weaker: list[str] | None = None,
 ) -> ReportSection:
+    """The section: unmet items, rejections grouped by reason, budget stops, weaker evidence.
+
+    `weaker` holds the lines (already worded) for cited findings that rest on less than a
+    page read in full and in scope.
+    """
     lines = [
         f"- {e.item_id}: {e.text} — {e.reason}. Tried: {', '.join(e.tried_queries) or 'no queries'}."
         for e in limits
@@ -69,6 +75,7 @@ def render_limits(
         lines.append("- Every must-pass criterion was met.")
     lines.extend(_rejection_lines(rejected, codes or {}))
     lines.extend(f"- Budget: {stop}." for stop in budget_stops)
+    lines.extend(weaker or [])
     return ReportSection(heading=COVERAGE_AND_LIMITS, body="\n".join(lines))
 
 

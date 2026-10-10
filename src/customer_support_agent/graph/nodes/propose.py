@@ -12,6 +12,7 @@ a timeout, a retry under an idempotency key, and a circuit breaker.
 
 from typing import Any
 
+from agent_platform.config import get_settings
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
 from agent_platform.observability import Span
 from agent_platform.observability.model_observer import MODEL_STAGE as LLM_CALL_SPAN
@@ -45,7 +46,9 @@ class ProposalNodes(NodeSupport):
             messages=self._prompt_messages(state),
             tools=self._registry.to_openai_tools([tool.qualified_name for tool in tools]),
         )
-        self._report_llm_request(request, purpose="tool_selection")
+        # The model may ask for a tool or answer; the response card names which it did.
+        purpose = get_settings().observability.llm_purposes.next_action
+        self._report_llm_request(request, purpose=purpose)
         try:
             result = await self._call_model(request, state)
         except Exception as exc:
@@ -69,7 +72,7 @@ class ProposalNodes(NodeSupport):
             }
         message = Message(role="assistant", content=result.content, tool_calls=result.tool_calls)
         state.working_memory.add_current_turn(message)
-        self._report_llm_response(result, purpose="tool_selection")
+        self._report_llm_response(result, purpose=purpose)
         requested = bool(result.tool_calls)
         next_step, because = after_propose_step(requested)
         self._report_loop_status(
