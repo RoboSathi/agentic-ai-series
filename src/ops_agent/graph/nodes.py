@@ -20,7 +20,7 @@ from agent_platform.gatekeeper.types import AuthorityDecision
 from agent_platform.hallucination_protection.confidence import ConfidenceCheck, report_confidence
 from agent_platform.hallucination_protection.levels import CheckLevel, grounding_level
 from agent_platform.llm.client import LLMClient
-from agent_platform.llm.types import CompletionRequest, Message
+from agent_platform.llm.types import CompletionRequest, Message, ModelToolCall
 from agent_platform.logging import get_logger, instrument
 from agent_platform.loop_control import LoopControlReport
 from agent_platform.observability import StageReporter, checks
@@ -48,6 +48,8 @@ _TOOL_REQUESTED, _NO_TOOL_CALL, _ITERATION_LIMIT = (
 _ABORT = "abort"
 # A figure's verdict, in the claim words every agent's HALLUCINATION CHECK card reads.
 _SUPPORTED, _UNVERIFIED = "supported", "undetermined"
+# A prefetch read takes no arguments.
+_NO_ARGUMENTS = "{}"
 
 
 @instrument("ops_agent")
@@ -78,8 +80,6 @@ class OpsNodes:
 
     async def propose(self, state: OpsState) -> dict[str, Any]:
         """One step: the model reads the conversation and asks for tools, or answers."""
-        if state["steps"] == 0:
-            self._calls.begin_turn()
         step = state["steps"] + 1
         self._steps.begin(step)
         request = CompletionRequest(
@@ -119,6 +119,45 @@ class OpsNodes:
             because=because,
         )
         self._logger.info("Loop control status", **fields)
+
+    def begin_turn(self) -> None:
+        """A new question: the loop forgets the last one (before any prefetch read runs)."""
+        self._calls.begin_turn()
+
+    def can_prefetch(self, name: str) -> bool:
+        """Whether a procedure's read can run before the model: known, read-only, no arguments."""
+        tool = self._registry.get(name)
+        return tool is not None and not tool.side_effecting and not _required(tool)
+
+    async def prefetch(
+        self, planned: list[tuple[str, str]], session_id: str
+    ) -> tuple[list[Message], list[str]]:
+        """A procedure's first reads, run before the model is asked: the messages, and what ran.
+
+        Each is shown and governed like a model's call, and handed to the model as one, so it
+        starts where the procedure's first steps end. A read that needs arguments, or would
+        change something, is skipped.
+        """
+        messages: list[Message] = []
+        ran: list[str] = []
+        for procedure, name in planned:
+            tool = self._registry.get(name)
+            if tool is None or not self.can_prefetch(name):
+                continue
+            call = ModelToolCall(
+                id=self._settings.prefetch_call_id.format(tool=tool.model_name),
+                name=tool.model_name,
+                arguments=_NO_ARGUMENTS,
+            )
+            self._steps.tool_request(call.name, call.arguments, prefetched_for=procedure)
+            outcome = await self._calls.run(call, session_id, 0, on_decision=self._decided)
+            self._report_call(call.name, outcome)
+            messages += [
+                Message(role="assistant", content="", tool_calls=[call]),
+                Message(role="tool", content=outcome.text, tool_call_id=call.id),
+            ]
+            ran += [call.name] if outcome.succeeded else []
+        return messages, ran
 
     async def execute(self, state: OpsState) -> dict[str, Any]:
         replies: list[Message] = []
@@ -243,3 +282,8 @@ def _claim_check(finding: FigureFinding, found: str) -> dict[str, Any]:
 
 
 __all__ = ["EXECUTE", "GROUND", "PROPOSE", "OpsNodes"]
+
+
+def _required(tool: Any) -> bool:
+    """Whether a tool needs arguments a prefetch has no way to know."""
+    return any(field.is_required() for field in tool.args_schema.model_fields.values())

@@ -316,18 +316,6 @@ def _kind_examples(
     return ExemplarIntentClassifier(embedder, exemplars, neighbours)
 
 
-def intent_embedder() -> EmbeddingClient:
-    """The local sentence embedder when one is configured, else the platform's hosted one.
-
-    Measured 2026-10-02 on the 76 labelled examples (leave-one-out, 7-neighbour vote):
-    intfloat/e5-large-v2 84.2% and right 97% of the time it decides alone (43% of messages),
-    against 78.9% / 91% / 29% for the hosted nemotron embedder — and no network call per message.
-    """
-    if get_settings().llm.local_embedder.enabled:
-        return _local_embedder()
-    return create_embedding_client()
-
-
 @cache
 @checks.recorded_dependency(checks.EMBEDDING, "embed", lambda _model: checks.LOCAL_MODEL)
 def _local_embedder() -> LocalSentenceEmbedder:
@@ -569,16 +557,6 @@ def _independent_auditor(
 ) -> IndependentAuditor:
     return IndependentAuditor(
         registry, context, roles.model_key(JUDGE), agent.audit.independent_judge
-    )
-
-
-def build_auditor(
-    agent: ResearchAgentSettings, roles: RoleClients, entailment: EntailmentModel
-) -> IndependentAuditor:
-    """A stand-alone Independent Audit, whatever the agent's posture — the evals' instrument."""
-    judge = LlmJudge(StructuredCaller(roles, PydanticValidator()))
-    return _independent_auditor(
-        build_registry(), context_factory(agent, entailment, judge), roles, agent
     )
 
 

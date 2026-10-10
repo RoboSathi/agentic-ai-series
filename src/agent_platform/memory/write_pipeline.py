@@ -414,10 +414,6 @@ class MemoryWritePipelineImpl:
                 return category
         return "general"
 
-    def attach_provenance(self, source: str, kind: ProvenanceKind) -> Provenance:
-        """Record who said it and how they knew (legacy helper)."""
-        return Provenance(source=source, kind=kind, ingestion_time=utc_now())
-
     def detect_conflict(self, candidate: MemoryFact) -> MemoryConflict | None:
         """Check the candidate against what this subject already believes.
 

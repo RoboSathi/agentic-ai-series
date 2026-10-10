@@ -80,9 +80,19 @@ audit:
 
 llm:
   intent_classifier:
-    # Fine-tuned on this agent's intents, so it is this agent's artifact.
+    # Which model classifies a turn the phrase rules did not settle:
+    #   laya_local        — Laya decision model, asked which of `intents[]` (by description)
+    #   huggingface_local — the fine-tuned BERT below, through its label mapping
+    # Each has its own threshold and labels in `customer_support_agent.intent_router.classifiers`.
+    provider: laya_local
+    # The BERT (`provider: huggingface_local`).
     model: learn-abc/magicSupport-intent-classifier
     local_model_dir: local_models/intent_classifier/magicSupport-intent-classifier
+    # Laya (`provider: laya_local`): one checkpoint of a bundle, downloaded once.
+    laya:
+      model: convaiinnovations/laya
+      subfolder: typed-decisions
+      local_model_dir: local_models/intent_classifier/laya-typed-decisions
   # The memory dream (`make dream`) summarises each session with this local model.
   dialogue_summarizer:
     enabled: true
@@ -93,9 +103,26 @@ llm:
 
 # The profile and the procedures (ADR 0010): synced into procedural memory
 # at start-up when memory.procedural is on, selected per turn by intent.
+# What the model and every card call each tool (ADR 0010): verbs a person would use.
+# Policy, audit and evals keep the qualified names (`support.process_refund`).
+tools:
+  model_names:
+    support.get_order_status: look_up_order
+    support.list_orders: list_my_orders
+    support.get_refund_status: check_refund
+    support.process_refund: request_refund
+    support.cancel_order: cancel_order
+
 skills:
   profile_path: src/customer_support_agent/prompts/AGENT.md
   skills_dir: src/customer_support_agent/prompts/skills
+  # An unplaced turn (route llm_fallback) gets every procedure that may be its task:
+  # order status, refund and cancel — and is offered exactly their tools.
+  selection:
+    max_active: 3
+  # Profile + the three largest procedures may add at most this to a prompt (the old
+  # instructions were 3,167).
+  max_prompt_chars: 2600
 
 memory:
   episodic:
@@ -444,10 +471,15 @@ customer_support_agent:
       tool: list_orders
     UNKNOWN: []
   intent_router:
-    # Routing threshold applied to the mapped model-softmax score. This is an
-    # agent-level routing policy, not a calibrated probability guarantee.
-    confidence_threshold: 0.75
     clarification_top_k: 2
+    # Route a turn by `intents[].phrases` before the classifier sees it (on: a phrase
+    # match is decided without a model call). Off sends every turn to the classifier
+    # (profiles/no_phrase_rules.yaml). The order validator reads the same phrases
+    # whatever this says.
+    phrase_rules: true
+    # The question a classifier that reads the intents' descriptions is asked
+    # (`provider: laya_local`); the options are `intents[].description`.
+    instructions: Which request is the customer making in this message?
     deterministic_rejects:
     - rule_id: WEATHER_REQUEST
       pattern: '\b(?:weather|forecast|temperature|rain(?:ing)?|snow(?:ing)?)\b'
@@ -459,23 +491,43 @@ customer_support_agent:
     - rule_id: PROGRAMMING_REQUEST
       pattern: '\b(?:write|generate|debug|fix)\s+(?:a\s+)?(?:python|javascript|java|code|program|script)\b'
       reason: Programming requests are outside Customer Support capabilities.
-    model_label_mapping:
-      ORDER_STATUS:
-      - track_order
-      - delivery_period
-      - delivery_options
-      ORDER_DETAILS: []
-      LIST_ORDERS: []
-      CANCEL_ORDER:
-      - cancel_order
-      REQUEST_REFUND:
-      - get_refund
-      # Tracking a refund is asking where it stands, not asking for one.
-      REFUND_STATUS:
-      - track_refund
-      UNKNOWN:
-      - fallback
-      - FALLBACK
+    # How each classifier's answers are read; the one in use is `llm.intent_classifier.provider`.
+    # Thresholds differ because the scores do: the BERT's softmax runs near 1.0 even when it
+    # is wrong, while Laya spreads probability over every option (intent bake-off, 2026-10-10:
+    # Laya at 0.6 decided 40% of turns at 95% accuracy).
+    classifiers:
+      # The fine-tuned BERT answers in its own 28 labels; these are the ones that mean an
+      # intent of ours. ORDER_DETAILS and LIST_ORDERS have none, so only phrases reach them.
+      huggingface_local:
+        confidence_threshold: 0.75
+        model_label_mapping:
+          ORDER_STATUS:
+          - track_order
+          - delivery_period
+          - delivery_options
+          ORDER_DETAILS: []
+          LIST_ORDERS: []
+          CANCEL_ORDER:
+          - cancel_order
+          REQUEST_REFUND:
+          - get_refund
+          # Tracking a refund is asking where it stands, not asking for one.
+          REFUND_STATUS:
+          - track_refund
+          UNKNOWN:
+          - fallback
+          - FALLBACK
+      # Laya answers in this agent's intent names (its options are `intents[].description`).
+      laya_local:
+        confidence_threshold: 0.6
+        model_label_mapping:
+          ORDER_STATUS: [ORDER_STATUS]
+          ORDER_DETAILS: [ORDER_DETAILS]
+          LIST_ORDERS: [LIST_ORDERS]
+          REQUEST_REFUND: [REQUEST_REFUND]
+          REFUND_STATUS: [REFUND_STATUS]
+          CANCEL_ORDER: [CANCEL_ORDER]
+          UNKNOWN: [UNKNOWN]
   followup:
     phrases:
     - what about
@@ -561,6 +613,13 @@ customer_support_agent:
       delivered: " on {value}"
   demo_user_code: 2HEDZTV
   policy_path: src/customer_support_agent/prompts/customer_policy.md
+  # A procedure's prefetch reads (ADR 0010): each tool argument, from the turn-state key that
+  # holds it; a read whose required arguments are not all known is skipped, never guessed.
+  # `call_id` names the tool call the model is shown, so its result pairs with it.
+  prefetch:
+    arguments:
+      order_id: order_under_discussion
+    call_id: "prefetch-{tool}"
   # Which turn facts become procedure signals (ADR 0010): a state metadata
   # key, and how its value is written as a signal a SKILL.md trigger names.
   instruction_signals:
@@ -637,6 +696,25 @@ customer_support_agent:
     order_reference_pattern: '\b\d{5}\b'
     money_pattern: '\$\s?(\d[\d,]*(?:\.\d{1,2})?)'
     prompt_leak_ngram: 8
+    # `make intent-bakeoff csa`: each contender (a config profile; "" is the agent as
+    # configured) classifies the same labelled messages, model alone and through the router.
+    intent_bakeoff:
+      cases_path: src/customer_support_agent/evals/intent/cases.yaml
+      report_dir: src/customer_support_agent/data/reports/intent_bakeoff
+      report_title: CSA intent classifier bake-off
+      report_file: "{stamp}.md"
+      stamp_format: "%Y%m%dT%H%M%SZ"
+      calibration_bins: 10
+      # A threshold tuned on one model's scores is not another's: read every contender here.
+      threshold_sweep: [0.3, 0.4, 0.5, 0.6, 0.75, 0.9]
+      # Each classifier with the phrase rules on and off, each at its own threshold.
+      contenders:
+        laya: []
+        laya_no_rules: [src/customer_support_agent/config/profiles/no_phrase_rules.yaml]
+        bert: [src/customer_support_agent/config/profiles/bert_intent.yaml]
+        bert_no_rules:
+          - src/customer_support_agent/config/profiles/bert_intent.yaml
+          - src/customer_support_agent/config/profiles/no_phrase_rules.yaml
 
 tui:
   # The order table, coloured by state. Anchored to a table cell (`│ word │`), so the same word in

@@ -72,9 +72,5 @@ class InMemoryPubSub:
                     "Subscriber raised; continuing delivery", topic=topic, error=str(exc)
                 )
 
-    def subscriber_count(self, topic: str) -> int:
-        """How many handlers are listening on a topic."""
-        return len(self._handlers.get(topic, []))
-
     def _remove(self, topic: str, handler: EventHandler) -> None:
         self._handlers[topic] = [h for h in self._handlers.get(topic, []) if h is not handler]

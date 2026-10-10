@@ -28,11 +28,6 @@ class AgentFingerprint(BaseModel):
     git_sha: str
     git_dirty: bool
 
-    def changed_parts(self, previous: dict[str, str]) -> list[str]:
-        """Names of the parts that differ from an earlier fingerprint."""
-        names = set(self.parts) | set(previous)
-        return sorted(name for name in names if self.parts.get(name) != previous.get(name))
-
 
 def compute_fingerprint(
     agent_inputs: dict[str, str],

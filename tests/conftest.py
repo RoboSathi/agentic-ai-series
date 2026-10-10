@@ -35,6 +35,7 @@ from agent_platform.llm.types import (
     TokenUsage,
 )
 from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.primitives.money import Money
 from agent_platform.resilience.rate_limiter import reset_rate_limiter
 from customer_support_agent.config.settings import reload_agent_settings
 from customer_support_agent.domain.identity import Customer, set_current_customer
@@ -44,6 +45,11 @@ from customer_support_agent.persistence.schema import ensure_schema
 _ANALYTICS_PATH_VAR = "ANALYTICS__SOURCES__LIVE__DB_PATH"
 _CHECKPOINTS_PATH_VAR = "DURABILITY__DB_PATH"
 _RATE_LIMIT_PATH_VAR = "RESILIENCE__RATE_LIMIT__STORE_PATH"
+# Settings fields naming a credential's environment variables, and the two provider
+# keys read by bare name (`llm.encoders.api_key`, `web_search` Tavily).
+_KEY_ENV_VARS = "key_env_vars"
+_BARE_PROVIDER_KEYS = ("hf_api_key", "tavily_api_key")
+_HOSTED_GUARDS_VAR = "SECURITY__GUARDS__ENABLED"
 
 
 class ScriptedLLM(LLMClient):
@@ -235,6 +241,61 @@ def no_trace_export() -> Iterator[None]:
         for name in get_settings().observability.langsmith.key_env_vars:
             patch.delenv(name, raising=False)
         yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def no_provider_calls() -> Iterator[None]:
+    """No test calls a hosted model, whatever keys the developer's shell exports.
+
+    With `nvidia_api_key` set, every agent turn a test drove went to the hosted
+    guards and model endpoints: each turn waited on the network and the shared
+    rate limiter, and the suite spent the developer's free-tier quota. Without a
+    key each hosted client takes its offline fallback, as in CI.
+
+    The hosted guards are switched off as well: they fail closed when their
+    model is unreachable (`fail_open_on_unavailable: false`), which is right in
+    production and would block every scripted turn here. The deterministic
+    phrase screens still run; a test of a hosted guard injects its own client.
+    """
+    names = _key_env_vars(get_settings().model_dump()) | set(_BARE_PROVIDER_KEYS)
+    with pytest.MonkeyPatch.context() as patch:
+        for name in names:
+            patch.delenv(name, raising=False)
+        patch.setenv(_HOSTED_GUARDS_VAR, "false")
+        reload_settings()
+        reload_agent_settings()
+        yield
+    reload_settings()
+    reload_agent_settings()
+
+
+def refunded_to(pool: SqliteConnectionPool, user_id: int) -> Money:
+    """What the ledger has paid one customer, reversals excluded: the money that moved."""
+    row = pool.query_one(
+        "SELECT COALESCE(SUM(amount_cents), 0) AS total FROM refunds "
+        "WHERE user_id = ? AND reversed = 0",
+        (user_id,),
+    )
+    return Money.from_cents(int(row["total"]) if row else 0)
+
+
+def unwrapped(client: LLMClient) -> LLMClient:
+    """The client under the call-log decorators (`llm.call_log`), which only record and step."""
+    from agent_platform.llm.call_log import RecordedClient, SteppedClient
+
+    while isinstance(client, RecordedClient | SteppedClient):
+        client = client._inner
+    return client
+
+
+def _key_env_vars(node: Any) -> set[str]:
+    """Every environment variable the configuration reads a provider key from."""
+    if isinstance(node, dict):
+        found = set(node.get(_KEY_ENV_VARS) or [])
+        return found.union(*(_key_env_vars(value) for value in node.values()))
+    if isinstance(node, list):
+        return set().union(*(_key_env_vars(item) for item in node))
+    return set()
 
 
 def _eval_paths(root: Any) -> dict[str, Any]:

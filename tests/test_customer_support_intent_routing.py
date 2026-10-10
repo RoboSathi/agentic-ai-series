@@ -89,7 +89,7 @@ def test_intent_operator_fields_are_concise_and_distinguish_source() -> None:
     bert_fields = CustomerSupportAgent._intent_status_fields(BertIntent())
     assert bert_fields == {
         "intent": "ORDER_STATUS",
-        "classification": "bert",
+        "classification": "model",
         "model": "bert-test-model",
         "score": 0.844,
     }

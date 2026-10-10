@@ -50,9 +50,3 @@ class LittlesLawQueueModel:
             reviewer_hours_per_hour=hours,
             reviewers_required=int(hours) + (1 if hours % 1 else 0),
         )
-
-    def is_stable(
-        self, arrival_rate_per_hr: float, service_time_min: float, reviewers: int
-    ) -> bool:
-        """Whether the queue drains at this staffing level, or grows forever."""
-        return reviewers >= self.required_capacity(arrival_rate_per_hr, service_time_min)

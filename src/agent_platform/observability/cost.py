@@ -7,7 +7,7 @@ than being called by every cost-incurring module.
 
 from typing import Protocol, runtime_checkable
 
-from agent_platform.observability.types import CostComponent, CostStack, Span
+from agent_platform.observability.types import CostComponent, CostStack
 
 
 @runtime_checkable
@@ -32,20 +32,9 @@ class CostAggregatorImpl:
         stack = self._stacks.setdefault(request_id, CostStack())
         setattr(stack, component, getattr(stack, component) + cost_usd)
 
-    def observe_span(self, span: Span) -> None:
-        """Subscriber hook: attribute a completed span's cost automatically."""
-        if span.cost_usd <= 0:
-            return
-        component: CostComponent = "tool_calls" if span.tool else "output_tokens"
-        self.record(span.trace_id, component, span.cost_usd)
-
     def record_outcome(self, request_id: str, success: bool) -> None:
         """Mark a request's eval outcome — the cost-per-success denominator."""
         (self._successes if success else self._failures).add(request_id)
-
-    def stack_for(self, request_id: str) -> CostStack:
-        """The cost breakdown for one request."""
-        return self._stacks.get(request_id, CostStack())
 
     @property
     def total_cost(self) -> float:

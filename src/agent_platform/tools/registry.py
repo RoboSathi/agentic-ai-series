@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from agent_platform.guardrails import PydanticValidator
 from agent_platform.logging import get_logger, instrument, logged
+from agent_platform.tools.names import configured_model_name
 from agent_platform.tools.types import (
     WIRE_NAME_PATTERN,
     ToolCall,
@@ -64,18 +65,39 @@ class NamespacedToolRegistry:
 
     @logged("tools")
     def register(self, tool: ToolDefinition) -> None:
-        """Register a tool under its qualified name, replacing any namesake.
+        """Register a tool under its qualified name, offered under its model name.
 
-        The wire name is validated here rather than at call time: a name
-        a provider will reject should fail at startup, not halfway
-        through a customer's first conversation.
+        The model name is validated here rather than at call time: a name a
+        provider will reject should fail at startup, not halfway through a
+        customer's first conversation. Two tools offered under one name would
+        leave the model's call ambiguous, so that is refused too.
         """
-        if not WIRE_NAME_PATTERN.match(tool.wire_name):
+        named = self._named(tool)
+        if not WIRE_NAME_PATTERN.match(named.model_name):
             raise ValueError(
-                f"Tool '{tool.wire_name}' is not a valid provider function name; "
+                f"Tool '{named.model_name}' is not a valid provider function name; "
                 f"only letters, digits, underscores and dashes are allowed"
             )
-        self._tools[tool.qualified_name] = tool
+        self._tools[named.qualified_name] = named
+
+    def _named(self, tool: ToolDefinition) -> ToolDefinition:
+        """The tool under the name it is offered by — never one another tool already has.
+
+        A configured name that clashes is a configuration error. A bare name that clashes
+        (two namespaces with a `lookup`) keeps its namespace, as the wire name, so both stay
+        callable and neither call is ambiguous.
+        """
+        configured = configured_model_name(tool.qualified_name, "")
+        name = configured or tool.alias or tool.name
+        clash = self._by_model_name(name)
+        if clash is None or clash.qualified_name == tool.qualified_name:
+            return tool.model_copy(update={"alias": name})
+        if configured:
+            raise ValueError(
+                f"Tools '{clash.qualified_name}' and '{tool.qualified_name}' would both be "
+                f"offered as '{name}'"
+            )
+        return tool.model_copy(update={"alias": tool.wire_name})
 
     def register_all(self, tools: list[ToolDefinition]) -> None:
         """Register a batch — how a subsystem contributes its whole toolset."""
@@ -85,19 +107,26 @@ class NamespacedToolRegistry:
     def get(self, name: str) -> ToolDefinition | None:
         """Look up by qualified name, falling back to a unique bare name.
 
-        Three spellings resolve: the qualified name used in logs and
-        policy, the wire name the provider was actually shown, and a bare
+        Four spellings resolve: the qualified name used in logs and
+        policy, the model name the provider was shown, the legacy wire
+        name, and a bare
         name while it is unambiguous — models routinely drop the
         namespace. Once two namespaces share a bare name the lookup
         fails rather than guessing which was meant.
         """
         if name in self._tools:
             return self._tools[name]
+        offered = self._by_model_name(name)
+        if offered is not None:
+            return offered
         by_wire = next((tool for tool in self._tools.values() if tool.wire_name == name), None)
         if by_wire is not None:
             return by_wire
         matches = [tool for tool in self._tools.values() if tool.name == name]
         return matches[0] if len(matches) == 1 else None
+
+    def _by_model_name(self, name: str) -> ToolDefinition | None:
+        return next((tool for tool in self._tools.values() if tool.model_name == name), None)
 
     def all_tools(self) -> list[ToolDefinition]:
         """Every registered tool."""
@@ -119,13 +148,6 @@ class NamespacedToolRegistry:
             else self.all_tools()
         )
         return [tool.to_openai_schema() for tool in selected]
-
-    def build_call(self, name: str, raw_arguments: str | dict[str, Any]) -> ToolCall | None:
-        """The validated call, or None when the tool is unknown or its arguments invalid.
-
-        A thin reading of `resolve` for callers that do not need to know which.
-        """
-        return self.resolve(name, raw_arguments).call
 
     def resolve(self, name: str, raw_arguments: str | dict[str, Any]) -> ToolResolution:
         """Turn a wire-level request into a validated, governed `ToolCall`, or say why not.

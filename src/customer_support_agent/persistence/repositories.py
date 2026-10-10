@@ -322,11 +322,6 @@ class UsersRepository:
         row = self._pool.query_one("SELECT COUNT(*) AS n FROM users")
         return int(row["n"]) if row else 0
 
-    def order_count_for(self, user_id: int) -> int:
-        """How many orders a customer has — shown in the verified read-back."""
-        row = self._pool.query_one("SELECT COUNT(*) AS n FROM orders WHERE user_id = ?", (user_id,))
-        return int(row["n"]) if row else 0
-
     def get_by_code(self, user_code: str) -> User | None:
         """One customer by the code they typed.
 
@@ -541,14 +536,5 @@ class RefundLedgerRepository:
             "SELECT COALESCE(SUM(amount_cents), 0) AS total FROM refunds "
             "WHERE order_id = ? AND reversed = 0",
             (order_id,),
-        )
-        return Money.from_cents(int(row["total"]) if row else 0)
-
-    def total_for_user(self, user_id: int) -> Money:
-        """Total refunded to one customer, excluding reversals."""
-        row = self._pool.query_one(
-            "SELECT COALESCE(SUM(amount_cents), 0) AS total FROM refunds "
-            "WHERE user_id = ? AND reversed = 0",
-            (user_id,),
         )
         return Money.from_cents(int(row["total"]) if row else 0)

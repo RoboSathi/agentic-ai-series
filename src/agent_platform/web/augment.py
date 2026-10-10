@@ -8,7 +8,7 @@ paces how often it may spend the metered provider on it:
     weak       fewer than `min_hits` hits, or the query's content words barely appear in the top
                `top_k` titles and snippets (a lexical check: no model, no network)
     allowance  `quota × (day of month / days in month) × share` — spent evenly across the month,
-               the rest (`1 − share`) kept for pure fallback and for research runs
+               the rest (`1 − share`) kept for pure fallback and for runs that search the web
 
 The merge keeps the free provider's order, puts the metered hits after its best one, drops a URL
 both returned, and caps the list at the request's `max_results`.

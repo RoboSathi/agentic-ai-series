@@ -115,6 +115,7 @@ from customer_support_agent.graph.nodes.context import ContextNodes
 from customer_support_agent.graph.nodes.execute import ExecutionNodes
 from customer_support_agent.graph.nodes.finalize import FinalizeNodes
 from customer_support_agent.graph.nodes.intent import IntentNodes
+from customer_support_agent.graph.nodes.prefetch import PrefetchNodes
 from customer_support_agent.graph.nodes.propose import ProposalNodes
 from customer_support_agent.graph.nodes.review_wait import ReviewWaitNodes
 from customer_support_agent.graph.nodes.screening import ScreeningNodes
@@ -147,6 +148,7 @@ class CustomerSupportAgent(
     ScreeningNodes,
     IntentNodes,
     ContextNodes,
+    PrefetchNodes,
     ProposalNodes,
     ExecutionNodes,
     FinalizeNodes,

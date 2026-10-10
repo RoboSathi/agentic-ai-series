@@ -41,6 +41,8 @@ features:
 skills:
   profile_path: src/ops_agent/prompts/AGENT.md
   skills_dir: src/ops_agent/prompts/skills
+  # Profile + the two largest procedures may add at most this to a prompt (the old system prompt was 1,493).
+  max_prompt_chars: 1500
 
 logging:
   subsystem_colors:
@@ -107,6 +109,8 @@ ops_agent:
   number_tolerance: 0.01
   # Figures every answer may carry without a query behind them (counts in prose).
   free_numbers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 100]
+  # A procedure's prefetch read is shown to the model as a call with this id (ADR 0010).
+  prefetch_call_id: "prefetch-{tool}"
   words:
     stopped: "I stopped after {steps} steps without an answer. Try a narrower question."
     blocked: "That message was stopped by the input screen ({reason})."

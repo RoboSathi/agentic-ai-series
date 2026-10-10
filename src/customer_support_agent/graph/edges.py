@@ -41,6 +41,8 @@ class GraphWiring(NodeSupport):
         graph.add_node("authenticate", self.authenticate)
         graph.add_node("choose_order", self.choose_order)
         graph.add_node("read_intent", self.read_intent)
+        # Between the front door and the first model call: a procedure's known first reads.
+        graph.add_node("prefetch", self.prefetch)
         graph.add_node("propose", self.propose)
         graph.add_node("execute", self.execute)
         graph.add_node("finalize", self.finalize)
@@ -81,7 +83,7 @@ class GraphWiring(NodeSupport):
         # Resolve deterministic menu choices before anything model-driven,
         # then hand to the first stage this agent actually has.
         names = [name for name, _ in front_door]
-        first = names[0] if names else "propose"
+        first = names[0] if names else "prefetch"
         graph.add_conditional_edges(
             "choose_order", self._after_choose, {"next": first, "done": END}
         )
@@ -89,7 +91,7 @@ class GraphWiring(NodeSupport):
         # Each stage continues to the next one that exists. Every one of
         # them can halt the turn, so each edge carries a `done` branch.
         for position, name in enumerate(names):
-            following = names[position + 1] if position + 1 < len(names) else "propose"
+            following = names[position + 1] if position + 1 < len(names) else "prefetch"
             if name == "classify_intent":
                 graph.add_conditional_edges(
                     name,
@@ -102,6 +104,7 @@ class GraphWiring(NodeSupport):
                 )
 
         graph.add_edge("read_intent", END)
+        graph.add_edge("prefetch", "propose")
         graph.add_conditional_edges(
             "propose", self._after_propose, {"execute": "execute", "finalize": "finalize"}
         )

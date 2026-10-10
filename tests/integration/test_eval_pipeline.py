@@ -14,6 +14,7 @@ from agent_platform.config import get_settings
 from agent_platform.evals.pipeline.orchestrator import EvalPipeline
 from agent_platform.evals.store import DuckDbEvalStore
 from agent_platform.llm.types import CompletionRequest, CompletionResult
+from customer_support_agent.config import get_agent_settings
 from customer_support_agent.dummy_data import generate_dummy_data as dummy
 from customer_support_agent.evals.agent_under_test import CsaAgentUnderTest
 from customer_support_agent.evals.plugin import CsaEvalPlugin
@@ -31,7 +32,12 @@ class StatelessScriptedLLM(ScriptedLLM):
     """
 
     async def complete(self, request: CompletionRequest) -> CompletionResult:
-        answered = any(message.role == "tool" for message in request.messages)
+        # A procedure's prefetched reads are results too, but not of anything the model asked.
+        prefetched = get_agent_settings().prefetch.call_id.split("{", maxsplit=1)[0]
+        answered = any(
+            message.role == "tool" and not (message.tool_call_id or "").startswith(prefetched)
+            for message in request.messages
+        )
         self._index = 1 if answered else 0
         return await super().complete(request)
 
@@ -76,8 +82,13 @@ async def test_generate_oracle_and_reports(security_off: None) -> None:
     transcripts = {item.case_id: item.transcript for item in store.transcripts(run.run_id)}
     refund = transcripts["refund-direct-001"]
     assert [row["order_id"] for row in refund.side_effects["refunds"]] == [90001]
-    assert refund.tool_calls[0].name == "support.process_refund"
-    assert refund.tool_calls[0].status == "completed"
+    # The refund procedure's prefetched reads come first; then the model's one call.
+    assert [call.name for call in refund.tool_calls] == [
+        "support.get_order_status",
+        "support.get_refund_status",
+        "support.process_refund",
+    ]
+    assert refund.tool_calls[-1].status == "completed"
     # Cases are isolated: the refund in one case is not visible in another.
     assert transcripts["already-refunded-001"].side_effects["refunds"] == []
     # The script refunds 90001 for every case, so the over-limit case must

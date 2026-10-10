@@ -10,7 +10,7 @@ from research_agent.domain.rubric import Contract, Rubric
 from research_agent.domain.scope import CoverageItem, KnownUnknown, ScopeBrief, SourcePolicy
 from research_agent.prompts.interviewer import InterviewTurn
 from research_agent.rubric.editor import RubricEditError, RubricEditor, render
-from research_agent.rubric.freeze import contract_artifacts, freeze_contract
+from research_agent.rubric.freeze import freeze_contract
 from research_agent.rubric.generator import RubricGenerator
 from research_agent.scoping import checklist
 from research_agent.scoping.brief import BriefBuilder
@@ -276,8 +276,6 @@ class TestFreezing:
             **{**contract.__dict__, "rubric": Rubric(items=rubric.items[:1])}
         )
         assert not tampered.verify()
-        brief, frozen_rubric = contract_artifacts(contract)
-        assert brief.kind == "brief" and frozen_rubric.kind == "rubric" and brief.verify()
         with pytest.raises(Exception):
             contract.contract_hash = "x"  # type: ignore[misc]
 

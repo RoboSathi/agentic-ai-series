@@ -19,6 +19,7 @@ from agent_platform.config import get_settings
 
 PROJECT = get_settings().analytics.dashboards.resolved_project_dir
 _PARQUET = re.compile(r"read_parquet\('data/(\w+)\.parquet'\)")
+_MODEL = re.compile(r"\bFROM\s+(\w+__\w+)\b")
 _QUOTED = re.compile(r"'[^']*'")
 _IDENTIFIER = re.compile(r"\b([a-z_][a-z0-9_]*)\b(?!\s*\()")
 _SQL_WORDS = {"case", "when", "then", "else", "end", "as", "and", "or", "not", "null", "double",
@@ -34,12 +35,21 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 def _model_views() -> dict[str, str]:
-    """Each Rill model's name → the source view it reads."""
+    """Each Rill model's name → the source view it reads, directly or through another model.
+
+    An agent's model narrows the platform's (`SELECT * FROM agent_platform__checks …`),
+    so it reads the view that model reads.
+    """
+    sql = {path.stem: str(_load(path)["sql"]) for path in _files("models")}
     views = {}
-    for path in _files("models"):
-        match = _PARQUET.search(_load(path)["sql"])
-        assert match, f"{path.name} does not read a source view"
-        views[path.stem] = match.group(1)
+    for model, text in sql.items():
+        match = _PARQUET.search(text)
+        if match is None:
+            read = _MODEL.search(text)
+            assert read and read.group(1) in sql, f"{model} reads neither a view nor a model"
+            match = _PARQUET.search(sql[read.group(1)])
+        assert match, f"{model} does not read a source view"
+        views[model] = match.group(1)
     return views
 
 
@@ -64,5 +74,17 @@ def test_every_column_a_metrics_view_names_is_documented(path: Path) -> None:
 
 @pytest.mark.parametrize("path", _files("dashboards"), ids=lambda path: path.stem)
 def test_every_dashboard_explores_a_metrics_view_that_exists(path: Path) -> None:
+    """A canvas names a metrics view per widget; every one of them must exist."""
     metrics = {metrics_path.stem for metrics_path in _files("metrics")}
-    assert _load(path)["metrics_view"] in metrics
+    named = _metrics_views(_load(path))
+    assert named and named <= metrics, f"{path.name} names {sorted(named - metrics)}"
+
+
+def _metrics_views(node: Any) -> set[str]:
+    """Every `metrics_view` a dashboard spec names, however deeply its widgets nest."""
+    if isinstance(node, dict):
+        found = {str(node["metrics_view"])} if "metrics_view" in node else set()
+        return found.union(*(_metrics_views(value) for value in node.values()))
+    if isinstance(node, list):
+        return set().union(*(_metrics_views(item) for item in node))
+    return set()

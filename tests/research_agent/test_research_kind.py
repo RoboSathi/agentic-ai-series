@@ -3,20 +3,13 @@
 Only `/research` reaches it, so it never decides *whether* to research — only which kind.
 """
 
-from pathlib import Path
-
 import pytest
 
 from agent_platform.intent.types import IntentCandidate
 from research_agent.config import get_agent_settings
 from research_agent.domain.scope import KindVerdict
 from research_agent.scoping.kind import LlmKindClassifier
-from research_agent.scoping.kind_encoder import LABELS, EncoderKindClassifier
-from research_agent.scoping.kind_examples import (
-    confusion,
-    load_examples,
-    stratified_split,
-)
+from research_agent.scoping.kind_encoder import EncoderKindClassifier
 
 # The classifier reads the research agent's own settings.
 pytestmark = pytest.mark.usefixtures("ra_config")
@@ -105,17 +98,3 @@ def test_an_unknown_kind_from_the_model_becomes_general() -> None:
     llm = _Llm()
     verdict = KindVerdict(decision="scopable", archetype=None, topic="")
     assert llm.normalise(verdict, "a question").archetype == "general"
-
-
-def test_examples_cover_every_kind_and_split_stratified() -> None:
-    examples = load_examples(Path("src/research_agent/scoping/kind_examples.yaml"))
-    assert {label for _, label in examples} == set(LABELS)
-    assert len({text for text, _ in examples}) == len(examples)  # no duplicate utterances
-    train, test = stratified_split(examples)
-    assert {label for _, label in test} == set(LABELS) == {label for _, label in train}
-    assert not {t for t, _ in train} & {t for t, _ in test}
-
-
-def test_confusion_matrix_has_a_row_per_label() -> None:
-    table = confusion(["general", "explainer"], ["general", "general"])
-    assert len(table.splitlines()) == len(LABELS) + 1

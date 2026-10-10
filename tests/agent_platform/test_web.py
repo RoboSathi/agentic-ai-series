@@ -191,11 +191,10 @@ class TestModes:
         recorder = _live(client, mode="record", fixtures=store)
         live = await recorder.search(SearchRequest(query="alpha", max_results=2))
         page = await recorder.fetch(PAGE)
-        store.write_manifest("1", "test")
         replay = WebGateway("replay", fixtures=store)
         assert (await replay.search(SearchRequest(query="ALPHA ", max_results=2))) == live
         assert (await replay.fetch(PAGE)).text == page.text
-        assert store.manifest() is not None and store.keys("search") and store.keys("fetch")
+        assert store.keys("search") and store.keys("fetch")
 
     async def test_a_replay_miss_raises_and_never_falls_through(self, tmp_path: Path) -> None:
         replay = WebGateway("replay", fixtures=FixtureStore(tmp_path, "empty"))

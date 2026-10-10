@@ -64,7 +64,7 @@ class GovernedMcpToolSource:
                 "MCP tool registered",
                 server=self._server.name,
                 tool=definition.qualified_name,
-                offered_as=definition.wire_name,
+                offered_as=definition.model_name,
                 envelope=self._policy.envelope_for(self._server, self._tool(definition.name)),
             )
         return definitions

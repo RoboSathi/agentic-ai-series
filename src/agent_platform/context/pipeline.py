@@ -83,10 +83,6 @@ class FiveStagePipeline:
         self._chars_per_token = settings.chars_per_token
         self._logger = get_logger("context")
 
-    def add_source(self, source: CandidateSource) -> None:
-        """Register another contributor of candidate chunks."""
-        self._sources.append(source)
-
     @logged("context")
     async def assemble(self, task: Task, budget_tokens: int | None = None) -> AssembledContext:
         """Run all five stages and return the assembled window."""

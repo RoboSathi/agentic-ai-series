@@ -17,9 +17,7 @@ Four dashboards (Rill *canvases*), one page each:
 | Dashboard | Shows |
 |---|---|
 | **Agent Platform** | Every agent together: each metric over all their traffic, and in every section the agents ranked side by side. |
-| **Customer Support Agent** | Its own traffic: the platform's sections, then its own (Human review: reviews, Gatekeeper decisions by standing). |
-| **Research Agent** | Its own traffic, the platform's sections. |
-| **Ops Analyst** | Its own traffic, the platform's sections. |
+| **Each agent** | Its own traffic: the platform's sections, then any the agent declares (its own views in the semantic layer). |
 
 Every dashboard has the same sections, in this order — **Outcomes, Hallucination &
 grounding, Security, Tool use, Reliability & speed, Cost, Models** — each a row of KPI tiles

@@ -93,7 +93,7 @@ class TestStepCards:
 def test_tool_fields_name_the_tool_and_every_argument() -> None:
     fields = tool_request_fields("answer__weather", '{"location": "Pune"}')
     assert (fields["tool"], fields["arg_location"]) == ("weather", "Pune")
-    assert display_tool_name("support.process_refund") == "process_refund"
+    assert display_tool_name("billing.issue_credit") == "issue_credit"
 
 
 def test_an_error_reads_as_one_line() -> None:

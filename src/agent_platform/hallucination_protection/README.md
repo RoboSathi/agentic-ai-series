@@ -34,9 +34,9 @@ its log line ("Response grounding checked").
   unsupported (`promote`). Each run writes a `logprob` check row. A model that returns
   no logprobs makes it `skipped`.
 - **Level 2, the agent's grounding.**
-  - Support and research replies: NLI entailment (`ResponseGuardrail`).
-  - The research report: the citation guard.
-  - The ops analyst: every figure found in a query result. There, level 1 is shown as a
+  - A reply grounded on tool results and documents: NLI entailment (`ResponseGuardrail`).
+  - A cited report: the agent's own citation guard.
+  - An answer from query results: every figure found in a result. There, level 1 is shown as a
     signal only, because a figure is either found or it is not.
 
 ```

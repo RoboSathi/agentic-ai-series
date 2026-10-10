@@ -618,15 +618,7 @@ class StageEventWidget(Collapsible):
             return "PASS · No PII detected"
 
         if stage == "content_moderation":
-            if status == "blocked":
-                categories = fields.get("categories") or []
-                category_text = ", ".join(str(item) for item in categories)
-
-                if category_text:
-                    return f"Flagged · Categories: {category_text}"
-
-                return "Flagged"
-
+            # A blocked screen returned above, with its decision summary.
             return "PASS · No harmful content detected"
 
         if stage == "intent_classification":

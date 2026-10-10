@@ -54,10 +54,6 @@ class AuthorityHierarchyResolver:
             return len(self._hierarchy)
         return rank
 
-    def can_grant(self, source: str) -> bool:
-        """Whether a source may grant or expand authority at all."""
-        return self.rank_of(source) <= self._max_granting_rank
-
     def outranks(self, source: str, other: str) -> bool:
         """Whether one source's instructions take precedence over another's."""
         return self.rank_of(source) < self.rank_of(other)

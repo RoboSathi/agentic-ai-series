@@ -1,7 +1,7 @@
-"""The profile and a turn's procedures, rendered and recorded (ADR 0010).
+"""The agent profile and a turn's procedures, rendered, checked and recorded (ADR 0010).
 
-Real files, a real procedural store and a real audit ledger; the only
-thing faked is the screen — a reporter that keeps what it was shown.
+Real files, a real procedural store, a real audit ledger and a real tool registry; the
+only thing faked is the screen — a reporter that keeps what it was shown.
 """
 
 from collections.abc import Iterator
@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
 from agent_platform.audit.ledger import SqliteAuditLedger
 from agent_platform.config import get_settings
@@ -23,12 +24,14 @@ from agent_platform.skills import (
     build_agent_instructions,
     render_profile,
 )
+from agent_platform.tools import NamespacedToolRegistry
+from agent_platform.tools.types import ToolDefinition, ToolResult
 
-_PROFILE = (
-    "# Test Agent\n\n## Mission\nHelp.\n## Scope\n## Working principles\n"
-    "## Tool-use principles\n## Memory principles\n## Escalation\n## Skill usage\n"
+_PROFILE = "# Test Agent\n\n## Mission\nHelp.\n## Scope\nOrders.\n## Rules\n- Be exact.\n"
+_BODY = (
+    "## Preconditions\nfor people\n## Procedure\n1. step one\n2. step two\n"
+    "## Boundaries\nb\n## Completion\nfor people\n"
 )
-_BODY = "## Preconditions\np\n## Procedure\n1. step\n## Boundaries\nb\n## Completion\nc\n"
 
 
 @contextmanager
@@ -48,19 +51,44 @@ class _Screen:
     def emit(self, stage: str, status: str, *_: Any, **kwargs: Any) -> None:
         self.events.append({"stage": stage, "status": status, **kwargs})
 
+    def of(self, stage: str) -> list[dict[str, Any]]:
+        return [e for e in self.events if e["stage"] == stage]
 
-def _write_skill(root: Path, name: str, triggers: str) -> None:
+
+def _write_skill(root: Path, name: str, front: str) -> None:
     folder = root / "skills" / name
-    folder.mkdir(parents=True)
-    front = f"---\nname: {name}\ndescription: {name} task\ntriggers: {triggers}\n---\n"
-    (folder / "SKILL.md").write_text(front + _BODY, encoding="utf-8")
+    folder.mkdir(parents=True, exist_ok=True)
+    head = f"---\nname: {name}\ndescription: {name} task\n{front}---\n"
+    (folder / "SKILL.md").write_text(head + _BODY, encoding="utf-8")
+
+
+class _Args(BaseModel):
+    pass
+
+
+def _tool(name: str, *, side_effecting: bool = False) -> ToolDefinition:
+    return ToolDefinition(
+        name=name,
+        namespace="test",
+        description=name,
+        args_schema=_Args,
+        handler=lambda: ToolResult(success=True),
+        side_effecting=side_effecting,
+    )
+
+
+@pytest.fixture
+def registry() -> NamespacedToolRegistry:
+    tools = NamespacedToolRegistry()
+    tools.register_all([_tool("look_up"), _tool("pay", side_effecting=True)])
+    return tools
 
 
 @pytest.fixture
 def settings(tmp_path: Path) -> SkillSettings:
     (tmp_path / "AGENT.md").write_text(_PROFILE, encoding="utf-8")
-    _write_skill(tmp_path, "refund-flow", "[intent:REFUND]")
-    _write_skill(tmp_path, "track-flow", "[intent:TRACK]")
+    _write_skill(tmp_path, "refund-flow", "triggers: [intent:REFUND]\nprefetch: [look_up]\n")
+    _write_skill(tmp_path, "track-flow", "triggers: [intent:TRACK]\n")
     return get_settings().skills.model_copy(
         update={
             "profile_path": str(tmp_path / "AGENT.md"),
@@ -85,13 +113,17 @@ def instructions(
     pool: SqliteConnectionPool,
     audit: SqliteAuditLedger,
     screen: _Screen,
+    registry: NamespacedToolRegistry,
 ) -> AgentInstructions:
     return build_agent_instructions(
-        settings, store=ProceduralStore(pool), audit=audit, reporter=screen
+        settings, store=ProceduralStore(pool), audit=audit, reporter=screen, tools=registry
     )
 
 
-class TestTheCharter:
+_REFUND = frozenset({"intent:REFUND"})
+
+
+class TestTheProfile:
     def test_it_is_the_file_as_written(
         self, instructions: AgentInstructions, settings: SkillSettings
     ) -> None:
@@ -102,75 +134,129 @@ class TestTheCharter:
         self, settings: SkillSettings, screen: _Screen
     ) -> None:
         bare = build_agent_instructions(settings, store=None, audit=None, reporter=screen)
-        composed = bare.compose(frozenset({"intent:REFUND"}), "refund please")
+        composed = bare.compose(_REFUND, "refund please")
         assert composed.text == _PROFILE.strip()
-        assert composed.activation.skills == ()
         assert bare.catalog is None
         assert screen.events == []
 
 
-class TestComposing:
-    def test_the_matching_procedure_follows_the_profile(
+class TestRendering:
+    def test_only_the_sections_the_model_acts_on_are_sent(
         self, instructions: AgentInstructions
     ) -> None:
-        text = instructions.compose(frozenset({"intent:REFUND"}), "").text
-        assert text.startswith("# Test Agent")
-        assert "# Procedure: refund-flow\n\n## Preconditions" in text
-        assert "track-flow" not in text
-
-    def test_the_frontmatter_never_reaches_the_prompt(
-        self, instructions: AgentInstructions
-    ) -> None:
-        text = instructions.compose(frozenset({"intent:REFUND"}), "").text
+        text = instructions.compose(_REFUND, "").text
+        assert "# Procedure: refund-flow\n\n## Procedure\n1. step one" in text
+        assert "## Boundaries" in text
+        assert "for people" not in text
         assert "triggers:" not in text
 
-    def test_the_activation_names_versions(self, instructions: AgentInstructions) -> None:
-        activation = instructions.compose(frozenset({"intent:REFUND"}), "").activation
-        assert [item.skill.ref("{name}@{version}") for item in activation.skills] == [
-            "refund-flow@1"
-        ]
+    def test_select_then_render_is_compose(self, instructions: AgentInstructions) -> None:
+        activation = instructions.select(_REFUND, "")
+        assert instructions.render(activation) == instructions.compose(_REFUND, "").text
+
+    def test_the_activation_lists_prefetch_reads(self, instructions: AgentInstructions) -> None:
+        assert instructions.select(_REFUND, "").prefetch() == ["look_up"]
 
 
-class TestRecording:
-    def test_one_audit_entry_per_turn(
+class TestTheProcedureCard:
+    def test_one_line_says_what_was_used_and_why(
+        self, instructions: AgentInstructions, screen: _Screen, settings: SkillSettings
+    ) -> None:
+        with trace_context("t1"):
+            activation = instructions.select(_REFUND, "")
+            instructions.announce(activation, prefetched=["look_up"])
+        [card] = screen.of(settings.observability.activation_stage)
+        assert card["summary"] == (
+            "refund-flow v1 · matched intent REFUND · 2 steps · reads first: look_up"
+        )
+        assert card["fields"]["procedures"][0]["matched"] == "matched intent REFUND"
+        assert "profile" not in card["fields"] and "signals" not in card["fields"]
+
+    def test_nothing_is_shown_or_recorded_when_no_procedure_is_used(
         self,
         instructions: AgentInstructions,
+        screen: _Screen,
         audit: SqliteAuditLedger,
         settings: SkillSettings,
     ) -> None:
-        with trace_context("trace-1"):
-            for _ in range(3):  # a tool loop composes once per round
-                instructions.compose(frozenset({"intent:REFUND"}), "q")
-        entries = [
-            e for e in audit.reconstruct("trace-1") if e.action == settings.audit.activation_action
-        ]
-        assert len(entries) == 1
-        assert entries[0].authority_context["procedures"] == ["refund-flow@1"]
-        assert entries[0].authority_context["profile"].startswith("profile@")
+        with trace_context("t2"):
+            instructions.compose(frozenset({"intent:OTHER"}), "hello")
+        assert screen.of(settings.observability.activation_stage) == []
+        assert audit.reconstruct("t2") == []
 
-    def test_one_card_per_turn(
-        self, instructions: AgentInstructions, screen: _Screen, settings: SkillSettings
+    def test_once_per_turn_however_often_a_loop_composes(
+        self,
+        instructions: AgentInstructions,
+        screen: _Screen,
+        audit: SqliteAuditLedger,
+        settings: SkillSettings,
     ) -> None:
-        with trace_context("trace-2"):
-            for _ in range(2):
-                instructions.compose(frozenset({"intent:REFUND"}), "q")
-        cards = [e for e in screen.events if e["stage"] == settings.observability.activation_stage]
-        assert len(cards) == 1
-        assert cards[0]["fields"]["procedures"] == ["refund-flow@1"]
+        with trace_context("t3"):
+            for _ in range(3):
+                instructions.compose(_REFUND, "q")
+        assert len(screen.of(settings.observability.activation_stage)) == 1
+        [entry] = audit.reconstruct("t3")
+        assert entry.authority_context["procedures"] == ["refund-flow@1"]
+        assert entry.authority_context["profile"].startswith("profile@")
 
-    def test_the_start_up_sync_is_shown(
-        self, instructions: AgentInstructions, screen: _Screen, settings: SkillSettings
+
+class TestTheStartUpSync:
+    def test_a_first_sync_is_shown(self, instructions: AgentInstructions, screen: _Screen) -> None:
+        assert screen.of(get_settings().skills.observability.sync_stage)
+
+    def test_an_unchanged_sync_draws_no_card(
+        self,
+        settings: SkillSettings,
+        pool: SqliteConnectionPool,
+        registry: NamespacedToolRegistry,
     ) -> None:
-        assert any(e["stage"] == settings.observability.sync_stage for e in screen.events)
+        build_agent_instructions(
+            settings, store=ProceduralStore(pool), audit=None, reporter=None, tools=registry
+        )
+        again = _Screen()
+        build_agent_instructions(
+            settings, store=ProceduralStore(pool), audit=None, reporter=again, tools=registry
+        )
+        assert again.events == []
 
 
-class TestBuilding:
-    def test_more_always_skills_than_the_cap_is_refused(
+class TestBuildChecks:
+    def _build(self, settings: SkillSettings, pool: SqliteConnectionPool, **kwargs: Any) -> Any:
+        return build_agent_instructions(
+            settings, store=ProceduralStore(pool), audit=None, reporter=None, **kwargs
+        )
+
+    def test_more_always_skills_than_the_cap(
         self, tmp_path: Path, settings: SkillSettings, pool: SqliteConnectionPool
     ) -> None:
-        for name in ("a-rule", "b-rule", "c-rule"):
-            _write_skill(tmp_path, name, "[always]")
+        for index in range(settings.selection.max_active + 1):
+            _write_skill(tmp_path, f"rule-{index}", "triggers: [always]\n")
         with pytest.raises(SkillDocumentError, match="always"):
-            build_agent_instructions(
-                settings, store=ProceduralStore(pool), audit=None, reporter=None
-            )
+            self._build(settings, pool)
+
+    def test_a_prompt_over_budget(
+        self, settings: SkillSettings, pool: SqliteConnectionPool
+    ) -> None:
+        tight = settings.model_copy(update={"max_prompt_chars": 10})
+        with pytest.raises(SkillDocumentError, match="max_prompt_chars"):
+            self._build(tight, pool)
+
+    def test_a_tool_the_agent_does_not_offer(
+        self, tmp_path: Path, settings: SkillSettings, pool: SqliteConnectionPool
+    ) -> None:
+        _write_skill(tmp_path, "odd-flow", "tools: [nowhere]\n")
+        tools = NamespacedToolRegistry()
+        tools.register(_tool("look_up"))
+        with pytest.raises(SkillDocumentError, match="nowhere"):
+            self._build(settings, pool, tools=tools)
+
+    def test_a_prefetch_that_would_change_something(
+        self,
+        tmp_path: Path,
+        settings: SkillSettings,
+        pool: SqliteConnectionPool,
+        registry: NamespacedToolRegistry,
+    ) -> None:
+        _write_skill(tmp_path, "pay-flow", "prefetch: [pay]\n")
+        with pytest.raises(SkillDocumentError, match="effect"):
+            self._build(settings, pool, tools=registry)

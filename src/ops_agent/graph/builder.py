@@ -98,6 +98,7 @@ def build_agent(
     )
     return OpsAgent(
         build_graph(nodes),
+        nodes,
         registry,
         _sources(transport or SdkMcpTransport()),
         agent,

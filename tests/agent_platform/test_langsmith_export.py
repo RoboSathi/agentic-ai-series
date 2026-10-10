@@ -68,6 +68,8 @@ class TestBuild:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         client = MagicMock()
+        # Export is off by default; this test is about what an enabled one sends.
+        monkeypatch.setattr(get_settings().observability.langsmith, "enabled", True)
         monkeypatch.setenv(_settings().key_env_vars[0], "key")
         monkeypatch.setattr(
             "agent_platform.observability.langsmith._routing_free_client", lambda: client

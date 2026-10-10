@@ -14,7 +14,7 @@ failing, so a new stage shows up as itself instead of breaking the feed.
 from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
-from agent_platform.tools.types import WIRE_SEPARATOR
+from agent_platform.tools.names import display_tool_name
 
 
 @runtime_checkable
@@ -106,9 +106,8 @@ class StageLabelRegistry:
         )
 
     def tool_label(self, tool: str) -> str:
-        """Convert wire / qualified tool names to concise display names."""
-        bare = tool.rsplit(WIRE_SEPARATOR, maxsplit=1)[-1].rsplit(".", maxsplit=1)[-1]
-        return bare.replace("_", " ")
+        """Any spelling of a tool, as the name the model and every card know it by."""
+        return display_tool_name(tool).replace("_", " ")
 
     def known_stages(self) -> set[str]:
         """Return the presentation aliases known to this renderer."""

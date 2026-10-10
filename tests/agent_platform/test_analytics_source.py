@@ -1,7 +1,7 @@
 """The analytics source: curated views exported as Parquet, checked against the semantic layer.
 
-A real DuckDB per test, filled through the platform's own writers (fact ledger,
-audit ledger); the source is read back with DuckDB, as Rill and the MCP server read it.
+A real DuckDB per test, filled through the platform's own writers (fact store, audit
+ledger); the source is read back with DuckDB, as Rill and the MCP server read it.
 """
 
 from pathlib import Path
@@ -22,26 +22,27 @@ from agent_platform.audit import AuditEntry, DuckDbAuditLedger
 from agent_platform.config import get_settings
 from agent_platform.logging.trace_context import bound_log_context
 from agent_platform.observability.facts import (
-    DuckDbFactLedger,
-    LlmCallFact,
+    DuckDbFactStore,
+    ModelCallFact,
     ToolCallFact,
-    TurnOutcomeFact,
+    TurnFact,
 )
 from agent_platform.observability.store import DuckDbObservabilityStore
 
 
 @pytest.fixture
 def store(tmp_path: Path) -> DuckDbObservabilityStore:
+    """Two turns in one session: one with a primary and a backup model call, one with none."""
     store = DuckDbObservabilityStore(tmp_path / "observability.duckdb")
-    facts = DuckDbFactLedger(store, agent_id="agent-a")
+    facts = DuckDbFactStore(store, agent_id="agent-a")
     with bound_log_context(agent="agent-a", session="s1", trace_id="t1"):
-        facts.record(LlmCallFact(role="planner", model="m1", total_tokens=10, latency_ms=100))
-        facts.record(LlmCallFact(role="planner", model="m2", position=1, total_tokens=5))
-        facts.record(TurnOutcomeFact(outcome="answered", answered=True, escalated=False))
-    with bound_log_context(agent="agent-a", session="s1", trace_id="t2"):
-        facts.record(
-            TurnOutcomeFact(outcome="escalated", answered=False, escalated=True, tool_calls=0)
+        first = {"task_id": "k1", "turn_id": "u1"}
+        facts.append(ModelCallFact(**first, role="planner", model="m1", total_tokens=10))
+        facts.append(
+            ModelCallFact(**first, role="planner", model="m2", is_backup=True, total_tokens=5)
         )
+        facts.append(TurnFact(**first, status="completed", steps=1, latency_ms=100))
+        facts.append(TurnFact(task_id="k2", turn_id="u2", status="completed", steps=0))
     DuckDbAuditLedger(store, agent_id="agent-a").record(
         AuditEntry(
             trace_id="t2",
@@ -69,42 +70,56 @@ def _read(parquet: Path, view: str, sql: str = "SELECT * FROM v") -> list[tuple[
     return connection.execute(sql).fetchall()
 
 
-def test_every_view_is_exported_with_its_documented_columns(
+def _columns(parquet: Path, view: str) -> list[str]:
+    described = duckdb.connect().execute(
+        f"DESCRIBE SELECT * FROM read_parquet('{parquet / view}.parquet')"
+    )
+    return [row[0] for row in described.fetchall()]
+
+
+def test_every_exported_view_has_exactly_its_documented_columns(
     store: DuckDbObservabilityStore, tmp_path: Path
 ) -> None:
     parquet = _export(store, tmp_path)
+    manifest = read_manifest(parquet)
+    assert manifest is not None
     for view in load_catalog().views:
-        if view.source == "evals":
+        if manifest.views[view.name].skipped:
             continue
-        connection = duckdb.connect()
-        described = connection.execute(
-            f"DESCRIBE SELECT * FROM read_parquet('{parquet / view.name}.parquet')"
-        ).fetchall()
-        assert [row[0] for row in described] == list(view.columns), view.name
+        assert _columns(parquet, view.name) == list(view.columns), view.name
 
 
-def test_the_manifest_counts_each_view_and_says_why_evals_were_skipped(
+def test_the_manifest_counts_each_view_and_says_why_one_was_skipped(
     store: DuckDbObservabilityStore, tmp_path: Path
 ) -> None:
     manifest = read_manifest(_export(store, tmp_path))
     assert manifest is not None
     assert manifest.schema_version == get_settings().analytics.schema_version
-    assert manifest.views["llm_calls"].rows == 2
+    assert manifest.views["model_calls"].rows == 2
     assert manifest.views["turns"].rows == 2
-    assert "no eval store" in manifest.views["eval_runs"].skipped
+    assert manifest.views["eval_runs"].skipped
 
 
-def test_turns_carry_the_tokens_of_their_model_calls(
+def test_turns_carry_the_calls_and_tokens_made_in_them(
     store: DuckDbObservabilityStore, tmp_path: Path
 ) -> None:
     parquet = _export(store, tmp_path)
-    rows = _read(parquet, "turns", "SELECT trace_id, llm_calls, total_tokens FROM v ORDER BY 1")
-    assert rows == [("t1", 2, 15), ("t2", 0, 0)]
+    rows = _read(parquet, "turns", "SELECT turn_id, model_calls, tokens FROM v ORDER BY 1")
+    assert rows == [("u1", 2, 15), ("u2", 0, 0)]
+
+
+def test_a_turn_counts_its_tool_proposals(store: DuckDbObservabilityStore, tmp_path: Path) -> None:
+    DuckDbFactStore(store, agent_id="agent-a").append(
+        ToolCallFact(task_id="k1", turn_id="u1", tool="x.y", stage="executed", succeeded=False)
+    )
+    parquet = _export(store, tmp_path)
+    rows = _read(parquet, "turns", "SELECT turn_id, tool_proposals FROM v ORDER BY 1")
+    assert rows == [("u1", 1), ("u2", 0)]
 
 
 def test_a_backup_call_is_marked_as_one(store: DuckDbObservabilityStore, tmp_path: Path) -> None:
     parquet = _export(store, tmp_path)
-    assert _read(parquet, "llm_calls", "SELECT model, is_backup FROM v ORDER BY 1") == [
+    assert _read(parquet, "model_calls", "SELECT model, is_backup FROM v ORDER BY 1") == [
         ("m1", False),
         ("m2", True),
     ]
@@ -117,45 +132,13 @@ def test_audit_decisions_expose_standing_but_never_the_raw_context(
     (row,) = _read(parquet, "audit_decisions", "SELECT standing, session_id, rationale FROM v")
     assert row[:2] == ("RATIFIABLE", "s1")
     assert "jane@example.com" not in row[2] and "<EMAIL>" in row[2]
-    columns = [c[0] for c in duckdb.connect().execute(
-        f"DESCRIBE SELECT * FROM read_parquet('{parquet / 'audit_decisions'}.parquet')"
-    ).fetchall()]  # fmt: skip
-    assert "authority_context" not in columns
-
-
-def test_slos_are_computed_only_from_what_turns_observed(
-    store: DuckDbObservabilityStore, tmp_path: Path
-) -> None:
-    parquet = _export(store, tmp_path)
-    daily = dict(_read(parquet, "slo_daily", "SELECT metric, observed FROM v"))
-    assert daily["task_success_rate"] == pytest.approx(0.5)
-    assert daily["escalation_rate"] == pytest.approx(0.5)
-    assert "tool_failure_rate" not in daily  # no turn made a tool call
-
-
-def test_the_error_budget_follows_the_registrys_rule(
-    store: DuckDbObservabilityStore, tmp_path: Path
-) -> None:
-    parquet = _export(store, tmp_path)
-    budget = {
-        (metric, days): (remaining, within)
-        for metric, days, remaining, within in _read(
-            parquet,
-            "slo_error_budget",
-            "SELECT metric, window_days, error_budget_remaining, within_target FROM v",
-        )
-    }
-    target = get_settings().observability.slo_targets["escalation_rate"]
-    expected = max(0.0, min(1.0, (target - 0.5) / target))
-    days = get_settings().analytics.slo_windows_days[0]
-    assert budget[("escalation_rate", days)] == (pytest.approx(expected), False)
+    assert "authority_context" not in _columns(parquet, "audit_decisions")
 
 
 def test_an_undocumented_column_fails_the_export(
     store: DuckDbObservabilityStore, tmp_path: Path
 ) -> None:
-    catalog = load_catalog()
-    view = catalog.views[0].model_copy(update={"columns": {"only": "one column"}})
+    view = load_catalog().views[0].model_copy(update={"columns": {"only": "one column"}})
     with pytest.raises(ViewContractError):
         _export(store, tmp_path, catalog=Catalog(views=[view]))
 
@@ -163,7 +146,7 @@ def test_an_undocumented_column_fails_the_export(
 def test_an_empty_database_exports_empty_views(tmp_path: Path) -> None:
     store = DuckDbObservabilityStore(tmp_path / "empty.duckdb")
     manifest = read_manifest(_export(store, tmp_path))
-    assert manifest is not None and manifest.views["llm_calls"].rows == 0
+    assert manifest is not None and manifest.views["model_calls"].rows == 0
 
 
 def test_no_partial_files_are_left_behind(store: DuckDbObservabilityStore, tmp_path: Path) -> None:
@@ -177,8 +160,7 @@ def test_an_empty_per_turn_view_says_it_fills_as_agents_run(tmp_path: Path) -> N
     assert manifest is not None
     words = get_settings().analytics.words
     lines = manifest_lines(manifest)
-    assert any(line.endswith(f"llm_calls · {words.empty_hint}") for line in lines)
-    assert any(line.endswith("slo_targets · " + words.rows.format(rows=8)) for line in lines)
+    assert any(line.endswith(f"model_calls · {words.empty_hint}") for line in lines)
     assert lines[-1] == words.no_facts
 
 
@@ -189,34 +171,5 @@ def test_a_populated_view_shows_its_rows_and_no_hint(
     assert manifest is not None
     words = get_settings().analytics.words
     lines = manifest_lines(manifest)
-    assert any(line.endswith("llm_calls · " + words.rows.format(rows=2)) for line in lines)
+    assert any(line.endswith("model_calls · " + words.rows.format(rows=2)) for line in lines)
     assert words.no_facts not in lines
-
-
-def test_a_turn_carries_its_model_tool_and_decision_counts(
-    store: DuckDbObservabilityStore, tmp_path: Path
-) -> None:
-    with bound_log_context(agent="agent-a", session="s1", trace_id="t1"):
-        DuckDbFactLedger(store, agent_id="agent-a").record(
-            ToolCallFact(action="x.y", succeeded=False)
-        )
-    parquet = _export(store, tmp_path)
-    rows = _read(
-        parquet,
-        "turns",
-        "SELECT trace_id, primary_model, llm_calls, backup_calls, tool_calls_executed, "
-        "tool_failures_executed, actions_escalated FROM v ORDER BY 1",
-    )
-    assert rows == [("t1", "m1", 2, 1, 1, 1, 0), ("t2", "", 0, 0, 0, 0, 1)]
-
-
-def test_events_hold_every_model_call_tool_call_and_decision(
-    store: DuckDbObservabilityStore, tmp_path: Path
-) -> None:
-    parquet = _export(store, tmp_path)
-    kinds = dict(_read(parquet, "events", "SELECT kind, count(*) FROM v GROUP BY 1"))
-    assert kinds == {"model_call": 2, "decision": 1}
-    (decision,) = _read(
-        parquet, "events", "SELECT name, outcome, standing, failed FROM v WHERE kind = 'decision'"
-    )
-    assert decision == ("support.process_refund", "escalate", "RATIFIABLE", False)

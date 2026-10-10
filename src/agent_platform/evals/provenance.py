@@ -99,21 +99,6 @@ class GoldenDatasetProvenanceLedger:
             ),
         )
 
-    def relabel(self, case_id: str, label: str, labeller: str, rationale: str) -> LabelProvenance:
-        """Correct a label to written policy, preserving what it replaced."""
-        previous = self.get(case_id)
-        updated = LabelProvenance(
-            case_id=case_id,
-            label=label,
-            basis="written_policy",
-            labeller=labeller,
-            source=previous.source if previous else "",
-            rationale=rationale,
-            superseded=previous.label if previous else None,
-        )
-        self.record(updated)
-        return updated
-
     def get(self, case_id: str) -> LabelProvenance | None:
         """Provenance for one case, if recorded."""
         row = self._store.query_one(
@@ -133,21 +118,6 @@ class GoldenDatasetProvenanceLedger:
                 (self._agent_id,),
             )
         ]
-
-    def bias_report(self) -> BiasReport:
-        """What share of the golden set encodes practice rather than policy."""
-        labels = self.all_labels()
-        by_basis: dict[str, int] = {}
-        for entry in labels:
-            by_basis[entry.basis] = by_basis.get(entry.basis, 0) + 1
-        total = len(labels)
-        practice = by_basis.get("historical_practice", 0)
-        return BiasReport(
-            total=total,
-            by_basis=by_basis,
-            practice_ratio=practice / total if total else 0.0,
-            relabelled=sum(entry.superseded is not None for entry in labels),
-        )
 
     def export(self) -> str:
         """The ledger as JSON — E11's checked-in exit artifact."""

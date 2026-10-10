@@ -123,11 +123,3 @@ class PostmortemRegister:
     def outstanding(self) -> list[Postmortem]:
         """Postmortems still missing a field — the review backlog."""
         return [postmortem for postmortem in self.all() if not postmortem.complete]
-
-    def regression_evals(self) -> list[str]:
-        """Every eval an incident has produced.
-
-        The series' actual claim about learning from failure: this list
-        should only ever grow, and each entry should be runnable.
-        """
-        return [p.permanent_eval for p in self.all() if p.permanent_eval]

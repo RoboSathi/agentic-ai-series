@@ -26,11 +26,6 @@ def policy_repository() -> AgentPolicyRepository:
     return AgentPolicyRepository(agent_store())
 
 
-def current_refund_limit() -> Money | None:
-    """The per-refund limit the Gatekeeper enforces, read from the database."""
-    return policy_repository().get().per_action_limit(REFUND_ACTION_CLASS)
-
-
 def set_refund_limit(repository: AgentPolicyRepository, limit: Money) -> tuple[Money, Money]:
     """Replace the refund per-action limit, keeping the window budget. Returns (old, new)."""
     if not limit:

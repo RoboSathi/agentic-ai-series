@@ -39,13 +39,33 @@ class DeterministicRejectRule(BaseModel):
     reason: str
 
 
+class ClassifierRoutingSettings(BaseModel):
+    """How one classifier's answers are read: its labels, and how sure it must be."""
+
+    # A model score at or above this routes the turn; below it the LLM decides.
+    # Each classifier's scores have their own scale, so each has its own threshold.
+    confidence_threshold: float
+    # This agent's intent → the classifier's native labels that mean it.
+    model_label_mapping: dict[str, list[str]]
+
+
 class IntentRouterSettings(BaseModel):
     """Customer Support intent routing policy."""
 
-    confidence_threshold: float
     clarification_top_k: int
+    # Whether `intents[].phrases` route a turn before the classifier sees it. The phrases
+    # stay in force for the order validator either way.
+    phrase_rules: bool
+    instructions: str
     deterministic_rejects: list[DeterministicRejectRule]
-    model_label_mapping: dict[str, list[str]]
+    # Classifier provider (`llm.intent_classifier.provider`) → how its answers are read.
+    classifiers: dict[str, ClassifierRoutingSettings]
+
+    def routing(self, provider: str) -> ClassifierRoutingSettings:
+        """The threshold and labels for this classifier; a classifier with none is refused."""
+        if provider not in self.classifiers:
+            raise ValueError(f"intent_router has no routing for classifier '{provider}'")
+        return self.classifiers[provider]
 
 
 class PlanStepSettings(BaseModel):
@@ -60,6 +80,30 @@ class FollowupSettings(BaseModel):
 
     phrases: list[str]
     reference_pattern: str
+
+
+class IntentBakeoffSettings(BaseModel):
+    """The intent classifier comparison: labelled messages, contenders, report."""
+
+    cases_path: str
+    report_dir: str
+    report_title: str
+    # Report file name; `{stamp}` is the run's UTC time in `stamp_format`.
+    report_file: str
+    stamp_format: str
+    calibration_bins: int = Field(ge=1)
+    # More routing thresholds to read coverage at, besides the configured one.
+    threshold_sweep: list[float]
+    # Contender name → config profiles applied for it, in order ([] = the agent as configured).
+    contenders: dict[str, list[str]]
+
+    @property
+    def resolved_cases_path(self) -> Path:
+        return resolve_path(self.cases_path)
+
+    @property
+    def resolved_report_dir(self) -> Path:
+        return resolve_path(self.report_dir)
 
 
 class CsaEvalSettings(BaseModel):
@@ -84,6 +128,7 @@ class CsaEvalSettings(BaseModel):
     # A reply sharing a run of this many words with the system instructions
     # is treated as leaking them (the refund policy itself may be quoted).
     prompt_leak_ngram: int
+    intent_bakeoff: IntentBakeoffSettings
 
     @property
     def resolved_dataset_path(self) -> Path:
@@ -260,6 +305,13 @@ class TaskOutcomeSettings(BaseModel):
         ]
 
 
+class PrefetchSettings(BaseModel):
+    """How a procedure's prefetch reads are filled and shown to the model (ADR 0010)."""
+
+    arguments: dict[str, str]
+    call_id: str
+
+
 class CustomerSupportAgentSettings(YamlBackedSettings):
     """The running product's own wiring values (LLD §21)."""
 
@@ -294,6 +346,8 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     policy_path: str
     # State metadata key → signal template (`intent:{value}`), ADR 0010.
     instruction_signals: dict[str, str]
+    # A procedure's prefetch reads: argument → state key, and the shown call id (ADR 0010).
+    prefetch: PrefetchSettings
     grounding_facts: dict[str, str]
     # Who the console acts as when it approves or denies a queued refund.
     console_reviewer: str

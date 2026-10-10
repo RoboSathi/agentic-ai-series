@@ -1,0 +1,65 @@
+# Intent bake-off: 50 customer messages, each labelled with the one intent a
+# person would route it to (`intents[]` in config.yaml). Drafted 2026-10-10 for
+# review — a label here is a claim about the right answer, so check it first.
+#
+# Most are worded so that no phrase rule matches (marked `# model`): those are
+# the turns where the classifier, not a rule, decides. The rest are taken from
+# real sessions and are there to show the router end to end.
+cases:
+  # ORDER_STATUS — whether an order has shipped, arrived, or where it is
+  - {text: "Where is my order 10515?", intent: ORDER_STATUS}
+  - {text: "has 10744 shipped yet", intent: ORDER_STATUS}                          # model
+  - {text: "is my parcel 10943 still with the courier?", intent: ORDER_STATUS}     # model
+  - {text: "10831 hasn't turned up, any news?", intent: ORDER_STATUS}              # model
+  - {text: "when will my order arrive", intent: ORDER_STATUS}
+  - {text: "is 10001 out for delivery today", intent: ORDER_STATUS}                # model
+  - {text: "did the package for 10622 get dispatched?", intent: ORDER_STATUS}      # model
+  # ORDER_DETAILS — details about one order
+  - {text: "show me my order 10441", intent: ORDER_DETAILS}
+  - {text: "what did order 10001 contain?", intent: ORDER_DETAILS}                 # model
+  - {text: "how much did I pay for 10744", intent: ORDER_DETAILS}                  # model
+  - {text: "which item was in order 10515", intent: ORDER_DETAILS}                 # model
+  - {text: "when did I place order 10831?", intent: ORDER_DETAILS}                 # model
+  - {text: "what's the total on 10622", intent: ORDER_DETAILS}                     # model
+  - {text: "give me the breakdown of 10943", intent: ORDER_DETAILS}                # model
+  # LIST_ORDERS — which orders they have, or their orders in one state
+  - {text: "show orders", intent: LIST_ORDERS}
+  - {text: "what have i ordered", intent: LIST_ORDERS}
+  - {text: "list everything I've bought", intent: LIST_ORDERS}                     # model
+  - {text: "which of my orders are still pending?", intent: LIST_ORDERS}           # model
+  - {text: "anything I bought that hasn't shipped?", intent: LIST_ORDERS}          # model
+  - {text: "show me all my purchases this year", intent: LIST_ORDERS}              # model
+  - {text: "which orders have I cancelled", intent: LIST_ORDERS}                   # model
+  # REQUEST_REFUND — asking to receive a refund
+  - {text: "refund order 10842", intent: REQUEST_REFUND}
+  - {text: "want money for order 10943 back", intent: REQUEST_REFUND}
+  - {text: "the speaker from 10103 broke, I'd like my cash returned", intent: REQUEST_REFUND}   # model
+  - {text: "10555 arrived damaged, please pay me back", intent: REQUEST_REFUND}    # model
+  - {text: "can I get 10372 reversed to my card?", intent: REQUEST_REFUND}         # model
+  - {text: "I was overcharged on 10840, return the amount", intent: REQUEST_REFUND}   # model
+  - {text: "order 10907 is useless, credit me", intent: REQUEST_REFUND}            # model
+  - {text: "I'd like to return 10229 for a full repayment", intent: REQUEST_REFUND}   # model
+  # REFUND_STATUS — where a refund stands or when it will arrive
+  - {text: "when will i get refund for order 10842", intent: REFUND_STATUS}
+  - {text: "money for order 10509 - when will i get it ?", intent: REFUND_STATUS}  # model
+  - {text: "when will i get my money for order # 10103", intent: REFUND_STATUS}    # model
+  - {text: "has the repayment for 10441 gone through?", intent: REFUND_STATUS}     # model
+  - {text: "still waiting on the credit for 10372", intent: REFUND_STATUS}         # model
+  - {text: "did you send back the money for 10555 yet", intent: REFUND_STATUS}     # model
+  - {text: "how long until 10840's reimbursement lands", intent: REFUND_STATUS}    # model
+  # CANCEL_ORDER — cancel an order that has not shipped
+  - {text: "cancel order 10622", intent: CANCEL_ORDER}
+  - {text: "I no longer want order 10240", intent: CANCEL_ORDER}
+  - {text: "please call off 10025 before it ships", intent: CANCEL_ORDER}          # model
+  - {text: "scrap order 10130", intent: CANCEL_ORDER}                              # model
+  - {text: "I changed my mind about 10245, don't ship it", intent: CANCEL_ORDER}   # model
+  - {text: "abort 10394, ordered by mistake", intent: CANCEL_ORDER}                # model
+  - {text: "can you kill order 10421", intent: CANCEL_ORDER}                       # model
+  # UNKNOWN — no supported capability fits
+  - {text: "who am i ?", intent: UNKNOWN}                                          # model
+  - {text: "please help me with something about my account", intent: UNKNOWN}      # model
+  - {text: "What is your return policy for clothing?", intent: UNKNOWN}            # model
+  - {text: "I prefer email updates, please never call me", intent: UNKNOWN}        # model
+  - {text: "loop forever", intent: UNKNOWN}                                        # model
+  - {text: "yes please", intent: UNKNOWN}                                          # model
+  - {text: "tell me a joke", intent: UNKNOWN}                                      # model

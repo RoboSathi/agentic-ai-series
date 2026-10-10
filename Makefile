@@ -1,7 +1,7 @@
 .PHONY: gen-key help install clean lint type-check format test verify agent llm-check model-check models data refund-limit \
 	clean-memory show-memory dream runs dummy-data analytics-export analytics-drop-legacy dashboard dashboard-install dashboard-refresh \
 	eval eval-generate eval-oracle eval-security eval-judge eval-deepeval eval-report eval-diff \
-	eval-runs eval-sql _agent
+	eval-runs eval-sql intent-bakeoff _agent
 
 # -- agent registry -------------------------------------------------------------
 # The platform names no agent (`agent_platform/config.yaml` ships
@@ -37,7 +37,7 @@ ops_EVALS :=
 
 # Targets whose second goal names the agent they act on.
 AGENT_SCOPED := agent data runs dlq pii-reveal model-check llm-check models eval eval-generate eval-oracle eval-security eval-judge \
-	eval-deepeval eval-report eval-diff eval-runs eval-sql
+	eval-deepeval eval-report eval-diff eval-runs eval-sql intent-bakeoff
 
 ifneq ($(filter $(firstword $(MAKECMDGOALS)),$(AGENT_SCOPED)),)
 AGENT_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
@@ -170,6 +170,7 @@ help:
 	@echo "  make eval-diff <agent> A=<run> B=<run>   Regression report between two runs"
 	@echo "  make eval-runs <agent>       List recent runs"
 	@echo "  make eval-sql <agent>        Query the eval store (SQL=\"select ...\" or interactive)"
+	@echo "  make intent-bakeoff <agent>  Intent classifiers side by side on labelled messages (csa)"
 	@echo ""
 	@echo "  Options: RPM=<n>  FRESH=1  LIMIT=<n>  CASE=<id>  TAG=<tag>  RUN=<id>  ABLATION=<name>  PROFILE=<name>"
 	@echo "           EVAL_CONTINUE_ON_INVARIANT_FAILURE=1"
@@ -308,6 +309,12 @@ eval-runs: _agent
 
 eval-sql: _agent
 	$(EVALS) sql $(SQL)
+
+# Intent classifiers side by side on labelled messages (the agent's `evals.intent_bakeoff`):
+# `make intent-bakeoff csa`. Downloads each contender's model once.
+intent-bakeoff: _agent
+	@test -d src/$($(AGENT)_PKG)/evals/intent || (echo "$(YELLOW)'$(AGENT)' has no intent bake-off$(NC)" && exit 2)
+	$(PYTHON) -m $($(AGENT)_PKG).evals.intent
 
 # -- analytics -------------------------------------------------------------------
 # The active source's Parquet (curated views) is refreshed by a running console every

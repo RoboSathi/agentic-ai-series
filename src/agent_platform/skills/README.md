@@ -1,7 +1,8 @@
 # skills — the profile and procedures in an agent's prompt (ADR 0010)
 
-An agent's `AGENT.md` is its **profile**: what it is for, its scope, and how it works, uses
-tools, treats memory and escalates. The profile is always in the system prompt.
+An agent's `AGENT.md` is its **agent profile**: who it is, what it handles, and the rules it
+never breaks (sections Mission, Scope, Rules). The profile is always in the system prompt, and
+it is kept short: anything task-shaped is a procedure.
 
 Its `skills/<name>/SKILL.md` files are **procedures**:
 
@@ -26,8 +27,27 @@ procedural = ProceduralStore(platform) if features.is_on("memory.procedural") el
 instructions = build_agent_instructions(
     settings.skills, store=procedural, audit=ledger, reporter=reporter
 )
-system = instructions.compose(signals, query).text  # profile + this turn's procedures
+activation = instructions.select(signals, query)  # no model call
+offered = tools_this_turn_offers(activation)  # narrowed by activation.tools(), really sent
+# The card first — the procedures, the reads they do first, the tools really offered —
+# so no read ever appears without the procedure that asked for it.
+instructions.announce(activation, prefetched=activation.prefetch(), offered=offered)
+# … then run the activation.prefetch() reads through the tool path, hand results to the model …
+system = instructions.render(activation)  # profile + the procedures' sent sections
 ```
+
+`compose(signals, query)` does select, announce and render in one step, for an agent with no
+prefetch.
+
+## What makes a procedure fast
+
+- **prefetch:** the reads it always starts with. The harness runs them before the first
+  model call, so the model skips those rounds.
+- **tools:** what it uses. The model is offered only these, by model name.
+- Only the Procedure and Boundaries sections are sent (`skills.render.sections_sent`). Keep
+  steps short and never repeat the profile.
+- `skills.max_prompt_chars` fails the build if the profile plus the largest procedures grow
+  past the agent's budget.
 
 The agent overlays `skills.profile_path` and `skills.skills_dir`, and derives its own
 **signals**: opaque strings a skill's `triggers` name, such as an intent or a role. The
@@ -41,6 +61,8 @@ name: example-task            # must equal its folder; skills.name_pattern
 description: When this applies and what it achieves.
 triggers: [some:signal]       # or [always]
 keywords: [words, a, query, uses]
+prefetch: [look_up_thing]     # reads run before the model is asked (model names)
+tools: [look_up_thing, act]   # what a turn running this is offered
 ---
 ## Preconditions
 ## Procedure

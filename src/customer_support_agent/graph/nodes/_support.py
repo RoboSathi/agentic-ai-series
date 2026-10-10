@@ -52,7 +52,7 @@ from agent_platform.resilience import (
 )
 from agent_platform.security import MessageScreener, SecuritySuite
 from agent_platform.security.auth.policy import AgentPolicy
-from agent_platform.skills import AgentInstructions
+from agent_platform.skills import Activation, AgentInstructions
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from agent_platform.tools.path import ToolPath
 from agent_platform.verification import EffectVerifier
@@ -92,6 +92,10 @@ from customer_support_agent.tools.definitions import SupportTools
 TOOL_COMPLETED = "completed"
 TOOL_REFERRED = "referred"
 TOOL_BLOCKED = "blocked"
+# The reads a procedure ran before the first model call (model names), for its card.
+PREFETCHED = "prefetched"
+# The tools this turn offers the model (qualified names), settled once before any read.
+TURN_OFFERED_TOOLS = "turn_offered_tools"
 # The outcomes whose recorded result is itself the evidence.
 _GROUNDED_AS_STATED = frozenset({TOOL_COMPLETED, TOOL_REFERRED})
 
@@ -201,6 +205,10 @@ class NodeSupport:
         """Build the window the model is handed."""
         raise NotImplementedError
 
+    async def prefetch(self, state: AgentState) -> dict[str, Any]:
+        """Run the reads this turn's procedures declare come first."""
+        raise NotImplementedError
+
     async def propose(self, state: AgentState) -> dict[str, Any]:
         """Ask the model what to do next."""
         raise NotImplementedError
@@ -223,6 +231,10 @@ class NodeSupport:
 
     def _prompt_messages(self, state: AgentState) -> list[Message]:
         """The transcript handed to the model this turn."""
+        raise NotImplementedError
+
+    async def _offered_tools(self, state: AgentState) -> list[Any]:
+        """The tools this turn may offer the model (settled once, by the prefetch stage)."""
         raise NotImplementedError
 
     async def _call_model(self, request: CompletionRequest, state: AgentState) -> CompletionResult:
@@ -267,6 +279,35 @@ class NodeSupport:
             return []
         history = self._working_memory.get(session_id).history
         return [Message(**item) if isinstance(item, dict) else item for item in history]
+
+    def _procedure_signals(self, state: AgentState) -> frozenset[str]:
+        """What this turn tells the procedure selector: its intent and its route.
+
+        Which metadata keys count, and how each is written, is configuration;
+        a key the turn did not set contributes nothing.
+        """
+        templates = get_agent_settings().instruction_signals
+        return frozenset(
+            template.format(value=state.metadata[key])
+            for key, template in templates.items()
+            if state.metadata.get(key)
+        )
+
+    def _activation(self, state: AgentState) -> Activation:
+        """This turn's procedures — deterministic, so every stage that asks gets the same."""
+        return self._instructions.select(
+            self._procedure_signals(state), state.model_query or state.query
+        )
+
+    def _procedure_tools(self, state: AgentState) -> set[str]:
+        """The tools this turn's procedures use, by internal name — on every path.
+
+        An unplaced turn is narrowed too: the procedures chosen for it are its best guess
+        at the task, and their tools are what that task needs. Empty — no narrowing — only
+        when no procedure is active (procedural memory withheld, or nothing matched).
+        """
+        names = self._activation(state).tools()
+        return {tool.name for name in names if (tool := self._registry.get(name)) is not None}
 
     def _current_messages(self, state: AgentState) -> list[Message]:
         """Return message-shaped entries from the current working-memory turn."""
@@ -476,19 +517,6 @@ class NodeSupport:
                 "result": result,
                 "source": name,
                 "outcome": outcome,
-            }
-        )
-
-    def _add_observation(
-        self, state: AgentState, content: str, source: str, *, authoritative: bool
-    ) -> None:
-        """Record one tool/system observation for the current turn."""
-        state.working_memory.add_current_turn(
-            {
-                "kind": "observation",
-                "content": content,
-                "source": source,
-                "authoritative": authoritative,
             }
         )
 

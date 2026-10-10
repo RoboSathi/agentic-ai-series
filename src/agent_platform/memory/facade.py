@@ -199,29 +199,6 @@ class MemoryFacade:
         )
         return WriteResult(route="auto_commit", written=True, fact=fact, reason="in active window")
 
-    def active_window(self, session_id: str, limit: int = 0) -> list[MemoryFact]:
-        """Expose compact working-memory state for legacy callers."""
-        if self.working is None:
-            return []
-        memory = self.working.get(session_id)
-        items = list(memory.state.items())
-        if limit:
-            items = items[-limit:]
-        return [
-            MemoryFact(
-                key=key,
-                value=str(value),
-                memory_type="working",
-                provenance=Provenance(source="working_memory", kind="agent_inference"),
-                metadata={"session_id": session_id},
-            )
-            for key, value in items
-        ]
-
-    def window_size(self, session_id: str) -> int:
-        """How many compact state entries this session holds."""
-        return len(self.working.get(session_id).state) if self.working else 0
-
     def end_session(self, session_id: str) -> None:
         """Drop one conversation's working memory."""
         if self.working is None:

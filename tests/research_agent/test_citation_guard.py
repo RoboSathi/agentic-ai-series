@@ -11,9 +11,10 @@ from agent_platform.guardrails.guards import PydanticValidator
 from agent_platform.llm.client import LLMClient
 from research_agent.domain.report import Report, ReportSection
 from research_agent.llm.structured import StructuredCaller
-from research_agent.prompts.base import payload_of, role_of
+from research_agent.prompts.base import role_of
 from research_agent.synthesis.citation_guard import CitationGuard
 from tests.conftest import ScriptedLLM
+from tests.research_agent.conftest import payload_of
 
 pytestmark = pytest.mark.usefixtures("ra_config")
 

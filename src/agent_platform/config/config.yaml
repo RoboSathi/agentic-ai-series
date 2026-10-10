@@ -275,6 +275,18 @@ llm:
     # Normal classification calls never download or reload from disk.
     download_if_missing: true
     max_length: 64
+    # `provider: laya_local`: a Laya decision checkpoint answers one choice
+    # question whose options are the agent's intents and their descriptions,
+    # injected at build time. An agent that
+    # selects it names the checkpoint; the platform names none.
+    laya:
+      model: ""
+      subfolder: ""
+      local_model_dir: ""
+      device: cpu
+      max_len: 512
+      question_id: intent
+      state_key: message
   # Summarises a session's conversation for a memory dream. BART fine-tuned
   # on SAMSum (chat dialogues). Local, like the intent BERT and NLI DeBERTa:
   # no key, no rate limit. ~1.6 GB, downloaded on first use.
@@ -313,6 +325,10 @@ llm:
       nli_premise: "The forecast for Pune on 2 October is light drizzle with a high of 32.5 °C."
       nli_hypothesis: "It will drizzle in Pune on 2 October."
       intent_text: "I have a question about my account"
+      intent_question: "Is this message asking for information or asking for something to be done?"
+      intent_choices:
+        information: asking for information
+        action: asking for something to be done
       dialogue: "User: What is the weather in Pune?\nAssistant: Light drizzle, 26 °C.\nUser: And tomorrow?\nAssistant: Light drizzle again, up to 32.5 °C."
     # `make model-check BENCH=1`: a judge-sized request, repeated, to each chat model.
     benchmark:
@@ -465,6 +481,8 @@ observability:
   # The cards every agent's tool-use loop draws, built once (`observability/step_events.py`).
   step_events:
     tool_requested: "Requested: {tool}"
+    # A read a procedure ran before the first model call (ADR 0010).
+    tool_prefetched: "Prefetched: {tool} · for {procedure}"
     gatekeeper: "Gatekeeper: {verdict} · {standing}"
     # Shown at each point the loop decides whether to go round again.
     loop_control:
@@ -792,7 +810,7 @@ context:
 # Agent profile (AGENT.md) and skills (SKILL.md) — procedural memory in the prompt (ADR 0010).
 # Each agent overlays the two paths; the platform never knows whose files they are.
 skills:
-  profile_path: ""         # an agent's AGENT.md, relative to the repo root
+  profile_path: ""         # an agent's AGENT.md (its profile), relative to the repo root
   skills_dir: ""           # the directory holding an agent's <name>/SKILL.md folders
   skill_file: SKILL.md
   references_dir: references
@@ -800,12 +818,18 @@ skills:
   frontmatter_delimiter: "---"
   # A level-two heading, the unit both files are checked for.
   section_pattern: "^## +(.+?)\\s*$"
+  # A numbered step inside a procedure ("1. …"), counted on its card.
+  step_pattern: "^\\s*\\d+\\."
+  # A tool written as `namespace.name` or `namespace__name` in a profile or skill: refused,
+  # because the model is offered model names only (`tools.model_names`).
+  internal_tool_reference: "`[a-z_]+(?:\\.|__)[a-z_]+`"
   name_pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
   max_name_chars: 64
   max_description_chars: 1024
   # The trigger a skill declares to be active on every turn.
   always_trigger: always
-  profile_sections: [Mission, Scope, Working principles, Tool-use principles, Memory principles, Escalation, Skill usage]
+  # The profile is identity and non-negotiables only; anything task-shaped is a procedure.
+  profile_sections: [Mission, Scope, Rules]
   skill_sections: [Preconditions, Procedure, Boundaries, Completion]
   # How an authored skill is stored; consolidated lessons keep the dream's
   # category. Only these types are selectable, so a retired artifact type
@@ -819,22 +843,32 @@ skills:
     # Raw BM25 units over description + keywords. Below it a query has not
     # named the task, and no procedure beats no procedure.
     min_lexical_score: 1.0
+  # The most the profile plus the largest `max_active` procedures may add to a prompt;
+  # 0 leaves it unchecked. Each agent sets its own, at or below its old instructions.
+  max_prompt_chars: 0
   render:
     procedure_heading: "# Procedure: {name}"
     reference_heading: "## Reference: {name}"
     separator: "\n\n"
+    # What of a skill the model reads; the other sections are for the people who maintain it.
+    sections_sent: [Procedure, Boundaries]
     ref: "{name}@{version}"
     profile_ref: "profile@{digest}"
   reasons:
-    always: always
-    trigger: "trigger:{signal}"
-    lexical: "lexical:{score:.2f}"
+    always: always used
+    # `{kind}`, `{value}`: the signal split at its first ':' (`intent:REQUEST_REFUND`).
+    trigger: "matched {kind} {value}"
+    lexical: "the question mentions it (score {score:.1f})"
   observability:
     activation_stage: skill_activation
     sync_stage: skill_sync
-    activated: "{count} procedure(s) active: {refs}"
-    none_active: "Agent profile only — no procedure matched"
+    # One procedure on the card: `{name}`, `{version}`, `{reason}`, `{steps}`.
+    activated: "{name} v{version} · {reason} · {steps} steps"
+    joiner: "; "
+    # The reads the procedure runs before the model is asked (the card is drawn first).
+    prefetched: " · reads first: {tools}"
     synced: "Procedures synced · {added} added · {updated} updated · {retired} retired"
+    unchanged: "Procedures unchanged"
   audit:
     actor: harness
     activation_action: procedure_activation
@@ -1580,6 +1614,11 @@ tools:
   # genuine order query scores over 0.24. Re-measure this if the
   # embedding model changes.
   selection_min_score: 0.15
+  # The name the model (and every card) knows a tool by, by qualified name
+  # (`orders.get_status: look_up_order`). Unlisted tools go by their bare name, never
+  # `namespace__name`: the namespace is internal (policy, audit, facts), not a word the
+  # model has to read. Each agent overlays its own verbs.
+  model_names: {}
 
 # MCP servers an agent consumes as ordinary governed tools (agent_platform/mcp). The
 # platform connects to none; an agent's overlay lists its own. The envelope is what
@@ -1858,7 +1897,7 @@ web:
     # `min_term_coverage` of the query's words in its top `top_k` titles and snippets — also asks
     # Tavily and merges the two. Paced: at most `share` of Tavily's monthly quota, spread evenly
     # over the month (`resilience.rate_limit.buckets.tavily.monthly_quota`); the rest stays for
-    # pure fallback and research runs. A strong answer spends nothing metered.
+    # pure fallback and for agents whose runs search the web. A strong answer spends nothing metered.
     augment:
       enabled: true
       provider: tavily

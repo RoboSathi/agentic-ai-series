@@ -31,10 +31,6 @@ class StageReporterModelObserver:
         )
         self._card(summary, primary, backup)
 
-    def backup_answered(self, label: str, primary: str, backup: str) -> None:
-        words = get_settings().observability.model_events
-        self._card(words.backup_answered.format(label=label.upper()), primary, backup)
-
     def _card(self, summary: str, primary: str, backup: str) -> None:
         reporter = self._reporter()
         if reporter is None:

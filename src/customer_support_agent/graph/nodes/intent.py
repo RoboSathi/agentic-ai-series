@@ -308,12 +308,13 @@ class IntentNodes(NodeSupport):
     def _intent_status_fields(intent: Intent) -> dict[str, Any]:
         """Return concise operator-facing intent facts; keep routing metadata internal."""
         source = intent.source or "unknown"
+        # Any other source is the configured classifier provider; the model it ran is
+        # named in the body (`model`), never in the label, so a config swap stays truthful.
         classification = {
-            "huggingface_local": "bert",
             "context_fallback": "context_fallback",
             "deterministic": "deterministic",
             "classifier_unavailable": "unavailable",
-        }.get(source, source)
+        }.get(source, "model" if intent.model else source)
         fields: dict[str, Any] = {"intent": intent.name, "classification": classification}
 
         if source == "deterministic":
@@ -347,10 +348,10 @@ class IntentNodes(NodeSupport):
             return f"Intent: {intent.name} · deterministic match ({matched})"
         if source == "context_fallback":
             return f"Intent: {intent.name} · context fallback"
-        if source == "huggingface_local":
-            return f"Intent: {intent.name} · BERT score {intent.confidence:.2f}"
         if source == "classifier_unavailable":
             return f"Intent: {intent.name} · classifier unavailable"
+        if intent.model:
+            return f"Intent: {intent.name} · model score {intent.confidence:.2f}"
         return f"Intent: {intent.name} · {source}"
 
     @staticmethod
@@ -361,7 +362,7 @@ class IntentNodes(NodeSupport):
         if source == "context_fallback":
             return f"{intent.name} [context fallback]"
         if intent.model:
-            return f"{intent.name} [BERT {intent.confidence:.2f}]"
+            return f"{intent.name} [model {intent.confidence:.2f}]"
         return intent.name
 
 

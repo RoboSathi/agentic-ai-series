@@ -488,7 +488,7 @@ def build_agent(
         ),
         context=context,
         instructions=build_agent_instructions(
-            settings.skills, store=procedural, audit=ledger, reporter=reporter
+            settings.skills, store=procedural, audit=ledger, reporter=reporter, tools=registry
         ),
         # Retrieval-based tool selection narrows within what the intent
         # already permits. Without it the agent is offered every tool the

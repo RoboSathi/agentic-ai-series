@@ -19,10 +19,7 @@ from agent_platform.skills import (
 )
 
 _SECTIONS = "## Preconditions\nx\n\n## Procedure\n1. y\n\n## Boundaries\nz\n\n## Completion\nw\n"
-_PROFILE_SECTIONS = (
-    "## Mission\n## Scope\n## Working principles\n## Tool-use principles\n"
-    "## Memory principles\n## Escalation\n## Skill usage\n"
-)
+_PROFILE_SECTIONS = "## Mission\n## Scope\n## Rules\n"
 
 
 def _settings(tmp_path: Path) -> SkillSettings:
@@ -144,7 +141,7 @@ class TestAStoredProcedure:
         assert document.triggers == ()
 
 
-class TestTheCharter:
+class TestTheProfile:
     def test_it_is_read_with_a_digest(self, tmp_path: Path) -> None:
         (tmp_path / "AGENT.md").write_text(f"# Agent\n\n{_PROFILE_SECTIONS}", encoding="utf-8")
         profile = load_profile(_settings(tmp_path))
@@ -166,3 +163,27 @@ class TestTheCharter:
     def test_a_missing_file_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(SkillDocumentError, match="AGENT.md"):
             load_profile(_settings(tmp_path))
+
+
+class TestWhatTheModelReads:
+    def test_only_the_sent_sections_are_in_the_prompt(self, tmp_path: Path) -> None:
+        _skill(tmp_path, "refund-flow", _VALID)
+        [document] = load_skill_documents(_settings(tmp_path))
+        assert document.prompt.startswith("## Procedure")
+        assert "## Boundaries" in document.prompt
+        assert "Preconditions" not in document.prompt and "Completion" not in document.prompt
+        assert "Preconditions" in document.body
+        assert document.steps == 1
+
+    def test_prefetch_and_tools_are_read(self, tmp_path: Path) -> None:
+        _skill(tmp_path, "refund-flow", _VALID + "prefetch: [look_up]\ntools: [look_up, pay]\n")
+        [document] = load_skill_documents(_settings(tmp_path))
+        assert document.prefetch == ("look_up",)
+        assert document.tools == ("look_up", "pay")
+
+    @pytest.mark.parametrize("spelling", ["support.look_up", "support__look_up"])
+    def test_an_internal_tool_name_is_refused(self, tmp_path: Path, spelling: str) -> None:
+        body = _SECTIONS.replace("1. y", f"1. call `{spelling}`")
+        _skill(tmp_path, "refund-flow", _VALID, body=body)
+        with pytest.raises(SkillDocumentError, match="model names"):
+            load_skill_documents(_settings(tmp_path))

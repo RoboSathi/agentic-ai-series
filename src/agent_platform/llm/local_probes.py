@@ -113,11 +113,14 @@ def _nli_probe(config: AppConfig) -> LocalProbe | None:
 
 
 def _intent_probe(config: AppConfig) -> LocalProbe | None:
+    """The intent classifier the configuration selects, not merely the one it names first."""
     settings = config.llm.intent_classifier
+    if not settings.enabled:
+        return None
+    if settings.provider == "laya_local":
+        return _laya_intent_probe(config)
     path = settings.local_model_dir
     if not path:
-        return None
-    if not settings.enabled:
         return None
     from agent_platform.intent.classifier import HuggingFaceIntentClassifier
 
@@ -131,6 +134,28 @@ def _intent_probe(config: AppConfig) -> LocalProbe | None:
 
     return LocalModelProbe(
         "intent_classifier", settings.model, path, classifier.ensure_loaded_sync, infer
+    )
+
+
+def _laya_intent_probe(config: AppConfig) -> LocalProbe | None:
+    settings = config.llm.intent_classifier
+    if not settings.laya.local_model_dir:
+        return None
+    from agent_platform.intent.laya import LayaIntentClassifier
+
+    check = config.llm.check.local
+    classifier = LayaIntentClassifier(check.intent_choices, check.intent_question, settings)
+
+    async def infer() -> str:
+        top = (await classifier.classify(check.intent_text))[0]
+        return f"{top.intent} {top.score:.2f}"
+
+    return LocalModelProbe(
+        "intent_classifier",
+        classifier.model_name,
+        settings.laya.local_model_dir,
+        classifier.ensure_loaded_sync,
+        infer,
     )
 
 

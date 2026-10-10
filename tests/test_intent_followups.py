@@ -43,9 +43,11 @@ def _settings() -> SimpleNamespace:
         ),
         intent_router=SimpleNamespace(
             enabled=True,
-            confidence_threshold=0.75,
             clarification_top_k=2,
-            model_label_mapping=labels,
+            phrase_rules=True,
+            routing=lambda provider: SimpleNamespace(
+                confidence_threshold=0.75, model_label_mapping=labels
+            ),
             deterministic_rejects=[],
         ),
     )

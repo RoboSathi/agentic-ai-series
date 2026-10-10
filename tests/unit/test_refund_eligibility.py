@@ -134,9 +134,8 @@ class TestRefundsAreNotVolunteered:
         assert tools.get_order_status(10061).output.startswith("Order 10061 (Desk Lamp) ")
 
     def test_a_refund_request_does_unlock_it(self) -> None:
-        assert "get_refund_status" in CustomerSupportIntentRouter().permitted_tools(
-            "I want a refund"
-        )
+        intent = CustomerSupportIntentRouter().classify("I want a refund")
+        assert "get_refund_status" in intent.allowed_tools
 
 
 class TestDummyDataObeysTheRule:

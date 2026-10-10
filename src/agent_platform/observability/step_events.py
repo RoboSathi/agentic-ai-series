@@ -78,17 +78,28 @@ class StepEvents:
         """LLM RESPONSE: the tool calls it asked for, or its answer."""
         words = get_settings().observability
         heading = (
-            words.llm_tool_requested_heading.format(tool=result.tool_calls[0].name)
+            words.llm_tool_requested_heading.format(
+                tool=display_tool_name(result.tool_calls[0].name)
+            )
             if result.tool_calls
             else words.llm_response_heading.format(purpose=purpose)
         )
         fields = {**llm_response_fields(result), "purpose": purpose}
         self._loop.emit(LLM_RESPONSE, summary=heading, fields=fields, event_kind="model")
 
-    def tool_request(self, name: str, arguments: str, *, redact: Any = None) -> None:
-        """TOOL REQUEST: every argument the model sent."""
-        heading = self._words().tool_requested.format(tool=display_tool_name(name))
+    def tool_request(
+        self, name: str, arguments: str, *, redact: Any = None, prefetched_for: str = ""
+    ) -> None:
+        """TOOL REQUEST: every argument sent — by the model, or by a procedure's prefetch."""
+        words, tool = self._words(), display_tool_name(name)
+        heading = (
+            words.tool_prefetched.format(tool=tool, procedure=prefetched_for)
+            if prefetched_for
+            else words.tool_requested.format(tool=tool)
+        )
         fields = tool_request_fields(name, arguments, redact)
+        if prefetched_for:
+            fields["prefetched_for"] = prefetched_for
         self._loop.emit(TOOL_REQUEST, summary=heading, fields=fields, event_kind="tool_request")
 
     def gatekeeper(

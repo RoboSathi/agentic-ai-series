@@ -23,6 +23,8 @@ dependencies = [
     "pyyaml>=6.0",
     "torch>=2.2",
     "transformers>=4.45",
+    # The Laya decision model: CSA's default intent classifier (`provider: laya_local`).
+    "laya>=0.4.1",
     "sentencepiece>=0.2",
     # Hosted encoders (NLI, cross-encoder reranking) speak plain HTTP
     # rather than the OpenAI protocol, so they need their own client.
@@ -77,9 +79,6 @@ python_classes = "Test*"
 python_functions = "test_*"
 addopts = "--strict-markers"
 asyncio_mode = "auto"
-markers = [
-    "live_llm: hits a real LLM endpoint; skipped unless RUN_LIVE_LLM_TESTS=1 and credentials are present",
-]
 
 [tool.coverage.run]
 source = ["src"]
@@ -110,6 +109,11 @@ ignore_missing_imports = true
 # DeepEval is an optional extra (`.[evals]`), imported lazily by one adapter.
 [[tool.mypy.overrides]]
 module = ["deepeval", "deepeval.*"]
+ignore_missing_imports = true
+
+# Laya ships no type information; it is imported lazily by the laya_local intent provider.
+[[tool.mypy.overrides]]
+module = ["laya", "laya.*"]
 ignore_missing_imports = true
 
 [tool.ruff]

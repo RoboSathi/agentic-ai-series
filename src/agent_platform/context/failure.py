@@ -33,7 +33,6 @@ from agent_platform.context.types import (
     ChunkKind,
     ContextFailureMode,
     ContextFinding,
-    ContextHealth,
     is_provenance_header,
 )
 from agent_platform.llm.embeddings import tokenize
@@ -252,34 +251,6 @@ class ContextFailureDetector:
         ]
 
     # ── degradation over checkpoints ─────────────────────────────────
-
-    def health_at(
-        self, checkpoint_tokens: int, observed_score: float, baseline_score: float
-    ) -> ContextHealth:
-        """Compare measured synthesis quality against the short-window baseline."""
-        drop = (baseline_score - observed_score) / baseline_score if baseline_score else 0.0
-        degraded = drop > self._degradation_threshold
-        if degraded:
-            self._logger.warning(
-                "Synthesis quality degraded at checkpoint",
-                tokens=checkpoint_tokens,
-                drop=round(drop, 3),
-            )
-        return ContextHealth(
-            checkpoint_tokens=checkpoint_tokens,
-            observed_score=observed_score,
-            baseline_score=baseline_score,
-            degraded=degraded,
-            modes=["rot"] if degraded else [],
-            detail=f"{drop:.1%} below baseline",
-        )
-
-    def degradation_curve(self, scores: dict[int, float]) -> list[ContextHealth]:
-        """The full curve against the shortest checkpoint as baseline."""
-        if not scores:
-            return []
-        baseline = scores[min(scores)]
-        return [self.health_at(tokens, score, baseline) for tokens, score in sorted(scores.items())]
 
 
 # A claim as stated: its value, and the chunk (with its position) that stated it.

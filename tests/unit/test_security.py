@@ -43,7 +43,8 @@ class TestPII:
 
     def test_masking_removes_the_value(self, security_on: None) -> None:
         redacted = PIIFilterImpl().redact("mail ada@example.com")
-        assert "ada@example.com" not in redacted and "[REDACTED]" in redacted
+        # A vault token, not a blank: the value stays recoverable by an audited reveal.
+        assert "ada@example.com" not in redacted and "[EMAIL_ADDRESS:" in redacted
 
     def test_tokenizing_is_stable_for_the_same_value(self, security_on: None) -> None:
         pii = PIIFilterImpl()
@@ -144,4 +145,5 @@ class TestPIIReachesMemory:
         """What the agent did before this was wired — the regression itself."""
         facade = self._facade(tmp_path, None)
         facade.note("contact", "mail ada@example.com", "s1", source="customer")
-        assert "ada@example.com" in facade.active_window("s1")[0].value
+        assert facade.working is not None
+        assert "ada@example.com" in str(facade.working.get("s1").state["contact"])

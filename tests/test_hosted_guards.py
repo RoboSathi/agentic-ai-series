@@ -3,6 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from agent_platform.config import get_settings
 from agent_platform.resilience import ExponentialBackoffRetry, ResilientCaller
 from agent_platform.security.content_moderation.hosted import HostedContentSafetyGuard
 from agent_platform.security.prompt_injection.hosted import HostedJailbreakGuard
@@ -205,6 +206,8 @@ async def test_a_personal_data_only_flag_is_advisory_not_a_block(
     from agent_platform.security.screening import MessageScreener
 
     monkeypatch.setenv("NVIDIA_API_KEY", "test-key")
+    # The suite runs with hosted guards off (conftest); this test is about one, faked.
+    monkeypatch.setattr(get_settings().security.guards, "enabled", True)
     guard = _guard_for('{"User Safety":"unsafe","Safety Categories":"PII/Privacy"}')
     suite = SecuritySuite(moderator=TermContentModerator(), content_safety_guard=guard)
     feed = InMemoryLiveStatusFeed(max_events=0)

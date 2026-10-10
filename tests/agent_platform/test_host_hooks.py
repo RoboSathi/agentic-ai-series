@@ -119,4 +119,4 @@ def test_the_support_agent_opens_by_asking_who_is_speaking() -> None:
     from customer_support_agent.console import CustomerSupportHost
 
     greeting = CustomerSupportHost().greeting()
-    assert "verify your account" in greeting and "7-character" in greeting
+    assert "verify your account" in greeting.casefold() and "7-character" in greeting

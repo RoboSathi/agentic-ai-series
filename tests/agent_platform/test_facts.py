@@ -1,18 +1,15 @@
-"""Analytic facts: one row per model call, tool call and turn, stamped with the turn's identity.
+"""Analytic facts (ADR 0009): one row per unit of work, stamped with where it happened.
 
-Real DuckDB (in memory) behind every ledger; only the model is a stub.
+Real DuckDB (in memory) behind every store; only the model is a stub.
 """
 
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
 
-from agent_platform.config.settings import ModelChainSettings, ModelRef
-from agent_platform.executor import ToolExecutorImpl
-from agent_platform.executor.types import ApprovedToolCall
-from agent_platform.gatekeeper.types import AuthorityContext, AuthorityDecision
+from agent_platform.config import get_settings
 from agent_platform.llm.call_log import RecordedClient
-from agent_platform.llm.chain import ModelChainBuilder
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import (
     CompletionRequest,
@@ -22,18 +19,20 @@ from agent_platform.llm.types import (
 )
 from agent_platform.logging.trace_context import bound_log_context
 from agent_platform.observability.facts import (
-    DuckDbFactLedger,
+    CLOSED,
+    OPENED,
+    DuckDbFactStore,
     Fact,
-    LlmCallFact,
-    NullFactRecorder,
-    ToolCallFact,
-    TurnOutcomeFact,
-    create_fact_recorder,
+    ModelCallFact,
+    NullFactStore,
+    TaskEventFact,
+    TurnFact,
+    create_fact_store,
+    fact_store,
     fact_table_ddl,
+    install_fact_store,
 )
 from agent_platform.observability.store import DuckDbObservabilityStore
-from agent_platform.tools.types import ToolCall
-from customer_support_agent.observability.accounting import TurnAccountant, TurnOutcome
 
 REQUEST = CompletionRequest(messages=[])
 USAGE = TokenUsage(prompt_tokens=11, completion_tokens=7, total_tokens=18)
@@ -64,18 +63,11 @@ class _Collector:
     def __init__(self) -> None:
         self.facts: list[Fact] = []
 
-    def record(self, fact: Fact) -> None:
+    def append(self, fact: Fact) -> None:
         self.facts.append(fact)
 
-
-class _Handler:
-    def __init__(self, fails: bool = False) -> None:
-        self.fails = fails
-
-    async def execute(self, call: ToolCall) -> Any:
-        if self.fails:
-            raise RuntimeError("tool down")
-        return {"ok": True}
+    def open_task(self, agent_id: str, session_id: str) -> tuple[str, str] | None:
+        return None
 
 
 @pytest.fixture
@@ -83,148 +75,134 @@ def store() -> DuckDbObservabilityStore:
     return DuckDbObservabilityStore(":memory:")
 
 
+@pytest.fixture
+def installed() -> Iterator[None]:
+    previous = fact_store()
+    yield
+    install_fact_store(previous)
+
+
 def _rows(store: DuckDbObservabilityStore, table: str) -> list[dict[str, Any]]:
     return list(store.iter_rows(f"SELECT * FROM {table}"))
 
 
-# -- the ledger --------------------------------------------------------------------------
+# -- the store ---------------------------------------------------------------------------
 
 
 def test_a_fact_type_implies_its_table() -> None:
-    ddl = fact_table_ddl(TurnOutcomeFact)
-    assert "platform_turn_outcomes" in ddl
-    assert "answered BOOLEAN" in ddl and "latency_ms DOUBLE" in ddl
-    assert "recorded_at TIMESTAMPTZ" in ddl
+    ddl = fact_table_ddl(TurnFact)
+    assert f"CREATE TABLE IF NOT EXISTS {TurnFact.table}" in ddl
+    assert '"latency_ms" DOUBLE' in ddl and '"steps" BIGINT' in ddl
+    assert '"recorded_at" TIMESTAMPTZ' in ddl and '"screens" VARCHAR[]' in ddl
 
 
-def test_a_fact_is_stamped_with_the_turn_it_happened_in(store: DuckDbObservabilityStore) -> None:
-    ledger = DuckDbFactLedger(store, agent_id="fallback-agent")
+def test_a_fact_is_stamped_with_the_context_it_happened_in(
+    store: DuckDbObservabilityStore,
+) -> None:
+    facts = DuckDbFactStore(store, agent_id="fallback-agent")
     with bound_log_context(agent="agent-a", session="s-1", trace_id="t-1", channel="tui"):
-        ledger.record(LlmCallFact(model="m"))
-    (row,) = _rows(store, "platform_llm_calls")
-    assert (row["agent_id"], row["session_id"], row["trace_id"], row["channel"]) == (
-        "agent-a",
-        "s-1",
-        "t-1",
-        "tui",
-    )
+        facts.append(ModelCallFact(model="m"))
+    (row,) = _rows(store, ModelCallFact.table)
+    assert (row["agent_id"], row["session_id"], row["channel"]) == ("agent-a", "s-1", "tui")
 
 
-def test_outside_a_turn_the_ledgers_agent_is_used(store: DuckDbObservabilityStore) -> None:
-    DuckDbFactLedger(store, agent_id="fallback-agent").record(LlmCallFact(model="m"))
-    (row,) = _rows(store, "platform_llm_calls")
-    assert row["agent_id"] == "fallback-agent" and row["trace_id"] == ""
+def test_outside_a_turn_the_stores_agent_and_default_channel_are_used(
+    store: DuckDbObservabilityStore,
+) -> None:
+    DuckDbFactStore(store, agent_id="fallback-agent").append(ModelCallFact(model="m"))
+    (row,) = _rows(store, ModelCallFact.table)
+    assert row["agent_id"] == "fallback-agent"
+    assert row["channel"] == get_settings().analytics.default_channel
+    assert row["turn_id"] == "" and row["step"] is None
 
 
 def test_an_unobserved_field_is_null_not_zero(store: DuckDbObservabilityStore) -> None:
-    DuckDbFactLedger(store).record(TurnOutcomeFact(outcome="answered", answered=True))
-    (row,) = _rows(store, "platform_turn_outcomes")
-    assert row["answered"] is True and row["tool_calls"] is None
+    DuckDbFactStore(store).append(TurnFact(status="answered"))
+    (row,) = _rows(store, TurnFact.table)
+    assert row["status"] == "answered" and row["claims_checked"] is None
 
 
-def test_recording_never_fails_the_caller(store: DuckDbObservabilityStore) -> None:
+def test_appending_never_fails_the_caller(store: DuckDbObservabilityStore) -> None:
     store.close()
-    DuckDbFactLedger(store).record(LlmCallFact(model="m"))  # logged, not raised
+    DuckDbFactStore(store).append(ModelCallFact(model="m"))  # logged, not raised
 
 
-def test_without_a_store_nothing_is_recorded() -> None:
-    assert isinstance(create_fact_recorder(None, "agent"), NullFactRecorder)
-
-
-def test_with_a_store_the_ledger_is_built(store: DuckDbObservabilityStore) -> None:
-    assert isinstance(create_fact_recorder(store, "agent"), DuckDbFactLedger)
-
-
-# -- model calls -------------------------------------------------------------------------
-
-
-async def test_a_call_is_recorded_with_its_tokens_and_role() -> None:
-    sink = _Collector()
-    await RecordedClient(_Model("primary"), sink, role="planner", position=0).complete(REQUEST)
-    (fact,) = sink.facts
-    assert isinstance(fact, LlmCallFact)
-    assert (fact.role, fact.model, fact.position, fact.total_tokens) == (
-        "planner",
-        "primary",
-        0,
-        18,
+def test_a_batch_lands_in_one_table_per_fact_type(store: DuckDbObservabilityStore) -> None:
+    DuckDbFactStore(store).append_many(
+        [ModelCallFact(model="a"), TurnFact(status="answered"), ModelCallFact(model="b")]
     )
-    assert fact.succeeded and fact.finish_reason == "stop" and fact.latency_ms >= 0
-
-
-async def test_a_failed_call_is_recorded_and_still_raises() -> None:
-    sink = _Collector()
-    with pytest.raises(RuntimeError):
-        await RecordedClient(_Model("m", fails=True), sink, role="r", position=1).complete(REQUEST)
-    (fact,) = sink.facts
-    assert isinstance(fact, LlmCallFact)
-    assert not fact.succeeded and "down" in fact.error and fact.position == 1
-
-
-async def test_a_chain_records_each_model_it_tried_in_order() -> None:
-    sink = _Collector()
-    models = {"a": _Model("a", fails=True), "b": _Model("b")}
-    builder = ModelChainBuilder(lambda provider, model: models[model], recorder=sink)
-    chain = ModelChainSettings(fallbacks=[ModelRef(provider="nvidia", model="b")])
-    client = builder.build(ModelRef(provider="nvidia", model="a"), chain, label="answerer")
-    await client.complete(REQUEST)
-    calls = [fact for fact in sink.facts if isinstance(fact, LlmCallFact)]
-    assert [(f.model, f.position, f.succeeded) for f in calls][-1] == ("b", 1, True)
-    assert {f.role for f in calls} == {"answerer"}
-    assert any(f.model == "a" and not f.succeeded for f in calls)
-
-
-async def test_a_chain_without_a_recorder_records_nothing() -> None:
-    builder = ModelChainBuilder(lambda provider, model: _Model(model))
-    client = builder.build(ModelRef(provider="nvidia", model="a"), ModelChainSettings(), "r")
-    assert not isinstance(client, RecordedClient)
-    assert (await client.complete(REQUEST)).content == "ok"
-
-
-# -- tool calls --------------------------------------------------------------------------
-
-
-def _approved(action: str = "support.get_order_status") -> ApprovedToolCall:
-    call = ToolCall(action=action)
-    decision = AuthorityDecision(verdict="allow", action=action, actor="agent", reason="ok")
-    return ApprovedToolCall(call=call, decision=decision, authority=AuthorityContext(actor="agent"))
-
-
-@pytest.mark.parametrize("fails", [False, True])
-async def test_every_execution_is_recorded_with_its_status(fails: bool) -> None:
-    sink = _Collector()
-    executor = ToolExecutorImpl(handler=_Handler(fails=fails), recorder=sink)
-    await executor.execute(_approved())
-    (fact,) = sink.facts
-    assert isinstance(fact, ToolCallFact)
-    assert fact.action == "support.get_order_status" and fact.actor == "agent"
-    assert fact.succeeded is not fails
-    assert fact.status == ("failed" if fails else "completed")
-
-
-# -- turns -------------------------------------------------------------------------------
-
-
-def test_a_settled_turn_is_recorded_as_its_outcome() -> None:
-    sink = _Collector()
-    accountant = TurnAccountant(facts=sink)
-    accountant.begin()
-    accountant.settle(TurnOutcome(session_id="s", escalated=True, tool_calls=2, tool_failures=1))
-    (fact,) = sink.facts
-    assert isinstance(fact, TurnOutcomeFact)
-    assert fact.outcome == "escalated" and fact.escalated and not fact.answered
-    assert (fact.tool_calls, fact.tool_failures, fact.session_id) == (2, 1, "s")
-    assert fact.latency_ms >= 0
+    assert sorted(row["model"] for row in _rows(store, ModelCallFact.table)) == ["a", "b"]
+    assert len(_rows(store, TurnFact.table)) == 1
 
 
 def test_a_table_from_an_earlier_version_gains_the_new_columns(
     store: DuckDbObservabilityStore,
 ) -> None:
-    store.execute_script("CREATE TABLE platform_turn_outcomes (agent_id VARCHAR, outcome VARCHAR)")
-    store.execute("INSERT INTO platform_turn_outcomes VALUES ('old-agent', 'answered')")
-    DuckDbFactLedger(store).record(TurnOutcomeFact(outcome="escalated", unverified_claims=2))
+    store.execute_script(f"CREATE TABLE {TurnFact.table} (agent_id VARCHAR, status VARCHAR)")
+    store.execute(f"INSERT INTO {TurnFact.table} VALUES ('old-agent', 'answered')")
+    DuckDbFactStore(store).append(TurnFact(status="escalated", steps=2))
     rows = sorted(
-        (row["outcome"], row["unverified_claims"])
-        for row in store.iter_rows("SELECT outcome, unverified_claims FROM platform_turn_outcomes")
+        (row["status"], row["steps"])
+        for row in store.iter_rows(f"SELECT status, steps FROM {TurnFact.table}")
     )
     assert rows == [("answered", None), ("escalated", 2)]
+
+
+def test_an_open_explicit_task_is_found_until_it_is_closed(
+    store: DuckDbObservabilityStore,
+) -> None:
+    facts = DuckDbFactStore(store, agent_id="agent-a")
+    opened = TaskEventFact(
+        agent_id="agent-a", session_id="s", task_id="t1", event=OPENED, kind="refund"
+    )
+    facts.append(opened)
+    assert facts.open_task("agent-a", "s") == ("t1", "refund")
+    facts.append(opened.model_copy(update={"event": CLOSED}))
+    assert facts.open_task("agent-a", "s") is None
+
+
+# -- which store ----------------------------------------------------------------------------
+
+
+def test_without_a_database_nothing_is_kept() -> None:
+    assert isinstance(create_fact_store(None, "agent"), NullFactStore)
+
+
+def test_with_a_database_facts_are_persisted(store: DuckDbObservabilityStore) -> None:
+    assert isinstance(create_fact_store(store, "agent"), DuckDbFactStore)
+
+
+@pytest.mark.usefixtures("installed")
+def test_the_installed_store_is_the_one_every_component_appends_to() -> None:
+    collector = _Collector()
+    install_fact_store(collector)
+    assert fact_store() is collector
+
+
+# -- model calls ------------------------------------------------------------------------
+
+
+async def test_a_call_is_recorded_with_its_tokens_and_role() -> None:
+    sink = _Collector()
+    await RecordedClient(_Model("primary"), role="planner", position=0, store=sink).complete(
+        REQUEST
+    )
+    (fact,) = sink.facts
+    assert isinstance(fact, ModelCallFact)
+    assert (fact.role, fact.model, fact.is_backup, fact.total_tokens) == (
+        "planner",
+        "primary",
+        False,
+        18,
+    )
+    assert fact.succeeded and fact.finish_reason == "stop" and fact.latency_ms >= 0
+
+
+async def test_a_failed_backup_call_is_recorded_and_still_raises() -> None:
+    sink = _Collector()
+    client = RecordedClient(_Model("m", fails=True), role="r", position=1, store=sink)
+    with pytest.raises(RuntimeError):
+        await client.complete(REQUEST)
+    (fact,) = sink.facts
+    assert isinstance(fact, ModelCallFact)
+    assert not fact.succeeded and "down" in fact.error and fact.is_backup

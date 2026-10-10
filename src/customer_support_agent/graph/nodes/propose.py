@@ -18,9 +18,12 @@ from agent_platform.observability.model_observer import MODEL_STAGE as LLM_CALL_
 from agent_platform.resilience import (
     external_api_error_fields,
 )
-from customer_support_agent.config import get_agent_settings
 from customer_support_agent.graph.loop_decision import after_propose_step
-from customer_support_agent.graph.nodes._support import NodeSupport
+from customer_support_agent.graph.nodes._support import (
+    PREFETCHED,
+    TURN_OFFERED_TOOLS,
+    NodeSupport,
+)
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.reporting import FALLBACK_REPLY
 from customer_support_agent.prompts.system_prompt import build_system_prompt
@@ -30,8 +33,14 @@ class ProposalNodes(NodeSupport):
     async def propose(self, state: AgentState) -> dict[str, Any]:
         """One model turn, with the tools this turn is allowed to use."""
         self._steps.begin(state.tool_rounds + 1)
-        tools = await self._offered_tools(state)
+        tools = await self._turn_offer(state)
         offered = sorted(tool.qualified_name for tool in tools)
+        # Normally already drawn by the prefetch stage; a repeat in the same turn is a no-op.
+        self._instructions.announce(
+            self._activation(state),
+            prefetched=list(state.metadata.get(PREFETCHED, [])),
+            offered=[tool.model_name for tool in tools],
+        )
         request = CompletionRequest(
             messages=self._prompt_messages(state),
             tools=self._registry.to_openai_tools([tool.qualified_name for tool in tools]),
@@ -189,19 +198,26 @@ class ProposalNodes(NodeSupport):
             #
             # This grants no authority. The Gatekeeper and RBAC still rule on
             # every invocation, and the injection guard's narrowing still holds.
+            # The turn's procedures still narrow it: what they use is what the
+            # task they were chosen for needs (ADR 0010).
+            by_procedure = self._procedure_tools(state)
             return [
                 tool
                 for tool in self._registry.all_tools()
-                if not allowed or tool.qualified_name in allowed
+                if (not allowed or tool.qualified_name in allowed)
+                and (not by_procedure or tool.name in by_procedure)
             ]
 
         by_intent = set(state.metadata.get("intent_tools", []))
         if not by_intent:
             return []
+        by_procedure = self._procedure_tools(state)
         tools = [
             tool
             for tool in self._registry.all_tools()
-            if tool.name in by_intent and (not allowed or tool.qualified_name in allowed)
+            if tool.name in by_intent
+            and (not by_procedure or tool.name in by_procedure)
+            and (not allowed or tool.qualified_name in allowed)
         ]
         if self._selector is None:
             return tools
@@ -229,15 +245,20 @@ class ProposalNodes(NodeSupport):
             or tools
         )
 
+    async def _turn_offer(self, state: AgentState) -> list[Any]:
+        """The tools settled for this turn before its first read — the ones its card names."""
+        settled = state.metadata.get(TURN_OFFERED_TOOLS)
+        if settled is None:
+            return await self._offered_tools(state)
+        return [tool for name in settled if (tool := self._registry.get(name)) is not None]
+
     def _system_prompt(self) -> str:
         """The profile and policy, without per-turn procedures — what a screen sees."""
         return build_system_prompt(self._instructions.profile_section())
 
     def _prompt_messages(self, state: AgentState) -> list[Message]:
         """Build the small provider payload from working memory and context."""
-        query = state.model_query or state.query
-        instructions = self._instructions.compose(_signals(state), query)
-        system = build_system_prompt(instructions.text)
+        system = build_system_prompt(self._instructions.render(self._activation(state)))
         if state.context is not None and state.context.text:
             system = f"{system}\n\n# Retrieved context\n{state.context.text}"
         if state.metadata.get("intent_execution_route") == "llm_fallback":
@@ -257,17 +278,3 @@ class ProposalNodes(NodeSupport):
             Message(role="user", content=state.model_query or state.query),
             *self._current_messages(state),
         ]
-
-
-def _signals(state: AgentState) -> frozenset[str]:
-    """What this turn tells the procedure selector: its intent and its route.
-
-    Which metadata keys count, and how each is written, is configuration;
-    a key the turn did not set contributes nothing.
-    """
-    templates = get_agent_settings().instruction_signals
-    return frozenset(
-        template.format(value=state.metadata[key])
-        for key, template in templates.items()
-        if state.metadata.get(key)
-    )

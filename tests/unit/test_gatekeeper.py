@@ -54,25 +54,6 @@ class TestAuthorityHierarchy:
         assert resolver.rank_of("user_task") == 5
         assert resolver.rank_of("untrusted_content") == 8
 
-    @pytest.mark.parametrize(
-        "source,expected",
-        [
-            ("provider", True),
-            ("organization", True),
-            ("user_task", True),
-            ("runtime_reminders", False),
-            ("tool_observations", False),
-            ("untrusted_content", False),
-        ],
-    )
-    def test_only_the_top_ranks_may_grant(self, source: str, expected: bool) -> None:
-        assert AuthorityHierarchyResolver().can_grant(source) is expected
-
-    def test_an_unknown_source_is_treated_as_the_weakest(self) -> None:
-        """Fail-safe defaults: unplaced means untrusted, not middling."""
-        resolver = AuthorityHierarchyResolver()
-        assert resolver.can_grant("something_invented") is False
-
     def test_outranks_compares_two_sources(self) -> None:
         resolver = AuthorityHierarchyResolver()
         assert resolver.outranks("provider", "user_task") is True
@@ -91,7 +72,7 @@ class TestCumulativeLedger:
     def test_budgets_are_per_key(self, pool: SqliteConnectionPool) -> None:
         ledger = CumulativeLedger(pool, enabled=True)
         ledger.record(LedgerEntry(ledger_key="a", action_class="refund", actor="a", amount=4000.0))
-        assert ledger.would_exceed("b", "refund", Money.parse("100.00")) is False
+        assert ledger.window_total("b", "refund") == Money.zero()
 
     def test_an_unconfigured_class_is_uncapped(self, pool: SqliteConnectionPool) -> None:
         assert CumulativeLedger(pool).threshold_for("invented") is None

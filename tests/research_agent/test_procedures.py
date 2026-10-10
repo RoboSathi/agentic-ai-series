@@ -1,8 +1,8 @@
-"""The research agent's profile and role procedures (ADR 0010, ra-0021).
+"""The research agent's profile (ADR 0010, ra-0021).
 
-The profile goes below each profile role's `ROLE:` line, with the
-procedure that role's signal selects; the judge and the extractor are
-left narrow. Scripted roles, the real composition root, real files.
+The profile goes on the direct answer only. Every run role's own
+instructions already are its procedure, so a role call carries no profile
+and no procedure — a second copy cost tokens on every call.
 """
 
 import pytest
@@ -10,14 +10,13 @@ import pytest
 from agent_platform.config import get_settings
 from agent_platform.guardrails.guards import PydanticValidator
 from agent_platform.llm.types import Message
-from agent_platform.memory import ProceduralStore
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.skills import build_agent_instructions
 from research_agent.config import get_agent_settings
 from research_agent.llm.structured import StructuredCaller
-from research_agent.prompts.base import RolePrompt, payload_of, role_of
+from research_agent.prompts.base import RolePrompt, role_of
 from research_agent.prompts.planner import PlanAnswer
-from tests.research_agent.conftest import BuildHarness, ScriptedRoles
+from tests.research_agent.conftest import BuildHarness, ScriptedRoles, payload_of
 
 ANSWERED = {"direct_answer": True}
 _PROFILE = "# Research Agent"
@@ -26,10 +25,10 @@ _PROFILE = "# Research Agent"
 class TestThePreamble:
     def test_the_role_line_stays_first(self) -> None:
         prompt = RolePrompt(role="planner", instructions="Plan.", payload={"a": 1})
-        messages = prompt.messages(PlanAnswer, preamble="# AgentProfile\nBe careful.")
+        messages = prompt.messages(PlanAnswer, preamble="# Profile\nBe careful.")
         assert role_of(messages) == "planner"
         assert payload_of(messages) == {"a": 1}
-        assert messages[0].content.splitlines()[1] == "# AgentProfile"
+        assert messages[0].content.splitlines()[1] == "# Profile"
 
     def test_no_preamble_changes_nothing(self) -> None:
         prompt = RolePrompt(role="planner", instructions="Plan.", payload={})
@@ -49,7 +48,7 @@ async def test_the_answerer_is_prompted_with_the_profile(harness: BuildHarness) 
 async def _sent(role: str, pool: SqliteConnectionPool) -> str:
     roles = ScriptedRoles({role: [{"nodes": []}]})
     instructions = build_agent_instructions(
-        get_settings().skills, store=ProceduralStore(pool), audit=None, reporter=None
+        get_settings().skills, store=None, audit=None, reporter=None
     )
     caller = StructuredCaller(
         roles,
@@ -62,14 +61,14 @@ async def _sent(role: str, pool: SqliteConnectionPool) -> str:
 
 
 @pytest.mark.usefixtures("ra_config")
-async def test_a_planner_call_carries_its_procedure(pool: SqliteConnectionPool) -> None:
-    system = await _sent("planner", pool)
-    assert system.startswith("ROLE: planner\n" + _PROFILE)
-    assert "# Procedure: research-planning" in system
+@pytest.mark.parametrize("role", ["planner", "reflector", "synthesizer", "judge", "extractor"])
+async def test_a_run_role_carries_its_own_instructions_only(
+    role: str, pool: SqliteConnectionPool
+) -> None:
+    system = await _sent(role, pool)
+    assert system == f"ROLE: {role}\nDo it."
 
 
 @pytest.mark.usefixtures("ra_config")
-async def test_the_judge_is_left_narrow(pool: SqliteConnectionPool) -> None:
-    system = await _sent("judge", pool)
-    assert _PROFILE not in system
-    assert "# Procedure:" not in system
+def test_procedural_memory_is_not_composed() -> None:
+    assert not get_settings().features.is_on("memory.procedural")

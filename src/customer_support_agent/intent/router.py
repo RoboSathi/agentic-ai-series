@@ -63,9 +63,13 @@ class CustomerSupportIntentRouter:
         # The composition root supplies the agent-owned router; the router
         # immediately wires the shared classifier provider. Model weights are
         # still loaded asynchronously on first semantic classification.
-        self._backend = backend or create_intent_classifier()
+        self._backend = backend or create_intent_classifier(**intent_choices())
         self._backend_error: str = ""
         self._backend_ready = bool(getattr(self._backend, "is_loaded", False))
+        self._phrase_rules = settings.intent_router.phrase_rules
+        # The classifier in use, and its threshold and labels, read once.
+        self._provider = get_settings().llm.intent_classifier.provider
+        self._routing = settings.intent_router.routing(self._provider)
         self._reject_patterns = [
             (rule.rule_id, re.compile(rule.pattern, re.IGNORECASE), rule.reason)
             for rule in settings.intent_router.deterministic_rejects
@@ -74,6 +78,11 @@ class CustomerSupportIntentRouter:
     @property
     def model_name(self) -> str:
         return self._backend.model_name
+
+    @property
+    def _source(self) -> str:
+        """What a model-decided intent names as its source: the configured provider."""
+        return self._provider
 
     @property
     def model_ready(self) -> bool:
@@ -165,7 +174,7 @@ class CustomerSupportIntentRouter:
             )
 
         top = mapped_candidates[0]
-        threshold = self._settings.intent_router.confidence_threshold
+        threshold = self._routing.confidence_threshold
         contextual_followup = self._is_contextual_followup(text)
 
         # Current-turn evidence always wins. A follow-up marker never gets to
@@ -177,7 +186,7 @@ class CustomerSupportIntentRouter:
                     intent=top.intent,
                     confidence=top.score,
                     disposition=IntentDisposition.SUPPORTED,
-                    source="huggingface_local",
+                    source=self._source,
                     candidates=mapped_candidates,
                     allowed_tools=list(configured.tools),
                     model=self._backend_model_name(),
@@ -207,6 +216,14 @@ class CustomerSupportIntentRouter:
             reason="Classifier score is below the configured routing threshold; LLM context fallback is required.",
         )
 
+    async def rank_with_model(self, message: str) -> list[IntentCandidate]:
+        """The classifier's view of a message alone, in this agent's intents, best first.
+
+        No rules, no context: what the model would decide if every turn reached it.
+        """
+        await self.ensure_ready()
+        return self._map_model_candidates(await self._backend.classify(message.strip()))
+
     def classify(self, message: str, previous: Intent | None = None) -> Intent:
         """Synchronous deterministic-only path, retained for small tests/callers."""
         text = message.strip()
@@ -223,14 +240,6 @@ class CustomerSupportIntentRouter:
         if deterministic_supported is not None:
             return deterministic_supported
         return self._clarify([], "Synchronous path does not invoke the BERT classifier.")
-
-    def permitted_tools(self, message: str, previous: Intent | None = None) -> set[str]:
-        """Tool names granted by the deterministic portion of the assessment."""
-        return set(self.classify(message, previous).allowed_tools)
-
-    def intent_names(self) -> list[str]:
-        """Configured intent labels."""
-        return [*self._intents.keys(), self._default]
 
     def _deterministic_rejection(self, text: str) -> Intent | None:
         for name, pattern, reason in self._reject_patterns:
@@ -253,6 +262,8 @@ class CustomerSupportIntentRouter:
 
     def _deterministic_supported(self, text: str) -> Intent | None:
         """Resolve high-precision phrases, or clarify when one phrase maps to multiple intents."""
+        if not self._phrase_rules:
+            return None
         lowered = text.casefold()
         matches: list[tuple[int, int, str, str]] = []
         for configured in self._settings.intents:
@@ -328,7 +339,7 @@ class CustomerSupportIntentRouter:
         """Aggregate the model's native labels into Customer Support intents."""
         mapping = {
             label.casefold(): intent
-            for intent, labels in self._settings.intent_router.model_label_mapping.items()
+            for intent, labels in self._routing.model_label_mapping.items()
             for label in labels
         }
         scores = {intent: 0.0 for intent in self._intents}
@@ -395,7 +406,7 @@ class CustomerSupportIntentRouter:
             # conversational continuity rather than a current-turn request.
             return None
 
-        threshold = self._settings.intent_router.confidence_threshold
+        threshold = self._routing.confidence_threshold
         current_is_unknown = top.intent == self._default
         current_is_uncertain = top.intent in self._intents and top.score < threshold
         if not (current_is_unknown or current_is_uncertain):
@@ -468,7 +479,7 @@ class CustomerSupportIntentRouter:
                 intent="UNKNOWN",
                 confidence=candidates[0].score if candidates else 0.0,
                 disposition=IntentDisposition.SUPPORTED,
-                source="huggingface_local" if candidates else "classifier_unavailable",
+                source=self._source if candidates else "classifier_unavailable",
                 candidates=candidates,
                 allowed_tools=[],
                 model=self._backend_model_name(),
@@ -488,7 +499,7 @@ class CustomerSupportIntentRouter:
                 intent="UNKNOWN",
                 confidence=candidates[0].score if candidates else 0.0,
                 disposition=IntentDisposition.CLARIFY,
-                source="huggingface_local" if candidates else "classifier_unavailable",
+                source=self._source if candidates else "classifier_unavailable",
                 candidates=candidates,
                 model=self._backend_model_name(),
                 score_type=self._backend_score_type(),
@@ -523,6 +534,15 @@ class CustomerSupportIntentRouter:
         }.get(intent, "your request")
 
 
+def intent_choices() -> dict[str, Any]:
+    """This agent's intents as a classifier that reads label descriptions is given them."""
+    settings = get_agent_settings()
+    return {
+        "choices": {intent.name: intent.description for intent in settings.intents},
+        "instructions": settings.intent_router.instructions,
+    }
+
+
 def load_intent_classifier() -> Any:
     """The shared intent classifier, warmed up, or None if unavailable.
 
@@ -531,10 +551,8 @@ def load_intent_classifier() -> Any:
     — the router falls back to its deterministic phrase rules — rather
     than stopping whatever is starting it.
     """
-    from agent_platform.intent import create_intent_classifier
-
     try:
-        classifier = create_intent_classifier()
+        classifier = create_intent_classifier(**intent_choices())
         classifier.ensure_loaded_sync()
     except Exception:
         return None

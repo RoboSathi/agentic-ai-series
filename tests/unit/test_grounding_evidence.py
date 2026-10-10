@@ -101,7 +101,8 @@ class TestAnEffectIsEvidenceOnlyOnceItIsReadBack:
 class TestALoopStepIsNamedForWhatItIs:
     def test_the_step_label_does_not_claim_react(self) -> None:
         support = _Support()
-        support._loop_step, support._max_rounds = 3, 5
+        support._steps = SimpleNamespace(step=3)  # type: ignore[assignment]
+        support._max_rounds = 5
         _, fields = support._stepped("llm_request", "x", None)
         assert fields is not None
         assert fields["loop_step"] == "3 of 5 (model call → tool → result)"

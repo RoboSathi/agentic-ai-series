@@ -182,12 +182,6 @@ class CacheStrategy(ContextStrategy):
         rest = [chunk for chunk in context.chunks if chunk.kind not in self._prefix_kinds]
         return self._record(context, prefix + rest)
 
-    def prefix_signature(self, context: AssembledContext) -> str:
-        """The cacheable prefix, for asserting it did not change between turns."""
-        return "\n".join(
-            chunk.content for chunk in context.chunks if chunk.kind in self._prefix_kinds
-        )
-
 
 class ConsolidateStrategy(ContextStrategy):
     """Merge duplicate content so the window says each thing once.

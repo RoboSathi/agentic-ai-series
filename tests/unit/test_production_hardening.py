@@ -25,7 +25,7 @@ from customer_support_agent.persistence import (
 from customer_support_agent.resilience import RefundSaga
 from customer_support_agent.review import ReviewQueueService
 from customer_support_agent.tools import SupportTools
-from tests.conftest import ScriptedLLM, tool_call
+from tests.conftest import ScriptedLLM, refunded_to, tool_call, unwrapped
 
 
 @pytest.fixture
@@ -101,7 +101,7 @@ class TestTheEscalationPathDrains:
         tools.queue_for_approval(10002, 210.0)
         outcome = review.deny(review.pending()[0].id, "supervisor-1", "not eligible")  # type: ignore[arg-type]
         assert outcome.decision == "denied"
-        assert RefundLedgerRepository(seeded_pool).total_for_user(1) == Money.zero()
+        assert refunded_to(seeded_pool, 1) == Money.zero()
 
     async def test_eligibility_is_rechecked_at_approval(
         self, tools: SupportTools, review: ReviewQueueService, seeded_pool: SqliteConnectionPool
@@ -116,13 +116,6 @@ class TestTheEscalationPathDrains:
         self, review: ReviewQueueService
     ) -> None:
         assert (await review.approve(999, "supervisor-1")).decision == "not_found"
-
-    def test_deciding_drains_the_queue(
-        self, tools: SupportTools, review: ReviewQueueService
-    ) -> None:
-        tools.queue_for_approval(10002, 210.0)
-        review.deny(review.pending()[0].id, "supervisor-1")  # type: ignore[arg-type]
-        assert review.pending_count() == 0
 
     def test_the_agent_has_no_route_to_approval(self, tools: SupportTools) -> None:
         """`approve_hitl_request` is a human-controlled surface."""
@@ -155,7 +148,7 @@ class TestSubsystemsAreActuallyWired:
         from agent_platform.llm.client import create_llm_client
         from agent_platform.llm.resilient import ResilientLLMClient
 
-        client = create_llm_client()
+        client = unwrapped(create_llm_client())
         assert isinstance(client, CascadingLLMClient)
         assert all(isinstance(tier, ResilientLLMClient) for tier in client._tiers)
 

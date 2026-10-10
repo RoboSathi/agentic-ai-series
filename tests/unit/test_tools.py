@@ -75,12 +75,15 @@ class TestRegistry:
         """Models routinely drop the namespace they were shown."""
         assert registry.get("get_order_status") is not None
 
-    def test_refuses_an_ambiguous_bare_name(self) -> None:
-        """Guessing which namespace was meant is worse than failing."""
+    def test_a_shared_bare_name_keeps_its_namespace(self) -> None:
+        """Two `lookup`s: the second is offered as `b__lookup`, so no call is ambiguous."""
         registry = NamespacedToolRegistry()
         registry.register(_definition("lookup", namespace="a"))
         registry.register(_definition("lookup", namespace="b"))
-        assert registry.get("lookup") is None
+        offered = [schema["function"]["name"] for schema in registry.to_openai_tools()]
+        assert offered == ["lookup", "b__lookup"]
+        assert registry.get("lookup").qualified_name == "a.lookup"  # type: ignore[union-attr]
+        assert registry.get("b__lookup").qualified_name == "b.lookup"  # type: ignore[union-attr]
 
     def test_unknown_tools_return_none(self, registry: NamespacedToolRegistry) -> None:
         assert registry.get("nope") is None
@@ -90,27 +93,6 @@ class TestRegistry:
 
     def test_filters_by_namespace(self, registry: NamespacedToolRegistry) -> None:
         assert len(registry.in_namespace("billing")) == 1
-
-    def test_builds_a_validated_call(self, registry: NamespacedToolRegistry) -> None:
-        call = registry.build_call("orders.get_order_status", '{"order_id": 5}')
-        assert call is not None and call.params == {"order_id": 5}
-
-    def test_a_call_carries_the_tools_governance_properties(
-        self, registry: NamespacedToolRegistry
-    ) -> None:
-        """Which is what lets the Gatekeeper reason about it."""
-        call = registry.build_call("billing.process_refund", '{"order_id": 5}')
-        assert call is not None and call.reversible is False
-
-    def test_invalid_arguments_produce_no_call(self, registry: NamespacedToolRegistry) -> None:
-        """The model's error to recover from, not the harness's to crash on."""
-        assert registry.build_call("orders.get_order_status", "{}") is None
-
-    def test_malformed_json_produces_no_call(self, registry: NamespacedToolRegistry) -> None:
-        assert registry.build_call("orders.get_order_status", "not json") is None
-
-    def test_an_unknown_tool_produces_no_call(self, registry: NamespacedToolRegistry) -> None:
-        assert registry.build_call("nope", "{}") is None
 
     def test_renders_only_the_named_tools(self, registry: NamespacedToolRegistry) -> None:
         schemas = registry.to_openai_tools(["orders.get_order_status"])

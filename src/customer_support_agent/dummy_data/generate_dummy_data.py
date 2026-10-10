@@ -153,11 +153,6 @@ def _whereabouts(
     return carrier, tracking, eta, None, rng.choice(spec.transit_locations)
 
 
-def _sql_null(value: str | None) -> str:
-    """Inline SQL for an optional text column."""
-    return _sql_str(value) if value is not None else "NULL"
-
-
 def _sql_str(value: str) -> str:
     """Quote and escape a string for inline SQL."""
     return "'" + value.replace("'", "''") + "'"

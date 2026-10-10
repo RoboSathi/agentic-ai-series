@@ -72,25 +72,6 @@ class TestSemanticStore:
         assert semantic.get("limit") == []
         assert semantic.get("limit", include_superseded=True)
 
-    def test_revocation_actually_deletes(self, semantic: SemanticStore) -> None:
-        """A deletion that leaves the value readable is a deletion failure."""
-        semantic.write(_fact("pii", "ada@example.com"), Provenance(source="u"))
-        assert semantic.revoke("pii") == 1
-        assert semantic.get("pii", include_superseded=True) == []
-
-    def test_unconfirmed_self_reported_facts_decay(self, semantic: SemanticStore) -> None:
-        stale = _fact("claim", "unverified")
-        stale.provenance.ingestion_time = utc_now() - timedelta(days=400)
-        semantic.write(stale, stale.provenance)
-        assert semantic.decay_unconfirmed() == 1
-        assert semantic.get("claim") == []
-
-    def test_verified_facts_do_not_decay(self, semantic: SemanticStore) -> None:
-        verified = _fact("policy", "v", kind="verified_system_of_record")
-        verified.provenance.ingestion_time = utc_now() - timedelta(days=400)
-        semantic.write(verified, verified.provenance)
-        assert semantic.decay_unconfirmed() == 0
-
 
 class TestEpisodicStore:
     def test_appends_one_file_per_session(self, episodic: EpisodicStore) -> None:
@@ -326,8 +307,7 @@ class TestEachCoalaClassIsIndependent:
     ) -> None:
         facade = self._facade(tmp_path, pool, semantic=True)
         result = facade.note("k", "v", "s1", source="tool")
-        assert result.written is False
-        assert facade.active_window("s1") == []
+        assert result.written is False and facade.working is None
 
     def test_without_episodic_memory_an_event_is_discarded_not_raised(
         self, tmp_path: Path, pool: SqliteConnectionPool
@@ -356,5 +336,4 @@ class TestEachCoalaClassIsIndependent:
     ) -> None:
         """`memory: false` reaches the graph as a facade, not as a crash."""
         facade = self._facade(tmp_path, pool)
-        assert facade.window_size("s1") == 0
         facade.end_session("s1")

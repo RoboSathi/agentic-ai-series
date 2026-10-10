@@ -23,7 +23,7 @@ from agent_platform.mcp import (
 )
 from agent_platform.mcp.client.schema import arguments_model
 from agent_platform.mcp.server.analytics import build_server
-from agent_platform.observability.facts import DuckDbFactLedger, LlmCallFact
+from agent_platform.observability.facts import DuckDbFactStore, ModelCallFact
 from agent_platform.observability.store import DuckDbObservabilityStore
 from agent_platform.tools import NamespacedToolRegistry
 
@@ -40,7 +40,7 @@ SERVER = McpServerSettings(name="analytics", namespace="analytics", envelope=REA
 @pytest.fixture
 def parquet(tmp_path: Path) -> Path:
     store = DuckDbObservabilityStore(tmp_path / "observability.duckdb")
-    DuckDbFactLedger(store).record(LlmCallFact(model="m"))
+    DuckDbFactStore(store).append(ModelCallFact(model="m"))
     directory = tmp_path / "parquet"
     ParquetExporter(store, parquet_dir=directory, evals_db=tmp_path / "none.duckdb").export()
     return directory
@@ -59,7 +59,13 @@ async def test_the_servers_tools_arrive_namespaced_under_the_local_envelope(parq
         tools = {tool.qualified_name: tool for tool in await source.tools()}
     finally:
         await source.close()
-    assert set(tools) == {"analytics.list_views", "analytics.describe_view", "analytics.run_query"}
+    assert set(tools) == {
+        "analytics.list_views",
+        "analytics.describe_view",
+        "analytics.list_metrics",
+        "analytics.compute_metric",
+        "analytics.run_query",
+    }
     query = tools["analytics.run_query"]
     assert (query.side_effecting, query.surface, query.required_permission) == (
         False,
@@ -90,23 +96,12 @@ async def test_a_call_goes_to_the_server_and_comes_back_as_a_tool_result(parquet
         registry.register_all(await source.tools())
         tool = registry.get("analytics.run_query")
         assert tool is not None
-        result = await tool.handler(sql="SELECT count(*) AS n FROM llm_calls")
-        refused = await tool.handler(sql="DROP TABLE llm_calls")
+        result = await tool.handler(sql="SELECT count(*) AS n FROM model_calls")
+        refused = await tool.handler(sql="DROP TABLE model_calls")
     finally:
         await source.close()
     assert result.success and result.data["rows"] == [[1]]
     assert not refused.success and refused.error
-
-
-async def test_the_registry_validates_arguments_against_the_tools_schema(parquet: Path) -> None:
-    source = _source(parquet)
-    try:
-        registry = NamespacedToolRegistry()
-        registry.register_all(await source.tools())
-    finally:
-        await source.close()
-    assert registry.build_call("analytics.run_query", {"sql": "SELECT 1"}) is not None
-    assert registry.build_call("analytics.run_query", {}) is None
 
 
 async def test_a_closed_session_refuses_calls(parquet: Path) -> None:

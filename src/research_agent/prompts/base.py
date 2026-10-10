@@ -69,17 +69,3 @@ def role_of(messages: list[Message]) -> str:
     first = messages[0].content.splitlines()[0] if messages and messages[0].content else ""
     prefix = ROLE_HEADER.format(role="")
     return first[len(prefix) :].strip() if first.startswith(prefix) else ""
-
-
-def payload_of(messages: list[Message]) -> dict[str, Any]:
-    """The JSON payload a request carried (read back from its user message)."""
-    for message in messages:
-        if message.role == "user" and PAYLOAD_OPEN in message.content:
-            body = message.content.split(PAYLOAD_OPEN, 1)[1].split(PAYLOAD_CLOSE, 1)[0]
-            loaded = json.loads(body)
-            return loaded if isinstance(loaded, dict) else {}
-    return {}
-
-
-def instructions_of(messages: list[Message]) -> str:
-    return messages[0].content if messages else ""
