@@ -11,12 +11,17 @@ Everything else is always on: the MCP client (governed by the local envelope),
 the Executor (deadline, facts), the audit trail, the fact ledger, tracing.
 """
 
+from dataclasses import dataclass
+
 from agent_platform.audit import AuditLedger, create_audit_ledger
 from agent_platform.config import FeatureSet, active_features, get_settings
+from agent_platform.context import ContextWindow, FiveStagePipeline, WorkingMemoryContextSource
+from agent_platform.context.factory import build_context_management
 from agent_platform.executor import RegistryToolHandler, ToolExecutorImpl
 from agent_platform.gatekeeper import CumulativeLedger, Gatekeeper, GatekeeperImpl
 from agent_platform.hallucination_check.confidence import ConfidenceCheck
 from agent_platform.llm.client import LLMClient, create_llm_client
+from agent_platform.loop_control import LoopBudget, build_loop_governor
 from agent_platform.mcp import (
     ConfiguredGovernancePolicy,
     GovernedMcpToolSource,
@@ -26,6 +31,7 @@ from agent_platform.mcp import (
     server_spec,
 )
 from agent_platform.memory.procedural.memory import ProceduralStore
+from agent_platform.memory.working import WorkingMemoryStore
 from agent_platform.observability import StageReporter
 from agent_platform.observability.facts import create_fact_store, install_fact_store
 from agent_platform.observability.langsmith import build_trace_exporter
@@ -39,9 +45,11 @@ from agent_platform.security import MessageScreener, PromptInjectionGuard, Secur
 from agent_platform.security.auth.auth import Authorizer
 from agent_platform.security.auth.policy import AgentPolicy
 from agent_platform.security.pii import PIIFilterImpl
+from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
 from agent_platform.skills import build_agent_instructions
 from agent_platform.tools import NamespacedToolRegistry
 from agent_platform.tools.path import ToolPath
+from agent_platform.tools.types import ToolDefinition
 from ops_agent.config import get_agent_settings
 from ops_agent.config.settings import OpsAgentSettings
 from ops_agent.graph.agent import OUTCOMES, OpsAgent
@@ -81,7 +89,19 @@ def build_agent(
         audit,
         gatekeeper=_gatekeeper(agent, platform, audit) if posture.is_on("gatekeeper") else None,
     )
-    calls = GovernedCalls(registry, path, agent, actor=settings.agent.id)
+    # The one authority over the turn's loop: its step cap and budgets are this agent's,
+    # its historical baseline this agent's own turn facts.
+    governor = build_loop_governor(
+        LoopBudget(
+            max_steps=agent.max_steps,
+            max_tool_calls=agent.budget.max_tool_calls,
+            max_tokens=agent.budget.max_total_tokens,
+            max_seconds=agent.budget.max_seconds,
+        ),
+        facts=observability if settings.observability.enabled else None,
+        agent_id=settings.agent.id,
+    )
+    calls = GovernedCalls(registry, path, agent, actor=settings.agent.id, governor=governor)
     # Procedural memory is the only memory this agent has: its skills,
     # versioned in the platform store. Withheld, it runs on its profile.
     procedural = ProceduralStore(platform) if posture.is_on("memory.procedural") else None
@@ -96,6 +116,9 @@ def build_agent(
         figures=FigureCheck(agent) if posture.is_on("hallucination_guard") else None,
         confidence=_confidence() if posture.is_on("hallucination_guard") else None,
     )
+    window, working = _context_window(posture, agent, screen=InstructionDataSeparator())
+    if window is not None and window.fetch_tool is not None:
+        registry.register(window.fetch_tool)
     return OpsAgent(
         build_graph(nodes),
         nodes,
@@ -109,7 +132,29 @@ def build_agent(
         ),
         # Exported traces are always PII-redacted, whatever the `pii` feature says.
         trace_exporter=build_trace_exporter(settings.agent.id, lambda: PIIFilterImpl().redact),
+        window=window.window if window is not None else None,
+        working_memory=working,
     )
+
+
+@dataclass(frozen=True)
+class _Window:
+    window: ContextWindow
+    fetch_tool: ToolDefinition | None
+
+
+def _context_window(
+    posture: FeatureSet, agent: OpsAgentSettings, screen: InstructionDataSeparator
+) -> tuple[_Window | None, WorkingMemoryStore | None]:
+    """With `context` declared: the session's turns reach the model through the platform's
+    window (assembled, fitted, checked, carded) instead of as raw history. Withheld: None."""
+    if not posture.is_on("context"):
+        return None, None
+    working = WorkingMemoryStore(max_history=agent.history_turns)
+    management = build_context_management(posture, working, screen)
+    pipeline = FiveStagePipeline(sources=[WorkingMemoryContextSource(working)])
+    window = ContextWindow(pipeline, management.strategies, management.health)
+    return _Window(window, management.fetch_tool), working
 
 
 def _llm(reporter: StageReporter | None) -> LLMClient:

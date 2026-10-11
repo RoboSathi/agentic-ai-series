@@ -13,12 +13,16 @@ a timeout, a retry under an idempotency key, and a circuit breaker.
 from typing import Any
 
 from agent_platform.config import get_settings
+from agent_platform.context.offload import offload_tool_name
+from agent_platform.context.types import OFFLOADED
+from agent_platform.llm.prompt import TOOL_LOOP, USER_QUERY, PromptBuilder
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
 from agent_platform.observability import Span
 from agent_platform.observability.model_observer import MODEL_STAGE as LLM_CALL_SPAN
 from agent_platform.resilience import (
     external_api_error_fields,
 )
+from customer_support_agent.config import get_agent_settings
 from customer_support_agent.graph.loop_decision import after_propose_step
 from customer_support_agent.graph.nodes._support import (
     PREFETCHED,
@@ -27,13 +31,25 @@ from customer_support_agent.graph.nodes._support import (
 )
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.reporting import FALLBACK_REPLY
-from customer_support_agent.prompts.system_prompt import build_system_prompt
+from customer_support_agent.prompts.system_prompt import (
+    INTENT_FALLBACK,
+    build_system_prompt,
+    system_prompt_parts,
+)
 
 
 class ProposalNodes(NodeSupport):
     async def propose(self, state: AgentState) -> dict[str, Any]:
-        """One model turn, with the tools this turn is allowed to use."""
+        """One model turn, with the tools this turn is allowed to use — if the governor allows it."""
         self._steps.begin(state.tool_rounds + 1)
+        verdict = self._governor.begin_step()
+        if verdict.stops:
+            # The step cap, the deadline, a budget, a cycle or a plateau: answer from what
+            # the tools returned, without asking the model for another action.
+            next_step, because = after_propose_step(verdict, False)
+            self._report_loop_status(verdict, state, tools_requested=False, next_step=next_step,
+                                     because=because)  # fmt: skip
+            return {"loop": self._governor.state}
         tools = await self._turn_offer(state)
         offered = sorted(tool.qualified_name for tool in tools)
         # Normally already drawn by the prefetch stage; a repeat in the same turn is a no-op.
@@ -42,15 +58,15 @@ class ProposalNodes(NodeSupport):
             prefetched=list(state.metadata.get(PREFETCHED, [])),
             offered=[tool.model_name for tool in tools],
         )
-        request = CompletionRequest(
-            messages=self._prompt_messages(state),
-            tools=self._registry.to_openai_tools([tool.qualified_name for tool in tools]),
+        request = self._prompt_request(
+            state, self._registry.to_openai_tools([tool.qualified_name for tool in tools])
         )
         # The model may ask for a tool or answer; the response card names which it did.
         purpose = get_settings().observability.llm_purposes.next_action
         self._report_llm_request(request, purpose=purpose)
         try:
-            result = await self._call_model(request, state)
+            async with self._governor.deadline():
+                result = await self._call_model(request, state)
         except Exception as exc:
             error_fields = external_api_error_fields(exc)
             self._done_failed(
@@ -69,22 +85,19 @@ class ProposalNodes(NodeSupport):
                 "escalated": True,
                 "decisions": [*state.decisions, "resilience: llm unavailable after retries"],
                 "metadata": {**state.metadata, "external_dependency_failed": True},
+                "loop": self._governor.state,
             }
+        self._governor.after_model(result.usage.total_tokens, result.cost_usd)
         message = Message(role="assistant", content=result.content, tool_calls=result.tool_calls)
         state.working_memory.add_current_turn(message)
         self._report_llm_response(result, purpose=purpose)
         requested = bool(result.tool_calls)
-        next_step, because = after_propose_step(requested)
+        next_step, because = after_propose_step(verdict, requested)
         self._report_loop_status(
-            tool_rounds=state.tool_rounds + 1,
-            tools_requested=requested,
-            invocations=list(state.metadata.get("last_tool_invocations") or []),
-            escalated=state.escalated,
-            refusal_final=bool(state.metadata.get("refusal_is_final")),
-            next_step=next_step,
-            because=because,
+            verdict, state, tools_requested=requested, next_step=next_step, because=because
         )
         return {
+            "loop": self._governor.state,
             "tool_rounds": state.tool_rounds + 1,
             # The offered set is carried, not recomputed. Selection can
             # involve a network-backed ranker, so recomputing it in `execute`
@@ -251,9 +264,20 @@ class ProposalNodes(NodeSupport):
     async def _turn_offer(self, state: AgentState) -> list[Any]:
         """The tools settled for this turn before its first read — the ones its card names."""
         settled = state.metadata.get(TURN_OFFERED_TOOLS)
-        if settled is None:
-            return await self._offered_tools(state)
-        return [tool for name in settled if (tool := self._registry.get(name)) is not None]
+        tools = (
+            await self._offered_tools(state)
+            if settled is None
+            else [tool for name in settled if (tool := self._registry.get(name)) is not None]
+        )
+        return [*tools, *self._offload_fetch(state, tools)]
+
+    def _offload_fetch(self, state: AgentState, offered: list[Any]) -> list[Any]:
+        """The offload fetch tool, when this turn's window offloaded something it may need."""
+        window = state.context.window if state.context is not None else None
+        if window is None or not any(chunk.metadata.get(OFFLOADED) for chunk in window.chunks):
+            return []
+        tool = self._registry.get(offload_tool_name())
+        return [tool] if tool is not None and tool not in offered else []
 
     def _system_prompt(self) -> str:
         """The profile and policy, without per-turn procedures — what a screen sees."""
@@ -261,27 +285,30 @@ class ProposalNodes(NodeSupport):
             self._instructions.profile_section(), refund_limit=self._refund_limit()
         )
 
-    def _prompt_messages(self, state: AgentState) -> list[Message]:
-        """Build the small provider payload from working memory and context."""
-        system = build_system_prompt(
-            self._instructions.render(self._activation(state)), refund_limit=self._refund_limit()
+    def _prompt_request(
+        self, state: AgentState, tools: list[dict[str, Any]] | None = None
+    ) -> CompletionRequest:
+        """The working request, built from named sections: instructions, policy, limit, the
+        context window, then the question and this turn's tool loop."""
+        parts = system_prompt_parts(
+            self._instructions.parts(self._activation(state)), self._refund_limit()
         )
-        if state.context is not None and state.context.text:
-            system = f"{system}\n\n# Retrieved context\n{state.context.text}"
+        builder = PromptBuilder().instructions(parts)
+        context = state.context
+        if context is not None and context.text:
+            window = context.window
+            builder.window(
+                get_settings().context.prompt.window_heading,
+                context.text,
+                window.chunks if window is not None else (),
+            ).notes(window.applied_strategies if window is not None else [])
         if state.metadata.get("intent_execution_route") == "llm_fallback":
-            system = (
-                f"{system}\n\n"
-                "# Intent fallback\n"
-                "The lightweight intent classifier could not resolve this turn. "
-                "Use the current conversation and current-turn tool results to "
-                "infer what the customer means. You may ask a clarifying question "
-                "when context is still insufficient. Never claim that a refund, "
-                "approval, queueing, cancellation, or other business action "
-                "occurred unless you actually call the corresponding tool and "
-                "receive a successful tool result.\n"
-            )
-        return [
-            Message(role="system", content=system),
-            Message(role="user", content=state.model_query or state.query),
-            *self._current_messages(state),
-        ]
+            fallback = get_agent_settings().intent_fallback_instruction
+            builder.system(INTENT_FALLBACK, fallback, stable=False)
+        built = (
+            builder.message(USER_QUERY, "user", state.model_query or state.query)
+            .messages(TOOL_LOOP, self._current_messages(state))
+            .tools(tools)
+            .build()
+        )
+        return CompletionRequest(messages=built.messages, tools=tools, manifest=built.manifest)

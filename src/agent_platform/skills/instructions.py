@@ -17,6 +17,7 @@ from typing import Any, Protocol, runtime_checkable
 from agent_platform.audit.ledger import AuditLedger
 from agent_platform.audit.types import AuditEntry
 from agent_platform.config.settings import SkillSettings
+from agent_platform.llm.prompt import PROCEDURES, PROFILE, PromptPart
 from agent_platform.logging import get_logger
 from agent_platform.logging.trace_context import get_current_trace_id
 from agent_platform.memory.procedural.memory import ProceduralStore
@@ -55,6 +56,8 @@ class AgentInstructions(Protocol):
     ) -> None: ...
 
     def render(self, activation: Activation) -> str: ...
+
+    def parts(self, activation: Activation) -> list[PromptPart]: ...
 
     def compose(self, signals: frozenset[str], query: str) -> Instructions: ...
 
@@ -95,12 +98,17 @@ class InstructionBuilder:
 
     def render(self, activation: Activation) -> str:
         """The profile, then each procedure's sent sections under its heading."""
+        return self._settings.render.separator.join(part.text for part in self.parts(activation))
+
+    def parts(self, activation: Activation) -> list[PromptPart]:
+        """The same text as `render`, one attributable part each: the profile, each procedure."""
         render = self._settings.render
-        sections = [self.profile_section()]
+        parts = [PromptPart(PROFILE, self.profile_section(), self._settings.profile_path)]
         for item in activation.skills:
             heading = render.procedure_heading.format(name=item.skill.name)
-            sections.append(render.separator.join([heading, item.skill.document.prompt]))
-        return render.separator.join(sections)
+            text = render.separator.join([heading, item.skill.document.prompt])
+            parts.append(PromptPart(PROCEDURES, text, item.skill.ref(render.ref)))
+        return parts
 
     def compose(self, signals: frozenset[str], query: str) -> Instructions:
         """Select, announce and render in one step."""

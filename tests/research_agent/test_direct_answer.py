@@ -162,7 +162,13 @@ async def test_an_answer_from_the_models_own_knowledge_is_not_grounded() -> None
 
 
 def _tool_calls_until_the_cap() -> list[dict[str, Any]]:
-    return [{"tool_calls": [CALL]}] * get_agent_settings().answer.budget.max_tool_calls
+    """A different call each step, so it is the cap that stops the loop — not the governor
+    suppressing a repeat or catching a cycle."""
+    cities = range(get_agent_settings().answer.budget.max_tool_calls)
+    return [
+        {"tool_calls": [CALL.model_copy(update={"arguments": f'{{"location": "Pune {i}"}}'})]}
+        for i in cities
+    ]
 
 
 @pytest.mark.asyncio

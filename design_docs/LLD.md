@@ -911,6 +911,15 @@ mirrors `gatekeeper`'s Chain of Responsibility style),
 (Lamport happened-before, reused for multi-worker/multi-agent cases —
 E23/E42).
 
+**As built (2026-10-11).** One `LoopGovernor` (`loop_control/governor.py`) is the single
+authority for every agent: step cap, budgets (tool calls, tokens, cost, wall clock), a deadline
+scope that cancels an in-flight call, exact/canonical/semantic repeat suppression, cycle
+detection, convergence (evidence gained per step) and a historical baseline over `fact_turn`.
+Every mechanism answers with one `LoopVerdict`; routers read it through `route_on_verdict`.
+`LoopState` (with `LoopStateMachine` for the phase table) rides in each agent's LangGraph
+state, so LangGraph's checkpointer persists it — the separate `CheckpointStore`, `ReactStep`
+and `LoopController` protocols were dropped as unused.
+
 **LLD patterns applied.** Chain of Responsibility (six watchdog
 layers); Strategy (each layer independently swappable/toggleable per
 PRD G6); State (the FSM itself); Memento (`Checkpoint` as a restorable

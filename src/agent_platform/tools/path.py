@@ -19,7 +19,7 @@ the model. It reads all of that off the returned `ToolOutcome`.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Final, Literal
+from typing import Final, Literal, Protocol, cast, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
@@ -30,8 +30,7 @@ from agent_platform.gatekeeper import Gatekeeper
 from agent_platform.gatekeeper.types import AuthorityContext, AuthorityDecision
 from agent_platform.llm.types import ModelToolCall
 from agent_platform.logging import get_current_trace_id, get_logger
-from agent_platform.loop_control.types import LoopControlReport
-from agent_platform.loop_control.watchdogs import ToolLoopControl
+from agent_platform.loop_control.types import TOOL_STAGE, LoopVerdict
 from agent_platform.observability.facts import ToolCallFact, fact_store
 from agent_platform.tools.registry import NamespacedToolRegistry
 from agent_platform.tools.types import ToolCall
@@ -46,9 +45,21 @@ EXECUTED: Final[ToolStage] = "executed"
 
 # The Gatekeeper question that rules on whether a tool was offered this turn.
 _OFFERED_QUESTION = "offered"
-_ABORT = "abort"
-_DUPLICATE_CODE = "DUPLICATE_ACTION"
+_CONTINUE = "continue"
 _ALLOW: Final[Decision] = "allow"
+
+
+@runtime_checkable
+class ActionGate(Protocol):
+    """The loop's say over each action (`LoopGovernor`): run it or not, and what came of it."""
+
+    async def before_action(self, call: ToolCall) -> LoopVerdict: ...
+
+    async def after_action(self, call: ToolCall, outcome: str, succeeded: bool) -> None: ...
+
+    def record_refusal(self, call: ToolCall, reason: str) -> None: ...
+
+    def forget(self, call: ToolCall) -> None: ...
 
 
 class ToolTurn(BaseModel):
@@ -56,9 +67,7 @@ class ToolTurn(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    loop: ToolLoopControl
-    round_number: int
-    max_rounds: int
+    loop: ActionGate
     # The authority context for this call (who asks, what was offered, mandates).
     authority: Callable[[ToolCall], AuthorityContext]
     # A last transformation of the validated call (e.g. PII minimisation of its params).
@@ -81,7 +90,7 @@ class ToolOutcome(BaseModel):
     tool: str
     reason: str = ""
     call: ToolCall | None = None
-    control: LoopControlReport | None = None
+    control: LoopVerdict | None = None
     authority: AuthorityContext | None = None
     decision: AuthorityDecision | None = None
     execution: ExecutionOutcome | None = None
@@ -125,11 +134,9 @@ class ToolPath:
             stage = UNKNOWN if resolution.unknown else INVALID
             return ToolOutcome(stage=stage, tool=proposal.name, reason="; ".join(resolution.errors))
         call = turn.prepare(resolution.call) if turn.prepare else resolution.call
-        control = turn.loop.before_action(
-            call, round_number=turn.round_number, max_rounds=turn.max_rounds
-        )
-        if control.decision == _ABORT:
-            stage = DUPLICATE if control.reason_code == _DUPLICATE_CODE else REFUSED
+        control = await turn.loop.before_action(call)
+        if control.decision != _CONTINUE:
+            stage = cast(ToolStage, TOOL_STAGE[control.decision])
             return ToolOutcome(
                 stage=stage, tool=call.action, reason=control.reason, call=call, control=control
             )
@@ -138,7 +145,7 @@ class ToolPath:
         if isinstance(decided, ToolOutcome):
             return decided.model_copy(update={"control": control})
         execution = await self._executor.execute(decided)
-        self._settle(call, authority, execution, turn)
+        await self._settle(call, authority, execution, turn)
         return ToolOutcome(
             stage=EXECUTED,
             tool=call.action,
@@ -192,7 +199,7 @@ class ToolPath:
         )
         return approved
 
-    def _settle(
+    async def _settle(
         self,
         call: ToolCall,
         authority: AuthorityContext,
@@ -202,9 +209,11 @@ class ToolPath:
         """A real success is remembered (and charged to the budget); a replay is not charged."""
         if not execution.result.success:
             if turn.remember_failures:
-                turn.loop.record_refusal(call, execution.result.error or "")
+                await turn.loop.after_action(call, execution.result.error or "", False)
+            else:
+                turn.loop.forget(call)
             return
-        turn.loop.record_success(call, execution.result.output)
+        await turn.loop.after_action(call, execution.result.output, True)
         if self._gatekeeper is not None and not execution.replayed:
             self._gatekeeper.commit(call, authority)
 

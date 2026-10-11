@@ -97,6 +97,13 @@ ops_agent:
     authority_rank: 4
     permissions: [read_analytics]
   max_steps: 8
+  # The turn's budgets beside its step cap (the platform loop governor enforces them): tool
+  # calls, tokens across every model call, and a wall-clock deadline that cancels a call
+  # still running when it passes.
+  budget:
+    max_tool_calls: 16
+    max_total_tokens: 60000
+    max_seconds: 180
   # Earlier questions and answers in this conversation the model is shown.
   history_turns: 3
   temperature: 0.0
@@ -113,6 +120,8 @@ ops_agent:
   prefetch_call_id: "prefetch-{tool}"
   words:
     stopped: "I stopped after {steps} steps without an answer. Try a narrower question."
+    # The model could not be reached (after its own retries and backups), or ran past the deadline.
+    model_failed: "I could not finish this question: {error}. Please try again."
     blocked: "That message was stopped by the input screen ({reason})."
     no_tools: "The analytics MCP server is unavailable ({error}). Start it, or run `make analytics-export` and try again."
     refused_tool: "The Gatekeeper refused {action}: {reason}"

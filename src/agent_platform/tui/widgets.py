@@ -721,25 +721,12 @@ class StageEventWidget(Collapsible):
             return "Response Generated"
 
         if stage == "loop_control":
-            # A round's status card: its own summary says the round and the next step.
-            if "criteria" in fields and self.event.summary:
+            # The verdict names its own decision and mechanism (`loop_heading`).
+            if self.event.summary:
                 return self.event.summary
             decision = str(fields.get("decision") or "").upper()
             reason_code = str(fields.get("reason_code") or "")
-            round_number = fields.get("round")
-            max_rounds = fields.get("max_rounds")
-            if reason_code == "DUPLICATE_ACTION":
-                return "SUPPRESS · duplicate action"
-            if reason_code == "MAX_TOOL_ITERATIONS":
-                limit = (
-                    f" · round {round_number}/{max_rounds}" if round_number and max_rounds else ""
-                )
-                return f"ABORT · tool iteration limit{limit}"
-            return (
-                f"{decision} · {reason_code}"
-                if decision and reason_code
-                else decision or "control intervention"
-            )
+            return " · ".join(part for part in (decision, reason_code) if part)
 
         if stage == "tool_request":
             return self._tool_summary(fields)

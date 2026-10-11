@@ -1,7 +1,7 @@
 # loop_control — this agent's two loops
 
 The **tool-use loop** is the graph's `propose ⇄ execute` cycle, bounded by
-`max_tool_iterations` and watched by the platform's `ToolLoopControl`. It is
+`max_tool_iterations` and governed by the platform's `LoopGovernor`. It is
 deliberately not ReAct. The **output quality gate** (`quality_gate.py`)
 looks a plan up in config, applies one deterministic critique, allows at
 most one repair, and scores the result independently of the model that wrote it.
@@ -14,7 +14,7 @@ most one repair, and scores the result independently of the model that wrote it.
 ## Public interface
 
 - `OutputQualityGate`, `Planner`, `PlanLookup`, `GroundedCritic`, `IndependentScorer`, `Reflector`, `Evaluator` (`quality_gate.py`)
-- Re-exports the platform's `ToolLoopControl`, `DuplicateActionDetector`, `action_fingerprint`
+- The loop itself is the platform's `LoopGovernor` (`agent_platform.loop_control`)
 
 ## Configuration
 

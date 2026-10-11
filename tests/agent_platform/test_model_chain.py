@@ -48,6 +48,9 @@ class _Observer:
     def __init__(self) -> None:
         self.events: list[tuple[str, ...]] = []
 
+    def request_starting(self, label: str, model: str, request: Any) -> None:
+        self.events.append(("request", label, model))
+
     def backup_started(self, label: str, primary: str, backup: str, reason: str) -> None:
         self.events.append(("started", label, primary, backup, reason))
 

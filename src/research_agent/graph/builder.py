@@ -26,13 +26,12 @@ from agent_platform.config.paths import resolve_path
 from agent_platform.config.settings import WebSettings
 from agent_platform.context import (
     CandidateSource,
-    ContextFailureDetector,
     ContextWindow,
     CrossEncoderReranker,
     FiveStagePipeline,
-    StrategySelector,
     WorkingMemoryContextSource,
 )
+from agent_platform.context.factory import ContextManagement, build_context_management
 from agent_platform.durability import (
     DurableGraphRunner,
     RunRegistry,
@@ -63,7 +62,7 @@ from agent_platform.llm.observer import ModelCallObserver
 from agent_platform.llm.roles import RoleModelRouter
 from agent_platform.logging import get_logger
 from agent_platform.loop_control import BudgetGuard
-from agent_platform.loop_control.types import LoopControlReport
+from agent_platform.loop_control.types import LoopVerdict
 from agent_platform.memory import EpisodicStore, MemoryFacade, SemanticStore, WorkingMemoryStore
 from agent_platform.memory.procedural.memory import ProceduralStore
 from agent_platform.observability import StageReporter, checks
@@ -369,12 +368,17 @@ def _direct_answerer(
     )
     grounding = _answer_grounding(agent, posture, FetchUrl(web, agent.answer, screen))
     earlier = EarlierRunsSource(archive, agent.answer.context, agent.answer.messages)
+    management = build_context_management(
+        posture, memory.working if memory is not None else None, InstructionDataSeparator()
+    )
+    if management.fetch_tool is not None:
+        registry.register(management.fetch_tool)
     context = AnswerContext(
         memory,
         earlier,
         agent.answer.context,
         agent.answer.messages,
-        window=_context_window(posture, memory, earlier),
+        window=_context_window(posture, memory, earlier, management),
         reporter=lambda: telemetry.reporter,
     )
     # The answer tools read; they still take the platform's one tool path, so their
@@ -417,7 +421,10 @@ def recency_guard(agent: ResearchAgentSettings) -> RecencyGuard:
 
 
 def _context_window(
-    posture: FeatureSet, memory: MemoryFacade | None, earlier: EarlierRunsSource
+    posture: FeatureSet,
+    memory: MemoryFacade | None,
+    earlier: EarlierRunsSource,
+    management: ContextManagement,
 ) -> ContextWindow | None:
     """The platform's context window over this agent's sources — or None with `context` off.
 
@@ -436,12 +443,7 @@ def _context_window(
         ranker=scoring,
         reranker=CrossEncoderReranker(reranker) if reranker is not None else None,
     )
-    health = (
-        ContextFailureDetector(screen=InstructionDataSeparator())
-        if posture.is_on("context.failure_detection")
-        else None
-    )
-    return ContextWindow(pipeline, StrategySelector(), health)
+    return ContextWindow(pipeline, management.strategies, management.health)
 
 
 def _answer_grounding(
@@ -685,7 +687,7 @@ def _resources_factory(
 
 
 def _announce_cap(
-    telemetry: RunTelemetry, report: LoopControlReport, agent: ResearchAgentSettings
+    telemetry: RunTelemetry, report: LoopVerdict, agent: ResearchAgentSettings
 ) -> None:
     """A budget limit hit mid-run, as a card — but not a counter the plan is meant to use up.
 

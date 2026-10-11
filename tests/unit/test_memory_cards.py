@@ -86,7 +86,7 @@ class TestTheDreamInboxIsNamed:
         reporter.end_turn()
         summary = next(e for e in feed.events if e.stage == "turn_summary")
         assert len(queued) == 1
-        assert summary.fields["dream_inbox"] == "1 turn queued"
+        assert summary.fields["dream_inbox"] == "1 turn(s) queued · 0 action(s), 0 observation(s)"
         assert [e.stage for e in feed.events] == ["turn_summary"]
 
 

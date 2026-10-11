@@ -34,6 +34,9 @@ class TokenUsage(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    # Of `prompt_tokens`, how many the provider served from its prefix cache (0: none, or
+    # a provider that does not say).
+    cached_prompt_tokens: int = 0
 
 
 class CompletionRequest(BaseModel):
@@ -52,6 +55,10 @@ class CompletionRequest(BaseModel):
     # `chat_template_kwargs` to switch a reasoning model's thinking off. Set
     # per role from config; a backend that does not know a field ignores it.
     extra_body: dict[str, Any] = Field(default_factory=dict)
+    # What the request is made of, by named section (`llm.prompt.PromptManifest`): drawn as
+    # the CONTEXT card and logged, never sent. `Any` because the manifest module builds
+    # requests and so imports this one.
+    manifest: Any = Field(default=None, exclude=True)
 
 
 class TokenLogprob(BaseModel):

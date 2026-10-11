@@ -12,6 +12,7 @@ from collections import Counter
 from collections.abc import Mapping
 from typing import Any
 
+from agent_platform.config import get_settings
 from agent_platform.observability.types import StatusEvent
 
 # Model calls are counted where every one is made (the central meter, see
@@ -25,6 +26,9 @@ _RECALL_STAGE = "memory_recall"
 _WORKING_MEMORY_STAGE = "working_memory_write"
 _INBOX_STAGE = "dream_inbox"
 _TERMINAL = ("completed", "failed", "warning", "blocked", "waiting")
+# The loop governor's cards: each that intervened (any decision but continue) is counted.
+_LOOP_KIND = "loop_control"
+_CONTINUE = "continue"
 
 # How a memory outcome reads to a person.
 _MEMORY_WORDS = {
@@ -46,10 +50,14 @@ class TurnTally:
         self._embed_calls = 0
         self._added: dict[str, str] = {}
         self._inbox = 0
+        self._inbox_actions = 0
+        self._inbox_observations = 0
+        self._inbox_waiting: int | None = None
         self._tools: list[str] = []
         self._refused = 0
         self._llm_calls = 0
         self._tokens = 0
+        self._interventions: list[str] = []
 
     def observe(self, event: StatusEvent) -> None:
         """Account for one event of the turn."""
@@ -61,10 +69,16 @@ class TurnTally:
             refused = event.status == "blocked"
             self._refused += refused
             self._tools.append(f"{tool} (refused)" if refused else tool)
+        if event.event_kind == _LOOP_KIND:
+            self._loop(event)
         if event.stage == _WORKING_MEMORY_STAGE:
             self._added[str(event.fields.get("key"))] = str(event.fields.get("memory_value"))
         elif event.stage == _INBOX_STAGE:
             self._inbox += 1
+            self._inbox_actions += _int(event.fields.get("actions"))
+            self._inbox_observations += _int(event.fields.get("observations"))
+            waiting = event.fields.get("waiting")
+            self._inbox_waiting = int(waiting) if waiting is not None else self._inbox_waiting
         elif event.stage == _RECALL_STAGE:
             self._recall[str(event.fields.get("answered_by") or "nothing")] += 1
             self._recalled += len(event.fields.get("recalled") or [])
@@ -75,6 +89,18 @@ class TurnTally:
             route = str(event.fields.get("route") or "")
             if route:
                 self._memory[_MEMORY_WORDS.get(route, route)] += 1
+
+    def _loop(self, event: StatusEvent) -> None:
+        decision = str(event.fields.get("decision") or "")
+        if decision and decision != _CONTINUE:
+            layer = str(event.fields.get("layer") or "")
+            self._interventions.append(" · ".join(p for p in (decision.upper(), layer) if p))
+
+    def _loop_line(self) -> str:
+        """`2 · SUPPRESS · duplicate_action, FINALIZE · step_count`, or nothing."""
+        if not self._interventions:
+            return ""
+        return f"{len(self._interventions)} · {', '.join(self._interventions)}"
 
     def model_call(self, tokens: int) -> None:
         """One provider call of this turn, as the central meter reports it."""
@@ -94,6 +120,8 @@ class TurnTally:
             "tools": ", ".join(self._tools),
             # Refused tool calls — one per call, however many cards said so.
             "refused": self._refused or None,
+            # What the loop governor did that changed the turn (suppressed, stopped).
+            "loop_control": self._loop_line(),
             "failures": self._statuses["failed"] or None,
             "warnings": self._statuses["warning"] or None,
             "working_memory": _lines(working_memory or {}),
@@ -119,8 +147,17 @@ class TurnTally:
         )
 
     def _inbox_line(self) -> str:
-        """What the dream will find waiting: the turns this one queued."""
-        return f"{self._inbox} turn{'' if self._inbox == 1 else 's'} queued" if self._inbox else ""
+        """What this turn left for the dream, and how much the dream will find waiting:
+        `1 turn queued · 2 actions, 3 observations · 7 waiting for the next dream`."""
+        if not self._inbox:
+            return ""
+        words = get_settings().observability.dream_inbox
+        line = words.queued.format(
+            turns=self._inbox, actions=self._inbox_actions, observations=self._inbox_observations
+        )
+        if self._inbox_waiting is not None:
+            line += words.waiting.format(waiting=self._inbox_waiting)
+        return line
 
     def headline(self, outcome: str, seconds: float) -> str:
         """One line: the numbers that tell you whether the turn was normal."""

@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from agent_platform.loop_control import SECONDS, BudgetExhaustedError, BudgetGuard
-from agent_platform.loop_control.types import LoopControlReport
+from agent_platform.loop_control.types import LoopVerdict
 
 
 class FakeClock:
@@ -73,13 +73,13 @@ class TestNoOvershootUnderParallelWorkers:
 
 class TestExhaustion:
     def test_the_event_fires_once_per_counter(self) -> None:
-        events: list[LoopControlReport] = []
+        events: list[LoopVerdict] = []
         guard = BudgetGuard({"searches": 1}, on_exhausted=events.append)
         guard.commit(guard.reserve("searches"))
         guard.try_reserve("searches")
         guard.try_reserve("searches")
         assert len(events) == 1
-        assert events[0].decision == "abort"
+        assert events[0].decision == "finalize"
         assert events[0].checks[0].reason_code == "BUDGET_EXHAUSTED"
 
     def test_charge_reports_exhaustion(self) -> None:
@@ -95,7 +95,7 @@ class TestExhaustion:
         assert guard.expired()
         assert guard.try_reserve("searches") is None
         assert SECONDS in guard.exhausted_counters()
-        assert guard.report(SECONDS).decision == "abort"
+        assert guard.report(SECONDS).decision == "finalize"
 
     def test_restore_carries_spend_over(self) -> None:
         guard = BudgetGuard({"searches": 5})

@@ -35,6 +35,11 @@ def get_current_trace_id() -> str | None:
     return _current_trace_id.get()
 
 
+def get_current_session() -> str | None:
+    """The session of the request being handled on this task, if one is bound."""
+    return _current_session.get()
+
+
 def set_current_trace_id(trace_id: str | None) -> None:
     """Bind a trace id to the current context (observability owns calling this)."""
     _current_trace_id.set(trace_id)

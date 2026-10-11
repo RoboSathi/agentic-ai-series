@@ -29,7 +29,8 @@ from agent_platform.context import (
     Task,
     WorkingMemoryContextSource,
 )
-from agent_platform.context.failure import ContextFailureDetector
+from agent_platform.context.factory import build_context_management
+from agent_platform.context.types import TRUST
 from agent_platform.deterministic_checks import DeterministicChecker
 from agent_platform.durability import (
     RunRegistry,
@@ -46,6 +47,7 @@ from agent_platform.hallucination_check import DetectionLadder
 from agent_platform.llm.client import LLMClient, create_llm_client
 from agent_platform.llm.local_reranker import create_reranker
 from agent_platform.llm.local_summarizer import LocalDialogueSummarizer
+from agent_platform.loop_control import LoopBudget, build_loop_governor
 from agent_platform.memory import (
     DreamInbox,
     EpisodicStore,
@@ -203,7 +205,13 @@ def _order_chunk(order: Order) -> Chunk:
     queries dense retrieval exists for, and neither matches a row that
     says only an id, a status and an amount.
     """
-    return Chunk(content=order_sentence(order), kind="retrieved", source=str(order.order_id))
+    # Read from the system of record this turn: verified, not a retrieved copy.
+    return Chunk(
+        content=order_sentence(order),
+        kind="retrieved",
+        source=str(order.order_id),
+        metadata={TRUST: "verified"},
+    )
 
 
 def _cumulative_ledger(
@@ -418,6 +426,13 @@ def build_agent(
     # With context assembly off, the agent still gets its policy — the
     # graph falls back to it. An agent reasoning without its own refund
     # policy is not a narrower agent, it is a wrong one.
+    # The strategies, the health check (poisoning uses the security layer's own phrase list,
+    # so the two never disagree about what an injection is) and the offload fetch tool.
+    management = build_context_management(
+        features, live_working_memory, screen=InstructionDataSeparator()
+    )
+    if management.fetch_tool is not None:
+        registry.register(management.fetch_tool)
     context = (
         FiveStagePipeline(
             sources=sources,  # type: ignore[arg-type]
@@ -481,10 +496,13 @@ def build_agent(
         # Measured on what was actually assembled, and mitigated before the
         # model sees it. Poisoning uses the security layer's own phrase
         # list, so the two can never disagree about what an injection is.
-        context_health=(
-            ContextFailureDetector(screen=InstructionDataSeparator())
-            if features.is_on("context.failure_detection")
-            else None
+        context_health=management.health,
+        context_strategies=management.strategies,
+        # The loop's caps are this agent's own; the baseline is its own turn history.
+        governor=build_loop_governor(
+            LoopBudget(max_steps=agent_settings.max_tool_iterations),
+            facts=observability_store if observing else None,
+            agent_id=agent_id,
         ),
         context=context,
         instructions=build_agent_instructions(

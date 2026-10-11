@@ -100,9 +100,16 @@ class TestTheSummarySaysWhatMemoryDid:
 
     def test_the_dream_inbox_says_a_turn_was_queued(self) -> None:
         feed, reporter = _turn()
-        reporter.emit("dream_inbox", "completed", quiet=True, fields={"event_id": "abc"})
+        reporter.emit(
+            "dream_inbox",
+            "completed",
+            quiet=True,
+            fields={"event_id": "abc", "actions": 2, "observations": 3, "waiting": 7},
+        )
         reporter.end_turn()
-        assert _summary(feed)["dream_inbox"] == "1 turn queued"
+        assert _summary(feed)["dream_inbox"] == (
+            "1 turn(s) queued · 2 action(s), 3 observation(s) · 7 waiting for the next dream"
+        )
 
     def test_a_turn_that_did_none_of_it_says_nothing(self) -> None:
         feed, reporter = _turn()

@@ -17,7 +17,18 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from agent_platform.config import get_settings
-from agent_platform.observability.llm_fields import llm_request_fields, llm_response_fields
+from agent_platform.observability.context_card import (
+    CONTEXT_STAGE,
+    announced_manifest,
+    context_fields,
+    context_heading,
+    note_prefix,
+)
+from agent_platform.observability.llm_fields import (
+    estimate_fields,
+    llm_request_fields,
+    llm_response_fields,
+)
 from agent_platform.observability.loop_reporter import LoopReporter
 from agent_platform.observability.status_feed import StageReporter
 from agent_platform.observability.tool_fields import display_tool_name, tool_request_fields
@@ -25,6 +36,7 @@ from agent_platform.observability.types import StatusKind
 
 if TYPE_CHECKING:
     from agent_platform.gatekeeper.types import AuthorityDecision
+    from agent_platform.loop_control.types import LoopVerdict
     from agent_platform.tools.types import ToolCall, ToolResult
 
 LLM_REQUEST = "llm_request"
@@ -38,7 +50,7 @@ LOOP_CONTROL = "loop_control"
 HALLUCINATION_CHECK = "hallucination_check"
 # The cards that belong to one iteration of the loop, and so carry its step number.
 LOOP_STAGES = frozenset(
-    {LLM_REQUEST, "llm_call", LLM_RESPONSE, TOOL_REQUEST, GATEKEEPER, EXECUTOR, MCP_CALL,
+    {CONTEXT_STAGE, LLM_REQUEST, "llm_call", LLM_RESPONSE, TOOL_REQUEST, GATEKEEPER, EXECUTOR, MCP_CALL,
      TOOL_RESULT, LOOP_CONTROL}
 )  # fmt: skip
 # Where a tool result says it crossed a protocol (`ToolResult.exchange`), and which.
@@ -50,6 +62,7 @@ _ACTOR_CHECK = "gatekeeper.actor_authorization"
 # Card field ← that check's observed key.
 _ACTOR_FIELDS = {"permission": "required_permission", "role": "role"}
 _WRITE, _READ = "write", "read"
+_FAIL_MARK = "✗"
 
 
 def _produced(purpose: str, asked_for_tools: bool) -> str:
@@ -67,6 +80,8 @@ class StepEvents:
         self._loop = LoopReporter(reporter, max_steps=max_steps, stages=LOOP_STAGES)
         self._model = model
         self._max_steps = max_steps
+        # The last request's own size estimate, to set beside what the provider counted.
+        self._estimated_input = 0
 
     @property
     def step(self) -> int | None:
@@ -77,10 +92,25 @@ class StepEvents:
         self._loop.step = step
 
     def llm_request(self, request: Any, *, purpose: str) -> None:
-        """LLM REQUEST: what the model is handed this step."""
+        """CONTEXT, then LLM REQUEST: what the model is handed this step, section by section."""
+        self.context(request, purpose=purpose)
         heading = get_settings().observability.llm_request_heading.format(purpose=purpose)
         fields = {**llm_request_fields(request, model=self._model), "purpose": purpose}
         self._loop.emit(LLM_REQUEST, summary=heading, fields=fields, event_kind="model")
+
+    def context(self, request: Any, *, purpose: str) -> None:
+        """CONTEXT: the request's sections and their tokens, once per request."""
+        manifest = announced_manifest(request, purpose)
+        if manifest is None:
+            return
+        note_prefix(manifest, self._model)
+        self._estimated_input = manifest.total_tokens
+        self._loop.emit(
+            CONTEXT_STAGE,
+            summary=context_heading(manifest, self._model, purpose),
+            fields=context_fields(manifest, self._model),
+            event_kind="narrative",
+        )
 
     def llm_response(self, result: Any, *, purpose: str) -> None:
         """LLM RESPONSE: the tool calls it asked for, or its answer.
@@ -97,7 +127,11 @@ class StepEvents:
             if result.tool_calls
             else words.llm_response_heading.format(purpose=purpose)
         )
-        fields = {**llm_response_fields(result), "purpose": purpose}
+        fields = {
+            **llm_response_fields(result),
+            **estimate_fields(self._estimated_input, result.usage.prompt_tokens),
+            "purpose": purpose,
+        }
         self._loop.emit(LLM_RESPONSE, summary=heading, fields=fields, event_kind="model")
 
     def tool_request(
@@ -190,30 +224,57 @@ class StepEvents:
         status: StatusKind = "failed" if failed else "completed"
         self._loop.emit(MCP_CALL, status, summary=heading, fields=fields, event_kind="tool_result")
 
-    def loop_control(
+    def loop_verdict(
         self,
+        verdict: "LoopVerdict",
         *,
-        round_number: int,
-        criteria: Mapping[str, Any],
         next_step: str,
         because: str,
+        criteria: Mapping[str, Any] | None = None,
         because_words: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
-        """LOOP CONTROL: every criterion the loop weighs, its value now, and the step it chose.
+        """LOOP CONTROL, one schema for every agent, and only what says something.
 
-        Returns the fields, so the caller logs exactly what the card shows.
+        `because` is why the loop chose its next step (the model asked for a tool, the tools
+        ran). `intervened` appears only when a governor mechanism changed the course — which
+        one, and its reason — never "no check objected". Failing checks only; every budget as
+        it stands. A warning when a mechanism intervened, a plain card otherwise. Returns the
+        fields, so the caller logs exactly what the card shows.
         """
-        words = self._words().loop_control
-        reasons = {**words.because, **(because_words or {})}
+        reasons = {**self._words().loop_control.because, **(because_words or {})}
         fields: dict[str, Any] = {
-            "criteria": dict(criteria),
+            "decision": verdict.decision,
             "next_step": next_step,
             "because": reasons.get(because, because),
         }
-        heading = words.summary.format(
-            round=round_number, max_rounds=self._max_steps, next_step=next_step
+        if verdict.intervened:
+            words = get_settings().loop_control.card
+            fields["intervened"] = words.intervention.format(
+                layer=verdict.layer or verdict.reason_code, reason=verdict.reason
+            )
+            if verdict.fingerprint:
+                fields["fingerprint"] = verdict.fingerprint
+        if criteria:
+            fields["criteria"] = dict(criteria)
+        fields["budgets"] = budget_lines(verdict)
+        # Other failing checks only (a flag the verdict did not act on, such as the historical
+        # baseline): the deciding one is already the `intervened` line.
+        line = get_settings().loop_control.card.check_line
+        flags = [
+            line.format(mark=_FAIL_MARK, name=check.name, reason=check.reason)
+            for check in verdict.checks
+            if check.status != "PASS" and check.reason_code != verdict.reason_code
+        ]
+        if flags:
+            fields["flags"] = flags
+        status: StatusKind = "warning" if verdict.intervened else "completed"
+        self._loop.emit(
+            LOOP_CONTROL,
+            status,
+            summary=loop_heading(verdict, next_step),
+            fields=fields,
+            event_kind="loop_control",
         )
-        self._loop.emit(LOOP_CONTROL, summary=heading, fields=fields, event_kind="loop_control")
         return fields
 
     def hallucination_check(
@@ -227,6 +288,28 @@ class StepEvents:
     @staticmethod
     def _words() -> Any:
         return get_settings().observability.step_events
+
+
+def loop_heading(verdict: "LoopVerdict", next_step: str = "") -> str:
+    """`Step 3 of 5 · SUPPRESS · duplicate_action · next: propose`."""
+    words = get_settings().loop_control.card
+    layer = words.layer_suffix.format(layer=verdict.layer) if verdict.layer else ""
+    return words.summary.format(
+        step=verdict.round_number,
+        max=verdict.max_rounds,
+        decision=verdict.decision.upper(),
+        layer=layer,
+        next_step=next_step,
+    )
+
+
+def budget_lines(verdict: "LoopVerdict") -> list[str]:
+    """Each counter as `tokens: 4,210 of 30,000`."""
+    line = get_settings().loop_control.card.budget_line
+    return [
+        line.format(counter=name, spent=f"{budget.spent:,.6g}", cap=f"{budget.cap:,.6g}")
+        for name, budget in verdict.budgets.items()
+    ]
 
 
 def gatekeeper_fields(call: "ToolCall", decision: "AuthorityDecision") -> dict[str, Any]:

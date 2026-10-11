@@ -402,6 +402,12 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     policy_path: str
     # The prompt's refund-limit sentence: `{limit}` from the DB row, `{contact}` below.
     refund_limit_notice: str
+    # Added to the working prompt when the intent classifier could not place the turn.
+    intent_fallback_instruction: str
+    # What the dream inbox records instead of a turn's words when memory refused its claim
+    # (`{reason}`), and the reason given for a message security screening quarantined.
+    memory_withheld: str
+    memory_quarantined: str
     refund_limit_withheld: RefundLimitWithheldSettings
     support_contact: str
     # Added to a declined refund's refusal: how a customer who disagrees escalates.

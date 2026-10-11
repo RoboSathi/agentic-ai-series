@@ -84,7 +84,7 @@ class ContextNodes(NodeSupport):
         if result.modes:
             decisions.append(f"context health: {', '.join(result.modes)}")
         return {
-            "context": Context(items=[fitted.text]),
+            "context": Context(items=[fitted.text], window=fitted),
             "decisions": [*state.decisions, *decisions],
             # What the model saw that a reply may be grounded on — kept after
             # mitigation, so a poisoned or dropped chunk is never evidence.

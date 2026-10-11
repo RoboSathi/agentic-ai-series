@@ -678,5 +678,5 @@ class TestTheKnowledgeArticlesAreOneSentencePerPremise:
         from customer_support_agent.graph.nodes._support import _knowledge_evidence
 
         contents = [chunk.content for chunk in _knowledge_evidence()]
-        delivered = next(c for c in contents if "has been delivered can be refunded" in c)
+        delivered = next(c for c in contents if "delivered order can be refunded" in c)
         assert "nothing to refund" not in delivered

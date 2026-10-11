@@ -7,7 +7,8 @@ or result in, a dict of display fields out. The agent decides when to show them.
 
 from typing import Any
 
-from agent_platform.config import get_settings
+from agent_platform.llm.prompt import tool_names
+from agent_platform.llm.tokenizer import count_tokens
 
 
 def llm_request_fields(request: Any, *, model: str = "") -> dict[str, Any]:
@@ -25,25 +26,14 @@ def llm_request_fields(request: Any, *, model: str = "") -> dict[str, Any]:
         "",
     )
     user_messages = [message.content for message in request.messages if message.role == "user"]
-    tools = request.tools or []
-    tool_names: list[str] = []
-    for tool in tools:
-        if isinstance(tool, dict):
-            function = tool.get("function", tool)
-            if isinstance(function, dict) and function.get("name"):
-                tool_names.append(str(function["name"]))
-                continue
-        name = getattr(tool, "name", None)
-        if name:
-            tool_names.append(str(name))
-
+    manifest = getattr(request, "manifest", None)
     return {
         "model": model or "unknown",
-        "context_tokens": _tokens(request.messages),
+        "context_tokens": manifest.total_tokens if manifest else _tokens(request.messages),
         "system_prompt": system_prompt,
         "user_query": user_messages[-1] if user_messages else "",
         "messages": _messages(request.messages),
-        "tools_offered": tool_names,
+        "tools_offered": tool_names(request.tools or []),
     }
 
 
@@ -71,9 +61,21 @@ def _messages(messages: list[Any]) -> list[dict[str, Any]]:
 
 
 def _tokens(messages: list[Any]) -> int:
-    """How big what is sent is, in tokens (the context pipeline's own estimate)."""
-    characters = sum(len(str(getattr(message, "content", "") or "")) for message in messages)
-    return max(1, characters // get_settings().context.chars_per_token)
+    """How big what is sent is, in tokens, by the shared tokenizer."""
+    return sum(count_tokens(str(getattr(message, "content", "") or "")) for message in messages)
+
+
+def estimate_fields(estimated: int, counted: int) -> dict[str, Any]:
+    """The request's own size beside the provider's count, and how far apart they are.
+
+    Nothing when either is unknown: a drift against zero says nothing.
+    """
+    if not estimated or not counted:
+        return {}
+    return {
+        "estimated_input_tokens": estimated,
+        "estimate_drift": f"{(estimated - counted) / counted:+.1%}",
+    }
 
 
 def llm_response_fields(result: Any) -> dict[str, Any]:
@@ -88,6 +90,9 @@ def llm_response_fields(result: Any) -> dict[str, Any]:
         "total_tokens": result.usage.total_tokens,
         "latency_ms": round(float(result.latency_ms), 2),
     }
+    cached = getattr(result.usage, "cached_prompt_tokens", 0)
+    if cached:
+        fields["cached_input_tokens"] = cached
     if result.finish_reason:
         fields["finish_reason"] = result.finish_reason
     if result.tool_calls:

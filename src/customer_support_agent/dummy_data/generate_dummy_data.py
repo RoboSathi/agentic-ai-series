@@ -105,8 +105,8 @@ def generator_spec() -> GeneratorSpec:
 def refund_status_for(rng: random.Random, order_status: str) -> str:
     """The refund status an order in this state is allowed to have.
 
-    An order becomes refundable only once it is settled — delivered, or
-    cancelled before delivery. A pending or shipped order is still in
+    An order becomes refundable only once it is delivered or cancelled.
+    A pending or shipped order is still in
     flight, so it can only carry the no-refund status.
     """
     spec = generator_spec()

@@ -14,6 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from agent_platform.llm.prompt import INSTRUCTIONS, PAYLOAD, PROFILE, PromptBuilder, PromptManifest
 from agent_platform.llm.types import Message
 
 # The first line of every system prompt names the role, so a transcript
@@ -58,6 +59,21 @@ class RolePrompt(BaseModel):
         schema_text = json.dumps(schema.model_json_schema(), sort_keys=True)
         user = f"{PAYLOAD_OPEN}{body}{PAYLOAD_CLOSE}{SCHEMA_INTRO}{schema_text}"
         return [Message(role="system", content=system), Message(role="user", content=user)]
+
+    def manifest(self, schema: type[BaseModel], preamble: str = "") -> PromptManifest:
+        """What `messages` sends, by section: the profile, the role's instructions, its input."""
+        system, user = self.messages(schema, preamble)
+        role_text = (
+            system.content.replace(preamble.strip(), "", 1) if preamble.strip() else system.content
+        )
+        return (
+            PromptBuilder()
+            .system(PROFILE, preamble)
+            .system(INSTRUCTIONS, role_text)
+            .message(PAYLOAD, "user", user.content)
+            .build()
+            .manifest
+        )
 
     def with_instruction(self, extra: str) -> "RolePrompt":
         """The same prompt with one more instruction appended (a guard's re-prompt)."""

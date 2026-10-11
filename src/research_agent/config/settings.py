@@ -647,6 +647,8 @@ class RunLoopWords(BaseModel):
 
     next: dict[str, str]
     because: dict[str, str]
+    # The next steps that end the research loop (its LOOP CONTROL verdict is FINALIZE).
+    stops: list[str]
 
 
 class InstructionSettings(BaseModel):

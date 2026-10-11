@@ -75,4 +75,7 @@ def test_the_card_names_the_step_the_round_and_every_meter(
     words = get_agent_settings().run_loop
     assert card.fields["next_step"] == words.next["finalize"]
     assert card.fields["because"] == words.because["no_gaps"]
-    assert {"searches", "rounds", "must_pass_gaps"} <= set(card.fields["criteria"])
+    assert "must_pass_gaps" in card.fields["criteria"]
+    # Every meter is on the card's budget tree, in the one schema every agent's card uses.
+    budgets = " ".join(card.fields["budgets"])
+    assert "searches:" in budgets and "rounds:" in budgets

@@ -485,6 +485,7 @@ research_agent:
       gap_fill_planned: follow-ups were planned for the gaps
       no_follow_up: no follow-up fits what is left
       rescue: nothing was admitted, so one rescue round searches again without the time window
+    stops: [synthesize, finalize]
 
   calls:
     # The roles run on a reasoning model: its hidden reasoning counts against the cap,

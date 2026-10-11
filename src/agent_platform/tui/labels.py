@@ -41,7 +41,9 @@ _DISPLAY_NAMES = {
     "memory_write": "MEMORY UPDATED",
     "skill_activation": "PROCEDURES",
     "working_memory_write": "WORKING MEMORY UPDATED",
-    "context_assembly": "CONTEXT",
+    "context_assembly": "CONTEXT ASSEMBLY",
+    # What one model request is made of, section by section, drawn just before it.
+    "llm_context": "CONTEXT",
     "llm_request": "LLM REQUEST",
     "llm_call": "LLM CALL",
     "llm_response_received": "LLM RESPONSE",

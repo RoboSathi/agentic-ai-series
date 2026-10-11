@@ -1,10 +1,12 @@
-"""Public API for deterministic agent loop controls.
+"""Public API for loop control: one governor, one verdict, one state.
 
-Implementation is intentionally split into modules:
-
-* ``types`` — data contracts and state models.
-* ``watchdogs`` — deterministic watchdog logic.
-* ``protocols`` — orchestration interfaces.
+* ``types``        the contracts: `LoopVerdict`, `TerminalOutcome`, phases, layers
+* ``state``        `LoopState` (checkpointable) and the phase machine
+* ``budget``       named hard caps (reserve → commit / release), shared by workers
+* ``stagnation``   exact, canonical and semantic repeats; cycles; the historical baseline
+* ``convergence``  progress per step, and an agent's own convergence signal
+* ``governor``     `LoopGovernor`: the single authority, and `route_on_verdict`
+* ``factory``      building a governor in a composition root
 
 This module is an import surface only; it contains no runtime logic.
 """
@@ -16,55 +18,80 @@ from agent_platform.loop_control.budget import (
     CounterState,
     Reservation,
 )
-from agent_platform.loop_control.protocols import (
-    CheckpointStore,
-    LoopController,
-    ReactStep,
-    StateMachine,
+from agent_platform.loop_control.convergence import ConvergenceMonitor, ConvergenceSignal
+from agent_platform.loop_control.factory import build_loop_governor
+from agent_platform.loop_control.governor import (
+    COST,
+    STEPS,
+    TOKENS,
+    TOOL_CALLS,
+    CallLimits,
+    LoopBudget,
+    LoopGovernor,
+    route_on_verdict,
 )
+from agent_platform.loop_control.stagnation import (
+    CycleDetector,
+    FactStepHistory,
+    HistoricalBaseline,
+    SemanticTier,
+    StepHistory,
+    action_fingerprint,
+    canonical_fingerprint,
+)
+from agent_platform.loop_control.state import ActionRecord, LoopState, LoopStateMachine
 from agent_platform.loop_control.types import (
-    AgentState,
-    Checkpoint,
+    RUN_STATUS,
+    TOOL_STAGE,
+    BudgetLine,
     CheckStatus,
     ControlCheck,
     IllegalTransitionError,
-    LoopControlReport,
     LoopDecision,
+    LoopPhase,
     LoopVerdict,
-    StepResult,
-    Trajectory,
+    TerminalOutcome,
     Transition,
     WatchdogLayer,
 )
-from agent_platform.loop_control.watchdogs import (
-    DuplicateActionDetector,
-    ToolLoopControl,
-    action_fingerprint,
-)
 
 __all__ = [
+    "COST",
+    "RUN_STATUS",
     "SECONDS",
-    "AgentState",
+    "STEPS",
+    "TOKENS",
+    "TOOL_CALLS",
+    "TOOL_STAGE",
+    "ActionRecord",
     "BudgetExhaustedError",
     "BudgetGuard",
-    "CounterState",
-    "Reservation",
-    "Checkpoint",
-    "CheckpointStore",
+    "BudgetLine",
+    "CallLimits",
     "CheckStatus",
     "ControlCheck",
-    "LoopControlReport",
-    "DuplicateActionDetector",
+    "ConvergenceMonitor",
+    "ConvergenceSignal",
+    "CounterState",
+    "CycleDetector",
+    "FactStepHistory",
+    "HistoricalBaseline",
     "IllegalTransitionError",
-    "LoopController",
+    "LoopBudget",
     "LoopDecision",
+    "LoopGovernor",
+    "LoopPhase",
+    "LoopState",
+    "LoopStateMachine",
     "LoopVerdict",
-    "ReactStep",
-    "StateMachine",
-    "StepResult",
-    "ToolLoopControl",
-    "Trajectory",
+    "Reservation",
+    "SemanticTier",
+    "StepHistory",
+    "TerminalOutcome",
     "Transition",
     "WatchdogLayer",
     "action_fingerprint",
+    "build_loop_governor",
+    "canonical_fingerprint",
+    "route_on_verdict",
 ]

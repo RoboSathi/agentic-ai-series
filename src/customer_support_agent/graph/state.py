@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from agent_platform.context import Context
+from agent_platform.loop_control import LoopState
 from agent_platform.memory import WorkingMemory
 
 
@@ -39,6 +40,9 @@ class AgentState(BaseModel):
     working_memory: WorkingMemory = Field(default_factory=WorkingMemory)
     context: Context | None = None
     tool_rounds: int = 0
+    # The loop governor's state (steps, budgets, every action and its outcome, the last
+    # verdict): checkpointed with the turn, so a resumed run remembers what it already did.
+    loop: LoopState = Field(default_factory=LoopState)
     decisions: list[str] = Field(default_factory=list)
     escalated: bool = False
     response: str = ""

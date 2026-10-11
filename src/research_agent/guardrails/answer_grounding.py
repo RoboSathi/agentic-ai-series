@@ -25,6 +25,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from agent_platform.config import get_settings
+from agent_platform.context.failure.rot import support_rate
 from agent_platform.context.types import Chunk
 from agent_platform.guardrails.response import ResponseGuardrail, ResponseGuardrailResult
 from agent_platform.hallucination_check import Observation, sentence_pieces
@@ -48,6 +49,9 @@ class GroundingOutcome(BaseModel):
     unverified: list[str] = Field(default_factory=list)
     # The guardrail's own report: every claim, its verdict, and the evidence behind it.
     report: dict[str, Any] = Field(default_factory=dict)
+    # The share of the answer's claims the evidence supported (None: no checkable claim) —
+    # the context window's rot check reads it.
+    quality: float | None = None
 
     @property
     def clean(self) -> bool:
@@ -98,6 +102,7 @@ class AnswerGrounding:
             withheld=withheld,
             unverified=[] if withheld else result.unverified_sentences,
             report=self._report(result, removed, withheld),
+            quality=support_rate(result.claims, result.supported),
         )
 
     def _split_sources(self, answer: str) -> tuple[str, str]:

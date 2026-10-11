@@ -13,6 +13,7 @@ Two decorators, at the two ends of a model's protection stack:
 import time
 
 from agent_platform.llm.client import LLMClient
+from agent_platform.llm.observer import ModelCallObserver
 from agent_platform.llm.types import CompletionRequest, CompletionResult, HealthCheckResult
 from agent_platform.observability.facts import FactStore, ModelCallFact, fact_store
 from agent_platform.observability.unit_context import (
@@ -49,10 +50,20 @@ class SteppedClient(_Delegating):
 
     A completion that came with token log-probabilities is kept on the turn, so the
     hallucination check can score the reply it produced without any agent passing
-    them along.
+    them along. The observer hears of every request first, so a request no step card
+    described still gets its CONTEXT card.
     """
 
+    def __init__(
+        self, inner: LLMClient, observer: ModelCallObserver | None = None, label: str = ""
+    ) -> None:
+        super().__init__(inner)
+        self._observer = observer
+        self._label = label
+
     async def complete(self, request: CompletionRequest) -> CompletionResult:
+        if self._observer is not None:
+            self._observer.request_starting(self._label, self.model, request)
         with bound_step():
             result = await self._inner.complete(request)
         if result.logprobs:

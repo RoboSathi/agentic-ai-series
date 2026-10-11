@@ -18,8 +18,9 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, Field
 
-from agent_platform.config import get_settings
 from agent_platform.context import ContextWindow, Task
+from agent_platform.context.types import AssembledContext
+from agent_platform.llm.tokenizer import count_tokens
 from agent_platform.llm.types import Message
 from agent_platform.logging import instrument
 from agent_platform.memory import MemoryFacade
@@ -37,6 +38,8 @@ class SessionContext(BaseModel):
 
     # Appended to the system prompt: the session state, then earlier research.
     blocks: list[str] = Field(default_factory=list)
+    # With the `context` feature: the assembled window those reach the model through instead.
+    window: AssembledContext | None = None
     # Recent turns, oldest first, between the system prompt and the question.
     history: list[Message] = Field(default_factory=list)
     state: dict[str, str] = Field(default_factory=dict)
@@ -51,11 +54,10 @@ class SessionContext(BaseModel):
         return not (self.history or self.state or self.runs)
 
     def tokens(self) -> int:
-        """How big the context is, in the platform's own estimate."""
-        characters = sum(len(block) for block in self.blocks) + sum(
-            len(message.content) for message in self.history
-        )
-        return characters // get_settings().context.chars_per_token
+        """How big the context is, by the shared tokenizer."""
+        window = self.window.text if self.window is not None else ""
+        texts = [*self.blocks, window, *(message.content for message in self.history)]
+        return sum(count_tokens(text) for text in texts)
 
 
 @instrument("research_agent")
@@ -85,12 +87,16 @@ class AnswerContext:
         if self._window is not None:
             task = Task(query=question, session_id=session_id, kind=ANSWER_TASK)
             result = await self._window.build(task, self._reporter())
-            return SessionContext(
-                blocks=[result.text] if result.text else [], state=state, runs=runs
-            )
+            window = result.window if result.text else None
+            return SessionContext(window=window, state=state, runs=runs)
         pointers = self._earlier.block(earlier)
         blocks = [*self._state_block(state), *([pointers] if pointers else [])]
         return SessionContext(blocks=blocks, history=history, state=state, runs=runs)
+
+    def observe_quality(self, session_id: str, score: float) -> None:
+        """How well an answer held up, for the window's rot check (nothing without a window)."""
+        if self._window is not None:
+            self._window.observe_quality(session_id, score)
 
     def remember(self, session_id: str, question: str, answer: str) -> None:
         """Add one completed turn to the session's working memory."""

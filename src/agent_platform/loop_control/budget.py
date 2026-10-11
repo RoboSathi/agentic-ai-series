@@ -4,7 +4,7 @@ The loop control already stops a trajectory on an iteration ceiling and on
 a repeated action. What it did not have is a *resource* budget — so many
 searches, so many tokens, so many seconds — that concurrent workers draw
 on together. This is that, and it reports in the loop's own vocabulary
-(`ControlCheck`, `LoopControlReport`) so a budget stop reads like any
+(`ControlCheck`, `LoopVerdict`) so a budget stop reads like any
 other loop-control stop in the feed and the audit trail.
 
 The discipline is **reserve → commit / release**, and reservation is
@@ -27,11 +27,11 @@ from itertools import count
 from pydantic import BaseModel
 
 from agent_platform.logging import get_logger
-from agent_platform.loop_control.types import ControlCheck, LoopControlReport, WatchdogLayer
+from agent_platform.loop_control.types import BudgetLine, ControlCheck, LoopVerdict, WatchdogLayer
 from agent_platform.observability.units import report_loop
 
 Clock = Callable[[], float]
-ExhaustionHandler = Callable[[LoopControlReport], None]
+ExhaustionHandler = Callable[[LoopVerdict], None]
 
 # The counter name wall-clock time is reported under.
 SECONDS = "seconds"
@@ -189,13 +189,17 @@ class BudgetGuard:
             )
         return counters
 
-    def restore(self, spent: Mapping[str, float]) -> None:
-        """Carry spend over from a checkpoint, so a resumed run cannot start fresh."""
+    def restore(self, spent: Mapping[str, float], *, elapsed: float | None = None) -> None:
+        """Carry spend over from a checkpoint, so a resumed run cannot start fresh — the
+        wall clock included: `elapsed` seconds already used are taken off what is left."""
         for name, amount in spent.items():
             if name in self._counters:
                 self._counters[name].spent = amount
+        seconds = spent.get(SECONDS) if elapsed is None else elapsed
+        if seconds:
+            self._started = self._clock() - seconds
 
-    def report(self, counter: str) -> LoopControlReport:
+    def report(self, counter: str) -> LoopVerdict:
         """The loop-control report for one counter's current state."""
         state = self._state(counter) if counter != SECONDS else self.snapshot()[SECONDS]
         stopped = state.exhausted or (counter == SECONDS and self.expired())
@@ -212,11 +216,35 @@ class BudgetGuard:
                 "reserved": state.reserved,
             },
         )
-        return LoopControlReport(
-            decision="abort" if stopped else "continue",
+        return LoopVerdict(
+            # A spent budget stops the loop acting; what it has is still answered from.
+            decision="finalize" if stopped else "continue",
+            layer=("wall_clock" if counter == SECONDS else self._layer) if stopped else None,
             reason_code=check.reason_code,
             reason=check.reason,
             checks=[check],
+        )
+
+    def verdict(self, round_number: int, max_rounds: int, *, stopping: bool) -> LoopVerdict:
+        """The loop-control verdict for a loop this guard budgets, every counter on it — so a
+        loop that runs on reservations still reports in the one shape every agent's card reads."""
+        exhausted = self.exhausted_counters()
+        counter = exhausted[0] if exhausted else ""
+        report = self.report(counter) if counter else None
+        return LoopVerdict(
+            decision="finalize" if stopping else "continue",
+            layer=report.layer if report is not None and stopping else None,
+            reason_code=report.reason_code
+            if report is not None and stopping
+            else "LOOP_CONTROL_CONTINUE",
+            reason=report.reason if report is not None and stopping else "",
+            checks=report.checks if report is not None else [],
+            round_number=round_number,
+            max_rounds=max_rounds,
+            budgets={
+                name: BudgetLine(spent=round(state.spent, 6), cap=state.cap)
+                for name, state in self.snapshot().items()
+            },
         )
 
     def _state(self, counter: str) -> CounterState:

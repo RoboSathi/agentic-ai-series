@@ -7,20 +7,29 @@ load-bearing: scoring before fitting means the budget cuts the least
 relevant material rather than whatever happened to arrive last, and
 ordering *after* fitting means position is decided over the material
 that actually survived.
+
+Fitting is two steps. The strategies go first (`WindowFitter`): they say a
+repeated thing once, keep the task's kinds, hold the stable chunks fixed and,
+while the window is still over budget, retrieve, offload and reduce. Only what
+still does not fit after them is cut — so a strategy is what decides what the
+model loses, not the order chunks happened to be scored in.
 """
 
 from typing import Protocol, runtime_checkable
 
 from agent_platform.config import get_settings
-from agent_platform.context.failure import is_near_duplicate
 from agent_platform.context.retrieval import CrossEncoderReranker
+from agent_platform.context.similarity import jaccard
+from agent_platform.context.trust import with_trust
 from agent_platform.context.types import (
+    STABLE,
     AssembledContext,
     Chunk,
     ChunkKind,
     Task,
     provenance_header,
 )
+from agent_platform.llm.tokenizer import count_tokens
 from agent_platform.logging import get_logger, instrument, logged
 
 # Where each kind of content belongs in the window. Instructions lead;
@@ -48,10 +57,21 @@ class CandidateSource(Protocol):
 
 
 @runtime_checkable
+class WindowFitter(Protocol):
+    """The strategies, as the fit stage runs them (`StrategySelector`)."""
+
+    async def fit(
+        self, context: AssembledContext, task: Task | None = None
+    ) -> AssembledContext: ...
+
+
+@runtime_checkable
 class ContextAssembler(Protocol):
     """Builds the window for a task within a token budget."""
 
-    async def assemble(self, task: Task, budget_tokens: int | None = None) -> AssembledContext: ...
+    async def assemble(
+        self, task: Task, budget_tokens: int | None = None, strategies: WindowFitter | None = None
+    ) -> AssembledContext: ...
 
 
 @runtime_checkable
@@ -80,31 +100,45 @@ class FiveStagePipeline:
         self._reranker = reranker
         self._rerank = settings.rerank
         self._budget = settings.token_budget
-        self._chars_per_token = settings.chars_per_token
+        self._overlap = settings.consolidation.near_duplicate_overlap
         self._logger = get_logger("context")
 
     @logged("context")
-    async def assemble(self, task: Task, budget_tokens: int | None = None) -> AssembledContext:
+    async def assemble(
+        self, task: Task, budget_tokens: int | None = None, strategies: WindowFitter | None = None
+    ) -> AssembledContext:
         """Run all five stages and return the assembled window."""
         budget = budget_tokens or self._budget
         candidates = await self.gather_candidates(task)
         scored = await self.score_relevance(task, candidates)
-        fitted, dropped = self.fit_to_budget(scored, budget)
-        formatted = self.format(fitted)
-        ordered = self.order(formatted)
+        managed = await self._managed(scored, budget, task, strategies)
+        fitted, dropped = self.fit_to_budget(managed.chunks, budget)
+        ordered = self.order(self.format(fitted))
         return AssembledContext(
             chunks=ordered,
             budget_tokens=budget,
             used_tokens=sum(chunk.token_estimate for chunk in ordered),
-            dropped=dropped,
+            dropped=[*managed.dropped, *dropped],
+            applied_strategies=managed.applied_strategies,
         )
+
+    async def _managed(
+        self, chunks: list[Chunk], budget: int, task: Task, strategies: WindowFitter | None
+    ) -> AssembledContext:
+        """The candidates after the strategies, before anything is cut for the budget."""
+        window = AssembledContext(
+            chunks=chunks,
+            budget_tokens=budget,
+            used_tokens=sum(chunk.token_estimate for chunk in chunks),
+        )
+        return await strategies.fit(window, task) if strategies is not None else window
 
     async def gather_candidates(self, task: Task) -> list[Chunk]:
         """Stage 1 — collect from every registered source, cost-annotated."""
         gathered: list[Chunk] = []
         for source in self._sources:
             gathered.extend(await source.candidates(task))
-        return [self._with_cost(chunk) for chunk in gathered]
+        return [with_trust(self._with_cost(chunk)) for chunk in gathered]
 
     async def score_relevance(self, task: Task, chunks: list[Chunk]) -> list[Chunk]:
         """Stage 2 — score each candidate against the task.
@@ -170,7 +204,7 @@ class FiveStagePipeline:
         used = 0
         for chunk in ordered:
             if not chunk.pinned and any(
-                is_near_duplicate(chunk.content, existing.content) for existing in kept
+                jaccard(chunk.content, existing.content) > self._overlap for existing in kept
             ):
                 dropped.append(chunk.source or chunk.kind)
                 continue
@@ -190,18 +224,20 @@ class FiveStagePipeline:
         instruction once it is in the window. The label is what keeps the
         instruction/data boundary legible to the model.
         """
+        labelled = [f"{provenance_header(chunk)}\n{chunk.content}" for chunk in chunks]
+        # Recounted: the label is sent too, so it is paid for too.
         return [
-            chunk.model_copy(update={"content": f"{provenance_header(chunk)}\n{chunk.content}"})
-            for chunk in chunks
+            chunk.model_copy(update={"content": text, "token_estimate": self.estimate_tokens(text)})
+            for chunk, text in zip(chunks, labelled)
         ]
 
     def order(self, chunks: list[Chunk]) -> list[Chunk]:
-        """Stage 5 — place chunks by kind, then by score within a kind."""
-        return sorted(chunks, key=lambda chunk: (_KIND_ORDER.get(chunk.kind, 9), -chunk.score))
+        """Stage 5 — place chunks by kind; stable chunks by source, the rest by score."""
+        return sorted(chunks, key=_position)
 
     def estimate_tokens(self, text: str) -> int:
-        """Character-based token estimate — the configured approximation."""
-        return max(1, len(text) // self._chars_per_token)
+        """A chunk's cost, by the shared tokenizer (never zero: an empty chunk still costs)."""
+        return max(1, count_tokens(text))
 
     def _with_cost(self, chunk: Chunk) -> Chunk:
         """Annotate a chunk with its token cost if it has none."""
@@ -218,3 +254,14 @@ class FiveStagePipeline:
             len(needle & set(text.casefold().split())) / len(needle) if needle else 0.0
             for text in texts
         ]
+
+
+def _position(chunk: Chunk) -> tuple[int, int, str, float]:
+    """Kind first; a stable chunk then by source (fixed turn to turn), any other by score."""
+    stable = bool(chunk.metadata.get(STABLE))
+    return (
+        _KIND_ORDER.get(chunk.kind, len(_KIND_ORDER)),
+        0 if stable else 1,
+        chunk.source if stable else "",
+        0.0 if stable else -chunk.score,
+    )

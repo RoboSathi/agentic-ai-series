@@ -34,19 +34,16 @@ class RunLoopReport:
         criteria: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """One LOOP CONTROL card; the fields it showed, for the log."""
-        steps = StepEvents(self._reporter, max_steps=int(budget.snapshot()[ROUNDS].cap))
-        return steps.loop_control(
-            round_number=round_number,
-            criteria={**(criteria or {}), **_meters(budget)},
+        max_rounds = int(budget.snapshot()[ROUNDS].cap)
+        steps = StepEvents(self._reporter, max_steps=max_rounds)
+        verdict = budget.verdict(round_number, max_rounds, stopping=next_step in self._words.stops)
+        return steps.loop_verdict(
+            verdict,
+            criteria=criteria,
             next_step=self._words.next.get(next_step, next_step),
             because=because,
             because_words=self._words.because,
         )
-
-
-def _meters(budget: BudgetGuard) -> dict[str, str]:
-    """Every budget meter, spent of cap — what decides whether another round may run."""
-    return {name: f"{c.spent:g} of {c.cap:g}" for name, c in budget.snapshot().items()}
 
 
 __all__ = ["RunLoopReport"]

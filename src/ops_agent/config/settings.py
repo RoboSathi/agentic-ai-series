@@ -18,6 +18,7 @@ class Words(BaseModel):
     """What the agent says in its own replies."""
 
     stopped: str
+    model_failed: str
     blocked: str
     no_tools: str
     refused_tool: str
@@ -56,6 +57,14 @@ class Cards(BaseModel):
     queries_searched: str
 
 
+class OpsBudget(BaseModel):
+    """A turn's budgets beside its step cap (`loop_control.LoopBudget`)."""
+
+    max_tool_calls: int = Field(ge=1)
+    max_total_tokens: int = Field(ge=1)
+    max_seconds: float = Field(gt=0)
+
+
 class OpsAgentSettings(YamlBackedSettings):
     """The ops agent's wiring values."""
 
@@ -66,6 +75,7 @@ class OpsAgentSettings(YamlBackedSettings):
     greeting: str
     policy: PolicySettings
     max_steps: int = Field(ge=1)
+    budget: OpsBudget
     history_turns: int = Field(ge=0)
     temperature: float
     max_tokens: int = Field(ge=1)

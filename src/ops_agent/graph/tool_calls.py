@@ -16,8 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agent_platform.gatekeeper.types import AuthorityContext, AuthorityDecision
 from agent_platform.llm.types import ModelToolCall
-from agent_platform.loop_control.types import LoopControlReport
-from agent_platform.loop_control.watchdogs import ToolLoopControl
+from agent_platform.loop_control import LoopGovernor
 from agent_platform.tools import NamespacedToolRegistry
 from agent_platform.tools.names import display_tool_name
 from agent_platform.tools.path import DUPLICATE, ToolOutcome, ToolPath, ToolTurn
@@ -42,7 +41,7 @@ class CallOutcome(BaseModel):
 
 
 class GovernedCalls:
-    """Runs the model's tool calls through the platform tool path, one loop control a turn."""
+    """Runs the model's tool calls through the platform tool path, under the turn's governor."""
 
     def __init__(
         self,
@@ -50,36 +49,32 @@ class GovernedCalls:
         path: ToolPath,
         settings: OpsAgentSettings,
         actor: str,
+        governor: LoopGovernor,
     ) -> None:
         self._registry = registry
         self._path = path
         self._settings = settings
         self._actor = actor
-        self._loop = ToolLoopControl()
+        self._governor = governor
+
+    @property
+    def governor(self) -> LoopGovernor:
+        return self._governor
 
     def begin_turn(self) -> None:
-        """A new question: nothing it asks for has been asked before; the step cap is declared."""
-        self._loop = ToolLoopControl(step_cap=self._settings.max_steps)
-
-    def check_step(self, step: int, wants_tools: bool) -> LoopControlReport:
-        """Whether the turn's step cap allows another round of tools (reported to the bracket)."""
-        return self._loop.evaluate_round(
-            step + 1 if wants_tools else step, self._settings.max_steps
-        )
+        """A new question: nothing it asks for has been asked before; the budgets are fresh."""
+        self._governor.begin_turn()
 
     async def run(
         self,
         call: ModelToolCall,
         session_id: str,
-        step: int,
         on_decision: Callable[[ToolCall, AuthorityDecision], None] | None = None,
     ) -> CallOutcome:
         outcome = await self._path.run(
             call,
             ToolTurn(
-                loop=self._loop,
-                round_number=step,
-                max_rounds=self._settings.max_steps,
+                loop=self._governor,
                 authority=lambda built: self._authority(built, session_id),
                 on_decision=on_decision,
             ),
@@ -97,8 +92,9 @@ class GovernedCalls:
         words = self._settings.words
         if outcome.call is None:
             return CallOutcome(text=words.invalid_call.format(tool=name), succeeded=False)
-        if outcome.stage == DUPLICATE:
-            return CallOutcome(text=self._loop.reject_message(outcome.call), succeeded=False)
+        if outcome.stage == DUPLICATE and outcome.control is not None:
+            text = self._governor.suppression_message(outcome.control)
+            return CallOutcome(text=text, succeeded=False)
         if outcome.execution is None:
             action = display_tool_name(outcome.call.action)
             text = words.refused_tool.format(action=action, reason=outcome.reason)
