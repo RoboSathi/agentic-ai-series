@@ -39,23 +39,20 @@ from agent_platform.durability import (
     model_types,
 )
 from agent_platform.evals import NollmScoringCascadeImpl, create_scoring_cascade
-from agent_platform.evals.entailment import create_entailment_model
 from agent_platform.executor import ToolExecutorImpl
 from agent_platform.gatekeeper import Gatekeeper, GatekeeperImpl
 from agent_platform.gatekeeper.ledger import CumulativeLedger
 from agent_platform.hallucination_check import DetectionLadder
+from agent_platform.host.memory import long_term_memory
 from agent_platform.llm.client import LLMClient, create_llm_client
 from agent_platform.llm.local_reranker import create_reranker
-from agent_platform.llm.local_summarizer import LocalDialogueSummarizer
 from agent_platform.loop_control import LoopBudget, build_loop_governor
 from agent_platform.memory import (
-    DreamInbox,
     EpisodicStore,
-    MemoryFacade,
-    SemanticStore,
+    FileDreamInbox,
+    TurnRecorder,
     WorkingMemoryStore,
 )
-from agent_platform.memory.consolidation import ConsolidationService, SessionSummarizer
 from agent_platform.memory.context_source import MemoryRecallContextSource
 from agent_platform.memory.procedural.skills import build_agent_instructions
 from agent_platform.memory.procedural.store import SkillStore
@@ -83,7 +80,6 @@ from agent_platform.security import (
     SecuritySuite,
     TermContentModerator,
 )
-from agent_platform.security.auth.memory_authorizer import PolicyMemoryAuthorizer
 from agent_platform.security.auth.policy import AgentPolicy, AgentPolicyRepository
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
@@ -371,7 +367,12 @@ def build_agent(
             WorkingMemoryStore(max_history=agent_settings.history_turns) if memory_enabled else None
         )
     )
-    memory_event_sink = DreamInbox(platform_store) if live_working_memory is not None else None
+    # Every completed turn leaves one dream event, redacted, for `make dream csa` (ADR 0011).
+    dream_recorder = (
+        TurnRecorder(FileDreamInbox(), agent_id, redact=redactor.redact if redactor else None)
+        if live_working_memory is not None
+        else None
+    )
     ledger = audit or create_audit_ledger(store=observability_store, agent_id=agent_id)
     # Long-term memory: facts about the customer (semantic) and what
     # happened (episodic), each built only if declared. Every operation is
@@ -382,17 +383,20 @@ def build_agent(
     # approved. One store, shared by the facade (approvals land in it) and
     # the instructions (each turn's skills are read from it).
     procedural = SkillStore() if memory_enabled and features.is_on("memory.procedural") else None
-    long_term = long_term_memory(
-        platform_store,
-        semantic=memory_enabled and features.is_on("memory.semantic"),
-        episodic=memory_enabled and features.is_on("memory.episodic"),
-        procedural=procedural,
-        redactor=redactor,
-        policy=agent_policy,
-        audit=ledger,
-        relevance=scoring,
-        reporter=reporter,
-        episodic_store=episodic_store,
+    long_term = (
+        long_term_memory(
+            features,
+            platform_store=platform_store,
+            procedural=procedural,
+            redactor=redactor,
+            policy=agent_policy,
+            audit=ledger,
+            relevance=scoring,
+            reporter=reporter,
+            episodic_store=episodic_store,
+        )
+        if memory_enabled
+        else None
     )
 
     # No policy source. The policy reaches the model in the system prompt,
@@ -487,7 +491,7 @@ def build_agent(
             moderator=(TermContentModerator() if features.is_on("content_moderation") else None),
         ),
         working_memory=live_working_memory,
-        memory_event_sink=memory_event_sink,
+        dream_recorder=dream_recorder,
         long_term_memory=long_term,
         # Measured on what was actually assembled, and mitigated before the
         # model sees it. Poisoning uses the security layer's own phrase
@@ -555,39 +559,6 @@ def build_agent(
     )
 
 
-def long_term_memory(
-    platform_store: SqlitePlatformStore,
-    *,
-    semantic: bool,
-    episodic: bool,
-    redactor: PIIFilterImpl | None,
-    procedural: SkillStore | None = None,
-    policy: AgentPolicy,
-    audit: AuditLedger,
-    relevance: NollmScoringCascadeImpl,
-    reporter: StageReporter | None,
-    episodic_store: EpisodicStore | None = None,
-) -> MemoryFacade | None:
-    """The governed long-term memory this agent was declared to have, or None.
-
-    `episodic_store` replaces the configured on-disk log — an eval gives
-    each case its own, so no case recalls another's conversation.
-    """
-    if not (semantic or episodic or procedural):
-        return None
-    return MemoryFacade(
-        episodic=(episodic_store or EpisodicStore()) if episodic else None,
-        semantic=SemanticStore() if semantic else None,
-        procedural=procedural,
-        platform_store=platform_store,
-        redactor=redactor,
-        relevance=relevance,
-        memory_authorizer=PolicyMemoryAuthorizer(policy),
-        audit=audit,
-        reporter=reporter,
-    )
-
-
 def build_review_service(
     pool: SqliteConnectionPool | None = None, audit: AuditLedger | None = None
 ) -> ReviewQueueService:
@@ -639,55 +610,6 @@ def build_settlement_service(
         RefundLedgerRepository(connection),
         idempotency=SqliteIdempotencyGuard(platform_store),
         audit=audit or create_audit_ledger(store=observability_store, agent_id=settings.agent.id),
-    )
-
-
-def build_dream_service(
-    pool: SqliteConnectionPool | None = None, audit: AuditLedger | None = None
-) -> ConsolidationService:
-    """The memory dream (`make dream`, `/dream`), wired to this agent's stores.
-
-    Writes go through the same governed facade the agent uses — redacted,
-    authorized by the agent's persisted policy, audited. Audited to the
-    agent's own database by default: the DuckDB store is held open by a
-    running console, and a dream must not fail because the TUI is up.
-    """
-    settings = get_settings()
-    connection = pool or SqliteConnectionPool(get_agent_settings().resolved_db_path)
-    platform_store = SqlitePlatformStore(connection, agent_id=settings.agent.id)
-    episodic = EpisodicStore()
-    procedural = active_features(settings.features).is_on("memory.procedural")
-    memory = long_term_memory(
-        platform_store,
-        semantic=True,
-        episodic=True,
-        # A proposed lesson is queued, not written; the store exists so a
-        # curator's approval has somewhere to land.
-        procedural=SkillStore() if procedural else None,
-        redactor=PIIFilterImpl(),
-        policy=AgentPolicyRepository(platform_store).get(),
-        audit=audit or create_audit_ledger(platform_store, agent_id=settings.agent.id),
-        relevance=create_scoring_cascade(),
-        reporter=None,
-        episodic_store=episodic,
-    )
-    assert memory is not None
-    dream = settings.memory.dream
-    summarizer = SessionSummarizer(
-        entailment=create_entailment_model(),
-        threshold=settings.hallucination_check.nli_entailment_threshold,
-        outcome_chars=dream.outcome_chars,
-        summarizer=LocalDialogueSummarizer() if dream.summarize_intent else None,
-        lookup_tools=dream.lookup_tools,
-        forbidden_words=dream.forbidden_words,
-        min_word_ratio=dream.min_word_ratio,
-    )
-    return ConsolidationService(
-        inbox=DreamInbox(platform_store),
-        memory=memory,
-        episodic=episodic,
-        summarizer=summarizer,
-        settings=dream,
     )
 
 

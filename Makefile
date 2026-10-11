@@ -1,5 +1,5 @@
 .PHONY: gen-key help install clean lint type-check format test verify agent llm-check model-check models data refund-limit \
-	clean-memory show-memory dream runs dummy-data analytics-export analytics-drop-legacy dashboard dashboard-install dashboard-refresh \
+	clean-memory show-memory dream memory-reindex runs dummy-data analytics-export analytics-drop-legacy dashboard dashboard-install dashboard-refresh \
 	eval eval-generate eval-oracle eval-security eval-judge eval-deepeval eval-report eval-diff \
 	eval-runs eval-sql intent-bakeoff _agent
 
@@ -36,7 +36,7 @@ ops_OFFLINE_PROFILE :=
 ops_EVALS :=
 
 # Targets whose second goal names the agent they act on.
-AGENT_SCOPED := agent data runs dlq pii-reveal model-check llm-check models eval eval-generate eval-oracle eval-security eval-judge \
+AGENT_SCOPED := agent data runs dlq pii-reveal dream show-memory clean-memory memory-reindex model-check llm-check models eval eval-generate eval-oracle eval-security eval-judge \
 	eval-deepeval eval-report eval-diff eval-runs eval-sql intent-bakeoff
 
 ifneq ($(filter $(firstword $(MAKECMDGOALS)),$(AGENT_SCOPED)),)
@@ -155,9 +155,10 @@ help:
 	@echo ""
 	@echo "$(GREEN)Customer support admin$(NC) (csa only):"
 	@echo "  make refund-limit 100     Set the per-refund limit the Gatekeeper enforces (agent DB)"
-	@echo "  make show-memory          Everything long-term memory holds, as a tree (CUSTOMER=<id> EVENTS=<n>)"
-	@echo "  make dream                Consolidate recent conversations into memory (SHOW=1 for the full tree)"
-	@echo "  make clean-memory         Empty long-term memory (keeps checkpoints, orders, reviews, audit)"
+	@echo "  make show-memory <agent>  Everything long-term memory holds, as a tree (SUBJECT=<id> EVENTS=<n>)"
+	@echo "  make dream <agent>        Consolidate pending dream events into memory (SHOW=1 for the full tree)"
+	@echo "  make clean-memory <agent> Empty long-term memory (keeps checkpoints, business records, audit)"
+	@echo "  make memory-reindex <agent>  Rebuild the derived search index from the memory files"
 	@echo ""
 	@echo "$(GREEN)Evals$(NC) (agent name required; order: generate → oracle → security → judge → deepeval):"
 	@echo "  make eval <agent>         The whole pipeline; stops after the oracle on a broken invariant"
@@ -263,14 +264,22 @@ endif
 
 CSA_ENV := AGENTIC_OVERLAYS=$(csa_OVERLAY)
 
-show-memory:
-	@$(CSA_ENV) $(PYTHON) -m customer_support_agent.admin.show_memory $(if $(CUSTOMER),--customer $(CUSTOMER)) $(if $(EVENTS),--events $(EVENTS))
+# -- long-term memory (every agent; ADR 0011) -----------------------------------------
+# `make dream ra`, `make show-memory csa SUBJECT=1`, `make clean-memory ops`: one platform
+# CLI, the agent chosen by its config layer. Files live in src/<pkg>/data/memory/.
+MEMORY_CLI := $(PYTHON) -m agent_platform.commands.memory_cli
 
-dream:
-	@$(CSA_ENV) $(PYTHON) -m customer_support_agent.admin.dream $(if $(SHOW),--show-memory)
+dream: _agent
+	@$(MEMORY_CLI) dream $(if $(SHOW),--show-memory)
 
-clean-memory:
-	@$(CSA_ENV) $(PYTHON) -m customer_support_agent.admin.clean_memory
+show-memory: _agent
+	@$(MEMORY_CLI) show $(if $(SUBJECT),--subject $(SUBJECT)) $(if $(EVENTS),--events $(EVENTS))
+
+clean-memory: _agent
+	@$(MEMORY_CLI) clean
+
+memory-reindex: _agent
+	@$(MEMORY_CLI) reindex
 
 refund-limit:
 	@test -n "$(REFUND_LIMIT)" || (echo "$(YELLOW)Usage: make refund-limit 100$(NC)" && exit 1)

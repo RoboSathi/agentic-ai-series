@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from agent_platform.config import get_settings
 from agent_platform.presentation.text_tree import TreeNode, tree_lines
 
 # mem0's reconcile vocabulary, plus the curator hand-off governance adds.
@@ -20,9 +21,6 @@ _MARKS: dict[ReconcileOp, str] = {
     "REFUSED": "✗",
 }
 _STORES: tuple[Store, ...] = ("Episodic", "Semantic", "Procedural")
-_AGENT_WIDE = "agent-wide"
-# Events recorded before turn events carried a subject, with no log to recover it from.
-_UNKNOWN_CUSTOMER = "customer unknown"
 
 
 class DreamEntry(BaseModel):
@@ -54,10 +52,10 @@ class DreamReport(BaseModel):
 
 
 def change_tree_lines(report: DreamReport) -> list[str]:
-    """The dream as a tree: store → customer → session → change."""
+    """The dream as a tree: store → subject → session → change."""
     root = TreeNode(
         f"Dream · {report.started_at:%Y-%m-%d %H:%M} · "
-        f"{plural(report.events, 'turn event')} from {plural(report.sessions, 'session')}"
+        f"{plural(report.events, 'event')} from {plural(report.sessions, 'session')}"
     )
     for store in _STORES:
         _store_branch(root.add(store), [e for e in report.entries if e.store == store], store)
@@ -77,9 +75,10 @@ def _store_branch(branch: TreeNode, entries: list[DreamEntry], store: Store) -> 
     by_subject: dict[str, dict[str, list[DreamEntry]]] = {}
     for entry in entries:
         by_subject.setdefault(entry.subject, {}).setdefault(entry.session, []).append(entry)
+    memory = get_settings().memory
     for subject, by_session in sorted(by_subject.items()):
-        nobody = _AGENT_WIDE if store == "Procedural" else _UNKNOWN_CUSTOMER
-        person = branch.add(f"customer {subject}" if subject else nobody)
+        label = memory.subject_label.format(subject=subject) if subject else memory.no_subject_label
+        person = branch.add(label)
         for session, items in by_session.items():
             parent = person.add(f"session {session}") if session else person
             for entry in items:

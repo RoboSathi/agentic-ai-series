@@ -269,9 +269,10 @@ class MemoryWritePipelineImpl:
 
     def _claim(self, command: MemoryCommand, text: str) -> tuple[Claim, list[str]]:
         if command.key and command.value:
-            explicit = Claim(
-                key=normalize_key(command.key), value=command.value, extractor="explicit"
-            )
+            # A skill's name is already a checked slug, and it must stay the name its own
+            # SKILL.md declares; only a fact's key is normalised.
+            key = command.key if command.memory_type == "procedural" else normalize_key(command.key)
+            explicit = Claim(key=key, value=command.value, extractor="explicit")
             return explicit, ["D0:explicit"]
         claim = self._claims.extract(text)
         if claim is not None:

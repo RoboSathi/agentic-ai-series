@@ -6,7 +6,7 @@ It is deliberately the only place that parses a slash: the TUI asks
 API dispatches identically without reimplementing the grammar.
 """
 
-from agent_platform.commands.data import MemoryCommand
+from agent_platform.commands.data import DreamCommand, MemoryCommand
 from agent_platform.commands.evals import EvalCommand
 from agent_platform.commands.harness import HarnessCommand
 from agent_platform.commands.inspection import (
@@ -124,6 +124,7 @@ def _default_commands() -> list[Command]:
         StatsCommand(),
         DeadLetterCommand(),
         MemoryCommand(),
+        DreamCommand(),
         EvalCommand(),
         HarnessCommand(),
         ClearCommand(),

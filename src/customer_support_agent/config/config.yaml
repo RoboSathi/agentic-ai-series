@@ -122,10 +122,16 @@ skills:
 memory:
   files:
     root: src/customer_support_agent/data/memory
+  # Whoever a fact or session is about is a customer, here.
+  subject_label: "customer {subject}"
+  no_subject_label: "shared (no customer)"
   dream:
     # How this agent words a refused tool call (graph/nodes/execute.py);
     # refusals repeated across sessions become skill candidates.
     refusal_markers: ["That action was not permitted:"]
+    learned_skill:
+      lessons:
+        refused: "'{value}' was refused in {count} {unit}. Check that condition first and tell the customer before proposing the action."
     # This agent's read-only tools: a dream summary says "looked up
     # orders …" for these and quotes only the calls that changed something.
     lookup_tools: [get_order_status, get_refund_status, list_orders]

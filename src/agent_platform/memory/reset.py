@@ -9,8 +9,8 @@ Each store purges its own rows — table names stay with the class that
 owns them — and this module only decides which stores a reset covers.
 """
 
+from agent_platform.memory.dream.inbox import FileDreamInbox
 from agent_platform.memory.episodic.memory import EpisodicStore
-from agent_platform.memory.events import DreamInbox
 from agent_platform.memory.governance import CuratorQueue
 from agent_platform.memory.procedural.store import SkillStore
 from agent_platform.memory.semantic.memory import SemanticStore
@@ -24,5 +24,5 @@ def clear_long_term_memory(store: PlatformStore) -> dict[str, int]:
         "semantic facts": SemanticStore().purge(),
         "skills": SkillStore().purge(),
         "curator queue entries": CuratorQueue(store).purge(),
-        "dream inbox events": DreamInbox(store).purge(),
+        "dream events": FileDreamInbox().purge(),
     }

@@ -1442,24 +1442,38 @@ class MemoryImportanceSettings(BaseModel):
     by_category: dict[str, float]
 
 
-class DreamSettings(BaseModel):
-    """Offline consolidation of the dream inbox (`make dream`)."""
+class LearnedSkillWords(BaseModel):
+    """How a dream writes a skill it learned: a SKILL.md, worded by signal kind."""
 
-    # Consolidated turn events older than this are pruned by each dream.
+    artifact_type: str
+    name: str
+    description: str
+    unit: str
+    precondition_scoped: str
+    precondition_any: str
+    body: str
+    default_lesson: str
+    lessons: dict[str, str] = Field(default_factory=dict)
+    keyword_min_chars: int = Field(gt=0)
+    max_keywords: int = Field(gt=0)
+
+
+class DreamSettings(BaseModel):
+    """Offline consolidation of an agent's dream events (`make dream <agent>`)."""
+
+    # Consolidated events older than this are pruned by each dream.
     retention_days: int = Field(gt=0)
-    # How many identical refusals across sessions make a skill candidate.
-    skill_threshold: int = Field(gt=0)
+    # The kind a completed turn's event carries.
+    turn_event_kind: str
+    # strftime pattern naming a pending event's file, so a listing is arrival order.
+    event_file_time_format: str
     # Add a locally generated intent sentence to each session summary.
     summarize_intent: bool
-    # The principal a dream acts as. An agent role, so a proposed skill
-    # is refused by governance and lands with a curator.
+    # The principal a dream acts as. An agent role, so a proposed skill is
+    # refused by governance and lands with a curator.
     actor: str
     # How much of a tool result one outcome line quotes.
     outcome_chars: int = Field(gt=0)
-    # Prefixes that mark a tool result as a refusal.
-    refusal_markers: list[str]
-    # A skill key is a name, not a sentence: longer keys are cut here.
-    skill_key_chars: int = Field(gt=0)
     # Words a generated summary sentence may not contain (gendered pronouns:
     # the summarizer cannot know them). Such a sentence is dropped.
     forbidden_words: list[str]
@@ -1468,6 +1482,12 @@ class DreamSettings(BaseModel):
     # Read-only tools, named by the agent. A summary condenses their calls
     # to "looked up …" and quotes only what changed something.
     lookup_tools: list[str] = Field(default_factory=list)
+    # Prefixes that mark a tool result as a refusal, and the signal kind one becomes.
+    refusal_markers: list[str]
+    refusal_signal_kind: str
+    # In how many distinct sessions (or runs) a signal recurs before it is a skill candidate.
+    skill_threshold: int = Field(gt=0)
+    learned_skill: LearnedSkillWords
 
 
 class SkillSelectionSettings(BaseModel):
@@ -1571,6 +1591,8 @@ class MemorySettings(YamlBackedSettings):
     governance: MemoryGovernanceSettings
     deterministic: MemoryDeterministicSettings
     importance: MemoryImportanceSettings
+    subject_label: str
+    no_subject_label: str
     dream: DreamSettings
 
     model_config = SettingsConfigDict(env_prefix="MEMORY__")

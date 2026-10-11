@@ -70,6 +70,7 @@ from customer_support_agent.gatekeeper.business_rules import REFUND_ACTION_CLASS
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.intent.router import CustomerSupportIntentRouter, Intent
 from customer_support_agent.loop_control import OutputQualityGate
+from customer_support_agent.memory.signals import turn_signals
 from customer_support_agent.observability.accounting import TurnAccountant
 from customer_support_agent.persistence.repositories import OrdersRepository
 from customer_support_agent.presentation.facts import order_facts, policy_facts, session_facts
@@ -300,12 +301,7 @@ class NodeSupport:
         Which metadata keys count, and how each is written, is configuration;
         a key the turn did not set contributes nothing.
         """
-        templates = get_agent_settings().instruction_signals
-        return frozenset(
-            template.format(value=state.metadata[key])
-            for key, template in templates.items()
-            if state.metadata.get(key)
-        )
+        return turn_signals(state.metadata)
 
     def _activation(self, state: AgentState) -> Activation:
         """This turn's skills — deterministic, so every stage that asks gets the same."""

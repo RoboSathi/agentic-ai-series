@@ -2,7 +2,7 @@
 
 Two steps, kept apart: `take_snapshot` reads every long-term store through
 its own read API (nothing here writes), and `snapshot_tree` turns the
-picture into a tree grouped the way the agent recalls — by customer, then
+picture into a tree grouped the way the agent recalls — by subject, then
 session. The make target and the TUI command print the same lines.
 
 Generated ids never appear: an episodic event is shown as when it
@@ -14,8 +14,10 @@ from collections import defaultdict
 from pydantic import BaseModel, Field
 
 from agent_platform.config import get_settings
+from agent_platform.memory.dream.events import InboxCounts
+from agent_platform.memory.dream.inbox import FileDreamInbox
+from agent_platform.memory.dream.summaries import SUMMARY_CATEGORY
 from agent_platform.memory.episodic.memory import EpisodicStore
-from agent_platform.memory.events import DreamInbox, InboxCounts
 from agent_platform.memory.governance import CuratorQueue
 from agent_platform.memory.procedural.store import SkillStore
 from agent_platform.memory.semantic.memory import SemanticStore
@@ -24,8 +26,6 @@ from agent_platform.memory.write_pipeline import store_type
 from agent_platform.persistence import PlatformStore
 from agent_platform.presentation.text_tree import TreeNode
 
-# The category a dream gives the summary that stands for a session.
-SUMMARY_CATEGORY = "session_summary"
 _SHARED = ""
 
 
@@ -59,7 +59,7 @@ def take_snapshot(
     subject: str | None = None,
     term: str | None = None,
 ) -> MemorySnapshot:
-    """Read every store; optionally narrow to one customer and to entries containing `term`."""
+    """Read every store; optionally narrow to one subject and to entries containing `term`."""
     keep = _Filter(subject, term)
     return MemorySnapshot(
         agent_id=store.agent_id,
@@ -72,12 +72,12 @@ def take_snapshot(
             for queue_id, result in CuratorQueue(store).pending()
             if result.fact is None or keep.fact(result.fact)
         ],
-        inbox=DreamInbox(store).counts(),
+        inbox=FileDreamInbox().counts(),
     )
 
 
 def snapshot_tree(snapshot: MemorySnapshot, events_per_session: int, preview: int) -> TreeNode:
-    """The snapshot as a tree: store → customer → session → entry."""
+    """The snapshot as a tree: store → subject → session → entry."""
     root = TreeNode(f"Memory · {snapshot.agent_id} · {snapshot.root}")
     _episodic_branch(root, snapshot, events_per_session, preview)
     _semantic_branch(root, snapshot, preview)
@@ -189,7 +189,8 @@ def _candidate(result: WriteResult, preview: int) -> str:
 
 
 def _subject(subject: str) -> str:
-    return f"customer {subject}" if subject else "shared (no customer)"
+    memory = get_settings().memory
+    return memory.subject_label.format(subject=subject) if subject else memory.no_subject_label
 
 
 def _empty(branch: TreeNode) -> None:

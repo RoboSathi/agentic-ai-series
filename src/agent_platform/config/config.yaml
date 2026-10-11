@@ -1343,21 +1343,58 @@ memory:
       session_summary: 0.6
       how_to: 0.8
       general: 0.3
-  # `make dream`: consolidate the dream inbox into long-term memory.
+  # How a subject (whoever a fact or session is about) is named in memory trees and dream
+  # reports. Neutral here; an agent names its own (the support agent says "customer").
+  subject_label: "subject {subject}"
+  no_subject_label: agent-wide
+  # `make dream <agent>`: consolidate the agent's dream events into long-term memory (ADR 0011).
   dream:
     retention_days: 30
-    skill_threshold: 3
+    # The kind a completed turn's dream event carries; an agent may emit others (a run).
+    turn_event_kind: turn
+    # How a pending event's file is named: its time, so a listing is arrival order.
+    event_file_time_format: "%Y%m%dT%H%M%S%f"
     summarize_intent: true
     actor: memory-dream
     outcome_chars: 120
-    # What a refused tool call's result starts with. The wording is each
-    # agent's own, so the platform names none.
-    refusal_markers: []
-    skill_key_chars: 80
     forbidden_words: [he, him, his, himself, she, her, hers, herself]
     min_word_ratio: 0.8
     # Tool names are agent vocabulary; each agent lists its own lookups.
     lookup_tools: []
+    # What a refused tool call's result starts with. The wording is each agent's own, so
+    # the platform names none; a refusal found this way is a `refused` signal.
+    refusal_markers: []
+    refusal_signal_kind: refused
+    # A signal seen in at least this many distinct sessions (or runs) becomes a skill
+    # candidate, proposed to a curator — never active until one approves it.
+    skill_threshold: 3
+    # How a learned skill is written: a valid SKILL.md, so it is read, selected and audited
+    # exactly as an authored one is. `{lesson}` comes from `lessons` by signal kind.
+    learned_skill:
+      # The artifact type a learned skill is stored as: one the selector may choose.
+      artifact_type: how_to
+      name: "learned-{kind}-{value}"
+      description: "Learned from {count} {unit}: {lesson}"
+      unit: sessions
+      precondition_scoped: "Applies when the turn's signals include {scope}."
+      precondition_any: "Applies whenever the request matches this skill's keywords."
+      body: |
+        ## Preconditions
+        - {precondition}
+
+        ## Procedure
+        1. {lesson}
+
+        ## Boundaries
+        - Learned from what {count} earlier {unit} recorded. It changes how to approach the
+          task, never what is true: facts still come from tools and records.
+
+        ## Completion
+        Continue the task as the other instructions say.
+      default_lesson: "'{value}' ({kind}) recurred in {count} {unit}; account for it before acting."
+      lessons: {}
+      keyword_min_chars: 4
+      max_keywords: 8
 
 guardrails:
   enabled: true

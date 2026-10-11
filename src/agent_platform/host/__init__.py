@@ -8,6 +8,7 @@ from agent_platform.host.protocols import (
     GreetingHost,
     HostAction,
     HousekeepingHost,
+    MemoryHost,
     StatusHost,
     SubjectHost,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "GreetingHost",
     "HostAction",
     "HousekeepingHost",
+    "MemoryHost",
     "StatusHost",
     "SubjectHost",
     "load_spec",

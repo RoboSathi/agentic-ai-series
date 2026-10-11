@@ -12,7 +12,7 @@ The one place that names this agent is its own `config.yaml`
 
 import asyncio
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent_platform.commands.knowledge import KnowledgeBaseCommand
 from agent_platform.commands.runs import CancelCommand
@@ -27,6 +27,9 @@ from agent_platform.observability import StageReporter
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.console.commands import QueueCommand, SettleCommand, VoidCommand
 from customer_support_agent.intent.router import load_intent_classifier
+
+if TYPE_CHECKING:
+    from agent_platform.memory import MemoryProfile
 
 # Stage keys only this agent emits. The platform labels its own stages
 # (`llm_call`, `gatekeeper_evaluation`); these are the ones that exist
@@ -130,16 +133,12 @@ class CustomerSupportHost:
 
     def commands(self) -> list[Command]:
         """The slash commands that read this agent's own tables and corpus."""
-        from agent_platform.commands.data import DreamCommand
-        from customer_support_agent.graph.builder import build_dream_service
-
         return [
             QueueCommand(agent=lambda: self.agent),
             VoidCommand(),
             SettleCommand(),
             CancelCommand(lambda: self.agent),
             KnowledgeBaseCommand(lambda: self.knowledge_base),
-            DreamCommand(build_dream_service),
             SkillsCommand(
                 lambda: self.agent.skill_catalog if self.agent else None,
                 lambda: self.agent.curator if self.agent else None,
@@ -148,6 +147,12 @@ class CustomerSupportHost:
 
     def stage_labels(self) -> Mapping[str, str]:
         return _STAGE_LABELS
+
+    def memory_profile(self) -> "MemoryProfile":
+        """The default memory profile, with support sessions summarised its own way."""
+        from customer_support_agent.memory import support_memory_profile
+
+        return support_memory_profile()
 
     # -- settlement: issued refunds settle when their void window closes -----------------
 

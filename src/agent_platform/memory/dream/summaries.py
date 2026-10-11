@@ -14,8 +14,10 @@ from typing import Protocol, runtime_checkable
 from pydantic import BaseModel
 
 from agent_platform.evals.entailment import EntailmentModel
-from agent_platform.memory.events import MemoryAction, MemoryEvent
+from agent_platform.memory.dream.events import DreamEvent, MemoryAction
 
+# The category a dream gives the summary that stands for a session.
+SUMMARY_CATEGORY = "session_summary"
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s")
 # Between a tool's namespace and its name: `support.x` in the registry,
 # `support__x` as the model's function name.
@@ -44,11 +46,16 @@ class SessionSummary(BaseModel):
 
 
 class SessionSummarizer:
-    """Builds a session's summary from its turn events."""
+    """Builds a session's summary from its turn events.
+
+    With no dialogue summarizer it is the plain template — exact outcomes
+    only — which is the default any agent gets; an agent that adds a
+    generator must add the entailment check that keeps it honest.
+    """
 
     def __init__(
         self,
-        entailment: EntailmentModel,
+        entailment: EntailmentModel | None,
         threshold: float,
         outcome_chars: int,
         summarizer: DialogueSummarizer | None = None,
@@ -68,7 +75,7 @@ class SessionSummarizer:
         self._outcome_chars = outcome_chars
         self._summarizer = summarizer
 
-    async def summarize(self, events: list[MemoryEvent]) -> SessionSummary | None:
+    async def summarize(self, events: list[DreamEvent]) -> SessionSummary | None:
         """The session's summary, or None when nothing was done worth remembering."""
         actions = [action for event in events for action in event.actions]
         if not actions:
@@ -98,9 +105,9 @@ class SessionSummarizer:
         called = f"{tool} ({arguments})" if arguments else tool
         return f"{called} → {result}" if result else called
 
-    async def _intent(self, events: list[MemoryEvent]) -> tuple[str, bool | None]:
+    async def _intent(self, events: list[DreamEvent]) -> tuple[str, bool | None]:
         """A generated sentence of intent, kept only if the transcript entails it."""
-        if self._summarizer is None:
+        if self._summarizer is None or self._entailment is None:
             return "", None
         dialogue = _transcript(events)
         generated = await self._summarizer.summarize(dialogue)
@@ -148,7 +155,7 @@ def _looked_up(lookups: list[MemoryAction]) -> str:
     return "; ".join(part for part in (named, ", ".join(bare)) if part)
 
 
-def _transcript(events: list[MemoryEvent]) -> str:
+def _transcript(events: list[DreamEvent]) -> str:
     """The session as a two-speaker dialogue, the shape the summarizer was trained on."""
     customer, agent = _SPEAKERS
     return "\n".join(

@@ -25,11 +25,14 @@ decision rather than an import.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from agent_platform.commands.types import Command
 from agent_platform.config import FeatureSet
 from agent_platform.observability import StageReporter
+
+if TYPE_CHECKING:
+    from agent_platform.memory.profile import MemoryProfile
 
 
 @runtime_checkable
@@ -140,6 +143,18 @@ class SubjectHost(Protocol):
 
 
 @runtime_checkable
+class MemoryHost(Protocol):
+    """An agent that words its memory in its own vocabulary (ADR 0011).
+
+    Returns the agent's `MemoryProfile` — usually `MemoryProfile.default()`
+    with one consolidator replaced. An agent without this hook dreams with
+    the default profile, which is the point: memory works out of the box.
+    """
+
+    def memory_profile(self) -> "MemoryProfile": ...
+
+
+@runtime_checkable
 class CancellableHost(Protocol):
     """An agent whose long-running turn can be cancelled by a key binding."""
 
@@ -158,6 +173,7 @@ __all__ = [
     "CancellableHost",
     "GreetingHost",
     "HostAction",
+    "MemoryHost",
     "StatusHost",
     "SubjectHost",
 ]

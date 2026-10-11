@@ -21,7 +21,7 @@ from agent_platform.presentation.text_tree import tree_lines
 
 if TYPE_CHECKING:
     from agent_platform.memory import WorkingMemoryStore
-    from agent_platform.memory.consolidation import ConsolidationService
+    from agent_platform.memory.dream import Dream
 
 
 class MemoryCommand(PoolBackedCommand):
@@ -122,29 +122,35 @@ class MemoryCommand(PoolBackedCommand):
 
 
 class DreamCommand:
-    """Consolidate the dream inbox now, and show what changed (`/dream`).
+    """Consolidate this agent's pending dream events now, and show what changed (`/dream`).
 
-    The platform owns the command; the agent owns the wiring. The host
-    hands over a factory, because a dream writes through the agent's own
-    governed memory — its policy, its redactor — which only the agent's
-    composition root knows how to build.
+    Every agent has it: the dream is built by the platform from the agent's
+    configured memory and its host's `MemoryProfile` (or the default). A
+    test or an agent may hand in its own factory.
     """
 
     group = "Inspect"
     name = "dream"
-    summary = "Consolidate recent conversations into long-term memory"
+    summary = "Consolidate pending dream events into long-term memory"
     usage = "/dream"
 
-    def __init__(self, service: "Callable[[], ConsolidationService]") -> None:
-        self._service = service
+    def __init__(self, dream: "Callable[[], Dream] | None" = None) -> None:
+        self._dream = dream
 
     async def run(self, args: list[str]) -> CommandResult:
-        from agent_platform.memory.consolidation import change_tree_lines
+        from agent_platform.memory.dream import change_tree_lines
 
-        report = await self._service().dream()
+        report = await self._build().dream()
         result = CommandResult(
-            title=f"Dream — {report.events} turn events from {report.sessions} sessions"
+            title=f"Dream — {report.events} events from {report.sessions} sessions"
         )
         result.lines = change_tree_lines(report)
         result.line("Use /memory to see everything memory now holds.")
         return result
+
+    def _build(self) -> "Dream":
+        if self._dream is not None:
+            return self._dream()
+        from agent_platform.host.memory import build_dream
+
+        return build_dream()
