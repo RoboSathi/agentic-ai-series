@@ -22,12 +22,16 @@ from agent_platform.hallucination_check import DetectionLadder
 from agent_platform.hallucination_check.claims import specifics
 from agent_platform.hallucination_check.ledger import FLAG_TRUE, facts_in
 from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.primitives.money import Money
 from customer_support_agent.config import get_agent_settings
-from customer_support_agent.console.commands import QueueCommand
 from customer_support_agent.domain.identity import Customer, set_current_customer
+from customer_support_agent.domain.models import HitlRequest
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.nodes.review_wait import _reply
 from customer_support_agent.graph.state import AgentState
+from customer_support_agent.persistence.repositories import HitlQueueRepository
+from customer_support_agent.persistence.schema import ensure_schema
+from customer_support_agent.review.handler import support_queue_command
 from customer_support_agent.review.queue import ReviewOutcome
 
 
@@ -158,9 +162,12 @@ async def _decide(
         lambda pool=None, audit=None: _service(outcome),
     )
     agent = _Agent()
-    result = await QueueCommand(pool=SqliteConnectionPool(":memory:"), agent=lambda: agent).run(
-        [verb, "30"]
-    )
+    pool = SqliteConnectionPool(":memory:")
+    ensure_schema(pool)
+    queue = HitlQueueRepository(pool)
+    queue.save(HitlRequest(order_id=10003, user_id=2, requested_amount=Money.parse("45.00")))
+    command = support_queue_command(pool, agent=lambda: agent)
+    result = await command.run([verb, str(queue.last_id()), "reviewed"])
     return agent, result
 
 

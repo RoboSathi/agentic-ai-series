@@ -8,9 +8,9 @@ denying it says the check was right, and nothing more is sent.
 
 from agent_platform.guardrails import ResponseGuardrailResult
 from agent_platform.persistence import SqliteConnectionPool
-from customer_support_agent.console.commands import QueueCommand
 from customer_support_agent.persistence.repositories import HitlQueueRepository
 from customer_support_agent.persistence.schema import ensure_schema
+from customer_support_agent.review.handler import support_queue_command
 from customer_support_agent.review.referral import ReplyReferral
 
 _SESSION = "session-1"
@@ -71,9 +71,9 @@ class TestACutReplyIsQueued:
         self, seeded_pool: SqliteConnectionPool
     ) -> None:
         _queue(seeded_pool)
-        result = await QueueCommand(seeded_pool).run([])
-        [row] = result.rows
-        assert row.cells[1].startswith("reply · ") and _REMOVED in row.cells[1]
+        result = await support_queue_command(seeded_pool).run([])
+        [line] = [line for line in result.lines if "#" in line]
+        assert "reply · " in line and _REMOVED in line
 
 
 class TestTheReviewerDecides:
@@ -81,10 +81,10 @@ class TestTheReviewerDecides:
         self, seeded_pool: SqliteConnectionPool
     ) -> None:
         request_id, recipient = _queue(seeded_pool), _Recipient()
-        result = await QueueCommand(seeded_pool, agent=lambda: recipient).run(
-            ["approve", str(request_id)]
+        result = await support_queue_command(seeded_pool, agent=lambda: recipient).run(
+            ["approve", str(request_id), "the check was wrong"]
         )
-        assert result.title.endswith("approved")
+        assert ": approved by" in result.title
         [(session, reply)] = recipient.sent
         assert session == _SESSION and _REMOVED in reply
         assert any(line.startswith("└─ customer: told:") for line in result.lines)
@@ -92,16 +92,18 @@ class TestTheReviewerDecides:
 
     async def test_denying_sends_nothing(self, seeded_pool: SqliteConnectionPool) -> None:
         request_id, recipient = _queue(seeded_pool), _Recipient()
-        result = await QueueCommand(seeded_pool, agent=lambda: recipient).run(
-            ["deny", str(request_id)]
+        result = await support_queue_command(seeded_pool, agent=lambda: recipient).run(
+            ["deny", str(request_id), "the check was right"]
         )
-        assert result.title.endswith("denied")
+        assert ": denied by" in result.title
         assert recipient.sent == []
         assert not any("customer" in line for line in result.lines)
 
     async def test_the_output_names_no_thread(self, seeded_pool: SqliteConnectionPool) -> None:
         request_id = _queue(seeded_pool)
-        result = await QueueCommand(seeded_pool, agent=_Recipient).run(["approve", str(request_id)])
+        result = await support_queue_command(seeded_pool, agent=_Recipient).run(
+            ["approve", str(request_id), "fine"]
+        )
         assert not any("Resumed" in line for line in result.lines)
         branches = [line for line in result.lines if line.startswith(("├─", "└─"))]
         assert [line.split(":")[0] for line in branches] == [
@@ -125,5 +127,4 @@ class TestAnOlderQueueIsUpgraded:
         ensure_schema(pool)
         [old] = HitlQueueRepository(pool).pending()
         assert old.order_id == 10001 and old.requested_amount is not None
-        columns = {row["name"] for row in pool.iter_rows("PRAGMA table_info(hitl_queue)")}
-        assert {"session_id", "detail"} <= columns
+        assert not list(pool.iter_rows("PRAGMA table_info(hitl_queue)"))

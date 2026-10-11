@@ -13,7 +13,7 @@ from agent_platform.commands.inspection import (
     AuditCommand,
     ConfigCommand,
 )
-from agent_platform.commands.quarantine import DeadLetterCommand
+from agent_platform.commands.review import QueueCommand
 from agent_platform.commands.stats import StatsCommand
 from agent_platform.commands.system import (
     ClearCommand,
@@ -122,7 +122,7 @@ def _default_commands() -> list[Command]:
         ConfigCommand(),
         AuditCommand(),
         StatsCommand(),
-        DeadLetterCommand(),
+        QueueCommand(),
         MemoryCommand(),
         DreamCommand(),
         EvalCommand(),

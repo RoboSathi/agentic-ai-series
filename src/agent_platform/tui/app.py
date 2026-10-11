@@ -33,6 +33,7 @@ from agent_platform.commands import (
     ScopedCommand,
 )
 from agent_platform.commands.data import MemoryCommand
+from agent_platform.commands.review import QueueCommand
 from agent_platform.config import get_settings
 from agent_platform.durability import DurableAgent
 from agent_platform.host import (
@@ -54,6 +55,7 @@ from agent_platform.tui.clipboard import Osc52ClipboardService
 from agent_platform.tui.command_view import CommandView
 from agent_platform.tui.completion import TabCompleter
 from agent_platform.tui.labels import StageLabelRegistry
+from agent_platform.tui.review_screen import ReviewScreen
 from agent_platform.tui.widgets import (
     ActionBar,
     ChoiceMenu,
@@ -228,6 +230,7 @@ class AgenticTuiApp(App[None]):
         # with CSI u). Priority, or the focused Input takes it for its own copy.
         Binding("super+c", "copy_selection", "Copy selection", priority=True, show=False),
         Binding("ctrl+l", "clear_feed", "Clear"),
+        Binding("ctrl+r", "review", "Review"),
         Binding("pageup", "page_up", "Page up", priority=True, show=False),
         Binding("pagedown", "page_down", "Page down", priority=True, show=False),
         Binding("ctrl+u", "page_up", "Page up", priority=True, show=False),
@@ -722,6 +725,14 @@ class AgenticTuiApp(App[None]):
         else:
             self.notify("Copy failed — no clipboard command found", severity="warning")
         return True
+
+    def action_review(self) -> None:
+        """Open the Review screen over the same `/queue` this console has (ADR 0011)."""
+        command = self._commands.get("queue")
+        if isinstance(command, QueueCommand):
+            self.push_screen(
+                ReviewScreen(command, lambda line: self._panel.note(line, style=palette("notice")))
+            )
 
     def action_clear_feed(self) -> None:
         self._panel.clear_feed()

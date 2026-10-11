@@ -25,8 +25,9 @@ from agent_platform.logging import get_logger
 from agent_platform.memory.semantic.rag import KnowledgeBase
 from agent_platform.observability import StageReporter
 from customer_support_agent.config import get_agent_settings
-from customer_support_agent.console.commands import QueueCommand, SettleCommand, VoidCommand
+from customer_support_agent.console.commands import SettleCommand, VoidCommand
 from customer_support_agent.intent.router import load_intent_classifier
+from customer_support_agent.review.handler import support_queue_command
 
 if TYPE_CHECKING:
     from agent_platform.memory import MemoryProfile
@@ -134,7 +135,7 @@ class CustomerSupportHost:
     def commands(self) -> list[Command]:
         """The slash commands that read this agent's own tables and corpus."""
         return [
-            QueueCommand(agent=lambda: self.agent),
+            support_queue_command(agent=lambda: self.agent),
             VoidCommand(),
             SettleCommand(),
             CancelCommand(lambda: self.agent),

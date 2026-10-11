@@ -60,6 +60,8 @@ INSERT INTO refunds (refund_id, order_id, user_id, amount_cents, reason, reverse
     ('seed-refund-90003', 90003, 901, 4500, 'seeded: damaged on arrival', 0, '2026-08-09T10:00:00+00:00'),
     ('seed-refund-90013', 90013, 902, 9900, 'seeded: wrong size',         0, '2026-08-14T10:00:00+00:00');
 
--- The review already waiting for a person.
-INSERT INTO hitl_queue (order_id, user_id, requested_amount_cents, status, created_at) VALUES
-    (90007, 901, 12000, 'pending', '2026-08-16T10:00:00+00:00');
+-- The review already waiting for a person: an item in the platform's review queue (ADR 0011).
+INSERT INTO platform_review_queue (agent_id, kind, status, session_id, subject_id, summary, detail, created_at) VALUES
+    ('customer_support_agent', 'refund', 'pending', '', '901', 'refund',
+     '{"order_id": 90007, "requested_amount_cents": 12000, "reply": null, "reason": ""}',
+     '2026-08-16T10:00:00+00:00');

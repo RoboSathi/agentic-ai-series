@@ -123,7 +123,9 @@ class EvalFixture:
                 (REFUND_ACTION_CLASS,),
             ).fetchone()
             refund_ids = [row[0] for row in connection.execute("SELECT refund_id FROM refunds")]
-            review_ids = [row[0] for row in connection.execute("SELECT id FROM hitl_queue")]
+            review_ids = [
+                row[0] for row in connection.execute("SELECT id FROM platform_review_queue")
+            ]
         return FixtureFacts(
             users={user.user_code: user for user in users},
             orders={order.order_id: order for order in orders},

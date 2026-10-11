@@ -1598,6 +1598,56 @@ class MemorySettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="MEMORY__")
 
 
+class ReviewKinds(BaseModel):
+    """The platform's own review kinds."""
+
+    memory_fact: str
+    skill: str
+    quarantine: str
+
+
+class ReviewWords(BaseModel):
+    """How `/queue` and the Review tab word the queue."""
+
+    summary: str
+    usage: str
+    title: str
+    empty: str
+    kind_branch: str
+    item_line: str
+    subject_part: str
+    show_title: str
+    decided: str
+    hint: str
+    needs_id: str
+    needs_comment: str
+    unknown_item: str
+    already_decided: str
+    unknown_kind: str
+    quarantine_released: str
+    quarantine_upheld: str
+    tab_title: str
+    comment_placeholder: str
+    approve_button: str
+    deny_button: str
+    nothing_selected: str
+
+
+class ReviewSettings(YamlBackedSettings):
+    """One human-review queue for every kind (ADR 0011)."""
+
+    _yaml_section = "review"
+    table: str
+    min_comment_chars: int = Field(gt=0)
+    kinds: ReviewKinds
+    audit_action: str
+    trace_id: str
+    console_reviewer: str
+    words: ReviewWords
+
+    model_config = SettingsConfigDict(env_prefix="REVIEW__")
+
+
 class GuardrailOutcomeSettings(BaseModel):
     """What happened to a checked reply, as a card's result line says it.
 
@@ -2552,30 +2602,6 @@ class PresentationSettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="PRESENTATION__")
 
 
-class DeadLetterCommandWords(BaseModel):
-    """What `/dlq` and `make dlq` say (`commands/quarantine.py`)."""
-
-    summary: str
-    usage: str
-    default_status: str
-    list_title: str
-    counts: str
-    headers: list[str]
-    empty: str
-    show_hint: str
-    entry_title: str
-    preview_chars: int = Field(ge=8)
-    time_format: str
-    unknown: str
-    unknown_status: str
-    unknown_id: str
-    needs_id: str
-    needs_note: str
-    refused: str
-    done: str
-    audit_action: str
-
-
 class StatsCommandWords(BaseModel):
     """What `/stats` says (`commands/stats.py`)."""
 
@@ -2630,17 +2656,10 @@ class SkillsCommandWords(BaseModel):
     history_title: str
     history_headers: list[str]
     pending_title: str
-    pending_headers: list[str]
     empty: str
     no_catalog: str
-    no_curator: str
     unknown: str
     needs_name: str
-    needs_id: str
-    not_a_skill: str
-    approved: str
-    refused: str
-    curator_actor: str
     description_chars: int = Field(gt=0)
     none: str
     active: str
@@ -2662,7 +2681,6 @@ class CommandSettings(YamlBackedSettings):
     # when asked for someone else's records (`ConsoleScope`).
     verify_first: str
     not_your_records: str
-    dlq: DeadLetterCommandWords
     audit: AuditCommandWords
     stats: StatsCommandWords
     skills: SkillsCommandWords
@@ -2947,6 +2965,7 @@ class AppConfig(BaseSettings):
     memory: MemorySettings = Field(default_factory=lambda: MemorySettings())  # type: ignore[call-arg]
     skills: SkillSettings = Field(default_factory=lambda: SkillSettings())  # type: ignore[call-arg]
     guardrails: GuardrailsSettings = Field(default_factory=lambda: GuardrailsSettings())  # type: ignore[call-arg]
+    review: ReviewSettings = Field(default_factory=lambda: ReviewSettings())  # type: ignore[call-arg]
     hallucination_check: HallucinationCheckSettings = Field(
         default_factory=lambda: HallucinationCheckSettings()  # type: ignore[call-arg]
     )

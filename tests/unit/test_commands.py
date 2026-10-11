@@ -23,12 +23,12 @@ from agent_platform.commands import (
 )
 from agent_platform.commands.harness import HarnessCommand
 from agent_platform.commands.inspection import AuditCommand, ConfigCommand
+from agent_platform.commands.review import QueueCommand
 from agent_platform.commands.system import ClearCommand
 from agent_platform.config import active_features, get_settings, set_active_features
 from agent_platform.observability.store import DuckDbObservabilityStore
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.tui.command_view import CommandView
-from customer_support_agent.console.commands import QueueCommand
 
 # A key value that must never be rendered, whatever variable holds it.
 SECRET = "sk-test-never-shown"
@@ -41,10 +41,8 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_an_unknown_command_suggests_near_matches(self) -> None:
-        # `/queue` is the agent's, not the platform's, so it is registered
-        # the way the console registers it: from the running host.
+        # `/queue` is the platform's one review queue (ADR 0011).
         registry = CommandRegistry()
-        registry.register(QueueCommand())
         result = await registry.dispatch("/que")
         assert not result.ok
         assert "/queue" in result.lines[0]

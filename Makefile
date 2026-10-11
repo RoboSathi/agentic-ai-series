@@ -1,5 +1,5 @@
 .PHONY: gen-key help install clean lint type-check format test verify agent llm-check model-check models data refund-limit \
-	clean-memory show-memory dream memory-reindex runs dummy-data analytics-export analytics-drop-legacy dashboard dashboard-install dashboard-refresh \
+	clean-memory show-memory dream memory-reindex queue runs dummy-data analytics-export analytics-drop-legacy dashboard dashboard-install dashboard-refresh \
 	eval eval-generate eval-oracle eval-security eval-judge eval-deepeval eval-report eval-diff \
 	eval-runs eval-sql intent-bakeoff _agent
 
@@ -36,7 +36,7 @@ ops_OFFLINE_PROFILE :=
 ops_EVALS :=
 
 # Targets whose second goal names the agent they act on.
-AGENT_SCOPED := agent data runs dlq pii-reveal dream show-memory clean-memory memory-reindex model-check llm-check models eval eval-generate eval-oracle eval-security eval-judge \
+AGENT_SCOPED := agent data runs queue pii-reveal dream show-memory clean-memory memory-reindex model-check llm-check models eval eval-generate eval-oracle eval-security eval-judge \
 	eval-deepeval eval-report eval-diff eval-runs eval-sql intent-bakeoff
 
 ifneq ($(filter $(firstword $(MAKECMDGOALS)),$(AGENT_SCOPED)),)
@@ -134,7 +134,7 @@ help:
 	@echo "                            agents are running, using only the platform's analytics MCP server's tools;"
 	@echo "                            SOURCE=dummy reads the demo world from make dummy-data (its own turns still go to live)"
 	@echo "  make runs ra              List archived research runs"
-	@echo "  make dlq <agent> [STATUS=…|ID=…] [ACTION=claim|resolve|discard ID=… NOTE=…]   Quarantined messages (same as /dlq)"
+	@echo "  make queue <agent> [KIND=…|ID=…] [ACTION=approve|deny ID=… COMMENT=…]   Human review queue (same as /queue)"
 	@echo "  make pii-reveal <agent> T=<token> WHY=<reason>   What a PII token stood for (audited; needs PII_VAULT_KEY)"
 	@echo "  make model-check [agent]  Probe every hosted model and run every local model, per agent (BENCH=1 times them; alias: llm-check)"
 	@echo "  make models [agent]       Download (if missing) and run each agent's local models (run by make install)"
@@ -243,10 +243,11 @@ runs: _agent
 	@test -n "$($(AGENT)_RUNS)" || (echo "$(YELLOW)'$(AGENT)' keeps no archived runs$(NC)" && exit 2)
 	@$(PYTHON) -m $($(AGENT)_RUNS) list
 
-# The messages a security screen quarantined: `make dlq ra`, `make dlq csa STATUS=all LIMIT=50`,
-# `make dlq csa ID=7`, `make dlq csa ACTION=resolve ID=7 NOTE="false positive"`. Same as /dlq.
-dlq: _agent
-	@$(PYTHON) -m agent_platform.commands.dlq_cli $(if $(ACTION),$(ACTION) $(ID) $(NOTE),$(if $(ID),$(ID),$(or $(STATUS),pending) $(LIMIT)))
+# The one human review queue (ADR 0011): refunds, cut replies, quarantines, memory a curator
+# must confirm. `make queue csa`, `make queue ra KIND=skill`, `make queue csa ID=7`,
+# `make queue csa ACTION=approve ID=7 COMMENT="checked the order"`. Same as /queue.
+queue: _agent
+	@$(PYTHON) -m agent_platform.commands.review_cli $(if $(ACTION),$(ACTION) $(ID) $(COMMENT),$(if $(ID),show $(ID),$(KIND)))
 
 # What a PII redaction token stood for, for audit: `make pii-reveal csa T=3f9a1c2b7e10 WHY="ticket 42"`.
 # Every reveal is written to the audit trail first; it needs the vault key (PII_VAULT_KEY).

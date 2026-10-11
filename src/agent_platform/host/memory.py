@@ -96,6 +96,36 @@ def agent_memory_profile() -> MemoryProfile:
     return host.memory_profile() if isinstance(host, MemoryHost) else MemoryProfile.default()
 
 
+def governed_memory(
+    pool: SqliteConnectionPool | None = None,
+    *,
+    audit: AuditLedger | None = None,
+    posture: FeatureSet | None = None,
+    redact: bool = True,
+) -> MemoryFacade:
+    """The configured agent's governed long-term memory, outside a running turn.
+
+    What a dream writes through, and what a curator's approval commits
+    to. `redact=False` skips loading the PII model: an approval commits a
+    write that was redacted when it was queued.
+    """
+    settings = get_settings()
+    declared = posture or active_features(settings.features)
+    store = agent_store(pool)
+    ledger = audit or create_audit_ledger(store, agent_id=settings.agent.id)
+    memory = long_term_memory(
+        declared,
+        platform_store=store,
+        audit=ledger,
+        redactor=PIIFilterImpl() if redact and declared.is_on("pii") else None,
+        policy=seeded_policy(store),
+        # A proposed skill is queued, not written; the store exists so a
+        # curator's approval has somewhere to land.
+        procedural=SkillStore() if declared.is_on("memory.procedural") else None,
+    )
+    return memory or MemoryFacade(platform_store=store, audit=ledger)
+
+
 def build_dream(
     profile: MemoryProfile | None = None,
     *,
@@ -109,23 +139,9 @@ def build_dream(
     ledger is held open by a running console, and a dream must not fail
     because the TUI is up.
     """
-    settings = get_settings()
-    declared = posture or active_features(settings.features)
-    store = agent_store(pool)
-    ledger = audit or create_audit_ledger(store, agent_id=settings.agent.id)
-    memory = long_term_memory(
-        declared,
-        platform_store=store,
-        audit=ledger,
-        redactor=PIIFilterImpl() if declared.is_on("pii") else None,
-        policy=seeded_policy(store),
-        # A proposed skill is queued, not written; the store exists so a
-        # curator's approval has somewhere to land.
-        procedural=SkillStore() if declared.is_on("memory.procedural") else None,
-    ) or MemoryFacade(platform_store=store, audit=ledger)
     return Dream(
         inbox=FileDreamInbox(),
-        memory=memory,
+        memory=governed_memory(pool, audit=audit, posture=posture),
         profile=profile or agent_memory_profile(),
-        settings=settings.memory.dream,
+        settings=get_settings().memory.dream,
     )

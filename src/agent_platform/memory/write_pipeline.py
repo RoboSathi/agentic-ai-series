@@ -546,6 +546,33 @@ class MemoryWritePipelineImpl:
         self._record(MemoryCommand(principal=principal, operation="approve", key=fact.key), result)
         return result
 
+    def deny_queued(
+        self, queue_id: int, principal: MemoryPrincipal, reason: str = ""
+    ) -> WriteResult:
+        """A curator refuses a queued write: nothing is written, and the refusal is audited."""
+        pending = dict(self._curator.pending()).get(queue_id)
+        if pending is None or pending.fact is None:
+            return WriteResult(route="discard", written=False, reason="nothing to deny")
+        self._checked = ""
+        refusal = self._authorize(principal, "approve", pending.fact)
+        if refusal is not None:
+            return refusal
+        self._curator.decide(queue_id, "denied", principal.actor)
+        result = WriteResult(
+            route="discard",
+            written=False,
+            fact=pending.fact,
+            reason=reason or "denied by curator",
+            stage="curator",
+            operation="approve",
+            curator_id=queue_id,
+            permission=self._checked,
+        )
+        self._record(
+            MemoryCommand(principal=principal, operation="approve", key=pending.fact.key), result
+        )
+        return result
+
     def permits(
         self, principal: MemoryPrincipal, operation: Any, memory_type: MemoryType, category: str
     ) -> str | None:
@@ -641,7 +668,10 @@ class MemoryWritePipelineImpl:
 
     def _queue(self, result: WriteResult) -> WriteResult:
         """Hold a write for a human, and keep the record either way."""
-        return result.model_copy(update={"curator_id": self._curator.put(result)})
+        kinds = get_settings().review.kinds
+        procedural = result.fact is not None and store_type(result.fact.category) == "procedural"
+        kind = kinds.skill if procedural else kinds.memory_fact
+        return result.model_copy(update={"curator_id": self._curator.put(result, kind)})
 
     def _store_for(
         self, memory_type: MemoryType

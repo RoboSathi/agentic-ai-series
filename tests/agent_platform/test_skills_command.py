@@ -76,31 +76,24 @@ class TestListing:
             await command.run(["show", "nope"])
 
 
-class TestApproving:
-    async def test_a_lesson_becomes_an_active_skill(
-        self, command: SkillsCommand, pipeline: MemoryWritePipelineImpl, catalog: SkillCatalog
-    ) -> None:
-        await command.run(["approve", str(_queue(pipeline, "how_to"))])
-        lesson = catalog.show("check settled")
-        assert lesson is not None
-        assert lesson.source == "learned"
+class TestApprovingIsNotHere:
+    """ADR 0011: a candidate is decided in `/queue`, with a comment — `/skills` only lists it."""
 
-    async def test_a_semantic_entry_is_not_approved_here(
+    async def test_approve_is_not_a_skills_action(
         self, command: SkillsCommand, pipeline: MemoryWritePipelineImpl
     ) -> None:
         with pytest.raises(CommandError):
-            await command.run(["approve", str(_queue(pipeline, "preference"))])
+            await command.run(["approve", str(_queue(pipeline, "how_to"))])
 
-    async def test_an_id_is_required(self, command: SkillsCommand) -> None:
-        with pytest.raises(CommandError):
-            await command.run(["approve"])
+    async def test_a_candidate_is_listed_with_where_to_decide_it(
+        self, command: SkillsCommand, pipeline: MemoryWritePipelineImpl
+    ) -> None:
+        _queue(pipeline, "how_to")
+        result = await command.run([])
+        assert any("/queue" in line for line in result.lines)
 
 
 class TestWithoutTheParts:
     async def test_no_catalog(self) -> None:
         with pytest.raises(CommandError, match="procedural"):
             await SkillsCommand(lambda: None, lambda: None).run([])
-
-    async def test_no_curator(self, catalog: SkillCatalog) -> None:
-        with pytest.raises(CommandError, match="curator"):
-            await SkillsCommand(lambda: catalog, lambda: None).run(["approve", "1"])

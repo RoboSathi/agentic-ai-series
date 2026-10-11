@@ -1396,6 +1396,48 @@ memory:
       keyword_min_chars: 4
       max_keywords: 8
 
+# Human review (ADR 0011): one queue for every agent and every kind of decision a person makes —
+# a refund above the agent's authority, a reply the hallucination check cut, a quarantined
+# message, a fact or skill memory would not take on its own word. `/queue` and the console's
+# Review tab decide through the same service, and every decision needs a comment.
+review:
+  table: platform_review_queue
+  # A comment shorter than this is not a reason.
+  min_comment_chars: 3
+  # The platform's own kinds; an agent adds its own (a refund, a reply).
+  kinds:
+    memory_fact: memory_fact
+    skill: skill
+    quarantine: quarantine
+  audit_action: "review.{kind}.{decision}"
+  trace_id: "review-{id}"
+  # The reviewer a console records: the operator running it.
+  console_reviewer: console_operator
+  words:
+    summary: "Human review: list, show, approve or deny (a comment is required)"
+    usage: "/queue [kind] · /queue show <id> · /queue approve|deny <id> <comment> · /queue <arrivals_per_hour> [minutes_each]"
+    title: "Review queue — {n} pending"
+    empty: Nothing is waiting for a person.
+    kind_branch: "{kind} — {n}"
+    item_line: "#{id} · {summary}"
+    subject_part: " · {subject}"
+    show_title: "#{id} · {kind} · {status}"
+    decided: "#{id} {kind}: {status} by {reviewer} — {comment}"
+    hint: "/queue approve|deny <id> <comment> decides one; the comment is kept and audited."
+    needs_id: "/queue {action} needs an item id. {usage}"
+    needs_comment: "A decision needs a comment saying why (it is kept with the item and audited)."
+    unknown_item: "No pending review item #{id} here."
+    already_decided: "Item #{id} is already {status}."
+    unknown_kind: "No review kind '{kind}'. Kinds here: {kinds}"
+    quarantine_released: "Recorded: the screen was wrong (the message is not re-run)."
+    quarantine_upheld: "Recorded: the screen was right."
+    # The console's Review tab.
+    tab_title: Review
+    comment_placeholder: "Comment (required) — why approve or deny?"
+    approve_button: Approve
+    deny_button: Deny
+    nothing_selected: Select an item to see it.
+
 guardrails:
   enabled: true
   mode: auto_repair
@@ -2176,26 +2218,6 @@ commands:
   verify_first: Nobody is verified in this session yet. Verify first, then ask again.
   not_your_records: This console shows only the verified account's own records.
   # `/dlq` (and `make dlq <agent>`): the messages a security screen quarantined, for review.
-  dlq:
-    summary: Quarantined messages (dead-letter queue) — list, show, claim, resolve, discard
-    usage: "/dlq [pending|in_review|resolved|discarded|all] [limit] · /dlq <id> · /dlq claim <id> · /dlq resolve|discard <id> <note>"
-    default_status: pending
-    list_title: "Dead-letter queue — {status} ({n})"
-    counts: "by status: {counts}"
-    headers: [id, when, screen, status, session, decided by, message (redacted)]
-    empty: Nothing here.
-    show_hint: "/dlq <id> shows everything recorded about one entry."
-    entry_title: "Dead-letter entry {id}"
-    preview_chars: 48
-    time_format: "%Y-%m-%d %H:%M"
-    unknown: "—"
-    unknown_status: "No status '{status}'. {usage}"
-    unknown_id: "No dead-letter entry {id} for this agent."
-    needs_id: "/dlq {action} needs an entry id. {usage}"
-    needs_note: "/dlq {action} needs a note saying why (it is kept with the entry and audited)."
-    refused: "Entry {id} is {status}: it cannot be {action}d from there."
-    done: "Entry {id}: {action} recorded by {reviewer} (the message was not re-run)."
-    audit_action: "dlq.{action}"
   stats:
     summary: This session's tasks, turns, model calls, tools, checks, decisions and SLOs, as a tree
     usage: "/stats"
@@ -2232,27 +2254,21 @@ commands:
     unknown: "—"
     rationale_chars: 60
 
-  # `/skills`: an agent's procedural memory — authored skills and approved lessons.
+  # `/skills`: an agent's procedural memory — authored skills and learned ones a curator approved.
+  # Candidates a dream proposed are decided in `/queue` (ADR 0011), with a comment.
   skills:
-    summary: "Procedural memory: list, show, history, approve a queued lesson"
-    usage: "/skills [list | show <name> | history <name> | approve <queue id>]"
+    summary: "Procedural memory: list, show, history (decide learned-skill candidates in /queue)"
+    usage: "/skills [list | show <name> | history <name>]"
     group: Agent
     list_title: "Skills — {n} active"
     list_headers: [name, version, source, triggers, description]
     history_title: "{name} — {n} version(s)"
     history_headers: [version, active, source, recorded by]
-    pending_title: "Awaiting a curator — {n}"
-    pending_headers: [queue id, name, proposal]
+    pending_title: "Candidates awaiting a curator — {n} (decide with /queue approve|deny <id> <comment>)"
     empty: No skills yet.
     no_catalog: "This agent has no procedural memory (memory.procedural is off)."
-    no_curator: "This agent has no curator queue to approve from."
     unknown: "No skill '{name}'. {usage}"
     needs_name: "/skills {action} needs a skill name. {usage}"
-    needs_id: "/skills approve needs a queue id. {usage}"
-    not_a_skill: "Queue entry {id} is not a skill."
-    approved: "Approved {name}: version {version} is active."
-    refused: "Not approved: {reason}"
-    curator_actor: operator
     description_chars: 60
     none: "—"
     active: "yes"
