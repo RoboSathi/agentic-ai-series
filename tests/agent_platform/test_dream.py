@@ -26,6 +26,7 @@ from agent_platform.memory.dream import (
     FileDreamInbox,
     MemoryAction,
     RecurringSignalSkills,
+    SessionSummarizer,
     TurnRecorder,
 )
 from agent_platform.memory.procedural.skills import SkillCatalog, SkillSelector, parse_skill
@@ -197,3 +198,73 @@ class TestADreamWithTheDefaultProfile:
         report = await dream.dream()
         [fact] = [e for e in report.entries if e.store == "Semantic"]
         assert fact.subject == "7" and "delivery" in fact.label
+
+
+class _Generator:
+    def __init__(self, sentence: str) -> None:
+        self._sentence = sentence
+
+    async def summarize(self, dialogue: str) -> str | None:
+        return self._sentence
+
+
+class _Nli:
+    def __init__(self, label: str) -> None:
+        self._label = label
+
+    async def entails(self, premise: str, hypothesis: str) -> Any:
+        return SimpleNamespace(label=self._label, score=1.0)
+
+
+def _summarizer(sentence: str, label: str) -> SessionSummarizer:
+    dream = get_settings().memory.dream
+    return SessionSummarizer(
+        entailment=_Nli(label),  # type: ignore[arg-type]
+        threshold=0.5,
+        outcome_chars=dream.outcome_chars,
+        summarizer=_Generator(sentence),
+        lookup_tools=["lookup"],
+        forbidden_words=dream.forbidden_words,
+        min_word_ratio=dream.min_word_ratio,
+    )
+
+
+def _session() -> list[DreamEvent]:
+    lookup = MemoryAction(name="t.lookup", arguments={"order_id": 7})
+    refund = MemoryAction(name="t.refund", arguments={"order_id": 7}, result="Issued. Done.")
+    return [_event("s", user_input="refund 7", assistant_output="done", actions=[lookup, refund])]
+
+
+class TestTheSessionSummary:
+    async def test_an_entailed_intent_leads_the_exact_outcomes(self) -> None:
+        summary = await _summarizer("The customer wanted a refund.", "entailment").summarize(
+            _session()
+        )
+        assert summary is not None and summary.intent_kept is True
+        assert summary.text.startswith("The customer wanted a refund.")
+        assert (
+            "Looked up order_id 7" in summary.text
+            and "refund (order_id 7) → Issued" in summary.text
+        )
+
+    async def test_an_unentailed_or_gendered_intent_is_dropped(self) -> None:
+        refuted = await _summarizer("They wanted cash.", "contradiction").summarize(_session())
+        gendered = await _summarizer("She wanted a refund.", "entailment").summarize(_session())
+        assert refuted is not None and refuted.intent_kept is False
+        assert gendered is not None and gendered.intent_kept is False
+
+    async def test_a_session_with_no_actions_has_no_summary(self) -> None:
+        assert await _summarizer("x", "entailment").summarize([_event("s")]) is None
+
+
+def test_the_support_profile_replaces_only_the_session_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from customer_support_agent.memory import profile
+
+    monkeypatch.setattr(profile, "create_entailment_model", lambda: _Nli("entailment"))
+    monkeypatch.setattr(profile, "LocalDialogueSummarizer", lambda: _Generator("x"))
+    support, default = profile.support_memory_profile(), MemoryProfile.default()
+    assert isinstance(support.episodic, SessionSummarizer)
+    assert type(support.semantic) is type(default.semantic)
+    assert type(support.skills) is type(default.skills)
