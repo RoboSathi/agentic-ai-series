@@ -1,1 +1,1 @@
-"""The ops agent's profile (`AGENT.md`) and procedures (`skills/`), ADR 0010."""
+"""The ops agent's profile (`AGENT.md`) and skills (`skills/`), ADR 0010."""

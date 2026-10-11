@@ -20,17 +20,17 @@ from agent_platform.llm.types import Message
 from agent_platform.logging import get_current_trace_id, get_logger, instrument
 from agent_platform.mcp import McpToolSource
 from agent_platform.mcp.client.presentation import server_card
-from agent_platform.memory.working import WorkingMemoryStore
-from agent_platform.observability import StageReporter
-from agent_platform.observability.langsmith import NullTraceExporter, TraceExporter, turn_trace
-from agent_platform.observability.units import close_task
-from agent_platform.security import MessageScreener, ScreenSubject
-from agent_platform.skills import (
+from agent_platform.memory.procedural.skills import (
     Activation,
     AgentInstructions,
     SkillCatalog,
     build_agent_instructions,
 )
+from agent_platform.memory.working import WorkingMemoryStore
+from agent_platform.observability import StageReporter
+from agent_platform.observability.langsmith import NullTraceExporter, TraceExporter, turn_trace
+from agent_platform.observability.units import close_task
+from agent_platform.security import MessageScreener, ScreenSubject
 from agent_platform.tools import NamespacedToolRegistry
 from ops_agent.config.settings import OpsAgentSettings
 from ops_agent.graph.nodes import OpsNodes
@@ -76,7 +76,7 @@ class OpsAgent:
         self._reporter = reporter
         self._screen = screen
         self._exporter = trace_exporter or NullTraceExporter()
-        # The profile always; procedures when procedural memory was built.
+        # The profile always; skills when procedural memory was built.
         self._instructions = instructions or build_agent_instructions(
             get_settings().skills, store=None, audit=None, reporter=None
         )
@@ -90,7 +90,7 @@ class OpsAgent:
 
     @property
     def skill_catalog(self) -> SkillCatalog | None:
-        """The procedures `/skills` lists (None when procedural memory is withheld)."""
+        """The skills `/skills` lists (None when procedural memory is withheld)."""
         return self._instructions.catalog
 
     async def handle(self, query: str, session_id: str) -> TurnResult:
@@ -182,15 +182,15 @@ class OpsAgent:
         )
 
     async def _opening(self, query: str, session_id: str) -> tuple[list[Message], TurnLayout]:
-        """The turn's first messages: profile and procedure, history, the question, prefetches.
+        """The turn's first messages: profile and skill, history, the question, prefetches.
 
-        The procedure is chosen first, without a model call, so its prefetch reads (the
+        The skill is chosen first, without a model call, so its prefetch reads (the
         metric catalogue, the view list) are already answered when the model starts.
         """
         activation = self._instructions.select(frozenset(), query)
         planned = _planned(activation)
-        # The card first — the procedure, what it reads first, and what `propose` will offer
-        # (every tool the server listed) — so no read appears without the procedure behind it.
+        # The card first — the skill, what it reads first, and what `propose` will offer
+        # (every tool the server listed) — so no read appears without the skill behind it.
         offered = [tool.model_name for tool in self._registry.all_tools()]
         reads = [name for _, name in planned if self._nodes.can_prefetch(name)]
         self._instructions.announce(activation, prefetched=reads, offered=offered)
@@ -233,9 +233,9 @@ __all__ = ["ANSWERED", "BLOCKED", "OUTCOMES", "STOPPED", "UNAVAILABLE", "OpsAgen
 
 
 def _planned(activation: Activation) -> list[tuple[str, str]]:
-    """(procedure, tool) for every prefetch read, each tool once, in procedure order."""
+    """(skill, tool) for every prefetch read, each tool once, in skill order."""
     seen: dict[str, str] = {}
     for item in activation.skills:
         for name in item.skill.document.prefetch:
             seen.setdefault(name, item.skill.name)
-    return [(procedure, name) for name, procedure in seen.items()]
+    return [(skill, name) for name, skill in seen.items()]

@@ -36,6 +36,7 @@ from customer_support_agent.evals.dataset.schema import CsaCasePayload
 from customer_support_agent.evals.fixture import EvalFixture, FixtureFacts
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.intent.router import CustomerSupportIntentRouter
+from customer_support_agent.persistence.repositories import HitlQueueRepository
 
 _TOOL_REQUEST = "tool_request"
 _TOOL_RESULT = "tool_result"
@@ -250,13 +251,18 @@ def side_effects(pool: SqliteConnectionPool, facts: FixtureFacts) -> dict[str, A
         if row["refund_id"] not in facts.seeded_refund_ids
     ]
     reviews = [
-        dict(row)
-        for row in pool.execute(
-            # Money reviews only: a reply review is not a side effect the oracle scores.
-            "SELECT id, order_id, user_id, requested_amount_cents, status FROM hitl_queue "
-            "WHERE action != 'reply'"
-        ).rows
-        if row["id"] not in facts.seeded_review_ids
+        {
+            "id": request.id,
+            "order_id": request.order_id,
+            "user_id": request.user_id,
+            "requested_amount_cents": request.requested_amount.cents
+            if request.requested_amount is not None
+            else None,
+            "status": request.status,
+        }
+        # Money reviews only: a reply review is not a side effect the oracle scores.
+        for request in HitlQueueRepository(pool).query()
+        if not request.is_reply and request.id not in facts.seeded_review_ids
     ]
     changed = [
         {

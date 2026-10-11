@@ -1,4 +1,4 @@
-"""Choosing a turn's procedures without a model call (ADR 0010).
+"""Choosing a turn's skills without a model call (ADR 0010).
 
 Selection is deterministic: a skill declared `always`, then a skill whose
 trigger matches one of the turn's signals, and only when no trigger
@@ -9,15 +9,15 @@ import pytest
 
 from agent_platform.config import get_settings
 from agent_platform.config.settings import SkillSettings
-from agent_platform.skills import Skill, SkillDocument
-from agent_platform.skills.selector import SkillSelector
+from agent_platform.memory.procedural.skills import Skill, SkillDocument
+from agent_platform.memory.procedural.skills.selector import SkillSelector
 
 
 def _skill(
     name: str,
     *,
     triggers: tuple[str, ...] = (),
-    description: str = "a procedure",
+    description: str = "a skill",
     keywords: tuple[str, ...] = (),
     source: str = "authored",
 ) -> Skill:
@@ -112,7 +112,7 @@ class TestTheLexicalFallback:
         lesson = _skill(
             "check settled",
             description="Check the order is settled before proposing a refund",
-            source="consolidated",
+            source="learned",
         )
         assert selector.select([lesson], frozenset({"intent:REFUND"}), "") == ()
         catalog = [_REFUND, _TRACK, lesson]

@@ -44,7 +44,7 @@ from agent_platform.memory.governance import (
     memory_permission,
     provenance_for,
 )
-from agent_platform.memory.procedural.memory import ProceduralStore
+from agent_platform.memory.procedural.store import SkillStore
 from agent_platform.memory.semantic.memory import SemanticStore
 from agent_platform.memory.types import (
     MemoryCommand,
@@ -65,7 +65,7 @@ from agent_platform.persistence import PlatformStore, SqliteConnectionPool, as_p
 # are the two the pipeline can infer structurally, and everything else
 # falls through to semantic memory.
 _EVENT_CATEGORIES = frozenset({"event", "interaction", "observation", "session_summary"})
-_PROCEDURE_CATEGORIES = frozenset({"how_to", "recipe", "compiled_prompt"})
+_SKILL_CATEGORIES = frozenset({"how_to", "recipe", "compiled_prompt"})
 
 # The role a legacy `process(..., provenance_kind=...)` call acts as.
 _ROLE_FOR_PROVENANCE: dict[ProvenanceKind, PrincipalRole] = {
@@ -117,7 +117,7 @@ class MemoryWritePipelineImpl:
         self,
         semantic: SemanticStore | None = None,
         episodic: EpisodicStore | None = None,
-        procedural: ProceduralStore | None = None,
+        procedural: SkillStore | None = None,
         authorizer: WriteAuthorizer | None = None,
         platform_store: PlatformStore | SqliteConnectionPool | None = None,
         *,
@@ -269,9 +269,10 @@ class MemoryWritePipelineImpl:
 
     def _claim(self, command: MemoryCommand, text: str) -> tuple[Claim, list[str]]:
         if command.key and command.value:
-            explicit = Claim(
-                key=normalize_key(command.key), value=command.value, extractor="explicit"
-            )
+            # A skill's name is already a checked slug, and it must stay the name its own
+            # SKILL.md declares; only a fact's key is normalised.
+            key = command.key if command.memory_type == "procedural" else normalize_key(command.key)
+            explicit = Claim(key=key, value=command.value, extractor="explicit")
             return explicit, ["D0:explicit"]
         claim = self._claims.extract(text)
         if claim is not None:
@@ -545,6 +546,33 @@ class MemoryWritePipelineImpl:
         self._record(MemoryCommand(principal=principal, operation="approve", key=fact.key), result)
         return result
 
+    def deny_queued(
+        self, queue_id: int, principal: MemoryPrincipal, reason: str = ""
+    ) -> WriteResult:
+        """A curator refuses a queued write: nothing is written, and the refusal is audited."""
+        pending = dict(self._curator.pending()).get(queue_id)
+        if pending is None or pending.fact is None:
+            return WriteResult(route="discard", written=False, reason="nothing to deny")
+        self._checked = ""
+        refusal = self._authorize(principal, "approve", pending.fact)
+        if refusal is not None:
+            return refusal
+        self._curator.decide(queue_id, "denied", principal.actor)
+        result = WriteResult(
+            route="discard",
+            written=False,
+            fact=pending.fact,
+            reason=reason or "denied by curator",
+            stage="curator",
+            operation="approve",
+            curator_id=queue_id,
+            permission=self._checked,
+        )
+        self._record(
+            MemoryCommand(principal=principal, operation="approve", key=pending.fact.key), result
+        )
+        return result
+
     def permits(
         self, principal: MemoryPrincipal, operation: Any, memory_type: MemoryType, category: str
     ) -> str | None:
@@ -630,7 +658,7 @@ class MemoryWritePipelineImpl:
     def _prior(self, fact: MemoryFact) -> MemoryFact | None:
         """The semantic fact an approval supersedes — none for other classes.
 
-        Only semantic facts supersede by key. A procedure is versioned by
+        Only semantic facts supersede by key. A skill is versioned by
         its own store, and looking it up in the semantic one retired
         whatever fact happened to share its name.
         """
@@ -640,11 +668,14 @@ class MemoryWritePipelineImpl:
 
     def _queue(self, result: WriteResult) -> WriteResult:
         """Hold a write for a human, and keep the record either way."""
-        return result.model_copy(update={"curator_id": self._curator.put(result)})
+        kinds = get_settings().review.kinds
+        procedural = result.fact is not None and store_type(result.fact.category) == "procedural"
+        kind = kinds.skill if procedural else kinds.memory_fact
+        return result.model_copy(update={"curator_id": self._curator.put(result, kind)})
 
     def _store_for(
         self, memory_type: MemoryType
-    ) -> SemanticStore | EpisodicStore | ProceduralStore | None:
+    ) -> SemanticStore | EpisodicStore | SkillStore | None:
         """The store a memory type belongs to, if this agent has it."""
         if memory_type == "episodic":
             return self._episodic
@@ -672,7 +703,7 @@ def store_type(category: str) -> MemoryType:
     """Which CoALA store a category belongs in."""
     if category in _EVENT_CATEGORIES:
         return "episodic"
-    if category in _PROCEDURE_CATEGORIES:
+    if category in _SKILL_CATEGORIES:
         return "procedural"
     return "semantic"
 

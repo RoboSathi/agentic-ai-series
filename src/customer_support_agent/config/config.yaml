@@ -106,26 +106,41 @@ llm:
     local:
       intent_text: "I want a refund for my order"
 
-# The profile and the procedures (ADR 0010): synced into procedural memory
+# The profile and the skills (ADR 0010): synced into procedural memory
 # at start-up when memory.procedural is on, selected per turn by intent.
 skills:
   profile_path: src/customer_support_agent/prompts/AGENT.md
   skills_dir: src/customer_support_agent/prompts/skills
-  # An unplaced turn (route llm_fallback) gets the order-status procedure only, so it
+  # An unplaced turn (route llm_fallback) gets the order-status skill only, so it
   # is offered reads: a write needs a request the router recognised as one.
   selection:
     max_active: 3
-  # Profile + the three largest procedures may add at most this to a prompt (the old
+  # Profile + the three largest skills may add at most this to a prompt (the old
   # instructions were 3,167).
   max_prompt_chars: 2600
 
+review:
+  words:
+    # This agent's review kinds: a refund or a cancellation's refund above its authority, and
+    # a reply the hallucination check cut.
+    columns:
+      refund: [ID, Order, Amount, Customer, Why queued, Raised]
+      cancel_and_refund: [ID, Order, Amount, Customer, Why queued, Raised]
+      reply: [ID, Customer, Session, Removed sentences, Why cut, Raised]
+
 memory:
-  episodic:
-    path: logs/memory/customer_support_agent
+  files:
+    root: src/customer_support_agent/data/memory
+  # Whoever a fact or session is about is a customer, here.
+  subject_label: "customer {subject}"
+  no_subject_label: "shared (no customer)"
   dream:
     # How this agent words a refused tool call (graph/nodes/execute.py);
-    # refusals repeated across sessions become procedure candidates.
+    # refusals repeated across sessions become skill candidates.
     refusal_markers: ["That action was not permitted:"]
+    learned_skill:
+      lessons:
+        refused: "'{value}' was refused in {count} {unit}. Check that condition first and tell the customer before proposing the action."
     # This agent's read-only tools: a dream summary says "looked up
     # orders …" for these and quotes only the calls that changed something.
     lookup_tools: [get_order_status, get_refund_status, list_orders]
@@ -642,6 +657,7 @@ customer_support_agent:
   # Start-up refuses an agent database with no customers: an empty schema authenticates
   # nobody, and every code would be answered as unknown. `{path}` is the database file.
   unseeded_database: "The agent database {path} has no customers: run `make dummy-data csa`."
+  stale_database: "The agent database {path} was built from an older seed_data.sql, so its customer codes are not the seed's: run `make dummy-data csa`."
   # Fixed wording the agent says itself. `{length}` is user_code_length.
   messages:
     auth:
@@ -694,7 +710,7 @@ customer_support_agent:
       location: ", last seen at {value}"
       due: ", due {value}"
       delivered: " on {value}"
-  demo_user_code: 2HEDZTV
+  demo_user_code: 43PC77U
   policy_path: src/customer_support_agent/prompts/customer_policy.md
   # The one sentence that tells the model its refund limit, rendered from the DB row
   # (`platform_agent_budgets`) when the agent is built. It is not a control and does not
@@ -728,7 +744,7 @@ customer_support_agent:
   support_contact: *support_contact
   # A refund a reviewer declined is final; this is how the customer escalates it.
   refund_declined_escalation: "To escalate, email {contact}."
-  # A procedure's prefetch reads (ADR 0010): each tool argument, from the turn-state key that
+  # A skill's prefetch reads (ADR 0010): each tool argument, from the turn-state key that
   # holds it; a read whose required arguments are not all known is skipped, never guessed.
   # `call_id` names the tool call the model is shown, so its result pairs with it.
   prefetch:
@@ -740,7 +756,7 @@ customer_support_agent:
     # answered is not offered again, and a tool whose only job is to find the order
     # is not offered once the order is known.
     needless_when_order_known: [list_orders]
-  # Which turn facts become procedure signals (ADR 0010): a state metadata
+  # Which turn facts become skill signals (ADR 0010): a state metadata
   # key, and how its value is written as a signal a SKILL.md trigger names.
   instruction_signals:
     intent: "intent:{value}"
@@ -782,6 +798,8 @@ customer_support_agent:
     hallucination: hallucination_contradicted
   # One human review queue: refunds above the limit, and replies the hallucination check cut.
   review_output:
+    # A customer in a review table: who, and the account the record carries.
+    customer_cell: "{name} (#{id})"
     # Appended to the HALLUCINATION CHECK card when a cut reply was queued.
     queued: "queued for review #{id} · {reason}"
     # What the model reads when an escalated call could not be queued. The

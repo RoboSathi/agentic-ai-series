@@ -417,7 +417,7 @@ class TestAWithheldStageSaysNothing:
 def _turn_state(metadata: dict[str, Any]) -> Any:
     """The parts of a turn `_offered_tools` reads: its metadata, and its query.
 
-    The query matters now: the turn's procedures narrow what is offered (ADR 0010), and
+    The query matters now: the turn's skills narrow what is offered (ADR 0010), and
     they are selected from it. An empty one selects none, so nothing extra is narrowed.
     """
     return SimpleNamespace(metadata=metadata, query="", model_query="")

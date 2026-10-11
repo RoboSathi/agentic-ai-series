@@ -18,7 +18,7 @@ def box_table(
     headers: Sequence[str], rows: Sequence[Sequence[str]], align: Sequence[Align]
 ) -> list[str]:
     """Header, rule, rows, each cell padded to its column's widest value."""
-    widths = [max(len(text) for text in column) for column in zip(headers, *rows, strict=True)]
+    widths = column_widths(headers, rows)
     glyphs = get_settings().presentation.box
     return [
         _rule(widths, glyphs.top, glyphs.horizontal),
@@ -27,6 +27,16 @@ def box_table(
         *(_row(cells, widths, align, glyphs.vertical) for cells in rows),
         _rule(widths, glyphs.bottom, glyphs.horizontal),
     ]
+
+
+def column_widths(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> list[int]:
+    """Each column's width: its widest cell, heading included."""
+    return [max(len(text) for text in column) for column in zip(headers, *rows, strict=True)]
+
+
+def rule(widths: Sequence[int], joins: Sequence[str]) -> str:
+    """One horizontal rule of a box table (`top`, `middle` or `bottom` joins)."""
+    return _rule(widths, joins, get_settings().presentation.box.horizontal)
 
 
 def _rule(widths: Sequence[int], joins: Sequence[str], horizontal: str) -> str:
@@ -44,4 +54,4 @@ def _row(cells: Sequence[str], widths: Sequence[int], align: Sequence[Align], ve
     return vertical + vertical.join(f"{pad}{text}{pad}" for text in shown) + vertical
 
 
-__all__ = ["Align", "box_table"]
+__all__ = ["Align", "box_table", "column_widths", "rule"]

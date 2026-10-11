@@ -27,7 +27,8 @@ These names are used as written in code, logs, stage labels and docs.
 | **Gap-fill** | one bounded round of targeted research for must-pass evidence gaps the audit found | `graph/run_nodes.py::gap_fill` |
 | **Writing fault** / **Revision** | an audit failure of how the report is written (`reflection.writing_checks`), fixed by revising the report against the audit's findings; bounded, stopped on a plateau | `graph/run_nodes.py::revise` |
 | **Cross-check** | a subject supported by entailed claims from at least two independent domains, none contradicted by another | `audit/checks.py::claim_verdict` |
-| **Lesson** | what a run's critics found, kept in episodic memory and recalled for the next run of the same kind on a similar topic (Reflexion) | `reflexion/lessons.py::LessonBook` |
+| **Run event** | what a finished run's critics found (failed criteria, rejection codes, limits hit), left in the dream inbox as signals scoped to the run's kind | `memory/run_events.py::RunEventWriter` |
+| **Learned skill** | a finding that recurred across runs of one kind, written by the dream as a SKILL.md and active once a curator approves it in `/queue` (ra-0023) | `agent_platform.memory.dream.RecurringSignalSkills` |
 | **Coverage & Limits** | the report section, built in code, that lists every unmet must-pass item with what was tried and why the run stopped | `synthesis/limits.py` |
 | **COMPLETE / PARTIAL** | every must-pass item met and no budget exhausted / anything less | `graph/run_nodes.py::_final_status` |
 | **Provider summary** | text a search provider writes about its results (Tavily's `answer`); untrusted, never evidence | `agent_platform.web.SearchResponse.provider_summary` |

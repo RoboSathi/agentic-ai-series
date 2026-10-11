@@ -253,17 +253,26 @@ class DashboardGenerator:
                     "format_preset": self._settings.default_format,
                 }
             )
-        return counted + [
-            {
-                "name": metric.name,
-                "display_name": metric.title,
-                "description": f"{metric.description} Better: {metric.better}.",
-                "expression": metric.expr,
-                "format_preset": self._format(metric.name),
-            }
-            for metric in metrics
-            if metric.view == view.name
-        ]
+        return counted + [self._measure(metric) for metric in metrics if metric.view == view.name]
+
+    def _measure(self, metric: MetricDefinition) -> dict[str, Any]:
+        """One metric as a Rill measure; a duration in the one configured unit."""
+        measure: dict[str, Any] = {
+            "name": metric.name,
+            "display_name": metric.title,
+            "description": f"{metric.description} Better: {metric.better}.",
+            "expression": metric.expr,
+        }
+        durations = self._settings.durations
+        if not metric.name.endswith(durations.ending):
+            return {**measure, "format_preset": self._format(metric.name)}
+        return {
+            **measure,
+            "display_name": durations.title.format(title=metric.title, unit=durations.unit),
+            "description": measure["description"] + durations.note,
+            "expression": f"({metric.expr}) / {durations.divisor:g}",
+            "format_d3": durations.format_d3,
+        }
 
     def _dimensions(self, view: CuratedView) -> list[str]:
         path = literal(str(self._parquet(view.name)))

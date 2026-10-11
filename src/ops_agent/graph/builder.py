@@ -30,7 +30,8 @@ from agent_platform.mcp import (
     SdkMcpTransport,
     server_spec,
 )
-from agent_platform.memory.procedural.memory import ProceduralStore
+from agent_platform.memory.procedural.skills import build_agent_instructions
+from agent_platform.memory.procedural.store import SkillStore
 from agent_platform.memory.working import WorkingMemoryStore
 from agent_platform.observability import StageReporter
 from agent_platform.observability.facts import create_fact_store, install_fact_store
@@ -45,8 +46,8 @@ from agent_platform.security import MessageScreener, PromptInjectionGuard, Secur
 from agent_platform.security.auth.auth import Authorizer
 from agent_platform.security.auth.policy import AgentPolicy
 from agent_platform.security.pii import PIIFilterImpl
+from agent_platform.security.pii.boundary import bounded
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
-from agent_platform.skills import build_agent_instructions
 from agent_platform.tools import NamespacedToolRegistry
 from agent_platform.tools.path import ToolPath
 from agent_platform.tools.types import ToolDefinition
@@ -104,11 +105,11 @@ def build_agent(
     calls = GovernedCalls(registry, path, agent, actor=settings.agent.id, governor=governor)
     # Procedural memory is the only memory this agent has: its skills,
     # versioned in the platform store. Withheld, it runs on its profile.
-    procedural = ProceduralStore(platform) if posture.is_on("memory.procedural") else None
+    procedural = SkillStore() if posture.is_on("memory.procedural") else None
     screen = _screen(platform) if posture.is_on("prompt_injection") else None
     declare_screens(settings.agent.id, screen.declared_checks() if screen else [])
     nodes = OpsNodes(
-        llm or _llm(reporter),
+        bounded(llm or _llm(reporter), posture),
         registry,
         calls,
         agent,

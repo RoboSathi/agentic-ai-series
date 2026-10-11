@@ -56,12 +56,14 @@ class Planner:
         self._covered = tuple(covered_checks)
         self._logger = get_logger("research_agent")
 
-    async def plan(self, contract: Contract, lessons: Sequence[str] = ()) -> PlanOutcome:
+    async def plan(self, contract: Contract, learned_skills: Sequence[str] = ()) -> PlanOutcome:
         """The plan and how it got there; raises if the plan and its one repair both fail.
 
-        `lessons` are earlier runs' (Reflexion): the planner is told to avoid their failures.
+        `learned_skills` are skills learned from earlier runs of this kind: followed to avoid their failures.
         """
-        request = prompt.build(contract, contract.budget.max_dag_nodes, self._max_queries, lessons)
+        request = prompt.build(
+            contract, contract.budget.max_dag_nodes, self._max_queries, learned_skills
+        )
         plan, first = await self._ask(request)
         validation = self._validate(plan, contract)
         if validation.valid and not validation.uncovered:

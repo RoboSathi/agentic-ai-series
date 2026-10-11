@@ -25,8 +25,9 @@ list — an honest partial result is better than repeated searching.
 Today's date and the approved recency window are in the payload (`today`,
 `recency_days`). The search is already limited to that window: never put a
 year, month or date in a query, and never rely on dates from memory.
-- `lessons_from_past_runs` (when present) are what earlier runs on similar topics learned
-  from their audits. Use them to avoid repeating a failure; never cite them as evidence.
+- `skills_learned_from_past_runs` (when present) are skills a curator approved from what
+  earlier runs of this kind kept failing. Follow them to avoid repeating a failure; never
+  cite them as evidence.
 """
 
 
@@ -49,8 +50,9 @@ actually answers the question. Judge that, and say why.
   `queries_tried`. When sufficient, propose none.
 
 Never put a year, month or date in a query: the search already applies the brief's window.
-- `lessons_from_past_runs` (when present) are what earlier runs on similar topics learned
-  from their audits. Use them to avoid repeating a failure; never cite them as evidence.
+- `skills_learned_from_past_runs` (when present) are skills a curator approved from what
+  earlier runs of this kind kept failing. Follow them to avoid repeating a failure; never
+  cite them as evidence.
 """
 
 
@@ -77,7 +79,7 @@ def build(
     tried: list[str],
     claims: list[str],
     max_follow_ups: int,
-    lessons: Sequence[str] = (),
+    learned_skills: Sequence[str] = (),
 ) -> RolePrompt:
     return RolePrompt(
         role=ROLE,
@@ -91,7 +93,7 @@ def build(
             "queries_tried": tried,
             "claims_so_far": claims,
             "max_follow_ups": max_follow_ups,
-            **({"lessons_from_past_runs": list(lessons)} if lessons else {}),
+            **({"skills_learned_from_past_runs": list(learned_skills)} if learned_skills else {}),
         },
     )
 
@@ -102,7 +104,7 @@ def build_critique(
     tried: list[str],
     claims: list[str],
     max_follow_ups: int,
-    lessons: Sequence[str] = (),
+    learned_skills: Sequence[str] = (),
 ) -> RolePrompt:
     """The critique: the whole rubric with each check's verdict, the claims, what was tried."""
     rubric = [{"item_id": item.item_id, "text": item.text} for item in contract.rubric.items]
@@ -119,6 +121,6 @@ def build_critique(
             "queries_tried": tried,
             "claims_so_far": claims,
             "max_follow_ups": max_follow_ups,
-            **({"lessons_from_past_runs": list(lessons)} if lessons else {}),
+            **({"skills_learned_from_past_runs": list(learned_skills)} if learned_skills else {}),
         },
     )

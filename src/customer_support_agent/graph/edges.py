@@ -41,7 +41,7 @@ class GraphWiring(NodeSupport):
         graph.add_node("authenticate", self.authenticate)
         graph.add_node("choose_order", self.choose_order)
         graph.add_node("read_intent", self.read_intent)
-        # Between the front door and the first model call: a procedure's known first reads.
+        # Between the front door and the first model call: a skill's known first reads.
         graph.add_node("prefetch", self.prefetch)
         graph.add_node("propose", self.propose)
         graph.add_node("execute", self.execute)

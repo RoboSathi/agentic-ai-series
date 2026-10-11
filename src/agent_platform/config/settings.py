@@ -601,6 +601,21 @@ class MoneySettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="MONEY__")
 
 
+class AuditViewSettings(BaseModel):
+    """How the audit trail reads in a terminal and the console (`audit/view.py`)."""
+
+    decision_colours: dict[str, str]
+    standing_colours: dict[str, str]
+    since_pattern: str
+    since_units: dict[str, str]
+    trace_entry: str
+    trace_detail: str
+    trace_details: list[str]
+    locked: str
+    title: str
+    trace_title: str
+
+
 class AuditSettings(YamlBackedSettings):
     """Append-only decision ledger (LLD §5)."""
 
@@ -614,6 +629,7 @@ class AuditSettings(YamlBackedSettings):
     # The agent names its own; the platform default names none.
     prompt_source: str
     policy_source: str
+    view: AuditViewSettings
 
     model_config = SettingsConfigDict(env_prefix="AUDIT__")
 
@@ -927,6 +943,17 @@ class DummyAnalyticsSettings(BaseModel):
     incident: DummyIncidentSettings
 
 
+class DashboardDurations(BaseModel):
+    """Every duration measure in one unit and one format, so a row of tiles never mixes units."""
+
+    ending: str
+    divisor: float = Field(gt=0)
+    unit: str
+    format_d3: str
+    title: str
+    note: str
+
+
 class DashboardSettings(BaseModel):
     """The Rill project generated from the semantic layer (`analytics/dashboards.py`)."""
 
@@ -941,6 +968,7 @@ class DashboardSettings(BaseModel):
     by_agent: ByAgentSettings
     groups: dict[str, DashboardGroup]
     layout: DashboardLayout
+    durations: DashboardDurations
     # Format preset by the metric name's ending.
     formats: dict[str, str]
     default_format: str
@@ -1261,14 +1289,58 @@ class EnabledToggle(BaseModel):
     enabled: bool
 
 
-class EpisodicMemorySettings(BaseModel):
-    """Episodic store — append-only, one file per session (E14)."""
+class MemoryIndexWords(BaseModel):
+    """How each store's MEMORY.md reads: a title, then one line per memory."""
 
-    path: str
+    title: str
+    line: str
+    empty: str
+    description_chars: int = Field(gt=0)
+
+
+class MemoryFilesSettings(BaseModel):
+    """Where an agent's long-term memory lives on disk, and how its files are named (ADR 0012)."""
+
+    root: str
+    dream_events_dir: str
+    episodic_dir: str
+    semantic_dir: str
+    procedural_dir: str
+    pending_dir: str
+    consolidated_dir: str
+    history_dir: str
+    index_file: str
+    derived_index_file: str
+    lock_file: str
+    sequence_file: str
+    record_digits: int = Field(gt=0)
+    record_suffix: str
+    event_suffix: str
+    session_log_suffix: str
+    frontmatter_delimiter: str
+    shared_subject_dir: str
+    name_digest_chars: int = Field(gt=0)
+    index: MemoryIndexWords
 
     @property
-    def resolved_path(self) -> Path:
-        return resolve_path(self.path)
+    def resolved_root(self) -> Path:
+        return resolve_path(self.root)
+
+    @property
+    def dream_events_root(self) -> Path:
+        return self.resolved_root / self.dream_events_dir
+
+    @property
+    def episodic_root(self) -> Path:
+        return self.resolved_root / self.episodic_dir
+
+    @property
+    def semantic_root(self) -> Path:
+        return self.resolved_root / self.semantic_dir
+
+    @property
+    def procedural_root(self) -> Path:
+        return self.resolved_root / self.procedural_dir
 
 
 class RagChunkingSettings(BaseModel):
@@ -1398,24 +1470,38 @@ class MemoryImportanceSettings(BaseModel):
     by_category: dict[str, float]
 
 
-class DreamSettings(BaseModel):
-    """Offline consolidation of the dream inbox (`make dream`)."""
+class LearnedSkillWords(BaseModel):
+    """How a dream writes a skill it learned: a SKILL.md, worded by signal kind."""
 
-    # Consolidated turn events older than this are pruned by each dream.
+    artifact_type: str
+    name: str
+    description: str
+    unit: str
+    precondition_scoped: str
+    precondition_any: str
+    body: str
+    default_lesson: str
+    lessons: dict[str, str] = Field(default_factory=dict)
+    keyword_min_chars: int = Field(gt=0)
+    max_keywords: int = Field(gt=0)
+
+
+class DreamSettings(BaseModel):
+    """Offline consolidation of an agent's dream events (`make dream <agent>`)."""
+
+    # Consolidated events older than this are pruned by each dream.
     retention_days: int = Field(gt=0)
-    # How many identical refusals across sessions make a procedure candidate.
-    procedure_threshold: int = Field(gt=0)
+    # The kind a completed turn's event carries.
+    turn_event_kind: str
+    # strftime pattern naming a pending event's file, so a listing is arrival order.
+    event_file_time_format: str
     # Add a locally generated intent sentence to each session summary.
     summarize_intent: bool
-    # The principal a dream acts as. An agent role, so a proposed procedure
-    # is refused by governance and lands with a curator.
+    # The principal a dream acts as. An agent role, so a proposed skill is
+    # refused by governance and lands with a curator.
     actor: str
     # How much of a tool result one outcome line quotes.
     outcome_chars: int = Field(gt=0)
-    # Prefixes that mark a tool result as a refusal.
-    refusal_markers: list[str]
-    # A procedure key is a name, not a sentence: longer keys are cut here.
-    procedure_key_chars: int = Field(gt=0)
     # Words a generated summary sentence may not contain (gendered pronouns:
     # the summarizer cannot know them). Such a sentence is dropped.
     forbidden_words: list[str]
@@ -1424,19 +1510,25 @@ class DreamSettings(BaseModel):
     # Read-only tools, named by the agent. A summary condenses their calls
     # to "looked up …" and quotes only what changed something.
     lookup_tools: list[str] = Field(default_factory=list)
+    # Prefixes that mark a tool result as a refusal, and the signal kind one becomes.
+    refusal_markers: list[str]
+    refusal_signal_kind: str
+    # In how many distinct sessions (or runs) a signal recurs before it is a skill candidate.
+    skill_threshold: int = Field(gt=0)
+    learned_skill: LearnedSkillWords
 
 
 class SkillSelectionSettings(BaseModel):
-    """How many procedures one prompt carries, and when a query names one."""
+    """How many skills one prompt carries, and when a query names one."""
 
     max_active: int = Field(gt=0)
     min_lexical_score: float = Field(ge=0.0)
 
 
 class SkillRenderSettings(BaseModel):
-    """How procedures and their refs are written into a prompt and a record."""
+    """How skills and their refs are written into a prompt and a record."""
 
-    procedure_heading: str
+    skill_heading: str
     reference_heading: str
     separator: str
     sections_sent: list[str]
@@ -1445,7 +1537,7 @@ class SkillRenderSettings(BaseModel):
 
 
 class SkillReasonWords(BaseModel):
-    """Why a procedure was activated, as recorded on its card and audit entry."""
+    """Why a skill was activated, as recorded on its card and audit entry."""
 
     always: str
     trigger: str
@@ -1466,7 +1558,7 @@ class SkillObservabilitySettings(BaseModel):
 
 
 class SkillAuditSettings(BaseModel):
-    """Who the audit trail says activated or synced procedures, and as what action."""
+    """Who the audit trail says activated or synced skills, and as what action."""
 
     actor: str
     activation_action: str
@@ -1518,7 +1610,7 @@ class MemorySettings(YamlBackedSettings):
 
     _yaml_section = "memory"
     schema_version: str
-    episodic: EpisodicMemorySettings
+    files: MemoryFilesSettings
     semantic: SemanticMemorySettings
     write_pipeline: MemoryWritePipelineSettings
     retrieval_weights: MemoryRetrievalWeights
@@ -1527,9 +1619,63 @@ class MemorySettings(YamlBackedSettings):
     governance: MemoryGovernanceSettings
     deterministic: MemoryDeterministicSettings
     importance: MemoryImportanceSettings
+    subject_label: str
+    no_subject_label: str
     dream: DreamSettings
 
     model_config = SettingsConfigDict(env_prefix="MEMORY__")
+
+
+class ReviewKinds(BaseModel):
+    """The platform's own review kinds."""
+
+    memory_fact: str
+    skill: str
+    quarantine: str
+
+
+class ReviewWords(BaseModel):
+    """How `/queue` and the Review tab word the queue."""
+
+    summary: str
+    usage: str
+    title: str
+    empty: str
+    show_title: str
+    decided: str
+    hints: dict[str, str]
+    kind_title: str
+    time_format: str
+    none: str
+    columns: dict[str, list[str]]
+    show_headers: list[str]
+    needs_id: str
+    needs_comment: str
+    unknown_item: str
+    already_decided: str
+    unknown_kind: str
+    quarantine_released: str
+    quarantine_upheld: str
+    tab_title: str
+    comment_placeholder: str
+    approve_button: str
+    deny_button: str
+    nothing_selected: str
+
+
+class ReviewSettings(YamlBackedSettings):
+    """One human-review queue for every kind (ADR 0012)."""
+
+    _yaml_section = "review"
+    table: str
+    min_comment_chars: int = Field(gt=0)
+    kinds: ReviewKinds
+    audit_action: str
+    trace_id: str
+    console_reviewer: str
+    words: ReviewWords
+
+    model_config = SettingsConfigDict(env_prefix="REVIEW__")
 
 
 class GuardrailOutcomeSettings(BaseModel):
@@ -1976,6 +2122,7 @@ class PiiSettings(BaseModel):
     # `tokenize` writes `[CATEGORY:token]`: the category, then this many characters of the token.
     token_format: str
     token_chars: int = Field(ge=8, le=64)
+    boundary_cache_entries: int = Field(gt=0)
     # The deployment's own values that only look like personal data, left as written.
     allow_list: list[str] = Field(default_factory=list)
     patterns: dict[str, str]
@@ -2486,30 +2633,6 @@ class PresentationSettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="PRESENTATION__")
 
 
-class DeadLetterCommandWords(BaseModel):
-    """What `/dlq` and `make dlq` say (`commands/quarantine.py`)."""
-
-    summary: str
-    usage: str
-    default_status: str
-    list_title: str
-    counts: str
-    headers: list[str]
-    empty: str
-    show_hint: str
-    entry_title: str
-    preview_chars: int = Field(ge=8)
-    time_format: str
-    unknown: str
-    unknown_status: str
-    unknown_id: str
-    needs_id: str
-    needs_note: str
-    refused: str
-    done: str
-    audit_action: str
-
-
 class StatsCommandWords(BaseModel):
     """What `/stats` says (`commands/stats.py`)."""
 
@@ -2564,39 +2687,60 @@ class SkillsCommandWords(BaseModel):
     history_title: str
     history_headers: list[str]
     pending_title: str
-    pending_headers: list[str]
     empty: str
     no_catalog: str
-    no_curator: str
     unknown: str
     needs_name: str
-    needs_id: str
-    not_a_procedure: str
-    approved: str
-    refused: str
-    curator_actor: str
     description_chars: int = Field(gt=0)
     none: str
     active: str
     inactive: str
 
 
+class MemoryTablesWords(BaseModel):
+    """How `/memory` and `make show-memory` title and head their tables."""
+
+    title: str
+    working_title: str
+    working_headers: list[str]
+    history_key: str
+    history_value: str
+    episodic_title: str
+    episodic_headers: list[str]
+    summary_kind: str
+    event_kind: str
+    semantic_title: str
+    semantic_headers: list[str]
+    skills_title: str
+    skills_headers: list[str]
+    inbox_title: str
+    inbox_headers: list[str]
+    pending: str
+    consolidated: str
+    empty: str
+    episodic_empty: str
+    time_format: str
+    queue_note: str
+    inbox_events: int = Field(gt=0)
+
+
 class CommandSettings(YamlBackedSettings):
     """Console slash commands (LLD §20)."""
 
     _yaml_section = "commands"
+    hidden: list[str] = Field(default_factory=list)
     default_limit: int
     value_preview_chars: int
     # Memory trees (`make show-memory`, `/memory`, `make dream`): how much of
     # a value one line shows, and how many events each session lists.
     tree_preview_chars: int
     memory_tree_events_per_session: int
+    memory_tables: MemoryTablesWords
     recent_window: int
     # What a scoped command says when the session has nobody verified, and
     # when asked for someone else's records (`ConsoleScope`).
     verify_first: str
     not_your_records: str
-    dlq: DeadLetterCommandWords
     audit: AuditCommandWords
     stats: StatsCommandWords
     skills: SkillsCommandWords
@@ -2627,6 +2771,12 @@ class CommandOutputSettings(BaseModel):
     column_gap: int
     max_column_width: int
     prompt_style: str
+    table_title_style: str
+    grid_style: str
+    table_header_style: str
+    id_style: str
+    empty_style: str
+    state_styles: dict[str, str]
 
 
 class RunControl(BaseModel):
@@ -2881,6 +3031,7 @@ class AppConfig(BaseSettings):
     memory: MemorySettings = Field(default_factory=lambda: MemorySettings())  # type: ignore[call-arg]
     skills: SkillSettings = Field(default_factory=lambda: SkillSettings())  # type: ignore[call-arg]
     guardrails: GuardrailsSettings = Field(default_factory=lambda: GuardrailsSettings())  # type: ignore[call-arg]
+    review: ReviewSettings = Field(default_factory=lambda: ReviewSettings())  # type: ignore[call-arg]
     hallucination_check: HallucinationCheckSettings = Field(
         default_factory=lambda: HallucinationCheckSettings()  # type: ignore[call-arg]
     )

@@ -1,16 +1,19 @@
-"""The four CoALA memory stores and the write pipeline (LLD §8)."""
+"""The four CoALA memory stores, the write pipeline and dreams (LLD §8, ADR 0012)."""
 
-from agent_platform.memory.episodic import EpisodicStore
-from agent_platform.memory.events import (
-    DreamInbox,
+from agent_platform.memory.dream import (
+    DreamEvent,
+    DreamEventSink,
+    DreamSignal,
+    FileDreamInbox,
     MemoryAction,
-    MemoryEvent,
-    MemoryEventSink,
     MemoryObservation,
+    TurnRecorder,
 )
+from agent_platform.memory.episodic import EpisodicStore
 from agent_platform.memory.facade import MemoryFacade
 from agent_platform.memory.governance import MemoryAuthorizer, MemoryDecision
-from agent_platform.memory.procedural import ProceduralStore
+from agent_platform.memory.procedural import SkillStore
+from agent_platform.memory.profile import MemoryProfile
 from agent_platform.memory.semantic import SemanticStore
 from agent_platform.memory.store import (
     CompositeRetrievalScorer,
@@ -38,11 +41,14 @@ from agent_platform.memory.write_pipeline import MemoryWritePipelineImpl, WriteA
 
 __all__ = [
     "CompositeRetrievalScorer",
-    "DreamInbox",
+    "DreamEvent",
+    "DreamEventSink",
+    "DreamSignal",
+    "FileDreamInbox",
     "MemoryAction",
-    "MemoryEvent",
-    "MemoryEventSink",
     "MemoryObservation",
+    "MemoryProfile",
+    "TurnRecorder",
     "EpisodicStore",
     "MemoryAuthorizer",
     "MemoryCommand",
@@ -58,7 +64,7 @@ __all__ = [
     "MemoryStore",
     "MemoryType",
     "MemoryWritePipelineImpl",
-    "ProceduralStore",
+    "SkillStore",
     "Provenance",
     "ProvenanceKind",
     "RelevanceScorer",

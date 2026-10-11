@@ -1,26 +1,43 @@
-"""Semantic memory — what is generally true (E14, LLD §8).
+"""Semantic memory — what is generally true (E14, LLD §8, ADR 0012).
 
-Semantic memory is platform-owned agent state. The storage schema is scoped
-by ``agent_id`` because the same common library may host different agents in
-the same SQLite file, and by ``subject_id`` because one agent holds facts
-about many customers and a session may read only its own subject's.
+Files, one directory per agent. Each fact is about a subject (a customer,
+say) or about the agent itself, and lives in
+`semantic/<subject>/<key>.md`: a readable file with the fact's
+provenance in its frontmatter and its value as the body. `MEMORY.md`
+lists them all. Those files are *views*: the truth is the numbered
+records under `.history/`, one per version ever written.
 
 It is a source of truth, so nothing is ever overwritten:
 
-  * an update is a new **version** that supersedes the old one;
+  * an update is a new **version** whose record supersedes the last;
   * a delete is a **tombstone** — out of recall, still in history;
-  * only an **erase** removes a row, for data-protection requests.
+  * only an **erase** removes the records, for data-protection requests.
 
-Reads are tiered cheapest-first (R1 exact → R2 FTS5 BM25), and recall
-**reinforces** what it used (`access_count`, `last_accessed_at`).
+Reads are tiered cheapest-first (R1 exact → R2 BM25 over a derived FTS5
+index), and recall **reinforces** what it used (`access_count`,
+`last_accessed_at`).
 """
 
 import difflib
-import re
+from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 from agent_platform.config import get_settings
 from agent_platform.logging import get_logger, instrument, logged
+from agent_platform.memory.files import (
+    DerivedIndex,
+    IndexedDoc,
+    IndexEntry,
+    MemoryDirectory,
+    MemoryDocument,
+    Record,
+    RecordLog,
+    render_document,
+    safe_name,
+    write_index,
+)
+from agent_platform.memory.files.records import SEQUENCE_FIELD
 from agent_platform.memory.types import (
     MemoryFact,
     MemoryQuery,
@@ -28,143 +45,62 @@ from agent_platform.memory.types import (
     WriteResult,
 )
 from agent_platform.observability.types import utc_now
-from agent_platform.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS platform_semantic_facts (
-    fact_id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent_id       TEXT NOT NULL,
-    key            TEXT NOT NULL,
-    value          TEXT NOT NULL,
-    category       TEXT NOT NULL,
-    confidence     REAL NOT NULL,
-    importance     REAL NOT NULL,
-    source         TEXT NOT NULL,
-    provenance     TEXT NOT NULL,
-    confirmed      INTEGER NOT NULL,
-    event_time     TEXT NOT NULL,
-    ingestion_time TEXT NOT NULL,
-    valid_until    TEXT,
-    superseded_by  TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_platform_semantic_key
-    ON platform_semantic_facts (agent_id, key);
-"""
-
-# Columns added after the table first shipped: migrated in place, with the
-# defaults an existing row should have had all along.
-_ADDED_COLUMNS = {
-    "subject_id": "TEXT NOT NULL DEFAULT ''",
-    "version": "INTEGER NOT NULL DEFAULT 1",
-    "access_count": "INTEGER NOT NULL DEFAULT 0",
-    "last_accessed_at": "TEXT",
-    "deleted_at": "TEXT",
-    "deleted_by": "TEXT",
-}
-
-# Full-text index (R2) kept in step with the facts table by triggers, so no
-# write path can forget to update it.
-_FTS_TABLE = "platform_semantic_fts"
-_FTS_SCHEMA = f"""
-CREATE VIRTUAL TABLE {_FTS_TABLE} USING fts5(
-    key, value, content='platform_semantic_facts', content_rowid='fact_id'
-);
-CREATE TRIGGER IF NOT EXISTS platform_semantic_fts_ai AFTER INSERT ON platform_semantic_facts
-BEGIN INSERT INTO {_FTS_TABLE}(rowid, key, value) VALUES (new.fact_id, new.key, new.value); END;
-CREATE TRIGGER IF NOT EXISTS platform_semantic_fts_ad AFTER DELETE ON platform_semantic_facts
-BEGIN INSERT INTO {_FTS_TABLE}({_FTS_TABLE}, rowid, key, value)
-    VALUES ('delete', old.fact_id, old.key, old.value); END;
-INSERT INTO {_FTS_TABLE}({_FTS_TABLE}) VALUES ('rebuild');
-"""
-
-_INSERT = """
-INSERT INTO platform_semantic_facts (
-    agent_id, key, value, category, confidence, importance, source, provenance,
-    confirmed, event_time, ingestion_time, valid_until, superseded_by,
-    subject_id, version
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-"""
-
-# Believed now: neither replaced by a newer version nor tombstoned.
-_CURRENT = "superseded_by IS NULL AND deleted_at IS NULL"
-# FTS5 query terms: plain word characters only, so nothing a customer types
-# is ever interpreted as FTS syntax.
-_FTS_TERM = re.compile(r"[A-Za-z0-9]{2,}")
+# The store's name on its MEMORY.md title.
+_STORE_TITLE = "Semantic"
 
 
 @instrument("memory")
 class SemanticStore:
-    """Structured facts with exact-then-fuzzy key lookup, agent-scoped."""
+    """Structured facts with exact-then-fuzzy key lookup, one agent's directory."""
 
-    def __init__(
-        self,
-        store: PlatformStore | SqliteConnectionPool | None = None,
-        *,
-        agent_id: str | None = None,
-    ) -> None:
-        settings = get_settings().memory.semantic
-        self._store = as_platform_store(store, agent_id=agent_id)
-        self._agent_id = agent_id or self._store.agent_id
-        self._fuzzy_threshold = settings.fuzzy_match_threshold
+    def __init__(self, root: Path | None = None, *, agent_id: str | None = None) -> None:
+        settings = get_settings()
+        self._files = settings.memory.files
+        self._agent_id = agent_id or settings.agent.id
+        self._fuzzy_threshold = settings.memory.semantic.fuzzy_match_threshold
+        self._dir = MemoryDirectory(root or self._files.semantic_root, self._files.lock_file)
+        self._log = RecordLog(self._dir, self._files)
+        self._index = DerivedIndex(self._dir.path(self._files.derived_index_file))
         self._logger = get_logger("memory")
-        self._store.execute_script(_SCHEMA)
-        self._migrate_columns()
-        self._ensure_fts()
-        self._migrate_legacy_table()
 
     @property
     def agent_id(self) -> str:
         return self._agent_id
 
-    def purge(self) -> int:
-        """Remove every one of this agent's rows. Operator reset only.
+    @property
+    def root(self) -> Path:
+        return self._dir.root
 
-        Deliberately outside the write pipeline: this is `make clean-memory`
-        wiping a demo back to empty, not a memory operation with a
-        principal — the same standing as rebuilding the database.
+    def purge(self) -> int:
+        """Remove every fact, version and view. Operator reset only (`make clean-memory`).
+
+        Deliberately outside the write pipeline: this wipes a demo back to
+        empty, not a memory operation with a principal.
         """
-        result = self._store.execute(
-            "DELETE FROM platform_semantic_facts WHERE agent_id = ?", (self._agent_id,)
-        )
-        # The delete trigger keeps the index in step row by row; a rebuild
-        # makes sure nothing is left behind whatever state it was in.
-        self._store.execute(f"INSERT INTO {_FTS_TABLE}({_FTS_TABLE}) VALUES ('rebuild')")
-        return result.affected
+        with self._dir.locked():
+            removed = len(self._log.records())
+            for child in self._dir.children():
+                self._dir.remove_tree(child.name)
+            self._dir.delete(self._files.index_file)
+            self._index.rebuild([], self._log.fingerprint())
+        return removed
 
     @logged("memory")
     def write(self, fact: MemoryFact, provenance: Provenance) -> WriteResult:
         """Store a fact. Conflicts are the write pipeline's business, not ours."""
         stored = fact.model_copy(update={"memory_type": "semantic", "provenance": provenance})
-        self._store.execute(
-            _INSERT,
-            (
-                self._agent_id,
-                stored.key,
-                stored.value,
-                stored.category,
-                stored.confidence,
-                stored.importance,
-                provenance.source,
-                provenance.kind,
-                int(provenance.confirmed),
-                stored.event_time.isoformat(),
-                provenance.ingestion_time.isoformat(),
-                stored.valid_until.isoformat() if stored.valid_until else None,
-                stored.superseded_by,
-                stored.subject_id,
-                stored.version,
-            ),
-        )
+        with self._dir.locked():
+            self._log.append(self._group(stored.subject_id, stored.key), _document(stored))
+            self._refresh(stored.subject_id, stored.key)
         return WriteResult(route="auto_commit", written=True, fact=stored, reason="committed")
 
     def latest(self, key: str, subject_id: str = "") -> MemoryFact | None:
         """The current version of one subject's fact, if there is one."""
-        row = self._store.query_one(
-            f"SELECT * FROM platform_semantic_facts WHERE agent_id = ? AND subject_id = ? "
-            f"AND key = ? AND {_CURRENT} ORDER BY fact_id DESC LIMIT 1",
-            (self._agent_id, subject_id, key),
-        )
-        return _to_fact(row) if row else None
+        current = [
+            fact for _, fact in self._current(self._group(subject_id, key)) if fact.key == key
+        ]
+        return current[-1] if current else None
 
     def exact(
         self, keys: list[str], identifiers: list[str], subject_id: str, limit: int
@@ -172,61 +108,50 @@ class SemanticStore:
         """R1 — facts whose key is asked for, or whose value names an identifier."""
         if not keys and not identifiers:
             return []
-        matches = ["key = ?" for _ in keys] + ["instr(value, ?) > 0" for _ in identifiers]
-        sql = (
-            "SELECT * FROM platform_semantic_facts WHERE agent_id = ? AND subject_id = ? "
-            f"AND {_CURRENT} AND ({' OR '.join(matches)}) ORDER BY fact_id DESC LIMIT ?"
-        )
-        params = (self._agent_id, subject_id, *keys, *identifiers, limit)
-        return [_to_fact(row) for row in self._store.iter_rows(sql, params)]
+        hits = [
+            fact
+            for _, fact in self._current((self._subject_dir(subject_id),))
+            if fact.subject_id == subject_id
+            and (fact.key in keys or any(item in fact.value for item in identifiers))
+        ]
+        return list(reversed(hits))[:limit]
 
     def lexical(self, text: str, subject_id: str, limit: int) -> list[tuple[MemoryFact, float]]:
-        """R2 — FTS5 BM25 over keys and values, best first, with a [0, 1] score."""
-        terms = _FTS_TERM.findall(text)
-        if not terms:
-            return []
-        expression = " OR ".join(f'"{term}"' for term in terms)
-        rows = list(
-            self._store.iter_rows(
-                f"SELECT f.*, bm25({_FTS_TABLE}) AS rank FROM {_FTS_TABLE} "
-                f"JOIN platform_semantic_facts f ON f.fact_id = {_FTS_TABLE}.rowid "
-                f"WHERE {_FTS_TABLE} MATCH ? AND f.agent_id = ? AND f.subject_id = ? "
-                f"AND f.superseded_by IS NULL AND f.deleted_at IS NULL "
-                "ORDER BY rank LIMIT ?",
-                (expression, self._agent_id, subject_id, limit),
-            )
-        )
-        # bm25() is negative, more negative is better; scale against the best.
-        best = min((float(row["rank"]) for row in rows), default=0.0)
-        return [(_to_fact(row), float(row["rank"]) / best if best else 0.0) for row in rows]
+        """R2 — BM25 over keys and values, best first, with a [0, 1] score."""
+        self._ensure_index()
+        found: list[tuple[MemoryFact, float]] = []
+        for key, score in self._index.search(text, subject_id, limit):
+            current = [fact for _, fact in self._current(self._group(subject_id, key))]
+            if current:
+                found.append((current[-1], score))
+        return found
 
     def tombstone(self, key: str, subject_id: str, actor: str) -> int:
         """Delete a fact the way a source of truth deletes: keep it, stop believing it."""
-        result = self._store.execute(
-            f"UPDATE platform_semantic_facts SET deleted_at = ?, deleted_by = ? "
-            f"WHERE agent_id = ? AND subject_id = ? AND key = ? AND {_CURRENT}",
-            (utc_now().isoformat(), actor, self._agent_id, subject_id, key),
-        )
-        return result.affected
+        stamp = {"deleted_at": utc_now().isoformat(), "deleted_by": actor}
+        return self._mark(subject_id, key, stamp)
 
     def erase(self, key: str, subject_id: str) -> int:
         """Remove every version of a fact — data-protection erasure, not a delete."""
-        result = self._store.execute(
-            "DELETE FROM platform_semantic_facts WHERE agent_id = ? AND subject_id = ? AND key = ?",
-            (self._agent_id, subject_id, key),
-        )
-        self._logger.info("Erased semantic fact", key=key, removed=result.affected)
-        return result.affected
+        with self._dir.locked():
+            removed = self._log.remove(self._group(subject_id, key))
+            self._refresh(subject_id, key)
+        self._logger.info("Erased semantic fact", key=key, removed=removed)
+        return removed
 
     def reinforce(self, facts: list[MemoryFact]) -> None:
         """Record that recall used these facts (frequency and recency of use)."""
+        if not facts:
+            return
         now = utc_now().isoformat()
-        for fact in facts:
-            self._store.execute(
-                "UPDATE platform_semantic_facts SET access_count = access_count + 1, "
-                f"last_accessed_at = ? WHERE agent_id = ? AND subject_id = ? AND key = ? AND {_CURRENT}",
-                (now, self._agent_id, fact.subject_id, fact.key),
-            )
+        with self._dir.locked():
+            for fact in facts:
+                for record, current in self._current(self._group(fact.subject_id, fact.key)):
+                    self._log.rewrite(
+                        record,
+                        {"access_count": current.access_count + 1, "last_accessed_at": now},
+                    )
+                self._write_view(fact.subject_id, fact.key)
 
     def read(self, query: MemoryQuery) -> list[MemoryFact]:
         """Facts for a query, cheapest retrieval tier first."""
@@ -240,34 +165,21 @@ class SemanticStore:
         return self.search(query)[: query.limit]
 
     def get(self, key: str, include_superseded: bool = False) -> list[MemoryFact]:
-        """Tier 1 — exact key match, newest first."""
-        sql = "SELECT * FROM platform_semantic_facts WHERE agent_id = ? AND key = ?"
-        params: tuple[Any, ...] = (self._agent_id, key)
-        if not include_superseded:
-            sql += f" AND {_CURRENT}"
-        sql += " ORDER BY fact_id DESC"
-        return [_to_fact(row) for row in self._store.iter_rows(sql, params)]
+        """Tier 1 — exact key match across subjects, newest first."""
+        facts = [fact for fact in self._facts(include_superseded) if fact.key == key]
+        return list(reversed(facts))
 
     def search(self, query: MemoryQuery) -> list[MemoryFact]:
-        """Tier 2 — literal substring scan over keys and values."""
-        clauses, params = ["agent_id = ?"], [self._agent_id]
-        if query.text:
-            clauses.append("(value LIKE ? OR key LIKE ?)")
-            params += [f"%{query.text}%", f"%{query.text}%"]
-        if query.category:
-            clauses.append("category = ?")
-            params.append(query.category)
-        if query.subject_id:
-            clauses.append("subject_id = ?")
-            params.append(query.subject_id)
-        if not query.include_superseded:
-            clauses.append(_CURRENT)
-        sql = (
-            "SELECT * FROM platform_semantic_facts WHERE "
-            + " AND ".join(clauses)
-            + " ORDER BY fact_id DESC"
-        )
-        return [_to_fact(row) for row in self._store.iter_rows(sql, tuple(params))]
+        """Tier 2 — literal substring scan over keys and values, newest first."""
+        needle = query.text.casefold()
+        facts = [
+            fact
+            for fact in self._facts(query.include_superseded)
+            if (not needle or needle in fact.value.casefold() or needle in fact.key.casefold())
+            and (not query.category or fact.category == query.category)
+            and (not query.subject_id or fact.subject_id == query.subject_id)
+        ]
+        return list(reversed(facts))
 
     def fuzzy_get(self, key: str, include_superseded: bool = False) -> list[MemoryFact]:
         """Tier 3 — closest stored key above the configured similarity floor."""
@@ -278,15 +190,8 @@ class SemanticStore:
         return self.get(matches[0], include_superseded)
 
     def keys(self) -> list[str]:
-        """Every distinct key currently held for this agent."""
-        return [
-            str(row["key"])
-            for row in self._store.iter_rows(
-                "SELECT DISTINCT key FROM platform_semantic_facts "
-                f"WHERE agent_id = ? AND {_CURRENT}",
-                (self._agent_id,),
-            )
-        ]
+        """Every distinct key currently believed."""
+        return list(dict.fromkeys(fact.key for fact in self._facts(include_superseded=False)))
 
     def supersede(self, key: str, superseded_by: str, subject_id: str | None = None) -> int:
         """Mark existing facts for a key as replaced, keeping them readable.
@@ -294,105 +199,123 @@ class SemanticStore:
         With a subject, only that subject's fact; without one, every
         subject's (the legacy, agent-wide behaviour).
         """
-        sql = (
-            "UPDATE platform_semantic_facts SET superseded_by = ? "
-            "WHERE agent_id = ? AND key = ? AND superseded_by IS NULL"
+        subjects = (
+            [subject_id]
+            if subject_id is not None
+            else sorted({fact.subject_id for fact in self.get(key)})
         )
-        params: tuple[Any, ...] = (superseded_by, self._agent_id, key)
-        if subject_id is not None:
-            sql += " AND subject_id = ?"
-            params = (*params, subject_id)
-        return self._store.execute(sql, params).affected
+        return sum(
+            self._mark(subject, key, {"superseded_by": superseded_by}) for subject in subjects
+        )
 
-    def _migrate_columns(self) -> None:
-        """Add the columns later versions introduced to an older table."""
-        present = self._table_columns("platform_semantic_facts")
-        for column, definition in _ADDED_COLUMNS.items():
-            if column not in present:
-                self._store.execute(
-                    f"ALTER TABLE platform_semantic_facts ADD COLUMN {column} {definition}"
-                )
+    def reindex(self) -> int:
+        """Rebuild the derived search index from the records; returns how many facts it holds."""
+        with self._dir.locked():
+            return self._rebuild_index()
 
-    def _ensure_fts(self) -> None:
-        """Create the full-text index once, filled from whatever is already stored."""
-        if not self._table_exists(_FTS_TABLE):
-            self._store.execute_script(_FTS_SCHEMA)
+    # ── records and views ────────────────────────────────────────────
 
-    def _migrate_legacy_table(self) -> None:
-        """Copy legacy single-agent semantic facts into the scoped table."""
-        if not self._table_exists("semantic_facts"):
-            return
-        columns = self._table_columns("semantic_facts")
-        if "agent_id" in columns:
-            rows = self._store.iter_rows(
-                "SELECT agent_id, key, value, category, confidence, importance, source, provenance, "
-                "confirmed, event_time, ingestion_time, valid_until, superseded_by "
-                "FROM semantic_facts WHERE agent_id = ?",
-                (self._agent_id,),
-            )
+    def _group(self, subject_id: str, key: str) -> tuple[str, str]:
+        return (self._subject_dir(subject_id), key)
+
+    def _subject_dir(self, subject_id: str) -> str:
+        return subject_id or self._files.shared_subject_dir
+
+    def _current(self, group: tuple[str, ...]) -> list[tuple[Record, MemoryFact]]:
+        """(record, fact) for every current version in a group, oldest first."""
+        pairs = [(record, _fact(record)) for record in self._log.records(group)]
+        return [(record, fact) for record, fact in pairs if fact.is_current]
+
+    def _facts(self, include_superseded: bool) -> list[MemoryFact]:
+        facts = [_fact(record) for record in self._log.records()]
+        return facts if include_superseded else [fact for fact in facts if fact.is_current]
+
+    def _mark(self, subject_id: str, key: str, meta: dict[str, Any]) -> int:
+        """Stamp every current version of one fact; returns how many."""
+        with self._dir.locked():
+            current = self._current(self._group(subject_id, key))
+            for record, _ in current:
+                self._log.rewrite(record, meta)
+            self._refresh(subject_id, key)
+        return len(current)
+
+    def _refresh(self, subject_id: str, key: str) -> None:
+        """After a change to one fact: its view, its index entry, MEMORY.md. Under the lock."""
+        current = self._write_view(subject_id, key)
+        doc_id = self._log.group_path(self._group(subject_id, key))
+        if current is None:
+            self._index.remove(doc_id)
         else:
-            rows = self._store.iter_rows(
-                "SELECT key, value, category, confidence, importance, source, provenance, "
-                "confirmed, event_time, ingestion_time, valid_until, superseded_by "
-                "FROM semantic_facts"
-            )
-        for row in rows:
-            values = (
-                row.get("agent_id", self._agent_id),
-                row["key"],
-                row["value"],
-                row["category"],
-                row["confidence"],
-                row["importance"],
-                row["source"],
-                row["provenance"],
-                row["confirmed"],
-                row["event_time"],
-                row["ingestion_time"],
-                row["valid_until"],
-                row["superseded_by"],
-            )
-            exists = self._store.query_one(
-                "SELECT 1 AS hit FROM platform_semantic_facts WHERE agent_id = ? "
-                "AND key = ? AND value = ? AND event_time = ? LIMIT 1",
-                (self._agent_id, values[1], values[2], values[9]),
-            )
-            if exists is None:
-                self._store.execute(_INSERT, (*values, "", 1))
+            self._index.replace(_indexed(doc_id, current))
+        self._index.mark(self._log.fingerprint())
+        self._write_memory_index()
 
-    def _table_exists(self, table: str) -> bool:
-        row = self._store.query_one(
-            "SELECT 1 AS hit FROM sqlite_master WHERE type = 'table' AND name = ?",
-            (table,),
+    def _write_view(self, subject_id: str, key: str) -> MemoryFact | None:
+        """The readable file for one fact: its current version, or no file at all."""
+        current = [fact for _, fact in self._current(self._group(subject_id, key))]
+        view = self._view_path(subject_id, key)
+        if not current:
+            self._dir.delete(view)
+            return None
+        self._dir.write(
+            view, render_document(_document(current[-1]), self._files.frontmatter_delimiter)
         )
-        return row is not None
+        return current[-1]
 
-    def _table_columns(self, table: str) -> set[str]:
-        return {str(row["name"]) for row in self._store.iter_rows(f"PRAGMA table_info({table})")}
+    def _view_path(self, subject_id: str, key: str) -> str:
+        digest = self._files.name_digest_chars
+        subject = safe_name(self._subject_dir(subject_id), digest)
+        return f"{subject}/{safe_name(key, digest)}{self._files.record_suffix}"
+
+    def _write_memory_index(self) -> None:
+        by_subject: dict[str, list[MemoryFact]] = defaultdict(list)
+        for fact in self._facts(include_superseded=False):
+            by_subject[fact.subject_id].append(fact)
+        latest = {(f.subject_id, f.key): f for facts in by_subject.values() for f in facts}
+        entries = [
+            IndexEntry(
+                title=fact.key,
+                path=self._view_path(fact.subject_id, fact.key),
+                description=f"{fact.value} ({fact.provenance.kind}, v{fact.version})",
+            )
+            for fact in sorted(latest.values(), key=lambda f: (f.subject_id, f.key))
+        ]
+        write_index(
+            self._dir,
+            self._files.index_file,
+            _STORE_TITLE,
+            self._agent_id,
+            entries,
+            self._files.index,
+        )
+
+    def _ensure_index(self) -> None:
+        """Rebuild the derived index if the records changed behind it (or it never existed)."""
+        if self._index.fingerprint() == self._log.fingerprint():
+            return
+        with self._dir.locked():
+            if self._index.fingerprint() != self._log.fingerprint():
+                self._rebuild_index()
+
+    def _rebuild_index(self) -> int:
+        latest: dict[str, MemoryFact] = {}
+        for record in self._log.records():
+            fact = _fact(record)
+            if fact.is_current:
+                latest[self._log.group_path(self._group(fact.subject_id, fact.key))] = fact
+        docs = [_indexed(doc_id, fact) for doc_id, fact in latest.items()]
+        return self._index.rebuild(docs, self._log.fingerprint())
 
 
-def _to_fact(row: dict[str, Any]) -> MemoryFact:
-    """Rehydrate a stored row into a MemoryFact."""
-    return MemoryFact(
-        key=row["key"],
-        value=row["value"],
-        memory_type="semantic",
-        category=row["category"],
-        confidence=row["confidence"],
-        importance=row["importance"],
-        provenance=Provenance(
-            source=row["source"],
-            kind=row["provenance"],
-            confirmed=bool(row["confirmed"]),
-            ingestion_time=row["ingestion_time"],
-        ),
-        event_time=row["event_time"],
-        valid_until=row["valid_until"],
-        superseded_by=row["superseded_by"],
-        subject_id=row.get("subject_id") or "",
-        version=int(row.get("version") or 1),
-        access_count=int(row.get("access_count") or 0),
-        last_accessed_at=row.get("last_accessed_at"),
-        deleted_at=row.get("deleted_at"),
-        deleted_by=row.get("deleted_by"),
-    )
+def _document(fact: MemoryFact) -> MemoryDocument:
+    """A fact as a memory file: everything but the value in frontmatter, the value as body."""
+    return MemoryDocument(meta=fact.model_dump(mode="json", exclude={"value"}), body=fact.value)
+
+
+def _fact(record: Record) -> MemoryFact:
+    meta = {name: value for name, value in record.document.meta.items() if name != SEQUENCE_FIELD}
+    return MemoryFact.model_validate({**meta, "value": record.document.body})
+
+
+def _indexed(doc_id: str, fact: MemoryFact) -> IndexedDoc:
+    return IndexedDoc(doc_id=doc_id, subject=fact.subject_id, key=fact.key, text=fact.value)

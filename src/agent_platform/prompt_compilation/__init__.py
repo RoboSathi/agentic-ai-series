@@ -10,7 +10,7 @@ nobody can re-derive.
 
 Which makes a compiled module a procedural-memory artifact, not a new
 kind of thing — so when this lands, every `CompiledModule` registers
-with `memory.ProceduralStore` (E14) and with the deployment version
+with `memory.SkillStore` (E14) and with the deployment version
 registry (E39), rather than growing a third place where versioned
 know-how lives.
 """

@@ -1,25 +1,25 @@
-"""`/skills`: an agent's procedures, and the curator's approval of a lesson."""
+"""`/skills`: an agent's skills, and the curator's approval of a lesson."""
 
 import pytest
 
 from agent_platform.commands import CommandError
 from agent_platform.commands.skills import SkillsCommand
 from agent_platform.config import get_settings
-from agent_platform.memory import MemoryFact, ProceduralStore, Provenance, SemanticStore
+from agent_platform.memory import MemoryFact, Provenance, SemanticStore, SkillStore
+from agent_platform.memory.procedural.skills import SkillCatalog, SkillDocument
 from agent_platform.memory.write_pipeline import MemoryWritePipelineImpl
 from agent_platform.persistence import SqliteConnectionPool
-from agent_platform.skills import SkillCatalog, SkillDocument
 
 _QUEUED = 0.5
 
 
 @pytest.fixture
-def store(pool: SqliteConnectionPool) -> ProceduralStore:
-    return ProceduralStore(pool)
+def store(pool: SqliteConnectionPool) -> SkillStore:
+    return SkillStore()
 
 
 @pytest.fixture
-def catalog(store: ProceduralStore) -> SkillCatalog:
+def catalog(store: SkillStore) -> SkillCatalog:
     catalog = SkillCatalog(store, get_settings().skills)
     raw = "---\nname: refund-flow\ndescription: Refund an order\ntriggers: [intent:R]\n---\nsteps"
     catalog.sync(
@@ -29,8 +29,8 @@ def catalog(store: ProceduralStore) -> SkillCatalog:
 
 
 @pytest.fixture
-def pipeline(pool: SqliteConnectionPool, store: ProceduralStore) -> MemoryWritePipelineImpl:
-    return MemoryWritePipelineImpl(semantic=SemanticStore(pool), procedural=store)
+def pipeline(pool: SqliteConnectionPool, store: SkillStore) -> MemoryWritePipelineImpl:
+    return MemoryWritePipelineImpl(semantic=SemanticStore(), procedural=store)
 
 
 @pytest.fixture
@@ -52,7 +52,7 @@ def _queue(pipeline: MemoryWritePipelineImpl, category: str) -> int:
 
 
 class TestListing:
-    async def test_it_lists_active_procedures(self, command: SkillsCommand) -> None:
+    async def test_it_lists_active_skills(self, command: SkillsCommand) -> None:
         result = await command.run([])
         assert result.rows[0].cells[:3] == ["refund-flow", "1", "authored"]
 
@@ -76,31 +76,24 @@ class TestListing:
             await command.run(["show", "nope"])
 
 
-class TestApproving:
-    async def test_a_lesson_becomes_an_active_procedure(
-        self, command: SkillsCommand, pipeline: MemoryWritePipelineImpl, catalog: SkillCatalog
-    ) -> None:
-        await command.run(["approve", str(_queue(pipeline, "how_to"))])
-        lesson = catalog.show("check settled")
-        assert lesson is not None
-        assert lesson.source == "consolidated"
+class TestApprovingIsNotHere:
+    """ADR 0012: a candidate is decided in `/queue`, with a comment — `/skills` only lists it."""
 
-    async def test_a_semantic_entry_is_not_approved_here(
+    async def test_approve_is_not_a_skills_action(
         self, command: SkillsCommand, pipeline: MemoryWritePipelineImpl
     ) -> None:
         with pytest.raises(CommandError):
-            await command.run(["approve", str(_queue(pipeline, "preference"))])
+            await command.run(["approve", str(_queue(pipeline, "how_to"))])
 
-    async def test_an_id_is_required(self, command: SkillsCommand) -> None:
-        with pytest.raises(CommandError):
-            await command.run(["approve"])
+    async def test_a_candidate_is_listed_with_where_to_decide_it(
+        self, command: SkillsCommand, pipeline: MemoryWritePipelineImpl
+    ) -> None:
+        _queue(pipeline, "how_to")
+        result = await command.run([])
+        assert any("/queue" in line for line in result.lines)
 
 
 class TestWithoutTheParts:
     async def test_no_catalog(self) -> None:
         with pytest.raises(CommandError, match="procedural"):
             await SkillsCommand(lambda: None, lambda: None).run([])
-
-    async def test_no_curator(self, catalog: SkillCatalog) -> None:
-        with pytest.raises(CommandError, match="curator"):
-            await SkillsCommand(lambda: catalog, lambda: None).run(["approve", "1"])

@@ -67,17 +67,20 @@ from agent_platform.llm.types import Message, TokenUsage
 from agent_platform.logging import get_logger
 from agent_platform.loop_control import LoopBudget, LoopGovernor, build_loop_governor
 from agent_platform.memory import (
-    DreamInbox,
-    MemoryAction,
+    DreamEvent,
+    FileDreamInbox,
     MemoryCommand,
-    MemoryEvent,
-    MemoryEventSink,
     MemoryFacade,
-    MemoryObservation,
     MemoryPrincipal,
+    TurnRecorder,
     WorkingMemory,
     WorkingMemoryStore,
     WriteResult,
+)
+from agent_platform.memory.procedural.skills import (
+    AgentInstructions,
+    SkillCatalog,
+    build_agent_instructions,
 )
 from agent_platform.memory.write_pipeline import MemoryWritePipelineImpl
 from agent_platform.observability import (
@@ -98,7 +101,6 @@ from agent_platform.resilience import (
 )
 from agent_platform.security import MessageScreener, SecuritySuite
 from agent_platform.security.auth.policy import AgentPolicy
-from agent_platform.skills import AgentInstructions, SkillCatalog, build_agent_instructions
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from agent_platform.tools.path import ToolPath
 from agent_platform.verification import EffectVerifier
@@ -123,6 +125,7 @@ from customer_support_agent.graph.nodes.screening import ScreeningNodes
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.intent.router import CustomerSupportIntentRouter, Intent
 from customer_support_agent.loop_control import IndependentScorer, OutputQualityGate
+from customer_support_agent.memory.signals import turn_signals
 from customer_support_agent.observability.accounting import TurnAccountant, TurnOutcome
 from customer_support_agent.persistence.repositories import OrdersRepository, order_turn_scope
 from customer_support_agent.presentation.orders import (
@@ -169,7 +172,7 @@ class CustomerSupportAgent(
         executor: ToolExecutor,
         security: SecuritySuite,
         working_memory: WorkingMemoryStore | None = None,
-        memory_event_sink: MemoryEventSink | None = None,
+        dream_recorder: TurnRecorder | None = None,
         context: FiveStagePipeline | None = None,
         selector: ToolRetrievalSelector | None = None,
         cascade: NollmScoringCascadeImpl | None = None,
@@ -221,9 +224,9 @@ class CustomerSupportAgent(
         self._message_screener = MessageScreener(security, dead_letter_queue)
         declare_screens(get_settings().agent.id, self._message_screener.declared_checks())
         self._working_memory = working_memory
-        self._memory_event_sink = memory_event_sink
+        self._dream_recorder = dream_recorder
         self._long_term = long_term_memory
-        # The profile always; procedures only when the composition root
+        # The profile always; skills only when the composition root
         # built procedural memory. A hand-built agent gets the profile.
         self._instructions = instructions or build_agent_instructions(
             get_settings().skills, store=None, audit=None, reporter=None
@@ -804,7 +807,7 @@ class CustomerSupportAgent(
 
     @property
     def skill_catalog(self) -> SkillCatalog | None:
-        """The procedures `/skills` lists (None when procedural memory is withheld)."""
+        """The skills `/skills` lists (None when procedural memory is withheld)."""
         return self._instructions.catalog
 
     @property
@@ -819,13 +822,14 @@ class CustomerSupportAgent(
         history = self._working_memory.get(session_id).history
         return [Message(**item) if isinstance(item, dict) else item for item in history]
 
-    def _report_inbox(self, event: MemoryEvent) -> None:
+    def _report_inbox(self, event: DreamEvent) -> None:
         """Note, for the turn summary, what this turn left for the next dream."""
         if self._reporter is None:
             return
         waiting = (
-            self._memory_event_sink.counts().unconsolidated
-            if isinstance(self._memory_event_sink, DreamInbox)
+            self._dream_recorder.sink.counts().unconsolidated
+            if self._dream_recorder is not None
+            and isinstance(self._dream_recorder.sink, FileDreamInbox)
             else None
         )
         self._reporter.emit(
@@ -843,47 +847,20 @@ class CustomerSupportAgent(
         )
 
     def _complete_turn(self, state: AgentState) -> None:
-        """Emit one memory event, then retain only the completed dialogue."""
+        """Emit the turn's dream event, then retain only the completed dialogue."""
         asked = self._remember_turn(state)
         if self._working_memory is None:
             return
         working = self._working_memory.get(state.session_id)
-        if self._memory_event_sink is not None:
-            observations: list[MemoryObservation] = []
-            actions: list[MemoryAction] = []
-            for item in working.current_turn:
-                if not isinstance(item, dict):
-                    continue
-                if item.get("kind") == "observation":
-                    content = item.get("content", "")
-                    observations.append(
-                        MemoryObservation(
-                            content=self._security.redact(str(content)),
-                            source=str(item.get("source", "")),
-                        )
-                    )
-                elif item.get("kind") == "action":
-                    arguments = item.get("arguments", {})
-                    actions.append(
-                        MemoryAction(
-                            name=str(item.get("name", "")),
-                            arguments=arguments
-                            if isinstance(arguments, dict)
-                            else {"raw": str(arguments)},
-                            result=self._security.redact(str(item.get("result", ""))),
-                            source=str(item.get("source", "")),
-                        )
-                    )
-            event = MemoryEvent(
-                agent_id=self._actor,
+        if self._dream_recorder is not None:
+            event = self._dream_recorder.record(
                 session_id=state.session_id,
                 subject_id=str(state.customer_id) if state.customer_id is not None else "",
-                user_input=self._security.redact(asked),
-                assistant_output=self._security.redact(state.response),
-                observations=observations,
-                actions=actions,
+                asked=asked,
+                answered=state.response,
+                turn_items=working.current_turn,
+                scope=sorted(turn_signals(state.metadata)),
             )
-            self._memory_event_sink.emit(event)
             self._report_inbox(event)
         if state.response:
             # What the customer read, unless the turn left a compact form

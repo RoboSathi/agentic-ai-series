@@ -9,7 +9,7 @@ bulkhead → breaker → retry → timeout → operation.
 
 - **idempotency key** — what makes a retry safe; retrying a side effect without one is refused
 - **saga** — a multi-step action with a compensation per step, undone in reverse on failure
-- **dead-letter queue** — durable quarantine for requests blocked before the model
+- **dead-letter queue** — durable quarantine for requests blocked before the model; its entries are `quarantine` items in the platform's one review queue, decided with `/queue` (ADR 0012)
 - **rate-limit bucket** — a shared request budget for a set of hosts (e.g. `nvidia`)
 
 ## Public interface

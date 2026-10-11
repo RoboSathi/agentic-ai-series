@@ -10,7 +10,11 @@ trace is written). Redacting only the visible response leaves the same
 data in three places that outlive it.
 """
 
+import functools
+import hashlib
+import hmac
 import re
+import secrets
 from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 from agent_platform.config import get_settings
@@ -24,6 +28,10 @@ class _Default:
 
 
 _DEFAULT = _Default()
+
+
+# Length of the per-process token key, in bytes (an HMAC-SHA256 key of full strength).
+_PROCESS_KEY_BYTES = 32
 
 
 @runtime_checkable
@@ -197,6 +205,33 @@ class PIIFilterImpl:
             for span in self.detect(text)
         ]
 
+    def tokenize(self, text: str) -> tuple[str, dict[str, str]]:
+        """Text with every span replaced by its token, and token → value for what was replaced.
+
+        Always tokens, never a mask, because the caller (the provider boundary) must be able
+        to put the values back into what comes back. With a vault the token is the vault's
+        (and the value is kept for an audited reveal); without one it is keyed by a secret
+        this process alone holds, so it is consistent within the process and opaque outside.
+        """
+        spans = self.detect(text)
+        if not spans:
+            return text, {}
+        found: dict[str, str] = {}
+        tokenized = text
+        for span in sorted(spans, key=lambda item: item.start, reverse=True):
+            token = self._token_format.format(category=span.category, token=self._token(span))
+            found[token] = span.text
+            tokenized = tokenized[: span.start] + token + tokenized[span.end :]
+        return tokenized, found
+
+    def _token(self, span: PIISpan) -> str:
+        if self._vault is not None:
+            token = self._vault.token(span.category, span.text)
+            self._vault.keep(span.category, token, span.text)
+            return token
+        digest = hmac.new(_process_key(), f"{span.category}|{span.text}".encode(), hashlib.sha256)
+        return digest.hexdigest()[: get_settings().security.pii.token_chars]
+
     def _replacement(self, span: PIISpan, mode: RedactionMode) -> str:
         """The text that stands in for one redacted span."""
         if mode == "remove":
@@ -206,6 +241,12 @@ class PIIFilterImpl:
             self._vault.keep(span.category, token, span.text)
             return self._token_format.format(category=span.category, token=token)
         return self._mask_token
+
+
+@functools.cache
+def _process_key() -> bytes:
+    """A secret for tokens when there is no vault: this process's alone, never stored."""
+    return secrets.token_bytes(_PROCESS_KEY_BYTES)
 
 
 def _default_detectors() -> list[PIIDetector]:

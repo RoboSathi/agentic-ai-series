@@ -18,8 +18,8 @@ from agent_platform.llm.prompt import (
     CONTEXT_WINDOW,
     HISTORY,
     POLICY,
-    PROCEDURES,
     PROFILE,
+    SKILLS,
     TOOL_LOOP,
     USER_QUERY,
     PromptBuilder,
@@ -39,8 +39,8 @@ from tests.conftest import ScriptedLLM
 FOUR = CharEstimateTokenizer(4)
 INSTRUCTIONS = [
     PromptPart(PROFILE, "You are a support agent.", "AGENT.md"),
-    PromptPart(PROCEDURES, "# Procedure: refund\nsteps", "refund@1"),
-    PromptPart(PROCEDURES, "# Procedure: lookup\nsteps", "lookup@1"),
+    PromptPart(SKILLS, "# Skill: refund\nsteps", "refund@1"),
+    PromptPart(SKILLS, "# Skill: lookup\nsteps", "lookup@1"),
 ]
 CHUNKS = [
     Chunk(content="customer_id: 1", kind="memory", source="working_memory", pinned=True),
@@ -72,12 +72,12 @@ def _feed() -> tuple[StageReporter, list[StatusEvent]]:
 class TestSectionsAreNamedAndCounted:
     def test_sections_keep_the_order_the_model_reads_them(self) -> None:
         names = [section.name for section in _built().manifest.sections]
-        assert names == [PROFILE, PROCEDURES, POLICY, CONTEXT_WINDOW, USER_QUERY]
+        assert names == [PROFILE, SKILLS, POLICY, CONTEXT_WINDOW, USER_QUERY]
 
     def test_the_system_message_is_every_system_section_joined(self) -> None:
         messages = _built().messages
         assert [m.role for m in messages] == ["system", "user"]
-        assert messages[0].content.startswith("You are a support agent.\n\n# Procedure: refund")
+        assert messages[0].content.startswith("You are a support agent.\n\n# Skill: refund")
         assert messages[0].content.endswith("asked about shipping")
 
     def test_each_section_is_counted_by_the_tokenizer(self) -> None:
@@ -91,9 +91,9 @@ class TestSectionsAreNamedAndCounted:
         assert manifest.total_tokens == sections + manifest.tool_schema_tokens
         assert manifest.tools == ["process_refund"]
 
-    def test_each_procedure_is_its_own_part(self) -> None:
-        procedures = _built().manifest.sections[1]
-        assert [part.source for part in procedures.parts] == ["refund@1", "lookup@1"]
+    def test_each_skill_is_its_own_part(self) -> None:
+        skills = _built().manifest.sections[1]
+        assert [part.source for part in skills.parts] == ["refund@1", "lookup@1"]
 
     def test_the_window_is_broken_down_by_what_it_holds(self) -> None:
         window = _built().manifest.sections[3]

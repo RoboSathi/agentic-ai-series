@@ -9,12 +9,15 @@ rather than the table's.
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any
+from datetime import datetime
+from typing import Any, get_args
 
+from agent_platform.config import get_settings
 from agent_platform.logging import get_logger, logged
 from agent_platform.observability.types import utc_now
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.primitives.money import Money
+from agent_platform.review import ReviewItem, ReviewQueue
 from customer_support_agent.domain.models import (
     REFUNDABLE_ORDER_STATUSES,
     HitlRequest,
@@ -23,6 +26,7 @@ from customer_support_agent.domain.models import (
     OrderStatus,
     RefundStatus,
     ReplyReview,
+    ReviewAction,
     User,
 )
 
@@ -60,15 +64,42 @@ def _order_values(order: Order) -> tuple[Any, ...]:
     )
 
 
-def _hitl_from(row: dict[str, Any]) -> HitlRequest:
-    values = {
-        key: value for key, value in row.items() if key not in {"requested_amount_cents", "detail"}
-    }
-    cents = row["requested_amount_cents"]
-    values["requested_amount"] = None if cents is None else Money.from_cents(int(cents))
-    detail = row.get("detail")
-    values["detail"] = None if detail is None else ReplyReview.model_validate_json(detail)
-    return HitlRequest.model_validate(values)
+def _hitl_from(item: ReviewItem) -> HitlRequest:
+    """A review item of one of this agent's kinds, as the request it was queued as."""
+    detail = item.detail
+    cents = detail.get("requested_amount_cents")
+    reply = detail.get("reply")
+    return HitlRequest(
+        id=item.id,
+        order_id=detail.get("order_id"),
+        user_id=int(item.subject_id),
+        requested_amount=None if cents is None else Money.from_cents(int(cents)),
+        action=item.kind,  # type: ignore[arg-type]
+        status=item.status,  # type: ignore[arg-type]
+        created_at=item.created_at.isoformat(),
+        session_id=item.session_id or None,
+        detail=None if reply is None else ReplyReview.model_validate(reply),
+        reason=str(detail.get("reason", "")),
+    )
+
+
+def _review_item(request: HitlRequest) -> ReviewItem:
+    """A request as the review item that holds it."""
+    amount = request.requested_amount
+    return ReviewItem(
+        kind=request.action,
+        status=request.status,
+        session_id=request.session_id or "",
+        subject_id=str(request.user_id),
+        summary=request.reason or request.action,
+        created_at=datetime.fromisoformat(request.created_at),
+        detail={
+            "order_id": request.order_id,
+            "requested_amount_cents": None if amount is None else amount.cents,
+            "reply": None if request.detail is None else request.detail.model_dump(mode="json"),
+            "reason": request.reason,
+        },
+    )
 
 
 _USER_COLUMNS = "user_id, user_code, created_at, name, email, phone"
@@ -363,48 +394,39 @@ class UsersRepository:
 
 
 class HitlQueueRepository:
-    """The human-in-the-loop queue.
+    """This agent's escalations, as items in the agent's one review queue (ADR 0012).
 
-    Append-only in spirit and in surface class: entries are added and
-    their status is decided by a human. The agent may enqueue; it may
-    never approve.
+    A refund, a cancellation's refund and a reply the hallucination check
+    cut are review items of those kinds; `/queue` and the Review tab decide
+    them beside quarantines and memory. Append-only in spirit and in
+    surface class: entries are added and their status is decided by a
+    human. The agent may enqueue; it may never approve.
     """
 
     def __init__(self, pool: SqliteConnectionPool) -> None:
-        self._pool = pool
+        self._queue = ReviewQueue(pool, agent_id=get_settings().agent.id)
+        self._kinds: tuple[str, ...] = get_args(ReviewAction)
         self._logger = get_logger("customer_support_agent")
 
     def get(self, id: int) -> HitlRequest | None:
         """One queue entry by id."""
-        row = self._pool.query_one("SELECT * FROM hitl_queue WHERE id = ?", (id,))
-        return _hitl_from(row) if row else None
+        item = self._queue.get(id)
+        return _hitl_from(item) if item is not None and item.kind in self._kinds else None
 
     def save(self, entity: HitlRequest) -> None:
         """Enqueue a request for human review."""
-        self._pool.execute(
-            "INSERT INTO hitl_queue (order_id, user_id, requested_amount_cents, action, "
-            "status, created_at, session_id, detail, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                entity.order_id,
-                entity.user_id,
-                None if entity.requested_amount is None else entity.requested_amount.cents,
-                entity.action,
-                entity.status,
-                entity.created_at,
-                entity.session_id,
-                None if entity.detail is None else entity.detail.model_dump_json(),
-                entity.reason,
-            ),
-        )
+        self._queue.add(_review_item(entity))
 
     def query(self, **filters: Any) -> list[HitlRequest]:
-        """Queue entries matching equality filters."""
-        clause = " AND ".join(f"{column} = ?" for column in filters) or "1 = 1"
+        """Queue entries matching equality filters on the request's fields."""
+        status = filters.pop("status", None)
+        requests = [
+            _hitl_from(item) for item in self._queue.items(status=status, kinds=self._kinds)
+        ]
         return [
-            _hitl_from(row)
-            for row in self._pool.iter_rows(
-                f"SELECT * FROM hitl_queue WHERE {clause} ORDER BY id", tuple(filters.values())
-            )
+            request
+            for request in requests
+            if all(getattr(request, name) == value for name, value in filters.items())
         ]
 
     def pending(self) -> list[HitlRequest]:
@@ -428,20 +450,16 @@ class HitlQueueRepository:
     @logged("customer_support_agent")
     def decide(self, request_id: int, status: HitlStatus) -> bool:
         """Record a human's decision on a queued request."""
-        result = self._pool.execute(
-            "UPDATE hitl_queue SET status = ? WHERE id = ? AND status = 'pending'",
-            (status, request_id),
-        )
-        return result.affected > 0
+        return self._queue.decide(request_id, status)
 
     def remove(self, request_id: int) -> None:
         """Remove a queue entry — the compensation for a failed enqueue."""
-        self._pool.execute("DELETE FROM hitl_queue WHERE id = ?", (request_id,))
+        self._queue.remove(request_id)
 
     def last_id(self) -> int:
-        """The most recently inserted queue id."""
-        row = self._pool.query_one("SELECT MAX(id) AS id FROM hitl_queue")
-        return int(row["id"]) if row and row["id"] is not None else 0
+        """The most recently queued request's id."""
+        latest = self._queue.items(status=None, kinds=self._kinds, limit=1)
+        return int(latest[0].id or 0) if latest else 0
 
 
 class RefundLedgerRepository:

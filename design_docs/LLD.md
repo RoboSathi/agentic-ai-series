@@ -382,7 +382,7 @@ class MemoryWritePipeline(Protocol):
 window — not a store; delegates to `context`), `EpisodicStore`
 (append-only, filesystem-based, ripgrep-able, one file/session — E14),
 `SemanticStore` (structured fact store, exact/fuzzy key lookup, reuses
-the NOLLM retrieval cascade), `ProceduralStore` (versioned how-to
+the NOLLM retrieval cascade), `SkillStore` (versioned how-to
 artifacts, DSPy-compiled prompts land here — links to
 `prompt_compilation`), `MemoryWritePipelineImpl`,
 `CompositeRetrievalScorer` (relevance + recency + importance + authority
@@ -390,9 +390,9 @@ artifacts, DSPy-compiled prompts land here — links to
 
 **Procedural memory in the prompt (ADR 0010).** An agent's `AGENT.md`
 (the *profile*) is always in its system prompt. Its `skills/<name>/SKILL.md`
-files (*skills*) are synced into `ProceduralStore` at build time, as one
+files (*skills*) are synced into `SkillStore` at build time, as one
 version per change. Each turn's *procedures* are selected by
-`agent_platform.skills`, with no model call: `always`, then frontmatter
+`agent_platform.memory.procedural.skills`, with no model call: `always`, then frontmatter
 `triggers` matched against the turn's *signals*, then BM25 over description
 and keywords. They are rendered as `# Procedure: <name>` sections outside the
 context window, and audited as a `procedure_activation` entry
@@ -1066,7 +1066,7 @@ class CompiledModule(Protocol):
 **Key classes (target, built next phase).** `DspySignatureAdapter`,
 `TeleprompterOptimizer(Optimizer)` (wraps a DSPy teleprompter),
 `CompiledPromptRegistry` — every `CompiledModule` it stores is
-simultaneously registered with `memory.ProceduralStore` (E14
+simultaneously registered with `memory.SkillStore` (E14
 forward-link) and with the deployment version registry (E39
 forward-link).
 

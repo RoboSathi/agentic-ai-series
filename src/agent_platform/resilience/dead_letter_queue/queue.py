@@ -1,43 +1,28 @@
-"""Security quarantine queue for requests that must not reach the model.
+"""Security quarantine for requests that must not reach the model.
 
 The queue is deliberately part of the resilience package: a rejected request
 must have a durable destination, otherwise a security detector merely creates
-an observable warning while the workflow continues.
+an observable warning while the workflow continues. Its destination is the
+agent's one review queue (ADR 0012): a quarantine is a `quarantine` item a
+person decides with `/queue` like any other, and is never re-run.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from agent_platform.config import get_settings
 from agent_platform.logging import get_logger, instrument
-from agent_platform.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
+from agent_platform.persistence import PlatformStore, SqliteConnectionPool
 from agent_platform.primitives.clock import utc_now
+from agent_platform.review.queue import ReviewQueue
+from agent_platform.review.types import ReviewItem, ReviewStatus
 
 DeadLetterReason = Literal["prompt_injection", "content_moderation", "security_policy"]
-DeadLetterStatus = Literal["pending", "in_review", "resolved", "discarded"]
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS platform_resilience_dead_letter_queue (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent_id        TEXT NOT NULL,
-    trace_id        TEXT NOT NULL DEFAULT '',
-    session_id      TEXT NOT NULL DEFAULT '',
-    principal_id    TEXT,
-    reason          TEXT NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'pending',
-    payload         TEXT NOT NULL,
-    metadata        TEXT NOT NULL DEFAULT '{}',
-    created_at      TEXT NOT NULL,
-    updated_at      TEXT NOT NULL,
-    reviewer        TEXT,
-    resolution      TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_resilience_dlq_pending
-    ON platform_resilience_dead_letter_queue (agent_id, status, created_at);
-"""
+DeadLetterStatus = ReviewStatus
 
 
 class DeadLetterEntry(BaseModel):
@@ -63,7 +48,7 @@ class DeadLetterEntry(BaseModel):
 
 @instrument("resilience")
 class DeadLetterQueue:
-    """Durable quarantine queue for security-rejected requests.
+    """Durable quarantine for security-rejected requests, as review items.
 
     Payloads are expected to be sanitized by the caller before enqueueing.
     The queue never executes or forwards them to an LLM.
@@ -76,11 +61,11 @@ class DeadLetterQueue:
         agent_id: str | None = None,
         enabled: bool = True,
     ) -> None:
-        self._store = as_platform_store(store, agent_id=agent_id)
-        self._agent_id = agent_id or self._store.agent_id
+        self._queue = ReviewQueue(store, agent_id=agent_id)
+        self._agent_id = self._queue.agent_id
+        self._kind = get_settings().review.kinds.quarantine
         self._enabled = enabled
         self._logger = get_logger("resilience")
-        self._store.execute_script(_SCHEMA)
 
     @property
     def enabled(self) -> bool:
@@ -99,130 +84,56 @@ class DeadLetterQueue:
         """Persist a rejected request for later human review."""
         if not self._enabled:
             return None
-        now = datetime.now(timezone.utc).isoformat()
-        self._store.execute(
-            """
-            INSERT INTO platform_resilience_dead_letter_queue (
-                agent_id, trace_id, session_id, principal_id, reason, status,
-                payload, metadata, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
-            """,
-            (
-                self._agent_id,
-                trace_id,
-                session_id,
-                principal_id,
-                reason,
-                payload,
-                _json(metadata or {}),
-                now,
-                now,
-            ),
+        item = self._queue.add(
+            ReviewItem(
+                kind=self._kind,
+                session_id=session_id,
+                subject_id=principal_id or "",
+                summary=f"{reason}: {payload}",
+                detail={
+                    "reason": reason,
+                    "payload": payload,
+                    "trace_id": trace_id,
+                    "principal_id": principal_id,
+                    "metadata": metadata or {},
+                },
+            )
         )
-        row = self._store.query_one(
-            "SELECT * FROM platform_resilience_dead_letter_queue "
-            "WHERE agent_id = ? ORDER BY id DESC LIMIT 1",
-            (self._agent_id,),
-        )
-        if row is None:
-            self._logger.error("Dead-letter enqueue succeeded without a readable row")
-            return None
-        return _entry(row)
+        return _entry(item)
 
     def pending(self) -> list[DeadLetterEntry]:
-        """Return quarantined requests awaiting a human review decision."""
-        return [
-            _entry(row)
-            for row in self._store.iter_rows(
-                "SELECT * FROM platform_resilience_dead_letter_queue "
-                "WHERE agent_id = ? AND status = 'pending' ORDER BY id",
-                (self._agent_id,),
-            )
-        ]
+        """Quarantined requests awaiting a human decision."""
+        return [_entry(item) for item in self._queue.items(kinds=(self._kind,))]
 
     def entries(self, status: DeadLetterStatus | None, limit: int) -> list[DeadLetterEntry]:
         """The newest entries first, in one status or in all of them (None)."""
-        where, params = ("AND status = ?", (status,)) if status is not None else ("", ())
-        return [
-            _entry(row)
-            for row in self._store.iter_rows(
-                "SELECT * FROM platform_resilience_dead_letter_queue "
-                f"WHERE agent_id = ? {where} ORDER BY id DESC LIMIT ?",
-                (self._agent_id, *params, limit),
-            )
-        ]
+        items = self._queue.items(status=status, kinds=(self._kind,), limit=limit)
+        return [_entry(item) for item in reversed(items)]
 
     def get(self, entry_id: int) -> DeadLetterEntry | None:
-        """One entry of this agent's, by id."""
-        row = self._store.query_one(
-            "SELECT * FROM platform_resilience_dead_letter_queue WHERE id = ? AND agent_id = ?",
-            (entry_id, self._agent_id),
-        )
-        return _entry(row) if row is not None else None
+        item = self._queue.get(entry_id)
+        return _entry(item) if item is not None and item.kind == self._kind else None
 
     def counts(self) -> dict[str, int]:
         """How many entries are in each status."""
-        return {
-            str(row["status"]): int(row["n"])
-            for row in self._store.iter_rows(
-                "SELECT status, COUNT(*) AS n FROM platform_resilience_dead_letter_queue "
-                "WHERE agent_id = ? GROUP BY status",
-                (self._agent_id,),
-            )
-        }
-
-    def mark_in_review(self, entry_id: int, reviewer: str) -> bool:
-        """Claim one queued request for a human reviewer."""
-        result = self._store.execute(
-            "UPDATE platform_resilience_dead_letter_queue "
-            "SET status = 'in_review', reviewer = ?, updated_at = ? "
-            "WHERE id = ? AND agent_id = ? AND status = 'pending'",
-            (reviewer, datetime.now(timezone.utc).isoformat(), entry_id, self._agent_id),
-        )
-        return result.affected > 0
-
-    def resolve(
-        self, entry_id: int, reviewer: str, resolution: str, *, discarded: bool = False
-    ) -> bool:
-        """Close a reviewed queue item without executing its original payload."""
-        status = "discarded" if discarded else "resolved"
-        result = self._store.execute(
-            "UPDATE platform_resilience_dead_letter_queue "
-            "SET status = ?, reviewer = ?, resolution = ?, updated_at = ? "
-            "WHERE id = ? AND agent_id = ? AND status IN ('pending', 'in_review')",
-            (
-                status,
-                reviewer,
-                resolution,
-                datetime.now(timezone.utc).isoformat(),
-                entry_id,
-                self._agent_id,
-            ),
-        )
-        return result.affected > 0
+        return self._queue.counts((self._kind,))
 
 
-def _json(value: dict[str, Any]) -> str:
-    import json
-
-    return json.dumps(value, default=str, sort_keys=True)
-
-
-def _entry(row: dict[str, Any]) -> DeadLetterEntry:
-    import json
-
+def _entry(item: ReviewItem) -> DeadLetterEntry:
+    detail = item.detail
+    principal = detail.get("principal_id")
     return DeadLetterEntry(
-        id=int(row["id"]),
-        agent_id=str(row["agent_id"]),
-        trace_id=str(row.get("trace_id") or ""),
-        session_id=str(row.get("session_id") or ""),
-        principal_id=(str(row["principal_id"]) if row.get("principal_id") is not None else None),
-        reason=row["reason"],
-        status=row["status"],
-        payload=str(row["payload"]),
-        metadata=json.loads(row.get("metadata") or "{}"),
-        created_at=datetime.fromisoformat(row["created_at"]),
-        updated_at=datetime.fromisoformat(row["updated_at"]),
-        reviewer=row.get("reviewer"),
-        resolution=row.get("resolution"),
+        id=item.id,
+        agent_id=item.agent_id,
+        trace_id=str(detail.get("trace_id", "")),
+        session_id=item.session_id,
+        principal_id=str(principal) if principal is not None else None,
+        reason=detail.get("reason", "security_policy"),
+        status=item.status,
+        payload=str(detail.get("payload", "")),
+        metadata=dict(detail.get("metadata", {})),
+        created_at=item.created_at,
+        updated_at=item.decided_at or item.created_at,
+        reviewer=item.decided_by,
+        resolution=item.comment,
     )

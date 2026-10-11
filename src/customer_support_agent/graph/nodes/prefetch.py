@@ -1,10 +1,10 @@
-"""PREFETCH: the reads a turn's procedure says come first, run before the model is asked.
+"""PREFETCH: the reads a turn's skill says come first, run before the model is asked.
 
-A refund procedure always starts by reading the order and its refund; asking the model to
-ask for them costs a whole model round each. So the harness runs a procedure's declared
+A refund skill always starts by reading the order and its refund; asking the model to
+ask for them costs a whole model round each. So the harness runs a skill's declared
 `prefetch` reads itself, through the one governed tool path (Gatekeeper, Executor, audit,
 facts), and hands the model their results as if it had asked. The model starts where the
-procedure's first steps end.
+skill's first steps end.
 
 A read is skipped — never guessed — when its arguments are not known (no order under
 discussion yet), when the intent does not allow it, or when it would change something.
@@ -36,10 +36,10 @@ from customer_support_agent.tools.definitions import SNAPSHOT_READS
 
 class PrefetchNodes(NodeSupport):
     async def prefetch(self, state: AgentState) -> dict[str, Any]:
-        """Say which procedures this turn runs and what they read first; then read.
+        """Say which skills this turn runs and what they read first; then read.
 
-        The PROCEDURE card comes before any read, naming the reads and the tools the model
-        will be offered, so no tool call ever appears without the procedure that asked for it.
+        The SKILL card comes before any read, naming the reads and the tools the model
+        will be offered, so no tool call ever appears without the skill that asked for it.
         """
         activation = self._activation(state)
         reads = self._runnable_reads(activation, state)
@@ -51,8 +51,8 @@ class PrefetchNodes(NodeSupport):
         )
         failed = [
             tool
-            for procedure, tool, params in reads
-            if not await self._read(state, procedure, tool, params)
+            for skill, tool, params in reads
+            if not await self._read(state, skill, tool, params)
         ]
         ran = [tool.model_name for _, tool, _ in reads if tool not in failed]
         metadata = {
@@ -88,24 +88,22 @@ class PrefetchNodes(NodeSupport):
     def _runnable_reads(
         self, activation: Any, state: AgentState
     ) -> list[tuple[str, Any, dict[str, Any]]]:
-        """(procedure, tool, arguments) for each prefetch read that can run now.
+        """(skill, tool, arguments) for each prefetch read that can run now.
 
         A read is left out — never guessed — when its tool is unknown or changes something,
         when the intent does not allow it, or when an argument it needs is not yet known.
         """
         reads: list[tuple[str, Any, dict[str, Any]]] = []
-        for procedure, name in _planned(activation):
+        for skill, name in _planned(activation):
             tool = self._registry.get(name)
             if tool is None or tool.side_effecting or not self._intent_allows(state, tool.name):
                 continue
             params = self._prefetch_params(tool, state)
             if params is not None:
-                reads.append((procedure, tool, params))
+                reads.append((skill, tool, params))
         return reads
 
-    async def _read(
-        self, state: AgentState, procedure: str, tool: Any, params: dict[str, Any]
-    ) -> bool:
+    async def _read(self, state: AgentState, skill: str, tool: Any, params: dict[str, Any]) -> bool:
         """One read, as a tool call the model will see; False when it was refused."""
         call = ModelToolCall(
             id=get_agent_settings().prefetch.call_id.format(tool=tool.model_name),
@@ -118,7 +116,7 @@ class PrefetchNodes(NodeSupport):
                 call.name,
                 call.arguments,
                 served.output,
-                procedure=procedure,
+                skill=skill,
                 source=get_agent_settings().prefetch.served_from,
                 redact=self._security.redact,
             )
@@ -130,7 +128,7 @@ class PrefetchNodes(NodeSupport):
             )
             return True
         self._steps.tool_request(
-            call.name, call.arguments, redact=self._security.redact, prefetched_for=procedure
+            call.name, call.arguments, redact=self._security.redact, prefetched_for=skill
         )
         text, _decision, _stage, invocation = await self._invoke(
             tool.qualified_name, call.arguments, state, {tool.qualified_name}
@@ -175,7 +173,7 @@ class PrefetchNodes(NodeSupport):
 
 
 def _planned(activation: Any) -> list[tuple[str, str]]:
-    """(procedure, tool) for every prefetch read, each tool once, in procedure order."""
+    """(skill, tool) for every prefetch read, each tool once, in skill order."""
     seen: set[str] = set()
     planned: list[tuple[str, str]] = []
     for item in activation.skills:

@@ -10,12 +10,11 @@ privileged act, not a storage call:
   * **Every operation is authorized** as `memory:<class>:<op>:<category>`
     against the principal's grants, through the `MemoryAuthorizer` port so
     `memory` never imports `security`.
-  * **Writes that need a person are queued durably**, not in a list that
-    dies with the process — a refused or doubtful claim is evidence, and
+  * **Writes that need a person are queued durably** — in the agent's one
+    review queue — not in a list that dies with the process — a refused or doubtful claim is evidence, and
     evidence that vanishes on restart was never kept.
 """
 
-import json
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
@@ -31,9 +30,13 @@ from agent_platform.memory.types import (
 )
 from agent_platform.observability.types import utc_now
 from agent_platform.persistence import PlatformStore
+from agent_platform.review.queue import ReviewQueue
+from agent_platform.review.types import ReviewItem
 
 # The category segment used when a command names none.
 ANY_CATEGORY = "*"
+# How much of a held write a queue list shows on its line.
+_SUMMARY_CHARS = 160
 
 
 class MemoryDecision(BaseModel):
@@ -65,70 +68,45 @@ def provenance_for(principal: MemoryPrincipal, source: str = "") -> Provenance:
 
 
 class CuratorQueue:
-    """Writes held for a human, persisted so a restart does not drop them."""
+    """Writes held for a human, as items in the agent's one review queue.
 
-    _TABLE = "platform_memory_curator_queue"
+    A fact and a skill are kinds of review item like any other (ADR 0012):
+    a curator decides them with `/queue` or the Review tab, with a
+    comment, beside the agent's own escalations.
+    """
 
     def __init__(self, store: PlatformStore) -> None:
-        self._store = store
-        self._agent_id = store.agent_id
-        self._store.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {self._TABLE} (
-                queue_id   INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_id   TEXT NOT NULL,
-                status     TEXT NOT NULL,
-                payload    TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                decided_by TEXT,
-                decided_at TEXT
-            )
-            """
-        )
+        self._queue = ReviewQueue(store)
+        kinds = get_settings().review.kinds
+        self._kinds = (kinds.memory_fact, kinds.skill)
 
-    def put(self, result: WriteResult) -> int:
-        """Hold one write for a curator; returns its queue id."""
-        self._store.execute(
-            f"INSERT INTO {self._TABLE} (agent_id, status, payload, created_at) "
-            "VALUES (?, 'pending', ?, ?)",
-            (self._agent_id, result.model_dump_json(), utc_now().isoformat()),
+    def put(self, result: WriteResult, kind: str) -> int:
+        """Hold one write for a curator; returns its item id."""
+        fact = result.fact
+        item = self._queue.add(
+            ReviewItem(
+                kind=kind,
+                subject_id=fact.subject_id if fact else "",
+                session_id=str(fact.metadata.get("session_id", "")) if fact else "",
+                summary=f"{fact.key} = {fact.value}"[:_SUMMARY_CHARS] if fact else result.reason,
+                detail={"write": result.model_dump(mode="json")},
+            )
         )
-        row = self._store.query_one(
-            f"SELECT MAX(queue_id) AS queue_id FROM {self._TABLE} WHERE agent_id = ?",
-            (self._agent_id,),
-        )
-        return int(row["queue_id"]) if row else 0
+        return int(item.id or 0)
 
     def pending(self) -> list[tuple[int, WriteResult]]:
         """Everything awaiting a curator, oldest first."""
-        rows = self._store.iter_rows(
-            f"SELECT queue_id, payload FROM {self._TABLE} "
-            "WHERE agent_id = ? AND status = 'pending' ORDER BY queue_id",
-            (self._agent_id,),
-        )
         return [
-            (int(row["queue_id"]), WriteResult.model_validate(json.loads(str(row["payload"]))))
-            for row in rows
+            (int(item.id or 0), WriteResult.model_validate(item.detail["write"]))
+            for item in self._queue.items(kinds=self._kinds)
         ]
 
     def purge(self) -> int:
-        """Remove every one of this agent's rows. Operator reset only.
-
-        Deliberately outside the write pipeline: this is `make clean-memory`
-        wiping a demo back to empty, not a memory operation with a
-        principal — the same standing as rebuilding the database.
-        """
-        result = self._store.execute(
-            f"DELETE FROM {self._TABLE} WHERE agent_id = ?", (self._agent_id,)
-        )
-        return result.affected
+        """Remove every one of this agent's memory items. Operator reset only."""
+        return self._queue.purge(self._kinds)
 
     def decide(self, queue_id: int, status: str, curator: str) -> None:
-        self._store.execute(
-            f"UPDATE {self._TABLE} SET status = ?, decided_by = ?, decided_at = ? "
-            "WHERE agent_id = ? AND queue_id = ?",
-            (status, curator, utc_now().isoformat(), self._agent_id, queue_id),
-        )
+        self._queue.decide(queue_id, "approved" if status == "approved" else "denied")
 
 
 class InMemoryCuratorQueue:
@@ -137,7 +115,7 @@ class InMemoryCuratorQueue:
     def __init__(self) -> None:
         self._items: dict[int, tuple[str, WriteResult]] = {}
 
-    def put(self, result: WriteResult) -> int:
+    def put(self, result: WriteResult, kind: str = "") -> int:
         queue_id = len(self._items) + 1
         self._items[queue_id] = ("pending", result)
         return queue_id

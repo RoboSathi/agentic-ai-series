@@ -146,12 +146,12 @@ class TestDummyDataObeysTheRule:
         rng = random.Random(1)
         assert all(refund_status_for(rng, status) == "none" for _ in range(50))
 
-    def test_settled_orders_can_carry_a_refund(self) -> None:
+    def test_settled_orders_start_unrefunded_too(self) -> None:
+        """Every generated order starts with no refund; the agent and reviewers move it."""
         import random
 
         rng = random.Random(1)
-        produced = {refund_status_for(rng, "delivered") for _ in range(200)}
-        assert produced - {"none"}
+        assert {refund_status_for(rng, "delivered") for _ in range(200)} == {"none"}
 
     def test_the_shipped_database_holds_no_impossible_state(self) -> None:
         """The fixture the agent actually reasons over.

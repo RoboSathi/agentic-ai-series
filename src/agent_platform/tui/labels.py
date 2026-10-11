@@ -39,7 +39,7 @@ _DISPLAY_NAMES = {
     "intent_classification": "INTENT",
     "memory_recall": "MEMORY RECALL",
     "memory_write": "MEMORY UPDATED",
-    "skill_activation": "PROCEDURES",
+    "skill_activation": "SKILLS",
     "working_memory_write": "WORKING MEMORY UPDATED",
     "context_assembly": "CONTEXT ASSEMBLY",
     # What one model request is made of, section by section, drawn just before it.

@@ -203,7 +203,7 @@ class SettlementSettings(BaseModel):
     window_seconds: int = Field(gt=0)
     # How often the console settles refunds whose window has closed.
     sweep_interval_seconds: float = Field(gt=0)
-    # `/void` and `/settle` wording ({order_id}, {amount}, {settles_at}, {count}).
+    # `/void` and settlement-sweep wording ({order_id}, {amount}, {settles_at}, {count}).
     titles: dict[str, str]
     lines: dict[str, str]
     headers: list[str]
@@ -285,6 +285,8 @@ class ReviewOutputSettings(BaseModel):
     `effects` are keyed by action and by `<action>_<decision>`.
     """
 
+    customer_cell: str
+
     queued: str
     # The model's view of an escalation that reached no queue: no limit in it.
     not_queued: str
@@ -358,7 +360,7 @@ class GroundingFactSettings(BaseModel):
 
 
 class PrefetchSettings(BaseModel):
-    """How a procedure's prefetch reads are filled and shown to the model (ADR 0010)."""
+    """How a skill's prefetch reads are filled and shown to the model (ADR 0010)."""
 
     arguments: dict[str, str]
     call_id: str
@@ -394,6 +396,7 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     user_code_alphabet: str
     user_code_placeholder: str
     unseeded_database: str
+    stale_database: str
     messages: CsaMessages
     console: ConsoleSettings
     order_table: OrderTableSettings
@@ -414,7 +417,7 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     refund_declined_escalation: str
     # State metadata key → signal template (`intent:{value}`), ADR 0010.
     instruction_signals: dict[str, str]
-    # A procedure's prefetch reads: argument → state key, and the shown call id (ADR 0010).
+    # A skill's prefetch reads: argument → state key, and the shown call id (ADR 0010).
     prefetch: PrefetchSettings
     grounding_facts: GroundingFactSettings
     # Who the console acts as when it approves or denies a queued refund.

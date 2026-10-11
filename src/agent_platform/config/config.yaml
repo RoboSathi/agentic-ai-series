@@ -518,6 +518,22 @@ audit:
   tool_schema_version: unversioned
   prompt_source: unnamed
   policy_source: unnamed
+  # How the trail reads (`audit/view.py`): one renderer for `make audit <agent>`, `/audit`
+  # and the console. It holds tokens only — never a revealed value (`make pii-reveal`).
+  view:
+    # Colour by outcome: a decision, then the Gatekeeper standing when one was recorded.
+    decision_colours: {allow: green, deny: red, escalate: yellow}
+    standing_colours: {VOID: red, RATIFIABLE: yellow, RATIFIED: green, VOIDABLE: cyan, VALID: green, UNGOVERNED: magenta}
+    # `SINCE=24h`, `SINCE=7d`, or a date (`SINCE=2026-10-11`).
+    since_pattern: '^(?P<n>\d+)(?P<unit>[hd])$'
+    since_units: {h: hours, d: days}
+    # One trace as a tree: each decision, then why and under what standing.
+    trace_entry: "{time} · {action} · {decision} · {actor}"
+    trace_detail: "{key}: {value}"
+    trace_details: [standing, reason_code, kind, item_id, permission, procedure, skills]
+    locked: "The shared ledger is held by a running console; showing this agent's own ledger only (use /audit in the console for both)."
+    title: "Audit · {agent} · {n} newest{narrowed}"
+    trace_title: "Audit · {agent} · trace {trace_id} ({n})"
 
 observability:
   enabled: true
@@ -584,7 +600,7 @@ observability:
     aggregate_line: "{tokens} tokens · {share} of window · {model}"
     labels:
       profile: AGENT.md profile
-      procedures: SKILL.md procedures
+      skills: SKILL.md skills
       policy: Policy
       instructions: System prompt
       context_window: Context window
@@ -613,10 +629,10 @@ observability:
   # The cards every agent's tool-use loop draws, built once (`observability/step_events.py`).
   step_events:
     tool_requested: "Requested: {tool}"
-    # A read a procedure ran before the first model call (ADR 0010).
-    tool_prefetched: "Prefetched: {tool} · for {procedure}"
+    # A read a skill ran before the first model call (ADR 0010).
+    tool_prefetched: "Prefetched: {tool} · for {skill}"
     # A prefetch read answered from a row an earlier stage already read: no tool ran.
-    tool_served: "Prefetched: {tool} · for {procedure} · from {source}"
+    tool_served: "Prefetched: {tool} · for {skill} · from {source}"
     gatekeeper: "Gatekeeper: {verdict} · {standing}"
     # Shown at each point the loop decides whether to go round again.
     loop_control:
@@ -876,9 +892,18 @@ analytics:
       # No per-tile sparkline: a page has ~45 tiles, and each chart costs the browser; every
       # section's trend charts show the trend instead.
       sparkline: none
+    # Durations in one fixed unit on every tile. Rill's `interval_ms` picks a unit per value, so
+    # a p50 of 45 s sat beside a p95 shown as 1.4 min and a p99 in ms; a metric ending
+    # `ending` (stored in milliseconds) is divided into `unit` and printed with `format_d3`.
+    durations:
+      ending: _ms
+      divisor: 1000
+      unit: s
+      format_d3: ",.2f"
+      title: "{title} · {unit}"
+      note: " Shown in seconds (stored in milliseconds)."
     # Rill format presets, by the metric name's ending; anything else is humanized.
     formats:
-      _ms: interval_ms
       _rate: percentage
       availability: percentage
       validity: percentage
@@ -1109,7 +1134,7 @@ skills:
   frontmatter_delimiter: "---"
   # A level-two heading, the unit both files are checked for.
   section_pattern: "^## +(.+?)\\s*$"
-  # A numbered step inside a procedure ("1. …"), counted on its card.
+  # A numbered step inside a skill ("1. …"), counted on its card.
   step_pattern: "^\\s*\\d+\\."
   # A tool written as `namespace.name` or `namespace__name` in a profile or skill: refused,
   # because the model is offered model names only (`tools.model_names`).
@@ -1119,7 +1144,7 @@ skills:
   max_description_chars: 1024
   # The trigger a skill declares to be active on every turn.
   always_trigger: always
-  # The profile is identity and non-negotiables only; anything task-shaped is a procedure.
+  # The profile is identity and non-negotiables only; anything task-shaped is a skill.
   profile_sections: [Mission, Scope, Rules]
   skill_sections: [Preconditions, Procedure, Boundaries, Completion]
   # How an authored skill is stored; consolidated lessons keep the dream's
@@ -1129,16 +1154,16 @@ skills:
   selectable_artifact_types: [skill, how_to]
   digest_chars: 12
   selection:
-    # At most this many procedures join one prompt.
+    # At most this many skills join one prompt.
     max_active: 2
     # Raw BM25 units over description + keywords. Below it a query has not
-    # named the task, and no procedure beats no procedure.
+    # named the task, and no skill is better than a wrong one.
     min_lexical_score: 1.0
-  # The most the profile plus the largest `max_active` procedures may add to a prompt;
+  # The most the profile plus the largest `max_active` skills may add to a prompt;
   # 0 leaves it unchecked. Each agent sets its own, at or below its old instructions.
   max_prompt_chars: 0
   render:
-    procedure_heading: "# Procedure: {name}"
+    skill_heading: "# Skill: {name}"
     reference_heading: "## Reference: {name}"
     separator: "\n\n"
     # What of a skill the model reads; the other sections are for the people who maintain it.
@@ -1153,25 +1178,57 @@ skills:
   observability:
     activation_stage: skill_activation
     sync_stage: skill_sync
-    # One procedure on the card: `{name}`, `{version}`, `{reason}`; its steps are listed below.
+    # One skill on the card: `{name}`, `{version}`, `{reason}`; its steps are listed below.
     activated: "{name} v{version} · {reason}"
     joiner: "; "
-    # Harness reads appear in the expanded Procedure card; the compact heading only shows
+    # Harness reads appear in the expanded Skill card; the compact heading only shows
     # tools the model may then call.
     offered: " · Offered Tools: {tools}"
     offered_none: " · Offered Tools: None"
-    synced: "Procedures synced · {added} added · {updated} updated · {retired} retired"
-    unchanged: "Procedures unchanged"
+    synced: "Skills synced · {added} added · {updated} updated · {retired} retired"
+    unchanged: "Skills unchanged"
   audit:
     actor: harness
-    activation_action: procedure_activation
-    sync_action: procedure_sync
+    activation_action: skill_activation
+    sync_action: skill_sync
 
 memory:
   schema_version: memory-schema-v1
-  episodic:
-    # Neutral default; each agent overlays its own session-log directory.
-    path: logs/memory/default
+  # Long-term memory is files, one directory per agent (ADR 0012). The records under each
+  # store's history directory are the truth; the readable files beside them (one per fact,
+  # one SKILL.md per skill, a MEMORY.md index per store) are regenerated views, and the
+  # full-text index is derived from the records and rebuilt whenever it is missing or stale.
+  files:
+    # Neutral default; each agent overlays `src/<package>/data/memory`.
+    root: data/memory/default
+    dream_events_dir: dream_events
+    episodic_dir: episodic
+    semantic_dir: semantic
+    procedural_dir: procedural
+    # Inside dream_events: written by a turn, then moved once a dream has read it.
+    pending_dir: pending
+    consolidated_dir: consolidated
+    history_dir: .history
+    index_file: MEMORY.md
+    derived_index_file: .index.sqlite
+    lock_file: .lock
+    sequence_file: .sequence
+    # Record files are numbered in write order, zero-padded so a directory listing is that order.
+    record_digits: 8
+    record_suffix: .md
+    event_suffix: .json
+    session_log_suffix: .jsonl
+    frontmatter_delimiter: "---"
+    # Where an agent's own facts live, as against a subject's (a subject id is never empty).
+    shared_subject_dir: _agent
+    # A name that had to be made filename-safe keeps this many hex chars of its digest.
+    name_digest_chars: 8
+    # Each store's MEMORY.md: a title, then one line per memory.
+    index:
+      title: "# {store} memory · {agent}"
+      line: "- [{title}]({path}) — {description}"
+      empty: "_Nothing remembered yet._"
+      description_chars: 120
   semantic:
     fuzzy_match_threshold: 0.6
     # Document RAG (memory/semantic/rag). Neutral defaults under data/;
@@ -1311,21 +1368,109 @@ memory:
       session_summary: 0.6
       how_to: 0.8
       general: 0.3
-  # `make dream`: consolidate the dream inbox into long-term memory.
+  # How a subject (whoever a fact or session is about) is named in memory trees and dream
+  # reports. Neutral here; an agent names its own (the support agent says "customer").
+  subject_label: "subject {subject}"
+  no_subject_label: agent-wide
+  # `make dream <agent>`: consolidate the agent's dream events into long-term memory (ADR 0012).
   dream:
     retention_days: 30
-    procedure_threshold: 3
+    # The kind a completed turn's dream event carries; an agent may emit others (a run).
+    turn_event_kind: turn
+    # How a pending event's file is named: its time, so a listing is arrival order.
+    event_file_time_format: "%Y%m%dT%H%M%S%f"
     summarize_intent: true
     actor: memory-dream
     outcome_chars: 120
-    # What a refused tool call's result starts with. The wording is each
-    # agent's own, so the platform names none.
-    refusal_markers: []
-    procedure_key_chars: 80
     forbidden_words: [he, him, his, himself, she, her, hers, herself]
     min_word_ratio: 0.8
     # Tool names are agent vocabulary; each agent lists its own lookups.
     lookup_tools: []
+    # What a refused tool call's result starts with. The wording is each agent's own, so
+    # the platform names none; a refusal found this way is a `refused` signal.
+    refusal_markers: []
+    refusal_signal_kind: refused
+    # A signal seen in at least this many distinct sessions (or runs) becomes a skill
+    # candidate, proposed to a curator — never active until one approves it.
+    skill_threshold: 3
+    # How a learned skill is written: a valid SKILL.md, so it is read, selected and audited
+    # exactly as an authored one is. `{lesson}` comes from `lessons` by signal kind.
+    learned_skill:
+      # The artifact type a learned skill is stored as: one the selector may choose.
+      artifact_type: how_to
+      name: "learned-{kind}-{value}"
+      description: "Learned from {count} {unit}: {lesson}"
+      unit: sessions
+      precondition_scoped: "Applies when the turn's signals include {scope}."
+      precondition_any: "Applies whenever the request matches this skill's keywords."
+      body: |
+        ## Preconditions
+        - {precondition}
+
+        ## Procedure
+        1. {lesson}
+
+        ## Boundaries
+        - Learned from what {count} earlier {unit} recorded. It changes how to approach the
+          task, never what is true: facts still come from tools and records.
+
+        ## Completion
+        Continue the task as the other instructions say.
+      default_lesson: "'{value}' ({kind}) recurred in {count} {unit}; account for it before acting."
+      lessons: {}
+      keyword_min_chars: 4
+      max_keywords: 8
+
+# Human review (ADR 0012): one queue for every agent and every kind of decision a person makes —
+# a refund above the agent's authority, a reply the hallucination check cut, a quarantined
+# message, a fact or skill memory would not take on its own word. `/queue` and the console's
+# Review tab decide through the same service, and every decision needs a comment.
+review:
+  table: platform_review_queue
+  # A comment shorter than this is not a reason.
+  min_comment_chars: 3
+  # The platform's own kinds; an agent adds its own (a refund, a reply).
+  kinds:
+    memory_fact: memory_fact
+    skill: skill
+    quarantine: quarantine
+  audit_action: "review.{kind}.{decision}"
+  trace_id: "review-{id}"
+  # The reviewer a console records: the operator running it.
+  console_reviewer: console_operator
+  words:
+    summary: "Human review: list, show, approve or deny (a comment is required)"
+    usage: "/review [kind] · /review show <id> · /review approve|deny <id> <comment> · /review <arrivals_per_hour> [minutes_each]"
+    title: "Review queue — {n} pending"
+    empty: Nothing is waiting for a person.
+    show_title: "#{id} · {kind} · {status}"
+    decided: "#{id} {kind}: {status} by {reviewer} — {comment}"
+    # How to decide, said for where the list is read: in the console, or in a terminal.
+    hints:
+      console: "Decide: /review approve|deny <id> <comment> · or on screen: ctrl+r. The comment is kept and audited."
+      terminal: "Decide: make review {agent} ACTION=approve|deny ID=<id> COMMENT=\"<why>\" · or on screen: make agent {agent}, then ctrl+r."
+    kind_title: "{kind} — {n} pending"
+    time_format: "%Y-%m-%d %H:%M"
+    none: "—"
+    # Each kind's table headings. An agent adds its own kinds' in its overlay.
+    columns:
+      quarantine: [ID, Screen, "Message (redacted)", Subject, Raised]
+      memory_fact: [ID, Subject, Fact, Proposed by, Why held, Raised]
+      skill: [ID, Skill, What it says, Why held, Raised]
+    show_headers: [Field, Value]
+    needs_id: "/queue {action} needs an item id. {usage}"
+    needs_comment: "A decision needs a comment saying why (it is kept with the item and audited)."
+    unknown_item: "No pending review item #{id} here."
+    already_decided: "Item #{id} is already {status}."
+    unknown_kind: "No review kind '{kind}'. Kinds here: {kinds}"
+    quarantine_released: "Recorded: the screen was wrong (the message is not re-run)."
+    quarantine_upheld: "Recorded: the screen was right."
+    # The console's Review tab.
+    tab_title: Review
+    comment_placeholder: "Comment (required) — why approve or deny?"
+    approve_button: Approve
+    deny_button: Deny
+    nothing_selected: Select an item to see it.
 
 guardrails:
   enabled: true
@@ -1741,6 +1886,10 @@ security:
     mask_token: "[REDACTED]"
     token_format: "[{category}:{token}]"
     token_chars: 12
+    # The provider boundary (security/pii/boundary.py): with `pii` on, every message to a model
+    # provider is tokenised and the reply's tokens restored. Texts sent on every call (the
+    # system prompt) are tokenised once; this many are remembered.
+    boundary_cache_entries: 256
     # Values that look like personal data but are the deployment's own (a support address an
     # agent hands out on purpose). Matched exactly, ignoring case; nothing else is spared.
     allow_list: []
@@ -2098,35 +2247,44 @@ mcp:
 # views of the harness, so the limits here are about what fits on a
 # terminal, not about what the agent may do.
 commands:
+  # Platform commands an agent leaves out of its console (they do nothing for it). An agent
+  # overlay names them; the platform hides none.
+  hidden: []
   default_limit: 15        # rows a listing shows when no limit is given
   value_preview_chars: 40  # where a long stored value is elided in a table
   tree_preview_chars: 100  # where a value is elided on one line of a memory tree
   memory_tree_events_per_session: 5  # events listed per session before "… N more"
+  # `/memory` and `make show-memory`: one table per store. In a console scoped to a verified
+  # subject, only working memory and that subject's episodic memory are shown — semantic and
+  # procedural memory are the agent's, common to every subject.
+  memory_tables:
+    title: "Memory · {agent}"
+    working_title: "Working memory · this conversation"
+    working_headers: [Key, Value]
+    history_key: conversation
+    history_value: "{n} turn(s) held"
+    episodic_title: "Episodic · {subject} · {n} session(s)"
+    episodic_headers: [When, Session, Kind, What happened]
+    summary_kind: summary
+    event_kind: event
+    semantic_title: "Semantic · {n} fact(s), consolidated by dreams"
+    semantic_headers: [Subject, Fact, Value, Provenance, Version]
+    skills_title: "Procedural · {n} active skill(s)"
+    skills_headers: [Skill, Version, Source, Triggers, Description]
+    inbox_title: "Dream events · {pending} pending · {consolidated} consolidated"
+    inbox_headers: [Status, When, Session, Subject, Kind, Asked, Actions, Signals]
+    pending: pending
+    consolidated: consolidated
+    empty: Nothing yet.
+    episodic_empty: "Episodic · nothing yet — `make dream <agent>` turns dream events into episodes."
+    time_format: "%Y-%m-%d %H:%M"
+    queue_note: "Facts and skills waiting for a curator are in /review (make review <agent>)."
+    inbox_events: 50  # dream events listed, newest first
   recent_window: 20        # how many recent records the summaries look back over
   # A scoped command (`/memory`, an agent's `/queue`) shows only the session's verified subject.
   verify_first: Nobody is verified in this session yet. Verify first, then ask again.
   not_your_records: This console shows only the verified account's own records.
   # `/dlq` (and `make dlq <agent>`): the messages a security screen quarantined, for review.
-  dlq:
-    summary: Quarantined messages (dead-letter queue) — list, show, claim, resolve, discard
-    usage: "/dlq [pending|in_review|resolved|discarded|all] [limit] · /dlq <id> · /dlq claim <id> · /dlq resolve|discard <id> <note>"
-    default_status: pending
-    list_title: "Dead-letter queue — {status} ({n})"
-    counts: "by status: {counts}"
-    headers: [id, when, screen, status, session, decided by, message (redacted)]
-    empty: Nothing here.
-    show_hint: "/dlq <id> shows everything recorded about one entry."
-    entry_title: "Dead-letter entry {id}"
-    preview_chars: 48
-    time_format: "%Y-%m-%d %H:%M"
-    unknown: "—"
-    unknown_status: "No status '{status}'. {usage}"
-    unknown_id: "No dead-letter entry {id} for this agent."
-    needs_id: "/dlq {action} needs an entry id. {usage}"
-    needs_note: "/dlq {action} needs a note saying why (it is kept with the entry and audited)."
-    refused: "Entry {id} is {status}: it cannot be {action}d from there."
-    done: "Entry {id}: {action} recorded by {reviewer} (the message was not re-run)."
-    audit_action: "dlq.{action}"
   stats:
     summary: This session's tasks, turns, model calls, tools, checks, decisions and SLOs, as a tree
     usage: "/stats"
@@ -2163,27 +2321,21 @@ commands:
     unknown: "—"
     rationale_chars: 60
 
-  # `/skills`: an agent's procedural memory — authored skills and approved lessons.
+  # `/skills`: an agent's procedural memory — authored skills and learned ones a curator approved.
+  # Candidates a dream proposed are decided in `/queue` (ADR 0012), with a comment.
   skills:
-    summary: "Procedural memory: list, show, history, approve a queued lesson"
-    usage: "/skills [list | show <name> | history <name> | approve <queue id>]"
+    summary: "Procedural memory: list, show, history (decide learned-skill candidates in /review)"
+    usage: "/skills [list | show <name> | history <name>]"
     group: Agent
-    list_title: "Procedures — {n} active"
+    list_title: "Skills — {n} active"
     list_headers: [name, version, source, triggers, description]
     history_title: "{name} — {n} version(s)"
     history_headers: [version, active, source, recorded by]
-    pending_title: "Awaiting a curator — {n}"
-    pending_headers: [queue id, name, proposal]
-    empty: No procedures yet.
+    pending_title: "Candidates awaiting a curator — {n} (decide with /review approve|deny <id> <comment>)"
+    empty: No skills yet.
     no_catalog: "This agent has no procedural memory (memory.procedural is off)."
-    no_curator: "This agent has no curator queue to approve from."
-    unknown: "No procedure '{name}'. {usage}"
-    needs_name: "/skills {action} needs a procedure name. {usage}"
-    needs_id: "/skills approve needs a queue id. {usage}"
-    not_a_procedure: "Queue entry {id} is not a procedure."
-    approved: "Approved {name}: version {version} is active."
-    refused: "Not approved: {reason}"
-    curator_actor: operator
+    unknown: "No skill '{name}'. {usage}"
+    needs_name: "/skills {action} needs a skill name. {usage}"
     description_chars: 60
     none: "—"
     active: "yes"
@@ -2332,14 +2484,41 @@ tui:
   response_highlights: []
 
   command_output:
-    title_style: bold cyan
-    header_style: bold
-    row_style: default
-    note_style: bright_black
-    error_style: red
+    title_style: "bold #67E8F9"
+    header_style: "bold #67E8F9"
+    row_style: "#F3EAD3"
+    note_style: "#F3EAD3"
+    error_style: "bold #FF5C5C"
     column_gap: 2
     max_column_width: 64
-    prompt_style: bold magenta
+    prompt_style: "bold #67E8F9"
+    # Box tables (`CommandTable`), coloured as an agent's order table is: the grid recedes,
+    # headings read as headings, the first (id) column is bold, and a cell that is a known
+    # state is coloured by state. Matched on the whole cell, ignoring case.
+    table_title_style: bold
+    grid_style: bright_black
+    table_header_style: bold cyan
+    id_style: bold
+    empty_style: bright_black
+    state_styles:
+      pending: yellow
+      awaiting review: bold yellow
+      escalate: yellow
+      approved: green
+      active: green
+      allow: green
+      authored: green
+      completed: green
+      consolidated: green
+      denied: red
+      failed: red
+      deny: red
+      refused: red
+      learned: cyan
+      summary: cyan
+      event: bright_black
+      none: bright_black
+      "—": bright_black
 
 # The web gateway (agent_platform/web). `replay` is the default because
 # it is the only mode that cannot reach the network: a process that was

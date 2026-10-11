@@ -269,6 +269,26 @@ class SqliteAuditLedger:
             )
         ]
 
+    def recent(
+        self,
+        limit: int,
+        decision: Decision | None = None,
+        standing: str | None = None,
+    ) -> list[AuditEntry]:
+        """The latest events for the current agent, newest first, optionally narrowed."""
+        clauses, params = ["agent_id = ?"], [self._agent_id]
+        if decision is not None:
+            clauses.append("decision = ?")
+            params.append(decision)
+        if standing is not None:
+            clauses.append(f"json_extract(authority_context, '$.{STANDING_FIELD}') = ?")
+            params.append(standing)
+        sql = (
+            f"SELECT * FROM platform_audit_entries WHERE {' AND '.join(clauses)} "
+            "ORDER BY seq DESC LIMIT ?"
+        )
+        return [self._to_entry(row) for row in self._store.iter_rows(sql, (*params, limit))]
+
     def by_decision(self, decision: Decision) -> list[AuditEntry]:
         return [
             self._to_entry(row)

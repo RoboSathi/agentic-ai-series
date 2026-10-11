@@ -10,6 +10,7 @@ turn summary instead.
 from types import SimpleNamespace
 from typing import Any
 
+from agent_platform.memory.dream import TurnRecorder
 from agent_platform.memory.facade import _event_fields, _recall_fields
 from agent_platform.memory.types import MemoryFact, Provenance, RecallReport, ScoredFact
 from agent_platform.memory.working import WorkingMemoryStore
@@ -77,7 +78,7 @@ class TestTheDreamInboxIsNamed:
         agent.__dict__.update(
             _long_term=None,
             _working_memory=WorkingMemoryStore(),
-            _memory_event_sink=SimpleNamespace(emit=queued.append),
+            _dream_recorder=TurnRecorder(SimpleNamespace(emit=queued.append), "csa"),
             _security=SimpleNamespace(redact=lambda text: text),
             _actor="customer_support_agent",
             _reporter=reporter,

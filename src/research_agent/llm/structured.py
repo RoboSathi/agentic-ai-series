@@ -26,11 +26,11 @@ from agent_platform.llm.prompt import PromptManifest
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
 from agent_platform.logging import describe_error, get_logger
 from agent_platform.loop_control import BudgetGuard
+from agent_platform.memory.procedural.skills import AgentInstructions
 from agent_platform.observability import StageReporter
 from agent_platform.observability.step_card import ModelCall
 from agent_platform.presentation.text_tree import value_lines
 from agent_platform.resilience import AsyncTimeoutGuard
-from agent_platform.skills import AgentInstructions
 from research_agent.config.settings import InstructionSettings
 from research_agent.domain.budget import TOKENS
 from research_agent.presentation.narration import role_title, say, toned
@@ -82,7 +82,7 @@ class StructuredCaller:
         profile: InstructionSettings | None = None,
     ) -> None:
         self._clients = clients
-        # The profile and the role's procedures, for the roles configured to carry them.
+        # The profile and the role's skills, for the roles configured to carry them.
         self._instructions = instructions
         self._profile = profile
         self._role_max_tokens = dict(role_max_tokens or {})
@@ -98,7 +98,7 @@ class StructuredCaller:
 
     @property
     def instructions(self) -> AgentInstructions | None:
-        """The profile and procedures the roles are prompted with, if any."""
+        """The profile and skills the roles are prompted with, if any."""
         return self._instructions
 
     def usage(self) -> dict[str, dict[str, float]]:
@@ -214,7 +214,7 @@ class StructuredCaller:
         return await self._send(client, prompt.role, request, True, quiet=quiet)
 
     def _preamble(self, role: str) -> str:
-        """The profile and this role's procedures — or nothing, for a role kept narrow."""
+        """The profile and this role's skills — or nothing, for a role kept narrow."""
         if self._instructions is None or self._profile is None:
             return ""
         if role not in self._profile.profile_roles:

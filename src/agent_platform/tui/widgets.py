@@ -126,9 +126,9 @@ FIELD_PRIORITY = (
     "requested_tool_calls",
     "tools_available",
     "tools_offered",
-    # The procedure card: what was chosen and why, then what the harness read, then what
+    # The skill card: what was chosen and why, then what the harness read, then what
     # the model may call.
-    "procedures",
+    "skills",
     "harness_reads_first",
     "model_may_call",
     "input_tokens",

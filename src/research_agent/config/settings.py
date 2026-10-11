@@ -27,8 +27,6 @@ class CommandNames(BaseModel):
     rubric: str
     approve: str
     cancel: str
-    history: str
-    show: str
     rubric_add: str
     rubric_drop: str
     rubric_set: str
@@ -70,7 +68,6 @@ class MessageSettings(BaseModel):
     cancel_requested: str
     delivered: str
     new_scope: str
-    history_empty: str
     unknown_run: str
     # `{error}`: why a scoping step failed (the session is left ready for a new question).
     scope_failed: str
@@ -293,20 +290,28 @@ class ReflectionSettings(BaseModel):
     min_score_gain: float = Field(ge=0.0, le=1.0)
 
 
-class ReflexionSettings(BaseModel):
-    """Lessons across runs (`reflexion/lessons.py`): how many, where kept, how recalled."""
+class RunSignalKinds(BaseModel):
+    """The signal kind each finding of a run is recorded under."""
 
-    max_lessons: int = Field(ge=1)
-    recall_limit: int = Field(ge=1)
-    # How many episodic matches to read before filtering to this run's kind.
-    search_limit: int = Field(ge=1)
-    min_term_chars: int = Field(ge=1)
-    # Rejection codes named in one lesson, most frequent first.
-    top_codes: int = Field(ge=1)
-    category: str
-    session: str
-    # Lesson templates by kind: failed, rejected, budget, revised.
-    wording: dict[str, str]
+    criterion_failed: str
+    source_rejected: str
+    budget_stop: str
+
+
+class ResearchMemorySettings(BaseModel):
+    """What a finished run leaves for the dream, and how this agent's dream reads it (ra-0023)."""
+
+    run_event_kind: str
+    # A run kind as a skill trigger: a skill learned from runs of one kind applies to that kind.
+    scope: str
+    signals: RunSignalKinds
+    # A run's episodic summary, and the word for "nothing" in it.
+    summary: str
+    summary_none: str
+    # A source that runs could not use, as a semantic fact.
+    source_fact_key: str
+    source_fact_value: str
+    source_fact_category: str
 
 
 class SynthesisSettings(BaseModel):
@@ -602,7 +607,6 @@ class ArchiveSettings(BaseModel):
     # a "fact" about a report is not something the agent believes true.
     semantic_pointer: bool = False
     run_id_prefix: str
-    history_limit: int = Field(ge=1)
     # `make runs ra`: the archive read straight from the artifact store.
     list_headers: list[str]
     list_empty: str
@@ -629,7 +633,6 @@ class PanelSettings(BaseModel):
 
     stage_labels: dict[str, str]
     command_help: dict[str, str]
-    history_headers: list[str]
     # Every sentence a card or the status block says (`research_agent.presentation.narration`).
     cards: dict[str, str]
     # Rejection and gap codes, in words.
@@ -688,10 +691,10 @@ class RunLoopWords(BaseModel):
 
 
 class InstructionSettings(BaseModel):
-    """Which roles carry the profile and their procedures (ADR 0010, ra-0021)."""
+    """Which roles carry the profile and their skills (ADR 0010, ra-0021)."""
 
     profile_roles: list[str]
-    # How a role is written as a procedure signal (`role:{role}`).
+    # How a role is written as a skill signal (`role:{role}`).
     role_signal: str
 
 
@@ -721,7 +724,7 @@ class ResearchAgentSettings(YamlBackedSettings):
     calls: CallSettings
     run_loop: RunLoopWords
     reflection: ReflectionSettings
-    reflexion: ReflexionSettings
+    memory: ResearchMemorySettings
     synthesis: SynthesisSettings
     audit: AuditSettings
     injection_model: InjectionModelSettings = Field(default_factory=InjectionModelSettings)

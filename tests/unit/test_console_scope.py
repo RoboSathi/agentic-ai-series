@@ -10,11 +10,12 @@ from typing import Any
 
 import pytest
 
-from agent_platform.commands import ConsoleScope, MemoryCommand
+from agent_platform.commands import CommandError, ConsoleScope, MemoryCommand
+from agent_platform.commands.review import QueueCommand
 from agent_platform.memory.working import WorkingMemoryStore
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.primitives.money import Money
-from customer_support_agent.console.commands import QueueCommand
+from customer_support_agent.console.review_handler import support_queue_command
 from customer_support_agent.domain.models import HitlRequest
 from customer_support_agent.persistence.repositories import HitlQueueRepository
 
@@ -34,7 +35,7 @@ def queued(seeded_pool: SqliteConnectionPool) -> SqliteConnectionPool:
 
 
 def _queue(pool: SqliteConnectionPool, scope: ConsoleScope) -> QueueCommand:
-    command = QueueCommand(pool)
+    command = support_queue_command(pool)
     command.bind_scope(scope)
     return command
 
@@ -49,8 +50,9 @@ class TestTheQueueIsTheVerifiedCustomersOwn:
     async def test_it_lists_only_their_requests(self, queued: SqliteConnectionPool) -> None:
         result = await _queue(queued, _scope({"s": "1"}, ["s"])).run([])
         assert "1 pending" in result.title
-        assert [row.cells[1] for row in result.rows] == ["refund · order 10001 · $20.00"]
-        assert "customer" not in result.headers
+        [table] = result.tables
+        assert [row[1:3] for row in table.rows] == [["10001", "$20.00"]]
+        assert table.headers[:3] == ["ID", "Order", "Amount"]
 
     async def test_another_customers_request_cannot_be_decided(
         self, queued: SqliteConnectionPool, monkeypatch: pytest.MonkeyPatch
@@ -61,19 +63,27 @@ class TestTheQueueIsTheVerifiedCustomersOwn:
             lambda pool=None, audit=None: decided.append(pool),
         )
         theirs = _id_for(queued, 2)
-        result = await _queue(queued, _scope({"s": "1"}, ["s"])).run(["approve", str(theirs)])
+        with pytest.raises(CommandError, match="No pending review item"):
+            await _queue(queued, _scope({"s": "1"}, ["s"])).run(
+                ["approve", str(theirs), "looks right"]
+            )
         assert decided == []
-        assert any("not pending" in line for line in result.lines)
 
-    async def test_nobody_verified_means_nothing_is_shown(
+    async def test_nobody_verified_means_only_the_agents_own_items(
         self, queued: SqliteConnectionPool
     ) -> None:
         result = await _queue(queued, _scope({}, ["s"])).run([])
-        assert not result.ok and "Verify first" in " ".join(result.lines)
+        assert result.ok and "0 pending" in result.title
 
     async def test_unscoped_it_is_the_whole_queue(self, queued: SqliteConnectionPool) -> None:
-        result = await QueueCommand(queued).run([])
-        assert "2 pending" in result.title and "customer" in result.headers
+        result = await support_queue_command(queued).run([])
+        assert "2 pending" in result.title
+
+    async def test_a_decision_needs_a_comment(self, queued: SqliteConnectionPool) -> None:
+        mine = _id_for(queued, 1)
+        with pytest.raises(CommandError, match="comment"):
+            await _queue(queued, _scope({"s": "1"}, ["s"])).run(["approve", str(mine)])
+        assert QueueCommand(queued).service().queue.get(mine).status == "pending"  # type: ignore[union-attr]
 
 
 class TestMemoryIsTheVerifiedCustomersOwn:

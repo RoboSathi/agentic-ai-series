@@ -1,10 +1,10 @@
-"""`/skills` — an agent's procedural memory, and the curator's gate into it.
+"""`/skills` — an agent's procedural memory.
 
 Platform-owned and agent-agnostic: the host hands it the agent's skill
 catalog and, when the agent has one, its curator queue. Listing shows the
-active procedures and the lessons a dream proposed; `approve` is the only
-way a proposed lesson becomes a procedure, and it goes through the same
-governed approval every other curated memory does.
+active skills and the candidates a dream proposed; a candidate becomes a
+skill only when a curator approves it in `/queue` (ADR 0012), with a
+comment, through the same governed approval every curated memory takes.
 """
 
 from collections.abc import Callable
@@ -13,15 +13,14 @@ from typing import Protocol, runtime_checkable
 from agent_platform.commands.types import CommandError, CommandResult
 from agent_platform.config import get_settings
 from agent_platform.config.settings import SkillsCommandWords
-from agent_platform.memory.types import MemoryPrincipal, WriteResult
+from agent_platform.memory.procedural.skills.catalog import SkillCatalog
+from agent_platform.memory.procedural.skills.types import Skill
+from agent_platform.memory.types import WriteResult
 from agent_platform.memory.write_pipeline import store_type
-from agent_platform.skills.catalog import SkillCatalog
-from agent_platform.skills.types import Skill
 
 _LIST = "list"
 _SHOW = "show"
 _HISTORY = "history"
-_APPROVE = "approve"
 _PROCEDURAL = "procedural"
 
 
@@ -31,11 +30,9 @@ class CuratorPipeline(Protocol):
 
     def pending_with_ids(self) -> list[tuple[int, WriteResult]]: ...
 
-    def approve_queued(self, queue_id: int, principal: MemoryPrincipal) -> WriteResult: ...
-
 
 class SkillsCommand:
-    """List, show, history and approve over the agent's procedures."""
+    """List, show and history over the agent's skills."""
 
     name = "skills"
 
@@ -53,8 +50,6 @@ class SkillsCommand:
 
     async def run(self, args: list[str]) -> CommandResult:
         action = args[0].casefold() if args else _LIST
-        if action == _APPROVE:
-            return self._approve(args[1:])
         catalog = self._require_catalog()
         if action == _LIST:
             return self._list(catalog)
@@ -95,7 +90,7 @@ class SkillsCommand:
         curator = self._curator()
         if curator is None:
             return []
-        return [(i, entry) for i, entry in curator.pending_with_ids() if _is_procedure(entry)]
+        return [(i, entry) for i, entry in curator.pending_with_ids() if _is_skill(entry)]
 
     def _show(self, catalog: SkillCatalog, name: str) -> CommandResult:
         skill = catalog.show(name)
@@ -117,31 +112,11 @@ class SkillsCommand:
             result.row(str(skill.version), self._yes_no(is_active), skill.source, skill.name)
         return result
 
-    def _approve(self, args: list[str]) -> CommandResult:
-        curator = self._curator()
-        if curator is None:
-            raise CommandError(self._words.no_curator)
-        if not args or not args[0].isdigit():
-            raise CommandError(self._words.needs_id.format(usage=self.usage))
-        queue_id = int(args[0])
-        if queue_id not in dict(self._pending()):
-            raise CommandError(self._words.not_a_procedure.format(id=queue_id))
-        principal = MemoryPrincipal(actor=self._words.curator_actor, role="curator")
-        return self._approved(curator.approve_queued(queue_id, principal))
-
-    def _approved(self, outcome: WriteResult) -> CommandResult:
-        if not outcome.written or outcome.fact is None:
-            raise CommandError(self._words.refused.format(reason=outcome.reason))
-        version = outcome.fact.metadata.get("version", "")
-        return CommandResult(
-            title=self._words.approved.format(name=outcome.fact.key, version=version)
-        )
-
     def _yes_no(self, value: bool) -> str:
         return self._words.active if value else self._words.inactive
 
 
-def _is_procedure(entry: WriteResult) -> bool:
+def _is_skill(entry: WriteResult) -> bool:
     return entry.fact is not None and store_type(entry.fact.category) == _PROCEDURAL
 
 

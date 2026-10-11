@@ -19,7 +19,7 @@ No config surface until an implementation lands.
 
 ## Collaborators
 
-- Would register with `memory.ProceduralStore` and the version registry (`config.versions`).
+- Would register with `memory.SkillStore` and the version registry (`config.versions`).
 
 ## Episodes
 

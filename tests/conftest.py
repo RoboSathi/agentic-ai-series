@@ -36,6 +36,7 @@ from agent_platform.llm.types import (
     ModelToolCall,
     TokenUsage,
 )
+from agent_platform.logging.trace_context import set_current_trace_id
 from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
 from agent_platform.primitives.money import Money
 from agent_platform.resilience.rate_limiter import reset_rate_limiter
@@ -47,6 +48,7 @@ from customer_support_agent.persistence.schema import ensure_schema
 _ANALYTICS_PATH_VAR = "ANALYTICS__SOURCES__LIVE__DB_PATH"
 _CHECKPOINTS_PATH_VAR = "DURABILITY__DB_PATH"
 _RATE_LIMIT_PATH_VAR = "RESILIENCE__RATE_LIMIT__STORE_PATH"
+_MEMORY_ROOT_VAR = "MEMORY__FILES__ROOT"
 # Settings fields naming a credential's environment variables, and the two provider
 # key read by bare name (`web_search` Tavily).
 _KEY_ENV_VARS = "key_env_vars"
@@ -245,6 +247,8 @@ def isolated_analytics_store(tmp_path_factory: pytest.TempPathFactory) -> Iterat
         "ANALYTICS__SOURCES__LIVE__PARQUET_DIR": tmp_path_factory.mktemp("parquet"),
         # Eval history, reports and fixtures are developer data too.
         **_eval_paths(tmp_path_factory.mktemp("evals")),
+        # Long-term memory is files under each agent's package; a test never writes there.
+        _MEMORY_ROOT_VAR: tmp_path_factory.mktemp("memory"),
     }
     previous = {name: os.environ.get(name) for name in isolated}
     os.environ.update({name: str(path) for name, path in isolated.items()})
@@ -340,6 +344,33 @@ def _eval_paths(root: Any) -> dict[str, Any]:
         "CUSTOMER_SUPPORT_AGENT__EVALS__FIXTURE_DB_PATH": root / "fixture.db",
         "CUSTOMER_SUPPORT_AGENT__EVALS__WORKSPACE_DIR": root / "workspace",
     }
+
+
+@pytest.fixture(autouse=True)
+def no_leaked_trace() -> Iterator[None]:
+    """Start and end every test outside any trace.
+
+    The trace id is context state, like the settings singleton: a test that
+    sets one and does not clear it makes a later test that reads "no trace"
+    fail depending on the order the suite happened to run in.
+    """
+    set_current_trace_id(None)
+    yield
+    set_current_trace_id(None)
+
+
+@pytest.fixture(autouse=True)
+def isolated_memory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Give every test its own long-term memory directory.
+
+    Memory is files now, and files outlive a test the way a `:memory:`
+    database never did: a fact one test remembered would be recalled by
+    the next. Each test gets an empty directory, and a store built with no
+    root lands in it.
+    """
+    root = tmp_path / "memory"
+    monkeypatch.setattr(get_settings().memory.files, "root", str(root))
+    return root
 
 
 @pytest.fixture(autouse=True)

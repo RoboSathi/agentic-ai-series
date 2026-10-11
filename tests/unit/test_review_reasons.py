@@ -44,8 +44,10 @@ class TestARefundIsQueuedAsARefund:
         assert get_agent_settings().review_reasons.for_action(action) == reason
 
 
-class TestAnOlderQueueGainsTheColumn:
-    def test_ensure_schema_adds_reason_and_keeps_the_rows(self, pool: SqliteConnectionPool) -> None:
+class TestAnOlderQueueMovesIntoTheReviewQueue:
+    def test_its_rows_become_review_items_and_the_table_goes(
+        self, pool: SqliteConnectionPool
+    ) -> None:
         pool.execute_script(
             "CREATE TABLE hitl_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER, "
             "user_id INTEGER NOT NULL, requested_amount_cents INTEGER, action TEXT NOT NULL "
@@ -55,8 +57,9 @@ class TestAnOlderQueueGainsTheColumn:
             "VALUES (1, 'refund', 'pending', '2026-10-10');"
         )
         ensure_schema(pool)
-        [row] = list(pool.iter_rows("SELECT reason FROM hitl_queue"))
-        assert row["reason"] == ""
+        [moved] = HitlQueueRepository(pool).pending()
+        assert moved.user_id == 1 and moved.reason == ""
+        assert not list(pool.iter_rows("PRAGMA table_info(hitl_queue)"))
 
 
 class TestARetiredRefundStatusIsRewritten:

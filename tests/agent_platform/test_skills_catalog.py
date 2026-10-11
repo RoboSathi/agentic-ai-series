@@ -11,10 +11,10 @@ from agent_platform.audit.ledger import SqliteAuditLedger
 from agent_platform.config import get_settings
 from agent_platform.config.settings import SkillSettings
 from agent_platform.logging.trace_context import set_current_trace_id
-from agent_platform.memory import MemoryFact, ProceduralStore, Provenance
+from agent_platform.memory import MemoryFact, Provenance, SkillStore
+from agent_platform.memory.procedural.skills import SkillDocument
+from agent_platform.memory.procedural.skills.catalog import SkillCatalog
 from agent_platform.persistence import SqliteConnectionPool
-from agent_platform.skills import SkillDocument
-from agent_platform.skills.catalog import SkillCatalog
 
 
 def _document(name: str, body: str = "steps") -> SkillDocument:
@@ -28,8 +28,8 @@ def settings() -> SkillSettings:
 
 
 @pytest.fixture
-def store(pool: SqliteConnectionPool) -> ProceduralStore:
-    return ProceduralStore(pool)
+def store(pool: SqliteConnectionPool) -> SkillStore:
+    return SkillStore()
 
 
 @pytest.fixture
@@ -38,13 +38,11 @@ def audit(pool: SqliteConnectionPool) -> SqliteAuditLedger:
 
 
 @pytest.fixture
-def catalog(
-    store: ProceduralStore, settings: SkillSettings, audit: SqliteAuditLedger
-) -> SkillCatalog:
+def catalog(store: SkillStore, settings: SkillSettings, audit: SqliteAuditLedger) -> SkillCatalog:
     return SkillCatalog(store, settings, audit=audit)
 
 
-def _lesson(store: ProceduralStore, key: str, kind: str = "how_to") -> None:
+def _lesson(store: SkillStore, key: str, kind: str = "how_to") -> None:
     fact = MemoryFact(
         key=key,
         value="Check the order is settled first.",
@@ -78,9 +76,7 @@ class TestSync:
         assert [s.version for s in catalog.history("refund-flow")] == [2, 1]
         assert catalog.show("refund-flow").document.body == "new steps"  # type: ignore[union-attr]
 
-    def test_a_rollback_survives_a_restart(
-        self, catalog: SkillCatalog, store: ProceduralStore
-    ) -> None:
+    def test_a_rollback_survives_a_restart(self, catalog: SkillCatalog, store: SkillStore) -> None:
         catalog.sync([_document("refund-flow")])
         catalog.sync([_document("refund-flow", "new steps")])
         store.rollback("refund-flow", 1)
@@ -101,13 +97,13 @@ class TestSync:
         assert catalog.show("refund-flow") is not None
 
     def test_a_consolidated_lesson_is_never_retired(
-        self, catalog: SkillCatalog, store: ProceduralStore
+        self, catalog: SkillCatalog, store: SkillStore
     ) -> None:
         _lesson(store, "check settled")
         assert catalog.sync([]).retired == []
         lesson = catalog.show("check settled")
         assert lesson is not None
-        assert lesson.source == "consolidated"
+        assert lesson.source == "learned"
 
     def test_each_change_is_audited(
         self, catalog: SkillCatalog, audit: SqliteAuditLedger, settings: SkillSettings
@@ -117,19 +113,17 @@ class TestSync:
         catalog.sync([_document("refund-flow")])
         entries = audit.reconstruct(settings.audit.sync_action)
         assert len(entries) == 1
-        assert entries[0].authority_context["procedure"] == "refund-flow@1"
+        assert entries[0].authority_context["skill"] == "refund-flow@1"
 
 
 class TestTheActiveCatalog:
-    def test_it_lists_active_procedures_by_name(
-        self, catalog: SkillCatalog, store: ProceduralStore
-    ) -> None:
+    def test_it_lists_active_skills_by_name(self, catalog: SkillCatalog, store: SkillStore) -> None:
         catalog.sync([_document("b-flow"), _document("a-flow")])
         _lesson(store, "check settled")
         assert [s.name for s in catalog.active()] == ["a-flow", "b-flow", "check settled"]
 
     def test_an_unselectable_artifact_type_is_left_out(
-        self, catalog: SkillCatalog, store: ProceduralStore
+        self, catalog: SkillCatalog, store: SkillStore
     ) -> None:
         _lesson(store, "old prompt", kind="compiled_prompt")
         assert catalog.active() == []

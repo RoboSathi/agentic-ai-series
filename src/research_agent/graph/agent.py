@@ -31,7 +31,7 @@ from agent_platform.durability import (
 )
 from agent_platform.durability.stop_report import stop_report
 from agent_platform.logging import get_logger
-from agent_platform.memory import MemoryFacade
+from agent_platform.memory import MemoryFacade, TurnRecorder
 from agent_platform.observability.langsmith import (
     NullTraceExporter,
     TraceExporter,
@@ -107,6 +107,7 @@ class ResearchAgent:
         screen: InputScreen | None = None,
         refusal: RefusalRule | None = None,
         trace_exporter: TraceExporter | None = None,
+        dream_recorder: TurnRecorder | None = None,
     ) -> None:
         self._scoping = scoping
         # The person's own message, screened before any layer reads it (None: no screen declared).
@@ -126,6 +127,8 @@ class ResearchAgent:
         self._refusal = refusal
         # Where each turn's trace is exported (LangSmith), if anywhere.
         self._trace_exporter = trace_exporter or NullTraceExporter()
+        # Each turn's dream event, for `make dream ra` (None: no memory declared).
+        self._dream_recorder = dream_recorder
         self._sessions: dict[str, SessionRecord] = {}
         self._active: RunResources | None = None
         # The run thread in flight: what Stop pauses through the durable runner.
@@ -153,6 +156,7 @@ class ResearchAgent:
             inputs={"query": query},
         ) as trace:
             result = await self._summarised(query, session_id)
+            self._record_turn(query, session_id, result)
             trace.annotate({"phase": result.phase, "run_id": result.run_id})
             trace.finish({"response": result.response, "phase": result.phase})
             return result
@@ -183,7 +187,7 @@ class ResearchAgent:
         record = self.session(session_id)
         verb = _verb(query)
         names = self._settings.command_names
-        if verb in (names.cancel, names.history, names.show):
+        if verb == names.cancel:
             return self._control(verb, query, record)
         if record.phase == "RUNNING":
             return TurnResult(response=self._settings.messages.run_busy, phase="RUNNING")
@@ -257,12 +261,6 @@ class ResearchAgent:
     def phase(self, session_id: str) -> str:
         """Where the session stands (SCOPING, RUBRIC_REVIEW, RUNNING …): it picks the buttons."""
         return self.session(session_id).phase
-
-    def history(self, limit: int) -> list[dict[str, Any]]:
-        return [row.model_dump() for row in self._archive.history(limit)]
-
-    def show(self, run_id: str) -> str | None:
-        return self._archive.report(run_id)
 
     # -- scoping --------------------------------------------------------------------------
 
@@ -538,6 +536,13 @@ class ResearchAgent:
         )
         self._remember_turn(session_id, record.last_question, note)
 
+    def _record_turn(self, query: str, session_id: str, result: TurnResult) -> None:
+        """Leave the turn in the dream inbox; the agent's own work has no subject."""
+        if self._dream_recorder is not None:
+            self._dream_recorder.record(
+                session_id=session_id, subject_id="", asked=query, answered=result.response
+            )
+
     def _remember_turn(self, session_id: str, said: str, replied: str) -> None:
         """One exchange into the session's working memory (when the agent keeps one)."""
         if self._memory is not None and self._memory.working is not None:
@@ -563,23 +568,9 @@ class ResearchAgent:
     # -- control commands -----------------------------------------------------------------
 
     def _control(self, verb: str | None, query: str, record: SessionRecord) -> TurnResult:
-        names, messages = self._settings.command_names, self._settings.messages
-        if verb == names.cancel:
-            reply = messages.cancel_requested if self.cancel() else messages.no_active_run
-            return TurnResult(response=reply, phase=record.phase)
-        if verb == names.history:
-            rows = self.history(self._settings.archive.history_limit)
-            lines = [
-                f"{r['run_id']}  {r['status']:<8} {r['archetype']:<18} {r['topic']}" for r in rows
-            ]
-            return TurnResult(
-                response="\n".join(lines) or messages.history_empty, phase=record.phase
-            )
-        run_id = query.split(maxsplit=1)[1].strip() if len(query.split()) > 1 else ""
-        shown = self.show(run_id)
-        return TurnResult(
-            response=shown or messages.unknown_run.format(run_id=run_id), phase=record.phase
-        )
+        messages = self._settings.messages
+        reply = messages.cancel_requested if self.cancel() else messages.no_active_run
+        return TurnResult(response=reply, phase=record.phase)
 
     def _note(self, session_id: str, key: str, value: str) -> None:
         """Working memory holds the live run state of this session."""

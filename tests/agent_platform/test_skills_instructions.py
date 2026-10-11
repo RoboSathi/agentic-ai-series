@@ -1,4 +1,4 @@
-"""The agent profile and a turn's procedures, rendered, checked and recorded (ADR 0010).
+"""The agent profile and a turn's skills, rendered, checked and recorded (ADR 0010).
 
 Real files, a real procedural store, a real audit ledger and a real tool registry; the
 only thing faked is the screen — a reporter that keeps what it was shown.
@@ -16,14 +16,14 @@ from agent_platform.audit.ledger import SqliteAuditLedger
 from agent_platform.config import get_settings
 from agent_platform.config.settings import SkillSettings
 from agent_platform.logging.trace_context import get_current_trace_id, set_current_trace_id
-from agent_platform.memory import ProceduralStore
-from agent_platform.persistence import SqliteConnectionPool
-from agent_platform.skills import (
+from agent_platform.memory import SkillStore
+from agent_platform.memory.procedural.skills import (
     AgentInstructions,
     SkillDocumentError,
     build_agent_instructions,
     render_profile,
 )
+from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.tools import NamespacedToolRegistry
 from agent_platform.tools.types import ToolDefinition, ToolResult
 
@@ -116,7 +116,7 @@ def instructions(
     registry: NamespacedToolRegistry,
 ) -> AgentInstructions:
     return build_agent_instructions(
-        settings, store=ProceduralStore(pool), audit=audit, reporter=screen, tools=registry
+        settings, store=SkillStore(), audit=audit, reporter=screen, tools=registry
     )
 
 
@@ -145,7 +145,7 @@ class TestRendering:
         self, instructions: AgentInstructions
     ) -> None:
         text = instructions.compose(_REFUND, "").text
-        assert "# Procedure: refund-flow\n\n## Procedure\n1. step one" in text
+        assert "# Skill: refund-flow\n\n## Procedure\n1. step one" in text
         assert "## Boundaries" in text
         assert "for people" not in text
         assert "triggers:" not in text
@@ -158,7 +158,7 @@ class TestRendering:
         assert instructions.select(_REFUND, "").prefetch() == ["look_up"]
 
 
-class TestTheProcedureCard:
+class TestTheSkillCard:
     def test_one_line_says_what_was_used_and_why(
         self, instructions: AgentInstructions, screen: _Screen, settings: SkillSettings
     ) -> None:
@@ -167,15 +167,15 @@ class TestTheProcedureCard:
             instructions.announce(activation, prefetched=["look_up"])
         [card] = screen.of(settings.observability.activation_stage)
         assert card["summary"] == (
-            "refund-flow v1 · chosen for intent REFUND · harness reads first: look_up"
-            " · model may call: nothing"
+            "refund-flow v1 · chosen for intent REFUND · Offered Tools: None"
         )
-        procedure = card["fields"]["procedures"][0]
-        assert procedure["chosen_because"] == "chosen for intent REFUND"
-        assert len(procedure["steps"]) == 2 and procedure["steps"][0].startswith("1.")
+        assert card["fields"]["harness_reads_first"] == ["look_up"]
+        skill = card["fields"]["skills"][0]
+        assert skill["chosen_because"] == "chosen for intent REFUND"
+        assert len(skill["steps"]) == 2 and skill["steps"][0].startswith("1.")
         assert "profile" not in card["fields"] and "signals" not in card["fields"]
 
-    def test_nothing_is_shown_or_recorded_when_no_procedure_is_used(
+    def test_nothing_is_shown_or_recorded_when_no_skill_is_used(
         self,
         instructions: AgentInstructions,
         screen: _Screen,
@@ -199,7 +199,7 @@ class TestTheProcedureCard:
                 instructions.compose(_REFUND, "q")
         assert len(screen.of(settings.observability.activation_stage)) == 1
         [entry] = audit.reconstruct("t3")
-        assert entry.authority_context["procedures"] == ["refund-flow@1"]
+        assert entry.authority_context["skills"] == ["refund-flow@1"]
         assert entry.authority_context["profile"].startswith("profile@")
 
 
@@ -214,11 +214,11 @@ class TestTheStartUpSync:
         registry: NamespacedToolRegistry,
     ) -> None:
         build_agent_instructions(
-            settings, store=ProceduralStore(pool), audit=None, reporter=None, tools=registry
+            settings, store=SkillStore(), audit=None, reporter=None, tools=registry
         )
         again = _Screen()
         build_agent_instructions(
-            settings, store=ProceduralStore(pool), audit=None, reporter=again, tools=registry
+            settings, store=SkillStore(), audit=None, reporter=again, tools=registry
         )
         assert again.events == []
 
@@ -226,7 +226,7 @@ class TestTheStartUpSync:
 class TestBuildChecks:
     def _build(self, settings: SkillSettings, pool: SqliteConnectionPool, **kwargs: Any) -> Any:
         return build_agent_instructions(
-            settings, store=ProceduralStore(pool), audit=None, reporter=None, **kwargs
+            settings, store=SkillStore(), audit=None, reporter=None, **kwargs
         )
 
     def test_more_always_skills_than_the_cap(

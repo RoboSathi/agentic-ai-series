@@ -22,13 +22,13 @@ from agent_platform.commands import (
     CommandRow,
 )
 from agent_platform.commands.harness import HarnessCommand
-from agent_platform.commands.inspection import AuditCommand, ConfigCommand
+from agent_platform.commands.inspection import AuditCommand
+from agent_platform.commands.review import QueueCommand
 from agent_platform.commands.system import ClearCommand
 from agent_platform.config import active_features, get_settings, set_active_features
 from agent_platform.observability.store import DuckDbObservabilityStore
 from agent_platform.persistence import SqliteConnectionPool
-from agent_platform.tui.command_view import CommandView
-from customer_support_agent.console.commands import QueueCommand
+from agent_platform.presentation.command_view import CommandView
 
 # A key value that must never be rendered, whatever variable holds it.
 SECRET = "sk-test-never-shown"
@@ -41,10 +41,8 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_an_unknown_command_suggests_near_matches(self) -> None:
-        # `/queue` is the agent's, not the platform's, so it is registered
-        # the way the console registers it: from the running host.
+        # `/queue` is the platform's one review queue (ADR 0012).
         registry = CommandRegistry()
-        registry.register(QueueCommand())
         result = await registry.dispatch("/que")
         assert not result.ok
         assert "/queue" in result.lines[0]
@@ -63,42 +61,11 @@ class TestDispatch:
 
     def test_completions_narrow_as_you_type(self) -> None:
         registry = CommandRegistry()
-        assert registry.completions("/c") == ["clear", "config"]
+        assert registry.completions("/c") == ["clear"]
         assert registry.completions("/m") == ["memory"]
 
 
 class TestInspectionCommands:
-    @pytest.mark.asyncio
-    async def test_config_lists_sections_then_drills_into_one(self) -> None:
-        sections = await ConfigCommand().run([])
-        assert any(row.cells[0] == "gatekeeper" for row in sections.rows)
-        detail = await ConfigCommand().run(["gatekeeper"])
-        assert detail.rows
-
-    @pytest.mark.asyncio
-    async def test_config_never_renders_a_secret(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """API keys live in bare env vars, so they cannot appear here.
-
-        This asserts the property rather than the implementation: whatever value a configured
-        key variable holds, `/config` never prints it to whoever is watching the screen. (The
-        variable's *name* is configuration and may be shown.)
-        """
-        llm = get_settings().llm
-        for provider in llm.providers.values():
-            for env in provider.key_env_vars:
-                monkeypatch.setenv(env, SECRET)
-        for section in (await ConfigCommand().run([])).rows:
-            detail = await ConfigCommand().run([section.cells[0]])
-            rendered = " ".join(cell for row in detail.rows for cell in row.cells)
-            assert SECRET not in rendered
-            assert "nvapi-" not in rendered.casefold()
-
-    @pytest.mark.asyncio
-    async def test_an_unknown_config_section_is_an_error_not_an_empty_table(self) -> None:
-        registry = CommandRegistry(commands=[ConfigCommand()])
-        result = await registry.dispatch("/config nosuchsection")
-        assert not result.ok
-
     @pytest.mark.asyncio
     async def test_an_empty_audit_trail_is_a_result_not_a_failure(self) -> None:
         ledger = DuckDbAuditLedger(DuckDbObservabilityStore(":memory:"))
@@ -288,44 +255,20 @@ class TestHarnessCommand:
         assert "auth" not in get_settings().features.paths()
 
 
-class TestConfigStaysReadOnly:
-    """`/config` shows; `/harness` changes. One command per verb.
-
-    Worth asserting rather than assuming: an operator who can change
-    configuration from the inspection command has two ways to move the
-    same state, and only one of them rebuilds the agent afterwards.
-    """
-
-    @pytest.mark.asyncio
-    async def test_the_feature_tree_is_visible(self) -> None:
-        result = await ConfigCommand().run(["features"])
-        shown = {row.cells[0] for row in result.rows}
-        assert "gatekeeper" in shown
-        assert "memory.working" in shown
-
-    @pytest.mark.asyncio
-    async def test_showing_it_changes_nothing(self, restore_settings: None) -> None:
-        set_active_features(get_settings().features)
-        before = active_features()
-        await ConfigCommand().run(["features"])
-        assert active_features().tree == before.tree
-
-    @pytest.mark.asyncio
-    async def test_it_never_asks_for_a_rebuild(self) -> None:
-        """Nothing it does could require one."""
-        assert not (await ConfigCommand().run(["features"])).effect.rebuild_agent
-
-    @pytest.mark.asyncio
-    async def test_it_offers_no_way_to_write(self) -> None:
-        registry = CommandRegistry(commands=[ConfigCommand()])
-        result = await registry.dispatch("/config features gatekeeper off")
-        assert not result.ok
-
-
 class TestConsoleSurface:
     """The console offers exactly these commands — a removed one cannot creep back."""
 
-    KEPT = {"audit", "clear", "config", "dlq", "eval", "harness", "help", "kb", "memory", "queue"}
+    REMOVED = {"config", "dlq", "review", "settle"}
+
+    def test_removed_commands_stay_removed(self) -> None:
+        names = {command.name for command in CommandRegistry().all_commands()}
+        assert not names & self.REMOVED
+
+    def test_the_support_console_has_no_settle(self) -> None:
+        from customer_support_agent.console import CustomerSupportHost
+
+        names = {command.name for command in CustomerSupportHost().commands()}
+        assert "settle" not in names and "void" in names
 
     @pytest.mark.asyncio
     async def test_help_groups_every_command_once(self) -> None:

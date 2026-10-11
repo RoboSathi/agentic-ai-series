@@ -21,7 +21,7 @@ from agent_platform.primitives.money import Money
 from agent_platform.security import Authorizer
 from agent_platform.security.auth.policy import ActionLimit, AgentPolicy, AgentPolicyRepository
 from agent_platform.tools import ToolCall
-from customer_support_agent.console.commands import SettleCommand, VoidCommand
+from customer_support_agent.console.commands import VoidCommand
 from customer_support_agent.evals.fixture import policy_seed_sql
 from customer_support_agent.gatekeeper import REFUND_ACTION_CLASS, CustomerSupportBusinessRules
 from customer_support_agent.persistence import OrdersRepository, RefundLedgerRepository
@@ -209,15 +209,16 @@ class TestSettlementCommands:
         assert voided.ok
         assert orders.get(10001).refund_status == "none"  # type: ignore[union-attr]
 
-    async def test_settle_all_closes_the_batch(self, seeded_pool: SqliteConnectionPool) -> None:
+    async def test_a_settled_refund_can_no_longer_be_voided(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
         orders = OrdersRepository(seeded_pool)
         order = orders.get(10001)
         assert order is not None
         await RefundSaga(orders, RefundLedgerRepository(seeded_pool)).issue(
             order, Money.parse("32.00"), "x"
         )
-        result = await SettleCommand(seeded_pool).run(["all"])
-        assert result.ok and len(result.lines) == 1
+        await RefundSettlement(orders, RefundLedgerRepository(seeded_pool)).settle(10001, _ACTOR)
         assert orders.get(10001).refund_status == "completed"  # type: ignore[union-attr]
         refused: Any = await VoidCommand(seeded_pool).run(["10001"])
         assert refused.ok is False

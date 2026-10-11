@@ -27,7 +27,7 @@ from agent_platform.logging import get_logger, instrument
 from agent_platform.memory.deterministic import DeterministicClaims, normalize_key
 from agent_platform.memory.episodic.memory import EpisodicStore
 from agent_platform.memory.governance import MemoryAuthorizer
-from agent_platform.memory.procedural.memory import ProceduralStore
+from agent_platform.memory.procedural.store import SkillStore
 from agent_platform.memory.semantic.memory import SemanticStore
 from agent_platform.memory.store import CompositeRetrievalScorer, RelevanceScorer
 from agent_platform.memory.types import (
@@ -85,7 +85,7 @@ class MemoryFacade:
         working: WorkingMemoryStore | None = None,
         episodic: EpisodicStore | None = None,
         semantic: SemanticStore | None = None,
-        procedural: ProceduralStore | None = None,
+        procedural: SkillStore | None = None,
         pipeline: MemoryWritePipelineImpl | None = None,
         relevance: RelevanceScorer | None = None,
         platform_store: PlatformStore | None = None,
@@ -136,7 +136,7 @@ class MemoryFacade:
         working: WorkingMemoryStore | None = None,
         episodic: EpisodicStore | None = None,
         semantic: SemanticStore | None = None,
-        procedural: ProceduralStore | None = None,
+        procedural: SkillStore | None = None,
         pipeline: MemoryWritePipelineImpl | None = None,
         relevance: RelevanceScorer | None = None,
         platform_store: PlatformStore | None = None,
@@ -146,8 +146,8 @@ class MemoryFacade:
         return cls(
             working=working or WorkingMemoryStore(),
             episodic=episodic or EpisodicStore(),
-            semantic=semantic or SemanticStore(platform_store),
-            procedural=procedural or ProceduralStore(platform_store),
+            semantic=semantic or SemanticStore(),
+            procedural=procedural or SkillStore(),
             pipeline=pipeline,
             relevance=relevance,
             platform_store=platform_store,
@@ -280,7 +280,7 @@ class MemoryFacade:
         self.last_recall = report
         return ranked
 
-    def procedure(self, name: str) -> MemoryFact | None:
+    def skill(self, name: str) -> MemoryFact | None:
         """The active version of a how-to artifact."""
         return self.procedural.get(name) if self.procedural else None
 

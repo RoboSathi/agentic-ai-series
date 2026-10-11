@@ -258,7 +258,7 @@ Series-wide meta-framework: the Series Contract, the teaching loop (Live Failure
 - Episodic memory built live as a filesystem-based, append-only log (one file per session), queried by time range and participant using the same ripgrep-first discipline — shown as the deployable-Monday version before a database-backed version is introduced.
 - Procedural memory built live as versioned "how-to" artifacts capturing corrected mistakes and tool-use recipes, explicitly linked forward to **M7/E21**, where a DSPy-compiled prompt is shown as one legitimate procedural-memory artifact type.
 - Working memory is explicitly _not_ re-taught here — it's the context window itself, covered in full in E16 (Context Failure) and E17 (Context Management), so this episode doesn't duplicate that content.
-- Exit artifact: three minimal, independently testable store implementations (`SemanticStore`, `EpisodicStore`, `ProceduralStore`) added to `agentic-harness-core`, each satisfying a shared `MemoryStore` interface per E08's Information Hiding discipline.
+- Exit artifact: three minimal, independently testable store implementations (`SemanticStore`, `EpisodicStore`, `SkillStore`) added to `agentic-harness-core`, each satisfying a shared `MemoryStore` interface per E08's Information Hiding discipline.
 
 ### E15 — Memory Write Path: Provenance, Conflict Resolution & Temporal Truth
 

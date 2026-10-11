@@ -13,9 +13,9 @@ from pydantic import BaseModel
 from agent_platform.llm.prompt import INSTRUCTIONS, PromptPart, TurnLayout
 from agent_platform.logging import describe_error, get_logger, instrument
 from agent_platform.loop_control import LoopBudget, LoopGovernor, build_loop_governor
+from agent_platform.memory.procedural.skills import AgentInstructions
 from agent_platform.observability.loop_reporter import LoopReporter
 from agent_platform.observability.step_events import StepEvents
-from agent_platform.skills import AgentInstructions
 from agent_platform.tools.path import ToolPath
 from agent_platform.tools.registry import NamespacedToolRegistry
 from research_agent.config import get_agent_settings
@@ -102,7 +102,7 @@ class DirectAnswerer:
         return DirectAnswer(text=text, failed=bool(final["failure"]))
 
     def _profile(self, question: str) -> list[PromptPart]:
-        """The profile and the answerer's procedures, above its own instructions."""
+        """The profile and the answerer's skills, above its own instructions."""
         if self._instructions is None:
             return []
         signal = get_agent_settings().instructions.role_signal.format(role=prompt.ROLE)

@@ -11,9 +11,9 @@ from agent_platform.memory import (
     MemoryFacade,
     MemoryFact,
     MemoryQuery,
-    ProceduralStore,
     Provenance,
     SemanticStore,
+    SkillStore,
     WorkingMemory,
 )
 from agent_platform.memory.write_pipeline import MemoryWritePipelineImpl
@@ -28,17 +28,17 @@ def episodic(tmp_path: Path) -> EpisodicStore:
 
 @pytest.fixture
 def semantic(pool: SqliteConnectionPool) -> SemanticStore:
-    return SemanticStore(pool)
+    return SemanticStore()
 
 
 @pytest.fixture
-def procedural(pool: SqliteConnectionPool) -> ProceduralStore:
-    return ProceduralStore(pool)
+def procedural(pool: SqliteConnectionPool) -> SkillStore:
+    return SkillStore()
 
 
 @pytest.fixture
 def pipeline(
-    semantic: SemanticStore, episodic: EpisodicStore, procedural: ProceduralStore
+    semantic: SemanticStore, episodic: EpisodicStore, procedural: SkillStore
 ) -> MemoryWritePipelineImpl:
     return MemoryWritePipelineImpl(semantic=semantic, episodic=episodic, procedural=procedural)
 
@@ -113,25 +113,25 @@ class TestEpisodicStore:
 
 
 class TestProceduralStore:
-    def test_writes_are_versioned(self, procedural: ProceduralStore) -> None:
+    def test_writes_are_versioned(self, procedural: SkillStore) -> None:
         for body in ("v1 steps", "v2 steps"):
             procedural.write(_fact("howto", body), Provenance(source="curator"))
         assert len(procedural.history("howto")) == 2
 
-    def test_the_latest_version_is_active(self, procedural: ProceduralStore) -> None:
+    def test_the_latest_version_is_active(self, procedural: SkillStore) -> None:
         for body in ("v1", "v2"):
             procedural.write(_fact("howto", body), Provenance(source="c"))
         assert procedural.get("howto") is not None
         assert procedural.get("howto").value == "v2"  # type: ignore[union-attr]
 
-    def test_rollback_reactivates_an_earlier_version(self, procedural: ProceduralStore) -> None:
+    def test_rollback_reactivates_an_earlier_version(self, procedural: SkillStore) -> None:
         """The point of keeping every version."""
         for body in ("v1", "v2"):
             procedural.write(_fact("howto", body), Provenance(source="c"))
         procedural.rollback("howto", 1)
         assert procedural.get("howto").value == "v1"  # type: ignore[union-attr]
 
-    def test_rollback_to_a_missing_version_is_refused(self, procedural: ProceduralStore) -> None:
+    def test_rollback_to_a_missing_version_is_refused(self, procedural: SkillStore) -> None:
         assert procedural.rollback("howto", 99) is None
 
 
@@ -226,7 +226,7 @@ class TestWritePipeline:
         self,
         semantic: SemanticStore,
         episodic: EpisodicStore,
-        procedural: ProceduralStore,
+        procedural: SkillStore,
         restore_settings: None,
     ) -> None:
         """Settings are read at construction, so raise the bar first."""
@@ -261,9 +261,7 @@ class TestMemoryFacade:
     async def test_recall_ranks_across_stores(
         self, pool: SqliteConnectionPool, tmp_path: Path
     ) -> None:
-        facade = MemoryFacade.complete(
-            semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path)
-        )
+        facade = MemoryFacade.complete(semantic=SemanticStore(), episodic=EpisodicStore(tmp_path))
         facade.semantic.write(_fact("policy", "refunds within 30 days"), Provenance(source="p"))
         recalled = await facade.recall(MemoryQuery(text="refunds"))
         assert recalled and recalled[0].fact.key == "policy"
@@ -271,15 +269,11 @@ class TestMemoryFacade:
     async def test_recall_is_empty_when_nothing_matches(
         self, pool: SqliteConnectionPool, tmp_path: Path
     ) -> None:
-        facade = MemoryFacade.complete(
-            semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path)
-        )
+        facade = MemoryFacade.complete(semantic=SemanticStore(), episodic=EpisodicStore(tmp_path))
         assert await facade.recall(MemoryQuery(text="nothing here")) == []
 
     def test_forget_removes_a_fact(self, pool: SqliteConnectionPool, tmp_path: Path) -> None:
-        facade = MemoryFacade.complete(
-            semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path)
-        )
+        facade = MemoryFacade.complete(semantic=SemanticStore(), episodic=EpisodicStore(tmp_path))
         facade.semantic.write(_fact("k", "v"), Provenance(source="t"))
         assert facade.forget("k") == 1
 
@@ -297,8 +291,8 @@ class TestEachCoalaClassIsIndependent:
         return MemoryFacade(
             working=WorkingMemory() if have.get("working") else None,
             episodic=EpisodicStore(tmp_path) if have.get("episodic") else None,
-            semantic=SemanticStore(pool) if have.get("semantic") else None,
-            procedural=ProceduralStore(pool) if have.get("procedural") else None,
+            semantic=SemanticStore() if have.get("semantic") else None,
+            procedural=SkillStore() if have.get("procedural") else None,
             platform_store=pool,
         )
 
@@ -318,7 +312,7 @@ class TestEachCoalaClassIsIndependent:
     def test_without_procedural_memory_a_lookup_returns_nothing(
         self, tmp_path: Path, pool: SqliteConnectionPool
     ) -> None:
-        assert self._facade(tmp_path, pool, working=True).procedure("how_to_refund") is None
+        assert self._facade(tmp_path, pool, working=True).skill("how_to_refund") is None
 
     def test_without_semantic_memory_revocation_removes_nothing(
         self, tmp_path: Path, pool: SqliteConnectionPool

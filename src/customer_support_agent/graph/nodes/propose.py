@@ -214,25 +214,25 @@ class ProposalNodes(NodeSupport):
             #
             # This grants no authority. The Gatekeeper and RBAC still rule on
             # every invocation, and the injection guard's narrowing still holds.
-            # The turn's procedures still narrow it: what they use is what the
+            # The turn's skills still narrow it: what they use is what the
             # task they were chosen for needs (ADR 0010).
-            by_procedure = self._procedure_tools(state)
+            by_skill = self._skill_tools(state)
             return [
                 tool
                 for tool in self._registry.all_tools()
                 if (not allowed or tool.qualified_name in allowed)
-                and (not by_procedure or tool.name in by_procedure)
+                and (not by_skill or tool.name in by_skill)
             ]
 
         by_intent = set(state.metadata.get("intent_tools", []))
         if not by_intent:
             return []
-        by_procedure = self._procedure_tools(state)
+        by_skill = self._skill_tools(state)
         tools = [
             tool
             for tool in self._registry.all_tools()
             if tool.name in by_intent
-            and (not by_procedure or tool.name in by_procedure)
+            and (not by_skill or tool.name in by_skill)
             and (not allowed or tool.qualified_name in allowed)
         ]
         if self._selector is None:
@@ -280,7 +280,7 @@ class ProposalNodes(NodeSupport):
         return [tool] if tool is not None and tool not in offered else []
 
     def _system_prompt(self) -> str:
-        """The profile and policy, without per-turn procedures — what a screen sees."""
+        """The profile and policy, without per-turn skills — what a screen sees."""
         return build_system_prompt(
             self._instructions.profile_section(), refund_limit=self._refund_limit()
         )

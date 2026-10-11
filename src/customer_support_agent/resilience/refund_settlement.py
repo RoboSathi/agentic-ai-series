@@ -110,10 +110,6 @@ class RefundSettlement:
         self._record(order, actor, "settle_refund", "settled")
         return SettlementOutcome(order_id=order_id, state="settled", amount=order.amount)
 
-    async def settle_all(self, actor: str, user_id: int | None = None) -> list[SettlementOutcome]:
-        """Settle every issued refund now (one customer's when given) — closing the batch."""
-        return [await self.settle(order.order_id, actor) for order in self.issued(user_id)]
-
     async def settle_due(self, actor: str) -> list[SettlementOutcome]:
         """Settle the refunds whose window has closed."""
         due = self._orders.refunds_due(utc_now().isoformat())
