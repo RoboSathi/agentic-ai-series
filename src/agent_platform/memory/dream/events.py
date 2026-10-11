@@ -54,7 +54,7 @@ class DreamEvent(BaseModel):
     event_id: str = Field(default_factory=lambda: uuid4().hex)
     agent_id: str
     session_id: str
-    # Whose work it was; empty for an agent's own (a research run).
+    # Whose work it was; empty for the agent's own (a long-running job, say).
     subject_id: str = ""
     # `turn` by default (`memory.dream.turn_event_kind`); an agent may record others.
     kind: str = ""
