@@ -127,10 +127,11 @@ class Order(BaseModel):
     def is_refund_eligible(self) -> bool:
         """Whether this order has reached a state a refund can apply to.
 
-        An order becomes refundable once it is settled: delivered, so the
-        customer has it and wants their money back, or cancelled before
-        delivery, so they never received it. A pending or shipped order
-        is still in flight and there is nothing to refund yet.
+        An order becomes refundable once it is delivered, so the customer
+        has it and wants their money back, or cancelled, so they never
+        received it. A pending or shipped order is still in flight and
+        there is nothing to refund yet. ("Settled" is a refund's word —
+        a paid refund settles — never an order's.)
         """
         return self.order_status in REFUNDABLE_ORDER_STATUSES
 
@@ -148,7 +149,7 @@ class Order(BaseModel):
             return (
                 f"Order {self.order_id} is still {self.order_status}, so there is "
                 f"nothing to refund yet — a refund applies once an order has been "
-                f"delivered, or if it is cancelled before delivery"
+                f"delivered or cancelled"
             )
         return ""
 

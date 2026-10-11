@@ -177,7 +177,8 @@ class GraphWiring(NodeSupport):
     def _after_propose(self, state: AgentState) -> str:
         """Act on requested tools, or finish. The `propose` node reported why."""
         last = self._current_messages(state)[-1] if self._current_messages(state) else None
-        return after_propose_step(last is not None and bool(last.tool_calls))[0]
+        requested = last is not None and last.role == "assistant" and bool(last.tool_calls)
+        return after_propose_step(state.loop.verdict, requested)[0]
 
     def _after_execute(self, state: AgentState) -> str:
         """Go round again only while permitted. The `execute` node reported why.
@@ -185,9 +186,4 @@ class GraphWiring(NodeSupport):
         Pure: LangGraph runs a routing function off the event loop, where a
         card cannot be drawn, so it decides and says nothing.
         """
-        return after_execute_step(
-            state.tool_rounds,
-            self._max_rounds,
-            state.escalated,
-            bool(state.metadata.get("refusal_is_final")),
-        )[0]
+        return after_execute_step(state.escalated, bool(state.metadata.get("refusal_is_final")))[0]

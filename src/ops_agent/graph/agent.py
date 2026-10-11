@@ -13,10 +13,14 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from agent_platform.config import get_settings
+from agent_platform.context import ContextWindow, Task
+from agent_platform.context.types import AssembledContext
+from agent_platform.llm.prompt import TurnLayout
 from agent_platform.llm.types import Message
 from agent_platform.logging import get_current_trace_id, get_logger, instrument
 from agent_platform.mcp import McpToolSource
 from agent_platform.mcp.client.presentation import server_card
+from agent_platform.memory.working import WorkingMemoryStore
 from agent_platform.observability import StageReporter
 from agent_platform.observability.langsmith import NullTraceExporter, TraceExporter, turn_trace
 from agent_platform.observability.units import close_task
@@ -61,6 +65,8 @@ class OpsAgent:
         screen: MessageScreener | None = None,
         trace_exporter: TraceExporter | None = None,
         instructions: AgentInstructions | None = None,
+        window: ContextWindow | None = None,
+        working_memory: WorkingMemoryStore | None = None,
     ) -> None:
         self._graph = graph
         self._nodes = nodes
@@ -75,6 +81,10 @@ class OpsAgent:
             get_settings().skills, store=None, audit=None, reporter=None
         )
         self._history: dict[str, list[Message]] = {}
+        # With `context` declared, the turns live in working memory and reach the model
+        # through the window; without it, as the conversation they were.
+        self._window = window
+        self._working = working_memory
         self._connected = False
         self._logger = get_logger("ops_agent")
 
@@ -125,11 +135,13 @@ class OpsAgent:
         problem = await self._connect()
         if problem is not None:
             return TurnResult(response=words.no_tools.format(error=problem), outcome=UNAVAILABLE)
-        messages = await self._opening(query, session_id)
-        state: OpsState = await self._graph.ainvoke(initial_state(session_id, messages))
+        messages, layout = await self._opening(query, session_id)
+        state: OpsState = await self._graph.ainvoke(initial_state(session_id, messages, layout))
         self._remember(session_id, query, state["answer"])
-        stopped = bool(state["messages"][-1].tool_calls)
-        return TurnResult(response=state["response"], outcome=STOPPED if stopped else ANSWERED)
+        verdict, failed = state.get("verdict"), bool(state.get("failure"))
+        stopped = verdict is not None and verdict.stops
+        outcome = UNAVAILABLE if failed else STOPPED if stopped else ANSWERED
+        return TurnResult(response=state["response"], outcome=outcome)
 
     async def _screened(self, query: str, session_id: str) -> str | None:
         """The refusal, when a declared screen stops the message; None when it may go on."""
@@ -169,7 +181,7 @@ class OpsAgent:
             fields=sections,
         )
 
-    async def _opening(self, query: str, session_id: str) -> list[Message]:
+    async def _opening(self, query: str, session_id: str) -> tuple[list[Message], TurnLayout]:
         """The turn's first messages: profile and procedure, history, the question, prefetches.
 
         The procedure is chosen first, without a model call, so its prefetch reads (the
@@ -184,14 +196,33 @@ class OpsAgent:
         self._instructions.announce(activation, prefetched=reads, offered=offered)
         self._nodes.begin_turn()
         prefetched, _ran = await self._nodes.prefetch(planned, session_id)
-        return [
-            Message(role="system", content=self._instructions.render(activation)),
-            *self._history.get(session_id, []),
+        windowed = await self._windowed(query, session_id)
+        history = [] if windowed is not None else self._history.get(session_id, [])
+        layout = TurnLayout(
+            tuple(self._instructions.parts(activation)),
+            history=len(history),
+            window_text=windowed.text if windowed is not None else "",
+            window_chunks=tuple(windowed.chunks) if windowed is not None else (),
+            window_notes=tuple(windowed.applied_strategies) if windowed is not None else (),
+        )
+        messages = [
+            layout.build([]).messages[0],
+            *history,
             Message(role="user", content=query),
             *prefetched,
         ]
+        return messages, layout
+
+    async def _windowed(self, query: str, session_id: str) -> AssembledContext | None:
+        """The session's assembled window, when this agent declares context assembly."""
+        if self._window is None:
+            return None
+        result = await self._window.build(Task(query=query, session_id=session_id), self._reporter)
+        return result.window if result.text else None
 
     def _remember(self, session_id: str, query: str, answer: str) -> None:
+        if self._working is not None:
+            self._working.get(session_id).add_history(query, answer)
         turns = self._settings.history_turns
         kept = [*self._history.get(session_id, []), Message(role="user", content=query),
                 Message(role="assistant", content=answer)]  # fmt: skip

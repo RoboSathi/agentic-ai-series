@@ -58,9 +58,14 @@ async def test_a_sufficient_answer_proposes_nothing_and_says_why() -> None:
     assert caller.prompts[0].instructions == prompt.CRITIQUE_INSTRUCTIONS
 
 
+def _judged(contract: Contract) -> str:
+    return next(i.item_id for i in contract.rubric.items if i.check.kind == "judge")
+
+
 async def test_an_insufficient_answer_proposes_follow_ups_filtered_in_code() -> None:
     contract = _contract()
-    item = contract.rubric.ids[0]
+    # Every check passed: only a judge-scored criterion ("answers the question") is a target.
+    item = _judged(contract)
     answer = prompt.CritiqueAnswer(
         sufficient=False,
         critique="Nothing on learning outcomes in classrooms.",
@@ -81,6 +86,20 @@ async def test_an_insufficient_answer_proposes_follow_ups_filtered_in_code() -> 
         "What do studies find on classroom learning?"
     ]
     assert [r.why for r in proposal.rejected] == [TRIED]
+
+
+async def test_a_follow_up_for_a_criterion_that_already_passed_is_dropped() -> None:
+    contract = _contract()
+    passed = next(i.item_id for i in contract.rubric.items if i.check.kind != "judge")
+    answer = prompt.CritiqueAnswer(
+        sufficient=False,
+        critique="Thin.",
+        follow_ups=[prompt.FollowUp(question="More citations?", rubric_items=[passed],
+                                    queries=["mirror neurons citations"])],
+    )  # fmt: skip
+    reflector, _ = _reflector(answer)
+    proposal = await reflector.critique(_ctx(contract), [], [], 2)
+    assert proposal.accepted == [] and len(proposal.rejected) == 1
 
 
 async def test_without_a_model_there_is_no_critique() -> None:

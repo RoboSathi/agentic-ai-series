@@ -12,6 +12,8 @@ class WorkingMemory(BaseModel):
     state: dict[str, Any] = Field(default_factory=dict)
     current_turn: list[Any] = Field(default_factory=list)
     max_history: int = 6
+    # Passages offloaded from the context window, by handle, until the model fetches one back.
+    offloaded: dict[str, str] = Field(default_factory=dict)
 
     def get(self, key: str, default: Any = None) -> Any:
         """Return one active task value."""
@@ -42,6 +44,13 @@ class WorkingMemory(BaseModel):
             for item in self.current_turn
             if getattr(item, "role", None) in {"system", "user", "assistant", "tool"}
         ]
+
+    def offload(self, handle: str, text: str, keep: int) -> None:
+        """Keep an offloaded passage under its handle; only the `keep` most recent stay."""
+        self.offloaded.pop(handle, None)
+        self.offloaded[handle] = text
+        for stale in list(self.offloaded)[:-keep]:
+            del self.offloaded[stale]
 
     def clear_current_turn(self) -> None:
         """Discard transient current-turn data after the turn is emitted."""

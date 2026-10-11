@@ -28,6 +28,7 @@ from agent_platform.config import (
     set_active_features,
 )
 from agent_platform.llm.client import LLMClient
+from agent_platform.llm.tokenizer import shared_tokenizer
 from agent_platform.llm.types import (
     CompletionRequest,
     CompletionResult,
@@ -51,6 +52,9 @@ _RATE_LIMIT_PATH_VAR = "RESILIENCE__RATE_LIMIT__STORE_PATH"
 _KEY_ENV_VARS = "key_env_vars"
 _BARE_PROVIDER_KEYS = ("tavily_api_key",)
 _HOSTED_GUARDS_VAR = "SECURITY__GUARDS__ENABLED"
+# Request sizes are counted by characters in tests: the model-family tokenizer is a
+# download, and a count that depends on whether it is on disk is not a fixed expectation.
+_TOKENIZER_VAR = "LLM__TOKENIZER__ENABLED"
 
 
 class ScriptedLLM(LLMClient):
@@ -289,11 +293,14 @@ def no_provider_calls() -> Iterator[None]:
         for name in names:
             patch.delenv(name, raising=False)
         patch.setenv(_HOSTED_GUARDS_VAR, "false")
+        patch.setenv(_TOKENIZER_VAR, "false")
         reload_settings()
         reload_agent_settings()
+        shared_tokenizer.cache_clear()
         yield
     reload_settings()
     reload_agent_settings()
+    shared_tokenizer.cache_clear()
 
 
 def refunded_to(pool: SqliteConnectionPool, user_id: int) -> Money:

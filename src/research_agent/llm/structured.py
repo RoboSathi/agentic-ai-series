@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from agent_platform.guardrails.guards import PydanticValidator
 from agent_platform.llm.client import LLMClient
+from agent_platform.llm.prompt import PromptManifest
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
 from agent_platform.logging import describe_error, get_logger
 from agent_platform.loop_control import BudgetGuard
@@ -167,6 +168,7 @@ class StructuredCaller:
         temperature: float | None = None,
         timeout: float | None = None,
         quiet: bool = False,
+        manifest: PromptManifest | None = None,
     ) -> CompletionResult:
         """One free-form model call (tool calling allowed), reported and metered like any role.
 
@@ -177,7 +179,11 @@ class StructuredCaller:
         """
         cap = max_tokens if max_tokens is not None else self._role_max_tokens.get(role)
         request = CompletionRequest(
-            messages=messages, tools=tools, temperature=temperature, max_tokens=cap
+            messages=messages,
+            tools=tools,
+            temperature=temperature,
+            max_tokens=cap,
+            manifest=manifest,
         )
         client = self._clients.client_for(role)
         if timeout is None:
@@ -198,10 +204,12 @@ class StructuredCaller:
         quiet: bool = False,
     ) -> CompletionResult:
         """One structured model call, charged to the budget and the role's meter."""
+        preamble = self._preamble(prompt.role)
         request = CompletionRequest(
-            messages=prompt.messages(schema, self._preamble(prompt.role)),
+            messages=prompt.messages(schema, preamble),
             json_schema=schema.model_json_schema(),
             max_tokens=cap,
+            manifest=prompt.manifest(schema, preamble),
         )
         return await self._send(client, prompt.role, request, True, quiet=quiet)
 
@@ -223,8 +231,9 @@ class StructuredCaller:
         quiet: bool = False,
     ) -> CompletionResult:
         started = time.perf_counter()
-        if self._reporter is not None:
-            # The live status line names what is being waited for, per role.
+        if self._reporter is not None and not quiet:
+            # The live status line names what is being waited for, per role. A quiet call's
+            # caller draws its own step (the direct answer's THOUGHT), which already named it.
             self._reporter.started(f"{LLM_STAGE}_{role}")
         try:
             result = await client.complete(request)

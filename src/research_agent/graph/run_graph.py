@@ -6,7 +6,8 @@ by the scheduler's semaphore), and `batch_done` runs once after the whole
 superstep — so a checkpoint lands at every batch boundary and a crash
 resumes at the batch it interrupted. With the Independent Audit withheld,
 `independent_audit` is simply not a node: synthesis goes straight to
-finalization.
+finalization. With reflection withheld (or no revision allowed), `revise` is not a node
+either.
 """
 
 from typing import Any
@@ -56,4 +57,10 @@ def _audit_edges(builder: StateGraph, nodes: RunNodes, with_audit: bool) -> None
         return
     builder.add_node("independent_audit", nodes.independent_audit)
     builder.add_edge("synthesize", "independent_audit")
-    builder.add_conditional_edges("independent_audit", nodes.after_audit, ["gap_fill", "finalize"])
+    targets = ["gap_fill", "finalize"]
+    if nodes.revises:
+        # Producer-Critic on the report: a revision goes back to the same independent audit.
+        builder.add_node("revise", nodes.revise)
+        builder.add_edge("revise", "independent_audit")
+        targets.append("revise")
+    builder.add_conditional_edges("independent_audit", nodes.after_audit, targets)

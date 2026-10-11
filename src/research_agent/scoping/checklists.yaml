@@ -28,6 +28,7 @@ choices:
     - {label: Any time, value: any}
   sources: &source_choices
     - {label: Primary sources preferred, value: primary sources preferred}
+    - {label: At least two independent websites, value: at least 2 independent domains}
     - {label: No preference, value: no preference}
   deliverable: &deliverable_choices
     - {label: Short memo, value: short memo}
@@ -103,12 +104,13 @@ landscape_brief:
   - item_id: scope_boundary
     goal: where the landscape starts and stops (segment and region; a time span is the recency item)
     required: true
-    brief_field: geography
+    brief_field: scope
   - item_id: criteria
     goal: what the map should show for each player
     required: true
     brief_field: criteria
     multi: true
+  # Players the user names become subjects of the map (each is checked against the criteria).
   - item_id: known_players
     goal: players the user already knows, so the research looks beyond them
     required: false
@@ -125,7 +127,7 @@ fact_verification:
   - item_id: claim_origin
     goal: where the user saw the claims, to help find the primary source
     required: false
-    brief_field: constraints
+    brief_field: claim_origin
     multi: true
   - *common
 
@@ -133,7 +135,7 @@ explainer:
   - item_id: audience
     goal: who the explanation is for and what they already know
     required: false
-    brief_field: decision
+    brief_field: audience
   - item_id: concepts
     goal: the sub-concepts the explanation must cover
     required: true

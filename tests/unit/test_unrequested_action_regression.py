@@ -21,15 +21,12 @@ Four distinct defects, each tested below:
 import pytest
 
 from agent_platform.config import get_settings
+from agent_platform.context.similarity import LexicalSimilarity
 from agent_platform.evals import create_scoring_cascade
+from agent_platform.loop_control import LoopBudget, LoopGovernor, action_fingerprint
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.tools import NamespacedToolRegistry, ToolCall, ToolRetrievalSelector
 from customer_support_agent.graph import build_agent
-from customer_support_agent.loop_control import (
-    DuplicateActionDetector,
-    ToolLoopControl,
-    action_fingerprint,
-)
 from customer_support_agent.persistence import HitlQueueRepository, OrdersRepository
 from customer_support_agent.persistence.repositories import RefundLedgerRepository
 from customer_support_agent.resilience.refund_saga import RefundSaga
@@ -114,12 +111,25 @@ class TestDuplicateActionSuppression:
         second = ToolCall(action="x", params={"order_id": "2"})
         assert action_fingerprint(first) != action_fingerprint(second)
 
-    def test_a_repeat_is_answered_with_the_earlier_result(self) -> None:
+    async def test_a_repeat_is_answered_with_the_earlier_result(self) -> None:
         """Refusing without the value invites a third attempt."""
-        detector = DuplicateActionDetector()
+        governor = _governor()
         call = ToolCall(action="x", params={"order_id": "1"})
-        detector.record(call, "order 1 is delivered")
-        assert "order 1 is delivered" in detector.reject(call)
+        await governor.before_action(call)
+        await governor.after_action(call, "order 1 is delivered", True)
+        verdict = await governor.before_action(call)
+        assert verdict.decision == "suppress"
+        assert "order 1 is delivered" in governor.suppression_message(verdict)
+
+    async def test_the_same_call_written_differently_is_a_repeat(self) -> None:
+        """Key order, case, whitespace and `5` vs "5" mean nothing."""
+        governor = _governor()
+        first = ToolCall(action="x", params={"Order_Id": "10001 ", "note": "Hi"})
+        await governor.before_action(first)
+        await governor.after_action(first, "delivered", True)
+        again = ToolCall(action="x", params={"note": "hi", "order_id": 10001})
+        verdict = await governor.before_action(again)
+        assert verdict.decision == "suppress" and verdict.reason_code == "CANONICAL_DUPLICATE"
 
     async def test_the_detector_resets_between_runs(
         self, seeded_pool: SqliteConnectionPool
@@ -163,46 +173,45 @@ class TestARefusedCallIsNotRetried:
     and the refusal handed back to the model read like a transient error.
     """
 
-    def test_a_refusal_is_remembered_like_a_success(self) -> None:
-        detector = DuplicateActionDetector()
+    async def test_the_second_attempt_is_suppressed(self) -> None:
+        governor = _governor()
         call = ToolCall(
             action="support.queue_for_approval",
             params={"order_id": 10979, "amount": 56.86},
             side_effecting=True,
         )
-        assert detector.seen_before(call) is None
-        detector.record_refusal(call, "That action was not permitted: not in scope.")
-        assert detector.seen_before(call) is not None
+        assert (await governor.before_action(call)).decision == "continue"
+        governor.record_refusal(call, "That action was not permitted: not in scope.")
+        verdict = await governor.before_action(call)
+        assert verdict.decision == "suppress"
+        assert verdict.reason_code == "DUPLICATE_ACTION"
 
-    def test_the_second_attempt_is_suppressed(self) -> None:
-        loop = ToolLoopControl()
-        call = ToolCall(
-            action="support.queue_for_approval",
-            params={"order_id": 10979, "amount": 56.86},
-            side_effecting=True,
-        )
-        loop.record_refusal(call, "refused")
-        report = loop.before_action(call, round_number=2, max_rounds=5)
-        assert report.decision == "abort"
-        assert report.reason_code == "DUPLICATE_ACTION"
-
-    def test_the_model_is_told_the_refusal_is_final(self) -> None:
+    async def test_the_model_is_told_the_refusal_is_final(self) -> None:
         """Not just that it failed — that trying again cannot help."""
-        loop = ToolLoopControl()
+        governor = _governor()
         call = ToolCall(
             action="support.process_refund", params={"order_id": 1}, side_effecting=True
         )
-        loop.record_refusal(call, "not in scope")
-        message = loop.reject_message(call)
+        await governor.before_action(call)
+        governor.record_refusal(call, "not in scope")
+        message = governor.suppression_message(await governor.before_action(call))
         assert "refused" in message.lower()
         assert "cannot change" in message.lower()
 
-    def test_a_different_call_is_still_allowed_after_a_refusal(self) -> None:
+    async def test_a_different_call_is_still_allowed_after_a_refusal(self) -> None:
         """A refusal ends that proposal, not every remaining option."""
-        loop = ToolLoopControl()
+        governor = _governor()
         refused = ToolCall(
             action="support.process_refund", params={"order_id": 1}, side_effecting=True
         )
-        loop.record_refusal(refused, "not in scope")
+        await governor.before_action(refused)
+        governor.record_refusal(refused, "not in scope")
         other = ToolCall(action="support.get_order_status", params={"order_id": 1})
-        assert loop.before_action(other, round_number=2, max_rounds=5).decision == "continue"
+        assert (await governor.before_action(other)).decision == "continue"
+
+
+def _governor() -> LoopGovernor:
+    governor = LoopGovernor(LoopBudget(max_steps=5), similarity=LexicalSimilarity())
+    governor.begin_turn()
+    governor.begin_step()
+    return governor

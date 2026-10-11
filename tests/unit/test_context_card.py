@@ -9,6 +9,7 @@ support agent's node adds only its own task metadata and grounding sources.
 from types import SimpleNamespace
 from typing import Any
 
+from agent_platform.config import get_settings
 from agent_platform.context import ContextWindow, Task
 from agent_platform.context.types import AssembledContext, Chunk, ContextFinding
 from agent_platform.llm.types import CompletionRequest, Message
@@ -32,16 +33,22 @@ ROUTINE = ContextFinding(
 
 
 def _pipeline() -> Any:
-    async def assemble(_task: Any, budget_tokens: int | None = None) -> AssembledContext:
+    async def assemble(
+        _task: Any, budget_tokens: int | None = None, strategies: Any = None
+    ) -> AssembledContext:
         return WINDOW
 
     return SimpleNamespace(assemble=assemble)
 
 
 def _health(findings: list[ContextFinding]) -> Any:
+    async def diagnose(window: Any, task: Any) -> list[ContextFinding]:
+        return findings
+
     return SimpleNamespace(
-        diagnose=lambda window, terms: findings,
+        diagnose=diagnose,
         mitigate=lambda window, found: (window, found),
+        rot=SimpleNamespace(window_used=lambda session, tokens: None),
     )
 
 
@@ -71,7 +78,10 @@ class TestAPoisonedWindowIsNot:
     async def test_a_finding_that_is_not_routine_draws_one_warning(self) -> None:
         [warning] = await _build([POISONED])
         assert warning.status == "warning" and "poisoning" in (warning.summary or "")
-        assert warning.fields["used_tokens"] == 486
+        words = get_settings().context.window
+        assert "486 of 3000 tokens" in warning.fields[words.size_title][0]
+        [line] = warning.fields[words.findings_title]
+        assert line["tone"] == "fail" and "10975 · poisoning · dropped" in line["text"]
 
 
 class _Nodes(ContextNodes):
@@ -79,7 +89,7 @@ class _Nodes(ContextNodes):
 
     def __init__(self) -> None:
         self._context: Any = _pipeline()
-        self._strategies: Any = SimpleNamespace(fit=lambda assembled: assembled)
+        self._strategies: Any = None
         self._context_health = None
         self._reporter, _ = _reporter()
 

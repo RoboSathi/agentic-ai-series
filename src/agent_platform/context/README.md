@@ -8,22 +8,32 @@ budget, and whether the assembled context shows a known failure mode
 ## Vocabulary
 
 - **Chunk** — one candidate piece of context with a kind and provenance
-- **strategy** — reduce, offload, isolate, retrieve, cache or consolidate — chosen by `StrategySelector`
-- **five-stage pipeline** — gather → rank → select → assemble → check
-- **context failure** — a detected poisoning / clash / distraction / confusion, diagnosed and mitigated
+- **strategy** — consolidate, isolate, cache (always), then retrieve, offload, reduce (while over
+  budget) — run by `StrategySelector` inside the pipeline's fit stage, before anything is cut
+- **five-stage pipeline** — gather → score → fit (strategies, then cut) → format → order
+- **trust** — a chunk's provenance class (`system`, `verified`, `retrieved`, `user`, `model`): who wins a clash
+- **offload handle** — where an offloaded chunk's text waits (session working memory), fetched
+  back by the `fetch_offloaded_context` tool
+- **context failure** — poisoning (injection, or an unverified claim a verified source
+  contradicts), clash (`key: value` and prose, by local NLI), distraction (similarity to the
+  task), confusion (near-copies; too many tools), rot (answer quality falling as the window
+  grows), diagnosed and mitigated before the model call
 
 ## Public interface
 
 - `ContextAssembler` / `FiveStagePipeline` (`pipeline.py`)
 - Retrievers: `LexicalRetriever` (BM25), `DenseRetriever`, `HybridRetriever`, `GraphRetriever`; `CrossEncoderReranker`
-- Strategies (`strategies.py`) and `StrategySelector`
-- `ContextFailureDetector`, `ContextHealth` (`failure.py`)
+- Strategies (`strategies.py`) and `StrategySelector`; `build_context_management` (`factory.py`)
+- `ContextFailureDetector`, `RotMonitor` (`failure/`: one module per mode)
+- `TextSimilarity` (`similarity.py`), trust (`trust.py`), offload store and tool (`offload.py`)
+- The request a model is sent is built from named sections by `llm/prompt.py`
+  (`PromptBuilder`), and drawn as the CONTEXT card (`observability/context_card.py`)
 - `CandidateSource` (Protocol) — anything that contributes chunks, e.g. `WorkingMemoryContextSource`
 
 ## Configuration
 
 Section `context:` — `token_budget`, `chars_per_token`, `retrieval_mode`, `top_k`,
-`hybrid_lexical_weight`, `rerank`, `bm25_k1`/`bm25_b`, `strategies`, `reduce_keep_ratio`,
+`hybrid_lexical_weight`, `rerank`, `bm25_k1`/`bm25_b`, `strategies`, `strategy_notes`, `similarity`, `consolidation`, `isolation`, `offload`, `reduce`, `trust`, `findings`,
 `failure_detection`. Whether the stage exists: `features.context` (+ `rerank`, `failure_detection`).
 
 ## Seams

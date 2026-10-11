@@ -1,8 +1,11 @@
-"""Generic data contracts for deterministic agent loop controls.
+"""The loop's contracts: one verdict, one set of terminal outcomes, one phase table.
 
-This module contains only contracts and state models. Runtime watchdog logic
-lives in :mod:`agent_platform.loop_control.watchdogs` and protocols live in
-:mod:`agent_platform.loop_control.protocols`.
+Every loop-control mechanism — the step cap, the budgets, the deadline, the stagnation tiers,
+convergence, the historical baseline — answers with a `LoopVerdict`. Routers read its
+`decision`; cards and logs read the rest. A run ends in exactly one `TerminalOutcome`, mapped
+once onto the durable run's status and the tool path's stage, so no agent invents its own.
+
+Runtime logic lives in `governor.py`; state in `state.py`.
 """
 
 from datetime import datetime
@@ -12,19 +15,54 @@ from pydantic import BaseModel, Field
 
 from agent_platform.observability.types import utc_now
 
-AgentState = Literal[
-    "IDLE", "PLANNING", "ACTING", "WAITING_TOOL", "WAITING_HUMAN", "DONE", "FAILED"
-]
+# Where a loop is in its lifecycle (`state.LoopStateMachine` holds the legal moves).
+LoopPhase = Literal["IDLE", "PLANNING", "ACTING", "WAITING_TOOL", "WAITING_HUMAN", "DONE", "FAILED"]
+# Which mechanism decided. One name per mechanism, so a verdict always says who spoke.
 WatchdogLayer = Literal[
     "step_count",
     "wall_clock",
     "token_budget",
     "cost_budget",
+    "tool_budget",
     "duplicate_action",
     "semantic_stagnation",
+    "cycle",
+    "convergence",
+    "historical",
 ]
-LoopDecision = Literal["continue", "abort"]
+# What the loop does next:
+#   continue  go round again
+#   suppress  this one action is not run (a repeat); the loop goes on
+#   finalize  stop acting and answer now, from what there is
+#   abort     stop without an answer
+#   pause     wait for a person (a human-in-the-loop interrupt)
+LoopDecision = Literal["continue", "suppress", "finalize", "abort", "pause"]
+# The reason code of a loop that stopped because its work was done, not because a mechanism
+# stopped it: a FINALIZE that is the plan running its course, not an intervention.
+FINISHED_CODE = "LOOP_CONTROL_DONE"
 CheckStatus = Literal["PASS", "FAIL"]
+# How a turn or run ended.
+TerminalOutcome = Literal[
+    "answered", "finalized_on_cap", "aborted", "cancelled", "escalated", "failed"
+]
+
+# Terminal outcome → durable run status (`durability.types.RunStatus`).
+RUN_STATUS: dict[TerminalOutcome, str] = {
+    "answered": "completed",
+    "finalized_on_cap": "completed",
+    "escalated": "completed",
+    "aborted": "aborted",
+    "cancelled": "cancelled",
+    "failed": "failed_resumable",
+}
+# Loop decision about one action → the tool path's stage (`tools.path.ToolStage`).
+TOOL_STAGE: dict[LoopDecision, str] = {
+    "suppress": "duplicate",
+    "abort": "refused",
+    "finalize": "refused",
+    "pause": "refused",
+    "continue": "executed",
+}
 
 
 class IllegalTransitionError(Exception):
@@ -32,55 +70,16 @@ class IllegalTransitionError(Exception):
 
 
 class Transition(BaseModel):
-    """One recorded state change."""
+    """One recorded phase change."""
 
-    from_state: AgentState
-    to_state: AgentState
+    from_state: LoopPhase
+    to_state: LoopPhase
     reason: str = ""
     at: datetime = Field(default_factory=utc_now)
 
 
-class Trajectory(BaseModel):
-    """The running record of one agent run."""
-
-    run_id: str
-    state: AgentState = "IDLE"
-    steps: int = 0
-    started_at: datetime = Field(default_factory=utc_now)
-    tokens_used: int = 0
-    cost_usd: float = 0.0
-    actions: list[str] = Field(default_factory=list)
-    observations: list[str] = Field(default_factory=list)
-
-
-class StepResult(BaseModel):
-    """The outcome of one loop step."""
-
-    trajectory: Trajectory
-    finished: bool = False
-    output: str = ""
-
-
-class LoopVerdict(BaseModel):
-    """Whether the loop may continue, and which layer stopped it."""
-
-    decision: LoopDecision = "continue"
-    layer: WatchdogLayer | None = None
-    reason: str = ""
-
-
-class Checkpoint(BaseModel):
-    """Durable state for resuming a run."""
-
-    run_id: str
-    state: AgentState
-    transition_history: list[Transition] = Field(default_factory=list)
-    durable_facts: dict[str, Any] = Field(default_factory=dict)
-    saved_at: datetime = Field(default_factory=utc_now)
-
-
 class ControlCheck(BaseModel):
-    """One active deterministic watchdog check."""
+    """One deterministic watchdog check, as it stood when the verdict was given."""
 
     check_id: str
     name: str
@@ -92,10 +91,19 @@ class ControlCheck(BaseModel):
     timestamp: datetime = Field(default_factory=utc_now)
 
 
-class LoopControlReport(BaseModel):
-    """Canonical, renderer-friendly report for one loop-control decision."""
+class BudgetLine(BaseModel):
+    """One counter on a verdict: what is spent of what is allowed."""
+
+    spent: float
+    cap: float
+
+
+class LoopVerdict(BaseModel):
+    """The one loop-control decision contract every mechanism and every agent shares."""
 
     decision: LoopDecision
+    # Which mechanism decided; None for a plain continue no check objected to.
+    layer: WatchdogLayer | None = None
     reason_code: str = "LOOP_CONTROL_CONTINUE"
     reason: str = ""
     checks: list[ControlCheck] = Field(default_factory=list)
@@ -103,3 +111,32 @@ class LoopControlReport(BaseModel):
     max_rounds: int = 0
     fingerprint: str = ""
     previous_result: str = ""
+    # Every budget counter as it stood, for the LOOP CONTROL card's budget tree.
+    budgets: dict[str, BudgetLine] = Field(default_factory=dict)
+
+    @property
+    def stops(self) -> bool:
+        """Whether the loop goes no further (it answers now, or not at all)."""
+        return self.decision in ("finalize", "abort", "pause")
+
+    @property
+    def intervened(self) -> bool:
+        """Whether any mechanism changed what would otherwise have happened."""
+        return self.decision != "continue" and self.reason_code != FINISHED_CODE
+
+
+__all__ = [
+    "FINISHED_CODE",
+    "RUN_STATUS",
+    "TOOL_STAGE",
+    "BudgetLine",
+    "CheckStatus",
+    "ControlCheck",
+    "IllegalTransitionError",
+    "LoopDecision",
+    "LoopPhase",
+    "LoopVerdict",
+    "TerminalOutcome",
+    "Transition",
+    "WatchdogLayer",
+]

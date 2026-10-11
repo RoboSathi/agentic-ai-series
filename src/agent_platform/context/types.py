@@ -5,8 +5,18 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from agent_platform.llm.prompt import STABLE_MARK
+
 # What a chunk is for, which determines how it may be trimmed.
 ChunkKind = Literal["system", "policy", "history", "retrieved", "memory", "tool_result"]
+
+# Where a chunk's trust class (`context.trust`) is kept in its metadata.
+TRUST = "trust"
+# Marked by the Cache strategy: the chunk is the same every turn, so part of the cacheable
+# prefix. One key, the request builder's, so the two cannot drift apart.
+STABLE = STABLE_MARK
+# Set on an offloaded chunk's placeholder: the handle its text is kept under.
+OFFLOADED = "offloaded"
 
 # E17's five context failure modes.
 ContextFailureMode = Literal["rot", "distraction", "confusion", "clash", "poisoning"]
@@ -21,6 +31,9 @@ class Context(BaseModel):
     """
 
     items: list[Any] = Field(default_factory=list)
+    # The assembled window the items were rendered from, when there was one: what the
+    # request builder breaks into sections (working memory, long-term memory, retrieved).
+    window: "AssembledContext | None" = None
 
     def add(self, item: Any) -> None:
         """Append one item to the context."""
@@ -122,5 +135,13 @@ class ContextFinding(BaseModel):
     detail: str
     # Position of the chunk in the window, when the finding is about one.
     index: int | None = None
-    # What mitigation did: "dropped", "kept (higher authority)", "flagged".
+    # What mitigation did: "dropped", "kept (higher authority)", "flagged", "excised".
     action: str = "flagged"
+    # Lines to cut out of the chunk rather than dropping it whole (an unverified claim the
+    # model made inside a transcript that is otherwise worth keeping).
+    excise: list[str] = Field(default_factory=list)
+    # The statements that disagree (a clash, a contradicted claim), each on its own line.
+    statements: list[str] = Field(default_factory=list)
+
+
+Context.model_rebuild()

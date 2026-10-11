@@ -139,6 +139,7 @@ class GroundingResolver:
             if settings.refute_identifier_pattern
             else None
         )
+        self._refuting = settings.refuting_premise
         self._negations = tuple(m.casefold() for m in get_settings().evals.nli.negation_markers)
         self._entailment = entailment or create_entailment_model()
         self._classifier = classifier or ClaimClassifier()
@@ -296,6 +297,7 @@ class GroundingResolver:
             nli_score=1.0,
             decisive=True,
             source=chunk.source,
+            chosen=True,
         )
 
     def _direct_finding(
@@ -326,7 +328,7 @@ class GroundingResolver:
                         outcome.result,
                         retrieved,
                         supported=supported,
-                        checks=checks,
+                        checks=self._chosen_by(outcome, outcomes),
                     )
         why = "no tier decided: " + " · ".join(
             f"{outcome.tier.name}: {outcome.note}" for outcome in outcomes
@@ -342,6 +344,16 @@ class GroundingResolver:
             reason_code=CLAIM_UNSUPPORTED if self._unsupported_blocks else "",
             checks=checks,
             rationale=why,
+        )
+
+    def _chosen_by(self, winner: _TierOutcome, outcomes: list[_TierOutcome]) -> list[EvidenceCheck]:
+        """Every tier's lines, with only the deciding tier's choice marked as the one chosen."""
+        return self._ranked(
+            [
+                check if outcome is winner else check.model_copy(update={"chosen": False})
+                for outcome in outcomes
+                for check in outcome.checks
+            ]
         )
 
     def _current(self, evidence: list[Chunk]) -> list[Chunk]:
@@ -420,7 +432,7 @@ class GroundingResolver:
             joined = await self._joined_support(claim, relevant, chunks)
             if joined is not None:
                 chosen, judged, retrieved = joined, [*judged, joined], [*retrieved, joined[1]]
-        checks = self._checks(retrieved, judged)
+        checks = self._checks(retrieved, judged, chosen[1] if chosen else None)
         label = chosen[0].label if chosen else "abstain"
         note = "" if chosen else self._why_undecided(tier, retrieved, judged)
         return _TierOutcome(tier, label, chosen[0] if chosen else None, checks, retrieved, note)
@@ -536,6 +548,7 @@ class GroundingResolver:
             decisive=decisive,
             source=source,
             model=self._confirmer.model_name,
+            chosen=decisive,
         )
 
     def _best_sources(self, ranked: list[Chunk]) -> list[str]:
@@ -646,7 +659,20 @@ class GroundingResolver:
         if item[0].label == ENTAILMENT_LABEL:
             return not self._names_only_others(claim, item[1])
         passage = bool(item[1].metadata.get(PASSAGE))
-        return tier.may_refute and not passage and self._may_refute(claim, item[1])
+        return (
+            tier.may_refute
+            and not passage
+            and self._may_refute(claim, item[1])
+            and self._is_statement(item[1].content)
+        )
+
+    def _is_statement(self, text: str) -> bool:
+        """Whether a line reads as a statement, not a heading, a menu or a row of links."""
+        words = re.findall(r"[^\W\d_][\w'’-]*", text)
+        if len(words) < self._refuting.min_words:
+            return False
+        capitalised = sum(1 for word in words if word[0].isupper())
+        return capitalised / len(words) <= self._refuting.max_capitalised_share
 
     @staticmethod
     def _strength(item: tuple[EntailmentResult, Chunk]) -> tuple[float, float]:
@@ -728,7 +754,10 @@ class GroundingResolver:
         return result.score >= self._threshold
 
     def _checks(
-        self, retrieved: list[Chunk], judged: list[tuple[EntailmentResult, Chunk]]
+        self,
+        retrieved: list[Chunk],
+        judged: list[tuple[EntailmentResult, Chunk]],
+        chosen: Chunk | None = None,
     ) -> list[EvidenceCheck]:
         """Every retrieved item in similarity order, with the NLI result it got (if any)."""
         by_chunk = {id(chunk): result for result, chunk in judged}
@@ -747,6 +776,7 @@ class GroundingResolver:
                 and self._is_decisive(by_chunk[id(chunk)]),
                 source=chunk.source,
                 model=by_chunk[id(chunk)].model if id(chunk) in by_chunk else "",
+                chosen=chunk is chosen,
             )
             for chunk in retrieved
         ]

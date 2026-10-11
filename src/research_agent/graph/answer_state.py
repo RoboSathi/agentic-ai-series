@@ -9,16 +9,16 @@ pages          the URLs read in full (fetched), as against seen only as a search
 """
 
 import operator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, TypedDict
 
 from langchain_core.runnables import RunnableConfig
 
 from agent_platform.hallucination_check import Observation
+from agent_platform.llm.prompt import TurnLayout
 from agent_platform.llm.types import Message
-from agent_platform.loop_control import BudgetGuard
-from agent_platform.loop_control.watchdogs import ToolLoopControl
+from agent_platform.loop_control import LoopGovernor
 from agent_platform.observability.loop_reporter import LoopReporter
 from agent_platform.observability.step_events import StepEvents
 from research_agent.context.session import SessionContext
@@ -39,6 +39,8 @@ class AnswerState(TypedDict):
     stop: str
     # Why no answer could be given ("" when one was).
     failure: str
+    # How well the answer held up against its sources (None: not checked).
+    quality: float | None
 
 
 @dataclass
@@ -46,17 +48,23 @@ class Turn:
     """What belongs to one question and is not state: its budget, watchdog and step cards."""
 
     question: str
-    budget: BudgetGuard
-    control: ToolLoopControl
+    # The one authority over this question's loop: steps, tool calls, tokens, the deadline,
+    # repeats, cycles and convergence.
+    governor: LoopGovernor
     context: SessionContext
     loop: LoopReporter
     # The platform's loop cards (LOOP CONTROL), numbered with the same step.
     steps: StepEvents
     # When the question was asked: "today" for the prompt and for the recency check.
     asked_at: datetime
+    # The opening every step's request shares, so each CONTEXT card names its sections.
+    layout: TurnLayout = field(default_factory=TurnLayout)
 
     def spent(self, counter: str) -> float:
-        return self.budget.snapshot()[counter].spent
+        return self.governor.spent(counter)
+
+    def elapsed(self) -> float:
+        return self.governor.elapsed()
 
 
 def turn_of(config: RunnableConfig) -> Turn:
@@ -78,6 +86,7 @@ def initial_state(system: str, question: str, history: list[Message]) -> AnswerS
         "text": "",
         "stop": "",
         "failure": "",
+        "quality": None,
     }
 
 

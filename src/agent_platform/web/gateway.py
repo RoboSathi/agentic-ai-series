@@ -104,7 +104,7 @@ class WebGateway:
         remembered = self._remembered(request)
         if remembered is not None:
             self._notify(self._search_call(request, remembered, cached=True))
-            return remembered
+            return self._with_route(remembered, cached=True)
         try:
             response = await self._search(request)
         except Exception as exc:
@@ -116,7 +116,18 @@ class WebGateway:
             raise
         self._remember_search(response)
         self._notify(self._search_call(request, response, cached=False))
-        return response
+        return self._with_route(response, cached=False)
+
+    def _with_route(self, response: SearchResponse, *, cached: bool) -> SearchResponse:
+        """The response's route, completed with what only the gateway knows: cache and mode."""
+        route = response.route.model_copy(
+            update={
+                "answered_by": response.route.answered_by or response.provider,
+                "cached": cached,
+                "mode": self._mode,
+            }
+        )
+        return response.model_copy(update={"route": route})
 
     def _remembered(self, request: SearchRequest) -> SearchResponse | None:
         memo = self._searches.get(request.key)

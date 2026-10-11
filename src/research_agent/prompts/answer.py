@@ -2,10 +2,13 @@
 
 ROLE = "answerer"
 
-# `{today}` is the current date and time, filled in when a question starts.
+# The date the question was asked, filled in when it starts. Its own line, after the session's
+# context rather than inside the instructions: the instructions are then byte-identical from
+# one question to the next, so a provider can cache them (the Cache strategy).
+TODAY = "Today is {today}."
+
 INSTRUCTIONS = """
 You answer the user's question directly and briefly: a few points, not a report.
-Today is {today}.
 
 - Write the answer as "- " points, one fact per point, most important first. Never write a
   paragraph. A single fact is one sentence, with no bullet.

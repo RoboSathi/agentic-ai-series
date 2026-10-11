@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 from agent_platform.config import get_settings
-from agent_platform.loop_control import LoopControlReport
+from agent_platform.loop_control.types import LoopVerdict
 from agent_platform.primitives.money import money_or_none
 from agent_platform.tools.names import display_tool_name, qualified_tool_name
 
@@ -101,10 +101,11 @@ def tool_result_fields(
     return fields
 
 
-def loop_control_fields(report: LoopControlReport) -> dict[str, Any]:
+def loop_control_fields(report: LoopVerdict) -> dict[str, Any]:
     """A loop-control intervention with its evidence and limits."""
     fields: dict[str, Any] = {
         "decision": report.decision,
+        "layer": report.layer or "",
         "reason_code": report.reason_code,
         "reason": report.reason,
         "round": report.round_number,

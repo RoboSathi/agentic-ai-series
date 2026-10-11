@@ -54,15 +54,20 @@ Each turn:
   a short `draft_plan`: the sub-questions you would research. You propose
   the plan; do not ask the user to write it.
 - Private items (marked private) are recorded but never repeated back.
+- `rubric_shape` says how the answers will be checked once research ends. Ask for
+  criteria, options and concepts a source could be checked against: "cost per user" can be
+  checked, "good" cannot.
+- An item with `vague_answers` above zero was answered with a word that names nothing to
+  research ("all", "everything"). Ask it again, offering three or four specific examples
+  from the topic to pick from.
+- An item with status `delegated` was left to you. Never ask about it again: record three to
+  five specific values for it in `updated_items`, drawn from the topic itself. The user will
+  see and can change them before research starts.
 """
 
 CHALLENGE_INSTRUCTION = (
     "Your last turns only agreed with the user. This turn MUST include at least one "
     "challenge: question an assumption, a vague answer, or a missing criterion."
-)
-REFRAME_INSTRUCTION = (
-    "The request is open-ended. Ask what the research is for: choosing between options, "
-    "mapping a field, checking specific claims, or explaining how something works."
 )
 
 
@@ -100,6 +105,7 @@ def build(
     answer: str,
     turn: int,
     today: date,
+    rubric_shape: str = "",
 ) -> RolePrompt:
     return RolePrompt(
         role=ROLE,
@@ -113,6 +119,7 @@ def build(
                 "turn": turn,
                 "asked_item_id": asked_item_id,
                 "answer": answer,
+                "rubric_shape": rubric_shape,
                 "checklist": [_visible(item) for item in items],
             },
             today,
@@ -123,10 +130,11 @@ def build(
 def _visible(item: CoverageItem) -> dict[str, object]:
     """An item as the model sees it; a private value is replaced by a marker."""
     value = "(private, recorded)" if item.private and item.value else item.value
-    if item.status != "open":
+    if item.status not in ("open", "delegated"):
         # Settled: what it holds is all the model needs, not its goal and options again.
         return {"item_id": item.item_id, "status": item.status, "value": value}
     return {
+        "vague_answers": item.vague_answers,
         "item_id": item.item_id,
         "goal": item.goal,
         "choices": [choice.label for choice in item.choices],

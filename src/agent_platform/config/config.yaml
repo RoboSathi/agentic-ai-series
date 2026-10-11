@@ -174,6 +174,22 @@ llm:
   logprobs:
     enabled: true
     top_logprobs: 3
+  # What the CONTEXT card counts a request's sections with, before the provider counts the
+  # whole. Nemotron 3 models share one tokenizer; only its `tokenizer.json` is downloaded
+  # (once, into the repository). Unloadable or disabled, it falls back to
+  # `context.chars_per_token` and the card says the count is an estimate.
+  tokenizer:
+    enabled: true
+    model: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+    local_dir: local_models/tokenizer/nemotron-3
+    file: tokenizer.json
+    download_if_missing: true
+  # How many tokens each model reads, so a request's size shows as a share of what fits.
+  # The default is the smallest window among the configured models.
+  context_windows:
+    default_tokens: 131072
+    by_model:
+      openai/gpt-oss-20b: 131072
   providers:
     nim:
       adapter: hosted
@@ -187,6 +203,8 @@ llm:
       # nvidia/nemotron-3.5-lightning-30b-a3b , nvidia/nemotron-3-super-120b-a12b
       timeout_seconds: 60
       input_cost_per_1k_tokens: 0.0002
+      # NIM publishes no cached-prefix discount: a cached token is priced as any other.
+      cached_input_cost_per_1k_tokens: 0.0002
       output_cost_per_1k_tokens: 0.0006
     local:
       adapter: grammar
@@ -195,6 +213,7 @@ llm:
       model: mistral-nemo-12b
       timeout_seconds: 120
       input_cost_per_1k_tokens: 0.0
+      cached_input_cost_per_1k_tokens: 0.0
       output_cost_per_1k_tokens: 0.0
   # The default client's protection (`create_llm_client`): every attempt bounded and retried by
   # the resilience stack; when the model fails, or has not answered after `hedge_after_seconds`,
@@ -400,6 +419,67 @@ money:
 # Durable execution. Every node's output is checkpointed per thread, so a
 # run that fails — or a process that dies — resumes from the last node
 # that finished instead of from nothing. Each turn is its own thread.
+# The loop governor (loop_control/governor.py): the one authority over every agent's tool
+# loop. Budgets are each agent's own (its composition root maps its config onto them); the
+# mechanisms and their thresholds are here.
+loop_control:
+  # The fallback per-call limit, and the least time worth starting a call with.
+  call_timeout_seconds: 60
+  min_call_seconds: 3
+  stagnation:
+    # A repeat of an action is caught exactly (same arguments), canonically (same arguments
+    # once case, whitespace, key order and number formatting are normalised) and — for an
+    # action that failed — semantically (an action and result this similar to a failed one).
+    semantic: true
+    semantic_threshold: 0.92
+    # A cycle: the last `period` actions repeated `repeats` times (A→B→A→B).
+    cycle_max_period: 3
+    cycle_repeats: 3
+    # How many recent steps the semantic tier and convergence remember.
+    history_window: 12
+  # Convergence: progress per step is the new evidence a step added (how unlike everything
+  # seen before its result is). `window` steps in a row below `min_gain` is a plateau, and
+  # the loop is told to answer from what it has.
+  convergence:
+    enabled: true
+    window: 3
+    min_gain: 0.05
+  # The historical baseline: a turn this many standard deviations over the agent's own
+  # recent step counts is flagged (never stopped on its own — the budgets stop).
+  historical:
+    enabled: true
+    min_samples: 20
+    sample_size: 200
+    z_threshold: 3.0
+  # What the model is told when one of its calls is not run.
+  messages:
+    suppressed_success: "You already called this and it returned: {previous} Use that result rather than calling it again."
+    suppressed_refused: "You already attempted this and it was refused: {previous} Calling it again cannot change that."
+    suppressed_similar: "This is the same step as one that already failed ({previous}). Try a different approach or answer with what you have."
+  # Reason code → the sentence a verdict says (`{step}`, `{max}`, `{counter}`, `{spent}`,
+  # `{cap}`, `{period}`, `{z}` where they apply).
+  reasons:
+    LOOP_CONTROL_CONTINUE: "no check objected"
+    MAX_TOOL_ITERATIONS: "iteration limit reached ({step}/{max})"
+    BUDGET_EXHAUSTED: "{counter}: {spent:g} spent of {cap:g}"
+    DEADLINE_REACHED: "the turn's time is up ({spent:.1f}s of {cap:g}s)"
+    DUPLICATE_ACTION: "the exact action and arguments were already attempted"
+    CANONICAL_DUPLICATE: "the same action with the same arguments, written differently, was already attempted"
+    SEMANTIC_STAGNATION: "this step is the same as one that already failed"
+    ACTION_CYCLE: "the last {period} action(s) are repeating"
+    NO_PROGRESS: "the last {window} steps added no new evidence"
+    UNUSUAL_LENGTH: "{step} steps is {z:.1f} standard deviations over this agent's usual"
+  # The LOOP CONTROL card (one schema for every agent).
+  card:
+    summary: "Step {step} of {max} · {decision}{layer} · next: {next_step}"
+    layer_suffix: " · {layer}"
+    # The one line a card adds when a mechanism changed the loop's course.
+    intervention: "{layer} — {reason}"
+    sections: {verdict: Verdict, budgets: Budgets, checks: Checks}
+    budget_line: "{counter}: {spent} of {cap}"
+    check_line: "{mark} {name}: {reason}"
+    outcome_line: "outcome: {outcome}"
+
 durability:
   # Neutral default; each agent overlays its own checkpoint file.
   db_path: src/agent_platform/db/checkpoints.db
@@ -472,6 +552,54 @@ observability:
   loop_step_prefix: "Step {step} · "
   loop_step_detail: "{step} of {max} (model call → tool → result)"
   llm_request_heading: "LLM request · {purpose}"
+  # The turn summary's dream-inbox line: what this turn left for the dream (the turn's
+  # words, the actions it took, what the tools returned), and how much is waiting.
+  dream_inbox:
+    queued: "{turns} turn(s) queued · {actions} action(s), {observations} observation(s)"
+    waiting: " · {waiting} waiting for the next dream"
+  # The CONTEXT card drawn before every model request (`llm/prompt.py` → its manifest):
+  # each section the request is built from, its tokens, its share of the request and of the
+  # model's window, and the stable prefix a provider can cache.
+  context_card:
+    # The share is the request's input (prompt sections and tool schemas, not the answer) over
+    # the model's window from `llm.context_windows`, which the heading names.
+    heading: "{purpose} · prompt {tokens} tokens · {window_share} of {window} window"
+    heading_estimated: "{purpose} · prompt ~{tokens} tokens (estimated) · {window_share} of {window} window"
+    sections_title: Sections
+    request_title: Request
+    window_title: Window strategies and checks
+    findings_title: Request checks
+    prefix_reused: "reused — this model was sent the same prefix before"
+    prefix_new: "new — first time this model is sent this prefix"
+    model_line: "model: {model}"
+    section_line: "{label} · {tokens} tokens · {share}"
+    part_line: "{label} · {tokens} tokens"
+    source_line: "from {source}"
+    tools_line: "Tool schemas · {tokens} tokens · {count} tool(s)"
+    prefix_line: "stable prefix · {tokens} tokens · signature {signature}"
+    prefix_none: "stable prefix · none"
+    tokenizer_line: "counted with {tokenizer}"
+    aggregate_heading: "{purpose} · {count} requests · {low}–{high} tokens · peak {peak_share} of {window} window"
+    aggregate_title: Requests
+    aggregate_line: "{tokens} tokens · {share} of window · {model}"
+    labels:
+      profile: AGENT.md profile
+      procedures: SKILL.md procedures
+      policy: Policy
+      instructions: System prompt
+      context_window: Context window
+      window_stable: Context window (stable part)
+      user_query: User query
+      history: Conversation history
+      tool_loop: This turn's tool calls and results
+      payload: Input payload
+      working_memory: Working memory
+      long_term_memory: Long-term memory
+      retrieved: Retrieved
+      tool_results: Tool results
+      reply_instruction: Reply instruction
+      today: Today's date
+      session: Session notes
   llm_response_heading: "LLM response · {purpose}"
   llm_tool_requested_heading: "LLM response · tool requested: {tool}"
   # Why a model call was made. A loop step's call (`next_action`) may ask for a tool or answer;
@@ -781,10 +909,47 @@ context:
     removed: "{count} chunk(s) removed"
     nothing_removed: flagged, nothing removed
     finding_line: "{mode} · {source} · {rule}: {detail} → {action}"
+    # The card's findings, one entry per problem: its heading, then these labelled lines.
+    finding_heading: "{mode} · {rule}"
+    # The warning card: the window's size on one line, then one coloured line per source.
+    size_title: Window
+    size_line: "{used_tokens} of {budget_tokens} tokens · {chunks} chunk(s) kept · {dropped} dropped"
+    findings_title: Findings
+    source_line: "{mark} {source} · {mode} · {action} · {count} statement(s)"
+    marks: {fail: "✗", warn: "!", pass: "✓"}
+    detail_title: Detail
+    detail_note: "every statement and score is in the agent's context.log"
+    finding_labels: {statements: statements, detail: measured, sources: sources}
     routine_modes: [distraction]
     not_acted_on: flagged
     dropped_action: dropped
     quiet_when_healthy: true
+  # How a request is built from named sections (`llm/prompt.py`). Section names are code
+  # identifiers; what the CONTEXT card calls each is `observability.context_card.labels`.
+  prompt:
+    separator: "\n\n"
+    # The heading above the assembled context window in the system prompt.
+    window_heading: "# Retrieved context"
+    # Characters of the stable-prefix digest shown on the card.
+    signature_chars: 12
+    prefix_memory: 256
+    # How the window's chunks are broken down: a source prefix first, then the chunk kind.
+    window_parts:
+      by_source:
+        working_memory: working_memory
+        "memory:": long_term_memory
+      by_kind:
+        history: history
+        memory: long_term_memory
+        retrieved: retrieved
+        tool_result: tool_results
+        system: policy
+        policy: policy
+    # A request no builder made is broken down by message role.
+    role_sections:
+      user: user_query
+      assistant: tool_loop
+      tool: tool_loop
   token_budget: 3000
   chars_per_token: 4
   retrieval_mode: hybrid   # lexical | dense | hybrid | graph
@@ -801,6 +966,9 @@ context:
     min_candidates: 3
   bm25_k1: 1.5
   bm25_b: 0.75
+  # The six strategies (context/strategies.py), run inside the pipeline's fit stage before
+  # anything is cut. Consolidate, Isolate and Cache always run; Retrieve, Offload and Reduce
+  # run in that order only while the window is over its budget, cheapest loss first.
   strategies:
     offload: true
     reduce: true
@@ -808,10 +976,127 @@ context:
     isolate: true
     cache: true
     consolidate: true
-  reduce_keep_ratio: 0.5
+  # What the CONTEXT card says each strategy did (only a strategy that changed something).
+  strategy_notes:
+    consolidate: "consolidate: {count} duplicate chunk(s) said once"
+    isolate: "isolate: {count} chunk(s) outside {kinds} left out"
+    cache: "cache: {count} stable chunk(s) held first, in a fixed order"
+    retrieve: "retrieve: {count} lower-scoring chunk(s) left out"
+    offload: "offload: {count} chunk(s) moved out of the window (handles {handles})"
+    reduce: "reduce: {count} chunk(s) shortened"
+  # How alike two texts are, for every check that asks (context/similarity.py): the agent's
+  # local sentence encoder (`llm.local_embedder`, when it enables one), else hashed word
+  # vectors, else plain word overlap. Never a hosted endpoint.
+  similarity:
+    backend: local_embedder   # local_embedder | hashing | lexical
+  # Consolidate: an exact copy, a near-copy (word overlap above `near_duplicate_overlap`)
+  # or a paraphrase (similarity above `semantic_threshold`) is said once — by its most
+  # trusted source.
+  consolidation:
+    near_duplicate_overlap: 0.8
+    semantic_threshold: 0.92
+  # Isolate: a task kind → the chunk kinds its window may hold. A kind not listed keeps all.
+  isolation: {}
+  # Offload: a chunk over `min_tokens_fraction` of the budget leaves the window; its text is
+  # kept in the session's working memory under a handle the model can fetch it back by.
+  offload:
+    min_tokens_fraction: 0.25
+    handle_chars: 10
+    max_entries: 32
+    placeholder: "[offloaded: {source}, {tokens} tokens — call {tool} with handle {handle} if needed]"
+    tool_namespace: context
+    tool_name: fetch_offloaded_context
+    # The permission the fetch tool is governed by: one the agent's role already holds for
+    # reading (it returns only what was in that agent's own window). Empty: none declared.
+    tool_permission: ""
+    tool_description: >-
+      Return the full text of a context passage that was offloaded from the window to save
+      space. Call it only when the placeholder's passage is needed to answer.
+    not_found: "No offloaded passage has the handle {handle} in this session."
+  # Reduce: how each kind is shortened when the window is still over budget. `excerpt` keeps
+  # the passages that share the most words with the task, in their own order; `tail` keeps
+  # the most recent lines (a transcript's latest turns); `head` keeps the opening.
+  reduce:
+    keep_ratio: 0.5
+    by_kind:
+      history: tail
+      retrieved: excerpt
+      tool_result: excerpt
+      memory: head
+    excerpt_window_chars: 400
+    marker: "… [reduced: kept {kept} of {total} tokens]"
+  # Who is believed (poisoning, clash, consolidation). A source prefix first, then the kind.
+  # `model` is what the model itself said earlier: never a fact until a tool confirms it.
+  trust:
+    by_source_prefix:
+      "memory:semantic:": retrieved
+      "memory:episodic": user
+      "kb:": retrieved
+    by_kind:
+      system: system
+      policy: system
+      tool_result: verified
+      retrieved: retrieved
+      memory: user
+      history: user
+    # Higher wins a clash; equal is flagged, never decided.
+    rank: {system: 5, verified: 4, retrieved: 3, user: 2, model: 1}
+    # A transcript line the model wrote (working memory renders roles as `role: text`).
+    model_line_prefix: "assistant:"
+  # What a context finding says (context/failure/): the action taken, and per rule its
+  # `rule` and `detail` lines. An action that starts with `window.dropped_action` removed a chunk.
+  findings:
+    # The colour of a source on the card, by what was done to it: removed or cut is red.
+    action_tones:
+      dropped: fail
+      dropped_lower: fail
+      excised: fail
+      kept_higher: pass
+      tie: warn
+      flagged: warn
+      reduced: warn
+    actions:
+      dropped: dropped
+      dropped_lower: dropped (lower authority)
+      kept_higher: kept (higher authority)
+      tie: flagged (equal authority)
+      flagged: flagged
+      excised: excised (contradicts a verified source)
+      reduced: transcript reduced
+    templates:
+      poisoning_injection: {rule: injection phrasing in data, detail: "matched {phrases}"}
+      poisoning_claim: {rule: "unverified claim contradicts {against}", detail: "NLI contradiction {score:.2f}"}
+      clash_field: {rule: "'{key}' disagrees", detail: "one field, two values"}
+      clash_prose: {rule: statements contradict, detail: "NLI contradiction {score:.2f}"}
+      distraction_chunk: {rule: unrelated to the task, detail: "similarity {score:.2f} below {floor:.2f}"}
+      distraction_window: {rule: unrelated to the task, detail: "over {ratio:.0%} of chunks are off the task"}
+      confusion_window: {rule: near-duplicate chunks, detail: "over {ratio:.0%} of chunks are near-copies"}
+      confusion_tools: {rule: too many tool choices, detail: "{tools} tools; their schemas are {share:.0%} of the request"}
+      rot: {rule: answer quality fell as the window grew, detail: "score {observed:.2f} against a baseline of {baseline:.2f}, past {checkpoint} tokens"}
   failure_detection:
-    checkpoints_tokens: [10000, 30000, 60000, 100000, 150000]
+    # Rot: a session's answers are scored as its window grows (logprob confidence and the
+    # grounding check's support rate). At each checkpoint — a fraction of the budget — the
+    # score is compared with the session's own baseline; a drop of `degradation_threshold`
+    # or more is rot, and the transcript is reduced before the next call.
+    checkpoint_fractions: [0.25, 0.5, 0.75, 1.0]
     degradation_threshold: 0.2
+    min_observations: 2
+    max_observations: 50
+    # The share of chunks at which a window-wide mode (distraction, confusion) is declared.
+    mode_ratio: 0.5
+    # Distraction: a retrieved chunk this unlike the task is off it.
+    min_relevance: 0.1
+    # Confusion: more tools than this, or tool schemas over this share of the request.
+    max_tools: 12
+    max_tool_schema_share: 0.4
+    # Clash and poisoning in prose, by the local NLI model: only sentence pairs that name the
+    # same record (an order number) are compared — the most similar first, at most
+    # `max_pairs` of them — and a contradiction scored at `contradiction_score` or more counts.
+    nli: true
+    max_pairs: 24
+    max_sentences: 40
+    min_sentence_chars: 12
+    contradiction_score: 0.7
 
 # Agent profile (AGENT.md) and skills (SKILL.md) — procedural memory in the prompt (ADR 0010).
 # Each agent overlays the two paths; the platform never knows whose files they are.
@@ -1153,8 +1438,8 @@ hallucination_check:
   # policy file). A web page is named by its full URL.
   evidence_sources:
     prefixes:
-      "http://": "Web page · {source}"
-      "https://": "Web page · {source}"
+      "http://": "{id}"
+      "https://": "{id}"
       "kb:": "KB article · {id}"
     kinds:
       tool_result: "Tool result · {source}"
@@ -1276,6 +1561,12 @@ hallucination_check:
   # sets the shape of its ids here, and a record about a different id can
   # no longer "contradict" a claim (it can still fail to support it).
   refute_identifier_pattern: null
+  # What a line must look like to contradict a claim. Records are short and exact, so the
+  # platform accepts any line; an agent reading web pages raises the bar (a menu or a heading
+  # is not a statement).
+  refuting_premise:
+    min_words: 1
+    max_capitalised_share: 1.0
   # The grounding cascade. A claim is first classed — record (a fact about
   # this case), rule (how things work, and every promise), or
   # conversational (never scored) — and is then checked only against the
@@ -1935,8 +2226,8 @@ tui:
   # One style per console role.
   palette:
     banner: "bold #E2C792"
-    user: "bold #B8945A"
-    assistant: "bold #B8945A"
+    user: "bold #67E8F9"
+    assistant: "bold #67E8F9"
     metrics: "#A89F8F"
     command: "bold #F3EAD3"
     notice: "#E8DFC9"
@@ -1973,7 +2264,7 @@ tui:
   # A value that says a state (PASS, FAIL, ...) takes that state's tone instead.
   section_title_style: "bold cyan"
   body_styles:
-    key: "bold #B8945A"
+    key: "#67E8F9"
     separator: "#E4E4E0"
     value: "#F3EAD3"
     muted: "#8A8A8A"
@@ -1997,6 +2288,9 @@ tui:
     no_evidence: no evidence states this
     no_evidence_either_way: no evidence states or contradicts this
     lines_read: "read {count} lines"
+    step_branch: "├"
+    step_last: "└"
+    step_outcome: " → {decision}"
     confidence_bands: {pass: 0.85, warn: 0.6}
   # Words that name a state, wherever a card shows them as a value -> their tone.
   state_words:
@@ -2091,6 +2385,9 @@ web:
     reader_url_template: "https://r.jina.ai/{url}"
     date_meta_keys: [article:published_time, og:article:published_time, datepublished, date, dc.date, dcterms.created, pubdate, publish-date, article:modified_time]
     date_json_keys: [datePublished, dateCreated, dateModified]
+    # `header` is kept: an article's own header holds its title.
+    chrome_tags: [nav, footer, aside, form, button]
+    block_tags: [p, div, br, li, ul, ol, h1, h2, h3, h4, h5, h6, tr, section, article, blockquote, pre]
   tavily:
     base_url: https://api.tavily.com
     endpoint: /search

@@ -26,13 +26,12 @@ from agent_platform.config.paths import resolve_path
 from agent_platform.config.settings import WebSettings
 from agent_platform.context import (
     CandidateSource,
-    ContextFailureDetector,
     ContextWindow,
     CrossEncoderReranker,
     FiveStagePipeline,
-    StrategySelector,
     WorkingMemoryContextSource,
 )
+from agent_platform.context.factory import ContextManagement, build_context_management
 from agent_platform.durability import (
     DurableGraphRunner,
     RunRegistry,
@@ -63,7 +62,6 @@ from agent_platform.llm.observer import ModelCallObserver
 from agent_platform.llm.roles import RoleModelRouter
 from agent_platform.logging import get_logger
 from agent_platform.loop_control import BudgetGuard
-from agent_platform.loop_control.types import LoopControlReport
 from agent_platform.memory import EpisodicStore, MemoryFacade, SemanticStore, WorkingMemoryStore
 from agent_platform.memory.procedural.memory import ProceduralStore
 from agent_platform.observability import StageReporter, checks
@@ -114,7 +112,7 @@ from research_agent.llm.structured import RoleClients, StructuredCaller
 from research_agent.observability.telemetry import RunTelemetry
 from research_agent.planning.planner import Planner
 from research_agent.prompts import extractor as extractor_prompt
-from research_agent.research.cards import cap_reached_card
+from research_agent.reflexion import LessonBook
 from research_agent.research.defenses import OutboundGuard
 from research_agent.research.extractor import QuarantinedExtractor, UnquarantinedReader
 from research_agent.research.recency import RecencyGuard
@@ -169,7 +167,10 @@ def build_agent(
     )
     OutcomeCatalog().require(kinds=agent.tasks.kinds(), outcomes=agent.tasks.outcomes())
     telemetry = RunTelemetry(reporter, ledger, trace_id=settings.agent.id)
-    roles = clients or role_clients(StageReporterModelObserver(lambda: telemetry.reporter))
+    observer = StageReporterModelObserver(
+        lambda: telemetry.reporter, aggregate=agent.calls.context_aggregate_roles
+    )
+    roles = clients or role_clients(observer)
     _require_independent_judge(roles, posture, agent)
     # Authored procedures only (ra-0021): synced at start-up, selected by role.
     procedural = ProceduralStore(platform) if posture.is_on("memory.procedural") else None
@@ -196,7 +197,10 @@ def build_agent(
     answerer = _direct_answerer(agent, posture, caller, telemetry, ledger, gateway, memory, archive)
     saver = checkpointer or create_checkpointer(state_types=model_types(StateTypes))
     registry = RunRegistry(platform)
-    run_nodes = RunNodes(_run_parts(agent, posture, caller, roles, archive, entailment))
+    lessons = _lesson_book(agent, posture, memory, settings.agent.id)
+    run_nodes = RunNodes(
+        _run_parts(agent, posture, caller, roles, archive, entailment, observer.flush, lessons)
+    )
     return ResearchAgent(
         scoping=DurableGraphRunner(
             build_scoping_graph(
@@ -369,12 +373,17 @@ def _direct_answerer(
     )
     grounding = _answer_grounding(agent, posture, FetchUrl(web, agent.answer, screen))
     earlier = EarlierRunsSource(archive, agent.answer.context, agent.answer.messages)
+    management = build_context_management(
+        posture, memory.working if memory is not None else None, InstructionDataSeparator()
+    )
+    if management.fetch_tool is not None:
+        registry.register(management.fetch_tool)
     context = AnswerContext(
         memory,
         earlier,
         agent.answer.context,
         agent.answer.messages,
-        window=_context_window(posture, memory, earlier),
+        window=_context_window(posture, memory, earlier, management),
         reporter=lambda: telemetry.reporter,
     )
     # The answer tools read; they still take the platform's one tool path, so their
@@ -417,7 +426,10 @@ def recency_guard(agent: ResearchAgentSettings) -> RecencyGuard:
 
 
 def _context_window(
-    posture: FeatureSet, memory: MemoryFacade | None, earlier: EarlierRunsSource
+    posture: FeatureSet,
+    memory: MemoryFacade | None,
+    earlier: EarlierRunsSource,
+    management: ContextManagement,
 ) -> ContextWindow | None:
     """The platform's context window over this agent's sources — or None with `context` off.
 
@@ -436,12 +448,7 @@ def _context_window(
         ranker=scoring,
         reranker=CrossEncoderReranker(reranker) if reranker is not None else None,
     )
-    health = (
-        ContextFailureDetector(screen=InstructionDataSeparator())
-        if posture.is_on("context.failure_detection")
-        else None
-    )
-    return ContextWindow(pipeline, StrategySelector(), health)
+    return ContextWindow(pipeline, management.strategies, management.health)
 
 
 def _answer_grounding(
@@ -503,6 +510,8 @@ def _run_parts(
     roles: RoleClients,
     archive: ResearchArchive,
     entailment: EntailmentModel | None,
+    flush_context: Callable[[], None] | None = None,
+    lessons: LessonBook | None = None,
 ) -> RunParts:
     registry = build_registry()
     nli = _entailment(agent, posture, entailment)
@@ -515,7 +524,12 @@ def _run_parts(
     )
     reflection = posture.is_on("reflection")
     return RunParts(
-        planner=Planner(caller, agent.planning.max_queries_per_node, agent.planning.node_id_prefix),
+        planner=Planner(
+            caller,
+            agent.planning.max_queries_per_node,
+            agent.planning.node_id_prefix,
+            agent.planning.covered_checks,
+        ),
         analyzer=GapAnalyzer(registry),
         reflector=Reflector(
             caller if reflection else None, stop_rule_for, agent.reflection.max_followups_per_round
@@ -525,6 +539,7 @@ def _run_parts(
             agent.synthesis.resolved_templates_path,
             agent.synthesis.citation_pattern,
             agent.depths,
+            agent.synthesis.working_note_patterns,
         ),
         archive=archive,
         registry=registry,
@@ -535,7 +550,6 @@ def _run_parts(
         partial_threshold=agent.audit.partial_threshold,
         clip_chars=agent.tui.clip_chars,
         node_id_prefix=agent.planning.node_id_prefix,
-        budget_headline=agent.tui.budget_headline,
         reasons=agent.tui.reasons,
         auditor=auditor,
         reflection_enabled=reflection,
@@ -545,7 +559,23 @@ def _run_parts(
         judge_role=JUDGE,
         citation_guard=_citation_guard(agent, caller, nli),
         confidence=ConfidenceCheck(),
+        flush_context=flush_context,
+        writing_checks=frozenset(agent.reflection.writing_checks),
+        max_revisions=agent.reflection.max_revisions,
+        min_score_gain=agent.reflection.min_score_gain,
+        judge_models=judge.models_used,
+        lessons=lessons,
     )
+
+
+def _lesson_book(
+    agent: ResearchAgentSettings, posture: FeatureSet, memory: MemoryFacade | None, agent_id: str
+) -> LessonBook | None:
+    """Reflexion's lessons, kept in episodic memory: built only where both are declared."""
+    episodic = memory.episodic if memory is not None else None
+    if not posture.is_on("reflexion") or episodic is None:
+        return None
+    return LessonBook(episodic, agent_id, agent.reflexion)
 
 
 def _citation_guard(
@@ -635,7 +665,7 @@ def _resources_factory(
         budget = BudgetGuard(
             contract.budget.counters(),
             max_seconds=contract.budget.max_seconds,
-            on_exhausted=lambda report: _announce_cap(telemetry, report, agent),
+            layers=agent.budget_layers,
         )
         caller.bind_budget(budget)
         # A page that could not be read may be cited through its snippet, checked verbatim.
@@ -682,20 +712,6 @@ def _resources_factory(
         )
 
     return build
-
-
-def _announce_cap(
-    telemetry: RunTelemetry, report: LoopControlReport, agent: ResearchAgentSettings
-) -> None:
-    """A budget limit hit mid-run, as a card — but not a counter the plan is meant to use up.
-
-    Rounds reach their cap by design (one round of one is the whole plan); the reflect card
-    already says the run stopped there. A card announcing it is noise.
-    """
-    observed: dict[str, Any] = report.checks[0].observed if report.checks else {}
-    if observed.get("counter") in agent.tui.quiet_budget_counters:
-        return
-    telemetry.card("budget_tick", *cap_reached_card(report.reason, observed), status="warning")
 
 
 def _injection_screen(

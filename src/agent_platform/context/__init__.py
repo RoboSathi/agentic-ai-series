@@ -1,6 +1,6 @@
 """Context assembly, management strategies and retrieval (LLD §7)."""
 
-from agent_platform.context.failure import ContextFailureDetector
+from agent_platform.context.failure import ContextFailureDetector, is_near_duplicate
 from agent_platform.context.pipeline import (
     CandidateSource,
     ContextAssembler,

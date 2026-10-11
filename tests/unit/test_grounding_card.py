@@ -115,7 +115,7 @@ class TestTheConfidenceIsColoured:
 
 def _steps_card() -> Text:
     """A claim NLI could not decide and the second opinion confirmed, and one NLI refuted."""
-    page = "Web page · https://robosathi.com/about/"
+    page = "robosathi.com/about/"
     claims = [
         {
             "claim": "Kumar Karan was an Engineering Manager at Turing",
@@ -159,8 +159,13 @@ class TestEachClaimSaysWhichModelDecidedIt:
     def test_nli_then_the_second_opinion_in_order(self) -> None:
         card = _steps_card().plain
         assert "check = NLI DeBERTa first · Laya only where …" in card
-        assert "1  NLI DeBERTa      neutral 1.000 → not decided" in card
-        assert "2  Laya             supported 0.512 ≥ 0.45 → confirmed" in card
+        # The step that did not decide says so; the one that decided says only what it read.
+        assert (
+            '├ NLI DeBERTa neutral 1.000 → not decided · robosathi.com/about/: "Kumar Karan"'
+            in card
+        )
+        assert "└ Laya supported 0.512 ≥ 0.45 · robosathi.com/about/" in card
+        assert "→ confirmed" not in card
         # A model that read several lines is quoted by the one closest to the claim.
         assert 'read 3 lines · "Engineering Manager — AI @ Turing"' in card
 
@@ -171,11 +176,11 @@ class TestEachClaimSaysWhichModelDecidedIt:
 
     def test_every_line_that_decided_it_is_named_by_kind_and_source(self) -> None:
         card = _steps_card().plain
-        assert 'DB record · order 10677  "Order 10677 totals $95.86."' in card
+        assert '├ DB record · order 10677: "Order 10677 totals $95.86."' in card
         assert (
-            'Tool result · get_refund_status  "Order 10677 refund status: pending_review"' in card
+            '└ Tool result · get_refund_status: "Order 10677 refund status: pending_review"' in card
         )
-        assert "Web page · https://robosathi.com/about/" in card
+        assert "robosathi.com/about/" in card
 
     def test_the_colour_is_the_decisions_never_the_claims(self) -> None:
         card = _steps_card()
@@ -186,8 +191,7 @@ class TestEachClaimSaysWhichModelDecidedIt:
             return next(str(s.style) for s in card.spans if s.start <= start < s.end)
 
         assert style_of("Kumar Karan was an Engineering") == styles["value"]
-        assert style_of("NLI DeBERTa      neutral") == styles["key"]
-        assert style_of("neutral 1.000") == tones["warn"]
-        assert style_of("confirmed") == tones["pass"]
-        assert style_of("contradiction 0.999") == tones["fail"]
+        assert style_of("NLI DeBERTa neutral 1.000") == tones["warn"]
+        assert style_of("Laya supported 0.512") == tones["pass"]
+        assert style_of("NLI DeBERTa contradiction 0.999") == tones["fail"]
         assert style_of("DB record · order 10677") == styles["value"]

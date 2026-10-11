@@ -8,9 +8,12 @@ claim no tool result supports does not reach the customer.
 from typing import Any
 
 from agent_platform.config import get_settings
+from agent_platform.context.failure.rot import support_rate
 from agent_platform.guardrails import CustomerResponse, ResponseGuardrailResult
 from agent_platform.hallucination_check.checker import Resampler
+from agent_platform.llm.prompt import INSTRUCTIONS, TOOL_LOOP, USER_QUERY, PromptBuilder
 from agent_platform.llm.types import CompletionRequest, Message
+from agent_platform.loop_control import TerminalOutcome
 from agent_platform.observability.types import StatusKind
 from agent_platform.resilience import (
     external_api_error_fields,
@@ -24,6 +27,7 @@ from customer_support_agent.presentation.reporting import (
     is_customer_ready,
 )
 from customer_support_agent.prompts.system_prompt import (
+    REPLY_INSTRUCTION,
     build_reply_instruction,
     build_reply_system_prompt,
 )
@@ -51,6 +55,7 @@ class FinalizeNodes(NodeSupport):
         here: it sat on one path, and the common one sent "$50.00".
         """
         update = await self._compose(state)
+        update = {**update, "loop": self._governor.finish(_outcome(state, update))}
         reply = update.get("response")
         if not isinstance(reply, str):
             return update
@@ -144,10 +149,7 @@ class FinalizeNodes(NodeSupport):
 
         # The draft check already logged what it found; saying it twice
         # here would double every rejection in the trace.
-        request = CompletionRequest(
-            messages=self._reply_messages(state),
-            json_schema=CustomerResponse.model_json_schema(),
-        )
+        request = self._reply_request(state)
         purposes = get_settings().observability.llm_purposes
         self._report_llm_request(request, purpose=purposes.reply_revision)
         try:
@@ -303,7 +305,7 @@ class FinalizeNodes(NodeSupport):
         line += f" · evidence: {', '.join(sources) or _NO_EVIDENCE}"
         state.metadata[_PRE_CHECK] = line
 
-    def _reply_messages(self, state: AgentState) -> list[Message]:
+    def _reply_request(self, state: AgentState) -> CompletionRequest:
         """The smallest payload that can write this reply.
 
         What writing a reply needs is what the customer asked and what
@@ -315,12 +317,19 @@ class FinalizeNodes(NodeSupport):
         nothing left to decide, and every one of those was re-read in
         full to produce two sentences.
         """
-        return [
-            Message(role="system", content=build_reply_system_prompt()),
-            Message(role="user", content=state.model_query or state.query),
-            *self._current_messages(state),
-            Message(role="user", content=build_reply_instruction()),
-        ]
+        built = (
+            PromptBuilder()
+            .system(INSTRUCTIONS, build_reply_system_prompt())
+            .message(USER_QUERY, "user", state.model_query or state.query)
+            .messages(TOOL_LOOP, self._current_messages(state))
+            .message(REPLY_INSTRUCTION, "user", build_reply_instruction())
+            .build()
+        )
+        return CompletionRequest(
+            messages=built.messages,
+            json_schema=CustomerResponse.model_json_schema(),
+            manifest=built.manifest,
+        )
 
     def _resampler(self, state: AgentState) -> Resampler:
         """Ask the model the same question again, n more times.
@@ -331,10 +340,10 @@ class FinalizeNodes(NodeSupport):
         """
 
         async def resample(count: int) -> list[str]:
-            request = CompletionRequest(messages=self._prompt_messages(state))
             results = []
             for index in range(max(0, count)):
                 purpose = f"response_resample_{index + 1}"
+                request = self._prompt_request(state)
                 self._report_llm_request(request, purpose=purpose)
                 result = await self._call_model(request, state)
                 self._report_llm_response(result, purpose=purpose)
@@ -359,6 +368,10 @@ class FinalizeNodes(NodeSupport):
         """
         if self._grounding is None:
             return
+        quality = support_rate(result.claims, result.supported)
+        if self._context_health is not None and quality is not None:
+            # The rot check's evidence: how well this answer held up, beside its window's size.
+            self._context_health.rot.record(state.session_id, quality)
         review = self._refer_reply(state, result)
         fields = result.model_dump(exclude={"response"})
         pre_check = state.metadata.get(_PRE_CHECK)
@@ -402,3 +415,16 @@ def _grounding_headline(result: ResponseGuardrailResult, review: int | None) -> 
     reason = settings.review_reasons.for_finding(result.reason_code)
     queued = settings.review_output.queued.format(id=review, reason=reason)
     return f"{result.outcome} · {queued}"
+
+
+def _outcome(state: AgentState, update: dict[str, Any]) -> TerminalOutcome:
+    """How this turn's loop ended, as the governor records it."""
+    metadata = update.get("metadata", state.metadata)
+    if metadata.get("external_dependency_failed"):
+        return "failed"
+    if update.get("escalated", state.escalated):
+        return "escalated"
+    verdict = state.loop.verdict
+    if verdict is not None and verdict.stops:
+        return "finalized_on_cap"
+    return "answered"

@@ -36,7 +36,7 @@ from agent_platform.hallucination_check import (
 )
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
-from agent_platform.loop_control import ToolLoopControl
+from agent_platform.loop_control import LoopGovernor, LoopState, LoopVerdict
 from agent_platform.memory import MemoryFacade, WorkingMemoryStore
 from agent_platform.memory.semantic.rag import KNOWLEDGE_SOURCE_PREFIX, section_sentences
 from agent_platform.observability import (
@@ -67,7 +67,6 @@ from customer_support_agent.domain.order_reference import (
     OrderReferenceResolver,
 )
 from customer_support_agent.gatekeeper.business_rules import REFUND_ACTION_CLASS
-from customer_support_agent.graph.loop_decision import duplicate_suppressed
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.intent.router import CustomerSupportIntentRouter, Intent
 from customer_support_agent.loop_control import OutputQualityGate
@@ -147,7 +146,7 @@ class NodeSupport:
     _deliberation_markers: list[str]
     _max_rounds: int
     _actor: str
-    _strategies: StrategySelector
+    _strategies: StrategySelector | None
     # Absent when `context.failure_detection` is withheld.
     _context_health: ContextFailureDetector | None
     # Which tool-use loop iteration is running (None outside the loop).
@@ -158,7 +157,7 @@ class NodeSupport:
     _sessions: dict[str, Customer]
     _menus: dict[str, OrderMenu]
     _last_supported_intent: dict[str, Intent]
-    _loop_control: ToolLoopControl
+    _governor: LoopGovernor
     _deliberation: OutputQualityGate
     _accountant: TurnAccountant
     # Durable execution. Absent only for an agent constructed by hand
@@ -242,8 +241,10 @@ class NodeSupport:
         """The per-refund limit the prompt states: the DB row, read when the agent was built."""
         return self._agent_policy.per_action_limit(REFUND_ACTION_CLASS)
 
-    def _prompt_messages(self, state: AgentState) -> list[Message]:
-        """The transcript handed to the model this turn."""
+    def _prompt_request(
+        self, state: AgentState, tools: list[dict[str, Any]] | None = None
+    ) -> CompletionRequest:
+        """The working request handed to the model this turn, with its manifest."""
         raise NotImplementedError
 
     async def _offered_tools(self, state: AgentState) -> list[Any]:
@@ -679,14 +680,14 @@ class NodeSupport:
 
     def _report_loop_status(
         self,
+        verdict: LoopVerdict,
+        state: AgentState,
         *,
-        tool_rounds: int,
         tools_requested: bool,
-        invocations: list[Any],
-        escalated: bool,
-        refusal_final: bool,
         next_step: str,
         because: str,
+        escalated: bool | None = None,
+        refusal_final: bool | None = None,
     ) -> None:
         """Show every criterion the loop weighs, its value now, and the step it chose.
 
@@ -695,14 +696,17 @@ class NodeSupport:
         every round, not only when a criterion fires: a card that appears
         only on failure leaves a passing round unexplained.
         """
-        fields = self._steps.loop_control(
-            round_number=tool_rounds,
+        fields = self._steps.loop_verdict(
+            verdict,
             criteria={
                 "model_requested_tools": tools_requested,
-                "iteration_limit": f"{tool_rounds} of {self._max_rounds}",
-                "duplicate_action": duplicate_suppressed(invocations),
-                "escalated_to_human": escalated,
-                "final_refusal": refusal_final,
+                "duplicate_action": duplicate_suppressed(self._governor.state),
+                "escalated_to_human": state.escalated if escalated is None else escalated,
+                "final_refusal": (
+                    bool(state.metadata.get("refusal_is_final"))
+                    if refusal_final is None
+                    else refusal_final
+                ),
             },
             next_step=next_step,
             because=because,
@@ -855,3 +859,8 @@ def _not_executed(action: dict[str, Any]) -> str:
         named["amount"] = str(amount)
     shown = ", ".join(f"{key}={value}" for key, value in named.items())
     return f"{NOT_EXECUTED_MARKER} {action.get('name', '')}({shown}): {action.get('result', '')}"
+
+
+def duplicate_suppressed(loop: LoopState) -> bool:
+    """Whether this turn's governor suppressed a repeated action."""
+    return any(record.suppressed for record in loop.actions)

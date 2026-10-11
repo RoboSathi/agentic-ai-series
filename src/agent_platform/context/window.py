@@ -19,13 +19,17 @@ from agent_platform.context.failure import ContextFailureDetector
 from agent_platform.context.pipeline import ContextAssembler
 from agent_platform.context.strategies import StrategySelector
 from agent_platform.context.types import AssembledContext, ContextFinding, Task
-from agent_platform.llm.embeddings import tokenize
 from agent_platform.logging import get_logger, instrument
 from agent_platform.observability.status_feed import StageReporter
 from agent_platform.observability.types import EventKind
 
 CONTEXT_STAGE = "context_assembly"
+_WARN = "warn"
+# Removed first, then flagged, then kept: what changed the window leads the card.
+_TONE_ORDER = ("fail", "warn", "pass")
 CONTEXT_KIND: EventKind = "context"
+# A card its emitter lays out itself: titled sections of toned lines.
+NARRATIVE_KIND: EventKind = "narrative"
 
 
 class WindowResult(BaseModel):
@@ -62,23 +66,27 @@ class ContextWindow:
         words = get_settings().context.window
         if reporter is not None:
             reporter.started(CONTEXT_STAGE, event_kind=CONTEXT_KIND, summary=words.started)
-        assembled = await self._pipeline.assemble(task)
-        fitted = self._strategies.fit(assembled) if self._strategies is not None else assembled
-        result = self._checked(fitted, task)
+        fitted = await self._pipeline.assemble(task, strategies=self._strategies)
+        result = await self._checked(fitted, task)
         self._report(result, reporter)
         return result
 
-    def _checked(self, fitted: AssembledContext, task: Task) -> WindowResult:
+    def observe_quality(self, session_id: str, score: float) -> None:
+        """One answer's quality in [0, 1], for the rot check (nothing without a detector)."""
+        if self._health is not None:
+            self._health.rot.record(session_id, score)
+
+    async def _checked(self, fitted: AssembledContext, task: Task) -> WindowResult:
         """Diagnose the window and mitigate before the model sees it (when declared)."""
         if self._health is None:
             return WindowResult(window=fitted)
-        findings = self._health.diagnose(fitted, set(tokenize(task.query)))
+        findings = await self._health.diagnose(fitted, task)
         if findings:
             self._logger.warning(
-                "Context window shows failure modes",
-                findings=[finding.model_dump() for finding in findings],
+                "Context window shows failure modes", findings=finding_tree(findings)
             )
         window, findings = self._health.mitigate(fitted, findings)
+        self._health.rot.window_used(task.session_id, window.used_tokens)
         return WindowResult(window=window, findings=findings)
 
     def _report(self, result: WindowResult, reporter: StageReporter | None) -> None:
@@ -94,13 +102,19 @@ class ContextWindow:
             "budget_tokens": window.budget_tokens,
         }
         if result.modes and not _routine(result.findings):
+            # A short, coloured card: one line per source and what was done to it. Every
+            # statement behind each line is in the context log (`finding_tree`).
             reporter.warning(
                 CONTEXT_STAGE,
-                event_kind=CONTEXT_KIND,
+                event_kind=NARRATIVE_KIND,
                 summary=words.unhealthy.format(
                     modes=", ".join(result.modes), action=_acted(result.findings)
                 ),
-                fields={"findings": [_finding_line(f) for f in result.findings], **cost},
+                fields={
+                    words.size_title: [words.size_line.format(**cost)],
+                    words.findings_title: source_lines(result.findings),
+                    words.detail_title: [words.detail_note],
+                },
             )
             return
         reporter.emit(
@@ -134,8 +148,80 @@ def _acted(findings: list[ContextFinding]) -> str:
     return words.removed.format(count=dropped) if dropped else words.nothing_removed
 
 
-def _finding_line(finding: ContextFinding) -> str:
-    return get_settings().context.window.finding_line.format(**finding.model_dump())
+def source_lines(findings: list[ContextFinding]) -> list[dict[str, str]]:
+    """One toned line per source and what was done to it, worst first.
+
+    `✗ kb:refunds.md#0 · clash · dropped (lower authority) · 2 statement(s)` in red: a source
+    removed or cut is red, a flagged one yellow, a kept one green.
+    """
+    settings = get_settings().context
+    words, tones = settings.window, _action_tones()
+    grouped: dict[tuple[str, str, str], int] = {}
+    for finding in findings:
+        key = (finding.source, finding.mode, finding.action)
+        grouped[key] = grouped.get(key, 0) + 1
+    lines = [
+        {
+            "text": words.source_line.format(
+                mark=words.marks[tones.get(action, _WARN)],
+                source=source,
+                mode=mode,
+                action=action,
+                count=count,
+            ),
+            "tone": tones.get(action, _WARN),
+        }
+        for (source, mode, action), count in grouped.items()
+    ]
+    return sorted(lines, key=lambda line: _TONE_ORDER.index(line["tone"]))
+
+
+def _action_tones() -> dict[str, str]:
+    """An action's words → its tone (`context.findings.action_tones`, by action key)."""
+    findings = get_settings().context.findings
+    return {text: findings.action_tones[key] for key, text in findings.actions.items()}
+
+
+def finding_tree(findings: list[ContextFinding]) -> dict[str, dict[str, Any]]:
+    """Findings as a person reads them: one numbered entry per problem, not one per chunk.
+
+    A clash is found once per side; it is shown once — the statements that disagree (each on
+    its own line), how sure the check was, and every source with what was done to it:
+
+        1. clash · statements contradict
+           ├─ statements
+           │  ├─ 1: A refund applies once an order is settled.
+           │  └─ 2: A refund applies once the order is delivered.
+           ├─ measured: NLI contradiction 0.99
+           └─ sources
+              ├─ kb:refunds.md#0: flagged (equal authority)
+              └─ kb:faq.md#2: flagged (equal authority)
+    """
+    words = get_settings().context.window
+    labels = words.finding_labels
+    grouped: dict[tuple[str, str, str, tuple[str, ...]], dict[str, Any]] = {}
+    headings: dict[tuple[str, str, str, tuple[str, ...]], str] = {}
+    for finding in findings:
+        key = (finding.mode, finding.rule, finding.detail, tuple(finding.statements))
+        if key not in grouped:
+            headings[key] = words.finding_heading.format(**finding.model_dump())
+            grouped[key] = _entry(finding, labels)
+        grouped[key][labels["sources"]][finding.source] = finding.action
+    return {
+        f"{number}. {headings[key]}": entry
+        for number, (key, entry) in enumerate(grouped.items(), start=1)
+    }
+
+
+def _entry(finding: ContextFinding, labels: dict[str, str]) -> dict[str, Any]:
+    entry: dict[str, Any] = {}
+    if finding.statements:
+        entry[labels["statements"]] = {
+            str(number): text for number, text in enumerate(finding.statements, start=1)
+        }
+    entry[labels["detail"]] = finding.detail
+    entry[labels["sources"]] = {}
+    return entry
 
 
 __all__ = ["CONTEXT_STAGE", "ContextWindow", "WindowResult"]

@@ -147,7 +147,9 @@ async def test_a_figure_no_tool_returned_is_removed_before_the_answer_is_sent() 
     reply = await answerer.answer("weather in Pune tomorrow?")
     assert "90%" not in reply and "32.5°C" in reply
     assert get_agent_settings().answer.messages.filtered_note in reply
-    reflect = next(e for e in events if e.stage == "hallucination_check")
+    # The status line is told the check started; the card is the finished event.
+    started, reflect = (e for e in events if e.stage == "hallucination_check")
+    assert started.status == "started"
     assert reflect.status == "warning" and "90% chance of rain" in str(reflect.fields)
     # A figure found in no evidence is refuted by a rule; this agent still asks for one rewrite
     # from the evidence (`repair_direct_refutations`), and removes what the rewrite kept.
@@ -162,7 +164,13 @@ async def test_an_answer_from_the_models_own_knowledge_is_not_grounded() -> None
 
 
 def _tool_calls_until_the_cap() -> list[dict[str, Any]]:
-    return [{"tool_calls": [CALL]}] * get_agent_settings().answer.budget.max_tool_calls
+    """A different call each step, so it is the cap that stops the loop — not the governor
+    suppressing a repeat or catching a cycle."""
+    cities = range(get_agent_settings().answer.budget.max_tool_calls)
+    return [
+        {"tool_calls": [CALL.model_copy(update={"arguments": f'{{"location": "Pune {i}"}}'})]}
+        for i in cities
+    ]
 
 
 @pytest.mark.asyncio
@@ -195,3 +203,15 @@ async def test_the_last_step_is_told_it_is_the_last_and_offered_no_tools() -> No
     assert final.tools is None
     assert final.messages[-1].content == prompt.FINAL_STEP
     assert "32.5°C" in reply
+
+
+@pytest.mark.asyncio
+async def test_the_status_line_follows_the_loop_not_the_model_role() -> None:
+    answerer, events = _answerer(
+        [{"tool_calls": [CALL]}, {"content": "Tomorrow in Pune: light drizzle, up to 32.5°C"}]
+    )
+    await answerer.answer("weather in Pune tomorrow?")
+    started = [e.stage for e in events if e.status == "started"]
+    # The step's own stages name what is being waited for; the answerer role never does.
+    assert "llm_call_answerer" not in started
+    assert started[:2] == ["thought", "observation"] and "hallucination_check" in started

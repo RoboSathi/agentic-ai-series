@@ -16,5 +16,7 @@ class EveryClaimDecided:
     def decide(self, observed: StopInput) -> StopDecision:
         passed, count = all_passed(observed.verdicts, CHECK)
         if count and passed:
-            return StopDecision(stop=True, reason="every claim has independent sources")
-        return StopDecision(stop=False, reason="some claims lack independent sources")
+            return StopDecision(
+                stop=True, reason="every claim is supported by two independent domains that agree"
+            )
+        return StopDecision(stop=False, reason="some claims lack two agreeing independent domains")

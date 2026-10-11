@@ -16,7 +16,9 @@ from research_agent.domain.budget import Budget
 Archetype = Literal[
     "decision_support", "landscape_brief", "fact_verification", "explainer", "general"
 ]
-ItemStatus = Literal["open", "covered", "waived"]
+# `delegated`: the user answered only "all" (or the like) again; the interviewer proposes the
+# values itself, from the topic, and the user sees them at rubric review.
+ItemStatus = Literal["open", "covered", "waived", "delegated"]
 # How big a run and its report are: each size is a profile in config (`agent.depths`).
 Depth = Literal["small", "medium", "large"]
 DEFAULT_DEPTH: Depth = "small"
@@ -66,6 +68,11 @@ class CoverageItem(BaseModel):
     brief_field: str = ""
     # Whether the answer is a list (comma/semicolon separated).
     multi: bool = False
+    # How many answers named nothing to research ("all", "everything"); after enough, the item
+    # is delegated to the interviewer.
+    vague_answers: int = 0
+    # Whether the value was proposed by the interviewer for a delegated item, not the user.
+    derived: bool = False
 
 
 class KindVerdict(BaseModel):
@@ -117,11 +124,17 @@ class ScopeBrief(BaseModel):
     topic: str
     purpose: str = ""
     decision: str = ""
+    # Who an explanation is for and what they already know.
+    audience: str = ""
+    # Where a landscape starts and stops (its segment, its region).
+    scope: str = ""
     criteria: tuple[str, ...] = ()
     options: tuple[str, ...] = ()
     claims: tuple[str, ...] = ()
     concepts: tuple[str, ...] = ()
     constraints: tuple[str, ...] = ()
+    # Where the user saw the claims to verify: a lead to their primary source.
+    claim_origin: tuple[str, ...] = ()
     source_policy: SourcePolicy = Field(default_factory=SourcePolicy)
     recency_days: int | None = None
     # The span of events the research covers, resolved in code from a window the user stated

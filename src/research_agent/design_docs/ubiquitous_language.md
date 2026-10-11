@@ -10,7 +10,7 @@ These names are used as written in code, logs, stage labels and docs.
 | **Time window** | "in the last 1 month" → 30 days: the Brief's `recency_days`, sent to the search providers and enforced by the worker | `scoping/window.py` |
 | **Profile** | a named posture of the agent's config: live (default) or `demo` (offline Kelvari) | `config/profiles/` |
 | **Search quota** | a provider's monthly request allowance, counted across processes (Tavily: 900) | `agent_platform` rate limiter |
-| **Coverage checklist** | per-archetype interview items, each `open`, `covered` or `waived` | `scoping/checklists.yaml`, `scoping/checklist.py` |
+| **Coverage checklist** | per-archetype interview items, each `open`, `covered`, `waived` or `delegated` (answered only "all" twice: the interviewer proposes values, marked `derived`, shown at rubric review) | `scoping/checklists.yaml`, `scoping/checklist.py` |
 | **Known unknown** | a scope item the user waived or left open at `/done`; must be acknowledged by the rubric and the report | `domain/scope.py::KnownUnknown` |
 | **Scope Brief** | the typed, frozen output of scoping: archetype, purpose/decision, criteria, constraints, source policy, recency/geography, depth, deliverable, budget, known unknowns | `domain/scope.py::ScopeBrief` |
 | **Rubric** / **Rubric Item** | the acceptance criteria; each item has an id, text, a check (`deterministic`, `nli` or `judge` + name + params), a threshold, `must_pass`, an origin and what it maps to | `domain/rubric.py` |
@@ -22,9 +22,12 @@ These names are used as written in code, logs, stage labels and docs.
 | **Evidence Ledger** | run-scoped, append-only: claim → source URL → verbatim span → page hash → retrieved-at | `agent_platform.evidence.EvidenceLedger` |
 | **Verbatim-span rule** | a span is admitted only if it is a substring of the page text this run fetched, whose hash it records | `agent_platform.evidence.VerbatimSpanValidator` |
 | **Gap** | a Rubric Item the ledger (or report) does not yet satisfy | `research/reflector.py::GapAnalyzer` |
-| **Stop rule** | the archetype's "done" test (every option scored; no new entities; every claim decided; every concept cross-checked) | `research/stop_rules/` |
+| **Stop rule** | the archetype's "done" test (every option scored; no new entities; every claim cross-checked; every concept cross-checked) | `research/stop_rules/` |
 | **Independent Audit** | the independent verification; its signature accepts only `(contract, report, ledger_snapshot)` | `audit/independent.py::IndependentAuditor.audit_report` |
-| **Gap-fill** | one bounded round of targeted research for must-pass gaps the audit found | `graph/run_nodes.py::gap_fill` |
+| **Gap-fill** | one bounded round of targeted research for must-pass evidence gaps the audit found | `graph/run_nodes.py::gap_fill` |
+| **Writing fault** / **Revision** | an audit failure of how the report is written (`reflection.writing_checks`), fixed by revising the report against the audit's findings; bounded, stopped on a plateau | `graph/run_nodes.py::revise` |
+| **Cross-check** | a subject supported by entailed claims from at least two independent domains, none contradicted by another | `audit/checks.py::claim_verdict` |
+| **Lesson** | what a run's critics found, kept in episodic memory and recalled for the next run of the same kind on a similar topic (Reflexion) | `reflexion/lessons.py::LessonBook` |
 | **Coverage & Limits** | the report section, built in code, that lists every unmet must-pass item with what was tried and why the run stopped | `synthesis/limits.py` |
 | **COMPLETE / PARTIAL** | every must-pass item met and no budget exhausted / anything less | `graph/run_nodes.py::_final_status` |
 | **Provider summary** | text a search provider writes about its results (Tavily's `answer`); untrusted, never evidence | `agent_platform.web.SearchResponse.provider_summary` |

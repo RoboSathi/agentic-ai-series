@@ -7,6 +7,7 @@ rule independently on what is delivered.
 """
 
 import re
+from collections.abc import Callable, Sequence
 
 from pydantic import BaseModel, Field
 
@@ -61,6 +62,44 @@ def enforce_citations(
         removed=removed,
         unknown_ids=unknown,
     )
+
+
+def strip_working_notes(
+    check: CitationCheck, patterns: Sequence[re.Pattern[str]], citation: re.Pattern[str]
+) -> CitationCheck:
+    """The report without sentences about the research itself, each one counted as removed.
+
+    The writer reads ledger entries, their ids and their caveats; a sentence that talks about
+    those ("Sources E3–E7 are from reels", "the evidence does not cover X") is the run's
+    working notes, not a finding. Matched on the sentence with its citation markers removed,
+    so `[E3]` itself never matches; Coverage & Limits, built in code, says what was not found.
+    """
+    if not patterns:
+        return check
+    removed: list[str] = []
+
+    def note(sentence: str) -> bool:
+        plain = citation.sub("", sentence)
+        return any(pattern.search(plain) for pattern in patterns)
+
+    sections = [_kept(section, note, removed) for section in check.report.sections]
+    return check.model_copy(
+        update={
+            "report": check.report.model_copy(update={"sections": sections}),
+            "removed": [*check.removed, *removed],
+        }
+    )
+
+
+def _kept(section: ReportSection, drop: Callable[[str], bool], removed: list[str]) -> ReportSection:
+    kept_lines = []
+    for line in section.body.splitlines():
+        sentences = [s for s in _SENTENCE_END.split(line) if s]
+        good = [s for s in sentences if not drop(s)]
+        removed.extend(s for s in sentences if s not in good)
+        if good or not sentences:
+            kept_lines.append(" ".join(good))
+    return section.model_copy(update={"body": "\n".join(kept_lines).strip()})
 
 
 def _clean(

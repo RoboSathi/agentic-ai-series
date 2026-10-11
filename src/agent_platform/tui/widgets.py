@@ -721,25 +721,12 @@ class StageEventWidget(Collapsible):
             return "Response Generated"
 
         if stage == "loop_control":
-            # A round's status card: its own summary says the round and the next step.
-            if "criteria" in fields and self.event.summary:
+            # The verdict names its own decision and mechanism (`loop_heading`).
+            if self.event.summary:
                 return self.event.summary
             decision = str(fields.get("decision") or "").upper()
             reason_code = str(fields.get("reason_code") or "")
-            round_number = fields.get("round")
-            max_rounds = fields.get("max_rounds")
-            if reason_code == "DUPLICATE_ACTION":
-                return "SUPPRESS · duplicate action"
-            if reason_code == "MAX_TOOL_ITERATIONS":
-                limit = (
-                    f" · round {round_number}/{max_rounds}" if round_number and max_rounds else ""
-                )
-                return f"ABORT · tool iteration limit{limit}"
-            return (
-                f"{decision} · {reason_code}"
-                if decision and reason_code
-                else decision or "control intervention"
-            )
+            return " · ".join(part for part in (decision, reason_code) if part)
 
         if stage == "tool_request":
             return self._tool_summary(fields)
@@ -1124,9 +1111,7 @@ def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
     steps = [r for r in check.get("readings") or [] if isinstance(r, Mapping)]
     if steps:
         # Every step that ran, in order: what read the claim, what it said, what it decided.
-        claim = str(check.get("claim") or "")
-        for step in steps:
-            _append_reading(body, step, claim)
+        _append_steps(body, steps, str(check.get("claim") or ""))
         return
     basis = str(check.get("basis") or "")
     method = str(check.get("method") or "")
@@ -1158,39 +1143,69 @@ def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
     _append_proof(body, key, f'"{_excerpt(item)}"', styles["muted"])
 
 
-def _append_reading(body: Text, step: Mapping[str, Any], claim: str) -> None:
-    """One line per piece of evidence a step read, opening with what it decided:
+def _append_steps(body: Text, steps: list[Mapping[str, Any]], claim: str) -> None:
+    """The claim's checks as a tree, one line per piece of evidence each step read:
 
-        Supported by [DB record · order 10916]: "Order 10916 totals $135.73."
-        Not decided by [Web page · https://…] (NLI DeBERTa neutral 1.000): "Kumar Karan"
-        Supported by [Web page · https://…] (Laya supported 0.512 ≥ 0.45): read 24 lines · "…"
+        ✓ Reflection drafts, critiques and revises. [SUPPORTED]
+          └ NLI DeBERTa entailment 0.945 · www.scaler.com/topics/…: "Reflection means…"
+        ✓ Kumar Karan is a Lead Instructor at Scaler. [SUPPORTED]
+          ├ NLI DeBERTa neutral 1.000 → not decided · robosathi.com/about: "Kumar Karan"
+          └ Laya supported 0.512 ≥ 0.45 · robosathi.com/about: read 24 lines · "…"
 
-    The lead and the model's score take the decision's tone; the evidence is named in the
-    value colour and quoted muted — the same on every agent's card.
+    The claim line says the verdict once; the step that reached it says only what it read and
+    how sure it was, and an earlier step that did not decide says what it decided instead.
     """
+    lines = [
+        (step, ref, index == len(steps) - 1)
+        for index, step in enumerate(steps)
+        for ref in _step_refs(step)
+    ]
+    for position, (step, ref, deciding) in enumerate(lines):
+        _append_step(body, step, ref, claim, deciding, last=position == len(lines) - 1)
+
+
+def _step_refs(step: Mapping[str, Any]) -> list[Mapping[str, Any] | None]:
+    """The evidence a step read, or one empty slot for a step that read nothing."""
+    refs: list[Mapping[str, Any] | None] = [
+        r for r in step.get("evidence") or [] if isinstance(r, Mapping)
+    ]
+    return refs or [None]
+
+
+def _append_step(
+    body: Text,
+    step: Mapping[str, Any],
+    ref: Mapping[str, Any] | None,
+    claim: str,
+    deciding: bool,
+    *,
+    last: bool,
+) -> None:
+    """One line of the tree: what read the claim, its answer, and the evidence it read."""
     styles = get_settings().tui.body_styles
+    words = get_settings().tui.grounding_card
     tone = _tone(str(step.get("tone") or "dim"))
-    lead = str(step.get("lead") or step.get("decision") or "")
-    basis = _basis_of(step)
-    refs = [r for r in step.get("evidence") or [] if isinstance(r, Mapping)]
-    if not refs:
-        # Nothing read: what was decided, and by what ("Not decided by NLI DeBERTa: no related
-        # evidence").
-        body.append(f"\n      {lead} {step.get('check') or ''}", style=tone)
-        body.append(f": {step.get('decision') or ''}", style=styles["muted"])
+    decision = str(step.get("decision") or "")
+    head = _basis_of(step)
+    if not deciding:
+        head += words.step_outcome.format(decision=decision)
+    body.append(f"\n      {words.step_last if last else words.step_branch} ", style=tone)
+    if ref is None:
+        # Nothing read ("NLI DeBERTa: no related evidence").
+        body.append(str(step.get("check") or ""), style=tone)
+        body.append(f": {decision}", style=styles["muted"])
         return
-    for ref in refs:
-        body.append(f"\n      {lead} ", style=tone)
-        body.append(f"[{ref.get('where') or ''}]", style=styles["value"])
-        if basis:
-            body.append(f" ({basis})", style=tone)
-        lines = [line for line in str(ref.get("excerpt") or "").splitlines() if line.strip()]
-        if not lines:
-            continue
-        read = get_settings().tui.grounding_card.lines_read.format(count=len(lines))
-        quoted = _closest_line(lines, claim) if len(lines) > 1 else _excerpt(ref)
-        prefix = f": {read} · " if len(lines) > 1 else ": "
-        body.append(f'{prefix}"{quoted}"', style=styles["muted"])
+    if head.strip():
+        body.append(head.strip(), style=tone)
+        body.append(" · ", style=styles["muted"])
+    body.append(str(ref.get("where") or ""), style=styles["value"])
+    lines = [line for line in str(ref.get("excerpt") or "").splitlines() if line.strip()]
+    if not lines:
+        return
+    read = words.lines_read.format(count=len(lines))
+    quoted = _closest_line(lines, claim) if len(lines) > 1 else _excerpt(ref)
+    prefix = f": {read} · " if len(lines) > 1 else ": "
+    body.append(f'{prefix}"{quoted}"', style=styles["muted"])
 
 
 def _basis_of(step: Mapping[str, Any]) -> str:
@@ -1258,8 +1273,9 @@ def _closest_line(lines: list[str], claim: str) -> str:
     return _excerpt({"excerpt": best})
 
 
-def _strength(item: Mapping[str, Any]) -> tuple[bool, float]:
-    return bool(item.get("decisive")), float(item.get("nli_score") or 0)
+def _strength(item: Mapping[str, Any]) -> tuple[bool, bool, float]:
+    """The line the verdict rests on first, then a decisive one, then the surest."""
+    return bool(item.get("chosen")), bool(item.get("decisive")), float(item.get("nli_score") or 0)
 
 
 def _was_scored(item: Mapping[str, Any]) -> bool:
@@ -1293,8 +1309,9 @@ def _deciding_evidence(verdict: str, evidence: list[Any]) -> Mapping[str, Any] |
     """The line that settled the claim, or the nearest one when none did."""
     items = [item for item in evidence if isinstance(item, Mapping)]
     wanted = {_DECIDING_LABEL.get(verdict), _RECORD_LABEL}
+    chosen = [i for i in items if i.get("chosen") and i.get("nli_label") in wanted]
     decisive = [i for i in items if i.get("decisive") and i.get("nli_label") in wanted]
-    ranked = decisive or items
+    ranked = chosen or decisive or items
     return ranked[0] if ranked else None
 
 

@@ -30,6 +30,7 @@ from agent_platform.config.settings import (
 )
 from agent_platform.llm.http import create_sdk_http_client
 from agent_platform.llm.metering import record_usage
+from agent_platform.llm.prompt import PromptManifest
 from agent_platform.llm.types import (
     CompletionRequest,
     CompletionResult,
@@ -109,6 +110,21 @@ def _tool_calls_from(raw: Any) -> list[ModelToolCall] | None:
         for call in raw
         if getattr(call, "type", "function") == "function"
     ]
+
+
+def _manifest_summary(manifest: PromptManifest | None) -> dict[str, Any]:
+    """A request's sections and their sizes, beside the messages the log already holds whole."""
+    if manifest is None:
+        return {}
+    return {
+        "estimated_prompt_tokens": manifest.total_tokens,
+        "tokenizer": manifest.tokenizer,
+        "prefix_signature": manifest.prefix_signature,
+        "sections": [
+            {"name": section.name, "tokens": section.tokens, "source": section.source}
+            for section in manifest.sections
+        ],
+    }
 
 
 class OpenAICompatibleClient(LLMClient):
@@ -290,6 +306,7 @@ class OpenAICompatibleClient(LLMClient):
             max_tokens=request.max_tokens,
             json_schema=request.json_schema,
             extra_body=request.extra_body,
+            **_manifest_summary(request.manifest),
         )
 
     def _log_response(self, result: CompletionResult, normalised: int = 0) -> None:
@@ -308,6 +325,7 @@ class OpenAICompatibleClient(LLMClient):
             prompt_tokens=result.usage.prompt_tokens,
             completion_tokens=result.usage.completion_tokens,
             total_tokens=result.usage.total_tokens,
+            cached_prompt_tokens=result.usage.cached_prompt_tokens,
             latency_ms=round(result.latency_ms, 2),
             cost_usd=result.cost_usd,
             normalised_chars=normalised,
@@ -336,16 +354,20 @@ class OpenAICompatibleClient(LLMClient):
     def _usage_from(raw: Any) -> TokenUsage:
         if raw is None:
             return TokenUsage()
+        details = getattr(raw, "prompt_tokens_details", None)
         return TokenUsage(
             prompt_tokens=raw.prompt_tokens or 0,
             completion_tokens=raw.completion_tokens or 0,
             total_tokens=raw.total_tokens or 0,
+            cached_prompt_tokens=getattr(details, "cached_tokens", None) or 0,
         )
 
     def cost_for(self, usage: TokenUsage) -> float:
-        """Price one completion from this provider's configured rates."""
+        """Price one completion from this provider's rates; a cached prompt token at its own."""
+        fresh = usage.prompt_tokens - usage.cached_prompt_tokens
         return (
-            usage.prompt_tokens / 1000 * self._provider.input_cost_per_1k_tokens
+            fresh / 1000 * self._provider.input_cost_per_1k_tokens
+            + usage.cached_prompt_tokens / 1000 * self._provider.cached_input_cost_per_1k_tokens
             + usage.completion_tokens / 1000 * self._provider.output_cost_per_1k_tokens
         )
 

@@ -62,6 +62,11 @@ observability:
     tool_failure_rate: 0.05
     recovery_success_rate: 0.90
     policy_violation_rate: 0.0
+  # What the CONTEXT card calls the prompt sections only this agent's requests carry.
+  context_card:
+    labels:
+      refund_limit: Refund limit
+      intent_fallback: Intent fallback
 
 logging:
   # This agent's own subsystem, coloured on the console beside the platform's.
@@ -700,6 +705,21 @@ customer_support_agent:
     You may refund at most {limit} yourself. A larger refund still goes through
     process_refund with the order's full total: the result says whether it was issued or
     sent to a person for review. Never tell the customer the amount of this limit.
+  # What the dream inbox records instead of a turn's words when memory refused the claim in
+  # it, or screening quarantined it: the dream's summary becomes episodic memory, and recall
+  # would otherwise carry the refused words back into the model's context.
+  memory_withheld: "query withheld — {reason}"
+  memory_quarantined: quarantined by security screening
+  # Added to the working prompt when the lightweight intent classifier could not place the
+  # turn and the model routes it instead (`intent_execution_route: llm_fallback`).
+  intent_fallback_instruction: >-
+    # Intent fallback
+
+    The lightweight intent classifier could not resolve this turn. Use the current
+    conversation and current-turn tool results to infer what the customer means. You may
+    ask a clarifying question when context is still insufficient. Never claim that a
+    refund, approval, queueing, cancellation, or other business action occurred unless you
+    actually call the corresponding tool and receive a successful tool result.
   # What the customer is sent instead when a reply states the limit anyway
   # (`security/limit_disclosure.py`), checked after grounding.
   refund_limit_withheld:
@@ -851,3 +871,10 @@ tui:
   # One-line card summaries for this agent's own reason codes.
   reason_summaries:
     ORDER_REFERENCE_NOT_PRESENT: order reference not provided · validation deferred
+
+# Context management (platform `context.*`), as this agent needs it.
+context:
+  offload:
+    # The offload fetch tool returns only what was in this agent's own window: it is governed
+    # by the permission the agent already reads orders with.
+    tool_permission: read_orders

@@ -18,11 +18,19 @@ intent selects. This module adds the refund policy and owns the prompts
 for the final, customer-facing turn.
 """
 
+from collections.abc import Sequence
+
 from agent_platform.config import get_settings
+from agent_platform.llm.prompt import POLICY, PromptPart
 from agent_platform.primitives.money import Money
 from agent_platform.skills import load_skill_documents, render_profile
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.prompts.policy import policy_text
+
+# The prompt sections only this agent's requests carry (labels: `observability.context_card`).
+REFUND_LIMIT = "refund_limit"
+INTENT_FALLBACK = "intent_fallback"
+REPLY_INSTRUCTION = "reply_instruction"
 
 _REPLY_SYSTEM = """You are a customer support agent for an online store,
 writing the message the customer will read.
@@ -70,6 +78,19 @@ def build_reply_instruction() -> str:
     10003. According to policy, we need to confirm the amount…".
     """
     return _REPLY_INSTRUCTION
+
+
+def system_prompt_parts(
+    instructions: Sequence[PromptPart], refund_limit: Money | None
+) -> list[PromptPart]:
+    """The working prompt as named parts: the turn's instructions, the policy, the limit.
+
+    The same text `build_system_prompt` joins, attributable part by part, for a request
+    built with `PromptBuilder`.
+    """
+    policy = PromptPart(POLICY, policy_text().strip(), get_agent_settings().policy_path)
+    limit = PromptPart(REFUND_LIMIT, refund_limit_notice(refund_limit).strip())
+    return [*instructions, policy, limit]
 
 
 def build_system_prompt(instructions: str | None = None, refund_limit: Money | None = None) -> str:

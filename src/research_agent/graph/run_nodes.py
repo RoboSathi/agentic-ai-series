@@ -24,7 +24,7 @@ Every node that needs a live collaborator reaches it through the run's
 from the checkpointed snapshots, when a crashed run resumes).
 """
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,7 +34,7 @@ from agent_platform.config import FeatureSet
 from agent_platform.hallucination_check.confidence import ConfidenceCheck
 from agent_platform.hallucination_check.readings import check_rule
 from agent_platform.logging import describe_error
-from agent_platform.loop_control import BudgetGuard
+from agent_platform.loop_control import SECONDS, BudgetGuard
 from agent_platform.observability.step_events import HALLUCINATION_CHECK
 from agent_platform.observability.types import StatusKind
 from agent_platform.scheduling import AsyncDagScheduler, TaskGraph
@@ -52,6 +52,8 @@ from research_agent.graph.state import RunState
 from research_agent.planning.ids import renumber
 from research_agent.planning.planner import Planner, PlanRejectedError
 from research_agent.presentation.narration import clip, say
+from research_agent.reflexion import LessonBook, RunOutcome
+from research_agent.reflexion.lessons import lesson_lines
 from research_agent.research import cards
 from research_agent.research.reflector import FollowUpProposal, GapAnalyzer, Reflector
 from research_agent.research.resources import RunResources
@@ -71,12 +73,16 @@ _BATCH_START, _SYNTHESIZE, _GAP_FILL, _FINALIZE = (
     "gap_fill",
     "finalize",
 )
+_NEXT_BATCH, _REFLECT, _REVISE = "next_batch", "reflect", "revise"
 # Why (`research_agent.run_loop.because`).
 _ANOTHER_ROUND, _CANCELLED, _NO_GAPS = "another_round", "cancelled", "no_gaps"
 _GAP_FILL_EXHAUSTED, _BUDGET_SPENT = "gap_fill_exhausted", "budget_spent"
 _REFLECTION_OFF, _GAPS_TO_FILL = "reflection_off", "gaps_to_fill"
 _GAP_FILL_PLANNED, _NO_FOLLOW_UP = "gap_fill_planned", "no_follow_up"
 _RESCUE = "rescue"
+_BATCH_DONE, _ROUND_DONE = "batch_done", "round_done"
+_WRITING_FAULTS, _REVISIONS_SPENT = "writing_faults", "revisions_spent"
+_REVISION_PLATEAU = "revision_plateau"
 
 
 @dataclass
@@ -98,8 +104,6 @@ class RunParts:
     partial_threshold: float
     clip_chars: int
     node_id_prefix: str
-    # The budget counters shown on a budget card's heading (the rest are in its expander).
-    budget_headline: Sequence[str]
     reasons: Mapping[str, str]
     auditor: IndependentAuditor | None = None
     reflection_enabled: bool = True
@@ -113,6 +117,18 @@ class RunParts:
     citation_guard: CitationGuard | None = None
     # Level 1 of the report's hallucination check (token confidence); None: withheld.
     confidence: ConfidenceCheck | None = None
+    # Draws the batch's aggregated CONTEXT cards (one per page-reading role); None: none.
+    flush_context: Callable[[], None] | None = None
+    # Producer-Critic on the report: which checks are writing faults, how many revisions,
+    # and the least score gain that earns another.
+    writing_checks: frozenset[str] = frozenset()
+    max_revisions: int = 0
+    min_score_gain: float = 0.0
+    # The models that judged the last audit (`LlmJudge.models_used`); None: not tracked.
+    judge_models: Callable[[], set[str]] | None = None
+    # Reflexion: earlier runs' lessons recalled at plan, this run's written at archive; None:
+    # withheld.
+    lessons: LessonBook | None = None
 
 
 # Rejection codes that mean "the filter could not read the result", not "the result is
@@ -164,6 +180,11 @@ class RunNodes:
         self._scheduler = AsyncDagScheduler(resources.contract.budget.concurrency)
 
     @property
+    def revises(self) -> bool:
+        """Whether the report is revised against the audit (the `revise` node exists)."""
+        return self._p.reflection_enabled and self._p.max_revisions > 0
+
+    @property
     def resources(self) -> RunResources:
         assert self._r is not None, "no run is bound"
         return self._r
@@ -181,7 +202,6 @@ class RunNodes:
             contract_hash=contract.contract_hash,
             toggles=toggles,
         )
-        self._budget_card(say("budget.at_start"))
         return {
             "toggles": toggles,
             "round": 1,
@@ -194,8 +214,9 @@ class RunNodes:
     async def plan(self, state: RunState) -> Update:
         r, contract = self.resources, state["contract"]
         r.budget.charge(ROUNDS, 1)
+        lessons = self._recalled(contract)
         try:
-            outcome = await self._p.planner.plan(contract)
+            outcome = await self._p.planner.plan(contract, lessons)
         except PlanRejectedError as exc:
             heading, sections = cards.plan_card(
                 contract, None, 0, exc.call, rejected=list(exc.validation.problems)
@@ -219,10 +240,26 @@ class RunNodes:
         plan = outcome.plan
         batches = len(TaskGraph(plan.tasks()).batches())
         heading, sections = cards.plan_card(
-            contract, plan, batches, outcome.call, repaired_problems=outcome.problems
+            contract,
+            plan,
+            batches,
+            outcome.call,
+            repaired_problems=outcome.problems,
+            uncovered=outcome.validation.uncovered,
+            budget={**contract.budget.counters(), SECONDS: contract.budget.max_seconds},
         )
         r.telemetry.card("plan_dag", heading, sections)
-        return {"plans": [plan], "round_nodes": list(plan.nodes)}
+        return {"plans": [plan], "round_nodes": list(plan.nodes), "lessons": lessons}
+
+    def _recalled(self, contract: Any) -> list[str]:
+        """Earlier runs' lessons for this one, shown on a LESSONS card when there are any."""
+        if self._p.lessons is None:
+            return []
+        facts = self._p.lessons.recall(contract)
+        if facts:
+            heading, sections = cards.lessons_card(facts)
+            self.resources.telemetry.card("lessons", heading, sections)
+        return lesson_lines(facts)
 
     @staticmethod
     def after_plan(state: RunState) -> str:
@@ -285,10 +322,24 @@ class RunNodes:
         return {"done": {node.node_id: "done"}, "results": [result]}
 
     async def batch_done(self, state: RunState) -> Update:
-        """The batch boundary: snapshot what a resumed run needs, show the meters."""
+        """The batch boundary: snapshot what a resumed run needs; LOOP CONTROL says where next."""
         r = self.resources
-        self._budget_card(say("budget.after_batch", batch=state.get("batch", 0)))
-        self._batch_summary(state.get("batch", 0), state.get("plans", []))
+        batch = state.get("batch", 0)
+        if self._p.flush_context is not None:
+            self._p.flush_context()
+        self._batch_summary(batch, state.get("plans", []))
+        ready, _ = self._ready(state)
+        done = state.get("done", {})
+        self._report_loop(
+            state,
+            _NEXT_BATCH if ready else _REFLECT,
+            _BATCH_DONE if ready else _ROUND_DONE,
+            {
+                "batch": batch,
+                "admitted": len(r.ledger.snapshot().entries),
+                "failed_nodes": [node for node, outcome in done.items() if outcome == "failed"],
+            },
+        )
         return {
             "ledger": r.ledger.snapshot(),
             "spent": _spent(r.budget),
@@ -307,7 +358,7 @@ class RunNodes:
         failing = [v for v in verdicts if not v.passed]
         gaps = [v.item_id for v in failing]
         entities = GapAnalyzer.entities(ctx, ctx.entity_pattern)
-        stop, reason, judgeable = self._should_stop(state, verdicts, entities)
+        stop, reason, judgeable, cause = self._should_stop(state, verdicts, entities)
         proposal = FollowUpProposal()
         if not stop:
             update, proposal = await self._next_round(state, ctx, verdicts, gaps)
@@ -333,18 +384,23 @@ class RunNodes:
         status: StatusKind = "warning" if failing and not step.planned else "completed"
         r.telemetry.card("reflect_gap_analysis", heading, sections, status=status)
         another = bool(update["round_nodes"])
+        if not another and not cause and proposal.sufficient is False:
+            # The critique wanted more, and no round was left to look for it.
+            cause = next(iter(self._no_room()), None)
         self._report_loop(
             state,
             _BATCH_START if another else _SYNTHESIZE,
             _ANOTHER_ROUND if another else (update.get("stop_reason") or reason),
             {"failing_checks": len(failing), "budget_stops": list(r.trace.budget_stops)},
+            cause=None if another else cause,
         )
         return {**update, "entities": entities}
 
     def _should_stop(
         self, state: RunState, verdicts: list[CheckVerdict], entities: int
-    ) -> tuple[bool, str, bool]:
-        """Stop?, why, and whether the model should judge the evidence before the run stops.
+    ) -> tuple[bool, str, bool, str | None]:
+        """Stop?, why, whether the model should judge the evidence before the run stops, and
+        the budget counter that stopped it (None when the run stopped on its own terms).
 
         It judges whenever reflection is on and the run ends on its own terms — the stop rule
         says answered, or the rounds or budget ran out — not when the operator stopped it, no
@@ -352,27 +408,28 @@ class RunNodes:
         """
         r = self.resources
         if r.cancelled:
-            return True, say("stop.cancelled"), False
+            return True, say("stop.cancelled"), False, None
         blocked = self._unreadable_only()
         if blocked:
-            return True, blocked, False
+            return True, blocked, False, None
         archetype = state["contract"].brief.archetype
         decision = self._p.reflector.decide(archetype, verdicts, state.get("entities", 0), entities)
         if not self._p.reflection_enabled:
             if decision.stop:
-                return True, decision.reason, False
-            return True, say("stop.reflection_withheld"), False
+                return True, decision.reason, False, None
+            return True, say("stop.reflection_withheld"), False, None
         if decision.stop:
             # Answered is answered, even if a cap was reached getting there.
-            return True, decision.reason, True
+            return True, decision.reason, True, None
         # Rounds used up is the plan running its course, not a limit hit mid-way.
         exhausted = [c for c in r.budget.exhausted_counters() if c != ROUNDS]
         if exhausted or r.trace.budget_stops:
-            spent = ", ".join(exhausted or r.trace.budget_stops)
-            return True, say("stop.budget", counters=spent), True
+            spent = exhausted or list(r.trace.budget_stops)
+            return True, say("stop.budget", counters=", ".join(spent)), True, spent[0]
         if r.budget.remaining(ROUNDS) <= 0:
-            return True, say("stop.max_rounds"), True
-        return False, decision.reason, False
+            # The rounds ran out before the stop rule was met: that is the cap deciding.
+            return True, say("stop.max_rounds"), True, ROUNDS
+        return False, decision.reason, False, None
 
     def _rescue(self, state: RunState) -> Update | None:
         """One more round for a run that admitted nothing, instead of a report of nothing.
@@ -435,8 +492,12 @@ class RunNodes:
 
     def _room_for_a_round(self) -> bool:
         """Whether a follow-up round could still run: searches and rounds left."""
+        return not self._no_room()
+
+    def _no_room(self) -> list[str]:
+        """The counters that leave no room for another round (searches, rounds)."""
         r = self.resources
-        return r.budget.remaining(SEARCHES) > 0 and r.budget.remaining(ROUNDS) > 0
+        return [c for c in (SEARCHES, ROUNDS) if r.budget.remaining(c) <= 0]
 
     def _tried(self) -> list[str]:
         return [q for queries in self.resources.trace.queries_by_node.values() for q in queries]
@@ -444,7 +505,9 @@ class RunNodes:
     async def _next_round(
         self, state: RunState, ctx: CheckContext, verdicts: list[CheckVerdict], gaps: list[str]
     ) -> tuple[Update, FollowUpProposal]:
-        proposal = await self._p.reflector.propose(ctx, verdicts, self._tried(), state["round"] + 1)
+        proposal = await self._p.reflector.propose(
+            ctx, verdicts, self._tried(), state["round"] + 1, state.get("lessons", [])
+        )
         return self._round_from(state, proposal, gaps, say("stop.no_follow_up")), proposal
 
     async def _critiqued(
@@ -457,11 +520,14 @@ class RunNodes:
     ) -> tuple[Update, FollowUpProposal]:
         """Every check passed: the model judges whether the claims answer the question.
 
-        Asked whatever budget is left: its verdict and reasoning are on the card either way.
-        Only its follow-ups need room for another round (a small run has none after round 1).
+        Asked only when a round is left to act on its verdict: with none (a small run after
+        round 1) its follow-ups could only end in "no room", so the call is not made.
         """
+        if not self._room_for_a_round():
+            stop = say("stop.critique_skipped", reason=reason)
+            return {"gaps": gaps, "stop_reason": stop, "round_nodes": []}, FollowUpProposal()
         proposal = await self._p.reflector.critique(
-            ctx, verdicts, self._tried(), state["round"] + 1
+            ctx, verdicts, self._tried(), state["round"] + 1, state.get("lessons", [])
         )
         if proposal.sufficient:
             stop = say("stop.critique_sufficient", reason=reason)
@@ -505,10 +571,67 @@ class RunNodes:
     # -- synthesize, audit, gap-fill ----------------------------------------------------------
 
     async def synthesize(self, state: RunState) -> Update:
+        """The report; after a gap-fill, the previous one revised with the new evidence and the
+        audit's findings, rather than a fresh draft that never saw them."""
         r, contract = self.resources, state["contract"]
         notice = "" if r.ledger.snapshot().entries else self._best_effort()
         ledger = r.ledger.snapshot()
-        checked = await self._p.synthesizer.draft(contract, ledger, state.get("gaps", []))
+        previous, audit = state.get("report"), state.get("audit")
+        findings = self._findings(audit, contract, writing_only=False) if previous else None
+        checked = await self._p.synthesizer.draft(
+            contract, ledger, state.get("gaps", []), previous, findings
+        )
+        return await self._deliver(state, checked, notice)
+
+    async def revise(self, state: RunState) -> Update:
+        """Producer-Critic on the report: the audit's writing findings, fixed in a revision.
+
+        Only what a finding flags changes; the revision then goes through the same citation
+        guard and self-check as the draft, and the audit judges it again.
+        """
+        r, contract = self.resources, state["contract"]
+        previous, audit = state["report"], state["audit"]
+        assert previous is not None and audit is not None
+        findings = self._findings(audit, contract, writing_only=True)
+        revision = state.get("revision", 0) + 1
+        checked = await self._p.synthesizer.revise(
+            contract, r.ledger.snapshot(), previous, findings, state.get("lessons", [])
+        )
+        before = self._p.synthesizer.written_sections(previous)
+        after = self._p.synthesizer.written_sections(checked.report)
+        heading, sections = cards.revise_card(
+            revision, self._p.max_revisions, findings, before, after, checked.call
+        )
+        r.telemetry.card("revise", heading, sections)
+        update = await self._deliver(state, checked, previous.notice)
+        return {**update, "revision": revision}
+
+    def _findings(
+        self, audit: AuditResult | None, contract: Any, *, writing_only: bool
+    ) -> list[dict[str, Any]]:
+        """What the audit failed, as the writer reads it: the criterion, why, and the
+        sentences behind the score. `writing_only`: just the faults a revision can fix."""
+        if audit is None:
+            return []
+        return [
+            {
+                "item_id": v.item_id,
+                "criterion": item.text if (item := contract.rubric.item(v.item_id)) else v.name,
+                "score": round(v.score, 2),
+                "reason": v.detail,
+                "sentences": list(v.evidence),
+            }
+            for v in audit.verdicts
+            if not v.passed and v.applicable and (not writing_only or self._writing(v.name))
+        ]
+
+    def _writing(self, check: str) -> bool:
+        return check in self._p.writing_checks
+
+    async def _deliver(self, state: RunState, checked: Any, notice: str) -> Update:
+        """A written report, checked sentence by sentence, completed with its limits."""
+        r, contract = self.resources, state["contract"]
+        ledger = r.ledger.snapshot()
         if self._p.citation_guard is not None and ledger.entries:
             guarded = await self._p.citation_guard.guard(checked.report, ledger)
             self._guard_card(guarded, ledger)
@@ -538,7 +661,8 @@ class RunNodes:
         r.telemetry.card(
             "synthesize", heading, sections, status="warning" if checked.removed else "completed"
         )
-        return {"report": report, "ledger": ledger}
+        writer = (checked.call.backup or checked.call.model) if checked.call is not None else ""
+        return {"report": report, "ledger": ledger, "writer_model": writer}
 
     def _best_effort(self) -> str:
         """Nothing was admitted: the search results themselves, labelled, as the evidence.
@@ -630,10 +754,30 @@ class RunNodes:
             audit = await self._p.auditor.audit_report(state["contract"], report, state["ledger"])
         except Exception as exc:
             return self._audit_failed(describe_error(exc))
-        self._report_audit(audit, state["contract"].rubric)
-        next_step, because = self._gap_fill_decision(audit)
-        self._report_loop(state, next_step, because, {"must_pass_gaps": len(audit.must_pass_gaps)})
-        return {"audit": audit}
+        audit = self._independence(audit, state.get("writer_model", ""))
+        score = self._report_audit(audit, state["contract"].rubric)
+        scores = [*state.get("audit_scores", []), score]
+        next_step, because = self._gap_fill_decision(audit, {**state, "audit_scores": scores})
+        self._report_loop(
+            state,
+            next_step,
+            because,
+            {
+                "must_pass_gaps": len(audit.must_pass_gaps),
+                "writing_faults": len(self._findings(audit, state["contract"], writing_only=True)),
+                "revision": f"{state.get('revision', 0)} of {self._p.max_revisions}",
+                "audit_score": f"{score:.2f}",
+            },
+            cause=self._budget_cause(because),
+        )
+        return {"audit": audit, "audit_scores": scores}
+
+    def _independence(self, audit: AuditResult, writer: str) -> AuditResult:
+        """The audit as independent only if no criterion was judged by the report's writer."""
+        judges = self._p.judge_models() if self._p.judge_models is not None else set()
+        if writer and writer in judges:
+            return audit.model_copy(update={"independent": False})
+        return audit
 
     def _audit_failed(self, error: str) -> Update:
         """The audit could not run: deliver the report unverified, never fail the run for it."""
@@ -646,7 +790,8 @@ class RunNodes:
     def _verdict(self, verdicts: list[CheckVerdict], rubric: Any) -> AuditVerdict:
         return decide(verdicts, rubric, self._p.pass_threshold, self._p.partial_threshold)
 
-    def _report_audit(self, audit: AuditResult, rubric: Any) -> None:
+    def _report_audit(self, audit: AuditResult, rubric: Any) -> float:
+        """The AUDIT card; the audit's weighted score, which a revision must raise."""
         r = self.resources
         result = self._verdict(audit.verdicts, rubric)
         usage = self._p.usage() if self._p.usage is not None else {}
@@ -679,24 +824,71 @@ class RunNodes:
             "allow" if not audit.must_pass_gaps else "escalate",
             f"must-pass gaps: {audit.must_pass_gaps}; unflagged: {audit.unflagged_gaps}; false limits: {audit.false_limits}",
         )
+        return result.score
 
     def after_audit(self, state: RunState) -> str:
-        return self._gap_fill_decision(state.get("audit"))[0]
+        return self._gap_fill_decision(state.get("audit"), state)[0]
 
-    def _gap_fill_decision(self, audit: AuditResult | None) -> tuple[str, str]:
-        """Gap-fill or finish, and why — one rule for the edge and for its LOOP CONTROL card."""
+    def _gap_fill_decision(
+        self, audit: AuditResult | None, state: Mapping[str, Any] | None = None
+    ) -> tuple[str, str]:
+        """Gap-fill, revise or finish, and why — one rule for the edge and its LOOP CONTROL card.
+
+        Missing evidence goes to gap-fill (more research); a fault in how the report is written
+        goes to a revision (the critic's findings back to the writer). Evidence first: a report
+        revised before its evidence is in would be revised again.
+        """
         r = self.resources
-        if audit is None or not audit.must_pass_gaps:
+        if audit is None:
             return _FINALIZE, _NO_GAPS
         if r.cancelled:
             return _FINALIZE, _CANCELLED
+        evidence = [g for g in audit.must_pass_gaps if not self._writing(self._check_of(audit, g))]
+        blocked = self._gap_fill_blocked() if evidence else _NO_GAPS
+        if evidence and not blocked:
+            return _GAP_FILL, _GAPS_TO_FILL
+        if self._findings(audit, self.resources.contract, writing_only=True):
+            revise = self._revise_decision(state or {})
+            if revise[0] == _REVISE or not evidence:
+                return revise
+        return _FINALIZE, blocked
+
+    def _gap_fill_blocked(self) -> str:
+        """Why a gap-fill cannot run, or "" when it can."""
+        r = self.resources
+        if not self._p.reflection_enabled:
+            return _REFLECTION_OFF
+        if r.budget.remaining(GAP_FILL_ROUNDS) <= 0:
+            return _GAP_FILL_EXHAUSTED
+        if r.budget.exhausted_counters():
+            return _BUDGET_SPENT
+        return ""
+
+    def _revise_decision(self, state: Mapping[str, Any]) -> tuple[str, str]:
+        """Revise, while revisions are left and the last one raised the audit's score."""
         if not self._p.reflection_enabled:
             return _FINALIZE, _REFLECTION_OFF
-        if r.budget.remaining(GAP_FILL_ROUNDS) <= 0:
-            return _FINALIZE, _GAP_FILL_EXHAUSTED
-        if r.budget.exhausted_counters():
+        if state.get("revision", 0) >= self._p.max_revisions:
+            return _FINALIZE, _REVISIONS_SPENT
+        scores = state.get("audit_scores", [])
+        if state.get("revision", 0) and len(scores) > 1:
+            if scores[-1] - scores[-2] < self._p.min_score_gain:
+                return _FINALIZE, _REVISION_PLATEAU
+        if truncated_by_budget(self.resources.budget.exhausted_counters()):
             return _FINALIZE, _BUDGET_SPENT
-        return _GAP_FILL, _GAPS_TO_FILL
+        return _REVISE, _WRITING_FAULTS
+
+    @staticmethod
+    def _check_of(audit: AuditResult, item_id: str) -> str:
+        return next((v.name for v in audit.verdicts if v.item_id == item_id), "")
+
+    def _budget_cause(self, because: str) -> str | None:
+        """The counter behind a budget-decided finish after the audit; None for any other."""
+        if because == _GAP_FILL_EXHAUSTED:
+            return GAP_FILL_ROUNDS
+        if because == _BUDGET_SPENT:
+            return next(iter(self.resources.budget.exhausted_counters()), None)
+        return None
 
     async def gap_fill(self, state: RunState) -> Update:
         r, audit = self.resources, state.get("audit")
@@ -872,8 +1064,27 @@ class RunNodes:
             index = self._p.archive.archive(
                 state["contract"], report, _spent(r.budget)
             ).model_dump()
+        self._remember(state)
         r.ledger.discard()
         return {"index": index}
+
+    def _remember(self, state: RunState) -> None:
+        """Reflexion: what this run's critics found, written as lessons for the next run."""
+        if self._p.lessons is None or state.get("status") in (None, "CANCELLED"):
+            return
+        audit, r = state.get("audit"), self.resources
+        failed = [v for v in audit.verdicts if not v.passed and v.applicable] if audit else []
+        written = self._p.lessons.write(
+            RunOutcome(
+                contract=state["contract"],
+                failed=failed,
+                rejected_codes=dict(r.trace.rejected_codes),
+                budget_stops=list(r.trace.budget_stops),
+                audit_scores=list(state.get("audit_scores", [])),
+                revisions=state.get("revision", 0),
+            )
+        )
+        r.telemetry.audit("reflexion.lessons", "allow", f"{len(written)} lesson(s) written")
 
     # -- shared -----------------------------------------------------------------------------
 
@@ -928,8 +1139,10 @@ class RunNodes:
         next_step: str,
         because: str,
         criteria: dict[str, Any] | None = None,
+        cause: str | None = None,
     ) -> None:
-        """LOOP CONTROL: the round, every budget meter, and the step the run takes next."""
+        """LOOP CONTROL: the round, every budget meter, the step the run takes next, and the
+        counter that forced it when one did."""
         r = self.resources
         RunLoopReport(r.telemetry.reporter, get_agent_settings().run_loop).report(
             r.budget,
@@ -937,14 +1150,8 @@ class RunNodes:
             next_step=next_step,
             because=because,
             criteria=criteria,
+            cause=cause,
         )
-
-    def _budget_card(self, label: str) -> None:
-        """The few meters that matter on the heading; every meter in the expander."""
-        r = self.resources
-        meters = {name: (c.spent, c.cap) for name, c in r.budget.snapshot().items()}
-        heading, sections = cards.budget_card(label, meters, self._p.budget_headline)
-        r.telemetry.card("budget_tick", heading, sections)
 
 
 # What became of a cited sentence, as the shared card names a claim's verdict.

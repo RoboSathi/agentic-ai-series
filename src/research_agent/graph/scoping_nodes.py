@@ -30,6 +30,9 @@ from research_agent.scoping.challenge_check import ChallengeGuard
 from research_agent.scoping.kind import KindClassifier
 from research_agent.scoping.termination import TerminationPolicy
 
+# A word of an answer, as the vague-answer rule reads it.
+_WORD = re.compile(r"[^\W\d_]+")
+
 Update = dict[str, Any]
 
 
@@ -113,6 +116,7 @@ class ScopingNodes:
             answer=state.user_input,
             turn=turn_number,
             today=self._p.clock().date(),
+            rubric_shape=self._p.settings.rubric_shapes.get(state.archetype or "", ""),
         )
         turn = await self._p.caller.call(prompt, interviewer_prompt.InterviewTurn)
         turn, since = await self._guarded(prompt, turn, state)
@@ -171,6 +175,15 @@ class ScopingNodes:
             answer, settings.vague_answer_max_words, settings.absolute_words
         )
 
+    def _names_nothing(self, target: Any, value: str) -> bool:
+        """Whether an answer to a subject item names nothing to research ("all", "everything")."""
+        settings = self._p.settings
+        if target.brief_field not in settings.subject_fields:
+            return False
+        words = _WORD.findall(value.casefold())
+        vague = {word.casefold() for word in settings.vague_subject_words}
+        return bool(words) and all(word in vague for word in words)
+
     @staticmethod
     def _menu_answer(state: ScopingState) -> bool:
         asked = checklist.item(state.items, state.asked_item_id)
@@ -178,10 +191,18 @@ class ScopingNodes:
 
     def _apply(self, items: list[Any], turn: interviewer_prompt.InterviewTurn) -> list[Any]:
         for update in turn.updated_items:
-            if update.value.strip():
-                items = checklist.with_status(
-                    items, update.item_id, "covered", update.value.strip()
+            value = update.value.strip()
+            target = checklist.item(items, update.item_id)
+            if not value or target is None:
+                continue
+            if target.status != "delegated" and self._names_nothing(target, value):
+                # "all" is no list of concepts to research: ask again, then propose them.
+                items = checklist.vague_answer(
+                    items, target.item_id, self._p.settings.vague_answers_before_delegating
                 )
+                continue
+            derived = target.status == "delegated"
+            items = checklist.covered(items, target.item_id, value, derived=derived)
         for skip in turn.skip_items:
             target = checklist.item(items, skip.item_id)
             if (

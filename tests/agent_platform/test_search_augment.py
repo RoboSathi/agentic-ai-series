@@ -104,3 +104,28 @@ async def test_a_time_bounded_search_keeps_its_own_order() -> None:
 def test_no_quota_means_no_pacing() -> None:
     policy = SearchAugmentPolicy(SETTINGS, _Quota(10_000, quota=None))
     assert policy.allowed()
+
+
+class _Down:
+    name = "duckduckgo"
+
+    async def search(self, request: SearchRequest) -> SearchResponse:
+        raise RuntimeError("throttled")
+
+
+async def test_the_route_says_who_answered_and_what_was_merged() -> None:
+    router, _ = _router(STRONG)
+    strong = await router.search(SearchRequest(query=QUERY, max_results=8))
+    assert strong.route.answered_by == "duckduckgo" and not strong.route.augmented_with
+    router, _ = _router(STRONG[:2])
+    merged = await router.search(SearchRequest(query=QUERY, max_results=8))
+    assert merged.route.answered_by == "duckduckgo" and merged.route.augmented_with == "tavily"
+
+
+async def test_the_route_names_a_provider_that_failed_first() -> None:
+    router = SearchRouter(
+        {"duckduckgo": RoutedProvider(_Down()), "tavily": RoutedProvider(_Provider("tavily", TAVILY))},
+        ["duckduckgo", "tavily"], ["tavily", "duckduckgo"],
+    )  # fmt: skip
+    response = await router.search(SearchRequest(query=QUERY, max_results=8))
+    assert response.route.answered_by == "tavily" and response.route.failed == ["duckduckgo"]

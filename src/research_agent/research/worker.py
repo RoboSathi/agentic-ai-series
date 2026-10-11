@@ -32,7 +32,7 @@ from research_agent.domain.plan import SubQuestion
 from research_agent.domain.sources import host_of, window_verdict
 from research_agent.domain.trace import SeenHit
 from research_agent.llm.structured import OutputTruncatedError
-from research_agent.presentation.narration import say
+from research_agent.presentation.narration import say, search_route
 from research_agent.research import cards
 from research_agent.research.defenses import apply_source_policy, rank_by_kind
 from research_agent.research.extractor import PageReading
@@ -161,7 +161,7 @@ class ResearcherWorker:
         heading, sections = cards.search_card(
             node.node_id,
             query,
-            response.provider,
+            search_route(response.route, response.provider),
             _window_label(response.request),
             [f"{host_of(h.url)} · {h.published_date[:16] or 'undated'}" for h in response.hits],
             bool(response.provider_summary),

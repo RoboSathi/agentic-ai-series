@@ -1,7 +1,9 @@
 """Context source for generic working memory."""
 
-from agent_platform.context.types import Chunk, Task
+from agent_platform.context.types import TRUST, Chunk, Task
 from agent_platform.memory.working import WorkingMemoryStore
+
+WORKING_MEMORY = "working_memory"
 
 
 class WorkingMemoryContextSource:
@@ -33,10 +35,24 @@ class WorkingMemoryContextSource:
                 else str(item)
                 for item in memory.history
             )
-            candidates.append(Chunk(content=history, kind="history", source="working_memory"))
+            candidates.append(
+                Chunk(
+                    content=history,
+                    kind="history",
+                    source=WORKING_MEMORY,
+                    metadata={TRUST: "user"},
+                )
+            )
         if memory.state:
             state = "\n".join(f"{key}: {value}" for key, value in memory.state.items())
             candidates.append(
-                Chunk(content=state, kind="memory", source="working_memory", pinned=True)
+                Chunk(
+                    content=state,
+                    kind="memory",
+                    source=WORKING_MEMORY,
+                    pinned=True,
+                    # The harness's own bookkeeping (who is verified, what is under discussion).
+                    metadata={TRUST: "system"},
+                )
             )
         return candidates

@@ -439,10 +439,11 @@ class TestAStateRecordIsNotSentToNli:
         body = Text()
         _append_claim(body, result.claim_checks[0])
         assert (
-            'Tool result · process_refund  "Order 10665 refund status: pending_review."'
+            '└ Tool result · process_refund: "Order 10665 refund status: pending_review."'
             in body.plain
         )
-        assert "1  record" in body.plain and "supported" in body.plain
+        # A record read directly needs no model named: the line says it is the record.
+        assert "[SUPPORTED]" in body.plain and "Supported by" not in body.plain
 
 
 @pytest.mark.usefixtures("abstaining_guard")
@@ -678,5 +679,5 @@ class TestTheKnowledgeArticlesAreOneSentencePerPremise:
         from customer_support_agent.graph.nodes._support import _knowledge_evidence
 
         contents = [chunk.content for chunk in _knowledge_evidence()]
-        delivered = next(c for c in contents if "has been delivered can be refunded" in c)
+        delivered = next(c for c in contents if "delivered order can be refunded" in c)
         assert "nothing to refund" not in delivered

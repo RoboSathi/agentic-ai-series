@@ -20,6 +20,8 @@ from research_agent.domain.scope import (
 )
 
 RECENCY_FIELD = "recency_days"
+# Statuses that still need a value: asked, or left to the interviewer to propose.
+_UNSETTLED = frozenset({"open", "delegated"})
 
 
 def load_checklist(path: Path, archetype: Archetype) -> list[CoverageItem]:
@@ -48,6 +50,33 @@ def with_status(
     ]
 
 
+def covered(
+    items: Sequence[CoverageItem], item_id: str, value: str, *, derived: bool = False
+) -> list[CoverageItem]:
+    """A copy with one item answered; `derived` when the interviewer proposed the value."""
+    return [
+        candidate.model_copy(update={"status": "covered", "value": value, "derived": derived})
+        if candidate.item_id == item_id
+        else candidate
+        for candidate in items
+    ]
+
+
+def vague_answer(
+    items: Sequence[CoverageItem], item_id: str, delegate_after: int
+) -> list[CoverageItem]:
+    """An answer that names nothing to research: the item stays open, asked again with
+    examples, until `delegate_after` such answers hand it to the interviewer to propose."""
+    moved: list[CoverageItem] = []
+    for candidate in items:
+        if candidate.item_id == item_id:
+            count = candidate.vague_answers + 1
+            status: ItemStatus = "delegated" if count >= delegate_after else candidate.status
+            candidate = candidate.model_copy(update={"vague_answers": count, "status": status})
+        moved.append(candidate)
+    return moved
+
+
 def prefill_window(items: Sequence[CoverageItem], days: int | None) -> list[CoverageItem]:
     """A time window the first message stated is not asked about again."""
     if days is None:
@@ -68,7 +97,7 @@ def open_items(items: Sequence[CoverageItem], required_only: bool = False) -> li
     return [
         item
         for item in items
-        if item.status == "open" and (item.required or not item.skippable or not required_only)
+        if item.status in _UNSETTLED and (item.required or not item.skippable or not required_only)
     ]
 
 
@@ -97,7 +126,7 @@ def known_unknowns(
             reason="waived" if item.status == "waived" else closing_reason,
         )
         for item in items
-        if item.status == "waived" or (item.status == "open" and item.required)
+        if item.status == "waived" or (item.status in _UNSETTLED and item.required)
     ]
 
 

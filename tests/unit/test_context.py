@@ -20,6 +20,7 @@ from agent_platform.context import (
     Task,
     is_identifier_query,
 )
+from agent_platform.context.failure import RotMonitor
 from agent_platform.evals import create_scoring_cascade
 
 _CORPUS = [
@@ -81,6 +82,24 @@ class TestFiveStagePipeline:
         assert FiveStagePipeline([]).estimate_tokens("a" * 40) == 10
 
 
+TASK = Task(query="refund", session_id="s")
+
+
+class _Store:
+    """An offload store in a dict: what the strategy keeps, and what it hands back."""
+
+    def __init__(self) -> None:
+        self.kept: dict[str, str] = {}
+
+    def put(self, session_id: str, text: str) -> str:
+        handle = f"h{len(self.kept)}"
+        self.kept[handle] = text
+        return handle
+
+    def get(self, session_id: str, handle: str) -> str | None:
+        return self.kept.get(handle)
+
+
 class TestStrategies:
     def _context(self, chunks: list[Chunk], budget: int = 10) -> AssembledContext:
         return AssembledContext(
@@ -89,25 +108,60 @@ class TestStrategies:
             used_tokens=sum(chunk.token_estimate for chunk in chunks),
         )
 
-    def test_consolidate_removes_duplicates(self) -> None:
+    async def test_consolidate_removes_duplicates(self) -> None:
         context = self._context(
             [Chunk(content="same", token_estimate=5), Chunk(content="same", token_estimate=5)]
         )
-        assert len(ConsolidateStrategy().apply(context).chunks) == 1
+        result = await ConsolidateStrategy().apply(context, TASK)
+        assert len(result.chunks) == 1
+        assert result.applied_strategies and "consolidate" in result.applied_strategies[0]
 
-    def test_reduce_shortens_and_says_so(self) -> None:
+    async def test_consolidate_keeps_the_more_trusted_copy(self) -> None:
+        context = self._context(
+            [
+                Chunk(content="order 1 shipped", kind="history", token_estimate=3),
+                Chunk(content="order 1 shipped", kind="tool_result", token_estimate=3),
+            ]
+        )
+        result = await ConsolidateStrategy().apply(context, TASK)
+        assert [chunk.kind for chunk in result.chunks] == ["tool_result"]
+
+    async def test_reduce_shortens_and_says_so(self) -> None:
         """Silent truncation makes a model answer as if it saw everything."""
-        context = self._context([Chunk(content="x" * 100, token_estimate=25)])
-        assert "[reduced]" in ReduceStrategy(keep_ratio=0.5).apply(context).chunks[0].content
+        context = self._context([Chunk(content="x " * 50, kind="memory", token_estimate=25)])
+        result = await ReduceStrategy().apply(context, TASK)
+        assert "[reduced: kept" in result.chunks[0].content
 
-    def test_offload_replaces_bulk_with_a_pointer(self) -> None:
+    async def test_reduce_keeps_a_transcripts_latest_lines(self) -> None:
+        lines = "\n".join(f"user: turn {i}" for i in range(20))
+        context = self._context([Chunk(content=lines, kind="history", token_estimate=60)])
+        kept = (await ReduceStrategy().apply(context, TASK)).chunks[0].content
+        assert "turn 19" in kept and "turn 0\n" not in kept
+
+    async def test_offload_keeps_the_text_under_a_handle_it_names(self) -> None:
+        store = _Store()
         context = self._context([Chunk(content="x" * 4000, token_estimate=1000)])
-        result = OffloadStrategy(min_tokens=100).apply(context)
-        assert "offloaded" in result.chunks[0].content and result.used_tokens == 1
+        result = await OffloadStrategy(store, min_tokens=100).apply(context, TASK)
+        assert "h0" in result.chunks[0].content and store.kept["h0"] == "x" * 4000
+        assert result.used_tokens < 1000
 
-    def test_retrieve_keeps_only_the_top_k(self) -> None:
+    async def test_offload_without_a_store_offloads_nothing(self) -> None:
+        context = self._context([Chunk(content="x" * 4000, token_estimate=1000)])
+        result = await OffloadStrategy(None, min_tokens=100).apply(context, TASK)
+        assert result.chunks[0].content == "x" * 4000 and result.applied_strategies == []
+
+    async def test_retrieve_keeps_only_the_top_k(self) -> None:
         chunks = [Chunk(content=str(i), score=i / 10, token_estimate=1) for i in range(10)]
-        assert len(RetrieveStrategy(top_k=3).apply(self._context(chunks)).chunks) == 3
+        result = await RetrieveStrategy(top_k=3).apply(self._context(chunks), TASK)
+        assert len(result.chunks) == 3
+
+    async def test_isolate_keeps_only_the_tasks_kinds(self) -> None:
+        context = self._context(
+            [Chunk(content="a", kind="policy"), Chunk(content="b", kind="history")]
+        )
+        task = Task(query="q", kind="repair")
+        result = await IsolateStrategy({"repair": ["policy"]}).apply(context, task)
+        assert [chunk.kind for chunk in result.chunks] == ["policy"]
 
     def test_isolate_partitions_by_kind(self) -> None:
         context = self._context(
@@ -115,38 +169,41 @@ class TestStrategies:
         )
         assert set(IsolateStrategy().partition(context)) == {"policy", "history"}
 
-    def test_cache_gives_the_prefix_a_stable_order(self) -> None:
+    async def test_cache_marks_the_stable_chunks(self) -> None:
         """Reordering between turns silently destroys the cache saving."""
         chunks = [
             Chunk(content="h", kind="history", score=0.9),
             Chunk(content="p", kind="policy", source="p"),
-            Chunk(content="s", kind="system", source="s"),
         ]
-        strategy = CacheStrategy()
-        first = strategy.apply(self._context(chunks))
-        second = strategy.apply(self._context(list(reversed(chunks))))
-        prefix = [chunk.content for chunk in first.chunks if chunk.kind != "history"]
-        assert prefix == [chunk.content for chunk in second.chunks if chunk.kind != "history"]
+        result = await CacheStrategy().apply(self._context(chunks), TASK)
+        assert [bool(c.metadata.get("stable")) for c in result.chunks] == [False, True]
 
-    def test_pinned_chunks_survive_every_strategy(self) -> None:
+    async def test_pinned_chunks_survive_every_strategy(self) -> None:
         pinned = Chunk(content="x" * 4000, token_estimate=1000, pinned=True)
         for strategy in (
             ConsolidateStrategy(),
             ReduceStrategy(),
-            OffloadStrategy(),
+            OffloadStrategy(_Store(), min_tokens=1),
             RetrieveStrategy(),
         ):
-            result = strategy.apply(self._context([pinned]))
+            result = await strategy.apply(self._context([pinned]), TASK)
             assert result.chunks[0].content == pinned.content, type(strategy).__name__
 
-    def test_the_selector_stops_once_it_fits(self) -> None:
+    async def test_the_selector_applies_no_pressure_strategy_once_it_fits(self) -> None:
         context = self._context([Chunk(content="a", token_estimate=1)], budget=100)
-        assert StrategySelector().fit(context).applied_strategies == []
+        assert (await StrategySelector().fit(context, TASK)).applied_strategies == []
 
-    def test_the_selector_reduces_an_oversized_window(self) -> None:
-        chunks = [Chunk(content="x" * 200, token_estimate=50) for _ in range(4)]
-        fitted = StrategySelector().fit(self._context(chunks, budget=60))
+    async def test_the_selector_reduces_an_oversized_window(self) -> None:
+        chunks = [Chunk(content=f"{i} " + "x " * 100, token_estimate=50) for i in range(4)]
+        fitted = await StrategySelector().fit(self._context(chunks, budget=60), TASK)
         assert fitted.used_tokens < 200
+
+    async def test_the_pipeline_runs_the_strategies_before_it_cuts(self) -> None:
+        chunks = [Chunk(content="same text"), Chunk(content="same text")]
+        pipeline = FiveStagePipeline(sources=[_Source(chunks)])
+        window = await pipeline.assemble(TASK, strategies=StrategySelector())
+        assert len(window.chunks) == 1
+        assert any("consolidate" in note for note in window.applied_strategies)
 
 
 class TestRetrieval:
@@ -210,11 +267,11 @@ class TestFailureDetection:
         )
         assert ContextFailureDetector().contradictions(context) == []
 
-    def test_measures_off_task_distraction(self) -> None:
+    async def test_measures_off_task_distraction(self) -> None:
         context = AssembledContext(
             chunks=[Chunk(content="completely unrelated text"), Chunk(content="refund policy")]
         )
-        assert ContextFailureDetector().distraction_ratio(context, {"refund"}) == 0.5
+        assert await ContextFailureDetector().distraction_ratio(context, "refund") == 0.5
 
     def test_near_duplicates_signal_confusion(self) -> None:
         context = AssembledContext(
@@ -225,8 +282,19 @@ class TestFailureDetection:
         )
         assert ContextFailureDetector().near_duplicate_ratio(context) == 1.0
 
-    def test_checkpoints_come_from_config(self) -> None:
-        assert ContextFailureDetector().checkpoints == [10000, 30000, 60000, 100000, 150000]
+    def test_rot_is_judged_against_the_sessions_own_baseline(self) -> None:
+        monitor = RotMonitor()
+        for score in (1.0, 1.0, 0.5, 0.5):
+            monitor.window_used("s", 2900)
+            monitor.record("s", score)
+        health = monitor.health("s", used_tokens=2900, budget=3000)
+        assert health is not None and health.degraded and health.baseline_score == 1.0
+
+    def test_no_rot_below_the_first_checkpoint(self) -> None:
+        monitor = RotMonitor()
+        for score in (1.0, 1.0, 0.1, 0.1):
+            monitor.record("s", score)
+        assert monitor.health("s", used_tokens=10, budget=3000) is None
 
 
 class TestATranscriptIsNotASetOfClaims:

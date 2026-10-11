@@ -12,12 +12,14 @@ an import of `evals`: `tools` sits at layer 2 and the cascade at layer 5
 (HLD §layering).
 """
 
+import json
 import time
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
 from agent_platform.config import get_settings
+from agent_platform.llm.tokenizer import count_tokens
 from agent_platform.logging import get_logger, instrument
 from agent_platform.tools.registry import NamespacedToolRegistry
 from agent_platform.tools.types import ToolDefinition, ToolSelection
@@ -57,7 +59,6 @@ class ToolRetrievalSelector:
         self._ranker = ranker
         self._k = settings.tools.selection_k
         self._min_score = settings.tools.selection_min_score
-        self._chars_per_token = settings.context.chars_per_token
         self._logger = get_logger("tools")
         self._last_metrics: SelectionMetrics | None = None
 
@@ -133,12 +134,12 @@ class ToolRetrievalSelector:
     ) -> SelectionMetrics:
         """Quantify what this selection cost and what it left exposed."""
         exposed = [tool for s in selections if (tool := self._registry.get(s.tool)) is not None]
-        characters = sum(len(str(tool.to_openai_schema())) for tool in exposed)
+        schema_tokens = sum(count_tokens(json.dumps(tool.to_openai_schema())) for tool in exposed)
         available = len(candidates)
         return SelectionMetrics(
             tools_available=available,
             tools_exposed=len(exposed),
-            exposed_token_estimate=characters // self._chars_per_token,
+            exposed_token_estimate=schema_tokens,
             irrelevant_exposure_rate=(
                 (len(exposed) - 1) / available if available and exposed else 0.0
             ),

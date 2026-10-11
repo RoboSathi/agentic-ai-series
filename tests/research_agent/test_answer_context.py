@@ -67,7 +67,8 @@ def _context(window: bool) -> tuple[AnswerContext, list[Any]]:
 async def test_the_window_carries_the_turns_the_state_and_earlier_research() -> None:
     context, shown = _context(window=True)
     session = await context.assemble("s", "what limits iron-air battery cycle life?")
-    text = "\n".join(session.blocks)
+    assert session.window is not None and session.blocks == []
+    text = session.window.text
     assert "Light drizzle" in text and "run_status" in text and "run-7" in text
     assert session.history == []  # the turns are inside the window, not separate messages
     assert session.runs == ["run-7"]

@@ -179,14 +179,30 @@ class HybridRetriever:
             self._dense.index(chunks)
 
     async def retrieve(self, query: str, k: int) -> list[Chunk]:
-        """Retrieve by the configured mode, or by the query's shape in hybrid."""
-        if self._mode == "lexical" or self._dense is None:
-            return await self._lexical.retrieve(query, k)
-        if self._mode == "dense":
-            return await self._dense.retrieve(query, k)
+        """Retrieve by the configured mode, or by the query's shape in hybrid.
+
+        A mode whose retriever was not given falls back to the next one that was, and says
+        so: `graph` with no edges declared is lexical/hybrid retrieval, not graph retrieval.
+        In hybrid, a declared graph adds the neighbours of the fused hits (one hop).
+        """
         if self._mode == "graph" and self._graph is not None:
             return await self._graph.retrieve(query, k)
-        return await self._fuse(query, k)
+        if self._mode in ("graph", "dense") and (self._mode == "graph" or self._dense is None):
+            self._logger.debug("Retrieval mode not available; falling back", mode=self._mode)
+        if self._mode == "dense" and self._dense is not None:
+            return await self._dense.retrieve(query, k)
+        if self._mode == "lexical" or self._dense is None:
+            return await self._lexical.retrieve(query, k)
+        fused = await self._fuse(query, k)
+        return await self._expanded(query, fused, k)
+
+    async def _expanded(self, query: str, fused: list[Chunk], k: int) -> list[Chunk]:
+        """The fused hits plus their graph neighbours, up to k (unchanged without a graph)."""
+        if self._graph is None or len(fused) >= k:
+            return fused
+        seen = {chunk.source for chunk in fused}
+        hops = await self._graph.retrieve(" ".join([query, *seen]), k)
+        return [*fused, *(chunk for chunk in hops if chunk.source not in seen)][:k]
 
     async def _fuse(self, query: str, k: int) -> list[Chunk]:
         """Weighted fusion, tilted toward lexical for identifier queries."""

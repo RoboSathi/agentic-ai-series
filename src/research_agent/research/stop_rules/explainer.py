@@ -11,5 +11,10 @@ class EveryConceptCovered:
     def decide(self, observed: StopInput) -> StopDecision:
         passed, count = all_passed(observed.verdicts, CHECK)
         if count and passed:
-            return StopDecision(stop=True, reason="every sub-concept is covered in two sources")
-        return StopDecision(stop=False, reason="some sub-concepts are not yet cross-checked")
+            return StopDecision(
+                stop=True,
+                reason="every sub-concept is supported by two independent domains that agree",
+            )
+        return StopDecision(
+            stop=False, reason="some sub-concepts lack two agreeing independent domains"
+        )

@@ -21,9 +21,10 @@ from agent_platform.gatekeeper.types import AuthorityDecision
 from agent_platform.hallucination_check.confidence import ConfidenceCheck, report_confidence
 from agent_platform.hallucination_check.levels import CheckLevel, grounding_level
 from agent_platform.llm.client import LLMClient
-from agent_platform.llm.types import CompletionRequest, Message, ModelToolCall
-from agent_platform.logging import get_logger, instrument
-from agent_platform.loop_control import LoopControlReport
+from agent_platform.llm.prompt import TurnLayout
+from agent_platform.llm.types import CompletionRequest, CompletionResult, Message, ModelToolCall
+from agent_platform.logging import describe_error, get_logger, instrument
+from agent_platform.loop_control import LoopDecision, LoopGovernor, LoopVerdict, route_on_verdict
 from agent_platform.observability import StageReporter, checks
 from agent_platform.observability.step_events import StepEvents
 from agent_platform.observability.tool_fields import display_tool_name, tool_result_fields
@@ -41,12 +42,9 @@ from ops_agent.presentation.cards import result_card
 
 PROPOSE, EXECUTE, GROUND = "propose", "execute", "ground"
 # Why the loop chose its next step (wording: `observability.step_events.loop_control`).
-_TOOL_REQUESTED, _NO_TOOL_CALL, _ITERATION_LIMIT = (
-    "tool_requested",
-    "no_tool_call",
-    "iteration_limit",
-)
-_ABORT = "abort"
+_TOOL_REQUESTED, _NO_TOOL_CALL = "tool_requested", "no_tool_call"
+# A verdict that stops the loop sends the turn straight to the answer.
+_STOPPED: dict[LoopDecision, str] = {"finalize": GROUND, "abort": GROUND, "pause": GROUND}
 # A figure's verdict, in the claim words every agent's HALLUCINATION CHECK card reads.
 _SUPPORTED, _UNVERIFIED = "supported", "undetermined"
 # A prefetch read takes no arguments.
@@ -83,40 +81,65 @@ class OpsNodes:
         """One step: the model reads the conversation and asks for tools, or answers."""
         step = state["steps"] + 1
         self._steps.begin(step)
+        governor = self._calls.governor
+        verdict = governor.begin_step()
+        if verdict.stops:
+            # The step cap, the deadline, a budget, a cycle or a plateau: answer now.
+            self._report_loop(verdict, wants_tools=False)
+            return {"steps": step, "verdict": verdict}
+        try:
+            result = await self._ask(state, governor)
+        except Exception as exc:  # noqa: BLE001 - said to the person; the turn ends failed
+            error = describe_error(exc)
+            self._logger.error("Model call failed", error=error, step=step)
+            return {"steps": step, "verdict": verdict, "failure": error}
+        governor.after_model(result.usage.total_tokens, result.cost_usd)
+        wants_tools = bool(result.tool_calls)
+        self._report_loop(verdict, wants_tools=wants_tools)
+        reply = Message(role="assistant", content=result.content, tool_calls=result.tool_calls)
+        return {"messages": [reply], "steps": step, "answer": result.content, "verdict": verdict}
+
+    async def _ask(self, state: OpsState, governor: LoopGovernor) -> CompletionResult:
+        """The step's model call, capped by what the token budget has left and cancelled at
+        the deadline."""
+        tools = self._registry.to_openai_tools()
+        built = state.get("layout", TurnLayout()).build(state["messages"], tools)
+        limits = governor.call_limits(self._settings.max_tokens)
         request = CompletionRequest(
-            messages=state["messages"],
-            tools=self._registry.to_openai_tools(),
+            messages=built.messages,
+            tools=tools,
             temperature=self._settings.temperature,
-            max_tokens=self._settings.max_tokens,
+            max_tokens=limits.max_tokens,
+            manifest=built.manifest,
         )
         # A step may ask for tools or answer; the response card names which it did.
         purpose = get_settings().observability.llm_purposes.next_action
         self._steps.llm_request(request, purpose=purpose)
-        result = await self._llm.complete(request)
+        async with governor.deadline(limits.timeout_seconds):
+            result = await self._llm.complete(request)
         self._steps.llm_response(result, purpose=purpose)
-        # The platform loop guard owns the step cap, so the turn's loop abort is
-        # reported the same way as every other agent's; routing reads the same rule.
-        wants_tools = bool(result.tool_calls)
-        self._report_loop(step, wants_tools, self._calls.check_step(step, wants_tools))
-        reply = Message(role="assistant", content=result.content, tool_calls=result.tool_calls)
-        return {"messages": [reply], "steps": step, "answer": result.content}
+        return result
 
     def after_propose(self, state: OpsState) -> str:
-        """Tools while the model asks for them and steps remain; then the answer."""
+        """The governor's verdict first; then tools while the model asks for them; then the answer."""
+        if state.get("failure"):
+            return GROUND
+        stopped = route_on_verdict(state.get("verdict"), _STOPPED, "")
+        if stopped:
+            return stopped
         last = state["messages"][-1]
-        return EXECUTE if last.tool_calls and state["steps"] < self._settings.max_steps else GROUND
+        return EXECUTE if last.role == "assistant" and last.tool_calls else GROUND
 
-    def _report_loop(self, step: int, wants_tools: bool, report: LoopControlReport) -> None:
-        """LOOP CONTROL: the step cap and whether the model asked for tools, and what follows."""
-        stopped = report.decision == _ABORT
-        next_step = EXECUTE if wants_tools and not stopped else GROUND
-        because = _ITERATION_LIMIT if stopped else _TOOL_REQUESTED if wants_tools else _NO_TOOL_CALL
-        fields = self._steps.loop_control(
-            round_number=step,
-            criteria={
-                "model_requested_tools": wants_tools,
-                "iteration_limit": f"{step} of {self._settings.max_steps}",
-            },
+    def _report_loop(self, verdict: LoopVerdict, *, wants_tools: bool) -> None:
+        """LOOP CONTROL: the governor's verdict, whether the model asked for tools, what follows."""
+        if verdict.stops:
+            next_step, because = GROUND, verdict.reason_code
+        else:
+            next_step = EXECUTE if wants_tools else GROUND
+            because = _TOOL_REQUESTED if wants_tools else _NO_TOOL_CALL
+        fields = self._steps.loop_verdict(
+            verdict,
+            criteria={"model_requested_tools": wants_tools},
             next_step=next_step,
             because=because,
         )
@@ -152,7 +175,7 @@ class OpsNodes:
                 arguments=_NO_ARGUMENTS,
             )
             self._steps.tool_request(call.name, call.arguments, prefetched_for=procedure)
-            outcome = await self._calls.run(call, session_id, 0, on_decision=self._decided)
+            outcome = await self._calls.run(call, session_id, on_decision=self._decided)
             self._report_call(call.name, outcome)
             messages += [
                 Message(role="assistant", content="", tool_calls=[call]),
@@ -168,9 +191,7 @@ class OpsNodes:
         calls = state["messages"][-1].tool_calls or []
         for call in calls:
             self._steps.tool_request(call.name, call.arguments)
-            outcome = await self._calls.run(
-                call, state["session_id"], state["steps"], on_decision=self._decided
-            )
+            outcome = await self._calls.run(call, state["session_id"], on_decision=self._decided)
             self._report_call(call.name, outcome)
             replies.append(Message(role="tool", content=outcome.text, tool_call_id=call.id))
             failures += 0 if outcome.succeeded else 1
@@ -184,12 +205,15 @@ class OpsNodes:
         }
 
     async def ground(self, state: OpsState) -> dict[str, Any]:
-        last = state["messages"][-1]
-        answer = (
-            self._settings.words.stopped.format(steps=state["steps"])
-            if last.tool_calls
-            else state["answer"]
-        )
+        words = self._settings.words
+        verdict = state.get("verdict")
+        if state.get("failure"):
+            answer, outcome = words.model_failed.format(error=state["failure"]), "failed"
+        elif verdict is not None and verdict.stops:
+            answer, outcome = words.stopped.format(steps=state["steps"]), "finalized_on_cap"
+        else:
+            answer, outcome = state["answer"], "answered"
+        self._calls.governor.finish(outcome)  # type: ignore[arg-type]
         unsupported = self._check(answer, state["queries"])
         return {
             "answer": answer,

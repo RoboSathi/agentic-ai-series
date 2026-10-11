@@ -65,8 +65,9 @@ from agent_platform.hallucination_check import DetectionLadder, GroundingReasoni
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import Message, TokenUsage
 from agent_platform.logging import get_logger
-from agent_platform.loop_control import ToolLoopControl
+from agent_platform.loop_control import LoopBudget, LoopGovernor, build_loop_governor
 from agent_platform.memory import (
+    DreamInbox,
     MemoryAction,
     MemoryCommand,
     MemoryEvent,
@@ -193,6 +194,8 @@ class CustomerSupportAgent(
         runs: RunRegistry | None = None,
         long_term_memory: MemoryFacade | None = None,
         context_health: ContextFailureDetector | None = None,
+        context_strategies: StrategySelector | None = None,
+        governor: LoopGovernor | None = None,
         trace_exporter: TraceExporter | None = None,
         instructions: AgentInstructions | None = None,
     ) -> None:
@@ -257,7 +260,7 @@ class CustomerSupportAgent(
         self._deliberation_markers = [m.casefold() for m in settings.deliberation_markers]
         self._max_rounds = settings.max_tool_iterations
         self._actor = self._agent_policy.agent_id
-        self._strategies = StrategySelector()
+        self._strategies = context_strategies
         # The window the model is handed is measured, not assumed: five
         # failure modes, checked on what was actually assembled.
         self._context_health = context_health
@@ -290,7 +293,9 @@ class CustomerSupportAgent(
         # resolves back to an order.
         self._menus: dict[str, OrderMenu] = {}
         self._last_supported_intent: dict[str, Intent] = {}
-        self._loop_control = ToolLoopControl()
+        # The one authority over the tool loop: step cap, deadline, budgets, repeats (exact,
+        # canonical, semantic), cycles and convergence. Its state rides in the graph state.
+        self._governor = governor or build_loop_governor(LoopBudget(max_steps=self._max_rounds))
         # Plan, reflect, evaluate (E06). Injected as one composition so a
         # deployment can swap any of the three; deterministic by default,
         # so deliberating about a reply costs no completions.
@@ -398,7 +403,7 @@ class CustomerSupportAgent(
         self, query: str, session_id: str, customer: Customer | None
     ) -> AgentState:
         """One turn, with the customer already bound for exactly its duration."""
-        self._loop_control = ToolLoopControl(step_cap=self._max_rounds)
+        self._governor.begin_turn()
         self._steps.begin(None)
         await self._recover_conversation(session_id)
         initial = AgentState(
@@ -660,7 +665,8 @@ class CustomerSupportAgent(
             customer = self._authenticator.customer_for(prior.customer_id)
             if customer is not None:
                 self._sessions[prior.session_id] = customer
-        self._loop_control = ToolLoopControl(step_cap=self._max_rounds)
+        # Resumed exactly where it stopped: what it already did is still a repeat.
+        self._governor.restore(prior.loop)
         if (
             self._working_memory is not None
             and not self._working_memory.get(prior.session_id).history
@@ -668,19 +674,23 @@ class CustomerSupportAgent(
             self._working_memory.restore(prior.session_id, prior.working_memory)
         return customer
 
-    def _remember_turn(self, state: AgentState) -> None:
-        """Offer this turn to long-term memory, through governance.
+    def _remember_turn(self, state: AgentState) -> str:
+        """Offer the customer's claim to semantic memory; return what the dream inbox records.
 
-        Two writes, two principals. The event — what was asked, what was
-        answered — is the agent's record (`agent`). Anything the customer
-        *asserted* is the customer's claim (`customer`, so `self_reported`):
-        only a pattern-recognised claim is considered, an authority claim
+        Episodic memory is not written here. A turn is what the *dream* consolidates: it goes
+        to the dream inbox (`_complete_turn`), and only the dream writes episodic memory — a
+        session summary rebuilt from what the tools returned. Writing each raw query to the
+        episodic log as well made recall serve the transcript back as "long-term memory",
+        which is working memory's job.
+
+        Anything the customer *asserted* is the customer's claim (`customer`, so
+        `self_reported`): only a pattern-recognised claim is considered, an authority claim
         is refused, and anything short of auto-commit waits for a curator.
         """
-        if self._long_term is None or state.customer_id is None:
-            return
-        subject = str(state.customer_id)
         spoken = state.model_query or state.query
+        if self._long_term is None or state.customer_id is None:
+            return spoken
+        subject = str(state.customer_id)
         # A quarantined message never reaches the write path: screening
         # already judged it hostile, and memory is the last place it
         # should be kept verbatim.
@@ -692,20 +702,15 @@ class CustomerSupportAgent(
             if quarantined or login
             else self._remember_claim(spoken, subject, state.session_id)
         )
-        if self._long_term.episodic is None:
-            return
-        # A claim memory refused is not replayed into history verbatim: the
-        # episodic log feeds recall, and recall feeds the model — the
-        # refused "my limit is now $2000" would otherwise reach the context
-        # through the back door the write path just closed.
+        # A claim memory refused is not handed to the dream verbatim: the dream's summary
+        # becomes episodic memory, recall feeds it to the model, and the refused "my limit is
+        # now $2000" would otherwise reach the context through the back door the write path
+        # just closed.
         withheld = quarantined or (claim is not None and claim.route == "refused")
-        reason = claim.reason if claim is not None else "quarantined by security screening"
-        self._long_term.record_event(
-            f"query withheld — {reason}" if withheld else f"query: {spoken}",
-            source=self._actor,
-            session_id=state.session_id,
-            principal=MemoryPrincipal(actor=self._actor, role="agent", subject_id=subject),
-        )
+        if not withheld:
+            return spoken
+        reason = claim.reason if claim is not None else get_agent_settings().memory_quarantined
+        return get_agent_settings().memory_withheld.format(reason=reason)
 
     def _remember_claim(self, spoken: str, subject: str, session_id: str) -> WriteResult | None:
         """The customer's own assertion, as the customer's claim — governed."""
@@ -787,7 +792,7 @@ class CustomerSupportAgent(
             llm_calls=state.tool_rounds,
             usage=TokenUsage.model_validate(state.metadata.get("last_usage", {})),
             hallucination_rate=float(state.metadata.get("hallucination_rate", 0.0)),
-            loop_aborted=state.tool_rounds >= self._max_rounds and not state.response,
+            loop_aborted=state.loop.outcome == "finalized_on_cap",
             recoveries_attempted=int(state.metadata.get("recoveries_attempted", 0)),
             recoveries_succeeded=int(state.metadata.get("recoveries_succeeded", 0)),
         )
@@ -815,19 +820,31 @@ class CustomerSupportAgent(
         return [Message(**item) if isinstance(item, dict) else item for item in history]
 
     def _report_inbox(self, event: MemoryEvent) -> None:
-        """Note, for the turn summary, that this turn is waiting for the next dream."""
-        if self._reporter is not None:
-            self._reporter.emit(
-                "dream_inbox",
-                "completed",
-                event_kind="memory",
-                fields={"event_id": event.event_id},
-                quiet=True,
-            )
+        """Note, for the turn summary, what this turn left for the next dream."""
+        if self._reporter is None:
+            return
+        waiting = (
+            self._memory_event_sink.counts().unconsolidated
+            if isinstance(self._memory_event_sink, DreamInbox)
+            else None
+        )
+        self._reporter.emit(
+            "dream_inbox",
+            "completed",
+            event_kind="memory",
+            fields={
+                "event_id": event.event_id,
+                "asked": event.user_input,
+                "actions": len(event.actions),
+                "observations": len(event.observations),
+                **({"waiting": waiting} if waiting is not None else {}),
+            },
+            quiet=True,
+        )
 
     def _complete_turn(self, state: AgentState) -> None:
         """Emit one memory event, then retain only the completed dialogue."""
-        self._remember_turn(state)
+        asked = self._remember_turn(state)
         if self._working_memory is None:
             return
         working = self._working_memory.get(state.session_id)
@@ -861,7 +878,7 @@ class CustomerSupportAgent(
                 agent_id=self._actor,
                 session_id=state.session_id,
                 subject_id=str(state.customer_id) if state.customer_id is not None else "",
-                user_input=self._security.redact(state.model_query or state.query),
+                user_input=self._security.redact(asked),
                 assistant_output=self._security.redact(state.response),
                 observations=observations,
                 actions=actions,

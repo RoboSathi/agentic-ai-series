@@ -80,7 +80,7 @@ class ModelChainBuilder:
             for position, ref in enumerate(refs)
         ]
         if len(tiers) == 1:
-            return SteppedClient(tiers[0])
+            return SteppedClient(tiers[0], self._observer, label)
         # Backups are about availability: a weak answer is the role's to judge, not the chain's.
         availability = self._settings.cascade.model_copy(update={"escalate_on_finish_reasons": []})
         return SteppedClient(
@@ -90,7 +90,9 @@ class ModelChainBuilder:
                 hedge_after_seconds=chain.hedge_after_seconds,
                 observer=self._observer,
                 label=label,
-            )
+            ),
+            self._observer,
+            label,
         )
 
     def _protected(

@@ -136,6 +136,8 @@ class LLMProviderSettings(BaseModel):
     model: str
     timeout_seconds: float
     input_cost_per_1k_tokens: float
+    # Prompt tokens the provider served from its prefix cache (`prompt_tokens_details`).
+    cached_input_cost_per_1k_tokens: float
     output_cost_per_1k_tokens: float
 
 
@@ -386,6 +388,36 @@ class RoleModelSettings(ModelRef, ModelChainSettings):
     """Which model plays one named role, and how its calls are protected."""
 
 
+class TokenizerSettings(BaseModel):
+    """The tokenizer a request's size is counted with, before the provider counts it.
+
+    One `tokenizer.json` from a model family, in a repository folder, read by the Rust
+    `tokenizers` library. Unset or unloadable, sizes fall back to characters per token —
+    an estimate the CONTEXT card labels as one, and reconciles with the provider's count.
+    """
+
+    enabled: bool
+    model: str
+    local_dir: str
+    file: str
+    download_if_missing: bool
+
+    @property
+    def resolved_local_dir(self) -> Path:
+        return resolve_path(self.local_dir)
+
+
+class ContextWindowSizes(BaseModel):
+    """How many tokens each model can read: what a request's size is a share of."""
+
+    default_tokens: int = Field(gt=0)
+    by_model: dict[str, int] = Field(default_factory=dict)
+
+    def for_model(self, model: str) -> int:
+        """The model's window, or the default for a model not listed."""
+        return self.by_model.get(model, self.default_tokens)
+
+
 class LogprobSettings(BaseModel):
     """Whether completions ask for token log-probabilities, and how many alternatives each."""
 
@@ -406,6 +438,8 @@ class LLMSettings(YamlBackedSettings):
     # (`reasoning_content` on NIM). Read in order; the first present wins.
     reasoning_fields: list[str] = Field(default_factory=list)
     logprobs: LogprobSettings
+    tokenizer: TokenizerSettings
+    context_windows: ContextWindowSizes
     providers: dict[str, LLMProviderSettings]
     # The default client's protection (`create_llm_client`): backups, timeout, hedge.
     chain: ModelChainSettings = Field(default_factory=ModelChainSettings)
@@ -476,6 +510,59 @@ class StopReportWording(BaseModel):
     nothing_to_abort: str
     # What `step` says when the run stopped after its last stage.
     the_end: str
+
+
+class StagnationSettings(BaseModel):
+    semantic: bool
+    semantic_threshold: float = Field(gt=0, le=1)
+    cycle_max_period: int = Field(ge=1)
+    cycle_repeats: int = Field(ge=2)
+    history_window: int = Field(ge=2)
+
+
+class ConvergenceSettings(BaseModel):
+    enabled: bool
+    window: int = Field(ge=1)
+    min_gain: float = Field(ge=0, le=1)
+
+
+class HistoricalBaselineSettings(BaseModel):
+    enabled: bool
+    min_samples: int = Field(ge=2)
+    sample_size: int = Field(ge=2)
+    z_threshold: float = Field(gt=0)
+
+
+class SuppressionMessages(BaseModel):
+    suppressed_success: str
+    suppressed_refused: str
+    suppressed_similar: str
+
+
+class LoopCardWords(BaseModel):
+    summary: str
+    layer_suffix: str
+    intervention: str
+    sections: dict[str, str]
+    budget_line: str
+    check_line: str
+    outcome_line: str
+
+
+class LoopControlSettings(YamlBackedSettings):
+    """The loop governor's mechanisms and wording (`loop_control/governor.py`)."""
+
+    _yaml_section = "loop_control"
+    call_timeout_seconds: float = Field(gt=0)
+    min_call_seconds: float = Field(ge=0)
+    stagnation: StagnationSettings
+    convergence: ConvergenceSettings
+    historical: HistoricalBaselineSettings
+    messages: SuppressionMessages
+    reasons: dict[str, str]
+    card: LoopCardWords
+
+    model_config = SettingsConfigDict(env_prefix="LOOP_CONTROL__")
 
 
 class DurabilitySettings(YamlBackedSettings):
@@ -613,6 +700,42 @@ class LlmPurposeWords(BaseModel):
     hallucination_repair: str
 
 
+class DreamInboxWords(BaseModel):
+    """The turn summary's dream-inbox line (`observability/turn_tally.py`)."""
+
+    queued: str
+    waiting: str
+
+
+class ContextCardWords(BaseModel):
+    """The CONTEXT card drawn before every model request (`observability/context_card.py`)."""
+
+    heading: str
+    heading_estimated: str
+    sections_title: str
+    request_title: str
+    window_title: str
+    findings_title: str
+    prefix_reused: str
+    prefix_new: str
+    model_line: str
+    section_line: str
+    part_line: str
+    source_line: str
+    tools_line: str
+    prefix_line: str
+    prefix_none: str
+    tokenizer_line: str
+    # Many requests of one purpose drawn as one card (`StageReporterModelObserver(aggregate=…)`):
+    # `{purpose}`, `{count}`, `{low}`, `{high}` tokens, `{peak_share}` of `{window}`.
+    aggregate_heading: str
+    aggregate_title: str
+    # One request of an aggregated card: `{tokens}`, `{share}`, `{model}`.
+    aggregate_line: str
+    # Section name → what a person reads for it; an unlisted name is shown as it is.
+    labels: dict[str, str]
+
+
 class StepEventWords(BaseModel):
     """Headings of the cards every agent's tool-use loop draws (`observability/step_events.py`)."""
 
@@ -643,6 +766,8 @@ class ObservabilitySettings(YamlBackedSettings):
     # The model-call cards' headings: `{purpose}` is why the call was made,
     # `{tool}` the tool the model asked for.
     llm_request_heading: str
+    context_card: ContextCardWords
+    dream_inbox: DreamInboxWords
     llm_response_heading: str
     llm_tool_requested_heading: str
     llm_purposes: LlmPurposeWords
@@ -971,8 +1096,80 @@ class ContextStrategySettings(BaseModel):
 class ContextFailureDetectionSettings(BaseModel):
     """Context-failure detection thresholds (E17)."""
 
-    checkpoints_tokens: list[int]
-    degradation_threshold: float
+    checkpoint_fractions: list[float]
+    degradation_threshold: float = Field(gt=0, lt=1)
+    min_observations: int = Field(ge=1)
+    max_observations: int = Field(ge=1)
+    mode_ratio: float = Field(gt=0, le=1)
+    min_relevance: float = Field(ge=0, le=1)
+    max_tools: int = Field(ge=1)
+    max_tool_schema_share: float = Field(gt=0, le=1)
+    nli: bool
+    max_pairs: int = Field(ge=0)
+    max_sentences: int = Field(ge=1)
+    min_sentence_chars: int = Field(ge=1)
+    contradiction_score: float = Field(ge=0, le=1)
+
+
+class FindingTemplate(BaseModel):
+    rule: str
+    detail: str
+
+
+class ContextFindingWords(BaseModel):
+    """What a context finding says: the action taken, and each rule's lines (`context/failure/`)."""
+
+    actions: dict[str, str]
+    # Action key → the tone its source is drawn in (`tui.tone_styles`: pass, warn, fail).
+    action_tones: dict[str, str]
+    templates: dict[str, FindingTemplate]
+
+
+class ContextSimilaritySettings(BaseModel):
+    """Which local model answers "how alike are these texts" (`context/similarity.py`)."""
+
+    backend: Literal["local_embedder", "hashing", "lexical"]
+
+
+class ContextConsolidationSettings(BaseModel):
+    near_duplicate_overlap: float = Field(gt=0, le=1)
+    semantic_threshold: float = Field(gt=0, le=1)
+
+
+class ContextOffloadSettings(BaseModel):
+    """Offload: what leaves the window, the placeholder left behind, the tool that fetches it."""
+
+    min_tokens_fraction: float = Field(gt=0, le=1)
+    handle_chars: int = Field(ge=6)
+    max_entries: int = Field(ge=1)
+    placeholder: str
+    tool_namespace: str
+    tool_name: str
+    tool_permission: str
+    tool_description: str
+    not_found: str
+
+
+ReduceMode = Literal["excerpt", "tail", "head"]
+
+
+class ContextReduceSettings(BaseModel):
+    keep_ratio: float = Field(gt=0, lt=1)
+    by_kind: dict[str, ReduceMode]
+    excerpt_window_chars: int = Field(gt=0)
+    marker: str
+
+
+TrustClass = Literal["system", "verified", "retrieved", "user", "model"]
+
+
+class ContextTrustSettings(BaseModel):
+    """Who is believed: a chunk's trust class by source prefix, then by kind, and the rank."""
+
+    by_source_prefix: dict[str, TrustClass]
+    by_kind: dict[str, TrustClass]
+    rank: dict[TrustClass, int]
+    model_line_prefix: str
 
 
 class ContextWindowWording(BaseModel):
@@ -989,6 +1186,16 @@ class ContextWindowWording(BaseModel):
     nothing_removed: str
     # One finding: `{mode}`, `{source}`, `{rule}`, `{detail}`, `{action}`.
     finding_line: str
+    finding_heading: str
+    size_title: str
+    size_line: str
+    findings_title: str
+    source_line: str
+    marks: dict[str, str]
+    detail_title: str
+    detail_note: str
+    # Keys of one finding's entry on the card: statements, detail, sources.
+    finding_labels: dict[str, str]
     # Failure modes that are retrieval noise the check already removed: no warning for them.
     routine_modes: list[str]
     # A finding's `action` when mitigation did nothing, and the prefix of one it dropped.
@@ -998,10 +1205,31 @@ class ContextWindowWording(BaseModel):
     quiet_when_healthy: bool
 
 
+class PromptWindowParts(BaseModel):
+    """How a context window's chunks are named on the CONTEXT card: by source prefix, then kind."""
+
+    by_source: dict[str, str]
+    by_kind: dict[str, str]
+
+
+class PromptSettings(BaseModel):
+    """How a request is built from named sections (`llm/prompt.py`)."""
+
+    separator: str
+    window_heading: str
+    signature_chars: int = Field(gt=0)
+    # How many (model, prefix) pairs are remembered, to say whether a prefix is reused.
+    prefix_memory: int = Field(gt=0)
+    window_parts: PromptWindowParts
+    # A message role → the section a request no builder made puts it in.
+    role_sections: dict[str, str]
+
+
 class ContextSettings(YamlBackedSettings):
     """Five-stage assembly pipeline, retrieval and strategies (LLD §7)."""
 
     _yaml_section = "context"
+    prompt: PromptSettings
     token_budget: int
     chars_per_token: int
     retrieval_mode: RetrievalMode
@@ -1011,7 +1239,16 @@ class ContextSettings(YamlBackedSettings):
     bm25_k1: float
     bm25_b: float
     strategies: ContextStrategySettings
-    reduce_keep_ratio: float
+    # What the CONTEXT card says each strategy did; `{count}` (and `{kinds}`, `{handles}`).
+    strategy_notes: dict[str, str]
+    similarity: ContextSimilaritySettings
+    consolidation: ContextConsolidationSettings
+    # A task kind → the chunk kinds its window may hold (Isolate); unlisted kinds keep all.
+    isolation: dict[str, list[str]]
+    offload: ContextOffloadSettings
+    reduce: ContextReduceSettings
+    trust: ContextTrustSettings
+    findings: ContextFindingWords
     failure_detection: ContextFailureDetectionSettings
     window: ContextWindowWording
 
@@ -1332,6 +1569,13 @@ class GroundingTierSettings(BaseModel):
     may_refute: bool
 
 
+class RefutingPremiseSettings(BaseModel):
+    """What a line must look like before it may contradict a claim."""
+
+    min_words: int = Field(ge=1)
+    max_capitalised_share: float = Field(gt=0.0, le=1.0)
+
+
 class RulePhraseSettings(BaseModel):
     """A surface phrase in an outcome, and the rule it restates."""
 
@@ -1582,6 +1826,10 @@ class HallucinationCheckSettings(YamlBackedSettings):
     # NLI reads a record about order B as contradicting a claim about
     # order A. Unset: every retrieved item may refute.
     refute_identifier_pattern: str | None = None
+    # A premise that may refute must be a statement: at least `min_words` words, and not mostly
+    # capitalised words (a heading, a menu, a row of links). NLI reads "Topics Trending
+    # Collections Enterprise" as contradicting anything; a fragment can still support.
+    refuting_premise: RefutingPremiseSettings
     # The grounding cascade, strongest first. Each tier names the evidence
     # kinds it reads, the claim classes it may ground, and whether it may
     # refute as well as support. Order is the order credit is given in.
@@ -2400,6 +2648,12 @@ class GroundingCardSettings(BaseModel):
     no_evidence_either_way: str
     # Beside a model that read several lines at once (the second opinion): `{count}`.
     lines_read: str
+    # The tree under a claim, one line per piece of evidence a step read: `├` before every
+    # line but the last, `└` before it. A step that did not decide the claim says what it
+    # decided after its reading (`{decision}`); the claim line already carries the verdict.
+    step_branch: str
+    step_last: str
+    step_outcome: str
     # Level 1 in one line atop the card: `{mean}`, `{lowest}`, `{sentence}`.
     logprobs_summary: str
     # The row naming the order the claims were checked in.
@@ -2559,6 +2813,11 @@ class WebFetchSettings(BaseModel):
     # and JSON-LD keys. Search hits outside a news vertical carry no date.
     date_meta_keys: list[str]
     date_json_keys: list[str]
+    # A page's chrome, dropped with everything inside it: menus, footers, sidebars, forms. Its
+    # link rows otherwise read as one line of evidence ("Topics Trending Collections").
+    chrome_tags: list[str]
+    # Tags that end a line, so items of a list are separate lines rather than one run.
+    block_tags: list[str]
 
 
 class WebSettings(YamlBackedSettings):
@@ -2629,6 +2888,7 @@ class AppConfig(BaseSettings):
     security: SecuritySettings = Field(default_factory=lambda: SecuritySettings())  # type: ignore[call-arg]
     resilience: ResilienceSettings = Field(default_factory=lambda: ResilienceSettings())  # type: ignore[call-arg]
     durability: DurabilitySettings = Field(default_factory=lambda: DurabilitySettings())  # type: ignore[call-arg]
+    loop_control: LoopControlSettings = Field(default_factory=lambda: LoopControlSettings())  # type: ignore[call-arg]
     money: MoneySettings = Field(default_factory=lambda: MoneySettings())  # type: ignore[call-arg]
     evals: EvalsSettings = Field(default_factory=lambda: EvalsSettings())  # type: ignore[call-arg]
     tools: ToolsSettings = Field(default_factory=lambda: ToolsSettings())  # type: ignore[call-arg]

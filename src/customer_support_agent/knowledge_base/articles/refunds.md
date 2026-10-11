@@ -1,9 +1,9 @@
 # Refunds
 
 ## Which orders can be refunded
-A refund applies once an order is settled. An order that has been delivered can be refunded, because the customer has it and wants their money back. An order that was cancelled before delivery can also be refunded, because the customer never received it.
+Only a delivered or a cancelled order can be refunded. A delivered order can be refunded because the customer has it and wants their money back. A cancelled order can be refunded when its refund has not been paid yet, because the customer never received it. Cancelling through support pays the refund in the same step, so an order cancelled that way already shows an issued refund and is not refunded again.
 
-An order that is still pending or shipped is in flight. There is nothing to refund yet, so the customer should wait until it is delivered, or ask for it to be cancelled.
+While an order is pending or shipped it is still on its way, and there is nothing to refund yet. A pending order can be cancelled instead. A shipped order can be refunded once it is delivered.
 
 ## One refund per order
 Each order can be refunded once. When an order already shows an issued or completed refund, it cannot be refunded again. The agent should say so plainly rather than open a second request.

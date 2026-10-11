@@ -30,7 +30,7 @@ from agent_platform.tools.path import DUPLICATE, NOT_OFFERED, ToolOutcome, ToolT
 from agent_platform.tools.types import ToolCall, ToolResult
 from agent_platform.verification import VerificationReport
 from customer_support_agent.config.settings import get_agent_settings
-from customer_support_agent.graph.loop_decision import ITERATION_LIMIT, after_execute_step
+from customer_support_agent.graph.loop_decision import after_execute_step
 from customer_support_agent.graph.nodes._support import (
     TOOL_BLOCKED,
     TOOL_COMPLETED,
@@ -159,11 +159,11 @@ class ExecutionNodes(NodeSupport):
         )
         self._report_after_act(
             state,
-            invocation_fields_history,
             escalated=state.escalated or turn_escalated,
             refusal_final=_has_terminal_denial(invocation_fields_history),
         )
         return {
+            "loop": self._governor.state,
             "decisions": decisions,
             "escalated": state.escalated or turn_escalated,
             "metadata": {
@@ -179,35 +179,21 @@ class ExecutionNodes(NodeSupport):
             },
         }
 
-    def _report_after_act(
-        self,
-        state: AgentState,
-        invocations: list[dict[str, Any]],
-        *,
-        escalated: bool,
-        refusal_final: bool,
-    ) -> None:
+    def _report_after_act(self, state: AgentState, *, escalated: bool, refusal_final: bool) -> None:
         """Report where the loop goes after this round, as the graph will route it."""
-        next_step, because = after_execute_step(
-            state.tool_rounds, self._max_rounds, escalated, refusal_final
-        )
+        next_step, because = after_execute_step(escalated, refusal_final)
+        verdict = self._governor.verdict
+        if verdict is None:
+            return
         self._report_loop_status(
-            tool_rounds=state.tool_rounds,
+            verdict,
+            state,
             tools_requested=True,
-            invocations=invocations,
-            escalated=escalated,
-            refusal_final=refusal_final,
             next_step=next_step,
             because=because,
+            escalated=escalated,
+            refusal_final=refusal_final,
         )
-        if because == ITERATION_LIMIT:
-            report = self._loop_control.evaluate_round(state.tool_rounds + 1, self._max_rounds)
-            self._reporter_blocked(
-                "loop_control",
-                summary="Maximum tool iterations reached",
-                event_kind="loop_control",
-                fields=loop_control_fields(report),
-            )
 
     async def _invoke(
         self, name: str, arguments: str, state: AgentState, offered: set[str]
@@ -221,9 +207,7 @@ class ExecutionNodes(NodeSupport):
         outcome = await self._tool_path.run(
             ModelToolCall(name=name, arguments=arguments),
             ToolTurn(
-                loop=self._loop_control,
-                round_number=state.tool_rounds,
-                max_rounds=self._max_rounds,
+                loop=self._governor,
                 authority=lambda call: self._authority(call, state, offered),
                 prepare=lambda call: call.model_copy(
                     update={"params": self._security.minimize(call.params)}
@@ -369,8 +353,8 @@ class ExecutionNodes(NodeSupport):
             fields=result_fields,
         )
         return (
-            self._loop_control.reject_message(call)
-            if duplicate
+            self._governor.suppression_message(outcome.control)
+            if duplicate and outcome.control is not None
             else "The loop control stopped this action before execution.",
             f"{call.action}: suppressed (duplicate)"
             if duplicate

@@ -13,16 +13,10 @@ the result with something independent of the model that wrote it. Single
 pass, no iteration. Naming it honestly is the point — a viewer who sees
 "loop" and finds a lookup has learned something false.
 
-Generic trajectory watchdogs come from `agent_platform.loop_control`.
+The loop itself is governed by the platform's `LoopGovernor` (`agent_platform.loop_control`):
+step cap, deadline, budgets, repeats, cycles and convergence, as one authority.
 """
 
-from agent_platform.loop_control import (
-    ControlCheck,
-    DuplicateActionDetector,
-    LoopControlReport,
-    ToolLoopControl,
-    action_fingerprint,
-)
 from customer_support_agent.loop_control.quality_gate import (
     Critique,
     Evaluator,
@@ -37,10 +31,7 @@ from customer_support_agent.loop_control.quality_gate import (
 )
 
 __all__ = [
-    "ControlCheck",
-    "LoopControlReport",
     "Critique",
-    "DuplicateActionDetector",
     "Evaluator",
     "GroundedCritic",
     "IndependentScorer",
@@ -50,6 +41,4 @@ __all__ = [
     "PlanStep",
     "Planner",
     "Reflector",
-    "ToolLoopControl",
-    "action_fingerprint",
 ]

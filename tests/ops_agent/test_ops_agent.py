@@ -7,6 +7,7 @@ from typing import Any
 
 from agent_platform.config import get_settings
 from agent_platform.llm.types import ModelToolCall
+from ops_agent.config import get_agent_settings
 from tests.ops_agent.conftest import COUNT_SQL, Harness, query_call
 
 ANSWER = "There were 2 allows and 1 deny."
@@ -110,10 +111,13 @@ async def test_a_malformed_call_is_explained_not_executed(harness: Any) -> None:
 
 
 async def test_a_model_that_never_stops_calling_is_stopped(harness: Any) -> None:
+    """The same query over and over: suppressed as a repeat, then stopped as a cycle — well
+    before the step cap would have stopped it."""
     run: Harness = harness([{"tool_calls": query_call()}])
     result = await run.agent.handle("Loop forever", "s1")
     assert result.outcome == "stopped"
-    assert run.rows("SELECT step_cap_hit FROM fact_turn") == [(True,)]
+    assert len(run.llm.requests) < get_agent_settings().max_steps
+    assert run.rows("SELECT step_cap_hit FROM fact_turn") == [(False,)]
 
 
 async def test_an_injection_attempt_is_stopped_before_the_model(harness: Any) -> None:

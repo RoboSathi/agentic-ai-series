@@ -26,8 +26,10 @@ from agent_platform.context.types import Chunk
 from agent_platform.gatekeeper.types import AuthorityContext
 from agent_platform.hallucination_check import PASSAGE, Observation
 from agent_platform.llm.embeddings import tokenize
+from agent_platform.llm.prompt import PromptManifest, manifest_from_messages
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message, ModelToolCall
 from agent_platform.logging import describe_error, get_logger, instrument
+from agent_platform.loop_control import LoopVerdict
 from agent_platform.observability.llm_fields import llm_request_fields, llm_response_fields
 from agent_platform.observability.tool_fields import display_tool_name, tool_request_fields
 from agent_platform.tools.path import DUPLICATE, INVALID, UNKNOWN, ToolPath, ToolTurn
@@ -44,7 +46,14 @@ from research_agent.observability.telemetry import ACTOR, RunTelemetry
 from research_agent.presentation.narration import clip, role_title
 from research_agent.prompts import answer as prompt
 from research_agent.research.recency import RecencyGuard
-from research_agent.tools import HITS_KEY, PAGE_KEY, PUBLISHED_KEY, QUERY_KEY, URLS_KEY
+from research_agent.tools import (
+    HITS_KEY,
+    PAGE_KEY,
+    PROVIDER_KEY,
+    PUBLISHED_KEY,
+    QUERY_KEY,
+    URLS_KEY,
+)
 
 # The loop's cards, in the order a step emits them.
 THOUGHT, ACTION, OBSERVATION, REVISE, ANSWER = (
@@ -61,6 +70,9 @@ ACT, GROUND, FINAL, REASON, FINALIZE = "act", "ground", "final", "reason", "fina
 # Why, when no budget forced it (the platform's `loop_control.because` words).
 _TOOL_REQUESTED, _NO_TOOL_CALL, _ROUNDS_REMAIN = "tool_requested", "no_tool_call", "rounds_remain"
 _SECONDS = "seconds"
+_WALL_CLOCK = "wall_clock"
+# A governor verdict's mechanism → this path's limit word (`messages.loop_because`).
+_LAYER_LIMITS = {"token_budget": TOKENS, "step_count": STEPS, "tool_budget": TOOL_CALLS}
 # Why a model call was made, as the card and the log say it.
 ANSWER_PURPOSE, REVISE_PURPOSE = "answer", "grounding_repair"
 _URL = re.compile(r"https?://\S+")
@@ -95,10 +107,10 @@ class AnswerNodes:
 
     async def reason(self, state: AnswerState, config: RunnableConfig) -> dict[str, Any]:
         turn = turn_of(config)
-        turn.budget.charge(STEPS, 1)
+        verdict = turn.governor.begin_step()
         turn.loop.begin(int(turn.spent(STEPS)))
         turn.steps.begin(int(turn.spent(STEPS)))
-        limit = self._limit(turn)
+        limit = self._limit(turn, verdict)
         if limit == _SECONDS:
             # Too little time left for a model call: answer with what there is.
             self._report_loop(turn, next_step=GROUND, because=limit)
@@ -111,7 +123,7 @@ class AnswerNodes:
         except Exception as exc:
             return self._failed(turn, exc)
         asked = result.tool_calls or []
-        wanted = asked[: int(turn.budget.remaining(TOOL_CALLS))]
+        wanted = asked[: self._tool_room(turn, len(asked))]
         if wanted:
             self._report_loop(
                 turn, next_step=ACT, because=_TOOL_REQUESTED, asked=len(asked), kept=len(wanted)
@@ -169,16 +181,33 @@ class AnswerNodes:
             Message(role="system", content=prompt.FROM_OBSERVATIONS),
             Message(role="user", content=json.dumps(payload, ensure_ascii=False)),
         ]
-        result = await self._think(turn, messages, None)
+        result = await self._think(turn, messages, None, opening=False)
         return result.content.strip()
 
     async def _think(
-        self, turn: Turn, messages: list[Message], tools: list[dict[str, Any]] | None
+        self,
+        turn: Turn,
+        messages: list[Message],
+        tools: list[dict[str, Any]] | None,
+        *,
+        opening: bool = True,
     ) -> CompletionResult:
-        """One reasoning step: the model call, shown as one THOUGHT card."""
-        request = CompletionRequest(messages=messages, tools=tools)
+        """One reasoning step: its CONTEXT card, then the model call as one THOUGHT card.
+
+        `opening` is False for a request that does not start from the turn's own opening (the
+        answer from observations alone), which is then broken down by message role.
+        """
+        manifest = (
+            turn.layout.build(messages, tools).manifest
+            if opening
+            else manifest_from_messages(messages, tools)
+        )
+        request = CompletionRequest(messages=messages, tools=tools, manifest=manifest)
+        turn.steps.context(request, purpose=ANSWER_PURPOSE)
         self._emit(turn, THOUGHT, self._waiting(), {}, event_kind="model", status="started")
-        result = await self._call(turn, messages, tools, self._call_timeout(turn))
+        result = await self._call(
+            turn, messages, tools, self._call_timeout(turn), manifest=manifest
+        )
         calls = ", ".join(
             self._notes.tool_call.format(tool=display_tool_name(c.name), arguments=c.arguments)
             for c in result.tool_calls or []
@@ -199,6 +228,7 @@ class AnswerNodes:
         messages: list[Message],
         tools: list[dict[str, Any]] | None,
         timeout: float,
+        manifest: PromptManifest | None = None,
     ) -> CompletionResult:
         """The model call itself, charged to the turn. Its usage goes on the step's card."""
         result = await self._caller.chat(
@@ -209,8 +239,9 @@ class AnswerNodes:
             temperature=self._settings.temperature,
             timeout=timeout,
             quiet=True,
+            manifest=manifest,
         )
-        turn.budget.charge(TOKENS, result.usage.total_tokens)
+        turn.governor.after_model(result.usage.total_tokens, result.cost_usd)
         return result
 
     def _exchange_fields(
@@ -241,24 +272,33 @@ class AnswerNodes:
             "seconds": result.latency_ms / 1000,
         }
 
-    def _limit(self, turn: Turn) -> str:
-        """The cap that forbids another tool call now ("" while tools are still allowed)."""
-        budget = turn.budget
-        if budget.expired() or self._time_left(turn) < self._settings.min_call_seconds:
+    def _limit(self, turn: Turn, verdict: LoopVerdict) -> str:
+        """Why no tool may be called now ("" while tools are still allowed).
+
+        The governor's verdict first (the deadline, a budget, a cycle, a plateau); then this
+        path's own rules: the last step and an empty tool budget answer without tools.
+        """
+        governor = turn.governor
+        if verdict.layer == _WALL_CLOCK or self._time_left(turn) < self._settings.min_call_seconds:
             return _SECONDS
-        if budget.remaining(TOKENS) <= 0:
-            return TOKENS
-        if budget.remaining(STEPS) <= 1:
+        if verdict.stops:
+            return _LAYER_LIMITS.get(verdict.layer or "", verdict.reason)
+        if governor.remaining(STEPS) <= 1:
             return STEPS
-        if budget.remaining(TOOL_CALLS) <= 0:
+        if governor.remaining(TOOL_CALLS) <= 0:
             return TOOL_CALLS
         return ""
 
+    @staticmethod
+    def _tool_room(turn: Turn, asked: int) -> int:
+        """How many of the calls the model asked for the tool budget still allows."""
+        return int(min(turn.governor.remaining(TOOL_CALLS), asked))
+
     def _time_left(self, turn: Turn) -> float:
-        return self._settings.budget.max_seconds - turn.budget.elapsed()
+        return turn.governor.time_left()
 
     def _call_timeout(self, turn: Turn) -> float:
-        return min(self._settings.call_timeout_seconds, self._time_left(turn))
+        return turn.governor.call_limits().timeout_seconds
 
     def _waiting(self) -> str:
         """The pending THOUGHT card's heading, shown while the model call is in flight."""
@@ -307,13 +347,8 @@ class AnswerNodes:
     # -- LOOP CONTROL -----------------------------------------------------------------------------
 
     def _report_after_act(self, turn: Turn) -> None:
-        """The decision `after_act` will route on, shown here: edges run off the event loop."""
-        spent = turn.budget.exhausted_counters()
-        stopped = next((c for c in (STEPS, TOKENS) if c in spent), "")
-        if turn.budget.expired():
-            stopped = _SECONDS
-        next_step = FINALIZE if stopped else REASON
-        self._report_loop(turn, next_step=next_step, because=stopped or _ROUNDS_REMAIN)
+        """Back to the model: whether another step is affordable is the governor's, at `reason`."""
+        self._report_loop(turn, next_step=REASON, because=_ROUNDS_REMAIN)
 
     def _report_loop(
         self, turn: Turn, *, next_step: str, because: str, asked: int = 0, kept: int = 0
@@ -323,13 +358,16 @@ class AnswerNodes:
             "model_requested_tools": next_step == ACT,
             "steps": self._used(turn, STEPS),
             "tool_calls": self._used(turn, TOOL_CALLS),
-            "tokens_left": int(turn.budget.remaining(TOKENS)),
+            "tokens_left": int(turn.governor.remaining(TOKENS)),
             "seconds_left": max(0, round(self._time_left(turn))),
         }
         if asked > kept:
             criteria["dropped_tool_calls"] = asked - kept
-        fields = turn.steps.loop_control(
-            round_number=int(turn.spent(STEPS)),
+        verdict = turn.governor.verdict
+        if verdict is None:
+            return
+        fields = turn.steps.loop_verdict(
+            verdict,
             criteria=criteria,
             next_step=self._notes.loop_next.get(next_step, next_step),
             because=because,
@@ -337,13 +375,12 @@ class AnswerNodes:
         )
         self._logger.info("Loop control status", **fields)
 
-    @staticmethod
-    def _used(turn: Turn, counter: str) -> str:
-        state = turn.budget.snapshot()[counter]
-        return f"{state.spent:g} of {state.cap:g}"
+    def _used(self, turn: Turn, counter: str) -> str:
+        caps = self._settings.budget
+        cap = caps.max_steps if counter == STEPS else caps.max_tool_calls
+        return f"{turn.spent(counter):g} of {cap:g}"
 
     async def _run(self, call: ModelToolCall, turn: Turn) -> tuple[Message, ToolResult]:
-        turn.budget.charge(TOOL_CALLS, 1)
         name = display_tool_name(call.name)
         self._emit(
             turn,
@@ -352,6 +389,8 @@ class AnswerNodes:
             tool_request_fields(call.name, call.arguments),
             event_kind="tool_request",
         )
+        # The status line follows the loop while the tool runs, as every agent's does.
+        self._emit(turn, OBSERVATION, "", {}, event_kind="tool_result", status="started")
         result = await self._execute(call, turn)
         text = result.output if result.success else result.error or self._notes.empty
         note = self._recency_note(turn, result)
@@ -381,9 +420,7 @@ class AnswerNodes:
         outcome = await self._tools.run(
             call,
             ToolTurn(
-                loop=turn.control,
-                round_number=int(turn.spent(STEPS)),
-                max_rounds=self._settings.budget.max_steps,
+                loop=turn.governor,
                 authority=lambda _built: AuthorityContext(actor=ACTOR),
                 # The answer tools read: a failed read asked again fails again.
                 remember_failures=True,
@@ -393,9 +430,9 @@ class AnswerNodes:
             return ToolResult(error=self._notes.unknown_tool.format(tool=call.name))
         if outcome.stage == INVALID:
             return ToolResult(error=self._notes.bad_arguments.format(tool=call.name))
-        if outcome.call is not None and outcome.stage == DUPLICATE:
+        if outcome.control is not None and outcome.stage == DUPLICATE:
             # Said to the model, but not evidence: a repeat proved nothing new.
-            return ToolResult(error=turn.control.reject_message(outcome.call))
+            return ToolResult(error=turn.governor.suppression_message(outcome.control))
         if outcome.execution is None:
             return ToolResult(
                 error=self._notes.tool_failed.format(tool=call.name, error=outcome.reason)
@@ -411,11 +448,15 @@ class AnswerNodes:
     def _observe(self, turn: Turn, tool: str, text: str, result: ToolResult) -> None:
         limit = get_agent_settings().tui.clip_chars
         lines = [clip(line, limit) for line in text.splitlines() if line.strip()]
-        heading = (
-            self._notes.observation_heading.format(tool=tool, lines=len(lines))
-            if result.success
-            else self._notes.observation_failed.format(tool=tool, error=clip(text, limit))
-        )
+        provider = str(result.data.get(PROVIDER_KEY) or "")
+        if not result.success:
+            heading = self._notes.observation_failed.format(tool=tool, error=clip(text, limit))
+        elif provider:
+            heading = self._notes.observation_heading_via.format(
+                tool=tool, provider=provider, lines=len(lines)
+            )
+        else:
+            heading = self._notes.observation_heading.format(tool=tool, lines=len(lines))
         fields = {
             "tool": tool,
             "result": "success" if result.success else "failed",
@@ -425,10 +466,9 @@ class AnswerNodes:
         self._emit(turn, OBSERVATION, heading, fields, event_kind="tool_result", status=status)
 
     def after_act(self, state: AnswerState, config: RunnableConfig) -> str:
-        """Back to the model while any budget remains; an exhausted one ends the loop."""
-        budget = turn_of(config).budget
-        spent = budget.exhausted_counters()
-        return FINALIZE if budget.expired() or STEPS in spent or TOKENS in spent else REASON
+        """Back to the model: its next step asks the governor whether it may go on, and the
+        answer comes from what there is when it may not."""
+        return REASON
 
     # -- HALLUCINATION CHECK and REVISE -----------------------------------------------------------------
 
@@ -448,11 +488,12 @@ class AnswerNodes:
         )
         if not evidence:
             return {}
+        self._emit(turn, HALLUCINATION_CHECK, "", {}, event_kind="grounding", status="started")
         outcome = await self._grounding.check(
             turn.question, state["text"], evidence, self._reviser(turn, evidence)
         )
         self._card_check(turn, outcome)
-        return {"text": outcome.text}
+        return {"text": outcome.text, "quality": outcome.quality}
 
     def _reviser(self, turn: Turn, evidence: list[Chunk]) -> Any:
         """The model's one rewrite of the claims the check refuted, from the evidence about them.
@@ -529,10 +570,11 @@ class AnswerNodes:
 
     async def finalize(self, state: AnswerState, config: RunnableConfig) -> dict[str, Any]:
         turn = turn_of(config)
-        steps, seconds = int(turn.spent(STEPS)), turn.budget.elapsed()
+        steps, seconds = int(turn.spent(STEPS)), turn.elapsed()
         if state["failure"]:
             text = self._notes.failed.format(cause=state["failure"], step=steps, seconds=seconds)
             self._card_answer(turn, text, failed=True)
+            turn.governor.finish("failed")
             return {"text": text}
         text = state["text"] or self._notes.empty
         points = self._settings.pointwise
@@ -546,10 +588,11 @@ class AnswerNodes:
             text = f"{body}\n\n{self._notes.sources_heading}\n" + "\n".join(
                 f"- {url}" for url in unique
             )
-        stop = state["stop"] or (turn.budget.exhausted_counters() or [""])[0]
+        stop = state["stop"] or (turn.governor.exhausted_counters() or [""])[0]
         if stop and (not state["text"] or turn.spent(TOOL_CALLS) > 0):
             text = f"{text}\n\n{self._notes.cap_reached.format(counter=stop)}"
         self._card_answer(turn, text, failed=False)
+        turn.governor.finish("finalized_on_cap" if stop else "answered")
         self._telemetry.audit(
             "answer.completed",
             "allow",
@@ -570,7 +613,7 @@ class AnswerNodes:
                 steps=int(turn.spent(STEPS)),
                 calls=int(turn.spent(TOOL_CALLS)),
                 tokens=f"{int(turn.spent(TOKENS)):,}",
-                seconds=turn.budget.elapsed(),
+                seconds=turn.elapsed(),
             )
         )
         status = "failed" if failed else "completed"

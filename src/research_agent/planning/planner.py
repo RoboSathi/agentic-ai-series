@@ -4,6 +4,7 @@ One repair attempt, then stop. A planner that cannot produce a valid plan
 twice is not going to on the fifth try, and every retry is spent budget.
 """
 
+from collections.abc import Sequence
 from typing import NamedTuple
 
 from agent_platform.logging import get_logger, instrument
@@ -43,31 +44,49 @@ class Planner:
     """Asks the planner role for a DAG and holds it to the validation gate."""
 
     def __init__(
-        self, caller: StructuredCaller, max_queries_per_node: int, node_id_prefix: str
+        self,
+        caller: StructuredCaller,
+        max_queries_per_node: int,
+        node_id_prefix: str,
+        covered_checks: Sequence[str] = (),
     ) -> None:
         self._caller = caller
         self._max_queries = max_queries_per_node
         self._prefix = node_id_prefix
+        self._covered = tuple(covered_checks)
         self._logger = get_logger("research_agent")
 
-    async def plan(self, contract: Contract) -> PlanOutcome:
-        """The plan and how it got there; raises if the plan and its one repair both fail."""
-        request = prompt.build(contract, contract.budget.max_dag_nodes, self._max_queries)
+    async def plan(self, contract: Contract, lessons: Sequence[str] = ()) -> PlanOutcome:
+        """The plan and how it got there; raises if the plan and its one repair both fail.
+
+        `lessons` are earlier runs' (Reflexion): the planner is told to avoid their failures.
+        """
+        request = prompt.build(contract, contract.budget.max_dag_nodes, self._max_queries, lessons)
         plan, first = await self._ask(request)
-        validation = validate_plan(plan, contract.rubric, contract.budget.max_dag_nodes)
-        if validation.valid:
+        validation = self._validate(plan, contract)
+        if validation.valid and not validation.uncovered:
             return PlanOutcome(self._numbered(plan), validation, False, first)
-        self._logger.warning("Plan rejected; one repair attempt", problems=validation.problems)
-        problems = tuple(validation.problems)
+        problems = (*validation.problems, *self._uncovered_problems(validation))
+        self._logger.warning("Plan needs a repair; one attempt", problems=list(problems))
         repair = request.with_instruction(
-            prompt.REPAIR_INSTRUCTION.format(problems="\n".join(validation.problems))
+            prompt.REPAIR_INSTRUCTION.format(problems="\n".join(problems))
         )
-        plan, second = await self._ask(repair)
+        repaired, second = await self._ask(repair)
         both = ModelCall.combined([first, second])
-        validation = validate_plan(plan, contract.rubric, contract.budget.max_dag_nodes)
-        if not validation.valid:
-            raise PlanRejectedError(validation, both)
-        return PlanOutcome(self._numbered(plan), validation, True, both, problems)
+        again = self._validate(repaired, contract)
+        if again.valid:
+            return PlanOutcome(self._numbered(repaired), again, True, both, problems)
+        if validation.valid:
+            # The repair broke a plan that only missed a criterion: run the first one.
+            return PlanOutcome(self._numbered(plan), validation, False, both)
+        raise PlanRejectedError(again, both)
+
+    def _validate(self, plan: PlanDag, contract: Contract) -> PlanValidation:
+        return validate_plan(plan, contract.rubric, contract.budget.max_dag_nodes, self._covered)
+
+    @staticmethod
+    def _uncovered_problems(validation: PlanValidation) -> list[str]:
+        return [f"rubric item {item_id} is served by no node" for item_id in validation.uncovered]
 
     def _numbered(self, plan: PlanDag) -> PlanDag:
         """The validated plan with readable ids (validated first: duplicates must be seen)."""

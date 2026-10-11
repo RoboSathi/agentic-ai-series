@@ -14,6 +14,7 @@ from pydantic_settings import SettingsConfigDict
 
 from agent_platform.config.paths import resolve_path
 from agent_platform.config.settings import YamlBackedSettings
+from agent_platform.loop_control.types import WatchdogLayer
 from research_agent.domain.budget import Budget
 from research_agent.domain.scope import Depth
 
@@ -126,12 +127,23 @@ class ScopingSettings(BaseModel):
     answer_split_pattern: str
     vague_answer_max_words: int = Field(ge=0)
     absolute_words: list[str]
+    # An answer to a subject item (`subject_fields`) made only of these words names nothing to
+    # research: the item stays open; after `vague_answers_before_delegating` such answers the
+    # interviewer proposes the values itself, from the topic.
+    vague_subject_words: list[str]
+    subject_fields: list[str]
+    vague_answers_before_delegating: int = Field(ge=1)
+    # How each archetype's rubric will check the answers, told to the interviewer so it asks
+    # for what can be checked.
+    rubric_shapes: dict[str, str]
     waive_all_keyword: str
     any_recency_words: list[str]
     none_answers: list[str]
     # What an optional item the interviewer skipped is recorded as (one of `none_answers`).
     skipped_answer: str
     primary_sources_phrase: str
+    # "at least 3 independent domains": how many independent websites the answer must rest on.
+    distinct_domains_pattern: str
     # Words that pick a size, and the pattern for "N pages".
     depth_words: dict[Depth, list[str]]
     pages_pattern: str
@@ -158,6 +170,8 @@ class PlanningSettings(BaseModel):
     max_queries_per_node: int = Field(ge=1)
     # Sub-questions are shown as Q1, Q2, ...; the planner's own ids are replaced by these.
     node_id_prefix: str
+    # Rubric checks whose must-pass items some sub-question must serve.
+    covered_checks: list[str]
 
 
 class MatchingSettings(BaseModel):
@@ -248,6 +262,8 @@ class CallSettings(BaseModel):
 
     # Output-token cap per role; a role not listed uses the provider's default.
     role_max_tokens: dict[str, int]
+    # Roles whose CONTEXT cards are drawn as one per batch rather than one per request.
+    context_aggregate_roles: list[str]
     # A cut-off call is retried this many times, each with the cap multiplied by the factor.
     truncation_retries: int = Field(ge=0)
     truncation_retry_factor: float = Field(gt=1)
@@ -268,6 +284,29 @@ class DepthProfile(BaseModel):
 class ReflectionSettings(BaseModel):
     max_followups_per_round: int = Field(ge=0)
     gap_fill_round_offset: int = Field(ge=1)
+    # Checks a failure of which is the report's writing, not missing evidence: the audit sends
+    # them to a revision of the report rather than to more research.
+    writing_checks: list[str]
+    # Revisions of one report, at most; and the least gain in audit score a revision must
+    # bring for another to be tried.
+    max_revisions: int = Field(ge=0)
+    min_score_gain: float = Field(ge=0.0, le=1.0)
+
+
+class ReflexionSettings(BaseModel):
+    """Lessons across runs (`reflexion/lessons.py`): how many, where kept, how recalled."""
+
+    max_lessons: int = Field(ge=1)
+    recall_limit: int = Field(ge=1)
+    # How many episodic matches to read before filtering to this run's kind.
+    search_limit: int = Field(ge=1)
+    min_term_chars: int = Field(ge=1)
+    # Rejection codes named in one lesson, most frequent first.
+    top_codes: int = Field(ge=1)
+    category: str
+    session: str
+    # Lesson templates by kind: failed, rejected, budget, revised.
+    wording: dict[str, str]
 
 
 class SynthesisSettings(BaseModel):
@@ -277,6 +316,10 @@ class SynthesisSettings(BaseModel):
     # The citation guard's rewrites of unsupported sentences before a sentence is removed
     # (0: remove without asking).
     max_guard_rewrites: int = Field(ge=0)
+    # A sentence about the research rather than its subject (an evidence id outside a citation,
+    # "search snippets only", "the evidence does not cover"): the run's working notes, removed
+    # from the report in code. What was not found is Coverage & Limits' to say.
+    working_note_patterns: list[str]
 
     @property
     def resolved_templates_path(self) -> Path:
@@ -388,6 +431,7 @@ class AnswerMessages(BaseModel):
     tool_call: str
     # OBSERVATION: `{tool}`, `{lines}`; or `{tool}`, `{error}`.
     observation_heading: str
+    observation_heading_via: str
     observation_failed: str
     # ANSWER: `{steps}`, `{calls}`, `{tokens}`, `{seconds}`.
     answered: str
@@ -594,14 +638,6 @@ class PanelSettings(BaseModel):
     clip_chars: int = Field(ge=20)
     # Buttons offered beside the slash commands, by session phase.
     actions: dict[str, list[ActionSpec]]
-    # The status block's colours: the phase line by phase, the other lines by what they show.
-    phase_colors: dict[str, str]
-    status_line_styles: dict[str, str]
-    checklist_styles: dict[str, str]
-    # The budget counters named on a budget card's heading; the rest are in its expander.
-    budget_headline: list[str]
-    # Counters the plan is meant to use up (rounds): reaching their cap draws no card.
-    quiet_budget_counters: list[str] = Field(default_factory=list)
 
 
 class TurnSummarySettings(BaseModel):
@@ -647,6 +683,8 @@ class RunLoopWords(BaseModel):
 
     next: dict[str, str]
     because: dict[str, str]
+    # The next steps that end the research loop (its LOOP CONTROL verdict is FINALIZE).
+    stops: list[str]
 
 
 class InstructionSettings(BaseModel):
@@ -675,6 +713,7 @@ class ResearchAgentSettings(YamlBackedSettings):
     scoping: ScopingSettings
     rubric: RubricSettings
     budget: Budget
+    budget_layers: dict[str, WatchdogLayer]
     depths: dict[Depth, DepthProfile]
     planning: PlanningSettings
     matching: MatchingSettings
@@ -682,6 +721,7 @@ class ResearchAgentSettings(YamlBackedSettings):
     calls: CallSettings
     run_loop: RunLoopWords
     reflection: ReflectionSettings
+    reflexion: ReflexionSettings
     synthesis: SynthesisSettings
     audit: AuditSettings
     injection_model: InjectionModelSettings = Field(default_factory=InjectionModelSettings)
