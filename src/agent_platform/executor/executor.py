@@ -114,7 +114,20 @@ class ToolExecutorImpl:
                 },
             )
 
-        if call.side_effecting and self._idempotency is not None and self._idempotency.seen(key):
+        # Queueing human review is a durable, repairable state transition, not
+        # an irreversible payment. A cached success can outlive the review row
+        # (for example after a queue reset or database restore); replaying that
+        # success would tell the customer it is queued while `/review` is empty.
+        # Let the domain handler reconcile the queue every time. Its
+        # pending_for_order check makes this operation idempotent without
+        # suppressing repair when the row is missing.
+        is_review_enqueue = call.action.rsplit(".", maxsplit=1)[-1] == "queue_for_approval"
+        if (
+            call.side_effecting
+            and not is_review_enqueue
+            and self._idempotency is not None
+            and self._idempotency.seen(key)
+        ):
             recorded = self._idempotency.recorded_result(key)
             if recorded is not None:
                 normalized = _normalize_result(recorded)
