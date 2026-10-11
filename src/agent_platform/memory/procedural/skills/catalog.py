@@ -17,7 +17,13 @@ from agent_platform.config.settings import SkillSettings
 from agent_platform.logging import get_logger
 from agent_platform.logging.trace_context import get_current_trace_id
 from agent_platform.memory.procedural.skills.document import parse_stored
-from agent_platform.memory.procedural.skills.types import Skill, SkillDocument, SkillSyncReport
+from agent_platform.memory.procedural.skills.types import (
+    AUTHORED,
+    LEARNED,
+    Skill,
+    SkillDocument,
+    SkillSyncReport,
+)
 from agent_platform.memory.procedural.store import SkillStore
 from agent_platform.memory.types import MemoryFact, Provenance
 
@@ -117,9 +123,9 @@ class SkillCatalog:
             self._parsed[key] = Skill(
                 document=parse_stored(fact.value, fact.key, self._settings),
                 version=key[1],
-                source="authored"
+                source=AUTHORED
                 if fact.category == self._settings.authored_artifact_type
-                else "learned",
+                else LEARNED,
             )
         return self._parsed[key]
 

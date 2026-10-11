@@ -102,7 +102,7 @@ class Synthesizer:
         ledger: LedgerSnapshot,
         previous: Report,
         findings: list[dict[str, Any]],
-        lessons: Sequence[str] = (),
+        learned_skills: Sequence[str] = (),
     ) -> CitationCheck:
         """The report revised against the audit's findings: only what they flag changes."""
         headings = list(self._templates[contract.brief.archetype]["sections"])
@@ -114,7 +114,7 @@ class Synthesizer:
                 headings,
                 self.written_sections(previous),
                 findings,
-                lessons,
+                learned_skills,
             ),
             prompt.SynthesisAnswer,
             max_tokens=size.report_max_tokens,

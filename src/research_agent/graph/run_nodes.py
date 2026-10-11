@@ -35,6 +35,8 @@ from agent_platform.hallucination_check.confidence import ConfidenceCheck
 from agent_platform.hallucination_check.readings import check_rule
 from agent_platform.logging import describe_error
 from agent_platform.loop_control import SECONDS, BudgetGuard
+from agent_platform.memory.procedural.skills import AgentInstructions
+from agent_platform.memory.procedural.skills.types import LEARNED
 from agent_platform.observability.step_events import HALLUCINATION_CHECK
 from agent_platform.observability.types import StatusKind
 from agent_platform.scheduling import AsyncDagScheduler, TaskGraph
@@ -49,11 +51,10 @@ from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.report import LimitEntry, Report, RunStatus
 from research_agent.graph.run_loop import RunLoopReport
 from research_agent.graph.state import RunState
+from research_agent.memory import RunEventWriter, RunOutcome
 from research_agent.planning.ids import renumber
 from research_agent.planning.planner import Planner, PlanRejectedError
 from research_agent.presentation.narration import clip, say
-from research_agent.reflexion import LessonBook, RunOutcome
-from research_agent.reflexion.lessons import lesson_lines
 from research_agent.research import cards
 from research_agent.research.reflector import FollowUpProposal, GapAnalyzer, Reflector
 from research_agent.research.resources import RunResources
@@ -126,9 +127,13 @@ class RunParts:
     min_score_gain: float = 0.0
     # The models that judged the last audit (`LlmJudge.models_used`); None: not tracked.
     judge_models: Callable[[], set[str]] | None = None
-    # Reflexion: earlier runs' lessons recalled at plan, this run's written at archive; None:
-    # withheld.
-    lessons: LessonBook | None = None
+    # Learned skills (ra-0023): selected at plan for this run's kind, shown on the SKILLS
+    # card and handed to the planner, reflector and reviser; None: procedural memory withheld.
+    skills: AgentInstructions | None = None
+    # How a run's kind is written as the signal its learned skills trigger on.
+    skill_scope: str = ""
+    # Writes the finished run's dream event (what its critics found); None: no memory.
+    run_events: RunEventWriter | None = None
 
 
 # Rejection codes that mean "the filter could not read the result", not "the result is
@@ -214,9 +219,9 @@ class RunNodes:
     async def plan(self, state: RunState) -> Update:
         r, contract = self.resources, state["contract"]
         r.budget.charge(ROUNDS, 1)
-        lessons = self._recalled(contract)
+        learned = self._learned_skills(contract)
         try:
-            outcome = await self._p.planner.plan(contract, lessons)
+            outcome = await self._p.planner.plan(contract, learned)
         except PlanRejectedError as exc:
             heading, sections = cards.plan_card(
                 contract, None, 0, exc.call, rejected=list(exc.validation.problems)
@@ -249,17 +254,23 @@ class RunNodes:
             budget={**contract.budget.counters(), SECONDS: contract.budget.max_seconds},
         )
         r.telemetry.card("plan_dag", heading, sections)
-        return {"plans": [plan], "round_nodes": list(plan.nodes), "lessons": lessons}
+        return {"plans": [plan], "round_nodes": list(plan.nodes), "learned_skills": learned}
 
-    def _recalled(self, contract: Any) -> list[str]:
-        """Earlier runs' lessons for this one, shown on a LESSONS card when there are any."""
-        if self._p.lessons is None:
+    def _learned_skills(self, contract: Any) -> list[str]:
+        """Skills learned from earlier runs of this kind, on the SKILLS card when there are any.
+
+        Only learned skills: no run role has an authored one (ra-0021). Selected without a
+        model, by the run's kind and its topic, and announced once, like any skill.
+        """
+        if self._p.skills is None or not self._p.skill_scope:
             return []
-        facts = self._p.lessons.recall(contract)
-        if facts:
-            heading, sections = cards.lessons_card(facts)
-            self.resources.telemetry.card("lessons", heading, sections)
-        return lesson_lines(facts)
+        signal = self._p.skill_scope.format(archetype=contract.brief.archetype)
+        chosen = self._p.skills.select(frozenset({signal}), contract.brief.topic)
+        learned = chosen.model_copy(
+            update={"skills": [i for i in chosen.skills if i.skill.source == LEARNED]}
+        )
+        self._p.skills.announce(learned)
+        return [item.skill.document.prompt for item in learned.skills]
 
     @staticmethod
     def after_plan(state: RunState) -> str:
@@ -506,7 +517,7 @@ class RunNodes:
         self, state: RunState, ctx: CheckContext, verdicts: list[CheckVerdict], gaps: list[str]
     ) -> tuple[Update, FollowUpProposal]:
         proposal = await self._p.reflector.propose(
-            ctx, verdicts, self._tried(), state["round"] + 1, state.get("lessons", [])
+            ctx, verdicts, self._tried(), state["round"] + 1, state.get("learned_skills", [])
         )
         return self._round_from(state, proposal, gaps, say("stop.no_follow_up")), proposal
 
@@ -527,7 +538,7 @@ class RunNodes:
             stop = say("stop.critique_skipped", reason=reason)
             return {"gaps": gaps, "stop_reason": stop, "round_nodes": []}, FollowUpProposal()
         proposal = await self._p.reflector.critique(
-            ctx, verdicts, self._tried(), state["round"] + 1, state.get("lessons", [])
+            ctx, verdicts, self._tried(), state["round"] + 1, state.get("learned_skills", [])
         )
         if proposal.sufficient:
             stop = say("stop.critique_sufficient", reason=reason)
@@ -595,7 +606,7 @@ class RunNodes:
         findings = self._findings(audit, contract, writing_only=True)
         revision = state.get("revision", 0) + 1
         checked = await self._p.synthesizer.revise(
-            contract, r.ledger.snapshot(), previous, findings, state.get("lessons", [])
+            contract, r.ledger.snapshot(), previous, findings, state.get("learned_skills", [])
         )
         before = self._p.synthesizer.written_sections(previous)
         after = self._p.synthesizer.written_sections(checked.report)
@@ -1069,14 +1080,16 @@ class RunNodes:
         return {"index": index}
 
     def _remember(self, state: RunState) -> None:
-        """Reflexion: what this run's critics found, written as lessons for the next run."""
-        if self._p.lessons is None or state.get("status") in (None, "CANCELLED"):
+        """What this run's critics found, left in the dream inbox for `make dream ra`."""
+        status = state.get("status")
+        if self._p.run_events is None or status in (None, "CANCELLED"):
             return
         audit, r = state.get("audit"), self.resources
         failed = [v for v in audit.verdicts if not v.passed and v.applicable] if audit else []
-        written = self._p.lessons.write(
+        event = self._p.run_events.record(
             RunOutcome(
                 contract=state["contract"],
+                status=str(status),
                 failed=failed,
                 rejected_codes=dict(r.trace.rejected_codes),
                 budget_stops=list(r.trace.budget_stops),
@@ -1084,7 +1097,7 @@ class RunNodes:
                 revisions=state.get("revision", 0),
             )
         )
-        r.telemetry.audit("reflexion.lessons", "allow", f"{len(written)} lesson(s) written")
+        r.telemetry.audit("memory.run_event", "allow", f"{len(event.signals)} signal(s) recorded")
 
     # -- shared -----------------------------------------------------------------------------
 

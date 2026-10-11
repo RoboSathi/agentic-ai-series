@@ -1,17 +1,15 @@
 """/research fixes of 2026-10-11: the plan shows its DAG, a vague answer is never a subject,
 the cross-check is entailment from agreeing domains, the audit routes writing faults to a
-revision (Producer-Critic) and evidence gaps to gap-fill, and lessons outlive the run
-(Reflexion)."""
+revision (Producer-Critic) and evidence gaps to gap-fill, and what a run's critics found
+outlives it as a dream event (ra-0023)."""
 
-from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
 
 from agent_platform.evals.entailment import EntailmentResult
 from agent_platform.evidence import EvidenceEntry, LedgerSnapshot
-from agent_platform.memory import EpisodicStore
+from agent_platform.memory import DreamEvent
 from agent_platform.observability.types import StatusEvent
 from agent_platform.verification.acceptance import CheckSpec, CheckVerdict
 from research_agent.audit.checks import claim_verdict
@@ -20,8 +18,8 @@ from research_agent.config import get_agent_settings
 from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.rubric import Contract, Rubric, RubricCheck, RubricItem
 from research_agent.domain.scope import CoverageItem, ScopeBrief
+from research_agent.memory import RunEventWriter, RunOutcome, research_memory_profile
 from research_agent.planning.dag_validation import validate_plan
-from research_agent.reflexion import LessonBook, RunOutcome
 from research_agent.research.cards import plan_tree, revise_card
 from research_agent.scoping import checklist
 from tests.research_agent.conftest import BuildHarness
@@ -243,52 +241,53 @@ def test_the_revise_card_counts_what_changed() -> None:
     assert "1 sentence(s) kept · 2 rewritten or added · 1 removed" in str(sections)
 
 
-class TestLessonsOutliveTheRun:
-    def _book(self, tmp_path: Path) -> LessonBook:
-        settings = get_agent_settings()
-        return LessonBook(EpisodicStore(tmp_path), "ra", settings.reflexion)
+class TestWhatARunLeavesForTheDream:
+    """ra-0023: a run's findings become one dream event; the dream turns them into memory."""
 
-    def test_a_failed_criterion_is_recalled_by_the_next_run_on_the_topic(
-        self, tmp_path: Path
-    ) -> None:
-        book = self._book(tmp_path)
-        first = _contract(_item("R2", "explanation_accuracy", "judge", False))
-        written = book.write(
-            RunOutcome(
-                contract=first,
-                failed=[_verdict("R2", "explanation_accuracy", False, "judge")],
-                rejected_codes={"u1": "recency", "u2": "recency"},
-            )
-        )
-        assert any("criterion R2" in lesson for lesson in written)
-        assert any("recency (2)" in lesson for lesson in written)
-        later = Contract.freeze("c-2", first.brief, first.rubric, first.brief.budget)
-        recalled = book.recall(later)
-        assert recalled and all(f.metadata["run"] == "c-1" for f in recalled)
-
-    def test_its_own_lessons_and_other_kinds_are_not_recalled(self, tmp_path: Path) -> None:
-        book = self._book(tmp_path)
+    def _outcome(self) -> RunOutcome:
         contract = _contract(_item("R2", "explanation_accuracy", "judge", False))
-        book.write(
-            RunOutcome(
-                contract=contract, failed=[_verdict("R2", "explanation_accuracy", False, "judge")]
-            )
+        return RunOutcome(
+            contract=contract,
+            status="PARTIAL",
+            failed=[_verdict("R2", "explanation_accuracy", False, "judge")],
+            rejected_codes={"https://a.example/x": "paywall", "https://a.example/y": "paywall"},
+            budget_stops=["N1: searches exhausted"],
+            audit_scores=[0.5, 0.7],
+            revisions=1,
         )
-        assert book.recall(contract) == []
-        other = contract.brief.model_copy(update={"archetype": "general"})
-        assert book.recall(Contract.freeze("c-3", other, contract.rubric, other.budget)) == []
+
+    def test_the_run_event_names_its_findings_scoped_to_its_kind(self) -> None:
+        settings = get_agent_settings().memory
+        sent: list[DreamEvent] = []
+        event = RunEventWriter(_Sink(sent), "ra", settings).record(self._outcome())
+        assert sent == [event] and event.kind == settings.run_event_kind
+        kinds = {(s.kind, s.value) for s in event.signals}
+        assert (settings.signals.criterion_failed, "criterion R2") in kinds
+        assert (settings.signals.source_rejected, "paywall") in kinds
+        assert (settings.signals.budget_stop, "searches exhausted") in kinds
+        assert all(s.scope == event.scope[0] for s in event.signals)
+
+    async def test_the_run_is_summarised_from_its_record(self) -> None:
+        settings = get_agent_settings().memory
+        event = RunEventWriter(_Sink([]), "ra", settings).record(self._outcome())
+        summary = await research_memory_profile().episodic.summarize([event])
+        assert summary is not None
+        assert "PARTIAL" in summary.text and "0.50 → 0.70" in summary.text
+
+    def test_an_unusable_source_becomes_a_fact_about_its_domain(self) -> None:
+        settings = get_agent_settings().memory
+        event = RunEventWriter(_Sink([]), "ra", settings).record(self._outcome())
+        facts = research_memory_profile().semantic.facts(event.session_id, "", [event])
+        [source] = [f for f in facts if "a.example" in f.key]
+        assert source.role == "system_of_record" and "paywall" in source.value
 
 
-def test_lessons_are_dated_when_recalled(tmp_path: Path) -> None:
-    from research_agent.research.cards import lessons_card
+class _Sink:
+    def __init__(self, sent: list[DreamEvent]) -> None:
+        self._sent = sent
 
-    book = LessonBook(EpisodicStore(tmp_path), "ra", get_agent_settings().reflexion)
-    contract = _contract(_item("R2", "explanation_accuracy", "judge", False))
-    book.write(RunOutcome(contract=contract, budget_stops=["fetches"]))
-    later = Contract.freeze("c-9", contract.brief, contract.rubric, contract.brief.budget)
-    heading, sections = lessons_card(book.recall(later))
-    assert "1 lesson(s)" in heading
-    assert str(datetime.now(UTC).date()) in str(sections)
+    def emit(self, event: DreamEvent) -> None:
+        self._sent.append(event)
 
 
 class TestTheSearchHeadingNamesItsProvider:

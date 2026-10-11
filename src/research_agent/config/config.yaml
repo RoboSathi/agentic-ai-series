@@ -25,7 +25,6 @@ features:
     grounding: true                  # the answer is checked against what its tools returned; unsupported details are removed
   rubric: true                       # acceptance criteria; off = run with no contract items
   reflection: true                   # gap analysis + follow-up queries after each batch; the report revised against the audit
-  reflexion: true                    # lessons from earlier runs' audits, recalled at plan (needs memory.episodic)
   independent_audit: true               # independent audit of the delivered report
   citation_verification:             # verbatim-span rule + NLI claim support
     enabled: true
@@ -44,9 +43,10 @@ features:
     working: true
     episodic: true
     semantic: true
-    # Not composed (ra-0021): each role's own instructions are its skill, and a second
-    # copy as a skill only cost tokens on every call. The profile goes on the answerer.
-    procedural: false
+    # Learned skills only (ra-0023): what keeps failing across runs of one kind, once a
+    # curator approves it, is selected at plan for the next run of that kind. No role has an
+    # authored skill (ra-0021): each role's own instructions already are its procedure.
+    procedural: true
   # The platform's context window for the direct answer: working memory and earlier research,
   # ranked, fitted and health-checked. The reranker is a hosted cross-encoder: off by default.
   context:
@@ -239,6 +239,14 @@ durability:
 memory:
   files:
     root: src/research_agent/data/memory
+  dream:
+    # A run is this agent's unit of work: findings recur across runs, not sessions.
+    learned_skill:
+      unit: runs
+      lessons:
+        criterion_failed: "Earlier {scope} runs failed the criterion '{value}' ({count} {unit}). Plan nodes, queries and sources that satisfy it explicitly, and check it before writing."
+        source_rejected: "Earlier {scope} runs lost pages as '{value}' ({count} {unit}). Prefer queries and sources that avoid it."
+        budget_stop: "Earlier {scope} runs hit '{value}' before finishing ({count} {unit}). Plan fewer, broader nodes and spend the budget on the criteria first."
 
 security:
   prompt_injection:
@@ -611,21 +619,21 @@ research_agent:
     max_revisions: 2
     min_score_gain: 0.02
 
-  # Reflexion: what a run's critics found, kept in episodic memory as lessons, and recalled for
-  # the next run of the same kind on a topic sharing its words. Written in code from verdicts.
-  reflexion:
-    max_lessons: 5
-    recall_limit: 3
-    search_limit: 40
-    min_term_chars: 4
-    top_codes: 2
-    category: research_lesson
-    session: research-lessons
-    wording:
-      failed: "A {kind} run on '{topic}' failed '{criterion}': {detail}"
-      rejected: "On '{topic}', pages were rejected most often as {codes}; plan sources and queries that avoid it"
-      budget: "A run on '{topic}' hit its {limits} limit before it finished"
-      revised: "On '{topic}', {n} revision(s) against the audit raised its score from {first:.2f} to {last:.2f}"
+  # What a finished run leaves for the dream (ra-0023): one `run` event whose signals are what
+  # its critics found, scoped to the run's kind. `make dream ra` summarises it, remembers the
+  # sources it could not use, and proposes a skill once a finding recurs across runs.
+  memory:
+    run_event_kind: run
+    scope: "archetype:{archetype}"
+    signals:
+      criterion_failed: criterion_failed
+      source_rejected: source_rejected
+      budget_stop: budget_stop
+    summary: "A {kind} run on '{topic}' ended {status}; audit {scores}; {revisions} revision(s); failed: {failed}."
+    summary_none: none
+    source_fact_key: "source:{domain}"
+    source_fact_value: "pages rejected as {codes}"
+    source_fact_category: source_reliability
 
   synthesis:
     citation_pattern: '\[(E\d+)\]'
@@ -905,7 +913,6 @@ research_agent:
       content_defense: CONTENT DEFENCE
       reflect_gap_analysis: REFLECT
       revise: REVISE
-      lessons: LESSONS
       page_result: EXTRACT
       batch_summary: BATCH RESULT
       synthesize: SYNTHESIZE
@@ -1164,9 +1171,6 @@ research_agent:
       final.section.budget: Budget used
       final.section.cost: Model cost by role
       final.section.saved: Saved
-      lessons.heading: "{n} lesson(s) from earlier runs of this kind on a similar topic"
-      lessons.section: Recalled (used to avoid a past failure, never as evidence)
-      lessons.line: "{lesson} · run {run}, {when}"
       revise.heading: "Revision {n} of {max} · {findings} finding(s) · {changed} sentence(s) rewritten or added"
       revise.finding: "{id} · {criterion} — {reason}"
       revise.diff: "{kept} sentence(s) kept · {added} rewritten or added · {removed} removed"

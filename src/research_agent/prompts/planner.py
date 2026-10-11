@@ -41,8 +41,9 @@ Plan the research as a small DAG of sub-questions.
 - Every query costs one search from `max_searches`. Plan at most
   `max_searches` minus one queries in total, so one search stays in reserve
   for a follow-up. Do not name publishers or sites unless the brief does.
-- `lessons_from_past_runs` (when present) are what earlier runs on similar topics learned
-  from their audits. Use them to avoid repeating a failure; never cite them as evidence.
+- `skills_learned_from_past_runs` (when present) are skills a curator approved from what
+  earlier runs of this kind kept failing. Follow them to avoid repeating a failure; never
+  cite them as evidence.
 """
 
 REPAIR_INSTRUCTION = "Your previous plan was rejected for these reasons; fix every one:\n{problems}"
@@ -80,7 +81,7 @@ def rubric_view(contract: Contract) -> list[dict[str, Any]]:
 
 
 def build(
-    contract: Contract, max_nodes: int, max_queries: int, lessons: Sequence[str] = ()
+    contract: Contract, max_nodes: int, max_queries: int, learned_skills: Sequence[str] = ()
 ) -> RolePrompt:
     payload: dict[str, Any] = {
         "task": "plan",
@@ -90,8 +91,8 @@ def build(
         "max_queries_per_node": max_queries,
         "max_searches": contract.budget.max_searches,
     }
-    if lessons:
-        payload["lessons_from_past_runs"] = list(lessons)
+    if learned_skills:
+        payload["skills_learned_from_past_runs"] = list(learned_skills)
     return RolePrompt(
         role=ROLE, instructions=INSTRUCTIONS, payload=dated(payload, contract.frozen_at.date())
     )

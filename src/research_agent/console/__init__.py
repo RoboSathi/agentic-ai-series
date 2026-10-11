@@ -16,6 +16,7 @@ from agent_platform.config import FeatureSet, get_settings
 from agent_platform.durability.controls import run_actions
 from agent_platform.host import HostAction
 from agent_platform.logging import get_logger
+from agent_platform.memory import MemoryProfile
 from agent_platform.observability import StageReporter
 from research_agent.config import get_agent_settings
 from research_agent.console.commands import (
@@ -132,6 +133,12 @@ class ResearchHost:
 
     def stage_labels(self) -> Mapping[str, str]:
         return get_agent_settings().tui.stage_labels
+
+    def memory_profile(self) -> MemoryProfile:
+        """The default memory profile, reading research runs their own way (ra-0023)."""
+        from research_agent.memory import research_memory_profile
+
+        return research_memory_profile()
 
     # -- optional hooks -------------------------------------------------------------------
 

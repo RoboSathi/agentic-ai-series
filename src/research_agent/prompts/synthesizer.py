@@ -107,8 +107,8 @@ ledger only.
   name, or anything about entries, snippets, caveats or what the evidence covers.
 - Use exactly the section headings given, in order.
 - Do not write a Coverage & Limits, Known unknowns or Sources section.
-- `lessons_from_past_runs` (when present) are what earlier runs' audits found; use them to
-  avoid repeating a fault, never as evidence.
+- `skills_learned_from_past_runs` (when present) are skills a curator approved from what
+  earlier runs' audits kept finding; follow them to avoid repeating a fault, never as evidence.
 """
 
 # Appended to the drafting instructions when a report is drafted again after more research.
@@ -124,7 +124,7 @@ def build_revision(
     headings: list[str],
     previous: list[dict[str, str]],
     findings: list[dict[str, Any]],
-    lessons: Sequence[str] = (),
+    learned_skills: Sequence[str] = (),
 ) -> RolePrompt:
     """The revision: the report as it stands, what the audit found, and the ledger."""
     return RolePrompt(
@@ -138,7 +138,11 @@ def build_revision(
                 "sections": headings,
                 "previous_report": previous,
                 "findings": findings,
-                **({"lessons_from_past_runs": list(lessons)} if lessons else {}),
+                **(
+                    {"skills_learned_from_past_runs": list(learned_skills)}
+                    if learned_skills
+                    else {}
+                ),
             },
             contract.frozen_at.date(),
         ),

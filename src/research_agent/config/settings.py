@@ -293,20 +293,28 @@ class ReflectionSettings(BaseModel):
     min_score_gain: float = Field(ge=0.0, le=1.0)
 
 
-class ReflexionSettings(BaseModel):
-    """Lessons across runs (`reflexion/lessons.py`): how many, where kept, how recalled."""
+class RunSignalKinds(BaseModel):
+    """The signal kind each finding of a run is recorded under."""
 
-    max_lessons: int = Field(ge=1)
-    recall_limit: int = Field(ge=1)
-    # How many episodic matches to read before filtering to this run's kind.
-    search_limit: int = Field(ge=1)
-    min_term_chars: int = Field(ge=1)
-    # Rejection codes named in one lesson, most frequent first.
-    top_codes: int = Field(ge=1)
-    category: str
-    session: str
-    # Lesson templates by kind: failed, rejected, budget, revised.
-    wording: dict[str, str]
+    criterion_failed: str
+    source_rejected: str
+    budget_stop: str
+
+
+class ResearchMemorySettings(BaseModel):
+    """What a finished run leaves for the dream, and how this agent's dream reads it (ra-0023)."""
+
+    run_event_kind: str
+    # A run kind as a skill trigger: a skill learned from runs of one kind applies to that kind.
+    scope: str
+    signals: RunSignalKinds
+    # A run's episodic summary, and the word for "nothing" in it.
+    summary: str
+    summary_none: str
+    # A source that runs could not use, as a semantic fact.
+    source_fact_key: str
+    source_fact_value: str
+    source_fact_category: str
 
 
 class SynthesisSettings(BaseModel):
@@ -721,7 +729,7 @@ class ResearchAgentSettings(YamlBackedSettings):
     calls: CallSettings
     run_loop: RunLoopWords
     reflection: ReflectionSettings
-    reflexion: ReflexionSettings
+    memory: ResearchMemorySettings
     synthesis: SynthesisSettings
     audit: AuditSettings
     injection_model: InjectionModelSettings = Field(default_factory=InjectionModelSettings)

@@ -13,6 +13,8 @@ from pydantic import BaseModel, ConfigDict
 # Where a skill came from: a file in the repository, or a dream that
 # proposed it and a curator who approved it.
 SkillSource = Literal["authored", "learned"]
+AUTHORED: SkillSource = "authored"
+LEARNED: SkillSource = "learned"
 
 
 class SkillDocument(BaseModel):

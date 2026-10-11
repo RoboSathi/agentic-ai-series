@@ -142,18 +142,6 @@ def _caps(budget: Mapping[str, float]) -> str:
     )
 
 
-# -- lessons --------------------------------------------------------------------------------
-
-
-def lessons_card(facts: Sequence[Any]) -> Card:
-    """LESSONS: what earlier runs' audits found that this run's planner is told about."""
-    lines = [
-        say("lessons.line", lesson=f.value, run=f.metadata.get("run", ""), when=f.event_time.date())
-        for f in facts
-    ]
-    return say("lessons.heading", n=len(facts)), {say("lessons.section"): lines}
-
-
 # -- revise ---------------------------------------------------------------------------------
 
 

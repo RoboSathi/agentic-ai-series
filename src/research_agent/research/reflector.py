@@ -126,14 +126,14 @@ class Reflector:
         verdicts: list[CheckVerdict],
         tried: list[str],
         round_number: int,
-        lessons: Sequence[str] = (),
+        learned_skills: Sequence[str] = (),
     ) -> FollowUpProposal:
         """The model's follow-ups, what of them was kept and dropped, and the call that made them."""
         gaps = [v for v in verdicts if not v.passed]
         if self._caller is None or not gaps or self._max == 0:
             return FollowUpProposal()
         answer, call = await self._caller.call_traced(
-            self._prompt(ctx, gaps, tried, lessons), prompt.ReflectorAnswer
+            self._prompt(ctx, gaps, tried, learned_skills), prompt.ReflectorAnswer
         )
         accepted, rejected = _sorted(
             answer, {v.item_id for v in gaps}, set(tried), round_number, self._max
@@ -148,7 +148,7 @@ class Reflector:
         verdicts: list[CheckVerdict],
         tried: list[str],
         round_number: int,
-        lessons: Sequence[str] = (),
+        learned_skills: Sequence[str] = (),
     ) -> FollowUpProposal:
         """Before the run stops: do the claims answer the question? If not, follow-ups for it.
 
@@ -161,7 +161,7 @@ class Reflector:
         claims = [entry.claim for entry in ctx.ledger.entries]
         checks = [{"item_id": v.item_id, "passed": v.passed, "detail": v.detail} for v in verdicts]
         answer, call = await self._caller.call_traced(
-            prompt.build_critique(ctx.contract, checks, tried, claims, self._max, lessons),
+            prompt.build_critique(ctx.contract, checks, tried, claims, self._max, learned_skills),
             prompt.CritiqueAnswer,
         )
         reasoning = answer.critique or answer.rationale
@@ -181,7 +181,7 @@ class Reflector:
         ctx: CheckContext,
         gaps: list[CheckVerdict],
         tried: list[str],
-        lessons: Sequence[str] = (),
+        learned_skills: Sequence[str] = (),
     ) -> RolePrompt:
         # `detail` says what is still needed; the evidence list is what was found for checks
         # that count sources, and what is missing for those that list absent pairs.
@@ -196,7 +196,7 @@ class Reflector:
             for v in gaps
         ]
         claims = [entry.claim for entry in ctx.ledger.entries]
-        return prompt.build(ctx.contract, payload_gaps, tried, claims, self._max, lessons)
+        return prompt.build(ctx.contract, payload_gaps, tried, claims, self._max, learned_skills)
 
 
 def _critique_targets(ctx: CheckContext, verdicts: list[CheckVerdict]) -> set[str]:

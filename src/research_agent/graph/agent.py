@@ -31,7 +31,7 @@ from agent_platform.durability import (
 )
 from agent_platform.durability.stop_report import stop_report
 from agent_platform.logging import get_logger
-from agent_platform.memory import MemoryFacade
+from agent_platform.memory import MemoryFacade, TurnRecorder
 from agent_platform.observability.langsmith import (
     NullTraceExporter,
     TraceExporter,
@@ -107,6 +107,7 @@ class ResearchAgent:
         screen: InputScreen | None = None,
         refusal: RefusalRule | None = None,
         trace_exporter: TraceExporter | None = None,
+        dream_recorder: TurnRecorder | None = None,
     ) -> None:
         self._scoping = scoping
         # The person's own message, screened before any layer reads it (None: no screen declared).
@@ -126,6 +127,8 @@ class ResearchAgent:
         self._refusal = refusal
         # Where each turn's trace is exported (LangSmith), if anywhere.
         self._trace_exporter = trace_exporter or NullTraceExporter()
+        # Each turn's dream event, for `make dream ra` (None: no memory declared).
+        self._dream_recorder = dream_recorder
         self._sessions: dict[str, SessionRecord] = {}
         self._active: RunResources | None = None
         # The run thread in flight: what Stop pauses through the durable runner.
@@ -153,6 +156,7 @@ class ResearchAgent:
             inputs={"query": query},
         ) as trace:
             result = await self._summarised(query, session_id)
+            self._record_turn(query, session_id, result)
             trace.annotate({"phase": result.phase, "run_id": result.run_id})
             trace.finish({"response": result.response, "phase": result.phase})
             return result
@@ -537,6 +541,13 @@ class ResearchAgent:
             run_id=record.run_thread, status=status, topic=record.last_question
         )
         self._remember_turn(session_id, record.last_question, note)
+
+    def _record_turn(self, query: str, session_id: str, result: TurnResult) -> None:
+        """Leave the turn in the dream inbox; the agent's own work has no subject."""
+        if self._dream_recorder is not None:
+            self._dream_recorder.record(
+                session_id=session_id, subject_id="", asked=query, answered=result.response
+            )
 
     def _remember_turn(self, session_id: str, said: str, replied: str) -> None:
         """One exchange into the session's working memory (when the agent keeps one)."""

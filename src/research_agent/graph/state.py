@@ -83,8 +83,8 @@ class RunState(TypedDict, total=False):
     audit_scores: list[float]
     # The model that wrote the report in hand (a backup counts as itself).
     writer_model: str
-    # Earlier runs' lessons recalled at plan (Reflexion), as the prompts carry them.
-    lessons: list[str]
+    # Skills learned from earlier runs of this kind, selected at plan, as the prompts carry them.
+    learned_skills: list[str]
     status: RunStatus | None
     stop_reason: str
     toggles: dict[str, bool]

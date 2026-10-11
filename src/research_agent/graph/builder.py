@@ -62,7 +62,14 @@ from agent_platform.llm.observer import ModelCallObserver
 from agent_platform.llm.roles import RoleModelRouter
 from agent_platform.logging import get_logger
 from agent_platform.loop_control import BudgetGuard
-from agent_platform.memory import EpisodicStore, MemoryFacade, SemanticStore, WorkingMemoryStore
+from agent_platform.memory import (
+    EpisodicStore,
+    FileDreamInbox,
+    MemoryFacade,
+    SemanticStore,
+    TurnRecorder,
+    WorkingMemoryStore,
+)
 from agent_platform.memory.procedural.skills import build_agent_instructions
 from agent_platform.memory.procedural.store import SkillStore
 from agent_platform.observability import StageReporter, checks
@@ -109,10 +116,10 @@ from research_agent.guardrails.input_screen import InputScreen
 from research_agent.guardrails.page_evidence import PageEvidence
 from research_agent.guardrails.refusal import RefusalRule
 from research_agent.llm.structured import RoleClients, StructuredCaller
+from research_agent.memory import RunEventWriter
 from research_agent.observability.telemetry import RunTelemetry
 from research_agent.planning.planner import Planner
 from research_agent.prompts import extractor as extractor_prompt
-from research_agent.reflexion import LessonBook
 from research_agent.research.defenses import OutboundGuard
 from research_agent.research.extractor import QuarantinedExtractor, UnquarantinedReader
 from research_agent.research.recency import RecencyGuard
@@ -172,7 +179,7 @@ def build_agent(
     )
     roles = clients or role_clients(observer)
     _require_independent_judge(roles, posture, agent)
-    # Authored skills only (ra-0021): synced at start-up, selected by role.
+    # Learned skills only (ra-0023): synced at start-up, chosen at plan by the run's kind.
     procedural = SkillStore() if posture.is_on("memory.procedural") else None
     caller = StructuredCaller(
         roles,
@@ -197,9 +204,11 @@ def build_agent(
     answerer = _direct_answerer(agent, posture, caller, telemetry, ledger, gateway, memory, archive)
     saver = checkpointer or create_checkpointer(state_types=model_types(StateTypes))
     registry = RunRegistry(platform)
-    lessons = _lesson_book(agent, posture, memory, settings.agent.id)
+    # Dream events (ADR 0011): every turn, and every finished run, for `make dream ra`.
+    inbox = FileDreamInbox() if posture.is_on("memory") else None
+    run_events = RunEventWriter(inbox, settings.agent.id, agent.memory) if inbox else None
     run_nodes = RunNodes(
-        _run_parts(agent, posture, caller, roles, archive, entailment, observer.flush, lessons)
+        _run_parts(agent, posture, caller, roles, archive, entailment, observer.flush, run_events)
     )
     return ResearchAgent(
         scoping=DurableGraphRunner(
@@ -225,6 +234,15 @@ def build_agent(
         refusal=RefusalRule(agent.scoping.refuse_patterns),
         # Exported traces are always PII-redacted, whatever the `pii` feature says.
         trace_exporter=build_trace_exporter(settings.agent.id, lambda: PIIFilterImpl().redact),
+        dream_recorder=(
+            TurnRecorder(
+                inbox,
+                settings.agent.id,
+                redact=PIIFilterImpl().redact if posture.is_on("pii") else None,
+            )
+            if inbox is not None
+            else None
+        ),
     )
 
 
@@ -511,7 +529,7 @@ def _run_parts(
     archive: ResearchArchive,
     entailment: EntailmentModel | None,
     flush_context: Callable[[], None] | None = None,
-    lessons: LessonBook | None = None,
+    run_events: RunEventWriter | None = None,
 ) -> RunParts:
     registry = build_registry()
     nli = _entailment(agent, posture, entailment)
@@ -564,18 +582,11 @@ def _run_parts(
         max_revisions=agent.reflection.max_revisions,
         min_score_gain=agent.reflection.min_score_gain,
         judge_models=judge.models_used,
-        lessons=lessons,
+        # Learned skills only when procedural memory is composed (ra-0023).
+        skills=caller.instructions if posture.is_on("memory.procedural") else None,
+        skill_scope=agent.memory.scope,
+        run_events=run_events,
     )
-
-
-def _lesson_book(
-    agent: ResearchAgentSettings, posture: FeatureSet, memory: MemoryFacade | None, agent_id: str
-) -> LessonBook | None:
-    """Reflexion's lessons, kept in episodic memory: built only where both are declared."""
-    episodic = memory.episodic if memory is not None else None
-    if not posture.is_on("reflexion") or episodic is None:
-        return None
-    return LessonBook(episodic, agent_id, agent.reflexion)
 
 
 def _citation_guard(
@@ -754,7 +765,7 @@ def _memory(
     episodic: EpisodicStore | None,
     procedural: SkillStore | None,
 ) -> MemoryFacade | None:
-    """Every CoALA class as declared. Procedural holds authored skills only (ra-0021)."""
+    """Every CoALA class as declared. Procedural holds learned skills only (ra-0021, ra-0023)."""
     if not posture.is_on("memory"):
         return None
     return MemoryFacade(
