@@ -3,7 +3,7 @@
 A skill is YAML frontmatter (what it is for, when it applies) over a
 markdown body (what to do). Both files are checked for the sections the
 configuration requires, and anything malformed fails the build: an agent
-quietly running without the procedure its author wrote is worse than an
+quietly running without the skill its author wrote is worse than an
 agent that will not start.
 """
 
@@ -16,7 +16,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from agent_platform.config.settings import SkillSettings
-from agent_platform.skills.types import AgentProfile, SkillDocument
+from agent_platform.memory.procedural.skills.types import AgentProfile, SkillDocument
 
 
 class SkillDocumentError(ValueError):
@@ -62,7 +62,7 @@ def load_skill_documents(settings: SkillSettings) -> list[SkillDocument]:
 
 
 def parse_stored(text: str, key: str, settings: SkillSettings) -> SkillDocument:
-    """A procedure read back from memory: an authored skill, or a lesson.
+    """A skill read back from memory: an authored skill, or a lesson.
 
     A consolidated lesson is one sentence with no frontmatter. It has no
     triggers, so only a query that names its subject selects it.

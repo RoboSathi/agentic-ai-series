@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from agent_platform.memory.episodic.memory import EpisodicStore
 from agent_platform.memory.events import DreamInbox, InboxCounts
 from agent_platform.memory.governance import CuratorQueue
-from agent_platform.memory.procedural.memory import ProceduralStore
+from agent_platform.memory.procedural.store import SkillStore
 from agent_platform.memory.semantic.memory import SemanticStore
 from agent_platform.memory.types import MemoryFact, WriteResult
 from agent_platform.memory.write_pipeline import store_type
@@ -37,7 +37,7 @@ class MemorySnapshot(BaseModel):
     # subject → session → events, newest first.
     episodic: dict[str, dict[str, list[MemoryFact]]] = Field(default_factory=dict)
     semantic: dict[str, list[MemoryFact]] = Field(default_factory=dict)
-    procedures: list[MemoryFact] = Field(default_factory=list)
+    skills: list[MemoryFact] = Field(default_factory=list)
     curator: list[tuple[int, WriteResult]] = Field(default_factory=list)
     inbox: InboxCounts = Field(default_factory=InboxCounts)
 
@@ -48,7 +48,7 @@ class MemorySnapshot(BaseModel):
         facts = sum(len(items) for items in self.semantic.values())
         return (
             f"{_count(sessions, 'session')} · {_count(facts, 'fact')} · "
-            f"{_count(len(self.procedures), 'procedure')} · "
+            f"{_count(len(self.skills), 'skill')} · "
             f"{len(self.curator)} awaiting curator · {self.inbox.unconsolidated} to dream"
         )
 
@@ -66,7 +66,7 @@ def take_snapshot(
         db_path=store.db_path,
         episodic=_episodic(EpisodicStore(episodic_root), keep),
         semantic=_semantic(SemanticStore(store), keep),
-        procedures=_procedures(ProceduralStore(store), keep),
+        skills=_skills(SkillStore(store), keep),
         curator=[
             (queue_id, result)
             for queue_id, result in CuratorQueue(store).pending()
@@ -81,10 +81,10 @@ def snapshot_tree(snapshot: MemorySnapshot, events_per_session: int, preview: in
     root = TreeNode(f"Memory · {snapshot.agent_id} · {snapshot.db_path}")
     _episodic_branch(root, snapshot, events_per_session, preview)
     _semantic_branch(root, snapshot, preview)
-    procedures = root.add(f"Procedural — {len(snapshot.procedures)} active")
-    for fact in snapshot.procedures:
-        procedures.add(f"{fact.key}  v{fact.version}: {_cut(fact.value, preview)}")
-    _empty(procedures)
+    skills = root.add(f"Procedural — {len(snapshot.skills)} active")
+    for fact in snapshot.skills:
+        skills.add(f"{fact.key}  v{fact.version}: {_cut(fact.value, preview)}")
+    _empty(skills)
     curator = root.add(f"Curator queue — {len(snapshot.curator)} pending")
     for queue_id, result in snapshot.curator:
         curator.add(f"#{queue_id}  {_candidate(result, preview)}  ({result.reason})")
@@ -133,9 +133,9 @@ def _episodic(episodic: EpisodicStore, keep: _Filter) -> dict[str, dict[str, lis
     return dict(grouped)
 
 
-def _procedures(procedures: ProceduralStore, keep: _Filter) -> list[MemoryFact]:
-    """The active version of every procedure (agent-wide, so no subject filter)."""
-    active = [procedures.get(name) for name in procedures.names()]
+def _skills(skills: SkillStore, keep: _Filter) -> list[MemoryFact]:
+    """The active version of every skill (agent-wide, so no subject filter)."""
+    active = [skills.get(name) for name in skills.names()]
     return [fact for fact in active if fact is not None and keep.fact(fact)]
 
 

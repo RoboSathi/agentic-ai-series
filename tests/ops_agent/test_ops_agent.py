@@ -13,12 +13,12 @@ from tests.ops_agent.conftest import COUNT_SQL, Harness, query_call
 ANSWER = "There were 2 allows and 1 deny."
 
 
-# The model's own query, as distinct from the procedure's prefetch reads.
+# The model's own query, as distinct from the skill's prefetch reads.
 _QUERY = "tool = 'analytics.run_query'"
 
 
 def _tool_decisions() -> str:
-    """Audit rows for tool calls — not the procedures each turn records (ADR 0010)."""
+    """Audit rows for tool calls — not the skills each turn records (ADR 0010)."""
     audit = get_settings().skills.audit
     return f"FROM platform_audit_entries WHERE action NOT IN ('{audit.sync_action}', '{audit.activation_action}')"
 
@@ -62,7 +62,7 @@ async def test_each_call_is_authorized_audited_and_recorded(harness: Any) -> Non
         "SELECT action, decision, json_extract_string(authority_context, '$.standing') "
         + _tool_decisions()
     )
-    # The procedure's two prefetch reads are governed and audited like the model's own call.
+    # The skill's two prefetch reads are governed and audited like the model's own call.
     assert standings == [
         ("analytics.list_metrics", "allow", "VALID"),
         ("analytics.list_views", "allow", "VALID"),

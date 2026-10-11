@@ -150,22 +150,22 @@ class OpsNodes:
         self._calls.begin_turn()
 
     def can_prefetch(self, name: str) -> bool:
-        """Whether a procedure's read can run before the model: known, read-only, no arguments."""
+        """Whether a skill's read can run before the model: known, read-only, no arguments."""
         tool = self._registry.get(name)
         return tool is not None and not tool.side_effecting and not _required(tool)
 
     async def prefetch(
         self, planned: list[tuple[str, str]], session_id: str
     ) -> tuple[list[Message], list[str]]:
-        """A procedure's first reads, run before the model is asked: the messages, and what ran.
+        """A skill's first reads, run before the model is asked: the messages, and what ran.
 
         Each is shown and governed like a model's call, and handed to the model as one, so it
-        starts where the procedure's first steps end. A read that needs arguments, or would
+        starts where the skill's first steps end. A read that needs arguments, or would
         change something, is skipped.
         """
         messages: list[Message] = []
         ran: list[str] = []
-        for procedure, name in planned:
+        for skill, name in planned:
             tool = self._registry.get(name)
             if tool is None or not self.can_prefetch(name):
                 continue
@@ -174,7 +174,7 @@ class OpsNodes:
                 name=tool.model_name,
                 arguments=_NO_ARGUMENTS,
             )
-            self._steps.tool_request(call.name, call.arguments, prefetched_for=procedure)
+            self._steps.tool_request(call.name, call.arguments, prefetched_for=skill)
             outcome = await self._calls.run(call, session_id, on_decision=self._decided)
             self._report_call(call.name, outcome)
             messages += [

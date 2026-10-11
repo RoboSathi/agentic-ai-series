@@ -106,16 +106,16 @@ llm:
     local:
       intent_text: "I want a refund for my order"
 
-# The profile and the procedures (ADR 0010): synced into procedural memory
+# The profile and the skills (ADR 0010): synced into procedural memory
 # at start-up when memory.procedural is on, selected per turn by intent.
 skills:
   profile_path: src/customer_support_agent/prompts/AGENT.md
   skills_dir: src/customer_support_agent/prompts/skills
-  # An unplaced turn (route llm_fallback) gets the order-status procedure only, so it
+  # An unplaced turn (route llm_fallback) gets the order-status skill only, so it
   # is offered reads: a write needs a request the router recognised as one.
   selection:
     max_active: 3
-  # Profile + the three largest procedures may add at most this to a prompt (the old
+  # Profile + the three largest skills may add at most this to a prompt (the old
   # instructions were 3,167).
   max_prompt_chars: 2600
 
@@ -124,7 +124,7 @@ memory:
     path: logs/memory/customer_support_agent
   dream:
     # How this agent words a refused tool call (graph/nodes/execute.py);
-    # refusals repeated across sessions become procedure candidates.
+    # refusals repeated across sessions become skill candidates.
     refusal_markers: ["That action was not permitted:"]
     # This agent's read-only tools: a dream summary says "looked up
     # orders …" for these and quotes only the calls that changed something.
@@ -728,7 +728,7 @@ customer_support_agent:
   support_contact: *support_contact
   # A refund a reviewer declined is final; this is how the customer escalates it.
   refund_declined_escalation: "To escalate, email {contact}."
-  # A procedure's prefetch reads (ADR 0010): each tool argument, from the turn-state key that
+  # A skill's prefetch reads (ADR 0010): each tool argument, from the turn-state key that
   # holds it; a read whose required arguments are not all known is skipped, never guessed.
   # `call_id` names the tool call the model is shown, so its result pairs with it.
   prefetch:
@@ -740,7 +740,7 @@ customer_support_agent:
     # answered is not offered again, and a tool whose only job is to find the order
     # is not offered once the order is known.
     needless_when_order_known: [list_orders]
-  # Which turn facts become procedure signals (ADR 0010): a state metadata
+  # Which turn facts become skill signals (ADR 0010): a state metadata
   # key, and how its value is written as a signal a SKILL.md trigger names.
   instruction_signals:
     intent: "intent:{value}"

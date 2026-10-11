@@ -10,7 +10,7 @@ keeping:
     "query: …" lines;
   * **customer facts** (semantic) the pattern tier recognises, reconciled
     against what is already believed (mem0's ADD / UPDATE / NOOP);
-  * **procedure candidates** from refusals that recur across sessions,
+  * **skill candidates** from refusals that recur across sessions,
     which governance sends to a curator rather than activating.
 
 Every write goes through the governed pipeline via the facade, redacted
@@ -22,13 +22,13 @@ from datetime import timedelta
 
 from agent_platform.config.settings import DreamSettings
 from agent_platform.logging import get_logger, instrument
-from agent_platform.memory.consolidation.procedures import ProcedureCandidate, recurring_refusals
 from agent_platform.memory.consolidation.report import (
     DreamEntry,
     DreamReport,
     ReconcileOp,
     plural,
 )
+from agent_platform.memory.consolidation.skills import SkillCandidate, recurring_refusals
 from agent_platform.memory.consolidation.summaries import SessionSummarizer
 from agent_platform.memory.deterministic import DeterministicClaims
 from agent_platform.memory.episodic.memory import EpisodicStore
@@ -38,7 +38,7 @@ from agent_platform.memory.inspect import SUMMARY_CATEGORY
 from agent_platform.memory.types import MemoryCommand, MemoryPrincipal, WriteResult
 from agent_platform.observability.types import utc_now
 
-_PROCEDURE_CATEGORY = "how_to"
+_SKILL_CATEGORY = "how_to"
 _SUMMARY_KEY = "session_summary"
 
 
@@ -75,7 +75,7 @@ class ConsolidationService:
         for session, events in sessions.items():
             await self._consolidate_session(session, events, report)
             self._inbox.mark_consolidated([event.event_id for event in events], started)
-        self._propose_procedures(sessions, report)
+        self._propose_skills(sessions, report)
         report.pruned = self._inbox.prune(started - timedelta(days=self._settings.retention_days))
         return report
 
@@ -185,18 +185,16 @@ class ConsolidationService:
             if result.fact is not None
         }
 
-    def _propose_procedures(
-        self, sessions: dict[str, list[MemoryEvent]], report: DreamReport
-    ) -> None:
-        """Recurring refusals become procedure candidates, handed to governance."""
+    def _propose_skills(self, sessions: dict[str, list[MemoryEvent]], report: DreamReport) -> None:
+        """Recurring refusals become skill candidates, handed to governance."""
         pending = {
             result.fact.key for _, result in self._memory.pipeline.pending_with_ids() if result.fact
         }
         for candidate in recurring_refusals(
             sessions,
             self._settings.refusal_markers,
-            self._settings.procedure_threshold,
-            self._settings.procedure_key_chars,
+            self._settings.skill_threshold,
+            self._settings.skill_key_chars,
         ):
             if candidate.key in pending:
                 report.add(
@@ -207,21 +205,21 @@ class ConsolidationService:
                     )
                 )
                 continue
-            result = self._memory.submit(self._procedure_command(candidate))
+            result = self._memory.submit(self._skill_command(candidate))
             report.add(
                 DreamEntry(
                     store="Procedural", op=_op(result), label=f'candidate "{candidate.value}"'
                 )
             )
 
-    def _procedure_command(self, candidate: ProcedureCandidate) -> MemoryCommand:
+    def _skill_command(self, candidate: SkillCandidate) -> MemoryCommand:
         return MemoryCommand(
             principal=self._principal(""),
             operation="create",
             memory_type="procedural",
             key=candidate.key,
             value=candidate.value,
-            category=_PROCEDURE_CATEGORY,
+            category=_SKILL_CATEGORY,
             reason=f"refused in {candidate.sessions} sessions",
         )
 

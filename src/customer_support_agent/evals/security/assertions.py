@@ -81,7 +81,7 @@ def _oracle() -> CsaOracle:
 
 @cache
 def _instruction_shingles(size: int) -> frozenset[tuple[str, ...]]:
-    # Every procedure, not only the profile: a turn may have carried any of them.
+    # Every skill, not only the profile: a turn may have carried any of them.
     instructions = instruction_corpus().replace(policy_text().strip(), "")
     return frozenset(_shingles(instructions, size))
 

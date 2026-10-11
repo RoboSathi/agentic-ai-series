@@ -1,4 +1,4 @@
-"""The support agent's profile and procedures, end to end (ADR 0010).
+"""The support agent's profile and skills, end to end (ADR 0010).
 
 Built by the real composition root against the seeded database with its deployed policy;
 only the model is scripted, so these assert what the model was actually sent, how many
@@ -89,7 +89,7 @@ async def _refund_turn(
         pool=pool,
         audit=audit,
         features=_features(procedural),
-        reporter=StageReporter(feed, run_id="csa-procedures"),
+        reporter=StageReporter(feed, run_id="csa-skills"),
     )
     state = await agent.handle(query)
     assert llm.requests, "the scripted model was never called"
@@ -104,7 +104,7 @@ def _activations(audit: DuckDbAuditLedger) -> list[AuditEntry]:
 
 
 class TestARefundTurn:
-    async def test_the_procedure_saves_the_model_its_reading_rounds(
+    async def test_the_skill_saves_the_model_its_reading_rounds(
         self, seeded_pool: SqliteConnectionPool, audit: DuckDbAuditLedger
     ) -> None:
         """Two model calls — request the refund, then reply — not four."""
@@ -133,16 +133,16 @@ class TestARefundTurn:
         assert requested == ["process_refund"]
         assert "10001" in served[0].fields["output"]
 
-    async def test_it_carries_the_profile_and_the_refund_procedure(
+    async def test_it_carries_the_profile_and_the_refund_skill(
         self, seeded_pool: SqliteConnectionPool, audit: DuckDbAuditLedger
     ) -> None:
         system = (await _refund_turn(seeded_pool, audit, procedural=True)).system()
         assert system.startswith("# Customer Support Agent")
-        assert "# Procedure: refund-workflow" in system
+        assert "# Skill: refund-workflow" in system
         assert "full total, whatever it is" in system
         assert "## Preconditions" not in system  # the people's sections are not sent
 
-    async def test_one_procedure_card_says_what_ran_and_why(
+    async def test_one_skill_card_says_what_ran_and_why(
         self, seeded_pool: SqliteConnectionPool, audit: DuckDbAuditLedger
     ) -> None:
         turn = await _refund_turn(seeded_pool, audit, procedural=True)
@@ -150,8 +150,8 @@ class TestARefundTurn:
         [card] = turn.stage(stage)
         assert card.summary is not None
         assert card.summary.startswith("refund-workflow v1 · chosen for intent REQUEST_REFUND")
-        assert "harness reads first: get_order_status, get_refund_status" in card.summary
-        assert card.summary.endswith("model may call: process_refund")
+        assert card.fields["harness_reads_first"] == ["get_order_status", "get_refund_status"]
+        assert card.summary.endswith("Offered Tools: process_refund")
         prefetched = [
             e
             for e in [*turn.stage("tool_request"), *turn.stage("tool_result")]
@@ -167,7 +167,7 @@ class TestARefundTurn:
     ) -> None:
         await _refund_turn(seeded_pool, audit, procedural=True)
         [entry] = _activations(audit)
-        assert entry.authority_context["procedures"] == ["refund-workflow@1"]
+        assert entry.authority_context["skills"] == ["refund-workflow@1"]
         assert entry.authority_context["profile"].startswith("profile@")
 
 
@@ -175,7 +175,7 @@ class TestTheCardTellsTheTruth:
     async def test_it_comes_before_any_read_it_explains(
         self, seeded_pool: SqliteConnectionPool, audit: DuckDbAuditLedger
     ) -> None:
-        """No tool call appears without the procedure that asked for it, drawn first."""
+        """No tool call appears without the skill that asked for it, drawn first."""
         turn = await _refund_turn(seeded_pool, audit, procedural=True)
         stage = get_settings().skills.observability.activation_stage
         order = [e.stage for e in turn.events if e.status != "started"]
@@ -197,12 +197,12 @@ class TestAnUnplacedTurn:
 
     _UNPLACED = "something is not right, can you look into it"
 
-    async def test_it_gets_the_order_status_procedure_only(
+    async def test_it_gets_the_order_status_skill_only(
         self, seeded_pool: SqliteConnectionPool, audit: DuckDbAuditLedger
     ) -> None:
         turn = await _refund_turn(seeded_pool, audit, procedural=True, query=self._UNPLACED)
         assert turn.route == "llm_fallback"
-        names = [p["procedure"].split(" v")[0] for p in turn.card().fields["procedures"]]
+        names = [p["skill"].split(" v")[0] for p in turn.card().fields["skills"]]
         assert names == ["order-status"]
 
     async def test_it_is_offered_reads_and_the_card_says_so(
@@ -220,14 +220,14 @@ class TestWithoutProceduralMemory:
     ) -> None:
         turn = await _refund_turn(seeded_pool, audit, procedural=False)
         assert turn.system().startswith("# Customer Support Agent")
-        assert "# Procedure:" not in turn.system()
+        assert "# Skill:" not in turn.system()
         assert _activations(audit) == []
         assert not [e for e in turn.stage("tool_request") if e.fields.get("prefetched_for")]
 
 
 def test_no_intent_prompt_outgrows_the_old_instructions() -> None:
-    """Profile + the largest procedures that fit one turn stay under the old prompt's 3,167."""
-    from agent_platform.skills import load_profile, load_skill_documents
+    """Profile + the largest skills that fit one turn stay under the old prompt's 3,167."""
+    from agent_platform.memory.procedural.skills import load_profile, load_skill_documents
 
     settings = get_settings().skills
     sizes = sorted((len(d.prompt) for d in load_skill_documents(settings)), reverse=True)

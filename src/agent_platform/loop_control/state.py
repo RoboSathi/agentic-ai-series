@@ -21,7 +21,7 @@ from agent_platform.loop_control.types import (
 
 _LEGAL: dict[LoopPhase, frozenset[LoopPhase]] = {
     "IDLE": frozenset({"PLANNING", "DONE", "FAILED"}),
-    # A procedure's prefetch reads run before the first model call: PLANNING → WAITING_TOOL.
+    # A skill's prefetch reads run before the first model call: PLANNING → WAITING_TOOL.
     "PLANNING": frozenset({"ACTING", "WAITING_TOOL", "WAITING_HUMAN", "DONE", "FAILED"}),
     "ACTING": frozenset({"WAITING_TOOL", "PLANNING", "DONE", "FAILED"}),
     "WAITING_TOOL": frozenset({"ACTING", "PLANNING", "DONE", "FAILED"}),

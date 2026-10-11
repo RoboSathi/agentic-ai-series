@@ -2,8 +2,8 @@
 
 Platform-owned and agent-agnostic: the host hands it the agent's skill
 catalog and, when the agent has one, its curator queue. Listing shows the
-active procedures and the lessons a dream proposed; `approve` is the only
-way a proposed lesson becomes a procedure, and it goes through the same
+active skills and the lessons a dream proposed; `approve` is the only
+way a proposed lesson becomes a skill, and it goes through the same
 governed approval every other curated memory does.
 """
 
@@ -13,10 +13,10 @@ from typing import Protocol, runtime_checkable
 from agent_platform.commands.types import CommandError, CommandResult
 from agent_platform.config import get_settings
 from agent_platform.config.settings import SkillsCommandWords
+from agent_platform.memory.procedural.skills.catalog import SkillCatalog
+from agent_platform.memory.procedural.skills.types import Skill
 from agent_platform.memory.types import MemoryPrincipal, WriteResult
 from agent_platform.memory.write_pipeline import store_type
-from agent_platform.skills.catalog import SkillCatalog
-from agent_platform.skills.types import Skill
 
 _LIST = "list"
 _SHOW = "show"
@@ -35,7 +35,7 @@ class CuratorPipeline(Protocol):
 
 
 class SkillsCommand:
-    """List, show, history and approve over the agent's procedures."""
+    """List, show, history and approve over the agent's skills."""
 
     name = "skills"
 
@@ -95,7 +95,7 @@ class SkillsCommand:
         curator = self._curator()
         if curator is None:
             return []
-        return [(i, entry) for i, entry in curator.pending_with_ids() if _is_procedure(entry)]
+        return [(i, entry) for i, entry in curator.pending_with_ids() if _is_skill(entry)]
 
     def _show(self, catalog: SkillCatalog, name: str) -> CommandResult:
         skill = catalog.show(name)
@@ -125,7 +125,7 @@ class SkillsCommand:
             raise CommandError(self._words.needs_id.format(usage=self.usage))
         queue_id = int(args[0])
         if queue_id not in dict(self._pending()):
-            raise CommandError(self._words.not_a_procedure.format(id=queue_id))
+            raise CommandError(self._words.not_a_skill.format(id=queue_id))
         principal = MemoryPrincipal(actor=self._words.curator_actor, role="curator")
         return self._approved(curator.approve_queued(queue_id, principal))
 
@@ -141,7 +141,7 @@ class SkillsCommand:
         return self._words.active if value else self._words.inactive
 
 
-def _is_procedure(entry: WriteResult) -> bool:
+def _is_skill(entry: WriteResult) -> bool:
     return entry.fact is not None and store_type(entry.fact.category) == _PROCEDURAL
 
 

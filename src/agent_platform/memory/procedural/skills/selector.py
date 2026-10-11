@@ -1,6 +1,6 @@
-"""Choosing one turn's procedures, deterministically (ADR 0010).
+"""Choosing one turn's skills, deterministically (ADR 0010).
 
-No model call decides which procedure a prompt carries. A skill declared
+No model call decides which skill a prompt carries. A skill declared
 `always` joins every turn; a skill whose trigger matches one of the
 turn's signals joins it; and only when no trigger matched does the query
 itself select, by BM25 over each skill's description and keywords. A
@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from agent_platform.config.settings import SkillSettings
 from agent_platform.context.retrieval import LexicalRetriever
 from agent_platform.context.types import Chunk
-from agent_platform.skills.types import ActivatedSkill, Skill
+from agent_platform.memory.procedural.skills.types import ActivatedSkill, Skill
 
 # A signal is `kind:value`; its reason reads "chosen for intent REQUEST_REFUND".
 _SIGNAL_SEPARATOR = ":"
@@ -30,7 +30,7 @@ class SkillSelector:
     def select(
         self, skills: Sequence[Skill], signals: frozenset[str], query: str
     ) -> tuple[ActivatedSkill, ...]:
-        """The procedures this turn's prompt carries, each with its reason."""
+        """The skills this turn's prompt carries, each with its reason."""
         declared = [chosen for skill in skills if (chosen := self._declared(skill, signals))]
         if not any(chosen.reason != self._reasons.always for chosen in declared):
             taken = {chosen.skill.name for chosen in declared}

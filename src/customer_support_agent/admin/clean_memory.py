@@ -1,6 +1,6 @@
 """`make clean-memory`: empty this agent's long-term memory.
 
-Episodic logs, semantic facts, procedures, the curator queue and the dream
+Episodic logs, semantic facts, skills, the curator queue and the dream
 inbox. Checkpoints stay, so paused runs can resume; orders, refunds,
 reviews, audit, policy and the knowledge index are not memory.
 """

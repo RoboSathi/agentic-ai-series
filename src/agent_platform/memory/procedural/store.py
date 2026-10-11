@@ -8,7 +8,7 @@ from agent_platform.observability.types import utc_now
 from agent_platform.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS platform_procedures (
+CREATE TABLE IF NOT EXISTS platform_skills (
     agent_id      TEXT NOT NULL,
     name          TEXT NOT NULL,
     version       INTEGER NOT NULL,
@@ -21,13 +21,13 @@ CREATE TABLE IF NOT EXISTS platform_procedures (
     recorded_at   TEXT NOT NULL,
     PRIMARY KEY (agent_id, name, version)
 );
-CREATE INDEX IF NOT EXISTS idx_platform_procedures_active
-    ON platform_procedures (agent_id, name, active);
+CREATE INDEX IF NOT EXISTS idx_platform_skills_active
+    ON platform_skills (agent_id, name, active);
 """
 
 
-class ProceduralStore:
-    """Versioned procedures, with exactly one active version per agent/name."""
+class SkillStore:
+    """Versioned skills, with exactly one active version per agent/name."""
 
     def __init__(
         self,
@@ -47,14 +47,14 @@ class ProceduralStore:
 
     @logged("memory")
     def write(self, fact: MemoryFact, provenance: Provenance) -> WriteResult:
-        """Record a new version of a procedure and make it the active one."""
+        """Record a new version of a skill and make it the active one."""
         version = self.latest_version(fact.key) + 1
         self._store.execute(
-            "UPDATE platform_procedures SET active = 0 WHERE agent_id = ? AND name = ?",
+            "UPDATE platform_skills SET active = 0 WHERE agent_id = ? AND name = ?",
             (self._agent_id, fact.key),
         )
         self._store.execute(
-            "INSERT INTO platform_procedures "
+            "INSERT INTO platform_skills "
             "(agent_id, name, version, body, artifact_type, source, provenance, rationale, active, recorded_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
             (
@@ -81,11 +81,11 @@ class ProceduralStore:
         )
 
     def read(self, query: MemoryQuery) -> list[MemoryFact]:
-        """Active procedures matching the query."""
+        """Active skills matching the query."""
         if query.key:
             found = self.get(query.key)
             return [found] if found else []
-        sql = "SELECT * FROM platform_procedures WHERE agent_id = ? AND active = 1"
+        sql = "SELECT * FROM platform_skills WHERE agent_id = ? AND active = 1"
         params: list[Any] = [self._agent_id]
         if query.text:
             sql += " AND (name LIKE ? OR body LIKE ?)"
@@ -93,25 +93,25 @@ class ProceduralStore:
         return [_to_fact(row) for row in self._store.iter_rows(sql, tuple(params))][: query.limit]
 
     def get(self, name: str, version: int | None = None) -> MemoryFact | None:
-        """The active version of a procedure, or a specific historical one."""
+        """The active version of a skill, or a specific historical one."""
         if version is None:
             row = self._store.query_one(
-                "SELECT * FROM platform_procedures WHERE agent_id = ? AND name = ? AND active = 1",
+                "SELECT * FROM platform_skills WHERE agent_id = ? AND name = ? AND active = 1",
                 (self._agent_id, name),
             )
         else:
             row = self._store.query_one(
-                "SELECT * FROM platform_procedures WHERE agent_id = ? AND name = ? AND version = ?",
+                "SELECT * FROM platform_skills WHERE agent_id = ? AND name = ? AND version = ?",
                 (self._agent_id, name, version),
             )
         return _to_fact(row) if row else None
 
     def history(self, name: str) -> list[MemoryFact]:
-        """Every version of a procedure, newest first."""
+        """Every version of a skill, newest first."""
         return [
             _to_fact(row)
             for row in self._store.iter_rows(
-                "SELECT * FROM platform_procedures WHERE agent_id = ? AND name = ? "
+                "SELECT * FROM platform_skills WHERE agent_id = ? AND name = ? "
                 "ORDER BY version DESC",
                 (self._agent_id, name),
             )
@@ -121,37 +121,36 @@ class ProceduralStore:
         """Reactivate an earlier version — the point of keeping them all."""
         target = self.get(name, version)
         if target is None:
-            self._logger.warning("Rollback target not found", procedure=name, version=version)
+            self._logger.warning("Rollback target not found", skill=name, version=version)
             return None
         self._store.execute(
-            "UPDATE platform_procedures SET active = 0 WHERE agent_id = ? AND name = ?",
+            "UPDATE platform_skills SET active = 0 WHERE agent_id = ? AND name = ?",
             (self._agent_id, name),
         )
         self._store.execute(
-            "UPDATE platform_procedures SET active = 1 "
-            "WHERE agent_id = ? AND name = ? AND version = ?",
+            "UPDATE platform_skills SET active = 1 WHERE agent_id = ? AND name = ? AND version = ?",
             (self._agent_id, name, version),
         )
-        self._logger.info("Rolled back procedure", procedure=name, version=version)
+        self._logger.info("Rolled back skill", skill=name, version=version)
         return target
 
     def retire(self, name: str) -> int:
-        """Deactivate every version of a procedure, keeping its history.
+        """Deactivate every version of a skill, keeping its history.
 
-        A procedure whose authored source was removed must stop being
+        A skill whose authored source was removed must stop being
         selectable without losing the record of what it used to say.
         """
         result = self._store.execute(
-            "UPDATE platform_procedures SET active = 0 WHERE agent_id = ? AND name = ?",
+            "UPDATE platform_skills SET active = 0 WHERE agent_id = ? AND name = ?",
             (self._agent_id, name),
         )
-        self._logger.info("Retired procedure", procedure=name, versions=result.affected)
+        self._logger.info("Retired skill", skill=name, versions=result.affected)
         return result.affected
 
     def latest_version(self, name: str) -> int:
-        """Highest version number recorded for a procedure (0 if none)."""
+        """Highest version number recorded for a skill (0 if none)."""
         row = self._store.query_one(
-            "SELECT MAX(version) AS v FROM platform_procedures WHERE agent_id = ? AND name = ?",
+            "SELECT MAX(version) AS v FROM platform_skills WHERE agent_id = ? AND name = ?",
             (self._agent_id, name),
         )
         return int(row["v"]) if row and row["v"] is not None else 0
@@ -164,35 +163,35 @@ class ProceduralStore:
         principal — the same standing as rebuilding the database.
         """
         result = self._store.execute(
-            "DELETE FROM platform_procedures WHERE agent_id = ?", (self._agent_id,)
+            "DELETE FROM platform_skills WHERE agent_id = ?", (self._agent_id,)
         )
         return result.affected
 
     def names(self) -> list[str]:
-        """Every procedure with at least one version."""
+        """Every skill with at least one version."""
         return [
             str(row["name"])
             for row in self._store.iter_rows(
-                "SELECT DISTINCT name FROM platform_procedures WHERE agent_id = ? ORDER BY name",
+                "SELECT DISTINCT name FROM platform_skills WHERE agent_id = ? ORDER BY name",
                 (self._agent_id,),
             )
         ]
 
     def _migrate_legacy_table(self) -> None:
-        """Copy legacy single-agent procedures into the scoped table."""
-        if not self._table_exists("procedures"):
+        """Copy legacy single-agent skills into the scoped table."""
+        if not self._table_exists("skills"):
             return
-        columns = self._table_columns("procedures")
+        columns = self._table_columns("skills")
         if "agent_id" in columns:
             rows = self._store.iter_rows(
                 "SELECT agent_id, name, version, body, artifact_type, source, provenance, rationale, active, recorded_at "
-                "FROM procedures WHERE agent_id = ?",
+                "FROM skills WHERE agent_id = ?",
                 (self._agent_id,),
             )
         else:
             rows = self._store.iter_rows(
                 "SELECT name, version, body, artifact_type, source, provenance, rationale, active, recorded_at "
-                "FROM procedures"
+                "FROM skills"
             )
         for row in rows:
             values = (
@@ -208,7 +207,7 @@ class ProceduralStore:
                 row["recorded_at"],
             )
             self._store.execute(
-                "INSERT OR IGNORE INTO platform_procedures "
+                "INSERT OR IGNORE INTO platform_skills "
                 "(agent_id, name, version, body, artifact_type, source, provenance, rationale, active, recorded_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 values,
@@ -226,7 +225,7 @@ class ProceduralStore:
 
 
 def _to_fact(row: dict[str, Any]) -> MemoryFact:
-    """Rehydrate a stored procedure row."""
+    """Rehydrate a stored skill row."""
     return MemoryFact(
         key=row["name"],
         value=row["body"],

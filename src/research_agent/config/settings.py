@@ -688,10 +688,10 @@ class RunLoopWords(BaseModel):
 
 
 class InstructionSettings(BaseModel):
-    """Which roles carry the profile and their procedures (ADR 0010, ra-0021)."""
+    """Which roles carry the profile and their skills (ADR 0010, ra-0021)."""
 
     profile_roles: list[str]
-    # How a role is written as a procedure signal (`role:{role}`).
+    # How a role is written as a skill signal (`role:{role}`).
     role_signal: str
 
 

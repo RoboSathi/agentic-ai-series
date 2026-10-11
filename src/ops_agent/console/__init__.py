@@ -6,8 +6,8 @@ from typing import Any
 from agent_platform.commands.skills import SkillsCommand
 from agent_platform.commands.types import Command
 from agent_platform.config import FeatureSet
+from agent_platform.memory.procedural.skills import SkillCatalog
 from agent_platform.observability import StageReporter
-from agent_platform.skills import SkillCatalog
 from ops_agent.config import get_agent_settings
 
 
@@ -33,7 +33,7 @@ class OpsHost:
         return self._agent
 
     def commands(self) -> list[Command]:
-        """`/skills` over this agent's procedures; it has no curator queue to approve from."""
+        """`/skills` over this agent's skills; it has no curator queue to approve from."""
         return [SkillsCommand(self._catalog, lambda: None)]
 
     def _catalog(self) -> SkillCatalog | None:

@@ -13,7 +13,7 @@ queue, which is worth fixing on its own terms.
 
 What used to be one page of instructions here is now two kinds of file
 (ADR 0010): the profile, `AGENT.md`, which every turn carries, and the
-procedures under `skills/`, of which a turn carries only the ones its
+skills under `skills/`, of which a turn carries only the ones its
 intent selects. This module adds the refund policy and owns the prompts
 for the final, customer-facing turn.
 """
@@ -22,8 +22,8 @@ from collections.abc import Sequence
 
 from agent_platform.config import get_settings
 from agent_platform.llm.prompt import POLICY, PromptPart
+from agent_platform.memory.procedural.skills import load_skill_documents, render_profile
 from agent_platform.primitives.money import Money
-from agent_platform.skills import load_skill_documents, render_profile
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.prompts.policy import policy_text
 
@@ -97,9 +97,9 @@ def build_system_prompt(instructions: str | None = None, refund_limit: Money | N
     """The working system prompt: the turn's instructions, the refund policy, the limit.
 
     `instructions` is what `AgentInstructions.compose` rendered for this
-    turn — the profile plus the procedures its intent selected. Without
+    turn — the profile plus the skills its intent selected. Without
     it (a screen, a leak check, evidence for the grounding check) the
-    prompt carries the profile alone: per-turn procedures are not the
+    prompt carries the profile alone: per-turn skills are not the
     rules a reply is judged against.
 
     The policy file carries its own `# Refund Policy` heading, so this
@@ -132,11 +132,11 @@ def refund_limit_notice(refund_limit: Money | None) -> str:
 def instruction_corpus() -> str:
     """Every instruction this agent could send a model, whatever a turn selects.
 
-    The profile, every authored procedure, the policy and the reply
+    The profile, every authored skill, the policy and the reply
     prompts: what a leak check compares output against, and what must
     never contain the refund limit.
     """
-    procedures = [document.body for document in load_skill_documents(get_settings().skills)]
+    skills = [document.body for document in load_skill_documents(get_settings().skills)]
     return "\n\n".join(
-        [build_system_prompt(), *procedures, build_reply_system_prompt(), build_reply_instruction()]
+        [build_system_prompt(), *skills, build_reply_system_prompt(), build_reply_instruction()]
     )

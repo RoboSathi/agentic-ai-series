@@ -1,8 +1,8 @@
 """The research agent's profile (ADR 0010, ra-0021).
 
 The profile goes on the direct answer only. Every run role's own
-instructions already are its procedure, so a role call carries no profile
-and no procedure — a second copy cost tokens on every call.
+instructions already are its skill, so a role call carries no profile
+and no skill — a second copy cost tokens on every call.
 """
 
 import pytest
@@ -10,8 +10,8 @@ import pytest
 from agent_platform.config import get_settings
 from agent_platform.guardrails.guards import PydanticValidator
 from agent_platform.llm.types import Message
+from agent_platform.memory.procedural.skills import build_agent_instructions
 from agent_platform.persistence import SqliteConnectionPool
-from agent_platform.skills import build_agent_instructions
 from research_agent.config import get_agent_settings
 from research_agent.llm.structured import StructuredCaller
 from research_agent.prompts.base import RolePrompt, role_of

@@ -63,7 +63,8 @@ from agent_platform.llm.roles import RoleModelRouter
 from agent_platform.logging import get_logger
 from agent_platform.loop_control import BudgetGuard
 from agent_platform.memory import EpisodicStore, MemoryFacade, SemanticStore, WorkingMemoryStore
-from agent_platform.memory.procedural.memory import ProceduralStore
+from agent_platform.memory.procedural.skills import build_agent_instructions
+from agent_platform.memory.procedural.store import SkillStore
 from agent_platform.observability import StageReporter, checks
 from agent_platform.observability.facts import create_fact_store, install_fact_store
 from agent_platform.observability.langsmith import build_trace_exporter
@@ -83,7 +84,6 @@ from agent_platform.security import (
 from agent_platform.security.pii import PIIFilterImpl
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
 from agent_platform.security.prompt_injection.hosted import HostedJailbreakGuard
-from agent_platform.skills import build_agent_instructions
 from agent_platform.tools.path import ToolPath
 from agent_platform.web import WebGateway, create_web_gateway
 from research_agent.archive.store import ResearchArchive
@@ -172,8 +172,8 @@ def build_agent(
     )
     roles = clients or role_clients(observer)
     _require_independent_judge(roles, posture, agent)
-    # Authored procedures only (ra-0021): synced at start-up, selected by role.
-    procedural = ProceduralStore(platform) if posture.is_on("memory.procedural") else None
+    # Authored skills only (ra-0021): synced at start-up, selected by role.
+    procedural = SkillStore(platform) if posture.is_on("memory.procedural") else None
     caller = StructuredCaller(
         roles,
         PydanticValidator(),
@@ -752,7 +752,7 @@ def _memory(
     audit: AuditLedger,
     reporter: StageReporter | None,
     episodic: EpisodicStore | None,
-    procedural: ProceduralStore | None,
+    procedural: SkillStore | None,
 ) -> MemoryFacade | None:
     """Every CoALA class as declared. Procedural holds authored skills only (ra-0021)."""
     if not posture.is_on("memory"):

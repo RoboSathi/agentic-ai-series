@@ -23,7 +23,7 @@ skills/
 ## Using it from a composition root
 
 ```python
-procedural = ProceduralStore(platform) if features.is_on("memory.procedural") else None
+procedural = SkillStore(platform) if features.is_on("memory.procedural") else None
 instructions = build_agent_instructions(
     settings.skills, store=procedural, audit=ledger, reporter=reporter
 )

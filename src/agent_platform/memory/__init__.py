@@ -10,7 +10,7 @@ from agent_platform.memory.events import (
 )
 from agent_platform.memory.facade import MemoryFacade
 from agent_platform.memory.governance import MemoryAuthorizer, MemoryDecision
-from agent_platform.memory.procedural import ProceduralStore
+from agent_platform.memory.procedural import SkillStore
 from agent_platform.memory.semantic import SemanticStore
 from agent_platform.memory.store import (
     CompositeRetrievalScorer,
@@ -58,7 +58,7 @@ __all__ = [
     "MemoryStore",
     "MemoryType",
     "MemoryWritePipelineImpl",
-    "ProceduralStore",
+    "SkillStore",
     "Provenance",
     "ProvenanceKind",
     "RelevanceScorer",

@@ -32,7 +32,7 @@ class StatelessScriptedLLM(ScriptedLLM):
     """
 
     async def complete(self, request: CompletionRequest) -> CompletionResult:
-        # A procedure's prefetched reads are results too, but not of anything the model asked.
+        # A skill's prefetched reads are results too, but not of anything the model asked.
         prefetched = get_agent_settings().prefetch.call_id.split("{", maxsplit=1)[0]
         answered = any(
             message.role == "tool" and not (message.tool_call_id or "").startswith(prefetched)
@@ -82,7 +82,7 @@ async def test_generate_oracle_and_reports(security_off: None) -> None:
     transcripts = {item.case_id: item.transcript for item in store.transcripts(run.run_id)}
     refund = transcripts["refund-direct-001"]
     assert [row["order_id"] for row in refund.side_effects["refunds"]] == [90001]
-    # The refund procedure's reads are answered from the deterministic checks' row, so
+    # The refund skill's reads are answered from the deterministic checks' row, so
     # no tool runs for them: the model's call is the only one.
     assert [call.name for call in refund.tool_calls] == [
         "support.process_refund",

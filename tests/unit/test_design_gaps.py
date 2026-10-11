@@ -166,7 +166,7 @@ class TestPromptIsVersioned:
 
     The procedural-artifact tests that used to live here covered a
     versioned-prompt store the agent no longer writes (`build_system_prompt`
-    takes no store); they were removed with that feature. Procedures are
+    takes no store); they were removed with that feature. Skills are
     versioned in procedural memory now (ADR 0010), but the profile is read
     from its file, so the prompt still builds with no database.
     """

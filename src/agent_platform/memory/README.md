@@ -17,7 +17,7 @@ base. Every write is authorized, attributed and audited.
 ## Public interface
 
 - `MemoryFacade` — the governed long-term entry point (`facade.py`)
-- Stores: `WorkingMemoryStore`, `EpisodicStore`, `SemanticStore`, `ProceduralStore`
+- Stores: `WorkingMemoryStore`, `EpisodicStore`, `SemanticStore`, `SkillStore`
 - `MemoryWritePipelineImpl` (`write_pipeline.py`); governance: `MemoryCommand`, `MemoryPrincipal`, `MemoryAuthorizer` (`governance.py`)
 - RAG (`semantic/rag/`): chunking, index (sqlite-vec + FTS), fusion (RRF), retriever, knowledge-base context source
 - Deterministic recall tier (`deterministic/`); `DreamInbox` event sink (`events.py`)

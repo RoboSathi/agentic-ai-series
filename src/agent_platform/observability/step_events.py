@@ -137,10 +137,10 @@ class StepEvents:
     def tool_request(
         self, name: str, arguments: str, *, redact: Any = None, prefetched_for: str = ""
     ) -> None:
-        """TOOL REQUEST: every argument sent — by the model, or by a procedure's prefetch."""
+        """TOOL REQUEST: every argument sent — by the model, or by a skill's prefetch."""
         words, tool = self._words(), display_tool_name(name)
         heading = (
-            words.tool_prefetched.format(tool=tool, procedure=prefetched_for)
+            words.tool_prefetched.format(tool=tool, skill=prefetched_for)
             if prefetched_for
             else words.tool_requested.format(tool=tool)
         )
@@ -155,22 +155,22 @@ class StepEvents:
         arguments: str,
         output: str,
         *,
-        procedure: str,
+        skill: str,
         source: str,
         redact: Any = None,
     ) -> None:
         """TOOL RESULT for a prefetch read answered from a row an earlier stage already read.
 
         No tool ran, so there is no request, verdict or execution to draw: one card says
-        what the model is handed, for which procedure, and which stage's read it reuses.
+        what the model is handed, for which skill, and which stage's read it reuses.
         """
         heading = self._words().tool_served.format(
-            tool=display_tool_name(name), procedure=procedure, source=source
+            tool=display_tool_name(name), skill=skill, source=source
         )
         fields = tool_request_fields(name, arguments, redact)
         fields.update(
             {
-                "prefetched_for": procedure,
+                "prefetched_for": skill,
                 "served_from": source,
                 "output": redact(output) if redact is not None else output,
             }

@@ -1,7 +1,7 @@
 """The CONTEXT card: what a model is about to read, section by section, before it reads it.
 
 One card per model request, drawn just before it: the request's sections as a tree (the
-AGENT.md profile, the SKILL.md procedures, the policy, the context window broken into working
+AGENT.md profile, the SKILL.md skills, the policy, the context window broken into working
 memory, long-term memory and retrieved chunks, the transcript, this turn's tool loop), each
 with its tokens and share; the tool schemas; the stable prefix and its signature; the
 tokenizer that counted. Below the tree, every section's full text — nothing elided, so the

@@ -584,7 +584,7 @@ observability:
     aggregate_line: "{tokens} tokens · {share} of window · {model}"
     labels:
       profile: AGENT.md profile
-      procedures: SKILL.md procedures
+      skills: SKILL.md skills
       policy: Policy
       instructions: System prompt
       context_window: Context window
@@ -613,10 +613,10 @@ observability:
   # The cards every agent's tool-use loop draws, built once (`observability/step_events.py`).
   step_events:
     tool_requested: "Requested: {tool}"
-    # A read a procedure ran before the first model call (ADR 0010).
-    tool_prefetched: "Prefetched: {tool} · for {procedure}"
+    # A read a skill ran before the first model call (ADR 0010).
+    tool_prefetched: "Prefetched: {tool} · for {skill}"
     # A prefetch read answered from a row an earlier stage already read: no tool ran.
-    tool_served: "Prefetched: {tool} · for {procedure} · from {source}"
+    tool_served: "Prefetched: {tool} · for {skill} · from {source}"
     gatekeeper: "Gatekeeper: {verdict} · {standing}"
     # Shown at each point the loop decides whether to go round again.
     loop_control:
@@ -1109,7 +1109,7 @@ skills:
   frontmatter_delimiter: "---"
   # A level-two heading, the unit both files are checked for.
   section_pattern: "^## +(.+?)\\s*$"
-  # A numbered step inside a procedure ("1. …"), counted on its card.
+  # A numbered step inside a skill ("1. …"), counted on its card.
   step_pattern: "^\\s*\\d+\\."
   # A tool written as `namespace.name` or `namespace__name` in a profile or skill: refused,
   # because the model is offered model names only (`tools.model_names`).
@@ -1119,7 +1119,7 @@ skills:
   max_description_chars: 1024
   # The trigger a skill declares to be active on every turn.
   always_trigger: always
-  # The profile is identity and non-negotiables only; anything task-shaped is a procedure.
+  # The profile is identity and non-negotiables only; anything task-shaped is a skill.
   profile_sections: [Mission, Scope, Rules]
   skill_sections: [Preconditions, Procedure, Boundaries, Completion]
   # How an authored skill is stored; consolidated lessons keep the dream's
@@ -1129,16 +1129,16 @@ skills:
   selectable_artifact_types: [skill, how_to]
   digest_chars: 12
   selection:
-    # At most this many procedures join one prompt.
+    # At most this many skills join one prompt.
     max_active: 2
     # Raw BM25 units over description + keywords. Below it a query has not
-    # named the task, and no procedure beats no procedure.
+    # named the task, and no skill is better than a wrong one.
     min_lexical_score: 1.0
-  # The most the profile plus the largest `max_active` procedures may add to a prompt;
+  # The most the profile plus the largest `max_active` skills may add to a prompt;
   # 0 leaves it unchecked. Each agent sets its own, at or below its old instructions.
   max_prompt_chars: 0
   render:
-    procedure_heading: "# Procedure: {name}"
+    skill_heading: "# Skill: {name}"
     reference_heading: "## Reference: {name}"
     separator: "\n\n"
     # What of a skill the model reads; the other sections are for the people who maintain it.
@@ -1153,19 +1153,19 @@ skills:
   observability:
     activation_stage: skill_activation
     sync_stage: skill_sync
-    # One procedure on the card: `{name}`, `{version}`, `{reason}`; its steps are listed below.
+    # One skill on the card: `{name}`, `{version}`, `{reason}`; its steps are listed below.
     activated: "{name} v{version} · {reason}"
     joiner: "; "
-    # Harness reads appear in the expanded Procedure card; the compact heading only shows
+    # Harness reads appear in the expanded Skill card; the compact heading only shows
     # tools the model may then call.
     offered: " · Offered Tools: {tools}"
     offered_none: " · Offered Tools: None"
-    synced: "Procedures synced · {added} added · {updated} updated · {retired} retired"
-    unchanged: "Procedures unchanged"
+    synced: "Skills synced · {added} added · {updated} updated · {retired} retired"
+    unchanged: "Skills unchanged"
   audit:
     actor: harness
-    activation_action: procedure_activation
-    sync_action: procedure_sync
+    activation_action: skill_activation
+    sync_action: skill_sync
 
 memory:
   schema_version: memory-schema-v1
@@ -1314,14 +1314,14 @@ memory:
   # `make dream`: consolidate the dream inbox into long-term memory.
   dream:
     retention_days: 30
-    procedure_threshold: 3
+    skill_threshold: 3
     summarize_intent: true
     actor: memory-dream
     outcome_chars: 120
     # What a refused tool call's result starts with. The wording is each
     # agent's own, so the platform names none.
     refusal_markers: []
-    procedure_key_chars: 80
+    skill_key_chars: 80
     forbidden_words: [he, him, his, himself, she, her, hers, herself]
     min_word_ratio: 0.8
     # Tool names are agent vocabulary; each agent lists its own lookups.
@@ -2168,19 +2168,19 @@ commands:
     summary: "Procedural memory: list, show, history, approve a queued lesson"
     usage: "/skills [list | show <name> | history <name> | approve <queue id>]"
     group: Agent
-    list_title: "Procedures — {n} active"
+    list_title: "Skills — {n} active"
     list_headers: [name, version, source, triggers, description]
     history_title: "{name} — {n} version(s)"
     history_headers: [version, active, source, recorded by]
     pending_title: "Awaiting a curator — {n}"
     pending_headers: [queue id, name, proposal]
-    empty: No procedures yet.
+    empty: No skills yet.
     no_catalog: "This agent has no procedural memory (memory.procedural is off)."
     no_curator: "This agent has no curator queue to approve from."
-    unknown: "No procedure '{name}'. {usage}"
-    needs_name: "/skills {action} needs a procedure name. {usage}"
+    unknown: "No skill '{name}'. {usage}"
+    needs_name: "/skills {action} needs a skill name. {usage}"
     needs_id: "/skills approve needs a queue id. {usage}"
-    not_a_procedure: "Queue entry {id} is not a procedure."
+    not_a_skill: "Queue entry {id} is not a skill."
     approved: "Approved {name}: version {version} is active."
     refused: "Not approved: {reason}"
     curator_actor: operator

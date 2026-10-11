@@ -2,7 +2,7 @@
 
 Real files in a temporary directory; nothing is mocked. A malformed
 file fails the build loudly — an agent that silently runs without the
-procedure its author wrote is the failure this guards against.
+skill its author wrote is the failure this guards against.
 """
 
 from pathlib import Path
@@ -11,7 +11,7 @@ import pytest
 
 from agent_platform.config import get_settings
 from agent_platform.config.settings import SkillSettings
-from agent_platform.skills import (
+from agent_platform.memory.procedural.skills import (
     SkillDocumentError,
     load_profile,
     load_skill_documents,
@@ -126,7 +126,7 @@ class TestAMalformedSkillIsRefused:
             load_skill_documents(settings)
 
 
-class TestAStoredProcedure:
+class TestAStoredSkill:
     def test_an_authored_one_parses_back(self, tmp_path: Path) -> None:
         _skill(tmp_path, "refund-flow", _VALID)
         [document] = load_skill_documents(_settings(tmp_path))

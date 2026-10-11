@@ -1,21 +1,22 @@
-"""The vocabulary of the profile and procedures in a prompt (ADR 0010).
+"""The vocabulary of the profile and skills in a prompt (ADR 0010).
 
-A *skill* is a procedure authored as a file. A *procedure* is a skill (or
-a curator-approved lesson) once it is a version in procedural memory. An
-*activation* is which procedures one turn's prompt carried, and why.
+A *skill* is how-to knowledge in procedural memory, held as versions. An
+*authored* skill is a SKILL.md in the repository; a *learned* skill is one
+a dream proposed and a curator approved. An *activation* is which skills
+one turn's prompt carried, and why.
 """
 
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-# Where a procedure came from: a file in the repository, or a lesson the
-# dream proposed and a curator approved.
-SkillSource = Literal["authored", "consolidated"]
+# Where a skill came from: a file in the repository, or a dream that
+# proposed it and a curator who approved it.
+SkillSource = Literal["authored", "learned"]
 
 
 class SkillDocument(BaseModel):
-    """One procedure's text, parsed: what it is for and what it says."""
+    """One skill's text, parsed: what it is for and what it says."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -24,21 +25,21 @@ class SkillDocument(BaseModel):
     triggers: tuple[str, ...] = ()
     keywords: tuple[str, ...] = ()
     # Read tools the harness runs before the first model call, and every tool the
-    # procedure uses (what a turn running it is offered), by model name.
+    # skill uses (what a turn running it is offered), by model name.
     prefetch: tuple[str, ...] = ()
     tools: tuple[str, ...] = ()
-    # The whole procedure without its frontmatter (what `/skills show` prints).
+    # The whole skill without its frontmatter (what `/skills show` prints).
     body: str
     # What the model reads: only the configured sections (`skills.render.sections_sent`).
     prompt: str = ""
-    # The procedure's numbered steps, one line each (what its card lists).
+    # The skill's numbered steps, one line each (what its card lists).
     steps: tuple[str, ...] = ()
     # What is stored and digested: the file as written, references included.
     raw: str
 
 
 class Skill(BaseModel):
-    """A procedure as procedural memory holds it: a document at a version."""
+    """A skill as procedural memory holds it: a document at a version."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -65,7 +66,7 @@ class AgentProfile(BaseModel):
 
 
 class ActivatedSkill(BaseModel):
-    """A procedure chosen for one turn, and the reason it was."""
+    """A skill chosen for one turn, and the reason it was."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -82,11 +83,11 @@ class Activation(BaseModel):
     skills: tuple[ActivatedSkill, ...] = ()
 
     def prefetch(self) -> list[str]:
-        """Every active procedure's prefetch tools, in order, each once."""
+        """Every active skill's prefetch tools, in order, each once."""
         return list(dict.fromkeys(t for item in self.skills for t in item.skill.document.prefetch))
 
     def tools(self) -> list[str]:
-        """Every tool the active procedures use, each once (empty: no narrowing)."""
+        """Every tool the active skills use, each once (empty: no narrowing)."""
         return list(dict.fromkeys(t for item in self.skills for t in item.skill.document.tools))
 
 

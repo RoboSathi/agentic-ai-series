@@ -1,13 +1,13 @@
-"""The agent profile and one turn's procedures, as the system prompt carries them.
+"""The agent profile and one turn's skills, as the system prompt carries them.
 
 `AgentInstructions` is the whole interface an agent sees. `select` picks this turn's
-procedures without a model call; an agent that runs a procedure's prefetch reads does so
-next; `announce` records the turn once (one PROCEDURE card and one audit entry, and nothing
-at all when no procedure was used); `render` writes the prompt text. `compose` does all three
+skills without a model call; an agent that runs a skill's prefetch reads does so
+next; `announce` records the turn once (one SKILL card and one audit entry, and nothing
+at all when no skill was used); `render` writes the prompt text. `compose` does all three
 for an agent with nothing to do in between.
 
-Procedures are synced at build time, and the build refuses what would slow or mislead the
-model: a profile and procedures longer than the agent's prompt budget, a procedure naming a
+Skills are synced at build time, and the build refuses what would slow or mislead the
+model: a profile and skills longer than the agent's prompt budget, a skill naming a
 tool the agent does not offer, or a prefetch of a tool with a side effect.
 """
 
@@ -17,19 +17,17 @@ from typing import Any, Protocol, runtime_checkable
 from agent_platform.audit.ledger import AuditLedger
 from agent_platform.audit.types import AuditEntry
 from agent_platform.config.settings import SkillSettings
-from agent_platform.llm.prompt import PROCEDURES, PROFILE, PromptPart
+from agent_platform.llm.prompt import PROFILE, SKILLS, PromptPart
 from agent_platform.logging import get_logger
 from agent_platform.logging.trace_context import get_current_trace_id
-from agent_platform.memory.procedural.memory import ProceduralStore
-from agent_platform.memory.write_pipeline import MemoryReporter
-from agent_platform.skills.catalog import SkillCatalog
-from agent_platform.skills.document import (
+from agent_platform.memory.procedural.skills.catalog import SkillCatalog
+from agent_platform.memory.procedural.skills.document import (
     SkillDocumentError,
     load_profile,
     load_skill_documents,
 )
-from agent_platform.skills.selector import SkillSelector
-from agent_platform.skills.types import (
+from agent_platform.memory.procedural.skills.selector import SkillSelector
+from agent_platform.memory.procedural.skills.types import (
     ActivatedSkill,
     Activation,
     AgentProfile,
@@ -37,12 +35,14 @@ from agent_platform.skills.types import (
     Skill,
     SkillSyncReport,
 )
+from agent_platform.memory.procedural.store import SkillStore
+from agent_platform.memory.write_pipeline import MemoryReporter
 from agent_platform.tools.registry import ToolRegistry
 
 
 @runtime_checkable
 class AgentInstructions(Protocol):
-    """What an agent's prompt builder asks of its profile and procedures."""
+    """What an agent's prompt builder asks of its profile and skills."""
 
     @property
     def catalog(self) -> SkillCatalog | None: ...
@@ -63,7 +63,7 @@ class AgentInstructions(Protocol):
 
 
 class InstructionBuilder:
-    """The agent profile plus selected procedures; the profile alone without a catalog."""
+    """The agent profile plus selected skills; the profile alone without a catalog."""
 
     def __init__(
         self,
@@ -90,24 +90,24 @@ class InstructionBuilder:
         return self._profile.text.strip()
 
     def select(self, signals: frozenset[str], query: str) -> Activation:
-        """This turn's procedures, chosen without a model call (none without a catalog)."""
+        """This turn's skills, chosen without a model call (none without a catalog)."""
         if self._catalog is None:
             return Activation(profile=self._profile)
         chosen = self._selector.select(self._catalog.active(), signals, query)
         return Activation(profile=self._profile, skills=chosen)
 
     def render(self, activation: Activation) -> str:
-        """The profile, then each procedure's sent sections under its heading."""
+        """The profile, then each skill's sent sections under its heading."""
         return self._settings.render.separator.join(part.text for part in self.parts(activation))
 
     def parts(self, activation: Activation) -> list[PromptPart]:
-        """The same text as `render`, one attributable part each: the profile, each procedure."""
+        """The same text as `render`, one attributable part each: the profile, each skill."""
         render = self._settings.render
         parts = [PromptPart(PROFILE, self.profile_section(), self._settings.profile_path)]
         for item in activation.skills:
-            heading = render.procedure_heading.format(name=item.skill.name)
+            heading = render.skill_heading.format(name=item.skill.name)
             text = render.separator.join([heading, item.skill.document.prompt])
-            parts.append(PromptPart(PROCEDURES, text, item.skill.ref(render.ref)))
+            parts.append(PromptPart(SKILLS, text, item.skill.ref(render.ref)))
         return parts
 
     def compose(self, signals: frozenset[str], query: str) -> Instructions:
@@ -119,7 +119,7 @@ class InstructionBuilder:
     def announce(
         self, activation: Activation, *, prefetched: Sequence[str] = (), offered: Sequence[str] = ()
     ) -> None:
-        """One PROCEDURE card and one audit entry per turn — and nothing when none was used."""
+        """One SKILL card and one audit entry per turn — and nothing when none was used."""
         if not activation.skills:
             return
         refs = tuple(item.skill.ref(self._settings.render.ref) for item in activation.skills)
@@ -135,7 +135,7 @@ class InstructionBuilder:
             return
         words = self._settings.observability
         summary = words.joiner.join(_line(item, words.activated) for item in activation.skills)
-        # Prefetch details belong in the expanded Procedure card, not its compact heading.
+        # Prefetch details belong in the expanded Skill card, not its compact heading.
         summary += words.offered.format(tools=", ".join(offered)) if offered else words.offered_none
         self._reporter.emit(
             words.activation_stage,
@@ -143,7 +143,7 @@ class InstructionBuilder:
             event_kind="memory",
             summary=summary,
             fields={
-                "procedures": [_card_fields(item) for item in activation.skills],
+                "skills": [_card_fields(item) for item in activation.skills],
                 # Drawn before any of them runs: what the harness reads before the model is
                 # asked, and what the model may then call (a read already made is not offered).
                 "harness_reads_first": prefetched,
@@ -163,7 +163,7 @@ class InstructionBuilder:
                 action=audit.activation_action,
                 authority_context={
                     "profile": render.profile_ref.format(digest=activation.profile.digest),
-                    "procedures": refs,
+                    "skills": refs,
                     "reasons": {
                         item.skill.ref(render.ref): item.reason for item in activation.skills
                     },
@@ -182,7 +182,7 @@ def _line(item: ActivatedSkill, template: str) -> str:
 def _card_fields(item: ActivatedSkill) -> dict[str, Any]:
     skill = item.skill
     return {
-        "procedure": f"{skill.name} v{skill.version}",
+        "skill": f"{skill.name} v{skill.version}",
         "chosen_because": item.reason,
         "steps": list(skill.document.steps),
     }
@@ -191,16 +191,16 @@ def _card_fields(item: ActivatedSkill) -> dict[str, Any]:
 def build_agent_instructions(
     settings: SkillSettings,
     *,
-    store: ProceduralStore | None,
+    store: SkillStore | None,
     audit: AuditLedger | None,
     reporter: MemoryReporter | None,
     tools: ToolRegistry | None = None,
 ) -> InstructionBuilder:
-    """The composition root's one call: the profile always, procedures if memory has them.
+    """The composition root's one call: the profile always, skills if memory has them.
 
     `store` is None when the agent's posture withholds procedural memory; the agent then
     runs on its profile alone, with nothing synced. `tools`, when the agent's tools are
-    known at build time, is what every procedure's `tools` and `prefetch` are checked
+    known at build time, is what every skill's `tools` and `prefetch` are checked
     against.
     """
     profile = load_profile(settings)
@@ -231,19 +231,19 @@ def _check_always(active: list[Skill], settings: SkillSettings) -> None:
 
 
 def _check_budget(profile: AgentProfile, active: list[Skill], settings: SkillSettings) -> None:
-    """The profile and the largest procedures that could join it must fit the budget."""
+    """The profile and the largest skills that could join it must fit the budget."""
     budget = settings.max_prompt_chars
     if not budget:
         return
     sizes = sorted((len(s.document.prompt) for s in active), reverse=True)
     worst = len(profile.text) + sum(sizes[: settings.selection.max_active])
     if worst > budget:
-        reason = f"profile and procedures reach {worst} chars, over max_prompt_chars {budget}"
+        reason = f"profile and skills reach {worst} chars, over max_prompt_chars {budget}"
         raise SkillDocumentError(settings.skills_dir, reason)
 
 
 def _check_tools(active: list[Skill], tools: ToolRegistry, settings: SkillSettings) -> None:
-    """Every tool a procedure names is offered by that name; a prefetch only reads."""
+    """Every tool a skill names is offered by that name; a prefetch only reads."""
     for skill in active:
         for name in (*skill.document.tools, *skill.document.prefetch):
             tool = tools.get(name)
@@ -261,7 +261,7 @@ def _show_sync(
     """A card when the sync changed something; one log line when it did not."""
     words = settings.observability
     if not report.changed:
-        get_logger("memory").info(words.unchanged, procedures=len(report.unchanged))
+        get_logger("memory").info(words.unchanged, skills=len(report.unchanged))
         return
     if reporter is None:
         return

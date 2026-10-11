@@ -44,7 +44,7 @@ from agent_platform.memory.governance import (
     memory_permission,
     provenance_for,
 )
-from agent_platform.memory.procedural.memory import ProceduralStore
+from agent_platform.memory.procedural.store import SkillStore
 from agent_platform.memory.semantic.memory import SemanticStore
 from agent_platform.memory.types import (
     MemoryCommand,
@@ -65,7 +65,7 @@ from agent_platform.persistence import PlatformStore, SqliteConnectionPool, as_p
 # are the two the pipeline can infer structurally, and everything else
 # falls through to semantic memory.
 _EVENT_CATEGORIES = frozenset({"event", "interaction", "observation", "session_summary"})
-_PROCEDURE_CATEGORIES = frozenset({"how_to", "recipe", "compiled_prompt"})
+_SKILL_CATEGORIES = frozenset({"how_to", "recipe", "compiled_prompt"})
 
 # The role a legacy `process(..., provenance_kind=...)` call acts as.
 _ROLE_FOR_PROVENANCE: dict[ProvenanceKind, PrincipalRole] = {
@@ -117,7 +117,7 @@ class MemoryWritePipelineImpl:
         self,
         semantic: SemanticStore | None = None,
         episodic: EpisodicStore | None = None,
-        procedural: ProceduralStore | None = None,
+        procedural: SkillStore | None = None,
         authorizer: WriteAuthorizer | None = None,
         platform_store: PlatformStore | SqliteConnectionPool | None = None,
         *,
@@ -630,7 +630,7 @@ class MemoryWritePipelineImpl:
     def _prior(self, fact: MemoryFact) -> MemoryFact | None:
         """The semantic fact an approval supersedes — none for other classes.
 
-        Only semantic facts supersede by key. A procedure is versioned by
+        Only semantic facts supersede by key. A skill is versioned by
         its own store, and looking it up in the semantic one retired
         whatever fact happened to share its name.
         """
@@ -644,7 +644,7 @@ class MemoryWritePipelineImpl:
 
     def _store_for(
         self, memory_type: MemoryType
-    ) -> SemanticStore | EpisodicStore | ProceduralStore | None:
+    ) -> SemanticStore | EpisodicStore | SkillStore | None:
         """The store a memory type belongs to, if this agent has it."""
         if memory_type == "episodic":
             return self._episodic
@@ -672,7 +672,7 @@ def store_type(category: str) -> MemoryType:
     """Which CoALA store a category belongs in."""
     if category in _EVENT_CATEGORIES:
         return "episodic"
-    if category in _PROCEDURE_CATEGORIES:
+    if category in _SKILL_CATEGORIES:
         return "procedural"
     return "semantic"
 

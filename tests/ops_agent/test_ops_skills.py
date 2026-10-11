@@ -1,4 +1,4 @@
-"""The ops agent's profile and its one procedure (ADR 0010)."""
+"""The ops agent's profile and its one skill (ADR 0010)."""
 
 from typing import Any
 
@@ -12,12 +12,12 @@ def _system(run: Harness) -> str:
     return str(run.llm.requests[0].messages[0].content)
 
 
-async def test_every_question_carries_the_profile_and_the_procedure(harness: Any) -> None:
+async def test_every_question_carries_the_profile_and_the_skill(harness: Any) -> None:
     run: Harness = harness([{"content": _ANSWER}])
     await run.agent.handle("how many denies were there?", "s1")
     system = _system(run)
     assert system.startswith("# Ops Analyst")
-    assert "# Procedure: analytics-investigation" in system
+    assert "# Skill: analytics-investigation" in system
 
 
 async def test_the_activation_is_audited(harness: Any) -> None:
@@ -25,7 +25,7 @@ async def test_the_activation_is_audited(harness: Any) -> None:
     await run.agent.handle("how many denies were there?", "s1")
     action = get_settings().skills.audit.activation_action
     rows = run.rows(
-        "SELECT json_extract_string(authority_context, '$.procedures[0]') "
+        "SELECT json_extract_string(authority_context, '$.skills[0]') "
         f"FROM platform_audit_entries WHERE action = '{action}'"
     )
     assert rows == [("analytics-investigation@1",)]
@@ -34,11 +34,11 @@ async def test_the_activation_is_audited(harness: Any) -> None:
 async def test_without_procedural_memory_only_the_profile(harness: Any) -> None:
     run: Harness = harness([{"content": _ANSWER}], features={"memory.procedural": False})
     await run.agent.handle("how many denies were there?", "s1")
-    assert "# Procedure:" not in _system(run)
+    assert "# Skill:" not in _system(run)
     assert run.agent.skill_catalog is None
 
 
-async def test_the_procedure_prefetches_the_catalogue_and_the_views(harness: Any) -> None:
+async def test_the_skill_prefetches_the_catalogue_and_the_views(harness: Any) -> None:
     """The model starts with what its first two calls used to fetch."""
     run: Harness = harness([{"content": _ANSWER}])
     await run.agent.handle("how many denies were there?", "s1")
@@ -49,7 +49,7 @@ async def test_the_procedure_prefetches_the_catalogue_and_the_views(harness: Any
     assert len(results) == 2 and all(result.content for result in results)
 
 
-async def test_the_procedure_card_names_what_was_prefetched(harness: Any) -> None:
+async def test_the_skill_card_names_what_was_prefetched(harness: Any) -> None:
     run: Harness = harness([{"content": _ANSWER}])
     events: list[Any] = []
     run.feed.subscribe(events.append)
@@ -57,7 +57,8 @@ async def test_the_procedure_card_names_what_was_prefetched(harness: Any) -> Non
     stage = get_settings().skills.observability.activation_stage
     [card] = [e for e in events if e.stage == stage]
     assert card.summary.startswith("analytics-investigation v1 · always used")
-    assert "harness reads first: list_metrics, list_views · model may call:" in card.summary
+    assert card.fields["harness_reads_first"] == ["list_metrics", "list_views"]
+    assert "Offered Tools: " in card.summary
 
 
 async def test_the_card_lists_exactly_the_tools_the_model_was_offered(harness: Any) -> None:

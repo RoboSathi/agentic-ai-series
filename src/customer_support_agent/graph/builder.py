@@ -57,7 +57,8 @@ from agent_platform.memory import (
 )
 from agent_platform.memory.consolidation import ConsolidationService, SessionSummarizer
 from agent_platform.memory.context_source import MemoryRecallContextSource
-from agent_platform.memory.procedural.memory import ProceduralStore
+from agent_platform.memory.procedural.skills import build_agent_instructions
+from agent_platform.memory.procedural.store import SkillStore
 from agent_platform.memory.semantic.rag import (
     KnowledgeBase,
     KnowledgeBaseContextSource,
@@ -85,7 +86,6 @@ from agent_platform.security import (
 from agent_platform.security.auth.memory_authorizer import PolicyMemoryAuthorizer
 from agent_platform.security.auth.policy import AgentPolicy, AgentPolicyRepository
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
-from agent_platform.skills import build_agent_instructions
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from agent_platform.verification import ReadBackVerifier
 from customer_support_agent.config import get_agent_settings
@@ -380,9 +380,9 @@ def build_agent(
     # and shown as a card. Redaction happens at the write, when PII is on.
     # Procedural memory: the agent's skills and the lessons a curator
     # approved. One store, shared by the facade (approvals land in it) and
-    # the instructions (each turn's procedures are read from it).
+    # the instructions (each turn's skills are read from it).
     procedural = (
-        ProceduralStore(platform_store)
+        SkillStore(platform_store)
         if memory_enabled and features.is_on("memory.procedural")
         else None
     )
@@ -565,7 +565,7 @@ def long_term_memory(
     semantic: bool,
     episodic: bool,
     redactor: PIIFilterImpl | None,
-    procedural: ProceduralStore | None = None,
+    procedural: SkillStore | None = None,
     policy: AgentPolicy,
     audit: AuditLedger,
     relevance: NollmScoringCascadeImpl,
@@ -667,7 +667,7 @@ def build_dream_service(
         episodic=True,
         # A proposed lesson is queued, not written; the store exists so a
         # curator's approval has somewhere to land.
-        procedural=ProceduralStore(platform_store) if procedural else None,
+        procedural=SkillStore(platform_store) if procedural else None,
         redactor=PIIFilterImpl(),
         policy=AgentPolicyRepository(platform_store).get(),
         audit=audit or create_audit_ledger(platform_store, agent_id=settings.agent.id),

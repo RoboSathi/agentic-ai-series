@@ -14,7 +14,7 @@ from pathlib import Path
 from agent_platform.memory.episodic.memory import EpisodicStore
 from agent_platform.memory.events import DreamInbox
 from agent_platform.memory.governance import CuratorQueue
-from agent_platform.memory.procedural.memory import ProceduralStore
+from agent_platform.memory.procedural.store import SkillStore
 from agent_platform.memory.semantic.memory import SemanticStore
 from agent_platform.persistence import PlatformStore
 
@@ -24,7 +24,7 @@ def clear_long_term_memory(store: PlatformStore, episodic_root: Path) -> dict[st
     return {
         "episodic session logs": EpisodicStore(episodic_root).purge(),
         "semantic facts": SemanticStore(store).purge(),
-        "procedures": ProceduralStore(store).purge(),
+        "skills": SkillStore(store).purge(),
         "curator queue entries": CuratorQueue(store).purge(),
         "dream inbox events": DreamInbox(store).purge(),
     }

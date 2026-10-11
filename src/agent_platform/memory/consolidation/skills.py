@@ -1,11 +1,11 @@
-"""Procedure candidates from refusals that keep recurring.
+"""Skill candidates from refusals that keep recurring.
 
 Generative Agents reflect once enough has accumulated; this is the same
 idea without a model. When the same tool is refused for the same reason
 in enough separate sessions, that is a lesson about how to handle such
-requests — and a candidate procedure. It is only ever a candidate: the
+requests — and a candidate skill. It is only ever a candidate: the
 dream proposes it as an agent, the agent holds no grant to create
-procedures, and governance queues it for a curator.
+skills, and governance queues it for a curator.
 """
 
 import re
@@ -24,8 +24,8 @@ _SPECIFIC = re.compile(r"\$?\d[\d,.:/-]*")
 _MASK = "N"
 
 
-class ProcedureCandidate(BaseModel):
-    """A recurring refusal, worded as the procedure it suggests."""
+class SkillCandidate(BaseModel):
+    """A recurring refusal, worded as the skill it suggests."""
 
     key: str
     value: str
@@ -36,7 +36,7 @@ class ProcedureCandidate(BaseModel):
 
 def recurring_refusals(
     sessions: dict[str, list[MemoryEvent]], markers: list[str], threshold: int, key_chars: int
-) -> list[ProcedureCandidate]:
+) -> list[SkillCandidate]:
     """Refusals of one tool for one reason seen in at least `threshold` sessions."""
     seen: dict[tuple[str, str], set[str]] = {}
     for session, events in sessions.items():
@@ -47,7 +47,7 @@ def recurring_refusals(
                     tool = tool_name(action.name)
                     seen.setdefault((tool, reason), set()).add(session)
     return [
-        ProcedureCandidate(
+        SkillCandidate(
             key=normalize_key(f"{tool} refused {reason}")[:key_chars],
             value=(
                 f"'{tool}' was refused in {len(where)} sessions because: {reason} "

@@ -38,6 +38,7 @@ from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
 from agent_platform.loop_control import LoopGovernor, LoopState, LoopVerdict
 from agent_platform.memory import MemoryFacade, WorkingMemoryStore
+from agent_platform.memory.procedural.skills import Activation, AgentInstructions
 from agent_platform.memory.semantic.rag import KNOWLEDGE_SOURCE_PREFIX, section_sentences
 from agent_platform.observability import (
     StageReporter,
@@ -52,7 +53,6 @@ from agent_platform.resilience import (
 )
 from agent_platform.security import MessageScreener, SecuritySuite
 from agent_platform.security.auth.policy import AgentPolicy
-from agent_platform.skills import Activation, AgentInstructions
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from agent_platform.tools.path import ToolPath
 from agent_platform.verification import EffectVerifier
@@ -96,7 +96,7 @@ from customer_support_agent.tools.definitions import SupportTools
 TOOL_COMPLETED = "completed"
 TOOL_REFERRED = "referred"
 TOOL_BLOCKED = "blocked"
-# The reads a procedure ran before the first model call (model names), for its card.
+# The reads a skill ran before the first model call (model names), for its card.
 PREFETCHED = "prefetched"
 # The tools this turn offers the model (qualified names), settled once before any read.
 TURN_OFFERED_TOOLS = "turn_offered_tools"
@@ -124,7 +124,7 @@ class NodeSupport:
     _working_memory: WorkingMemoryStore | None
     _long_term: MemoryFacade | None
     _context: FiveStagePipeline | None
-    # The profile, plus the procedures a turn's signals select (ADR 0010).
+    # The profile, plus the skills a turn's signals select (ADR 0010).
     _instructions: AgentInstructions
     _selector: ToolRetrievalSelector | None
     _cascade: NollmScoringCascadeImpl | None
@@ -214,7 +214,7 @@ class NodeSupport:
         raise NotImplementedError
 
     async def prefetch(self, state: AgentState) -> dict[str, Any]:
-        """Run the reads this turn's procedures declare come first."""
+        """Run the reads this turn's skills declare come first."""
         raise NotImplementedError
 
     async def propose(self, state: AgentState) -> dict[str, Any]:
@@ -294,8 +294,8 @@ class NodeSupport:
         history = self._working_memory.get(session_id).history
         return [Message(**item) if isinstance(item, dict) else item for item in history]
 
-    def _procedure_signals(self, state: AgentState) -> frozenset[str]:
-        """What this turn tells the procedure selector: its intent and its route.
+    def _skill_signals(self, state: AgentState) -> frozenset[str]:
+        """What this turn tells the skill selector: its intent and its route.
 
         Which metadata keys count, and how each is written, is configuration;
         a key the turn did not set contributes nothing.
@@ -308,17 +308,17 @@ class NodeSupport:
         )
 
     def _activation(self, state: AgentState) -> Activation:
-        """This turn's procedures — deterministic, so every stage that asks gets the same."""
+        """This turn's skills — deterministic, so every stage that asks gets the same."""
         return self._instructions.select(
-            self._procedure_signals(state), state.model_query or state.query
+            self._skill_signals(state), state.model_query or state.query
         )
 
-    def _procedure_tools(self, state: AgentState) -> set[str]:
-        """The tools this turn's procedures use, by internal name — on every path.
+    def _skill_tools(self, state: AgentState) -> set[str]:
+        """The tools this turn's skills use, by internal name — on every path.
 
-        An unplaced turn is narrowed too: the procedures chosen for it are its best guess
+        An unplaced turn is narrowed too: the skills chosen for it are its best guess
         at the task, and their tools are what that task needs. Empty — no narrowing — only
-        when no procedure is active (procedural memory withheld, or nothing matched).
+        when no skill is active (procedural memory withheld, or nothing matched).
         """
         names = self._activation(state).tools()
         return {tool.name for name in names if (tool := self._registry.get(name)) is not None}

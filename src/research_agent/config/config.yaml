@@ -44,7 +44,7 @@ features:
     working: true
     episodic: true
     semantic: true
-    # Not composed (ra-0021): each role's own instructions are its procedure, and a second
+    # Not composed (ra-0021): each role's own instructions are its skill, and a second
     # copy as a skill only cost tokens on every call. The profile goes on the answerer.
     procedural: false
   # The platform's context window for the direct answer: working memory and earlier research,
@@ -277,13 +277,13 @@ tools:
     answer.current_datetime: current_time
     answer.weather: weather
 
-# The profile and the procedures (ADR 0010, ra-0021).
+# The profile and the skills (ADR 0010, ra-0021).
 skills:
   profile_path: src/research_agent/prompts/AGENT.md
 
 research_agent:
   # Which roles are prompted with the agent profile, and how a role is written as a
-  # procedure signal. Only the direct answer: every run role's own instructions already say
+  # skill signal. Only the direct answer: every run role's own instructions already say
   # all it needs, and the profile on top only cost tokens on each call (ra-0021).
   instructions:
     profile_roles: [answerer]

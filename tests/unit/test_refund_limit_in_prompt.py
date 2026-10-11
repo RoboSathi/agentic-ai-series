@@ -2,7 +2,7 @@
 
 The prompt states the limit so that the model holds to it on a plain
 request — and so that a persuasive customer can be shown talking it past
-the rule while the Gatekeeper is off. Authored text (profile, procedures,
+the rule while the Gatekeeper is off. Authored text (profile, skills,
 policy file, reply prompts) still never carries an amount: the number has
 one source, the `platform_agent_budgets` row, and one sentence that renders it.
 """
@@ -12,10 +12,10 @@ from typing import Any
 
 from agent_platform.config import get_settings
 from agent_platform.hallucination_check.direct import amounts
-from agent_platform.memory import ProceduralStore
+from agent_platform.memory import SkillStore
+from agent_platform.memory.procedural.skills import build_agent_instructions
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.primitives.money import Money
-from agent_platform.skills import build_agent_instructions
 from customer_support_agent.graph.nodes.execute import ExecutionNodes
 from customer_support_agent.prompts.system_prompt import build_system_prompt, instruction_corpus
 
@@ -26,13 +26,13 @@ _REASON = (
 
 
 def test_no_instruction_states_an_amount() -> None:
-    """The profile, every procedure, the policy and the reply prompts."""
+    """The profile, every skill, the policy and the reply prompts."""
     assert amounts(instruction_corpus()) == set()
 
 
 def test_a_refund_turn_states_the_db_limit_and_only_it(pool: SqliteConnectionPool) -> None:
     instructions = build_agent_instructions(
-        get_settings().skills, store=ProceduralStore(pool), audit=None, reporter=None
+        get_settings().skills, store=SkillStore(pool), audit=None, reporter=None
     )
     composed = instructions.compose(frozenset({"intent:REQUEST_REFUND"}), "refund order 10533")
     limit = Money.from_cents(5000)

@@ -358,7 +358,7 @@ class GroundingFactSettings(BaseModel):
 
 
 class PrefetchSettings(BaseModel):
-    """How a procedure's prefetch reads are filled and shown to the model (ADR 0010)."""
+    """How a skill's prefetch reads are filled and shown to the model (ADR 0010)."""
 
     arguments: dict[str, str]
     call_id: str
@@ -414,7 +414,7 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     refund_declined_escalation: str
     # State metadata key → signal template (`intent:{value}`), ADR 0010.
     instruction_signals: dict[str, str]
-    # A procedure's prefetch reads: argument → state key, and the shown call id (ADR 0010).
+    # A skill's prefetch reads: argument → state key, and the shown call id (ADR 0010).
     prefetch: PrefetchSettings
     grounding_facts: GroundingFactSettings
     # Who the console acts as when it approves or denies a queued refund.

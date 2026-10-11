@@ -1403,19 +1403,19 @@ class DreamSettings(BaseModel):
 
     # Consolidated turn events older than this are pruned by each dream.
     retention_days: int = Field(gt=0)
-    # How many identical refusals across sessions make a procedure candidate.
-    procedure_threshold: int = Field(gt=0)
+    # How many identical refusals across sessions make a skill candidate.
+    skill_threshold: int = Field(gt=0)
     # Add a locally generated intent sentence to each session summary.
     summarize_intent: bool
-    # The principal a dream acts as. An agent role, so a proposed procedure
+    # The principal a dream acts as. An agent role, so a proposed skill
     # is refused by governance and lands with a curator.
     actor: str
     # How much of a tool result one outcome line quotes.
     outcome_chars: int = Field(gt=0)
     # Prefixes that mark a tool result as a refusal.
     refusal_markers: list[str]
-    # A procedure key is a name, not a sentence: longer keys are cut here.
-    procedure_key_chars: int = Field(gt=0)
+    # A skill key is a name, not a sentence: longer keys are cut here.
+    skill_key_chars: int = Field(gt=0)
     # Words a generated summary sentence may not contain (gendered pronouns:
     # the summarizer cannot know them). Such a sentence is dropped.
     forbidden_words: list[str]
@@ -1427,16 +1427,16 @@ class DreamSettings(BaseModel):
 
 
 class SkillSelectionSettings(BaseModel):
-    """How many procedures one prompt carries, and when a query names one."""
+    """How many skills one prompt carries, and when a query names one."""
 
     max_active: int = Field(gt=0)
     min_lexical_score: float = Field(ge=0.0)
 
 
 class SkillRenderSettings(BaseModel):
-    """How procedures and their refs are written into a prompt and a record."""
+    """How skills and their refs are written into a prompt and a record."""
 
-    procedure_heading: str
+    skill_heading: str
     reference_heading: str
     separator: str
     sections_sent: list[str]
@@ -1445,7 +1445,7 @@ class SkillRenderSettings(BaseModel):
 
 
 class SkillReasonWords(BaseModel):
-    """Why a procedure was activated, as recorded on its card and audit entry."""
+    """Why a skill was activated, as recorded on its card and audit entry."""
 
     always: str
     trigger: str
@@ -1466,7 +1466,7 @@ class SkillObservabilitySettings(BaseModel):
 
 
 class SkillAuditSettings(BaseModel):
-    """Who the audit trail says activated or synced procedures, and as what action."""
+    """Who the audit trail says activated or synced skills, and as what action."""
 
     actor: str
     activation_action: str
@@ -2571,7 +2571,7 @@ class SkillsCommandWords(BaseModel):
     unknown: str
     needs_name: str
     needs_id: str
-    not_a_procedure: str
+    not_a_skill: str
     approved: str
     refused: str
     curator_actor: str

@@ -1,7 +1,7 @@
 """What one model request is made of, by name — and the one way to build one (Builder).
 
 A request used to be a list of messages each agent concatenated by hand: the profile, the
-procedures, the policy, the retrieved window, the transcript, this turn's tool calls, all
+skills, the policy, the retrieved window, the transcript, this turn's tool calls, all
 inside one system string or scattered across messages. Nothing downstream could say how big
 any of it was, or which part grew. `PromptBuilder` assembles the same messages from named
 sections and returns, beside them, a `PromptManifest`: every section, where it came from,
@@ -26,7 +26,7 @@ from agent_platform.llm.types import Message, Role
 
 # The section vocabulary. An agent may add its own names; these are the ones every agent shares.
 PROFILE = "profile"
-PROCEDURES = "procedures"
+SKILLS = "skills"
 POLICY = "policy"
 INSTRUCTIONS = "instructions"
 CONTEXT_WINDOW = "context_window"
@@ -194,7 +194,7 @@ class PromptBuilder:
     def system_parts(
         self, name: str, parts: Sequence[PromptPart], *, stable: bool = True
     ) -> "PromptBuilder":
-        """One system section built of attributable parts (each procedure, say)."""
+        """One system section built of attributable parts (each skill, say)."""
         kept = [part for part in parts if part.text.strip()]
         if not kept:
             return self
@@ -209,7 +209,7 @@ class PromptBuilder:
         return self
 
     def instructions(self, parts: Sequence[PromptPart], *, stable: bool = True) -> "PromptBuilder":
-        """The agent's instructions — its profile, then each procedure — one section per kind."""
+        """The agent's instructions — its profile, then each skill — one section per kind."""
         for name in dict.fromkeys(part.name for part in parts):
             self.system_parts(name, [part for part in parts if part.name == name], stable=stable)
         return self
@@ -386,7 +386,7 @@ __all__ = [
     "INSTRUCTIONS",
     "PAYLOAD",
     "POLICY",
-    "PROCEDURES",
+    "SKILLS",
     "PROFILE",
     "TOOL_LOOP",
     "USER_QUERY",

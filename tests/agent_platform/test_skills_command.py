@@ -1,25 +1,25 @@
-"""`/skills`: an agent's procedures, and the curator's approval of a lesson."""
+"""`/skills`: an agent's skills, and the curator's approval of a lesson."""
 
 import pytest
 
 from agent_platform.commands import CommandError
 from agent_platform.commands.skills import SkillsCommand
 from agent_platform.config import get_settings
-from agent_platform.memory import MemoryFact, ProceduralStore, Provenance, SemanticStore
+from agent_platform.memory import MemoryFact, Provenance, SemanticStore, SkillStore
+from agent_platform.memory.procedural.skills import SkillCatalog, SkillDocument
 from agent_platform.memory.write_pipeline import MemoryWritePipelineImpl
 from agent_platform.persistence import SqliteConnectionPool
-from agent_platform.skills import SkillCatalog, SkillDocument
 
 _QUEUED = 0.5
 
 
 @pytest.fixture
-def store(pool: SqliteConnectionPool) -> ProceduralStore:
-    return ProceduralStore(pool)
+def store(pool: SqliteConnectionPool) -> SkillStore:
+    return SkillStore(pool)
 
 
 @pytest.fixture
-def catalog(store: ProceduralStore) -> SkillCatalog:
+def catalog(store: SkillStore) -> SkillCatalog:
     catalog = SkillCatalog(store, get_settings().skills)
     raw = "---\nname: refund-flow\ndescription: Refund an order\ntriggers: [intent:R]\n---\nsteps"
     catalog.sync(
@@ -29,7 +29,7 @@ def catalog(store: ProceduralStore) -> SkillCatalog:
 
 
 @pytest.fixture
-def pipeline(pool: SqliteConnectionPool, store: ProceduralStore) -> MemoryWritePipelineImpl:
+def pipeline(pool: SqliteConnectionPool, store: SkillStore) -> MemoryWritePipelineImpl:
     return MemoryWritePipelineImpl(semantic=SemanticStore(pool), procedural=store)
 
 
@@ -52,7 +52,7 @@ def _queue(pipeline: MemoryWritePipelineImpl, category: str) -> int:
 
 
 class TestListing:
-    async def test_it_lists_active_procedures(self, command: SkillsCommand) -> None:
+    async def test_it_lists_active_skills(self, command: SkillsCommand) -> None:
         result = await command.run([])
         assert result.rows[0].cells[:3] == ["refund-flow", "1", "authored"]
 
@@ -77,13 +77,13 @@ class TestListing:
 
 
 class TestApproving:
-    async def test_a_lesson_becomes_an_active_procedure(
+    async def test_a_lesson_becomes_an_active_skill(
         self, command: SkillsCommand, pipeline: MemoryWritePipelineImpl, catalog: SkillCatalog
     ) -> None:
         await command.run(["approve", str(_queue(pipeline, "how_to"))])
         lesson = catalog.show("check settled")
         assert lesson is not None
-        assert lesson.source == "consolidated"
+        assert lesson.source == "learned"
 
     async def test_a_semantic_entry_is_not_approved_here(
         self, command: SkillsCommand, pipeline: MemoryWritePipelineImpl

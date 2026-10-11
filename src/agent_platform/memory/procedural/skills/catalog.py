@@ -16,18 +16,18 @@ from agent_platform.audit.types import AuditEntry
 from agent_platform.config.settings import SkillSettings
 from agent_platform.logging import get_logger
 from agent_platform.logging.trace_context import get_current_trace_id
-from agent_platform.memory.procedural.memory import ProceduralStore
+from agent_platform.memory.procedural.skills.document import parse_stored
+from agent_platform.memory.procedural.skills.types import Skill, SkillDocument, SkillSyncReport
+from agent_platform.memory.procedural.store import SkillStore
 from agent_platform.memory.types import MemoryFact, Provenance
-from agent_platform.skills.document import parse_stored
-from agent_platform.skills.types import Skill, SkillDocument, SkillSyncReport
 
 
 class SkillCatalog:
-    """The agent's procedures: authored skills and approved lessons."""
+    """The agent's skills: authored skills and approved lessons."""
 
     def __init__(
         self,
-        store: ProceduralStore,
+        store: SkillStore,
         settings: SkillSettings,
         *,
         audit: AuditLedger | None = None,
@@ -44,23 +44,23 @@ class SkillCatalog:
         for document in documents:
             getattr(report, self._sync_one(document)).append(document.name)
         report.retired.extend(self._retire_missing({d.name for d in documents}))
-        self._logger.info("Synced procedures", **report.model_dump())
+        self._logger.info("Synced skills", **report.model_dump())
         return report
 
     def active(self) -> list[Skill]:
-        """Every selectable procedure's active version, by name."""
+        """Every selectable skill's active version, by name."""
         found = (self.show(name) for name in self._store.names())
         return [skill for skill in found if skill is not None]
 
     def show(self, name: str) -> Skill | None:
-        """A procedure's active version, if it has one and may be selected."""
+        """A skill's active version, if it has one and may be selected."""
         fact = self._store.get(name)
         if fact is None or fact.category not in self._settings.selectable_artifact_types:
             return None
         return self._skill(fact)
 
     def history(self, name: str) -> list[Skill]:
-        """Every version of a procedure, newest first."""
+        """Every version of a skill, newest first."""
         return [self._skill(fact) for fact in self._store.history(name)]
 
     def _sync_one(self, document: SkillDocument) -> str:
@@ -119,7 +119,7 @@ class SkillCatalog:
                 version=key[1],
                 source="authored"
                 if fact.category == self._settings.authored_artifact_type
-                else "consolidated",
+                else "learned",
             )
         return self._parsed[key]
 
@@ -133,7 +133,7 @@ class SkillCatalog:
                 trace_id=get_current_trace_id() or audit.sync_action,
                 actor=audit.actor,
                 action=audit.sync_action,
-                authority_context={"procedure": ref, "change": change},
+                authority_context={"skill": ref, "change": change},
                 decision="allow",
                 rationale=f"{ref} {change}",
             )

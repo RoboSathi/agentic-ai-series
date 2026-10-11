@@ -79,6 +79,11 @@ from agent_platform.memory import (
     WorkingMemoryStore,
     WriteResult,
 )
+from agent_platform.memory.procedural.skills import (
+    AgentInstructions,
+    SkillCatalog,
+    build_agent_instructions,
+)
 from agent_platform.memory.write_pipeline import MemoryWritePipelineImpl
 from agent_platform.observability import (
     SLORegistry,
@@ -98,7 +103,6 @@ from agent_platform.resilience import (
 )
 from agent_platform.security import MessageScreener, SecuritySuite
 from agent_platform.security.auth.policy import AgentPolicy
-from agent_platform.skills import AgentInstructions, SkillCatalog, build_agent_instructions
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from agent_platform.tools.path import ToolPath
 from agent_platform.verification import EffectVerifier
@@ -223,7 +227,7 @@ class CustomerSupportAgent(
         self._working_memory = working_memory
         self._memory_event_sink = memory_event_sink
         self._long_term = long_term_memory
-        # The profile always; procedures only when the composition root
+        # The profile always; skills only when the composition root
         # built procedural memory. A hand-built agent gets the profile.
         self._instructions = instructions or build_agent_instructions(
             get_settings().skills, store=None, audit=None, reporter=None
@@ -804,7 +808,7 @@ class CustomerSupportAgent(
 
     @property
     def skill_catalog(self) -> SkillCatalog | None:
-        """The procedures `/skills` lists (None when procedural memory is withheld)."""
+        """The skills `/skills` lists (None when procedural memory is withheld)."""
         return self._instructions.catalog
 
     @property
