@@ -54,6 +54,15 @@ class FileDreamInbox:
             sessions[event.session_id].append(event)
         return dict(sessions)
 
+    def events(self, limit: int) -> list[DreamEvent]:
+        """Pending and consolidated events, newest first, at most `limit` (for reading).
+
+        A consolidated event carries `consolidated_at`; a pending one does not.
+        """
+        paths = self._paths(self._files.pending_dir) + self._paths(self._files.consolidated_dir)
+        found = [event for event in map(self._read, paths) if event is not None]
+        return sorted(found, key=lambda event: event.timestamp, reverse=True)[:limit]
+
     def mark_consolidated(self, event_ids: list[str], at: datetime) -> None:
         """Move these events to `consolidated/`, stamped; a later dream skips them."""
         wanted = set(event_ids)

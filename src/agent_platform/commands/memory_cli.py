@@ -12,12 +12,14 @@ from collections.abc import Sequence
 
 from rich.console import Console
 
+from agent_platform.commands.types import CommandResult
 from agent_platform.config import get_settings
 from agent_platform.host.memory import agent_store, build_dream
 from agent_platform.memory import SemanticStore
 from agent_platform.memory.dream import change_tree_lines
-from agent_platform.memory.inspect import snapshot_tree, take_snapshot
+from agent_platform.memory.inspect import snapshot_tables, take_snapshot
 from agent_platform.memory.reset import clear_long_term_memory
+from agent_platform.presentation.terminal import print_result
 from agent_platform.presentation.text_tree import TreeNode, tree_lines
 
 # What a reset deliberately leaves alone, said out loud so nobody wonders.
@@ -25,19 +27,21 @@ _KEPT = "Kept: conversation checkpoints, business records, reviews, audit, polic
 _RESTART = "Restart a running console: its working memory lives in the process."
 
 
-def memory_lines(subject: str | None = None, events: int | None = None) -> list[str]:
-    """Everything this agent's long-term memory holds, as a tree."""
+def memory_result(subject: str | None = None, events: int | None = None) -> CommandResult:
+    """Everything this agent's long-term memory holds, one table per store, the inbox last."""
     commands = get_settings().commands
-    snapshot = take_snapshot(agent_store(), subject)
+    snapshot = take_snapshot(subject)
     per_session = events or commands.memory_tree_events_per_session
-    return tree_lines(snapshot_tree(snapshot, per_session, commands.tree_preview_chars))
+    result = CommandResult(title=commands.memory_tables.title.format(agent=snapshot.agent_id))
+    result.line(snapshot.root)
+    for table in snapshot_tables(snapshot, per_session):
+        result.table(table)
+    return result.line(commands.memory_tables.queue_note)
 
 
-def dream_lines(show_memory: bool) -> list[str]:
-    """Run a dream; what it changed, then (optionally) the whole memory tree."""
-    report = asyncio.run(build_dream().dream())
-    lines = change_tree_lines(report)
-    return [*lines, "", *memory_lines()] if show_memory else lines
+def dream_lines() -> list[str]:
+    """Run a dream; what it changed."""
+    return change_tree_lines(asyncio.run(build_dream().dream()))
 
 
 def clean_lines() -> list[str]:
@@ -77,9 +81,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     actions.add_parser("reindex", help="rebuild the derived search index")
     args = parser.parse_args(argv)
     if args.action == "dream":
-        print_lines(dream_lines(args.show_memory))
+        print_lines(dream_lines())
+        if args.show_memory:
+            print_result(memory_result())
     elif args.action == "show":
-        print_lines(memory_lines(args.subject, args.events))
+        print_result(memory_result(args.subject, args.events))
     elif args.action == "clean":
         print_lines(clean_lines())
     else:

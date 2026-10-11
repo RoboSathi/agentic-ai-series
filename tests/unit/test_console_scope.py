@@ -50,8 +50,9 @@ class TestTheQueueIsTheVerifiedCustomersOwn:
     async def test_it_lists_only_their_requests(self, queued: SqliteConnectionPool) -> None:
         result = await _queue(queued, _scope({"s": "1"}, ["s"])).run([])
         assert "1 pending" in result.title
-        text = " ".join(result.lines)
-        assert "refund · order 10001 · $20.00" in text and "10003" not in text
+        [table] = result.tables
+        assert [row[1:3] for row in table.rows] == [["10001", "$20.00"]]
+        assert table.headers[:3] == ["ID", "Order", "Amount"]
 
     async def test_another_customers_request_cannot_be_decided(
         self, queued: SqliteConnectionPool, monkeypatch: pytest.MonkeyPatch

@@ -11,8 +11,8 @@ import json
 from typing import Any
 
 from agent_platform.config import get_settings
-from agent_platform.observability.types import utc_now
 from agent_platform.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
+from agent_platform.primitives.clock import utc_now
 from agent_platform.review.types import ReviewItem, ReviewStatus
 
 _PENDING = "pending"

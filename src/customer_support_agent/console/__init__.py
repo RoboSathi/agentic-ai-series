@@ -25,7 +25,7 @@ from agent_platform.logging import get_logger
 from agent_platform.memory.semantic.rag import KnowledgeBase
 from agent_platform.observability import StageReporter
 from customer_support_agent.config import get_agent_settings
-from customer_support_agent.console.commands import SettleCommand, VoidCommand
+from customer_support_agent.console.commands import VoidCommand
 from customer_support_agent.console.review_handler import support_queue_command
 from customer_support_agent.intent.router import load_intent_classifier
 
@@ -137,7 +137,6 @@ class CustomerSupportHost:
         return [
             support_queue_command(agent=lambda: self.agent),
             VoidCommand(),
-            SettleCommand(),
             CancelCommand(lambda: self.agent),
             KnowledgeBaseCommand(lambda: self.knowledge_base),
             SkillsCommand(

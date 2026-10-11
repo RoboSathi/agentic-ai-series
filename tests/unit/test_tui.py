@@ -257,7 +257,7 @@ class TestARebuildKeepsTheConversation:
 class TestEveryKeptCommandIsWired:
     """Boot the console and run every command it offers, end to end."""
 
-    KEPT = ("/help", "/config", "/audit", "/memory", "/eval", "/kb", "/queue", "/harness", "/clear")
+    KEPT = ("/help", "/audit", "/memory", "/eval", "/kb", "/queue", "/harness", "/clear")
 
     def _app(self, pool: object) -> AgenticTuiApp:
         from agent_platform.commands.knowledge import KnowledgeBaseCommand

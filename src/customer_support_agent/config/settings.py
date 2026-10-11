@@ -203,7 +203,7 @@ class SettlementSettings(BaseModel):
     window_seconds: int = Field(gt=0)
     # How often the console settles refunds whose window has closed.
     sweep_interval_seconds: float = Field(gt=0)
-    # `/void` and `/settle` wording ({order_id}, {amount}, {settles_at}, {count}).
+    # `/void` and settlement-sweep wording ({order_id}, {amount}, {settles_at}, {count}).
     titles: dict[str, str]
     lines: dict[str, str]
     headers: list[str]
@@ -284,6 +284,8 @@ class ReviewOutputSettings(BaseModel):
     effect, and what the customer was told — under `labels`. `request` and
     `effects` are keyed by action and by `<action>_<decision>`.
     """
+
+    customer_cell: str
 
     queued: str
     # The model's view of an escalation that reached no queue: no limit in it.

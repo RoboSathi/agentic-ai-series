@@ -51,8 +51,8 @@ from agent_platform.logging import bound_channel, get_logger, new_session_id
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.types import StatusEvent
 from agent_platform.observability.units import end_session
+from agent_platform.presentation.command_view import CommandView
 from agent_platform.tui.clipboard import Osc52ClipboardService
-from agent_platform.tui.command_view import CommandView
 from agent_platform.tui.completion import TabCompleter
 from agent_platform.tui.labels import StageLabelRegistry
 from agent_platform.tui.review_screen import ReviewScreen

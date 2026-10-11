@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from agent_platform.observability.types import utc_now
+from agent_platform.primitives.clock import utc_now
 
 ReviewStatus = Literal["pending", "approved", "denied", "failed"]
 ReviewDecision = Literal["approve", "deny"]

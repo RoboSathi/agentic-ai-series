@@ -1629,12 +1629,14 @@ class ReviewWords(BaseModel):
     usage: str
     title: str
     empty: str
-    kind_branch: str
-    item_line: str
-    subject_part: str
     show_title: str
     decided: str
-    hint: str
+    hints: dict[str, str]
+    kind_title: str
+    time_format: str
+    none: str
+    columns: dict[str, list[str]]
+    show_headers: list[str]
     needs_id: str
     needs_comment: str
     unknown_item: str
@@ -2683,6 +2685,33 @@ class SkillsCommandWords(BaseModel):
     inactive: str
 
 
+class MemoryTablesWords(BaseModel):
+    """How `/memory` and `make show-memory` title and head their tables."""
+
+    title: str
+    working_title: str
+    working_headers: list[str]
+    history_key: str
+    history_value: str
+    episodic_title: str
+    episodic_headers: list[str]
+    summary_kind: str
+    event_kind: str
+    semantic_title: str
+    semantic_headers: list[str]
+    skills_title: str
+    skills_headers: list[str]
+    inbox_title: str
+    inbox_headers: list[str]
+    pending: str
+    consolidated: str
+    empty: str
+    episodic_empty: str
+    time_format: str
+    queue_note: str
+    inbox_events: int = Field(gt=0)
+
+
 class CommandSettings(YamlBackedSettings):
     """Console slash commands (LLD §20)."""
 
@@ -2693,6 +2722,7 @@ class CommandSettings(YamlBackedSettings):
     # a value one line shows, and how many events each session lists.
     tree_preview_chars: int
     memory_tree_events_per_session: int
+    memory_tables: MemoryTablesWords
     recent_window: int
     # What a scoped command says when the session has nobody verified, and
     # when asked for someone else's records (`ConsoleScope`).
@@ -2728,6 +2758,12 @@ class CommandOutputSettings(BaseModel):
     column_gap: int
     max_column_width: int
     prompt_style: str
+    table_title_style: str
+    grid_style: str
+    table_header_style: str
+    id_style: str
+    empty_style: str
+    state_styles: dict[str, str]
 
 
 class RunControl(BaseModel):

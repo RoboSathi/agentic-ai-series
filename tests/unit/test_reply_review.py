@@ -72,8 +72,8 @@ class TestACutReplyIsQueued:
     ) -> None:
         _queue(seeded_pool)
         result = await support_queue_command(seeded_pool).run([])
-        [line] = [line for line in result.lines if "#" in line]
-        assert "reply · " in line and _REMOVED in line
+        [table] = result.tables
+        assert table.title.startswith("reply") and _REMOVED in " ".join(table.rows[0])
 
 
 class TestTheReviewerDecides:

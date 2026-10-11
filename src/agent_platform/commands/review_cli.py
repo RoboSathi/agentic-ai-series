@@ -1,29 +1,35 @@
 """`make queue <agent> [KIND=…] [ID=…] [ACTION=approve|deny ID=… COMMENT=…]`: `/queue`, from a terminal.
 
-The same command and the same lines as the console; an operator at a
-terminal sees every subject's items (there is no console session to scope
-to). Only the printing is here.
+The same command and the same tables as the console, printed in the same
+colours; an operator at a terminal sees every subject's items (there is no
+console session to scope to), and the hint under the list says how to
+decide from a terminal.
 """
 
+import argparse
 import asyncio
 import sys
 
-from agent_platform.commands.review import QueueCommand
+from agent_platform.commands.review import TERMINAL, QueueCommand
 from agent_platform.commands.types import CommandError
 from agent_platform.config import get_settings
 from agent_platform.host.loader import load_spec
+from agent_platform.presentation.terminal import print_result
 
 
 def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
+    parser.add_argument("--agent", default="", help="the agent's name as make knows it")
+    parser.add_argument("words", nargs="*", help="what /queue would be given")
+    args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     command = _command()
+    command.surface, command.make_agent = TERMINAL, args.agent
     try:
-        result = asyncio.run(command.run(list(argv if argv is not None else sys.argv[1:])))
+        result = asyncio.run(command.run(args.words))
     except CommandError as exc:
         print(exc)
         return 1
-    for line in [result.title, *result.lines]:
-        if line:
-            print(line)
+    print_result(result)
     return 0
 
 

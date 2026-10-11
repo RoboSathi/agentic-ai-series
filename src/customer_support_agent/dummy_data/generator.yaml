@@ -25,10 +25,8 @@ order_status_weights:
   cancelled: 0.10
 # Refund outcomes for an order that has reached a refundable state.
 refund_status_weights:
-  none: 0.70
-  pending_review: 0.08
-  denied: 0.06
-  completed: 0.16
+  # Every order starts unrefunded; the agent and its reviewers move it from there.
+  none: 1.0
 # The only refund status an in-flight order can carry.
 in_flight_refund_status: none
 quantity_weights:
@@ -43,10 +41,121 @@ shipped_eta_days: [2, 8]
 tracking_suffix: GB
 tracking_digits: [1000000000, 9999999999]
 
-first_names: [Ada, Grace, Alan, Katherine, Linus, Barbara, Dennis, Radia, Ken, Margaret,
-              Edsger, Frances, Tony, Jean, Donald, Adele]
-last_names: [Lovelace, Hopper, Turing, Johnson, Torvalds, Liskov, Ritchie, Perlman,
-             Thompson, Hamilton, Dijkstra, Allen, Hoare, Bartik]
+# One famous scientist, mathematician or computer scientist per user — every era and region.
+# Assigned by a seeded shuffle, so names are unique and the world is deterministic.
+names:
+  - "Srinivasa Ramanujan"
+  - "Aryabhata"
+  - "Brahmagupta"
+  - "Bhaskara"
+  - "C. V. Raman"
+  - "Satyendra Nath Bose"
+  - "Homi Bhabha"
+  - "Jagadish Chandra Bose"
+  - "Meghnad Saha"
+  - "Prasanta Chandra Mahalanobis"
+  - "Subrahmanyan Chandrasekhar"
+  - "Vikram Sarabhai"
+  - "A. P. J. Abdul Kalam"
+  - "Har Gobind Khorana"
+  - "Shakuntala Devi"
+  - "Anna Mani"
+  - "Janaki Ammal"
+  - "Asima Chatterjee"
+  - "Kamala Sohonie"
+  - "Raj Reddy"
+  - "C. R. Rao"
+  - "Harish-Chandra"
+  - "Manjul Bhargava"
+  - "Narendra Karmarkar"
+  - "Madhava of Sangamagrama"
+  - "Venkatraman Ramakrishnan"
+  - "Amartya Sen"
+  - "Salim Ali"
+  - "P. C. Ray"
+  - "D. R. Kaprekar"
+  - "Ada Lovelace"
+  - "Alan Turing"
+  - "Grace Hopper"
+  - "Marie Curie"
+  - "Carl Friedrich Gauss"
+  - "Emmy Noether"
+  - "Isaac Newton"
+  - "Albert Einstein"
+  - "Leonhard Euler"
+  - "Bernhard Riemann"
+  - "Kurt Gödel"
+  - "John von Neumann"
+  - "Claude Shannon"
+  - "Donald Knuth"
+  - "Edsger Dijkstra"
+  - "Barbara Liskov"
+  - "Tony Hoare"
+  - "Dennis Ritchie"
+  - "Ken Thompson"
+  - "Margaret Hamilton"
+  - "Katherine Johnson"
+  - "Frances Allen"
+  - "Radia Perlman"
+  - "Linus Torvalds"
+  - "Tim Berners-Lee"
+  - "Vint Cerf"
+  - "John McCarthy"
+  - "Marvin Minsky"
+  - "Geoffrey Hinton"
+  - "Yoshua Bengio"
+  - "Niels Bohr"
+  - "Richard Feynman"
+  - "Rosalind Franklin"
+  - "Charles Darwin"
+  - "Galileo Galilei"
+  - "Johannes Kepler"
+  - "Blaise Pascal"
+  - "Pierre de Fermat"
+  - "René Descartes"
+  - "Gottfried Leibniz"
+  - "Évariste Galois"
+  - "Sophie Germain"
+  - "Henri Poincaré"
+  - "David Hilbert"
+  - "Georg Cantor"
+  - "Alonzo Church"
+  - "Edgar Codd"
+  - "Alan Kay"
+  - "Leslie Lamport"
+  - "Shafi Goldwasser"
+  - "Judea Pearl"
+  - "Lise Meitner"
+  - "Dorothy Hodgkin"
+  - "Max Planck"
+  - "James Clerk Maxwell"
+  - "Michael Faraday"
+  - "Nikola Tesla"
+  - "Hedy Lamarr"
+  - "Jean Bartik"
+  - "Adele Goldberg"
+  - "Annie Easley"
+  - "Mary Jackson"
+  - "Al-Khwarizmi"
+  - "Ibn al-Haytham"
+  - "Omar Khayyam"
+  - "Hypatia"
+  - "Euclid"
+  - "Archimedes"
+  - "Pythagoras"
+  - "Zu Chongzhi"
+  - "Shen Kuo"
+  - "Chien-Shiung Wu"
+  - "Tu Youyou"
+  - "Kiyoshi Itô"
+  - "Hideki Yukawa"
+  - "Maryam Mirzakhani"
+  - "Terence Tao"
+  - "Cahit Arf"
+  - "Abdus Salam"
+  - "Ali Javan"
+  - "Shing-Tung Yau"
+  - "Andrew Yao"
 
 # name, sku, price band (major units). The total is always consistent
 # with what was bought: a $7 laptop makes a grounding check look broken.

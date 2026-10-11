@@ -13,15 +13,17 @@ from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
 from agent_platform.commands.review import QueueCommand
+from agent_platform.config import get_settings
 from agent_platform.durability import DurableAgent
 from agent_platform.logging import get_logger
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.presentation.text_tree import value_lines
 from agent_platform.review import ReviewItem, ReviewOutcome
+from agent_platform.review.handlers import none, raised
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.models import REPLY_REVIEW, HitlRequest, ReviewAction
 from customer_support_agent.graph.nodes.review_wait import review_wait_key
-from customer_support_agent.persistence.repositories import HitlQueueRepository
+from customer_support_agent.persistence.repositories import HitlQueueRepository, UsersRepository
 from customer_support_agent.review.queue import ReviewOutcome as SupportOutcome
 from customer_support_agent.review.queue import ReviewQueueService
 
@@ -60,6 +62,35 @@ class SupportReviewHandler:
             return [item.summary]
         sent = request.detail.sent if request.detail is not None else ""
         return [request_line(request), request.reason, *([sent] if sent else [])]
+
+    def columns(self, kind: str) -> list[str]:
+        return list(get_settings().review.words.columns[kind])
+
+    def cells(self, item: ReviewItem) -> list[str]:
+        """A refund as its order, amount and customer; a cut reply as what was removed."""
+        request = HitlQueueRepository(self._pool).get(int(item.id or 0))
+        if request is None:
+            return [str(item.id), *[none()] * (len(self.columns(item.kind)) - 1)]
+        customer = self._customer(request.user_id)
+        if request.is_reply:
+            removed = " ".join(request.detail.removed) if request.detail is not None else ""
+            why = request.detail.reason if request.detail is not None else request.reason
+            return [str(item.id), customer, request.session_id or none(), removed or none(),
+                    why or none(), raised(item)]  # fmt: skip
+        return [
+            str(item.id),
+            str(request.order_id) if request.order_id is not None else none(),
+            str(request.requested_amount) if request.requested_amount is not None else none(),
+            customer,
+            request.reason or none(),
+            raised(item),
+        ]
+
+    def _customer(self, user_id: int) -> str:
+        """`Name (#id)` when the customer is on record; the id alone otherwise."""
+        user = UsersRepository(self._pool).get(user_id)
+        words = get_agent_settings().review_output
+        return words.customer_cell.format(name=user.name, id=user_id) if user else str(user_id)
 
     async def approve(self, item: ReviewItem, reviewer: str, comment: str) -> ReviewOutcome:
         outcome = await self._service(self._pool).approve(int(item.id or 0), reviewer)

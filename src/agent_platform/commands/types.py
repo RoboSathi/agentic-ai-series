@@ -53,6 +53,21 @@ class CommandRow(BaseModel):
     style: str = ""
 
 
+class CommandTable(BaseModel):
+    """One titled box table, drawn the same in the console and a terminal.
+
+    A command that shows several kinds of thing (a queue's kinds, memory's
+    stores) returns one table per kind rather than one table of everything:
+    each has its own columns, so each has its own headings.
+    """
+
+    title: str = ""
+    headers: list[str]
+    rows: list[list[str]] = Field(default_factory=list)
+    # A table with no rows says so in a line under its title.
+    empty: str = ""
+
+
 class CommandResult(BaseModel):
     """What a command produced.
 
@@ -65,12 +80,19 @@ class CommandResult(BaseModel):
     lines: list[str] = Field(default_factory=list)
     headers: list[str] = Field(default_factory=list)
     rows: list[CommandRow] = Field(default_factory=list)
+    # Titled box tables, drawn after the title and before `lines`.
+    tables: list[CommandTable] = Field(default_factory=list)
     ok: bool = True
     effect: ConsoleEffect = Field(default_factory=ConsoleEffect)
 
     @property
     def empty(self) -> bool:
-        return not self.lines and not self.rows
+        return not self.lines and not self.rows and not self.tables
+
+    def table(self, table: CommandTable) -> "CommandResult":
+        """Append one titled table, fluently."""
+        self.tables.append(table)
+        return self
 
     def line(self, text: str) -> "CommandResult":
         """Append one line, fluently."""

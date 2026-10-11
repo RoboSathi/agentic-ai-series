@@ -36,6 +36,10 @@ class ReviewHandler(Protocol):
 
     def describe(self, item: ReviewItem) -> list[str]: ...
 
+    def columns(self, kind: str) -> list[str]: ...
+
+    def cells(self, item: ReviewItem) -> list[str]: ...
+
     async def approve(self, item: ReviewItem, reviewer: str, comment: str) -> ReviewOutcome: ...
 
     async def deny(self, item: ReviewItem, reviewer: str, comment: str) -> ReviewOutcome: ...
@@ -78,6 +82,14 @@ class ReviewService:
 
     def describe(self, item: ReviewItem) -> list[str]:
         return self._handlers[item.kind].describe(item)
+
+    def columns(self, kind: str) -> list[str]:
+        """A kind's table headings, from its handler."""
+        return self._handlers[kind].columns(kind)
+
+    def cells(self, item: ReviewItem) -> list[str]:
+        """One item as its kind's table row."""
+        return self._handlers[item.kind].cells(item)
 
     async def decide(
         self,

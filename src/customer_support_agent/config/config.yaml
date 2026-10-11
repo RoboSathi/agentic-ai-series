@@ -119,6 +119,15 @@ skills:
   # instructions were 3,167).
   max_prompt_chars: 2600
 
+review:
+  words:
+    # This agent's review kinds: a refund or a cancellation's refund above its authority, and
+    # a reply the hallucination check cut.
+    columns:
+      refund: [ID, Order, Amount, Customer, Why queued, Raised]
+      cancel_and_refund: [ID, Order, Amount, Customer, Why queued, Raised]
+      reply: [ID, Customer, Session, Removed sentences, Why cut, Raised]
+
 memory:
   files:
     root: src/customer_support_agent/data/memory
@@ -700,7 +709,7 @@ customer_support_agent:
       location: ", last seen at {value}"
       due: ", due {value}"
       delivered: " on {value}"
-  demo_user_code: 2HEDZTV
+  demo_user_code: 43PC77U
   policy_path: src/customer_support_agent/prompts/customer_policy.md
   # The one sentence that tells the model its refund limit, rendered from the DB row
   # (`platform_agent_budgets`) when the agent is built. It is not a control and does not
@@ -788,6 +797,8 @@ customer_support_agent:
     hallucination: hallucination_contradicted
   # One human review queue: refunds above the limit, and replies the hallucination check cut.
   review_output:
+    # A customer in a review table: who, and the account the record carries.
+    customer_cell: "{name} (#{id})"
     # Appended to the HALLUCINATION CHECK card when a cut reply was queued.
     queued: "queued for review #{id} · {reason}"
     # What the model reads when an escalated call could not be queued. The

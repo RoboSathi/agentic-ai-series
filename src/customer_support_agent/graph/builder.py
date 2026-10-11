@@ -600,7 +600,7 @@ def build_review_service(
 def build_settlement_service(
     pool: SqliteConnectionPool | None = None, audit: AuditLedger | None = None
 ) -> RefundSettlement:
-    """Voiding and settling issued refunds (`/void`, `/settle`, the console's sweep).
+    """Voiding and settling issued refunds (`/void`, and the console's sweep that settles them).
 
     The operator's side of a VOIDABLE refund, built apart from the agent
     like the review queue: the agent issues refunds and has no route to

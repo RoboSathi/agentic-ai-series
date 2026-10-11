@@ -45,7 +45,8 @@ def test_show_prints_the_memory_tree(capsys: pytest.CaptureFixture[str]) -> None
         Provenance(source="t"),
     )
     memory_cli.main(["show", "--subject", "7"])
-    assert "window = mornings" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "window" in out and "mornings" in out and "Semantic" in out
 
 
 def test_clean_says_what_each_store_lost(capsys: pytest.CaptureFixture[str]) -> None:

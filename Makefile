@@ -248,7 +248,7 @@ runs: _agent
 # must confirm. `make queue csa`, `make queue ra KIND=skill`, `make queue csa ID=7`,
 # `make queue csa ACTION=approve ID=7 COMMENT="checked the order"`. Same as /queue.
 queue: _agent
-	@$(PYTHON) -m agent_platform.commands.review_cli $(if $(ACTION),$(ACTION) $(ID) $(COMMENT),$(if $(ID),show $(ID),$(KIND)))
+	@$(PYTHON) -m agent_platform.commands.review_cli --agent $(AGENT) -- $(if $(ACTION),$(ACTION) $(ID) "$(COMMENT)",$(if $(ID),show $(ID),$(KIND)))
 
 # The audit trail, coloured by outcome, from every ledger the agent writes to (ADR 0012):
 # `make audit csa`, `make audit ra DECISION=deny`, `make audit csa KIND=review. SINCE=24h N=50`,

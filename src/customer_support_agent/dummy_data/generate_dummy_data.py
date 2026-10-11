@@ -87,8 +87,7 @@ class GeneratorSpec(BaseModel):
     shipped_eta_days: tuple[int, int]
     tracking_suffix: str
     tracking_digits: tuple[int, int]
-    first_names: list[str]
-    last_names: list[str]
+    names: list[str]
     catalogue: list[CatalogueItem]
     carriers: list[str]
     transit_locations: list[str]
@@ -169,9 +168,12 @@ def _user_lines(
     lines = ["-- Users"]
     taken: set[str] = set()
     ids_by_code: dict[str, int] = {}
-    for index, user_id in enumerate(_user_ids(spec), start=1):
+    user_ids = list(_user_ids(spec))
+    if len(spec.names) < len(user_ids):
+        raise ValueError(f"generator.yaml names {len(spec.names)} people for {len(user_ids)} users")
+    names = rng.sample(spec.names, len(user_ids))
+    for index, (user_id, name) in enumerate(zip(user_ids, names, strict=True), start=1):
         created_at = (now - timedelta(days=rng.randint(*spec.user_created_days_ago))).isoformat()
-        name = f"{rng.choice(spec.first_names)} {rng.choice(spec.last_names)}"
         email = spec.email_template.format(index=index)
         phone = f"{spec.phone_prefix}{rng.randint(*spec.phone_digits)}"
         code = _user_code(rng, taken)

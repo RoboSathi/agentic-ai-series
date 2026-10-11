@@ -4,16 +4,19 @@ Commands return data, not pixels — the same `/audit` result has to work
 in the TUI, in a test, and eventually over an API. This is the one place
 that knows what it looks like on a terminal.
 
-The rendering is a plain aligned table rather than a Rich `Table`,
-because the feed is a single `Text` block that gets copied out verbatim
-by Ctrl-O. A box-drawn table would copy as box-drawing characters and
-paste into a ticket as noise.
+A plain `rows` result is an aligned table; a `CommandTable` is a box
+table coloured cell by cell, the way an agent's order table is. Both are
+`Text`, so Ctrl-O copies them out as plain characters, and a terminal
+command (`make queue`, `make show-memory`) prints the same `Text`.
 """
+
+from collections.abc import Callable
 
 from rich.text import Text
 
-from agent_platform.commands import CommandResult
+from agent_platform.commands import CommandResult, CommandTable
 from agent_platform.config import get_settings
+from agent_platform.presentation.text_table import column_widths, rule
 
 
 class CommandView:
@@ -29,9 +32,54 @@ class CommandView:
             style = self._style.error_style if not result.ok else self._style.title_style
             lines.append(Text.styled(result.title, style))
         lines.extend(self._table(result))
+        for table in result.tables:
+            lines.extend(self.box(table))
         body_style = self._style.error_style if not result.ok else self._style.note_style
         lines.extend(Text.styled(line, body_style) for line in result.lines)
         return lines
+
+    def box(self, table: CommandTable) -> list[Text]:
+        """One titled box table, coloured as an order table is (see `command_output`)."""
+        style = self._style
+        lines = [Text.styled(table.title, style.table_title_style)] if table.title else []
+        if not table.rows:
+            return [*lines, Text.styled(table.empty, style.empty_style)] if table.empty else lines
+        rows = [[self._fit(cell) for cell in row] for row in table.rows]
+        headers = [self._fit(cell) for cell in table.headers]
+        widths = column_widths(headers, rows)
+        glyphs = get_settings().presentation.box
+        lines.append(Text.styled(rule(widths, glyphs.top), style.grid_style))
+        lines.append(self._box_row(headers, widths, lambda _i, _c: style.table_header_style))
+        lines.append(Text.styled(rule(widths, glyphs.middle), style.grid_style))
+        lines.extend(self._box_row(row, widths, self._cell_style) for row in rows)
+        lines.append(Text.styled(rule(widths, glyphs.bottom), style.grid_style))
+        return lines
+
+    def _box_row(
+        self, cells: list[str], widths: list[int], style_of: Callable[[int, str], str]
+    ) -> Text:
+        presentation = get_settings().presentation
+        vertical, pad = presentation.box.vertical, " " * presentation.cell_padding
+        text = Text(vertical, style=self._style.grid_style)
+        for index, (cell, width) in enumerate(zip(cells, widths, strict=True)):
+            text.append(pad)
+            text.append(cell.ljust(width), style=style_of(index, cell))
+            text.append(pad)
+            text.append(vertical, style=self._style.grid_style)
+        return text
+
+    def _cell_style(self, index: int, cell: str) -> str:
+        """A state word in its state's colour; the id column bold; anything else plain."""
+        state = self._style.state_styles.get(cell.strip().casefold())
+        if state is not None:
+            return state
+        return self._style.id_style if index == 0 else self._style.row_style
+
+    def _fit(self, value: str) -> str:
+        """One cell on one line, cut to the widest a column may be."""
+        flat = " ".join(str(value).split())
+        width = self._style.max_column_width
+        return flat if len(flat) <= width else flat[: width - 1] + "…"
 
     def echo(self, line: str) -> Text:
         """The command the operator typed, echoed back into the feed."""

@@ -22,7 +22,7 @@ base. Every write is authorized, attributed and audited.
 - RAG (`semantic/rag/`): chunking, index (sqlite-vec + FTS), fusion (RRF), retriever, knowledge-base context source
 - Deterministic recall tier (`deterministic/`)
 - Files (`files/`): `MemoryDirectory`, frontmatter records, `MEMORY.md` index, derived FTS index (ADR 0012)
-- Dreams (`dream/`): `DreamEvent`, `FileDreamInbox`, `TurnRecorder`, consolidator protocols with defaults, `Dream`
+- Dreams (`dream/`): `DreamEvent`, `FileDreamInbox`, `TurnRecorder`, consolidator protocols with defaults, `Dream` — how events are created and consolidated: `dream/README.md`
 - `MemoryProfile` (`profile.py`): an agent's only customisation; `MemoryProfile.default()` works out of the box
 - Skills (`procedural/skills/`): the SKILL.md catalog, selector and instructions (ADR 0010)
 

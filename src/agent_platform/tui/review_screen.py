@@ -68,7 +68,7 @@ class ReviewScreen(Screen[None]):
         for item in visible:
             key = f"{_ITEM_PREFIX}{item.id}"
             self._items[key] = item
-            line = f"{item.kind} · {self._command.line(self._service, item)}"
+            line = f"{item.kind} · " + " · ".join(self._service.cells(item))
             listing.append(ListItem(Label(line), id=key))
         self._select(None)
 
@@ -119,7 +119,8 @@ class ReviewScreen(Screen[None]):
             detail.update(self._words.nothing_selected)
         else:
             heading = self._words.show_title.format(id=item.id, kind=item.kind, status=item.status)
-            lines = [line for line in self._service.describe(item) if line]
+            fields = zip(self._service.columns(item.kind), self._service.cells(item), strict=True)
+            lines = [f"{name}: {value}" for name, value in fields]
             detail.update("\n".join([heading, *lines]))
         self._enable()
 

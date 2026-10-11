@@ -17,7 +17,6 @@ from agent_platform.commands.scope import ConsoleScope
 from agent_platform.commands.types import CommandResult
 from agent_platform.config import get_settings
 from agent_platform.persistence import SqliteConnectionPool
-from agent_platform.presentation.text_tree import tree_lines
 
 if TYPE_CHECKING:
     from agent_platform.memory import WorkingMemoryStore
@@ -35,7 +34,7 @@ class MemoryCommand(PoolBackedCommand):
 
     group = "Inspect"
     name = "memory"
-    summary = "What memory holds, as a tree (add 'working' for this conversation)"
+    summary = "What memory holds, as tables (a verified customer: working + their episodes)"
     usage = "/memory [working|customer <id>|<search term>]"
 
     _WORKING = "working"
@@ -57,41 +56,62 @@ class MemoryCommand(PoolBackedCommand):
         self._scope = scope
 
     async def run(self, args: list[str]) -> CommandResult:
-        """The same tree `make show-memory` prints, narrowed by customer or search term."""
+        """Scoped to a verified subject: working + their episodic. Unscoped: every store."""
         settings = get_settings()
         if args and args[0].casefold() == self._WORKING:
             return self._working_window(settings.commands.value_preview_chars)
         subject, term = self._narrowing(args)
         if self._scope is not None and self._scope.scoped:
-            return self._scoped_tree(subject, term)
-        return self._tree(subject, term)
+            return self._scoped(subject, term)
+        return self._everything(subject, term)
 
-    def _scoped_tree(self, asked: str | None, term: str | None) -> CommandResult:
-        """Only the verified subject's memory; anyone else's is refused, not hidden silently."""
+    def _scoped(self, asked: str | None, term: str | None) -> CommandResult:
+        """This conversation's working memory and this subject's episodes — nobody else's.
+
+        Semantic facts and skills are the agent's, common to every subject,
+        so a subject's view leaves them out (`make show-memory` has them).
+        """
+        from agent_platform.memory.inspect import episodic_tables, take_snapshot
+
         assert self._scope is not None
-        settings = get_settings().commands
+        commands = get_settings().commands
         verified = self._scope.subject()
         if verified is None:
-            return CommandResult(title="Memory", ok=False).line(settings.verify_first)
+            return CommandResult(title="Memory", ok=False).line(commands.verify_first)
         if asked is not None and asked != verified:
-            return CommandResult(title="Memory", ok=False).line(settings.not_your_records)
-        return self._tree(verified, term)
-
-    def _tree(self, subject: str | None, term: str | None) -> CommandResult:
-        from agent_platform.memory.inspect import snapshot_tree, take_snapshot
-        from agent_platform.persistence import as_platform_store
-
-        settings = get_settings()
-        snapshot = take_snapshot(as_platform_store(self.pool), subject, term)
-        tree = snapshot_tree(
-            snapshot,
-            settings.commands.memory_tree_events_per_session,
-            settings.commands.tree_preview_chars,
-        )
-        result = CommandResult(title=f"Memory — {snapshot.headline}")
-        result.lines = tree_lines(tree)
-        result.line("Use /memory working to see what this conversation is holding.")
+            return CommandResult(title="Memory", ok=False).line(commands.not_your_records)
+        snapshot = take_snapshot(verified, term)
+        snapshot.episodic = {k: v for k, v in snapshot.episodic.items() if k == verified}
+        result = self._titled()
+        self._add_working(result)
+        for table in episodic_tables(snapshot, commands.memory_tree_events_per_session):
+            result.table(table)
         return result
+
+    def _everything(self, subject: str | None, term: str | None) -> CommandResult:
+        """Every store, as `make show-memory` prints it, plus this conversation's window."""
+        from agent_platform.memory.inspect import snapshot_tables, take_snapshot
+
+        commands = get_settings().commands
+        result = self._titled()
+        self._add_working(result)
+        snapshot = take_snapshot(subject, term)
+        for table in snapshot_tables(snapshot, commands.memory_tree_events_per_session):
+            result.table(table)
+        return result.line(commands.memory_tables.queue_note)
+
+    def _titled(self) -> CommandResult:
+        words = get_settings().commands.memory_tables
+        return CommandResult(title=words.title.format(agent=get_settings().agent.id))
+
+    def _add_working(self, result: CommandResult) -> None:
+        """This conversation's working memory, when a live agent is attached."""
+        from agent_platform.memory.inspect import working_table
+
+        if self._working_memory is None:
+            return
+        session = self._scope.session_id if self._scope is not None else self._session_id
+        result.table(working_table(self._working_memory.get(session)))
 
     def _narrowing(self, args: list[str]) -> tuple[str | None, str | None]:
         """`customer <id>` narrows to one customer; anything else is a search term."""

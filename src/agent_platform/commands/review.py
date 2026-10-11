@@ -19,20 +19,24 @@ With numbers instead, it is the staffing arithmetic the queue implies
 """
 
 from collections.abc import Callable, Sequence
+from typing import Literal
 
 from agent_platform.audit import SqliteAuditLedger
 from agent_platform.commands._pool import PoolBackedCommand
 from agent_platform.commands.scope import ConsoleScope
-from agent_platform.commands.types import CommandError, CommandResult
+from agent_platform.commands.types import CommandError, CommandResult, CommandTable
 from agent_platform.config import get_settings
 from agent_platform.observability.queue import LittlesLawQueueModel
 from agent_platform.persistence import SqliteConnectionPool
-from agent_platform.presentation.text_tree import TreeNode, tree_lines
 from agent_platform.review import ReviewItem, ReviewQueue
 from agent_platform.review.handlers import MemoryReviewHandler, QuarantineHandler
 from agent_platform.review.service import EVERYONE, ReviewError, ReviewHandler, ReviewService
 
 _SHOW = "show"
+# Where a queue is read, and so how its hint says to decide.
+Surface = Literal["console", "terminal"]
+CONSOLE: Surface = "console"
+TERMINAL: Surface = "terminal"
 _DECISIONS = {"approve": "approve", "deny": "deny"}
 
 HandlerFactory = Callable[[SqliteConnectionPool], Sequence[ReviewHandler]]
@@ -45,10 +49,17 @@ class QueueCommand(PoolBackedCommand):
     name = "queue"
 
     def __init__(
-        self, pool: SqliteConnectionPool | None = None, handlers: HandlerFactory | None = None
+        self,
+        pool: SqliteConnectionPool | None = None,
+        handlers: HandlerFactory | None = None,
+        surface: Surface = CONSOLE,
     ) -> None:
         super().__init__(pool)
         self._handlers = handlers
+        # Where the list is read: the hint under it says how to decide *there*. A terminal's
+        # hint names the agent as `make` knows it (`csa`), which only the caller can say.
+        self.surface: Surface = surface
+        self.make_agent = ""
         self._scope: ConsoleScope | None = None
         self._words = get_settings().review.words
         self.summary = self._words.summary
@@ -97,26 +108,24 @@ class QueueCommand(PoolBackedCommand):
         result = CommandResult(title=self._words.title.format(n=len(items)))
         if not items:
             return result.line(self._words.empty)
-        result.lines = tree_lines(self._tree(service, items, result.title))[1:]
-        return result.line(self._words.hint)
+        for name in dict.fromkeys(item.kind for item in items):
+            result.table(self.kind_table(service, name, [i for i in items if i.kind == name]))
+        return result.line(self.hint())
 
-    def _tree(self, service: ReviewService, items: list[ReviewItem], title: str) -> TreeNode:
-        root = TreeNode(title)
-        for kind in dict.fromkeys(item.kind for item in items):
-            mine = [item for item in items if item.kind == kind]
-            branch = root.add(self._words.kind_branch.format(kind=kind, n=len(mine)))
-            for item in mine:
-                branch.add(self.line(service, item))
-        return root
-
-    def line(self, service: ReviewService, item: ReviewItem) -> str:
-        """One item as a list shows it: its id, what it asks, and whose it is."""
-        described = service.describe(item)
-        summary = described[0] if described and described[0] else item.summary
-        subject = (
-            self._words.subject_part.format(subject=item.subject_id) if item.subject_id else ""
+    def kind_table(
+        self, service: ReviewService, kind: str, items: list[ReviewItem]
+    ) -> CommandTable:
+        """One kind's pending items, under that kind's own column headings."""
+        return CommandTable(
+            title=self._words.kind_title.format(kind=kind, n=len(items)),
+            headers=service.columns(kind),
+            rows=[service.cells(item) for item in items],
         )
-        return self._words.item_line.format(id=item.id, summary=summary) + subject
+
+    def hint(self) -> str:
+        """How to decide, said for where the list is being read."""
+        agent = self.make_agent or get_settings().agent.id
+        return self._words.hints[self.surface].format(agent=agent)
 
     def _show(self, args: list[str]) -> CommandResult:
         service = self.service()
@@ -124,10 +133,14 @@ class QueueCommand(PoolBackedCommand):
         result = CommandResult(
             title=self._words.show_title.format(id=item.id, kind=item.kind, status=item.status)
         )
-        for line in service.describe(item):
+        fields = zip(service.columns(item.kind), service.cells(item), strict=True)
+        result.table(
+            CommandTable(headers=self._words.show_headers, rows=[[k, v] for k, v in fields])
+        )
+        for line in service.describe(item)[1:]:
             if line:
                 result.line(line)
-        return result
+        return result.line(self.hint())
 
     async def _decide(self, decision: str, args: list[str]) -> CommandResult:
         item_id = self._id(decision, args)

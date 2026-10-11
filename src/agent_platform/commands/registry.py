@@ -11,7 +11,6 @@ from agent_platform.commands.evals import EvalCommand
 from agent_platform.commands.harness import HarnessCommand
 from agent_platform.commands.inspection import (
     AuditCommand,
-    ConfigCommand,
 )
 from agent_platform.commands.review import QueueCommand
 from agent_platform.commands.stats import StatsCommand
@@ -119,7 +118,6 @@ def _default_commands() -> list[Command]:
     """
     return [
         HelpCommand(),
-        ConfigCommand(),
         AuditCommand(),
         StatsCommand(),
         QueueCommand(),

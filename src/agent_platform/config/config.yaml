@@ -1434,12 +1434,21 @@ review:
     usage: "/queue [kind] · /queue show <id> · /queue approve|deny <id> <comment> · /queue <arrivals_per_hour> [minutes_each]"
     title: "Review queue — {n} pending"
     empty: Nothing is waiting for a person.
-    kind_branch: "{kind} — {n}"
-    item_line: "#{id} · {summary}"
-    subject_part: " · {subject}"
     show_title: "#{id} · {kind} · {status}"
     decided: "#{id} {kind}: {status} by {reviewer} — {comment}"
-    hint: "/queue approve|deny <id> <comment> decides one; the comment is kept and audited."
+    # How to decide, said for where the list is read: in the console, or in a terminal.
+    hints:
+      console: "Decide: /queue approve|deny <id> <comment> · or on screen: ctrl+r. The comment is kept and audited."
+      terminal: "Decide: make queue {agent} ACTION=approve|deny ID=<id> COMMENT=\"<why>\" · or on screen: make agent {agent}, then ctrl+r."
+    kind_title: "{kind} — {n} pending"
+    time_format: "%Y-%m-%d %H:%M"
+    none: "—"
+    # Each kind's table headings. An agent adds its own kinds' in its overlay.
+    columns:
+      quarantine: [ID, Screen, "Message (redacted)", Subject, Raised]
+      memory_fact: [ID, Subject, Fact, Proposed by, Why held, Raised]
+      skill: [ID, Skill, What it says, Why held, Raised]
+    show_headers: [Field, Value]
     needs_id: "/queue {action} needs an item id. {usage}"
     needs_comment: "A decision needs a comment saying why (it is kept with the item and audited)."
     unknown_item: "No pending review item #{id} here."
@@ -2233,6 +2242,32 @@ commands:
   value_preview_chars: 40  # where a long stored value is elided in a table
   tree_preview_chars: 100  # where a value is elided on one line of a memory tree
   memory_tree_events_per_session: 5  # events listed per session before "… N more"
+  # `/memory` and `make show-memory`: one table per store. In a console scoped to a verified
+  # subject, only working memory and that subject's episodic memory are shown — semantic and
+  # procedural memory are the agent's, common to every subject.
+  memory_tables:
+    title: "Memory · {agent}"
+    working_title: "Working memory · this conversation"
+    working_headers: [Key, Value]
+    history_key: conversation
+    history_value: "{n} turn(s) held"
+    episodic_title: "Episodic · {subject} · {n} session(s)"
+    episodic_headers: [When, Session, Kind, What happened]
+    summary_kind: summary
+    event_kind: event
+    semantic_title: "Semantic · {n} fact(s), consolidated by dreams"
+    semantic_headers: [Subject, Fact, Value, Provenance, Version]
+    skills_title: "Procedural · {n} active skill(s)"
+    skills_headers: [Skill, Version, Source, Triggers, Description]
+    inbox_title: "Dream events · {pending} pending · {consolidated} consolidated"
+    inbox_headers: [Status, When, Session, Subject, Kind, Asked, Actions, Signals]
+    pending: pending
+    consolidated: consolidated
+    empty: Nothing yet.
+    episodic_empty: "Episodic · nothing yet — `make dream <agent>` turns dream events into episodes."
+    time_format: "%Y-%m-%d %H:%M"
+    queue_note: "Facts and skills waiting for a curator are in /queue (make queue <agent>)."
+    inbox_events: 50  # dream events listed, newest first
   recent_window: 20        # how many recent records the summaries look back over
   # A scoped command (`/memory`, an agent's `/queue`) shows only the session's verified subject.
   verify_first: Nobody is verified in this session yet. Verify first, then ask again.
@@ -2437,14 +2472,41 @@ tui:
   response_highlights: []
 
   command_output:
-    title_style: bold cyan
-    header_style: bold
-    row_style: default
-    note_style: bright_black
-    error_style: red
+    title_style: "bold #E2C792"
+    header_style: "bold #E2C792"
+    row_style: "#F3EAD3"
+    note_style: "#F3EAD3"
+    error_style: "bold #FF5C5C"
     column_gap: 2
     max_column_width: 64
-    prompt_style: bold magenta
+    prompt_style: "bold #67E8F9"
+    # Box tables (`CommandTable`), coloured as an agent's order table is: the grid recedes,
+    # headings read as headings, the first (id) column is bold, and a cell that is a known
+    # state is coloured by state. Matched on the whole cell, ignoring case.
+    table_title_style: bold
+    grid_style: bright_black
+    table_header_style: bold cyan
+    id_style: bold
+    empty_style: bright_black
+    state_styles:
+      pending: yellow
+      awaiting review: bold yellow
+      escalate: yellow
+      approved: green
+      active: green
+      allow: green
+      authored: green
+      completed: green
+      consolidated: green
+      denied: red
+      failed: red
+      deny: red
+      refused: red
+      learned: cyan
+      summary: cyan
+      event: bright_black
+      none: bright_black
+      "—": bright_black
 
 # The web gateway (agent_platform/web). `replay` is the default because
 # it is the only mode that cannot reach the network: a process that was

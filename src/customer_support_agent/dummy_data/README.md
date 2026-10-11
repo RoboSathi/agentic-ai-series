@@ -1,8 +1,9 @@
 # dummy_data — the demo shop
 
 `make dummy-data` generates a deterministic synthetic shop from
-`generator.yaml` (100 users, 1000 orders, fixed seed; dates are relative to
-now) into `seed_data.sql`, rebuilds `agentic.db` from the schema, seed and
+`generator.yaml` (100 users, each a different famous scientist, mathematician or
+computer scientist; 1000 orders, every one starting with refund status `none`;
+fixed seed; dates are relative to now) into `seed_data.sql`, rebuilds `agentic.db` from the schema, seed and
 `agent_policy_seed.sql`, logs the policy it reads back from the database,
 resets checkpoints and episodic logs that remember the old orders
 (`KEEP_MEMORY=1` keeps them), and rebuilds the eval fixture. It never

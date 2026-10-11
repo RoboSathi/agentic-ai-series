@@ -1,4 +1,7 @@
-"""Customer Support's own console commands (LLD §20, §21): `/void` and `/settle`.
+"""Customer Support's own console command (LLD §20, §21): `/void`.
+
+An issued refund settles on its own when its void window closes (the
+console's housekeeping sweep); until then a reviewer can void it.
 
 Review decisions are the platform's `/queue` (ADR 0012), with this agent's
 refund and reply kinds added by `console/review_handler.py`.
@@ -20,10 +23,10 @@ from customer_support_agent.config import get_agent_settings
 
 
 class _SettlementCommand(PoolBackedCommand):
-    """What `/void` and `/settle` share: the settlement service and the console's scope.
+    """The settlement service and the console's scope, for `/void`.
 
     Scoped like `/queue`: in a console session only the verified customer's
-    refunds are listed, voided or settled, and someone else's order gets the
+    refunds are listed or voided, and someone else's order gets the
     answer an order with nothing issued gets.
     """
 
@@ -109,44 +112,3 @@ class VoidCommand(_SettlementCommand):
         return CommandResult(
             title=words.titles["refused"].format(order_id=order_id), ok=False
         ).line(words.lines[key].format(order_id=order_id))
-
-
-class SettleCommand(_SettlementCommand):
-    """Settle issued refunds now rather than at the end of their window — closing the batch."""
-
-    name = "settle"
-    summary = "Settle issued refunds now: one order, or all"
-    usage = "/settle [<order_id> | all]"
-    _ALL = "all"
-
-    def argument_completions(self, args: list[str]) -> list[str]:
-        """Each issued order, and `all`."""
-        return [] if args else [*super().argument_completions(args), self._ALL]
-
-    async def run(self, args: list[str]) -> CommandResult:
-        refused = self._unverified()
-        if refused is not None:
-            return refused
-        if not args:
-            return self._listing()
-        target = args[0].casefold()
-        if target != self._ALL and not target.isdigit():
-            raise CommandError(f"Usage: {self.usage}")
-        actor = get_agent_settings().console_reviewer
-        service = self._service()
-        if target == self._ALL:
-            outcomes = await service.settle_all(actor, self._customer())
-        elif self._is_theirs(int(target)):
-            outcomes = [await service.settle(int(target), actor)]
-        else:
-            outcomes = []
-        settled = [outcome for outcome in outcomes if outcome.state == "settled"]
-        words = get_agent_settings().settlement
-        result = CommandResult(title=words.titles["settled"].format(count=len(settled)))
-        if not settled:
-            return result.line(words.lines["nothing_due"])
-        for outcome in settled:
-            result.line(
-                words.lines["settled"].format(order_id=outcome.order_id, amount=outcome.amount)
-            )
-        return result

@@ -131,3 +131,10 @@
 - A learned skill counts toward an agent's `skills.max_prompt_chars`, like any skill.
 - `/dlq`, `dlq_cli`, `make dlq`, `/skills approve`, CSA's `admin/{dream,show_memory,clean_memory}`
   and `research_agent/reflexion/` are deleted.
+
+## Follow-up (same day)
+
+- `/queue`, `/memory` and `make show-memory` print clean box tables (`CommandTable`), coloured cell by cell like the support agent's order table, the same in the console and a terminal (`presentation/command_view.py`, `presentation/terminal.py`).
+- A console scoped to a verified customer shows only working memory and that customer's episodes; facts and skills are the agent's.
+- The queue's closing hint names how to decide where it is read (`make queue …` in a terminal; `/queue …`, `/review`, `ctrl+r` in the console).
+- How dream events are created and consolidated: `src/agent_platform/memory/dream/README.md`.

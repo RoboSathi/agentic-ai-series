@@ -1,6 +1,6 @@
 """Console slash commands (LLD §20).
 
-An operator asking the harness about itself: `/audit`, `/config`,
+An operator asking the harness about itself: `/audit`,
 `/harness`, `/eval`. None of them reaches a model and none appears in the
 customer's transcript — inspecting the system should not consume the
 customer's token budget, and a command answered by a model could be
@@ -18,7 +18,6 @@ from agent_platform.commands.evals import EvalCommand
 from agent_platform.commands.harness import HarnessCommand
 from agent_platform.commands.inspection import (
     AuditCommand,
-    ConfigCommand,
 )
 from agent_platform.commands.knowledge import KnowledgeBaseCommand
 from agent_platform.commands.registry import PREFIX, CommandRegistry
@@ -34,6 +33,7 @@ from agent_platform.commands.types import (
     CommandError,
     CommandResult,
     CommandRow,
+    CommandTable,
     ConsoleEffect,
 )
 
@@ -52,7 +52,7 @@ __all__ = [
     "CommandResult",
     "ConsoleEffect",
     "CommandRow",
-    "ConfigCommand",
+    "CommandTable",
     "EvalCommand",
     "HarnessCommand",
     "HelpCommand",
