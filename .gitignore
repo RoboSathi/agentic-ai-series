@@ -32,6 +32,8 @@ data/agent.db
 data/*
 src/customer_support_agent/dummy_data/*.db*
 src/research_agent/data/runs/*
+# Long-term memory (ADR 0011): each agent's files, written at run time, never versioned.
+src/*/data/memory/
 
 # Local Models
 local_models/*

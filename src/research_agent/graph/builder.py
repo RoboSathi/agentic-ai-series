@@ -173,7 +173,7 @@ def build_agent(
     roles = clients or role_clients(observer)
     _require_independent_judge(roles, posture, agent)
     # Authored skills only (ra-0021): synced at start-up, selected by role.
-    procedural = SkillStore(platform) if posture.is_on("memory.procedural") else None
+    procedural = SkillStore() if posture.is_on("memory.procedural") else None
     caller = StructuredCaller(
         roles,
         PydanticValidator(),
@@ -762,7 +762,7 @@ def _memory(
         if posture.is_on("memory.working")
         else None,
         episodic=(episodic or EpisodicStore()) if posture.is_on("memory.episodic") else None,
-        semantic=SemanticStore(platform) if posture.is_on("memory.semantic") else None,
+        semantic=SemanticStore() if posture.is_on("memory.semantic") else None,
         procedural=procedural,
         platform_store=platform,
         redactor=PIIFilterImpl() if posture.is_on("pii") else None,

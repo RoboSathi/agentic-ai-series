@@ -381,11 +381,7 @@ def build_agent(
     # Procedural memory: the agent's skills and the lessons a curator
     # approved. One store, shared by the facade (approvals land in it) and
     # the instructions (each turn's skills are read from it).
-    procedural = (
-        SkillStore(platform_store)
-        if memory_enabled and features.is_on("memory.procedural")
-        else None
-    )
+    procedural = SkillStore() if memory_enabled and features.is_on("memory.procedural") else None
     long_term = long_term_memory(
         platform_store,
         semantic=memory_enabled and features.is_on("memory.semantic"),
@@ -581,7 +577,7 @@ def long_term_memory(
         return None
     return MemoryFacade(
         episodic=(episodic_store or EpisodicStore()) if episodic else None,
-        semantic=SemanticStore(platform_store) if semantic else None,
+        semantic=SemanticStore() if semantic else None,
         procedural=procedural,
         platform_store=platform_store,
         redactor=redactor,
@@ -667,7 +663,7 @@ def build_dream_service(
         episodic=True,
         # A proposed lesson is queued, not written; the store exists so a
         # curator's approval has somewhere to land.
-        procedural=SkillStore(platform_store) if procedural else None,
+        procedural=SkillStore() if procedural else None,
         redactor=PIIFilterImpl(),
         policy=AgentPolicyRepository(platform_store).get(),
         audit=audit or create_audit_ledger(platform_store, agent_id=settings.agent.id),

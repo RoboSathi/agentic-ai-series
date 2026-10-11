@@ -28,12 +28,12 @@ def episodic(tmp_path: Path) -> EpisodicStore:
 
 @pytest.fixture
 def semantic(pool: SqliteConnectionPool) -> SemanticStore:
-    return SemanticStore(pool)
+    return SemanticStore()
 
 
 @pytest.fixture
 def procedural(pool: SqliteConnectionPool) -> SkillStore:
-    return SkillStore(pool)
+    return SkillStore()
 
 
 @pytest.fixture
@@ -261,9 +261,7 @@ class TestMemoryFacade:
     async def test_recall_ranks_across_stores(
         self, pool: SqliteConnectionPool, tmp_path: Path
     ) -> None:
-        facade = MemoryFacade.complete(
-            semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path)
-        )
+        facade = MemoryFacade.complete(semantic=SemanticStore(), episodic=EpisodicStore(tmp_path))
         facade.semantic.write(_fact("policy", "refunds within 30 days"), Provenance(source="p"))
         recalled = await facade.recall(MemoryQuery(text="refunds"))
         assert recalled and recalled[0].fact.key == "policy"
@@ -271,15 +269,11 @@ class TestMemoryFacade:
     async def test_recall_is_empty_when_nothing_matches(
         self, pool: SqliteConnectionPool, tmp_path: Path
     ) -> None:
-        facade = MemoryFacade.complete(
-            semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path)
-        )
+        facade = MemoryFacade.complete(semantic=SemanticStore(), episodic=EpisodicStore(tmp_path))
         assert await facade.recall(MemoryQuery(text="nothing here")) == []
 
     def test_forget_removes_a_fact(self, pool: SqliteConnectionPool, tmp_path: Path) -> None:
-        facade = MemoryFacade.complete(
-            semantic=SemanticStore(pool), episodic=EpisodicStore(tmp_path)
-        )
+        facade = MemoryFacade.complete(semantic=SemanticStore(), episodic=EpisodicStore(tmp_path))
         facade.semantic.write(_fact("k", "v"), Provenance(source="t"))
         assert facade.forget("k") == 1
 
@@ -297,8 +291,8 @@ class TestEachCoalaClassIsIndependent:
         return MemoryFacade(
             working=WorkingMemory() if have.get("working") else None,
             episodic=EpisodicStore(tmp_path) if have.get("episodic") else None,
-            semantic=SemanticStore(pool) if have.get("semantic") else None,
-            procedural=SkillStore(pool) if have.get("procedural") else None,
+            semantic=SemanticStore() if have.get("semantic") else None,
+            procedural=SkillStore() if have.get("procedural") else None,
             platform_store=pool,
         )
 

@@ -18,8 +18,10 @@ _RESTART = "Restart a running TUI: its working memory lives in the process."
 
 def main() -> None:
     store = agent_store()
-    removed = clear_long_term_memory(store, get_settings().memory.episodic.resolved_path)
-    root = TreeNode(f"Cleared long-term memory · {store.agent_id} · {store.db_path}")
+    removed = clear_long_term_memory(store)
+    root = TreeNode(
+        f"Cleared long-term memory · {store.agent_id} · {get_settings().memory.files.resolved_root}"
+    )
     for label, count in removed.items():
         root.add(f"{label}: {count} removed")
     print_lines([*tree_lines(root), _KEPT, _RESTART])

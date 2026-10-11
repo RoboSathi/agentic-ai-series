@@ -123,13 +123,13 @@ class TestDummyData:
     def test_reset_removes_state_that_remembers_old_orders(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        checkpoints, episodic = tmp_path / "c.db", tmp_path / "episodic"
+        checkpoints, memory = tmp_path / "c.db", tmp_path / "memory"
         checkpoints.write_text("x")
-        episodic.mkdir()
+        (memory / "semantic").mkdir(parents=True)
         monkeypatch.setattr(get_settings().durability, "db_path", str(checkpoints))
-        monkeypatch.setattr(get_settings().memory.episodic, "path", str(episodic))
-        assert set(dummy.reset_derived_state()) == {checkpoints, episodic}
-        assert not checkpoints.exists() and not episodic.exists()
+        monkeypatch.setattr(get_settings().memory.files, "root", str(memory))
+        assert set(dummy.reset_derived_state()) == {checkpoints, memory}
+        assert not checkpoints.exists() and not memory.exists()
 
     def test_the_database_holds_the_policy_it_reports(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

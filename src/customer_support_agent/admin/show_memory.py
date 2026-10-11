@@ -18,7 +18,7 @@ from customer_support_agent.admin._store import agent_store
 def memory_lines(customer: str | None = None, events: int | None = None) -> list[str]:
     """The memory tree for this agent, optionally narrowed to one customer."""
     settings = get_settings()
-    snapshot = take_snapshot(agent_store(), settings.memory.episodic.resolved_path, customer)
+    snapshot = take_snapshot(agent_store(), customer)
     per_session = events or settings.commands.memory_tree_events_per_session
     return tree_lines(snapshot_tree(snapshot, per_session, settings.commands.tree_preview_chars))
 

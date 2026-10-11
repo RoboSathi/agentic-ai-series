@@ -10,10 +10,10 @@ happened and what happened, not as `event_<session>_<uuid>`.
 """
 
 from collections import defaultdict
-from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from agent_platform.config import get_settings
 from agent_platform.memory.episodic.memory import EpisodicStore
 from agent_platform.memory.events import DreamInbox, InboxCounts
 from agent_platform.memory.governance import CuratorQueue
@@ -33,7 +33,8 @@ class MemorySnapshot(BaseModel):
     """Every long-term store's contents at one moment, grouped for reading."""
 
     agent_id: str
-    db_path: str
+    # The agent's memory directory, where every store below lives.
+    root: str
     # subject → session → events, newest first.
     episodic: dict[str, dict[str, list[MemoryFact]]] = Field(default_factory=dict)
     semantic: dict[str, list[MemoryFact]] = Field(default_factory=dict)
@@ -55,7 +56,6 @@ class MemorySnapshot(BaseModel):
 
 def take_snapshot(
     store: PlatformStore,
-    episodic_root: Path,
     subject: str | None = None,
     term: str | None = None,
 ) -> MemorySnapshot:
@@ -63,10 +63,10 @@ def take_snapshot(
     keep = _Filter(subject, term)
     return MemorySnapshot(
         agent_id=store.agent_id,
-        db_path=store.db_path,
-        episodic=_episodic(EpisodicStore(episodic_root), keep),
-        semantic=_semantic(SemanticStore(store), keep),
-        skills=_skills(SkillStore(store), keep),
+        root=str(get_settings().memory.files.resolved_root),
+        episodic=_episodic(EpisodicStore(), keep),
+        semantic=_semantic(SemanticStore(), keep),
+        skills=_skills(SkillStore(), keep),
         curator=[
             (queue_id, result)
             for queue_id, result in CuratorQueue(store).pending()
@@ -78,7 +78,7 @@ def take_snapshot(
 
 def snapshot_tree(snapshot: MemorySnapshot, events_per_session: int, preview: int) -> TreeNode:
     """The snapshot as a tree: store → customer → session → entry."""
-    root = TreeNode(f"Memory · {snapshot.agent_id} · {snapshot.db_path}")
+    root = TreeNode(f"Memory · {snapshot.agent_id} · {snapshot.root}")
     _episodic_branch(root, snapshot, events_per_session, preview)
     _semantic_branch(root, snapshot, preview)
     skills = root.add(f"Procedural — {len(snapshot.skills)} active")

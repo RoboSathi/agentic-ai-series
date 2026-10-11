@@ -82,9 +82,7 @@ class MemoryCommand(PoolBackedCommand):
         from agent_platform.persistence import as_platform_store
 
         settings = get_settings()
-        snapshot = take_snapshot(
-            as_platform_store(self.pool), settings.memory.episodic.resolved_path, subject, term
-        )
+        snapshot = take_snapshot(as_platform_store(self.pool), subject, term)
         tree = snapshot_tree(
             snapshot,
             settings.commands.memory_tree_events_per_session,

@@ -23,6 +23,7 @@ from pathlib import Path
 from agent_platform.config import get_settings
 from agent_platform.logging import get_logger, instrument, logged
 from agent_platform.memory.deterministic import TextSearchBackend, create_text_search
+from agent_platform.memory.files import IndexEntry, MemoryDirectory, write_index
 from agent_platform.memory.types import (
     MemoryFact,
     MemoryQuery,
@@ -30,6 +31,8 @@ from agent_platform.memory.types import (
     WriteResult,
 )
 
+# The store's name on its MEMORY.md title.
+_STORE_TITLE = "Episodic"
 # The category of an appended record that retires earlier events.
 SUPERSESSION = "supersession"
 # Where a supersession record lists the event keys it retires.
@@ -40,16 +43,22 @@ _SUPERSEDES = "supersedes"
 class EpisodicStore:
     """Append-only session logs, one file per session."""
 
-    _GLOB = "*.jsonl"
-
     def __init__(
         self, root: Path | None = None, text_search: TextSearchBackend | None = None
     ) -> None:
-        settings = get_settings().memory.episodic
-        self._root = root or settings.resolved_path
+        settings = get_settings()
+        self._files = settings.memory.files
+        self._agent_id = settings.agent.id
+        self._root = root or self._files.episodic_root
         self._root.mkdir(parents=True, exist_ok=True)
+        self._suffix = self._files.session_log_suffix
+        self._glob = f"*{self._suffix}"
         self._search = text_search or create_text_search()
         self._logger = get_logger("memory")
+
+    @property
+    def root(self) -> Path:
+        return self._root
 
     @property
     def search_backend(self) -> str:
@@ -62,7 +71,7 @@ class EpisodicStore:
         Scoped to one subject: a customer's recall reaches that customer's
         events and no one else's, whichever session they were recorded in.
         """
-        matches = self._search.search(self._root, terms, self._GLOB)
+        matches = self._search.search(self._root, terms, self._glob)
         facts = self._live(
             [fact for match in matches if (fact := _parse_line(match.text)) is not None]
         )
@@ -72,7 +81,7 @@ class EpisodicStore:
 
     def session_path(self, session_id: str) -> Path:
         """The log file for one session."""
-        return self._root / f"{_safe(session_id)}.jsonl"
+        return self._root / f"{_safe(session_id)}{self._suffix}"
 
     @logged("memory")
     def write(self, fact: MemoryFact, provenance: Provenance) -> WriteResult:
@@ -101,10 +110,35 @@ class EpisodicStore:
 
     def purge(self) -> int:
         """Delete every session log. Operator reset only (`make clean-memory`)."""
-        logs = list(self._root.glob(self._GLOB))
+        logs = list(self._root.glob(self._glob))
         for path in logs:
             path.unlink()
+        (self._root / self._files.index_file).unlink(missing_ok=True)
         return len(logs)
+
+    def write_index(self, summary_category: str) -> None:
+        """Rewrite MEMORY.md: one line per session, its latest summary if a dream wrote one."""
+        directory = MemoryDirectory(self._root, self._files.lock_file)
+        entries = []
+        for session in self.sessions():
+            events = self.events(session)
+            summaries = [fact for fact in events if fact.category == summary_category]
+            latest = (summaries or events)[:1]
+            entries.append(
+                IndexEntry(
+                    title=session,
+                    path=self.session_path(session).name,
+                    description=latest[0].value if latest else "",
+                )
+            )
+        write_index(
+            directory,
+            self._files.index_file,
+            _STORE_TITLE,
+            self._agent_id,
+            entries,
+            self._files.index,
+        )
 
     def events(self, session_id: str, include_superseded: bool = False) -> list[MemoryFact]:
         """Every event in one session, newest first (superseded ones left out by default)."""
@@ -129,7 +163,7 @@ class EpisodicStore:
 
     def sessions(self) -> list[str]:
         """Every session with a recorded log."""
-        return sorted(path.stem for path in self._root.glob("*.jsonl"))
+        return sorted(path.stem for path in self._root.glob(self._glob))
 
     def grep(self, pattern: str, limit: int = 20) -> list[MemoryFact]:
         """Literal substring search across every session log.
@@ -137,7 +171,7 @@ class EpisodicStore:
         The plain-text, one-fact-per-line format is what makes this a
         one-liner rather than a query planner (McIlroy's "do one thing").
         """
-        matches = self._search.search(self._root, [pattern], self._GLOB)
+        matches = self._search.search(self._root, [pattern], self._glob)
         found = self._live(
             [fact for match in matches if (fact := _parse_line(match.text)) is not None]
         )
@@ -163,7 +197,7 @@ class EpisodicStore:
         if session_id:
             path = self.session_path(session_id)
             return [path] if path.exists() else []
-        return sorted(self._root.glob("*.jsonl"))
+        return sorted(self._root.glob(self._glob))
 
     def _read_file(self, path: Path, include_superseded: bool = False) -> list[MemoryFact]:
         """One session's events: supersession records never, retired events on request."""

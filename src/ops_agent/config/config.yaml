@@ -70,6 +70,11 @@ audit:
 persistence:
   db_path: src/ops_agent/db/agent.db
 
+# Only procedural memory is composed: the skills, synced into these files at start-up.
+memory:
+  files:
+    root: src/ops_agent/data/memory
+
 # The analytics MCP server, launched over stdio with this interpreter. Its
 # tools run under the envelope below — what this deployment grants them,
 # whatever the server says about itself.

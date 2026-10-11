@@ -1169,9 +1169,41 @@ skills:
 
 memory:
   schema_version: memory-schema-v1
-  episodic:
-    # Neutral default; each agent overlays its own session-log directory.
-    path: logs/memory/default
+  # Long-term memory is files, one directory per agent (ADR 0011). The records under each
+  # store's history directory are the truth; the readable files beside them (one per fact,
+  # one SKILL.md per skill, a MEMORY.md index per store) are regenerated views, and the
+  # full-text index is derived from the records and rebuilt whenever it is missing or stale.
+  files:
+    # Neutral default; each agent overlays `src/<package>/data/memory`.
+    root: data/memory/default
+    dream_events_dir: dream_events
+    episodic_dir: episodic
+    semantic_dir: semantic
+    procedural_dir: procedural
+    # Inside dream_events: written by a turn, then moved once a dream has read it.
+    pending_dir: pending
+    consolidated_dir: consolidated
+    history_dir: .history
+    index_file: MEMORY.md
+    derived_index_file: .index.sqlite
+    lock_file: .lock
+    sequence_file: .sequence
+    # Record files are numbered in write order, zero-padded so a directory listing is that order.
+    record_digits: 8
+    record_suffix: .md
+    event_suffix: .json
+    session_log_suffix: .jsonl
+    frontmatter_delimiter: "---"
+    # Where an agent's own facts live, as against a subject's (a subject id is never empty).
+    shared_subject_dir: _agent
+    # A name that had to be made filename-safe keeps this many hex chars of its digest.
+    name_digest_chars: 8
+    # Each store's MEMORY.md: a title, then one line per memory.
+    index:
+      title: "# {store} memory · {agent}"
+      line: "- [{title}]({path}) — {description}"
+      empty: "_Nothing remembered yet._"
+      description_chars: 120
   semantic:
     fuzzy_match_threshold: 0.6
     # Document RAG (memory/semantic/rag). Neutral defaults under data/;

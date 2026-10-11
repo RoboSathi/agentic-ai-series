@@ -120,8 +120,8 @@ skills:
   max_prompt_chars: 2600
 
 memory:
-  episodic:
-    path: logs/memory/customer_support_agent
+  files:
+    root: src/customer_support_agent/data/memory
   dream:
     # How this agent words a refused tool call (graph/nodes/execute.py);
     # refusals repeated across sessions become skill candidates.

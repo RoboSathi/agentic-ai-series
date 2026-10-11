@@ -237,8 +237,8 @@ durability:
   db_path: src/research_agent/db/checkpoints.db
 
 memory:
-  episodic:
-    path: logs/memory/research_agent
+  files:
+    root: src/research_agent/data/memory
 
 security:
   prompt_injection:

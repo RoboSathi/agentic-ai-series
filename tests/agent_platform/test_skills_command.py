@@ -15,7 +15,7 @@ _QUEUED = 0.5
 
 @pytest.fixture
 def store(pool: SqliteConnectionPool) -> SkillStore:
-    return SkillStore(pool)
+    return SkillStore()
 
 
 @pytest.fixture
@@ -30,7 +30,7 @@ def catalog(store: SkillStore) -> SkillCatalog:
 
 @pytest.fixture
 def pipeline(pool: SqliteConnectionPool, store: SkillStore) -> MemoryWritePipelineImpl:
-    return MemoryWritePipelineImpl(semantic=SemanticStore(pool), procedural=store)
+    return MemoryWritePipelineImpl(semantic=SemanticStore(), procedural=store)
 
 
 @pytest.fixture

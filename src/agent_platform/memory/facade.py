@@ -146,8 +146,8 @@ class MemoryFacade:
         return cls(
             working=working or WorkingMemoryStore(),
             episodic=episodic or EpisodicStore(),
-            semantic=semantic or SemanticStore(platform_store),
-            procedural=procedural or SkillStore(platform_store),
+            semantic=semantic or SemanticStore(),
+            procedural=procedural or SkillStore(),
             pipeline=pipeline,
             relevance=relevance,
             platform_store=platform_store,

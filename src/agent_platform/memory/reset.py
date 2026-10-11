@@ -9,8 +9,6 @@ Each store purges its own rows — table names stay with the class that
 owns them — and this module only decides which stores a reset covers.
 """
 
-from pathlib import Path
-
 from agent_platform.memory.episodic.memory import EpisodicStore
 from agent_platform.memory.events import DreamInbox
 from agent_platform.memory.governance import CuratorQueue
@@ -19,12 +17,12 @@ from agent_platform.memory.semantic.memory import SemanticStore
 from agent_platform.persistence import PlatformStore
 
 
-def clear_long_term_memory(store: PlatformStore, episodic_root: Path) -> dict[str, int]:
+def clear_long_term_memory(store: PlatformStore) -> dict[str, int]:
     """Purge every long-term memory store for this agent; returns what each removed."""
     return {
-        "episodic session logs": EpisodicStore(episodic_root).purge(),
-        "semantic facts": SemanticStore(store).purge(),
-        "skills": SkillStore(store).purge(),
+        "episodic session logs": EpisodicStore().purge(),
+        "semantic facts": SemanticStore().purge(),
+        "skills": SkillStore().purge(),
         "curator queue entries": CuratorQueue(store).purge(),
         "dream inbox events": DreamInbox(store).purge(),
     }

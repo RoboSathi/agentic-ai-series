@@ -29,7 +29,7 @@ def settings() -> SkillSettings:
 
 @pytest.fixture
 def store(pool: SqliteConnectionPool) -> SkillStore:
-    return SkillStore(pool)
+    return SkillStore()
 
 
 @pytest.fixture

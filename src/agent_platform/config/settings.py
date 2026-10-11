@@ -1261,14 +1261,58 @@ class EnabledToggle(BaseModel):
     enabled: bool
 
 
-class EpisodicMemorySettings(BaseModel):
-    """Episodic store — append-only, one file per session (E14)."""
+class MemoryIndexWords(BaseModel):
+    """How each store's MEMORY.md reads: a title, then one line per memory."""
 
-    path: str
+    title: str
+    line: str
+    empty: str
+    description_chars: int = Field(gt=0)
+
+
+class MemoryFilesSettings(BaseModel):
+    """Where an agent's long-term memory lives on disk, and how its files are named (ADR 0011)."""
+
+    root: str
+    dream_events_dir: str
+    episodic_dir: str
+    semantic_dir: str
+    procedural_dir: str
+    pending_dir: str
+    consolidated_dir: str
+    history_dir: str
+    index_file: str
+    derived_index_file: str
+    lock_file: str
+    sequence_file: str
+    record_digits: int = Field(gt=0)
+    record_suffix: str
+    event_suffix: str
+    session_log_suffix: str
+    frontmatter_delimiter: str
+    shared_subject_dir: str
+    name_digest_chars: int = Field(gt=0)
+    index: MemoryIndexWords
 
     @property
-    def resolved_path(self) -> Path:
-        return resolve_path(self.path)
+    def resolved_root(self) -> Path:
+        return resolve_path(self.root)
+
+    @property
+    def dream_events_root(self) -> Path:
+        return self.resolved_root / self.dream_events_dir
+
+    @property
+    def episodic_root(self) -> Path:
+        return self.resolved_root / self.episodic_dir
+
+    @property
+    def semantic_root(self) -> Path:
+        return self.resolved_root / self.semantic_dir
+
+    @property
+    def procedural_root(self) -> Path:
+        return self.resolved_root / self.procedural_dir
 
 
 class RagChunkingSettings(BaseModel):
@@ -1518,7 +1562,7 @@ class MemorySettings(YamlBackedSettings):
 
     _yaml_section = "memory"
     schema_version: str
-    episodic: EpisodicMemorySettings
+    files: MemoryFilesSettings
     semantic: SemanticMemorySettings
     write_pipeline: MemoryWritePipelineSettings
     retrieval_weights: MemoryRetrievalWeights

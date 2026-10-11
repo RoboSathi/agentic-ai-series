@@ -116,7 +116,7 @@ def instructions(
     registry: NamespacedToolRegistry,
 ) -> AgentInstructions:
     return build_agent_instructions(
-        settings, store=SkillStore(pool), audit=audit, reporter=screen, tools=registry
+        settings, store=SkillStore(), audit=audit, reporter=screen, tools=registry
     )
 
 
@@ -214,11 +214,11 @@ class TestTheStartUpSync:
         registry: NamespacedToolRegistry,
     ) -> None:
         build_agent_instructions(
-            settings, store=SkillStore(pool), audit=None, reporter=None, tools=registry
+            settings, store=SkillStore(), audit=None, reporter=None, tools=registry
         )
         again = _Screen()
         build_agent_instructions(
-            settings, store=SkillStore(pool), audit=None, reporter=again, tools=registry
+            settings, store=SkillStore(), audit=None, reporter=again, tools=registry
         )
         assert again.events == []
 
@@ -226,7 +226,7 @@ class TestTheStartUpSync:
 class TestBuildChecks:
     def _build(self, settings: SkillSettings, pool: SqliteConnectionPool, **kwargs: Any) -> Any:
         return build_agent_instructions(
-            settings, store=SkillStore(pool), audit=None, reporter=None, **kwargs
+            settings, store=SkillStore(), audit=None, reporter=None, **kwargs
         )
 
     def test_more_always_skills_than_the_cap(

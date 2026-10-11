@@ -104,7 +104,7 @@ def build_agent(
     calls = GovernedCalls(registry, path, agent, actor=settings.agent.id, governor=governor)
     # Procedural memory is the only memory this agent has: its skills,
     # versioned in the platform store. Withheld, it runs on its profile.
-    procedural = SkillStore(platform) if posture.is_on("memory.procedural") else None
+    procedural = SkillStore() if posture.is_on("memory.procedural") else None
     screen = _screen(platform) if posture.is_on("prompt_injection") else None
     declare_screens(settings.agent.id, screen.declared_checks() if screen else [])
     nodes = OpsNodes(

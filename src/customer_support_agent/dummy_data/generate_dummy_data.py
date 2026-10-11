@@ -321,23 +321,28 @@ def _log_policy(pool: SqliteConnectionPool) -> None:
 
 
 def reset_derived_state() -> list[Path]:
-    """Checkpoints and episodic logs remember the old orders; remove them."""
+    """Checkpoints and long-term memory remember the old orders; remove them.
+
+    Memory is files under the agent's package (ADR 0011), not rows in the
+    database being rebuilt, so it would otherwise outlive the customers it
+    is about.
+    """
     removed = []
     checkpoints = get_settings().durability.resolved_db_path
     if checkpoints.exists():
         checkpoints.unlink()
         removed.append(checkpoints)
-    episodic = get_settings().memory.episodic.resolved_path
-    if episodic.exists():
-        shutil.rmtree(episodic)
-        removed.append(episodic)
+    memory = get_settings().memory.files.resolved_root
+    if memory.exists():
+        shutil.rmtree(memory)
+        removed.append(memory)
     return removed
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
     parser.add_argument(
-        "--keep-memory", action="store_true", help="keep checkpoints and episodic logs"
+        "--keep-memory", action="store_true", help="keep checkpoints and long-term memory"
     )
     args = parser.parse_args(argv)
 

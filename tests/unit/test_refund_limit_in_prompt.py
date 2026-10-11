@@ -32,7 +32,7 @@ def test_no_instruction_states_an_amount() -> None:
 
 def test_a_refund_turn_states_the_db_limit_and_only_it(pool: SqliteConnectionPool) -> None:
     instructions = build_agent_instructions(
-        get_settings().skills, store=SkillStore(pool), audit=None, reporter=None
+        get_settings().skills, store=SkillStore(), audit=None, reporter=None
     )
     composed = instructions.compose(frozenset({"intent:REQUEST_REFUND"}), "refund order 10533")
     limit = Money.from_cents(5000)

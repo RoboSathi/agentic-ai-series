@@ -35,8 +35,8 @@ def _queue(pipeline: MemoryWritePipelineImpl, fact: MemoryFact) -> int:
 
 class TestApprovingASkill:
     def test_it_lands_in_procedural_memory(self, pool: SqliteConnectionPool) -> None:
-        procedural = SkillStore(pool)
-        pipeline = MemoryWritePipelineImpl(semantic=SemanticStore(pool), procedural=procedural)
+        procedural = SkillStore()
+        pipeline = MemoryWritePipelineImpl(semantic=SemanticStore(), procedural=procedural)
         queue_id = _queue(pipeline, _skill("check settlement", "check it first"))
         result = pipeline.approve_queued(queue_id, _CURATOR)
         assert result.written is True
@@ -45,12 +45,12 @@ class TestApprovingASkill:
     def test_a_semantic_fact_with_the_same_key_is_untouched(
         self, pool: SqliteConnectionPool
     ) -> None:
-        semantic = SemanticStore(pool)
+        semantic = SemanticStore()
         semantic.write(
             MemoryFact(key="shared", value="a fact", provenance=Provenance(source="t")),
             Provenance(source="t"),
         )
-        pipeline = MemoryWritePipelineImpl(semantic=semantic, procedural=SkillStore(pool))
+        pipeline = MemoryWritePipelineImpl(semantic=semantic, procedural=SkillStore())
         pipeline.approve_queued(_queue(pipeline, _skill("shared", "steps")), _CURATOR)
         latest = semantic.latest("shared")
         assert latest is not None
@@ -58,21 +58,21 @@ class TestApprovingASkill:
         assert latest.superseded_by is None
 
     def test_without_a_procedural_store_it_is_discarded(self, pool: SqliteConnectionPool) -> None:
-        pipeline = MemoryWritePipelineImpl(semantic=SemanticStore(pool))
+        pipeline = MemoryWritePipelineImpl(semantic=SemanticStore())
         result = pipeline.approve_queued(_queue(pipeline, _skill("k", "v")), _CURATOR)
         assert result.route == "discard"
 
 
 class TestRetiringASkill:
     def test_no_version_stays_active(self, pool: SqliteConnectionPool) -> None:
-        store = SkillStore(pool)
+        store = SkillStore()
         for body in ("v1", "v2"):
             store.write(_skill("howto", body), Provenance(source="t"))
         assert store.retire("howto") == 2
         assert store.get("howto") is None
 
     def test_history_is_kept(self, pool: SqliteConnectionPool) -> None:
-        store = SkillStore(pool)
+        store = SkillStore()
         store.write(_skill("howto", "v1"), Provenance(source="t"))
         store.retire("howto")
         assert [fact.value for fact in store.history("howto")] == ["v1"]
