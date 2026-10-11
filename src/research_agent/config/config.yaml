@@ -165,7 +165,7 @@ tui:
     - { pattern: '\[must\]', style: "bold #B8945A" }
     - { pattern: '\[soft\]', style: "#A89F8F" }
     - { pattern: '^R\d+\b', style: "bold #E2C792" }
-    - { pattern: '(?<![\w/])/(?:research|done|approve|rubric|waive|cancel|show|history|help)\b', style: "bold #B8945A" }
+    - { pattern: '(?<![\w/])/(?:research|done|approve|waive|cancel|help)\b', style: "bold #B8945A" }
     - { pattern: '^\(I removed details[^)]*\)$', style: "italic #8A8A8A" }
     - { pattern: '^\*\*Status:\*\* COMPLETE.*$', style: "bold #59F06A" }
     - { pattern: '^\*\*Status:\*\* PARTIAL.*$', style: "bold #F4D35E" }
@@ -325,8 +325,6 @@ research_agent:
     rubric: rubric
     approve: approve
     cancel: cancel
-    history: history
-    show: show
     rubric_add: add
     rubric_drop: drop
     rubric_set: set
@@ -355,7 +353,7 @@ research_agent:
     plan_step: "Research {part}"
     next_step_marker: "→ Next:"
     next_step_proposed: "→ Next: /done (or reply yes) builds the acceptance criteria · reply with anything else to change the plan"
-    next_step_rubric: "→ Next: /approve (or reply yes) starts the research · /rubric add <text> | drop <id> | set <id> threshold=<x> must_pass=<bool> edits it"
+    next_step_rubric: "→ Next: /approve (or reply yes) starts the research"
     done_choice: "Done — build the acceptance criteria"
     approve_choice: "Approve — start the research"
     rubric_heading: "## Acceptance criteria"
@@ -365,7 +363,7 @@ research_agent:
     turn_cap: "We have reached the interview limit. Still open: {open}. Use /waive <id|all> or /done."
     waived: "Waived: {items}. They will be listed as known unknowns."
     finish_scoping_first: "We are still scoping: answer the question, /waive <id>, or /done."
-    rubric_hint: "Edit with /rubric add <text> | drop <id> | set <id> threshold=<x> must_pass=<bool>, or /approve to start."
+    rubric_hint: "/approve to start."
     rubric_error: "Rubric not changed: {error}"
     approved: "Contract {contract_id} frozen (hash {hash}). Research is starting; /cancel stops it."
     run_busy: A research run is in progress; you can watch it or cancel it (/cancel).
@@ -373,7 +371,6 @@ research_agent:
     cancel_requested: Cancelling the run; it stops at the next safe point and keeps its checkpoint.
     delivered: "Run {run_id} finished: {status}. {summary}"
     new_scope: Ask a new question to start another scope.
-    history_empty: No archived runs yet.
     unknown_run: "No archived run '{run_id}'."
     run_note: "Research run {run_id} finished {status}, on: {topic}. It can be opened with /show {run_id}."
     scope_failed: "Could not continue: {error}. Nothing was lost; ask again, or start over with /research <question>."
@@ -884,7 +881,6 @@ research_agent:
     # Off: the episodic index row is the run pointer. On: also file it as a semantic fact.
     semantic_pointer: false
     run_id_prefix: run
-    history_limit: 20
     list_headers: [run, status, archetype, topic, unmet, intact]
     list_empty: No archived research runs yet — finish a run in `make agent ra`.
 
@@ -924,12 +920,8 @@ research_agent:
       research: "Full research run on a question — interview, criteria, audit (/research [question]; bare = the last question)"
       done: "End the interview now; open required items become known unknowns"
       waive: "Waive an open checklist item (/waive <id> or /waive all)"
-      rubric: "Edit acceptance criteria: add <text> | drop <id> | set <id> threshold=<x> must_pass=<bool>"
       approve: "Freeze the Research Contract and start the autonomous run"
       cancel: "Cancel the research run in progress (checkpoint kept)"
-      history: "Archived research runs (the episodic run index)"
-      show: "Show an archived run's report"
-    history_headers: [run, status, archetype, topic, unmet]
     clip_chars: 110
     actions:
       SCOPING:

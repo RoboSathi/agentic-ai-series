@@ -1,4 +1,4 @@
-"""`/queue` — the one human-review queue, for every agent (ADR 0012).
+"""`/review` — the one human-review queue, for every agent (ADR 0012).
 
 Lists what is waiting on a person as a tree by kind, shows one item, and
 approves or denies it with a comment the service requires and audits.
@@ -46,7 +46,7 @@ class QueueCommand(PoolBackedCommand):
     """List, show, approve and deny review items — with a comment, always."""
 
     group = "Inspect"
-    name = "queue"
+    name = "review"
 
     def __init__(
         self,

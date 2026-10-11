@@ -396,6 +396,7 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     user_code_alphabet: str
     user_code_placeholder: str
     unseeded_database: str
+    stale_database: str
     messages: CsaMessages
     console: ConsoleSettings
     order_table: OrderTableSettings

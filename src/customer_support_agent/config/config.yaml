@@ -657,6 +657,7 @@ customer_support_agent:
   # Start-up refuses an agent database with no customers: an empty schema authenticates
   # nobody, and every code would be answered as unknown. `{path}` is the database file.
   unseeded_database: "The agent database {path} has no customers: run `make dummy-data csa`."
+  stale_database: "The agent database {path} was built from an older seed_data.sql, so its customer codes are not the seed's: run `make dummy-data csa`."
   # Fixed wording the agent says itself. `{length}` is user_code_length.
   messages:
     auth:

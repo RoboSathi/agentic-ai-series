@@ -94,6 +94,7 @@ from customer_support_agent.domain.order_reference import (
     WRITE_INTENT,
 )
 from customer_support_agent.domain.refund_policy import RefundPolicy
+from customer_support_agent.dummy_data import DUMMY_DATA_DIR, SEED_DATA_FILE
 from customer_support_agent.gatekeeper.business_rules import (
     REFUND_ACTION_CLASS,
     CustomerSupportBusinessRules,
@@ -289,7 +290,7 @@ def build_agent(
     # Idempotent; upgrades a database built before reply reviews shared the queue.
     ensure_schema(connection)
     if pool is None:
-        require_seeded(connection, agent_settings.resolved_db_path)
+        require_seeded(connection, agent_settings.resolved_db_path, _shipped_seed())
     platform_store = SqlitePlatformStore(connection, agent_id=agent_id)
     policy_repo = AgentPolicyRepository(platform_store)
     agent_policy = policy_repo.get()
@@ -617,6 +618,12 @@ def build_settlement_service(
         idempotency=SqliteIdempotencyGuard(platform_store),
         audit=audit or create_audit_ledger(store=observability_store, agent_id=settings.agent.id),
     )
+
+
+def _shipped_seed() -> str | None:
+    """The seed `make dummy-data csa` builds from, when this checkout has one."""
+    path = DUMMY_DATA_DIR / SEED_DATA_FILE
+    return path.read_text(encoding="utf-8") if path.is_file() else None
 
 
 def build_lexical_index(pool: SqliteConnectionPool) -> LexicalRetriever:

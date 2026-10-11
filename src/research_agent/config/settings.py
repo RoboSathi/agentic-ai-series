@@ -27,8 +27,6 @@ class CommandNames(BaseModel):
     rubric: str
     approve: str
     cancel: str
-    history: str
-    show: str
     rubric_add: str
     rubric_drop: str
     rubric_set: str
@@ -70,7 +68,6 @@ class MessageSettings(BaseModel):
     cancel_requested: str
     delivered: str
     new_scope: str
-    history_empty: str
     unknown_run: str
     # `{error}`: why a scoping step failed (the session is left ready for a new question).
     scope_failed: str
@@ -610,7 +607,6 @@ class ArchiveSettings(BaseModel):
     # a "fact" about a report is not something the agent believes true.
     semantic_pointer: bool = False
     run_id_prefix: str
-    history_limit: int = Field(ge=1)
     # `make runs ra`: the archive read straight from the artifact store.
     list_headers: list[str]
     list_empty: str
@@ -637,7 +633,6 @@ class PanelSettings(BaseModel):
 
     stage_labels: dict[str, str]
     command_help: dict[str, str]
-    history_headers: list[str]
     # Every sentence a card or the status block says (`research_agent.presentation.narration`).
     cards: dict[str, str]
     # Rejection and gap codes, in words.

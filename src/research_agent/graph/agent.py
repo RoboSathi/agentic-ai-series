@@ -187,7 +187,7 @@ class ResearchAgent:
         record = self.session(session_id)
         verb = _verb(query)
         names = self._settings.command_names
-        if verb in (names.cancel, names.history, names.show):
+        if verb == names.cancel:
             return self._control(verb, query, record)
         if record.phase == "RUNNING":
             return TurnResult(response=self._settings.messages.run_busy, phase="RUNNING")
@@ -261,12 +261,6 @@ class ResearchAgent:
     def phase(self, session_id: str) -> str:
         """Where the session stands (SCOPING, RUBRIC_REVIEW, RUNNING …): it picks the buttons."""
         return self.session(session_id).phase
-
-    def history(self, limit: int) -> list[dict[str, Any]]:
-        return [row.model_dump() for row in self._archive.history(limit)]
-
-    def show(self, run_id: str) -> str | None:
-        return self._archive.report(run_id)
 
     # -- scoping --------------------------------------------------------------------------
 
@@ -574,23 +568,9 @@ class ResearchAgent:
     # -- control commands -----------------------------------------------------------------
 
     def _control(self, verb: str | None, query: str, record: SessionRecord) -> TurnResult:
-        names, messages = self._settings.command_names, self._settings.messages
-        if verb == names.cancel:
-            reply = messages.cancel_requested if self.cancel() else messages.no_active_run
-            return TurnResult(response=reply, phase=record.phase)
-        if verb == names.history:
-            rows = self.history(self._settings.archive.history_limit)
-            lines = [
-                f"{r['run_id']}  {r['status']:<8} {r['archetype']:<18} {r['topic']}" for r in rows
-            ]
-            return TurnResult(
-                response="\n".join(lines) or messages.history_empty, phase=record.phase
-            )
-        run_id = query.split(maxsplit=1)[1].strip() if len(query.split()) > 1 else ""
-        shown = self.show(run_id)
-        return TurnResult(
-            response=shown or messages.unknown_run.format(run_id=run_id), phase=record.phase
-        )
+        messages = self._settings.messages
+        reply = messages.cancel_requested if self.cancel() else messages.no_active_run
+        return TurnResult(response=reply, phase=record.phase)
 
     def _note(self, session_id: str, key: str, value: str) -> None:
         """Working memory holds the live run state of this session."""

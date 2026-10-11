@@ -19,6 +19,7 @@ from agent_platform.commands.system import (
     HelpCommand,
 )
 from agent_platform.commands.types import Command, CommandError, CommandResult
+from agent_platform.config import get_settings
 from agent_platform.logging import get_logger
 
 PREFIX = "/"
@@ -38,7 +39,9 @@ class CommandRegistry:
         self._logger = get_logger("tui")
 
     def register(self, command: Command) -> None:
-        """Add a command under its name."""
+        """Add a command under its name — unless this agent hides it (`commands.hidden`)."""
+        if command.name in get_settings().commands.hidden:
+            return
         self._commands[command.name] = command
 
     def all_commands(self) -> list[Command]:

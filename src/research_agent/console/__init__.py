@@ -22,8 +22,6 @@ from research_agent.config import get_agent_settings
 from research_agent.console.commands import (
     CancelCommand,
     ForwardedCommand,
-    HistoryCommand,
-    ShowCommand,
 )
 from research_agent.console.greeting import build_greeting
 from research_agent.console.setup import missing_model_key, search_warning
@@ -107,9 +105,6 @@ class ResearchHost:
             ForwardedCommand(
                 names.waive, help_text["waive"], f"/{names.waive} <id|all>", needs_args=True
             ),
-            ForwardedCommand(
-                names.rubric, help_text["rubric"], f"/{names.rubric} [add|drop|set …]"
-            ),
             ForwardedCommand(names.approve, help_text["approve"], f"/{names.approve}"),
         ]
         return [
@@ -120,15 +115,6 @@ class ResearchHost:
                 lambda: self.agent,
                 (messages.cancel_requested, messages.no_active_run),
             ),
-            HistoryCommand(
-                names.history,
-                help_text["history"],
-                lambda: self.agent,
-                agent.archive.history_limit,
-                agent.tui.history_headers,
-                messages.history_empty,
-            ),
-            ShowCommand(names.show, help_text["show"], lambda: self.agent, messages.unknown_run),
         ]
 
     def stage_labels(self) -> Mapping[str, str]:

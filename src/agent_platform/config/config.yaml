@@ -892,9 +892,18 @@ analytics:
       # No per-tile sparkline: a page has ~45 tiles, and each chart costs the browser; every
       # section's trend charts show the trend instead.
       sparkline: none
+    # Durations in one fixed unit on every tile. Rill's `interval_ms` picks a unit per value, so
+    # a p50 of 45 s sat beside a p95 shown as 1.4 min and a p99 in ms; a metric ending
+    # `ending` (stored in milliseconds) is divided into `unit` and printed with `format_d3`.
+    durations:
+      ending: _ms
+      divisor: 1000
+      unit: s
+      format_d3: ",.2f"
+      title: "{title} · {unit}"
+      note: " Shown in seconds (stored in milliseconds)."
     # Rill format presets, by the metric name's ending; anything else is humanized.
     formats:
-      _ms: interval_ms
       _rate: percentage
       availability: percentage
       validity: percentage
@@ -1431,15 +1440,15 @@ review:
   console_reviewer: console_operator
   words:
     summary: "Human review: list, show, approve or deny (a comment is required)"
-    usage: "/queue [kind] · /queue show <id> · /queue approve|deny <id> <comment> · /queue <arrivals_per_hour> [minutes_each]"
+    usage: "/review [kind] · /review show <id> · /review approve|deny <id> <comment> · /review <arrivals_per_hour> [minutes_each]"
     title: "Review queue — {n} pending"
     empty: Nothing is waiting for a person.
     show_title: "#{id} · {kind} · {status}"
     decided: "#{id} {kind}: {status} by {reviewer} — {comment}"
     # How to decide, said for where the list is read: in the console, or in a terminal.
     hints:
-      console: "Decide: /queue approve|deny <id> <comment> · or on screen: ctrl+r. The comment is kept and audited."
-      terminal: "Decide: make queue {agent} ACTION=approve|deny ID=<id> COMMENT=\"<why>\" · or on screen: make agent {agent}, then ctrl+r."
+      console: "Decide: /review approve|deny <id> <comment> · or on screen: ctrl+r. The comment is kept and audited."
+      terminal: "Decide: make review {agent} ACTION=approve|deny ID=<id> COMMENT=\"<why>\" · or on screen: make agent {agent}, then ctrl+r."
     kind_title: "{kind} — {n} pending"
     time_format: "%Y-%m-%d %H:%M"
     none: "—"
@@ -2238,6 +2247,9 @@ mcp:
 # views of the harness, so the limits here are about what fits on a
 # terminal, not about what the agent may do.
 commands:
+  # Platform commands an agent leaves out of its console (they do nothing for it). An agent
+  # overlay names them; the platform hides none.
+  hidden: []
   default_limit: 15        # rows a listing shows when no limit is given
   value_preview_chars: 40  # where a long stored value is elided in a table
   tree_preview_chars: 100  # where a value is elided on one line of a memory tree
@@ -2266,7 +2278,7 @@ commands:
     empty: Nothing yet.
     episodic_empty: "Episodic · nothing yet — `make dream <agent>` turns dream events into episodes."
     time_format: "%Y-%m-%d %H:%M"
-    queue_note: "Facts and skills waiting for a curator are in /queue (make queue <agent>)."
+    queue_note: "Facts and skills waiting for a curator are in /review (make review <agent>)."
     inbox_events: 50  # dream events listed, newest first
   recent_window: 20        # how many recent records the summaries look back over
   # A scoped command (`/memory`, an agent's `/queue`) shows only the session's verified subject.
@@ -2312,14 +2324,14 @@ commands:
   # `/skills`: an agent's procedural memory — authored skills and learned ones a curator approved.
   # Candidates a dream proposed are decided in `/queue` (ADR 0012), with a comment.
   skills:
-    summary: "Procedural memory: list, show, history (decide learned-skill candidates in /queue)"
+    summary: "Procedural memory: list, show, history (decide learned-skill candidates in /review)"
     usage: "/skills [list | show <name> | history <name>]"
     group: Agent
     list_title: "Skills — {n} active"
     list_headers: [name, version, source, triggers, description]
     history_title: "{name} — {n} version(s)"
     history_headers: [version, active, source, recorded by]
-    pending_title: "Candidates awaiting a curator — {n} (decide with /queue approve|deny <id> <comment>)"
+    pending_title: "Candidates awaiting a curator — {n} (decide with /review approve|deny <id> <comment>)"
     empty: No skills yet.
     no_catalog: "This agent has no procedural memory (memory.procedural is off)."
     unknown: "No skill '{name}'. {usage}"
@@ -2472,8 +2484,8 @@ tui:
   response_highlights: []
 
   command_output:
-    title_style: "bold #E2C792"
-    header_style: "bold #E2C792"
+    title_style: "bold #67E8F9"
+    header_style: "bold #67E8F9"
     row_style: "#F3EAD3"
     note_style: "#F3EAD3"
     error_style: "bold #FF5C5C"

@@ -943,6 +943,17 @@ class DummyAnalyticsSettings(BaseModel):
     incident: DummyIncidentSettings
 
 
+class DashboardDurations(BaseModel):
+    """Every duration measure in one unit and one format, so a row of tiles never mixes units."""
+
+    ending: str
+    divisor: float = Field(gt=0)
+    unit: str
+    format_d3: str
+    title: str
+    note: str
+
+
 class DashboardSettings(BaseModel):
     """The Rill project generated from the semantic layer (`analytics/dashboards.py`)."""
 
@@ -957,6 +968,7 @@ class DashboardSettings(BaseModel):
     by_agent: ByAgentSettings
     groups: dict[str, DashboardGroup]
     layout: DashboardLayout
+    durations: DashboardDurations
     # Format preset by the metric name's ending.
     formats: dict[str, str]
     default_format: str
@@ -2716,6 +2728,7 @@ class CommandSettings(YamlBackedSettings):
     """Console slash commands (LLD §20)."""
 
     _yaml_section = "commands"
+    hidden: list[str] = Field(default_factory=list)
     default_limit: int
     value_preview_chars: int
     # Memory trees (`make show-memory`, `/memory`, `make dream`): how much of
