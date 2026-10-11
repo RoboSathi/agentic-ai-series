@@ -1,4 +1,4 @@
-"""Semantic memory — what is generally true (E14, LLD §8, ADR 0011).
+"""Semantic memory — what is generally true (E14, LLD §8, ADR 0012).
 
 Files, one directory per agent. Each fact is about a subject (a customer,
 say) or about the agent itself, and lives in

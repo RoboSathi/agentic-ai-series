@@ -15,9 +15,9 @@ from agent_platform.commands.review import QueueCommand
 from agent_platform.memory.working import WorkingMemoryStore
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.primitives.money import Money
+from customer_support_agent.console.review_handler import support_queue_command
 from customer_support_agent.domain.models import HitlRequest
 from customer_support_agent.persistence.repositories import HitlQueueRepository
-from customer_support_agent.review.handler import support_queue_command
 
 
 def _scope(verified: dict[str, str], session: list[str]) -> ConsoleScope:

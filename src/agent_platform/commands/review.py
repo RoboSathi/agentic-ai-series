@@ -1,4 +1,4 @@
-"""`/queue` — the one human-review queue, for every agent (ADR 0011).
+"""`/queue` — the one human-review queue, for every agent (ADR 0012).
 
 Lists what is waiting on a person as a tree by kind, shows one item, and
 approves or denies it with a comment the service requires and audits.
@@ -20,6 +20,7 @@ With numbers instead, it is the staffing arithmetic the queue implies
 
 from collections.abc import Callable, Sequence
 
+from agent_platform.audit import SqliteAuditLedger
 from agent_platform.commands._pool import PoolBackedCommand
 from agent_platform.commands.scope import ConsoleScope
 from agent_platform.commands.types import CommandError, CommandResult
@@ -70,7 +71,10 @@ class QueueCommand(PoolBackedCommand):
         own = list(self._handlers(self.pool)) if self._handlers is not None else []
         pipeline = governed_memory(self.pool, redact=False).pipeline
         handlers: list[ReviewHandler] = [QuarantineHandler(), MemoryReviewHandler(pipeline), *own]
-        return ReviewService(ReviewQueue(self.pool), handlers)
+        # The agent's own ledger: written from a console or a terminal alike without
+        # contending for the shared one, and read back by `/audit` and `make audit`.
+        ledger = SqliteAuditLedger(self.pool, agent_id=get_settings().agent.id)
+        return ReviewService(ReviewQueue(self.pool), handlers, ledger)
 
     async def run(self, args: list[str]) -> CommandResult:
         action = args[0].casefold() if args else ""

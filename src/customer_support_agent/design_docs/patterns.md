@@ -11,9 +11,9 @@ Episodes demonstrate a pattern by running this agent, not a separate reference c
 | branch | graph/edges.py · _after_authenticate, _after_screening, _after_finalize | deterministic predicates halt the turn or continue it |
 | router | intent/router.py · classify_intent → read_intent | deterministic out-of-scope rejection, then a small classifier (Laya by default), then one clarification question |
 | tool_use | graph/nodes/propose.py ⇄ graph/nodes/execute.py | the model proposes a typed tool call, execute runs it through the Gatekeeper, bounded by max_tool_iterations |
-| human_in_the_loop | graph/nodes/review_wait.py · await_approval (interrupt) + review/queue.py | above-limit refunds pause the durable run until a reviewer decides |
+| human_in_the_loop | graph/nodes/review_wait.py · await_approval (interrupt) + console/review_handler.py over the platform's one review queue (ADR 0012) | above-limit refunds pause the durable run until a reviewer decides in `/queue` or the Review screen, with a required comment |
 | rag_pipeline | graph/builder.py · FiveStagePipeline with KnowledgeBaseContextSource (assemble_context) |  |
-| memory_systems | graph/builder.py · MemoryFacade over the four CoALA stores; admin/dream.py consolidation | procedural: `prompts/skills/*/SKILL.md` synced into `SkillStore`, one per intent, selected by `intent:`/`route:` signals (ADR 0010); dream lessons enter via `/skills approve` |
+| memory_systems | graph/builder.py · MemoryFacade over the four CoALA stores (files, ADR 0012); `make dream csa` with `memory/profile.py` | procedural: `prompts/skills/*/SKILL.md` synced into `SkillStore`, one per intent, selected by `intent:`/`route:` signals (ADR 0010); learned skills from recurring refusals enter when a curator approves them in `/queue` |
 | profile | prompts/AGENT.md · `build_system_prompt` | the agent's stable operating profile, always in the prompt; procedures follow it per turn |
 | planning | loop_control/quality_gate.py · PlanLookup | a config lookup of the tool order per intent, committed before acting |
 | reflection | loop_control/quality_gate.py · GroundedCritic | one deterministic critique of the draft against tool outputs |

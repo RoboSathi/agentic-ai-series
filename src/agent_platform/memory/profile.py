@@ -1,4 +1,4 @@
-"""An agent's memory profile: how its dreams turn events into memory (ADR 0011).
+"""An agent's memory profile: how its dreams turn events into memory (ADR 0012).
 
 The whole of an agent's memory customisation is this one object — three
 consolidators, one per long-term store. `MemoryProfile.default()` is what

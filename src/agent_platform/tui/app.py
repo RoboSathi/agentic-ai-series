@@ -727,7 +727,7 @@ class AgenticTuiApp(App[None]):
         return True
 
     def action_review(self) -> None:
-        """Open the Review screen over the same `/queue` this console has (ADR 0011)."""
+        """Open the Review screen over the same `/queue` this console has (ADR 0012)."""
         command = self._commands.get("queue")
         if isinstance(command, QueueCommand):
             self.push_screen(

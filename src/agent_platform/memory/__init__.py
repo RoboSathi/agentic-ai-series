@@ -1,4 +1,4 @@
-"""The four CoALA memory stores, the write pipeline and dreams (LLD §8, ADR 0011)."""
+"""The four CoALA memory stores, the write pipeline and dreams (LLD §8, ADR 0012)."""
 
 from agent_platform.memory.dream import (
     DreamEvent,

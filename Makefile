@@ -1,5 +1,5 @@
 .PHONY: gen-key help install clean lint type-check format test verify agent llm-check model-check models data refund-limit \
-	clean-memory show-memory dream memory-reindex queue runs dummy-data analytics-export analytics-drop-legacy dashboard dashboard-install dashboard-refresh \
+	clean-memory show-memory dream memory-reindex queue audit runs dummy-data analytics-export analytics-drop-legacy dashboard dashboard-install dashboard-refresh \
 	eval eval-generate eval-oracle eval-security eval-judge eval-deepeval eval-report eval-diff \
 	eval-runs eval-sql intent-bakeoff _agent
 
@@ -36,7 +36,7 @@ ops_OFFLINE_PROFILE :=
 ops_EVALS :=
 
 # Targets whose second goal names the agent they act on.
-AGENT_SCOPED := agent data runs queue pii-reveal dream show-memory clean-memory memory-reindex model-check llm-check models eval eval-generate eval-oracle eval-security eval-judge \
+AGENT_SCOPED := agent data runs queue audit pii-reveal dream show-memory clean-memory memory-reindex model-check llm-check models eval eval-generate eval-oracle eval-security eval-judge \
 	eval-deepeval eval-report eval-diff eval-runs eval-sql intent-bakeoff
 
 ifneq ($(filter $(firstword $(MAKECMDGOALS)),$(AGENT_SCOPED)),)
@@ -134,6 +134,7 @@ help:
 	@echo "                            agents are running, using only the platform's analytics MCP server's tools;"
 	@echo "                            SOURCE=dummy reads the demo world from make dummy-data (its own turns still go to live)"
 	@echo "  make runs ra              List archived research runs"
+	@echo "  make audit <agent> [DECISION=…|STANDING=…|KIND=…|SINCE=24h|N=…|TRACE=<id>]   The audit trail, coloured"
 	@echo "  make queue <agent> [KIND=…|ID=…] [ACTION=approve|deny ID=… COMMENT=…]   Human review queue (same as /queue)"
 	@echo "  make pii-reveal <agent> T=<token> WHY=<reason>   What a PII token stood for (audited; needs PII_VAULT_KEY)"
 	@echo "  make model-check [agent]  Probe every hosted model and run every local model, per agent (BENCH=1 times them; alias: llm-check)"
@@ -243,11 +244,17 @@ runs: _agent
 	@test -n "$($(AGENT)_RUNS)" || (echo "$(YELLOW)'$(AGENT)' keeps no archived runs$(NC)" && exit 2)
 	@$(PYTHON) -m $($(AGENT)_RUNS) list
 
-# The one human review queue (ADR 0011): refunds, cut replies, quarantines, memory a curator
+# The one human review queue (ADR 0012): refunds, cut replies, quarantines, memory a curator
 # must confirm. `make queue csa`, `make queue ra KIND=skill`, `make queue csa ID=7`,
 # `make queue csa ACTION=approve ID=7 COMMENT="checked the order"`. Same as /queue.
 queue: _agent
 	@$(PYTHON) -m agent_platform.commands.review_cli $(if $(ACTION),$(ACTION) $(ID) $(COMMENT),$(if $(ID),show $(ID),$(KIND)))
+
+# The audit trail, coloured by outcome, from every ledger the agent writes to (ADR 0012):
+# `make audit csa`, `make audit ra DECISION=deny`, `make audit csa KIND=review. SINCE=24h N=50`,
+# `make audit csa TRACE=<trace id>` (one turn as a tree). Tokens only — values come from pii-reveal.
+audit: _agent
+	@$(PYTHON) -m agent_platform.audit.cli $(if $(DECISION),--decision $(DECISION)) $(if $(STANDING),--standing $(STANDING)) $(if $(KIND),--kind $(KIND)) $(if $(SINCE),--since $(SINCE)) $(if $(N),--limit $(N)) $(if $(TRACE),--trace $(TRACE))
 
 # What a PII redaction token stood for, for audit: `make pii-reveal csa T=3f9a1c2b7e10 WHY="ticket 42"`.
 # Every reveal is written to the audit trail first; it needs the vault key (PII_VAULT_KEY).
@@ -265,7 +272,7 @@ endif
 
 CSA_ENV := AGENTIC_OVERLAYS=$(csa_OVERLAY)
 
-# -- long-term memory (every agent; ADR 0011) -----------------------------------------
+# -- long-term memory (every agent; ADR 0012) -----------------------------------------
 # `make dream ra`, `make show-memory csa SUBJECT=1`, `make clean-memory ops`: one platform
 # CLI, the agent chosen by its config layer. Files live in src/<pkg>/data/memory/.
 MEMORY_CLI := $(PYTHON) -m agent_platform.commands.memory_cli

@@ -1,4 +1,4 @@
-"""Long-term memory as files (ADR 0011).
+"""Long-term memory as files (ADR 0012).
 
 One directory per agent, in the style of Anthropic's memory tool and
 Claude Code's own memory: plain markdown with YAML frontmatter, a

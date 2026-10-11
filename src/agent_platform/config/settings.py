@@ -601,6 +601,21 @@ class MoneySettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="MONEY__")
 
 
+class AuditViewSettings(BaseModel):
+    """How the audit trail reads in a terminal and the console (`audit/view.py`)."""
+
+    decision_colours: dict[str, str]
+    standing_colours: dict[str, str]
+    since_pattern: str
+    since_units: dict[str, str]
+    trace_entry: str
+    trace_detail: str
+    trace_details: list[str]
+    locked: str
+    title: str
+    trace_title: str
+
+
 class AuditSettings(YamlBackedSettings):
     """Append-only decision ledger (LLD §5)."""
 
@@ -614,6 +629,7 @@ class AuditSettings(YamlBackedSettings):
     # The agent names its own; the platform default names none.
     prompt_source: str
     policy_source: str
+    view: AuditViewSettings
 
     model_config = SettingsConfigDict(env_prefix="AUDIT__")
 
@@ -1271,7 +1287,7 @@ class MemoryIndexWords(BaseModel):
 
 
 class MemoryFilesSettings(BaseModel):
-    """Where an agent's long-term memory lives on disk, and how its files are named (ADR 0011)."""
+    """Where an agent's long-term memory lives on disk, and how its files are named (ADR 0012)."""
 
     root: str
     dream_events_dir: str
@@ -1634,7 +1650,7 @@ class ReviewWords(BaseModel):
 
 
 class ReviewSettings(YamlBackedSettings):
-    """One human-review queue for every kind (ADR 0011)."""
+    """One human-review queue for every kind (ADR 0012)."""
 
     _yaml_section = "review"
     table: str
@@ -2092,6 +2108,7 @@ class PiiSettings(BaseModel):
     # `tokenize` writes `[CATEGORY:token]`: the category, then this many characters of the token.
     token_format: str
     token_chars: int = Field(ge=8, le=64)
+    boundary_cache_entries: int = Field(gt=0)
     # The deployment's own values that only look like personal data, left as written.
     allow_list: list[str] = Field(default_factory=list)
     patterns: dict[str, str]

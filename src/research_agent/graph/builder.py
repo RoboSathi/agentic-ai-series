@@ -89,6 +89,7 @@ from agent_platform.security import (
     TermContentModerator,
 )
 from agent_platform.security.pii import PIIFilterImpl
+from agent_platform.security.pii.boundary import bounded_roles
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
 from agent_platform.security.prompt_injection.hosted import HostedJailbreakGuard
 from agent_platform.tools.path import ToolPath
@@ -177,7 +178,8 @@ def build_agent(
     observer = StageReporterModelObserver(
         lambda: telemetry.reporter, aggregate=agent.calls.context_aggregate_roles
     )
-    roles = clients or role_clients(observer)
+    # Every provider call tokenises personal data out and restores it in the answer.
+    roles = bounded_roles(clients or role_clients(observer), posture)
     _require_independent_judge(roles, posture, agent)
     # Learned skills only (ra-0023): synced at start-up, chosen at plan by the run's kind.
     procedural = SkillStore() if posture.is_on("memory.procedural") else None
@@ -204,7 +206,7 @@ def build_agent(
     answerer = _direct_answerer(agent, posture, caller, telemetry, ledger, gateway, memory, archive)
     saver = checkpointer or create_checkpointer(state_types=model_types(StateTypes))
     registry = RunRegistry(platform)
-    # Dream events (ADR 0011): every turn, and every finished run, for `make dream ra`.
+    # Dream events (ADR 0012): every turn, and every finished run, for `make dream ra`.
     inbox = FileDreamInbox() if posture.is_on("memory") else None
     run_events = RunEventWriter(inbox, settings.agent.id, agent.memory) if inbox else None
     run_nodes = RunNodes(

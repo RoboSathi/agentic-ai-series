@@ -3,7 +3,7 @@
 The queue is deliberately part of the resilience package: a rejected request
 must have a durable destination, otherwise a security detector merely creates
 an observable warning while the workflow continues. Its destination is the
-agent's one review queue (ADR 0011): a quarantine is a `quarantine` item a
+agent's one review queue (ADR 0012): a quarantine is a `quarantine` item a
 person decides with `/queue` like any other, and is never re-run.
 """
 

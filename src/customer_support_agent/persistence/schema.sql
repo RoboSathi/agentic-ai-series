@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS orders (
 CREATE INDEX IF NOT EXISTS idx_orders_user ON orders (user_id);
 
 -- Escalations (a refund, a cancellation's refund, a reply the hallucination check cut) are
--- items in the platform's one review queue, `platform_review_queue` (ADR 0011).
+-- items in the platform's one review queue, `platform_review_queue` (ADR 0012).
 
 
 

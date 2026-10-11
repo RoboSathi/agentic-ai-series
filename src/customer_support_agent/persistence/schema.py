@@ -4,7 +4,7 @@ The DDL lives in `schema.sql` beside this module and is read from disk
 rather than duplicated here: two copies of a schema drift, and the copy
 in the test fixture is always the one that drifts.
 
-A database built before the platform's one review queue (ADR 0011) has a
+A database built before the platform's one review queue (ADR 0012) has a
 `hitl_queue` table of its own. The first time this version opens it, its
 rows are moved into the review queue as items, and the table is dropped.
 """
@@ -54,7 +54,7 @@ def ensure_schema(pool: SqliteConnectionPool) -> None:
     _add_missing_columns(pool, "orders", _ADDED_ORDER_COLUMNS)
     _retire_refund_statuses(pool)
     pool.execute_script(_SCHEMA_FILE.read_text())
-    # The platform's review queue, where this agent's escalations are items (ADR 0011).
+    # The platform's review queue, where this agent's escalations are items (ADR 0012).
     ReviewQueue(pool, agent_id=get_settings().agent.id)
     _move_old_queue(pool)
 

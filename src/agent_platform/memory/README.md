@@ -20,17 +20,23 @@ base. Every write is authorized, attributed and audited.
 - Stores: `WorkingMemoryStore`, `EpisodicStore`, `SemanticStore`, `SkillStore`
 - `MemoryWritePipelineImpl` (`write_pipeline.py`); governance: `MemoryCommand`, `MemoryPrincipal`, `MemoryAuthorizer` (`governance.py`)
 - RAG (`semantic/rag/`): chunking, index (sqlite-vec + FTS), fusion (RRF), retriever, knowledge-base context source
-- Deterministic recall tier (`deterministic/`); `DreamInbox` event sink (`events.py`)
+- Deterministic recall tier (`deterministic/`)
+- Files (`files/`): `MemoryDirectory`, frontmatter records, `MEMORY.md` index, derived FTS index (ADR 0012)
+- Dreams (`dream/`): `DreamEvent`, `FileDreamInbox`, `TurnRecorder`, consolidator protocols with defaults, `Dream`
+- `MemoryProfile` (`profile.py`): an agent's only customisation; `MemoryProfile.default()` works out of the box
+- Skills (`procedural/skills/`): the SKILL.md catalog, selector and instructions (ADR 0010)
 
 ## Configuration
 
-Section `memory:` — `episodic.path`, `semantic.rag` (db, corpus, chunking, retrieval), `write_pipeline`,
+Section `memory:` — `files` (root and layout of `src/<agent>/data/memory/`), `dream`, `subject_label`, `semantic.rag` (db, corpus, chunking, retrieval), `write_pipeline`,
 `provenance_weights`, `retrieval_weights`, `recency_half_life_days`, `governance`, `deterministic`,
 `importance`. Which stores exist: `features.memory` and its four children.
 
 ## Seams
 
 - The composition root may inject stores — `build_agent(working_memory=..., episodic_store=...)`; the eval harness gives each case its own episodic log.
+- `host/memory.py` composes governed long-term memory and dreams for any agent; a host offers `memory_profile()` (`MemoryHost`) to customise.
+- `make dream|show-memory|clean-memory|memory-reindex <agent>` (`commands/memory_cli.py`).
 
 ## Collaborators
 

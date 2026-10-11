@@ -1,12 +1,12 @@
-# skills — the profile and procedures in an agent's prompt (ADR 0010)
+# memory/procedural/skills — the profile and skills in an agent's prompt (ADR 0010, ADR 0012)
 
 An agent's `AGENT.md` is its **agent profile**: who it is, what it handles, and the rules it
 never breaks (sections Mission, Scope, Rules). The profile is always in the system prompt, and
-it is kept short: anything task-shaped is a procedure.
+it is kept short: anything task-shaped is a skill.
 
-Its `skills/<name>/SKILL.md` files are **procedures**:
+Its `skills/<name>/SKILL.md` files are **skills** (authored; a dream may also propose **learned** ones, active once a curator approves them in `/queue`):
 
-- They are synced into procedural memory (`memory/procedural/`) at build time.
+- They are synced into procedural memory (`SkillStore`, files under `data/memory/procedural/`) at build time.
 - One version per name is active.
 - Each turn's are selected by the harness, with no model call.
 - Each turn's are audited as `name@version`.
@@ -23,30 +23,30 @@ skills/
 ## Using it from a composition root
 
 ```python
-procedural = SkillStore(platform) if features.is_on("memory.procedural") else None
+procedural = SkillStore() if features.is_on("memory.procedural") else None
 instructions = build_agent_instructions(
     settings.skills, store=procedural, audit=ledger, reporter=reporter
 )
 activation = instructions.select(signals, query)  # no model call
 offered = tools_this_turn_offers(activation)  # narrowed by activation.tools(), really sent
-# The card first — the procedures, the reads they do first, the tools really offered —
-# so no read ever appears without the procedure that asked for it.
+# The card first — the skills, the reads they do first, the tools really offered —
+# so no read ever appears without the skill that asked for it.
 instructions.announce(activation, prefetched=activation.prefetch(), offered=offered)
 # … then run the activation.prefetch() reads through the tool path, hand results to the model …
-system = instructions.render(activation)  # profile + the procedures' sent sections
+system = instructions.render(activation)  # profile + the skills' sent sections
 ```
 
 `compose(signals, query)` does select, announce and render in one step, for an agent with no
 prefetch.
 
-## What makes a procedure fast
+## What makes a skill fast
 
 - **prefetch:** the reads it always starts with. The harness runs them before the first
   model call, so the model skips those rounds.
 - **tools:** what it uses. The model is offered only these, by model name.
 - Only the Procedure and Boundaries sections are sent (`skills.render.sections_sent`). Keep
   steps short and never repeat the profile.
-- `skills.max_prompt_chars` fails the build if the profile plus the largest procedures grow
+- `skills.max_prompt_chars` fails the build if the profile plus the largest skills grow
   past the agent's budget.
 
 The agent overlays `skills.profile_path` and `skills.skills_dir`, and derives its own
@@ -70,12 +70,12 @@ tools: [look_up_thing, act]   # what a turn running this is offered
 ## Completion
 ```
 
-Files under `references/*.md` are appended to the stored procedure, so one version covers
+Files under `references/*.md` are appended to the stored skill, so one version covers
 both. A malformed file fails the build.
 
 ## What it is not
 
-- Not a `ChunkKind`. Procedures sit outside the context window: never evicted, present with
+- Not a `ChunkKind`. Skills sit outside the context window: never evicted, present with
   `context` off, and not screened as data.
-- Not grounding evidence. A procedure is not a fact.
+- Not grounding evidence. A skill is not a fact.
 - Not an authority. Limits, permissions and record state belong to code, policy and tools.

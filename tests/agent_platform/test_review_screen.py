@@ -1,4 +1,4 @@
-"""The console's Review screen (ADR 0011): pointing at the one queue, never around it.
+"""The console's Review screen (ADR 0012): pointing at the one queue, never around it.
 
 A real Textual app under the pilot: the buttons stay disabled until there
 is a comment, and a decision made here is the same decision `/queue`

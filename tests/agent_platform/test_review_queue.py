@@ -1,4 +1,4 @@
-"""One review queue for every kind, decided with a comment (ADR 0011).
+"""One review queue for every kind, decided with a comment (ADR 0012).
 
 Under test: the service refuses a decision without a comment and an item
 outside the reviewer's scope; quarantines and memory candidates are items

@@ -1,4 +1,4 @@
-"""The support agent's review kinds, decided through the platform's one queue (ADR 0011).
+"""The support agent's review kinds, decided through the platform's one queue (ADR 0012).
 
 A refund, a cancellation's refund and a reply the hallucination check cut
 are this agent's own kinds of review item. What deciding one *does* is

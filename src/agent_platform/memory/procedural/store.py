@@ -1,4 +1,4 @@
-"""Procedural memory — skills, versioned (E14, LLD §8, ADR 0010, ADR 0011).
+"""Procedural memory — skills, versioned (E14, LLD §8, ADR 0010, ADR 0012).
 
 Files, one directory per agent: `procedural/<name>/SKILL.md` is the active
 version of each skill, verbatim — the same file an author writes — and

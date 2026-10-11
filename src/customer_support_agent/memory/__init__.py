@@ -1,4 +1,4 @@
-"""The support agent's memory customisations (ADR 0011).
+"""The support agent's memory customisations (ADR 0012).
 
 Everything memory does is the platform's; this package holds only what
 is the support agent's own: how its turns are scoped for skills

@@ -26,8 +26,8 @@ from agent_platform.memory.semantic.rag import KnowledgeBase
 from agent_platform.observability import StageReporter
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.console.commands import SettleCommand, VoidCommand
+from customer_support_agent.console.review_handler import support_queue_command
 from customer_support_agent.intent.router import load_intent_classifier
-from customer_support_agent.review.handler import support_queue_command
 
 if TYPE_CHECKING:
     from agent_platform.memory import MemoryProfile

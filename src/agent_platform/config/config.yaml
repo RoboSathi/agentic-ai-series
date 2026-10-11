@@ -518,6 +518,22 @@ audit:
   tool_schema_version: unversioned
   prompt_source: unnamed
   policy_source: unnamed
+  # How the trail reads (`audit/view.py`): one renderer for `make audit <agent>`, `/audit`
+  # and the console. It holds tokens only — never a revealed value (`make pii-reveal`).
+  view:
+    # Colour by outcome: a decision, then the Gatekeeper standing when one was recorded.
+    decision_colours: {allow: green, deny: red, escalate: yellow}
+    standing_colours: {VOID: red, RATIFIABLE: yellow, RATIFIED: green, VOIDABLE: cyan, VALID: green, UNGOVERNED: magenta}
+    # `SINCE=24h`, `SINCE=7d`, or a date (`SINCE=2026-10-11`).
+    since_pattern: '^(?P<n>\d+)(?P<unit>[hd])$'
+    since_units: {h: hours, d: days}
+    # One trace as a tree: each decision, then why and under what standing.
+    trace_entry: "{time} · {action} · {decision} · {actor}"
+    trace_detail: "{key}: {value}"
+    trace_details: [standing, reason_code, kind, item_id, permission, procedure, skills]
+    locked: "The shared ledger is held by a running console; showing this agent's own ledger only (use /audit in the console for both)."
+    title: "Audit · {agent} · {n} newest{narrowed}"
+    trace_title: "Audit · {agent} · trace {trace_id} ({n})"
 
 observability:
   enabled: true
@@ -1169,7 +1185,7 @@ skills:
 
 memory:
   schema_version: memory-schema-v1
-  # Long-term memory is files, one directory per agent (ADR 0011). The records under each
+  # Long-term memory is files, one directory per agent (ADR 0012). The records under each
   # store's history directory are the truth; the readable files beside them (one per fact,
   # one SKILL.md per skill, a MEMORY.md index per store) are regenerated views, and the
   # full-text index is derived from the records and rebuilt whenever it is missing or stale.
@@ -1347,7 +1363,7 @@ memory:
   # reports. Neutral here; an agent names its own (the support agent says "customer").
   subject_label: "subject {subject}"
   no_subject_label: agent-wide
-  # `make dream <agent>`: consolidate the agent's dream events into long-term memory (ADR 0011).
+  # `make dream <agent>`: consolidate the agent's dream events into long-term memory (ADR 0012).
   dream:
     retention_days: 30
     # The kind a completed turn's dream event carries; an agent may emit others (a run).
@@ -1396,7 +1412,7 @@ memory:
       keyword_min_chars: 4
       max_keywords: 8
 
-# Human review (ADR 0011): one queue for every agent and every kind of decision a person makes —
+# Human review (ADR 0012): one queue for every agent and every kind of decision a person makes —
 # a refund above the agent's authority, a reply the hallucination check cut, a quarantined
 # message, a fact or skill memory would not take on its own word. `/queue` and the console's
 # Review tab decide through the same service, and every decision needs a comment.
@@ -1852,6 +1868,10 @@ security:
     mask_token: "[REDACTED]"
     token_format: "[{category}:{token}]"
     token_chars: 12
+    # The provider boundary (security/pii/boundary.py): with `pii` on, every message to a model
+    # provider is tokenised and the reply's tokens restored. Texts sent on every call (the
+    # system prompt) are tokenised once; this many are remembered.
+    boundary_cache_entries: 256
     # Values that look like personal data but are the deployment's own (a support address an
     # agent hands out on purpose). Matched exactly, ignoring case; nothing else is spared.
     allow_list: []
@@ -2255,7 +2275,7 @@ commands:
     rationale_chars: 60
 
   # `/skills`: an agent's procedural memory — authored skills and learned ones a curator approved.
-  # Candidates a dream proposed are decided in `/queue` (ADR 0011), with a comment.
+  # Candidates a dream proposed are decided in `/queue` (ADR 0012), with a comment.
   skills:
     summary: "Procedural memory: list, show, history (decide learned-skill candidates in /queue)"
     usage: "/skills [list | show <name> | history <name>]"

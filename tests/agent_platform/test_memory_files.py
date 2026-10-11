@@ -1,4 +1,4 @@
-"""The file layer under long-term memory (ADR 0011).
+"""The file layer under long-term memory (ADR 0012).
 
 Real files in a temporary directory: the behaviours under test — paths
 that cannot escape, writes no reader sees half of, records that keep

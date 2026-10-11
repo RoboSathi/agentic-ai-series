@@ -81,6 +81,7 @@ from agent_platform.security import (
     TermContentModerator,
 )
 from agent_platform.security.auth.policy import AgentPolicy, AgentPolicyRepository
+from agent_platform.security.pii.boundary import bounded
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from agent_platform.verification import ReadBackVerifier
@@ -367,7 +368,7 @@ def build_agent(
             WorkingMemoryStore(max_history=agent_settings.history_turns) if memory_enabled else None
         )
     )
-    # Every completed turn leaves one dream event, redacted, for `make dream csa` (ADR 0011).
+    # Every completed turn leaves one dream event, redacted, for `make dream csa` (ADR 0012).
     dream_recorder = (
         TurnRecorder(FileDreamInbox(), agent_id, redact=redactor.redact if redactor else None)
         if live_working_memory is not None
@@ -463,7 +464,12 @@ def build_agent(
     )
 
     return CustomerSupportAgent(
-        llm=llm or create_llm_client(observer=StageReporterModelObserver(lambda: reporter)),
+        # Every provider call tokenises personal data out and restores it in the answer.
+        llm=bounded(
+            llm or create_llm_client(observer=StageReporterModelObserver(lambda: reporter)),
+            features,
+            redactor,
+        ),
         gatekeeper=governed,
         # Only a Gatekeeper escalates, so only a governed agent refers.
         referral=ReviewReferral() if governed is not None else None,

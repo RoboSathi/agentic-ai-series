@@ -323,7 +323,7 @@ def _log_policy(pool: SqliteConnectionPool) -> None:
 def reset_derived_state() -> list[Path]:
     """Checkpoints and long-term memory remember the old orders; remove them.
 
-    Memory is files under the agent's package (ADR 0011), not rows in the
+    Memory is files under the agent's package (ADR 0012), not rows in the
     database being rebuilt, so it would otherwise outlive the customers it
     is about.
     """

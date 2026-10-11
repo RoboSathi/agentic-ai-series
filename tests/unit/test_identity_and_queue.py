@@ -24,6 +24,7 @@ from agent_platform.hallucination_check.ledger import FLAG_TRUE, facts_in
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.primitives.money import Money
 from customer_support_agent.config import get_agent_settings
+from customer_support_agent.console.review_handler import support_queue_command
 from customer_support_agent.domain.identity import Customer, set_current_customer
 from customer_support_agent.domain.models import HitlRequest
 from customer_support_agent.graph.nodes._support import NodeSupport
@@ -31,7 +32,6 @@ from customer_support_agent.graph.nodes.review_wait import _reply
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.persistence.repositories import HitlQueueRepository
 from customer_support_agent.persistence.schema import ensure_schema
-from customer_support_agent.review.handler import support_queue_command
 from customer_support_agent.review.queue import ReviewOutcome
 
 

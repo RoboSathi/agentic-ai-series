@@ -262,7 +262,7 @@ class TestEveryKeptCommandIsWired:
     def _app(self, pool: object) -> AgenticTuiApp:
         from agent_platform.commands.knowledge import KnowledgeBaseCommand
         from agent_platform.memory import WorkingMemoryStore
-        from customer_support_agent.review.handler import support_queue_command
+        from customer_support_agent.console.review_handler import support_queue_command
 
         agent = SimpleNamespace(working_memory=WorkingMemoryStore(), handle=None)
         commands = [

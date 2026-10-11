@@ -41,7 +41,7 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_an_unknown_command_suggests_near_matches(self) -> None:
-        # `/queue` is the platform's one review queue (ADR 0011).
+        # `/queue` is the platform's one review queue (ADR 0012).
         registry = CommandRegistry()
         result = await registry.dispatch("/que")
         assert not result.ok

@@ -1,4 +1,4 @@
-"""Semantic and procedural memory as files (ADR 0011).
+"""Semantic and procedural memory as files (ADR 0012).
 
 The contract tests in `test_memory.py` already hold the stores to their
 behaviour; these check what being files adds: the readable views and

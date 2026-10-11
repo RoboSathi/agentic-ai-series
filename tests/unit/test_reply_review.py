@@ -8,9 +8,9 @@ denying it says the check was right, and nothing more is sent.
 
 from agent_platform.guardrails import ResponseGuardrailResult
 from agent_platform.persistence import SqliteConnectionPool
+from customer_support_agent.console.review_handler import support_queue_command
 from customer_support_agent.persistence.repositories import HitlQueueRepository
 from customer_support_agent.persistence.schema import ensure_schema
-from customer_support_agent.review.handler import support_queue_command
 from customer_support_agent.review.referral import ReplyReferral
 
 _SESSION = "session-1"

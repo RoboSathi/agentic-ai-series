@@ -1,7 +1,7 @@
 """Customer Support's own console commands (LLD §20, §21): `/void` and `/settle`.
 
-Review decisions are the platform's `/queue` (ADR 0011), with this agent's
-refund and reply kinds added by `review/handler.py`.
+Review decisions are the platform's `/queue` (ADR 0012), with this agent's
+refund and reply kinds added by `console/review_handler.py`.
 
 Scoped like the agent's tools: in a console session these show and act on
 only the customer verified in that session (`ConsoleScope`). The agent has

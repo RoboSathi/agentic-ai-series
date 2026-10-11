@@ -77,7 +77,7 @@ class TestListing:
 
 
 class TestApprovingIsNotHere:
-    """ADR 0011: a candidate is decided in `/queue`, with a comment — `/skills` only lists it."""
+    """ADR 0012: a candidate is decided in `/queue`, with a comment — `/skills` only lists it."""
 
     async def test_approve_is_not_a_skills_action(
         self, command: SkillsCommand, pipeline: MemoryWritePipelineImpl

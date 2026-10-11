@@ -144,7 +144,7 @@ class SubjectHost(Protocol):
 
 @runtime_checkable
 class MemoryHost(Protocol):
-    """An agent that words its memory in its own vocabulary (ADR 0011).
+    """An agent that words its memory in its own vocabulary (ADR 0012).
 
     Returns the agent's `MemoryProfile` — usually `MemoryProfile.default()`
     with one consolidator replaced. An agent without this hook dreams with

@@ -46,6 +46,7 @@ from agent_platform.security import MessageScreener, PromptInjectionGuard, Secur
 from agent_platform.security.auth.auth import Authorizer
 from agent_platform.security.auth.policy import AgentPolicy
 from agent_platform.security.pii import PIIFilterImpl
+from agent_platform.security.pii.boundary import bounded
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
 from agent_platform.tools import NamespacedToolRegistry
 from agent_platform.tools.path import ToolPath
@@ -108,7 +109,7 @@ def build_agent(
     screen = _screen(platform) if posture.is_on("prompt_injection") else None
     declare_screens(settings.agent.id, screen.declared_checks() if screen else [])
     nodes = OpsNodes(
-        llm or _llm(reporter),
+        bounded(llm or _llm(reporter), posture),
         registry,
         calls,
         agent,

@@ -1,4 +1,4 @@
-"""Dreams, for any agent (ADR 0011).
+"""Dreams, for any agent (ADR 0012).
 
 Under test: the inbox's lifecycle on disk, the turn recorder an agent
 calls, the default skill learner, and a whole dream with the default

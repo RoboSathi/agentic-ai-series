@@ -36,6 +36,7 @@ from agent_platform.llm.types import (
     ModelToolCall,
     TokenUsage,
 )
+from agent_platform.logging.trace_context import set_current_trace_id
 from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
 from agent_platform.primitives.money import Money
 from agent_platform.resilience.rate_limiter import reset_rate_limiter
@@ -343,6 +344,19 @@ def _eval_paths(root: Any) -> dict[str, Any]:
         "CUSTOMER_SUPPORT_AGENT__EVALS__FIXTURE_DB_PATH": root / "fixture.db",
         "CUSTOMER_SUPPORT_AGENT__EVALS__WORKSPACE_DIR": root / "workspace",
     }
+
+
+@pytest.fixture(autouse=True)
+def no_leaked_trace() -> Iterator[None]:
+    """Start and end every test outside any trace.
+
+    The trace id is context state, like the settings singleton: a test that
+    sets one and does not clear it makes a later test that reads "no trace"
+    fail depending on the order the suite happened to run in.
+    """
+    set_current_trace_id(None)
+    yield
+    set_current_trace_id(None)
 
 
 @pytest.fixture(autouse=True)
