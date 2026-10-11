@@ -8,6 +8,7 @@ satisfy the same `Fetcher` interface, so a caller never knows which ran.
 """
 
 import re
+from collections.abc import Iterable
 from html.parser import HTMLParser
 from typing import Protocol, runtime_checkable
 
@@ -18,7 +19,8 @@ from agent_platform.primitives.hashing import text_hash
 from agent_platform.web.page_date import published_from_html
 from agent_platform.web.types import FetchedPage, FetchVia
 
-# `noscript` is kept: its "please enable JavaScript" text is how a shell page is recognised.
+# Never text, on any page. `noscript` is kept: its "please enable JavaScript" text is how a
+# shell page is recognised.
 _SKIP_TAGS = frozenset({"script", "style", "template", "svg"})
 _BLOCK_TAGS = frozenset(
     {"p", "div", "br", "li", "h1", "h2", "h3", "h4", "tr", "section", "article"}
@@ -37,22 +39,26 @@ class Fetcher(Protocol):
 class _TextExtractor(HTMLParser):
     """Visible text only: scripts, styles and markup are dropped."""
 
-    def __init__(self) -> None:
+    def __init__(self, skip: frozenset[str], blocks: frozenset[str]) -> None:
         super().__init__()
+        self._skip = skip
+        self._blocks = blocks
         self._parts: list[str] = []
         self._skipping = 0
         self.title = ""
         self._in_title = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in _SKIP_TAGS:
+        if tag in self._skip:
             self._skipping += 1
         self._in_title = tag == "title"
-        if tag in _BLOCK_TAGS:
+        if tag in self._blocks:
             self._parts.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in _SKIP_TAGS and self._skipping:
+        if tag in self._blocks:
+            self._parts.append("\n")
+        if tag in self._skip and self._skipping:
             self._skipping -= 1
         self._in_title = False
 
@@ -67,11 +73,17 @@ class _TextExtractor(HTMLParser):
         return _BLANK_LINES.sub("\n\n", joined).strip()
 
 
-def extract_text(html: str) -> tuple[str, str]:
-    """(title, visible text) of an HTML document; plain text passes through."""
+def extract_text(
+    html: str, chrome: Iterable[str] = (), blocks: Iterable[str] = ()
+) -> tuple[str, str]:
+    """(title, visible text) of an HTML document; plain text passes through.
+
+    `chrome` names the page furniture dropped with its contents (menus, footers); `blocks` the
+    tags that end a line, on top of the few every page needs.
+    """
     if "<" not in html:
         return "", html.strip()
-    parser = _TextExtractor()
+    parser = _TextExtractor(_SKIP_TAGS | frozenset(chrome), _BLOCK_TAGS | frozenset(blocks))
     parser.feed(html)
     return parser.title, parser.text()
 
@@ -80,7 +92,7 @@ def page_from(
     url: str, status: int, body: str, via: FetchVia, settings: WebFetchSettings
 ) -> FetchedPage:
     """A `FetchedPage` whose hash is over exactly the text it carries."""
-    title, text = extract_text(body)
+    title, text = extract_text(body, settings.chrome_tags, settings.block_tags)
     clipped = text[: settings.max_chars]
     return FetchedPage(
         url=url,

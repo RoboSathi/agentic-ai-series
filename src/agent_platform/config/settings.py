@@ -726,6 +726,12 @@ class ContextCardWords(BaseModel):
     prefix_line: str
     prefix_none: str
     tokenizer_line: str
+    # Many requests of one purpose drawn as one card (`StageReporterModelObserver(aggregate=…)`):
+    # `{purpose}`, `{count}`, `{low}`, `{high}` tokens, `{peak_share}` of `{window}`.
+    aggregate_heading: str
+    aggregate_title: str
+    # One request of an aggregated card: `{tokens}`, `{share}`, `{model}`.
+    aggregate_line: str
     # Section name → what a person reads for it; an unlisted name is shown as it is.
     labels: dict[str, str]
 
@@ -1563,6 +1569,13 @@ class GroundingTierSettings(BaseModel):
     may_refute: bool
 
 
+class RefutingPremiseSettings(BaseModel):
+    """What a line must look like before it may contradict a claim."""
+
+    min_words: int = Field(ge=1)
+    max_capitalised_share: float = Field(gt=0.0, le=1.0)
+
+
 class RulePhraseSettings(BaseModel):
     """A surface phrase in an outcome, and the rule it restates."""
 
@@ -1813,6 +1826,10 @@ class HallucinationCheckSettings(YamlBackedSettings):
     # NLI reads a record about order B as contradicting a claim about
     # order A. Unset: every retrieved item may refute.
     refute_identifier_pattern: str | None = None
+    # A premise that may refute must be a statement: at least `min_words` words, and not mostly
+    # capitalised words (a heading, a menu, a row of links). NLI reads "Topics Trending
+    # Collections Enterprise" as contradicting anything; a fragment can still support.
+    refuting_premise: RefutingPremiseSettings
     # The grounding cascade, strongest first. Each tier names the evidence
     # kinds it reads, the claim classes it may ground, and whether it may
     # refute as well as support. Order is the order credit is given in.
@@ -2631,6 +2648,12 @@ class GroundingCardSettings(BaseModel):
     no_evidence_either_way: str
     # Beside a model that read several lines at once (the second opinion): `{count}`.
     lines_read: str
+    # The tree under a claim, one line per piece of evidence a step read: `├` before every
+    # line but the last, `└` before it. A step that did not decide the claim says what it
+    # decided after its reading (`{decision}`); the claim line already carries the verdict.
+    step_branch: str
+    step_last: str
+    step_outcome: str
     # Level 1 in one line atop the card: `{mean}`, `{lowest}`, `{sentence}`.
     logprobs_summary: str
     # The row naming the order the claims were checked in.
@@ -2790,6 +2813,11 @@ class WebFetchSettings(BaseModel):
     # and JSON-LD keys. Search hits outside a news vertical carry no date.
     date_meta_keys: list[str]
     date_json_keys: list[str]
+    # A page's chrome, dropped with everything inside it: menus, footers, sidebars, forms. Its
+    # link rows otherwise read as one line of evidence ("Topics Trending Collections").
+    chrome_tags: list[str]
+    # Tags that end a line, so items of a list are separate lines rather than one run.
+    block_tags: list[str]
 
 
 class WebSettings(YamlBackedSettings):

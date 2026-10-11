@@ -1,5 +1,5 @@
-"""The run's cards say what happened once: no limit card for a plan's own rounds, and a judge
-card that names who judged and how the score was reached."""
+"""The run's cards say what happened once: a plan's own rounds are no intervention, a budget
+stop names its mechanism, and the judge card names who judged and how the score was reached."""
 
 import pytest
 
@@ -8,39 +8,30 @@ from agent_platform.verification.acceptance import CheckVerdict
 from research_agent.audit.verdict import decide
 from research_agent.config import get_agent_settings
 from research_agent.domain.rubric import Rubric, RubricCheck, RubricItem
-from research_agent.graph.builder import _announce_cap
 from research_agent.research.cards import JudgeSetup, audit_card
 
 pytestmark = pytest.mark.usefixtures("ra_config")
 
 
-class _Telemetry:
-    def __init__(self) -> None:
-        self.cards: list[str] = []
-
-    def card(self, stage: str, heading: str, *_: object, **__: object) -> None:
-        self.cards.append(heading)
+def _guard() -> BudgetGuard:
+    return BudgetGuard({"rounds": 1, "fetches": 1}, layers=get_agent_settings().budget_layers)
 
 
-def _guard(telemetry: _Telemetry) -> BudgetGuard:
-    agent = get_agent_settings()
-    return BudgetGuard(
-        {"rounds": 1, "fetches": 1},
-        on_exhausted=lambda report: _announce_cap(telemetry, report, agent),  # type: ignore[arg-type]
-    )
+def test_a_plan_that_uses_its_one_round_and_stops_is_no_intervention() -> None:
+    guard = _guard()
+    guard.charge("rounds", 1)
+    verdict = guard.verdict(1, 1, stopping=True)
+    assert verdict.decision == "finalize"
+    assert not verdict.intervened and verdict.layer is None
 
 
-def test_using_up_the_planned_rounds_draws_no_limit_card() -> None:
-    telemetry = _Telemetry()
-    _guard(telemetry).charge("rounds", 1)
-    assert telemetry.cards == []
-
-
-def test_a_refused_page_read_still_does() -> None:
-    telemetry = _Telemetry()
-    guard = _guard(telemetry)
+def test_a_budget_that_stops_the_run_names_its_own_mechanism() -> None:
+    guard = _guard()
+    guard.charge("rounds", 1)
+    verdict = guard.verdict(1, 1, stopping=True, cause="rounds")
+    assert verdict.intervened and verdict.layer == "step_count"
     guard.charge("fetches", 1)
-    assert len(telemetry.cards) == 1 and "fetches" in telemetry.cards[0]
+    assert guard.verdict(1, 1, stopping=True, cause="fetches").layer == "tool_budget"
 
 
 def _item(item_id: str, kind: str, must: bool, weight: float) -> RubricItem:

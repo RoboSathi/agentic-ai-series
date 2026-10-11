@@ -6,6 +6,7 @@ It has no field for a page and no field for a quoted span, so the model
 writing the report never reads text a web page chose.
 """
 
+from collections.abc import Sequence
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -31,8 +32,12 @@ Write the research report from the evidence ledger only.
   for student startups" when the claim does not say who it is for).
 - Where entries disagree, say so and cite both sides.
 - An entry with a `caveat` is weaker evidence (a search snippet, or a source outside the
-  time window): say so in the sentence that uses it ("according to a search result", "an
-  older source reports"), and never state it as settled fact.
+  time window): hedge the sentence that uses it in the reader's words ("according to a
+  search result", "an older source reports"), and never state it as settled fact.
+- Write about the subject, never about the research. Entry ids appear only inside the
+  [E<n>] markers; never write about the ledger, entries, snippets, caveats, what kind of
+  site a source is, or what the evidence does or does not cover. A part of the question
+  the ledger does not cover is left out: the run adds a Coverage & Limits section for it.
 - For a decision, recommend an option and state the trade-offs.
 - Do not write a Coverage & Limits, Known unknowns or Sources section;
   those are added from the run's records.
@@ -64,19 +69,76 @@ def ledger_view(ledger: LedgerSnapshot) -> list[dict[str, Any]]:
 
 
 def build(
-    contract: Contract, ledger: LedgerSnapshot, headings: list[str], gaps: list[str]
+    contract: Contract,
+    ledger: LedgerSnapshot,
+    headings: list[str],
+    gaps: list[str],
+    previous: list[dict[str, str]] | None = None,
+    findings: list[dict[str, Any]] | None = None,
 ) -> RolePrompt:
+    """The draft; after more research, also the previous report and what the audit found."""
+    payload: dict[str, Any] = {
+        "task": "synthesize",
+        "brief": brief_view(contract),
+        "rubric": rubric_view(contract),
+        "ledger": ledger_view(ledger),
+        "sections": headings,
+        "unmet_items": gaps,
+    }
+    if previous:
+        payload |= {"previous_report": previous, "findings": findings or []}
+    request = RolePrompt(
+        role=ROLE, instructions=INSTRUCTIONS, payload=dated(payload, contract.frozen_at.date())
+    )
+    return request.with_instruction(REDRAFT_INSTRUCTION) if previous else request
+
+
+REVISE_INSTRUCTIONS = """
+Revise the report in `previous_report` so it meets the audit's `findings`, from the evidence
+ledger only.
+
+- Each finding names a criterion the report failed, the reviewer's reason, and the sentences
+  that drove the score. Change only what a finding asks for; keep every other sentence, with
+  its citations, exactly as it is.
+- Every factual sentence cites at least one ledger entry as [E<n>], inside the sentence before
+  its full stop. Write no fact the ledger lacks: where a finding asks for something the ledger
+  does not cover, leave it out (Coverage & Limits, added by the run, says what was not found).
+- The findings are notes for you, not for the reader: never repeat their wording, the ids they
+  name, or anything about entries, snippets, caveats or what the evidence covers.
+- Use exactly the section headings given, in order.
+- Do not write a Coverage & Limits, Known unknowns or Sources section.
+- `lessons_from_past_runs` (when present) are what earlier runs' audits found; use them to
+  avoid repeating a fault, never as evidence.
+"""
+
+# Appended to the drafting instructions when a report is drafted again after more research.
+REDRAFT_INSTRUCTION = (
+    "A previous report and the audit's findings on it are in `previous_report` and "
+    "`findings`. Keep what the audit accepted, fix what it flagged, and use the new evidence."
+)
+
+
+def build_revision(
+    contract: Contract,
+    ledger: LedgerSnapshot,
+    headings: list[str],
+    previous: list[dict[str, str]],
+    findings: list[dict[str, Any]],
+    lessons: Sequence[str] = (),
+) -> RolePrompt:
+    """The revision: the report as it stands, what the audit found, and the ledger."""
     return RolePrompt(
         role=ROLE,
-        instructions=INSTRUCTIONS,
+        instructions=REVISE_INSTRUCTIONS,
         payload=dated(
             {
-                "task": "synthesize",
+                "task": "revise",
                 "brief": brief_view(contract),
-                "rubric": rubric_view(contract),
                 "ledger": ledger_view(ledger),
                 "sections": headings,
-                "unmet_items": gaps,
+                "previous_report": previous,
+                "findings": findings,
+                **({"lessons_from_past_runs": list(lessons)} if lessons else {}),
             },
             contract.frozen_at.date(),
         ),

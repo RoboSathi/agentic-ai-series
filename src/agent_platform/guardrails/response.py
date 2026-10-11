@@ -49,7 +49,11 @@ from agent_platform.hallucination_check.resolver import (
     DIRECT_TIER,
     RESTATEMENT_MODEL,
 )
-from agent_platform.hallucination_check.types import DetectionVerdict, GenerationAssessment
+from agent_platform.hallucination_check.types import (
+    DetectionVerdict,
+    EvidenceCheck,
+    GenerationAssessment,
+)
 from agent_platform.logging import get_logger
 from agent_platform.observability import checks
 from agent_platform.observability.units import report_grounding
@@ -601,6 +605,7 @@ def _claim_check(verdict: DetectionVerdict) -> dict[str, Any]:
                 "nli_label": check.nli_label,
                 "nli_score": check.nli_score,
                 "decisive": check.decisive,
+                "chosen": check.chosen,
                 "source": check.source,
                 "model": model_label(check.model) if check.model else "",
             }
@@ -624,12 +629,17 @@ def _scores(verdict: DetectionVerdict) -> dict[str, str]:
         if not check.model:
             continue
         held = best.get(check.model)
-        if held is None or (check.decisive, check.nli_score) > (held.decisive, held.nli_score):
+        if held is None or _rank(check) > _rank(held):
             best[check.model] = check
     return {
         model_label(model): f"{_NLI_WORDS.get(c.nli_label, c.nli_label)} {c.nli_score:.2f}"
         for model, c in best.items()
     }
+
+
+def _rank(check: EvidenceCheck) -> tuple[bool, bool, float]:
+    """The line the verdict rests on first, then a decisive one, then the surest."""
+    return check.chosen, check.decisive, check.nli_score
 
 
 # The NLI model's third label, as a reader should meet it.

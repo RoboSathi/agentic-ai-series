@@ -434,7 +434,9 @@ class LoopGovernor:
         ):
             if cap:
                 caps[counter] = cap
-        return BudgetGuard(caps, max_seconds=self._budget.max_seconds, clock=self._clock)
+        return BudgetGuard(
+            caps, max_seconds=self._budget.max_seconds, clock=self._clock, layers=_COUNTER_LAYERS
+        )
 
     def _exhausted(self, counter: str) -> bool:
         if counter == SECONDS:

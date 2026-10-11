@@ -251,7 +251,8 @@ async def test_the_search_card_shows_provider_window_and_each_hits_date() -> Non
     worker, _, _, rec = _setup({"https://a.example/one": "text"})
     await worker.run(NODE)
     (card,) = rec.of("worker_search")
-    assert card[1] == say("search.heading", node="n1", query="ai news")
+    # The heading names the provider that answered, beside the node and the query.
+    assert card[1] == say("search.heading", node="n1", route="tavily", query="ai news")
     details = card[2][say("search.section.search")]
     assert say("search.provider", provider="tavily") in details
     assert say("search.window", window="news, 30d") in details

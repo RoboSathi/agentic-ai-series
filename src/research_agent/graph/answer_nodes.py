@@ -46,7 +46,14 @@ from research_agent.observability.telemetry import ACTOR, RunTelemetry
 from research_agent.presentation.narration import clip, role_title
 from research_agent.prompts import answer as prompt
 from research_agent.research.recency import RecencyGuard
-from research_agent.tools import HITS_KEY, PAGE_KEY, PUBLISHED_KEY, QUERY_KEY, URLS_KEY
+from research_agent.tools import (
+    HITS_KEY,
+    PAGE_KEY,
+    PROVIDER_KEY,
+    PUBLISHED_KEY,
+    QUERY_KEY,
+    URLS_KEY,
+)
 
 # The loop's cards, in the order a step emits them.
 THOUGHT, ACTION, OBSERVATION, REVISE, ANSWER = (
@@ -382,6 +389,8 @@ class AnswerNodes:
             tool_request_fields(call.name, call.arguments),
             event_kind="tool_request",
         )
+        # The status line follows the loop while the tool runs, as every agent's does.
+        self._emit(turn, OBSERVATION, "", {}, event_kind="tool_result", status="started")
         result = await self._execute(call, turn)
         text = result.output if result.success else result.error or self._notes.empty
         note = self._recency_note(turn, result)
@@ -439,11 +448,15 @@ class AnswerNodes:
     def _observe(self, turn: Turn, tool: str, text: str, result: ToolResult) -> None:
         limit = get_agent_settings().tui.clip_chars
         lines = [clip(line, limit) for line in text.splitlines() if line.strip()]
-        heading = (
-            self._notes.observation_heading.format(tool=tool, lines=len(lines))
-            if result.success
-            else self._notes.observation_failed.format(tool=tool, error=clip(text, limit))
-        )
+        provider = str(result.data.get(PROVIDER_KEY) or "")
+        if not result.success:
+            heading = self._notes.observation_failed.format(tool=tool, error=clip(text, limit))
+        elif provider:
+            heading = self._notes.observation_heading_via.format(
+                tool=tool, provider=provider, lines=len(lines)
+            )
+        else:
+            heading = self._notes.observation_heading.format(tool=tool, lines=len(lines))
         fields = {
             "tool": tool,
             "result": "success" if result.success else "failed",
@@ -475,6 +488,7 @@ class AnswerNodes:
         )
         if not evidence:
             return {}
+        self._emit(turn, HALLUCINATION_CHECK, "", {}, event_kind="grounding", status="started")
         outcome = await self._grounding.check(
             turn.question, state["text"], evidence, self._reviser(turn, evidence)
         )

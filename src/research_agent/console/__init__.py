@@ -7,12 +7,9 @@ checklist and the budget meters) and a cancel key. The platform composes it from
 `agent.host` in this agent's overlay and never imports it.
 """
 
-from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
-
-from rich.markup import escape
 
 from agent_platform.commands.types import Command
 from agent_platform.config import FeatureSet, get_settings
@@ -29,7 +26,6 @@ from research_agent.console.commands import (
 )
 from research_agent.console.greeting import build_greeting
 from research_agent.console.setup import missing_model_key, search_warning
-from research_agent.presentation.narration import say, title_of
 
 
 class ResearchHost:
@@ -154,7 +150,7 @@ class ResearchHost:
         if controls:
             return controls
         settings = get_agent_settings()
-        phase = self.agent.panel_state(session_id)["phase"]
+        phase = self.agent.phase(session_id)
         names = settings.command_names
         return [
             HostAction(
@@ -169,34 +165,9 @@ class ResearchHost:
         ]
 
     def status_lines(self, session_id: str) -> tuple[Sequence[str], Sequence[str]]:
-        """Nothing always shown: phase, coverage, evidence, budget and the checklist expand.
-
-        The status line keeps one line (the current stage); everything about the run in
-        progress sits behind its marker, so the feed above it keeps the room.
-        """
-        if self.agent is None:
-            return [], []
-        state = self.agent.panel_state(session_id)
-        if not state.get("items") and not state.get("budget"):
-            return [], []  # nothing in progress yet: no phase to report
-        styles = get_agent_settings().tui
-        phase = state["phase"]
-        detail = [_styled(say("status.phase", phase=phase), styles.phase_colors.get(phase, "bold"))]
-        items: list[tuple[str, str]] = state.get("items") or []
-        if items:
-            detail.append(_styled(_coverage_line(items), styles.status_line_styles["coverage"]))
-        budget = state.get("budget")
-        if budget:
-            evidence = say(
-                "status.evidence", n=state.get("ledger", 0), rejected=state.get("rejected", 0)
-            )
-            detail.append(_styled(evidence, styles.status_line_styles["evidence"]))
-            meters = [_meter(name, spent, cap) for name, (spent, cap) in budget.items()]
-            budget_line = say("status.budget", meters=" · ".join(meters))
-            detail.append(_styled(budget_line, styles.status_line_styles["budget"]))
-        if items:
-            detail += _checklist_lines(items)
-        return [], detail
+        """Nothing beneath the status line: the cards above already show the run's scope,
+        evidence and budget (LOOP CONTROL), so a second copy behind a marker said nothing new."""
+        return [], []
 
 
 def _start_presidio() -> None:
@@ -205,30 +176,6 @@ def _start_presidio() -> None:
         from agent_platform.security.pii.presidio import preload_presidio_in_background
 
         preload_presidio_in_background()
-
-
-def _styled(text: str, style: str) -> str:
-    """`text` as Rich markup in `style` (plain when there is no style)."""
-    return f"[{style}]{escape(text)}[/]" if style else escape(text)
-
-
-def _coverage_line(items: list[tuple[str, str]]) -> str:
-    counts = Counter(status for _, status in items)
-    return say(
-        "status.coverage", covered=counts["covered"], total=len(items), waived=counts["waived"]
-    )
-
-
-def _checklist_lines(items: list[tuple[str, str]]) -> list[str]:
-    lines = [f"[bold]{say('status.detail.checklist')}[/bold]"]
-    for item_id, status in items:
-        style = get_agent_settings().tui.checklist_styles.get(status, "")
-        lines.append(f"  {_styled(f'{status:<8}', style)} {escape(title_of(item_id))}")
-    return lines
-
-
-def _meter(name: str, spent: float, cap: float) -> str:
-    return say("status.meter", name=title_of(name), spent=f"{spent:g}", cap=f"{cap:g}")
 
 
 __all__ = ["ResearchHost"]

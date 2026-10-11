@@ -231,8 +231,9 @@ class StructuredCaller:
         quiet: bool = False,
     ) -> CompletionResult:
         started = time.perf_counter()
-        if self._reporter is not None:
-            # The live status line names what is being waited for, per role.
+        if self._reporter is not None and not quiet:
+            # The live status line names what is being waited for, per role. A quiet call's
+            # caller draws its own step (the direct answer's THOUGHT), which already named it.
             self._reporter.started(f"{LLM_STAGE}_{role}")
         try:
             result = await client.complete(request)

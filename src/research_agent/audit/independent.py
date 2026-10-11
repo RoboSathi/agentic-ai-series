@@ -79,6 +79,13 @@ class LlmJudge:
     def __init__(self, caller: StructuredCaller) -> None:
         self._caller = caller
         self._logger = get_logger("research_agent")
+        # The models that answered since `models_used` was last read (a backup counts as itself).
+        self._used: set[str] = set()
+
+    def models_used(self) -> set[str]:
+        """The models that judged since the last read, and forget them (one audit's worth)."""
+        used, self._used = self._used, set()
+        return used
 
     async def judge(
         self, spec: CheckSpec, report: Report, ledger: LedgerSnapshot, today: date
@@ -92,10 +99,12 @@ class LlmJudge:
         criterion = str(spec.params.get("text", spec.name))
         try:
             # Traced: the AUDIT card shows the judge's work, so no LLM CALL card per criterion.
-            answer, _ = await self._caller.call_traced(
+            answer, call = await self._caller.call_traced(
                 judge_prompt.build(criterion, spec.name, report, ledger, today),
                 judge_prompt.JudgeAnswer,
             )
+            if call is not None:
+                self._used.add(call.backup or call.model)
         except Exception as exc:
             self._logger.warning("Judge unavailable", item=spec.item_id, error=describe_error(exc))
             detail = say("judge.unavailable", error=describe_error(exc))

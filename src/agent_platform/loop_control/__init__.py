@@ -41,6 +41,7 @@ from agent_platform.loop_control.stagnation import (
 )
 from agent_platform.loop_control.state import ActionRecord, LoopState, LoopStateMachine
 from agent_platform.loop_control.types import (
+    FINISHED_CODE,
     RUN_STATUS,
     TOOL_STAGE,
     BudgetLine,
@@ -57,6 +58,7 @@ from agent_platform.loop_control.types import (
 
 __all__ = [
     "COST",
+    "FINISHED_CODE",
     "RUN_STATUS",
     "SECONDS",
     "STEPS",

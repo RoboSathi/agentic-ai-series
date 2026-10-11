@@ -16,6 +16,8 @@ from pydantic import BaseModel, Field
 from agent_platform.evidence.types import EvidenceEntry
 from agent_platform.observability.step_card import Line as StepLine
 from agent_platform.observability.step_card import ModelCall, StepCard
+from agent_platform.presentation.text_tree import TreeNode, tree_lines
+from agent_platform.scheduling import TaskGraph
 from agent_platform.verification.acceptance import CheckVerdict
 from research_agent.audit.verdict import DEFAULT_WEIGHT, AuditVerdict
 from research_agent.domain.plan import PlanDag, SubQuestion
@@ -60,8 +62,12 @@ def plan_card(
     *,
     repaired_problems: Sequence[str] = (),
     rejected: Sequence[str] = (),
+    uncovered: Sequence[str] = (),
+    budget: Mapping[str, float] | None = None,
 ) -> Card:
-    """PLAN as a step card: the criteria to cover, the model's plan, and whether it is valid."""
+    """PLAN as a step card: the criteria to cover, the model's plan as the DAG it runs as
+    (batch by batch, each sub-question's dependencies and queries), whether it is valid, and
+    the budget the run starts with."""
     brief = contract.brief
     period = (
         [say("plan.period", start=brief.period_start, end=brief.period_end)]
@@ -73,25 +79,114 @@ def plan_card(
         *period,
         *(f"{item.item_id} · {item.text}" for item in contract.rubric.items),
     ]
-    card = StepCard().asked(*asked).model(call)
+    # The plan's raw JSON repeats the DAG drawn below (it stays in llm.log); only a rejected
+    # plan shows it, since the answer itself is then what went wrong.
+    card = StepCard().asked(*asked).model(call, response=bool(rejected))
     if rejected:
         heading = say("plan.rejected", error="; ".join(rejected))
         return heading, card.decision(*(toned(p, "fail") for p in rejected)).fields()
     assert plan is not None
     validity = say("plan.valid_repaired") if repaired_problems else say("plan.valid")
     heading = say("plan.heading", nodes=len(plan.nodes), batches=batches, validity=validity)
-    checks: list[StepLine] = [
-        toned(say("plan.check.acyclic"), "pass"),
-        toned(say("plan.check.traced"), "pass"),
-    ]
+    traced = (
+        toned(say("plan.check.untraced", items=", ".join(uncovered)), "warn")
+        if uncovered
+        else toned(say("plan.check.traced"), "pass")
+    )
+    checks: list[StepLine] = [toned(say("plan.check.acyclic"), "pass"), traced]
     if repaired_problems:
         problems = "; ".join(repaired_problems)
         checks.append(toned(say("plan.repaired_because", problems=problems), "warn"))
+    caps = [say("plan.budget", meters=_caps(budget))] if budget else []
+    return heading, card.decision(validity, *plan_tree(plan), *checks, *caps).fields()
+
+
+def plan_tree(plan: PlanDag) -> list[str]:
+    """The plan as the DAG it runs as: batches in order, each node with what it waits for.
+
+    Plan: define reflection, then compare it with Reflexion
+    ├── Batch 1 · 2 sub-question(s) in parallel
+    │   ├── Q1 · What is the reflection pattern? → R4, R5
+    │   │   └── queries: “reflection pattern agents” · “self-critique llm”
+    │   └── Q2 · …
+    └── Batch 2 · 1 sub-question(s), after batch 1
+        └── Q3 · How does Reflexion differ? → R6 · needs Q1
+    """
+    nodes = {node.node_id: node for node in plan.nodes}
+    root = TreeNode(say("plan.rationale", rationale=plan.rationale or say("plan.no_rationale")))
+    for number, batch in enumerate(TaskGraph(plan.tasks()).batches(), start=1):
+        label = (
+            say("plan.batch_first", n=number, count=len(batch))
+            if number == 1
+            else say("plan.batch_after", n=number, count=len(batch), previous=number - 1)
+        )
+        branch = root.add(label)
+        for node_id in batch:
+            _plan_node(branch, nodes[node_id])
+    return tree_lines(root)
+
+
+def _plan_node(branch: TreeNode, node: SubQuestion) -> None:
+    needs = say("plan.needs", deps=", ".join(node.depends_on)) if node.depends_on else ""
+    line = say(
+        "plan.line", id=node.node_id, question=node.question, items=", ".join(node.rubric_items)
+    )
+    leaf = branch.add(line + needs)
+    if node.queries:
+        leaf.add(say("plan.queries", queries=" · ".join(f"“{q}”" for q in node.queries)))
+
+
+def _caps(budget: Mapping[str, float]) -> str:
+    return " · ".join(
+        f"{describe('budget.name', name)} {cap:g}" for name, cap in budget.items() if cap
+    )
+
+
+# -- lessons --------------------------------------------------------------------------------
+
+
+def lessons_card(facts: Sequence[Any]) -> Card:
+    """LESSONS: what earlier runs' audits found that this run's planner is told about."""
     lines = [
-        say("plan.line", id=n.node_id, question=n.question, items=", ".join(n.rubric_items))
-        for n in plan.nodes
+        say("lessons.line", lesson=f.value, run=f.metadata.get("run", ""), when=f.event_time.date())
+        for f in facts
     ]
-    return heading, card.decision(validity, *lines, *checks).fields()
+    return say("lessons.heading", n=len(facts)), {say("lessons.section"): lines}
+
+
+# -- revise ---------------------------------------------------------------------------------
+
+
+def revise_card(
+    revision: int,
+    max_revisions: int,
+    findings: Sequence[Mapping[str, Any]],
+    before: Sequence[Mapping[str, str]],
+    after: Sequence[Mapping[str, str]],
+    call: ModelCall | None,
+) -> Card:
+    """REVISE as a step card: the audit's findings asked about, the writer's call, and what
+    changed — sentences kept, rewritten or added, and removed."""
+    old, new = _sentences(before), _sentences(after)
+    kept, added, removed = len(old & new), len(new - old), len(old - new)
+    asked = [
+        say("revise.finding", id=f["item_id"], criterion=f["criterion"], reason=f["reason"])
+        for f in findings
+    ]
+    heading = say(
+        "revise.heading", n=revision, max=max_revisions, findings=len(findings), changed=added
+    )
+    decision = say("revise.diff", kept=kept, added=added, removed=removed)
+    return heading, StepCard().asked(*asked).model(call).decision(decision).fields()
+
+
+def _sentences(sections: Sequence[Mapping[str, str]]) -> set[str]:
+    return {
+        line.strip()
+        for section in sections
+        for line in re.split(r"(?<=[.!?])\s+|\n+", section.get("body", ""))
+        if line.strip()
+    }
 
 
 # -- research batches -------------------------------------------------------------------------
@@ -133,19 +228,20 @@ def batch_card(
 def search_card(
     node_id: str,
     query: str,
-    provider: str,
+    route: str,
     window: str,
     hits: Sequence[str],
     summary_ignored: bool,
     recency: str = "",
 ) -> Card:
-    """A search: the question and query on the heading; provider, window and hits inside."""
+    """A search: the node, which provider answered it, and the query on the heading; the
+    window and hits inside."""
     details = [
-        say("search.provider", provider=provider or say("search.unknown_provider")),
+        say("search.provider", provider=route),
         say("search.window", window=window),
         say("search.hits", n=len(hits)),
     ]
-    return say("search.heading", node=node_id, query=query), _present(
+    return say("search.heading", node=node_id, route=route, query=query), _present(
         {
             say("search.section.search"): details,
             say("search.section.results"): list(hits),
@@ -652,39 +748,6 @@ def _audit_line(verdict: CheckVerdict, rubric: Rubric, setup: JudgeSetup, limit:
 
 
 # -- the budget -----------------------------------------------------------------------------
-
-
-def _meter(name: str, spent: float, cap: float) -> tuple[str, str, str]:
-    return describe("budget.name", name), f"{round(spent, 1):g}", f"{round(cap, 1):g}"
-
-
-def budget_card(
-    label: str, meters: Mapping[str, tuple[float, float]], headline: Sequence[str]
-) -> Card:
-    """The few counters that matter on the heading; every counter in the expander."""
-    shown = [
-        say("budget.meter", name=n, spent=s, cap=c)
-        for name, (spent, cap) in meters.items()
-        if name in headline
-        for n, s, c in [_meter(name, spent, cap)]
-    ]
-    lines = [
-        say("budget.line", name=n, spent=s, cap=c)
-        for name, (spent, cap) in meters.items()
-        for n, s, c in [_meter(name, spent, cap)]
-    ]
-    return say("budget.heading", label=label, meters=" · ".join(shown)), {
-        say("budget.section.all"): lines
-    }
-
-
-def cap_reached_card(reason: str, observed: Mapping[str, Any]) -> Card:
-    return say("budget.cap_reached", reason=reason), _present(
-        {
-            say("budget.section.limit"): [say("budget.cap_note")],
-            say("budget.section.all"): [f"{key}: {value}" for key, value in observed.items()],
-        }
-    )
 
 
 # -- the end --------------------------------------------------------------------------------

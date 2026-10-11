@@ -254,19 +254,9 @@ class ResearchAgent:
         self._telemetry.audit("run.cancel_requested", "allow", "operator stopped the run")
         return paused or self._active.cancelled
 
-    def panel_state(self, session_id: str) -> dict[str, Any]:
-        """What the side panel shows: the checklist, then the run's meters."""
-        record = self.session(session_id)
-        state: dict[str, Any] = {"phase": record.phase}
-        if record.scope is not None:
-            state["items"] = [(i.item_id, i.status) for i in record.scope.items]
-        if self._active is not None:
-            state["budget"] = {
-                k: (c.spent, c.cap) for k, c in self._active.budget.snapshot().items()
-            }
-            state["ledger"] = len(self._active.ledger.entries)
-            state["rejected"] = len(self._active.trace.rejected_sources)
-        return state
+    def phase(self, session_id: str) -> str:
+        """Where the session stands (SCOPING, RUBRIC_REVIEW, RUNNING …): it picks the buttons."""
+        return self.session(session_id).phase
 
     def history(self, limit: int) -> list[dict[str, Any]]:
         return [row.model_dump() for row in self._archive.history(limit)]

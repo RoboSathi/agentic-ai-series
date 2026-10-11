@@ -53,6 +53,10 @@ class EvidenceCheck(BaseModel):
     # The model that read this line (the NLI model, or the second opinion); "" for a line of
     # the record read directly.
     model: str = ""
+    # Whether the verdict rests on this line. Several lines may be decisive (a strong support
+    # and a strong contradiction from other lines of a page); the resolver chose one, and every
+    # reader quotes that one rather than ranking the lines again by score.
+    chosen: bool = False
 
 
 class DetectionVerdict(BaseModel):

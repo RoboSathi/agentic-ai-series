@@ -17,7 +17,15 @@ from agent_platform.tools.types import ToolResult
 from agent_platform.web import SearchRequest, WebGateway
 from research_agent.config.settings import AnswerSettings
 from research_agent.guardrails.injection import InjectionScreen
-from research_agent.tools import HITS_KEY, PAGE_KEY, PUBLISHED_KEY, QUERY_KEY, URLS_KEY
+from research_agent.presentation.narration import search_route
+from research_agent.tools import (
+    HITS_KEY,
+    PAGE_KEY,
+    PROVIDER_KEY,
+    PUBLISHED_KEY,
+    QUERY_KEY,
+    URLS_KEY,
+)
 
 _BLANK_RUNS = re.compile(r"\n\s*\n+")
 
@@ -71,7 +79,7 @@ class WebSearch:
                 HITS_KEY: hits,
                 QUERY_KEY: query,
                 PUBLISHED_KEY: [hit.published_date for hit in response.hits],
-                "provider": response.provider,
+                PROVIDER_KEY: search_route(response.route, response.provider),
             },
         )
 

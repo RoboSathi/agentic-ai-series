@@ -23,17 +23,51 @@ CONTEXT_STAGE = "llm_context"
 # provider's prefix cache could hold.
 _SEEN_PREFIXES: OrderedDict[tuple[str, str], None] = OrderedDict()
 _BRANCH, _LAST, _PIPE, _GAP = "├─ ", "└─ ", "│  ", "   "
+_THOUSAND, _MILLION = 1_000, 1_000_000
 
 
 def context_heading(manifest: PromptManifest, model: str, purpose: str) -> str:
     """`Context · reply · 2,140 tokens · 1.6% of window` (`~` and "estimated" when estimated)."""
     words = get_settings().observability.context_card
     template = words.heading if manifest.exact else words.heading_estimated
+    window = window_tokens(model)
     return template.format(
         purpose=purpose or manifest.purpose,
         tokens=f"{manifest.total_tokens:,}",
-        window_share=_share(manifest.total_tokens, window_tokens(model)),
+        window_share=_share(manifest.total_tokens, window),
+        window=window_size(window),
     )
+
+
+def aggregate_card(purpose: str, requests: list[tuple[int, str]]) -> tuple[str, dict[str, Any]]:
+    """Many requests of one purpose (a page read each) as one card: their range, the largest
+    request's share of its window, and one line per request. `requests` is (tokens, model)."""
+    words = get_settings().observability.context_card
+    tokens = [count for count, _ in requests]
+    peak_tokens, peak_model = max(requests)
+    peak_window = window_tokens(peak_model)
+    heading = words.aggregate_heading.format(
+        purpose=purpose,
+        count=len(requests),
+        low=f"{min(tokens):,}",
+        high=f"{max(tokens):,}",
+        peak_share=_share(peak_tokens, peak_window),
+        window=window_size(peak_window),
+    )
+    lines = [
+        words.aggregate_line.format(
+            tokens=f"{count:,}", share=_share(count, window_tokens(model)), model=model
+        )
+        for count, model in requests
+    ]
+    return heading, {words.aggregate_title: lines}
+
+
+def window_size(tokens: int) -> str:
+    """A window as a reader says it: `131k`, `1M`."""
+    if tokens >= _MILLION:
+        return f"{tokens / _MILLION:g}M"
+    return f"{tokens / _THOUSAND:.0f}k" if tokens >= _THOUSAND else str(tokens)
 
 
 def context_fields(manifest: PromptManifest, model: str) -> dict[str, Any]:
@@ -153,6 +187,8 @@ def _share(part: int, whole: int) -> str:
 
 __all__ = [
     "CONTEXT_STAGE",
+    "aggregate_card",
+    "window_size",
     "context_fields",
     "context_heading",
     "announced_manifest",

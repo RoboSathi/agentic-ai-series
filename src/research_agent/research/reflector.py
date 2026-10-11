@@ -15,14 +15,14 @@ tried query, is dropped.
 """
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from pydantic import BaseModel, Field
 
 from agent_platform.logging import instrument
 from agent_platform.observability.step_card import ModelCall
 from agent_platform.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
-from research_agent.audit.checks import COVERAGE_CHECKS
+from research_agent.audit.checks import COVERAGE_CHECKS, FOUND_EVIDENCE_CHECKS
 from research_agent.audit.context import CheckContext
 from research_agent.domain.plan import SubQuestion
 from research_agent.domain.scope import Archetype
@@ -30,6 +30,8 @@ from research_agent.llm.structured import StructuredCaller
 from research_agent.prompts import reflector as prompt
 from research_agent.prompts.base import RolePrompt
 from research_agent.research.stop_rules import StopDecision, StopInput, StopRule
+
+_JUDGE = "judge"
 
 # Why a proposed follow-up was dropped (`research_agent.messages` words them for the card).
 NO_GAP = "no_gap"
@@ -78,7 +80,9 @@ class GapAnalyzer:
 
     async def verdicts(self, ctx: CheckContext) -> list[CheckVerdict]:
         specs = [spec for spec in ctx.contract.rubric.specs() if spec.name in COVERAGE_CHECKS]
-        return await self._registry.evaluate(specs, ctx, kinds=["deterministic"])
+        # The cross-checks read NLI (local), so reflection stops on the same verdict the audit
+        # will reach; the report's own NLI check is not a coverage check and is not run here.
+        return await self._registry.evaluate(specs, ctx, kinds=["deterministic", "nli"])
 
     @staticmethod
     def entities(ctx: CheckContext, pattern: re.Pattern[str]) -> int:
@@ -117,14 +121,19 @@ class Reflector:
         return (await self.propose(ctx, verdicts, tried, round_number)).accepted
 
     async def propose(
-        self, ctx: CheckContext, verdicts: list[CheckVerdict], tried: list[str], round_number: int
+        self,
+        ctx: CheckContext,
+        verdicts: list[CheckVerdict],
+        tried: list[str],
+        round_number: int,
+        lessons: Sequence[str] = (),
     ) -> FollowUpProposal:
         """The model's follow-ups, what of them was kept and dropped, and the call that made them."""
         gaps = [v for v in verdicts if not v.passed]
         if self._caller is None or not gaps or self._max == 0:
             return FollowUpProposal()
         answer, call = await self._caller.call_traced(
-            self._prompt(ctx, gaps, tried), prompt.ReflectorAnswer
+            self._prompt(ctx, gaps, tried, lessons), prompt.ReflectorAnswer
         )
         accepted, rejected = _sorted(
             answer, {v.item_id for v in gaps}, set(tried), round_number, self._max
@@ -134,16 +143,25 @@ class Reflector:
         )
 
     async def critique(
-        self, ctx: CheckContext, verdicts: list[CheckVerdict], tried: list[str], round_number: int
+        self,
+        ctx: CheckContext,
+        verdicts: list[CheckVerdict],
+        tried: list[str],
+        round_number: int,
+        lessons: Sequence[str] = (),
     ) -> FollowUpProposal:
-        """Before the run stops: do the claims answer the question? If not, follow-ups for it."""
-        items = set(ctx.contract.rubric.ids)
+        """Before the run stops: do the claims answer the question? If not, follow-ups for it.
+
+        Its follow-ups may serve a criterion still failing, or one only a judge can score (does
+        it answer the question, is it accurate): never one whose check already passed.
+        """
+        items = _critique_targets(ctx, verdicts)
         if self._caller is None or not items:
             return FollowUpProposal()
         claims = [entry.claim for entry in ctx.ledger.entries]
         checks = [{"item_id": v.item_id, "passed": v.passed, "detail": v.detail} for v in verdicts]
         answer, call = await self._caller.call_traced(
-            prompt.build_critique(ctx.contract, checks, tried, claims, self._max),
+            prompt.build_critique(ctx.contract, checks, tried, claims, self._max, lessons),
             prompt.CritiqueAnswer,
         )
         reasoning = answer.critique or answer.rationale
@@ -158,18 +176,34 @@ class Reflector:
             sufficient=False,
         )
 
-    def _prompt(self, ctx: CheckContext, gaps: list[CheckVerdict], tried: list[str]) -> RolePrompt:
+    def _prompt(
+        self,
+        ctx: CheckContext,
+        gaps: list[CheckVerdict],
+        tried: list[str],
+        lessons: Sequence[str] = (),
+    ) -> RolePrompt:
+        # `detail` says what is still needed; the evidence list is what was found for checks
+        # that count sources, and what is missing for those that list absent pairs.
         payload_gaps = [
             {
                 "item_id": v.item_id,
                 "check": v.name,
-                "missing": v.evidence,
+                "detail": v.detail,
+                ("found" if v.name in FOUND_EVIDENCE_CHECKS else "missing"): v.evidence,
                 "text": _text(ctx, v.item_id),
             }
             for v in gaps
         ]
         claims = [entry.claim for entry in ctx.ledger.entries]
-        return prompt.build(ctx.contract, payload_gaps, tried, claims, self._max)
+        return prompt.build(ctx.contract, payload_gaps, tried, claims, self._max, lessons)
+
+
+def _critique_targets(ctx: CheckContext, verdicts: list[CheckVerdict]) -> set[str]:
+    """Failing criteria and judge-scored ones; every item if neither exists."""
+    failing = {v.item_id for v in verdicts if not v.passed}
+    judged = {item.item_id for item in ctx.contract.rubric.items if item.check.kind == _JUDGE}
+    return failing | judged or set(ctx.contract.rubric.ids)
 
 
 def _text(ctx: CheckContext, item_id: str) -> str:

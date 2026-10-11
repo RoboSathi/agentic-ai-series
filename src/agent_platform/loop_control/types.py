@@ -37,6 +37,9 @@ WatchdogLayer = Literal[
 #   abort     stop without an answer
 #   pause     wait for a person (a human-in-the-loop interrupt)
 LoopDecision = Literal["continue", "suppress", "finalize", "abort", "pause"]
+# The reason code of a loop that stopped because its work was done, not because a mechanism
+# stopped it: a FINALIZE that is the plan running its course, not an intervention.
+FINISHED_CODE = "LOOP_CONTROL_DONE"
 CheckStatus = Literal["PASS", "FAIL"]
 # How a turn or run ended.
 TerminalOutcome = Literal[
@@ -119,10 +122,11 @@ class LoopVerdict(BaseModel):
     @property
     def intervened(self) -> bool:
         """Whether any mechanism changed what would otherwise have happened."""
-        return self.decision != "continue"
+        return self.decision != "continue" and self.reason_code != FINISHED_CODE
 
 
 __all__ = [
+    "FINISHED_CODE",
     "RUN_STATUS",
     "TOOL_STAGE",
     "BudgetLine",

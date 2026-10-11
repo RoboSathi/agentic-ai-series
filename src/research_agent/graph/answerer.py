@@ -7,13 +7,12 @@ waiting: whatever happens, the user gets a reply that says what happened.
 """
 
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel
 
 from agent_platform.llm.prompt import INSTRUCTIONS, PromptPart, TurnLayout
 from agent_platform.logging import describe_error, get_logger, instrument
-from agent_platform.loop_control import LoopBudget, LoopGovernor, LoopVerdict, build_loop_governor
+from agent_platform.loop_control import LoopBudget, LoopGovernor, build_loop_governor
 from agent_platform.observability.loop_reporter import LoopReporter
 from agent_platform.observability.step_events import StepEvents
 from agent_platform.skills import AgentInstructions
@@ -29,7 +28,6 @@ from research_agent.guardrails.answer_grounding import AnswerGrounding
 from research_agent.llm.structured import StructuredCaller
 from research_agent.observability.telemetry import RunTelemetry
 from research_agent.prompts import answer as prompt
-from research_agent.research.cards import cap_reached_card
 from research_agent.research.recency import RecencyGuard
 
 # The session's own notes (its state, earlier runs) when no context window carries them.
@@ -163,14 +161,7 @@ class DirectAnswerer:
                 max_tokens=caps.max_total_tokens,
                 max_seconds=caps.max_seconds,
                 call_timeout_seconds=self._settings.call_timeout_seconds,
-            ),
-            on_exhausted=self._announce,
-        )
-
-    def _announce(self, report: LoopVerdict) -> None:
-        observed: dict[str, Any] = report.checks[0].observed if report.checks else {}
-        self._telemetry.card(
-            "budget_tick", *cap_reached_card(report.reason, observed), status="warning"
+            )
         )
 
 

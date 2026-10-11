@@ -9,9 +9,12 @@ changing a card's wording is a config edit, never a code change.
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from agent_platform.web.types import SearchRoute
 from research_agent.config import get_agent_settings
 
 Line = dict[str, str]
+# The web gateway's mode for real provider calls (`agent_platform.web.types.WebMode`).
+_LIVE = "live"
 
 
 def say(key: str, **values: Any) -> str:
@@ -52,3 +55,29 @@ def clip(text: str, limit: int) -> str:
 
 def bullets(items: Iterable[str]) -> list[str]:
     return [f"• {item}" for item in items]
+
+
+def search_route(route: SearchRoute, provider: str = "") -> str:
+    """Which provider answered a search, as the heading names it: `ddgs`, `ddgs + tavily (weak
+    result, merged)`, `tavily (ddgs failed)`, then ` · cached` or ` · replay` when no live
+    provider was asked."""
+    answered = route.answered_by or provider
+    if not answered:
+        return say("search.unknown_provider")
+    name = describe("search.provider_name", answered)
+    if route.augmented_with:
+        label = say(
+            "search.route.merged",
+            provider=name,
+            extra=describe("search.provider_name", route.augmented_with),
+        )
+    elif route.failed:
+        failed = ", ".join(describe("search.provider_name", f) for f in route.failed)
+        label = say("search.route.fallback", provider=name, failed=failed)
+    else:
+        label = name
+    if route.cached:
+        return label + say("search.route.cached")
+    if route.mode and route.mode != _LIVE:
+        return label + say("search.route.mode", mode=route.mode)
+    return label

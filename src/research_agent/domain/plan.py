@@ -43,6 +43,9 @@ class PlanValidation(BaseModel):
 
     problems: list[str] = Field(default_factory=list)
     cycle: list[str] = Field(default_factory=list)
+    # Must-pass criteria no sub-question serves. Not a reason to refuse the plan (gap analysis
+    # can still reach them), but a reason to ask for one repair, and shown on the plan card.
+    uncovered: list[str] = Field(default_factory=list)
 
     @property
     def valid(self) -> bool:

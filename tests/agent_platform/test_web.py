@@ -192,7 +192,10 @@ class TestModes:
         live = await recorder.search(SearchRequest(query="alpha", max_results=2))
         page = await recorder.fetch(PAGE)
         replay = WebGateway("replay", fixtures=store)
-        assert (await replay.search(SearchRequest(query="ALPHA ", max_results=2))) == live
+        replayed = await replay.search(SearchRequest(query="ALPHA ", max_results=2))
+        # The same answer; its route says it was replayed, not asked live.
+        assert replayed.hits == live.hits and replayed.provider == live.provider
+        assert replayed.route.mode == "replay" and live.route.mode == "record"
         assert (await replay.fetch(PAGE)).text == page.text
         assert store.keys("search") and store.keys("fetch")
 

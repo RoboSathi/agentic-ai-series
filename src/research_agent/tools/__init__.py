@@ -14,6 +14,8 @@ PUBLISHED_KEY = "published"
 HITS_KEY = "hits"
 # Set on a fetched page's result: that URL was read in full, not only as a search snippet.
 PAGE_KEY = "page"
+# A search's route, as the OBSERVATION heading names it ("ddgs", "tavily (ddgs failed)").
+PROVIDER_KEY = "provider"
 
 from research_agent.tools.registry import NAMESPACE, build_answer_registry  # noqa: E402
 
@@ -21,6 +23,7 @@ __all__ = [
     "HITS_KEY",
     "NAMESPACE",
     "PAGE_KEY",
+    "PROVIDER_KEY",
     "PUBLISHED_KEY",
     "QUERY_KEY",
     "URLS_KEY",

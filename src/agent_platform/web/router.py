@@ -21,7 +21,12 @@ from agent_platform.logging import get_logger
 from agent_platform.resilience import QuotaExhaustedError, ResilientCaller
 from agent_platform.web.augment import SearchAugmentPolicy
 from agent_platform.web.providers import SearchProvider
-from agent_platform.web.types import SearchRequest, SearchResponse, WebUnavailableError
+from agent_platform.web.types import (
+    SearchRequest,
+    SearchResponse,
+    SearchRoute,
+    WebUnavailableError,
+)
 
 _ROUTER = "router"
 
@@ -59,17 +64,21 @@ class SearchRouter:
 
     async def search(self, request: SearchRequest) -> SearchResponse:
         failures: list[Exception] = []
+        failed: list[str] = []
         empty: SearchResponse | None = None
         for name in self.order_for(request):
             try:
                 response = await self._ask(self._providers[name], request)
             except Exception as exc:
                 failures.append(exc)
+                failed.append(name)
                 self._logger.info("Search provider failed; trying the next", provider=name)
                 continue
             if response.hits:
-                return await self._augmented(name, request, response)
-            empty = empty or response
+                merged = await self._augmented(name, request, response)
+                extra = self._augment.provider if merged is not response and self._augment else ""
+                return _routed(merged, name, failed, extra)
+            empty = empty or _routed(response, name, failed)
         if empty is not None:
             return empty
         raise _exhausted(failures)
@@ -110,6 +119,14 @@ class SearchRouter:
             lambda: provider.search(request),
             idempotency_key=f"search:{provider.name}:{request.key}",
         )
+
+
+def _routed(
+    response: SearchResponse, answered_by: str, failed: list[str], augmented_with: str = ""
+) -> SearchResponse:
+    """The response, carrying how it was reached."""
+    route = SearchRoute(answered_by=answered_by, failed=list(failed), augmented_with=augmented_with)
+    return response.model_copy(update={"route": route})
 
 
 def _exhausted(failures: list[Exception]) -> Exception:

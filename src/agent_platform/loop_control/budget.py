@@ -27,7 +27,13 @@ from itertools import count
 from pydantic import BaseModel
 
 from agent_platform.logging import get_logger
-from agent_platform.loop_control.types import BudgetLine, ControlCheck, LoopVerdict, WatchdogLayer
+from agent_platform.loop_control.types import (
+    FINISHED_CODE,
+    BudgetLine,
+    ControlCheck,
+    LoopVerdict,
+    WatchdogLayer,
+)
 from agent_platform.observability.units import report_loop
 
 Clock = Callable[[], float]
@@ -86,6 +92,7 @@ class BudgetGuard:
         on_exhausted: ExhaustionHandler | None = None,
         clock: Clock = time.monotonic,
         layer: WatchdogLayer = "token_budget",
+        layers: Mapping[str, WatchdogLayer] | None = None,
         step_counter: str | None = None,
     ) -> None:
         self._counters = {name: CounterState(name=name, cap=cap) for name, cap in caps.items()}
@@ -94,6 +101,9 @@ class BudgetGuard:
         self._started = clock()
         self._on_exhausted = on_exhausted
         self._layer = layer
+        # The mechanism each counter reports as ("rounds" is a step cap, "searches" a tool
+        # budget); a counter not named here reports as `layer`.
+        self._layers = dict(layers or {})
         self._held: dict[int, Reservation] = {}
         self._ids = count(1)
         self._announced: set[str] = set()
@@ -219,26 +229,39 @@ class BudgetGuard:
         return LoopVerdict(
             # A spent budget stops the loop acting; what it has is still answered from.
             decision="finalize" if stopped else "continue",
-            layer=("wall_clock" if counter == SECONDS else self._layer) if stopped else None,
+            layer=self.layer_of(counter) if stopped else None,
             reason_code=check.reason_code,
             reason=check.reason,
             checks=[check],
         )
 
-    def verdict(self, round_number: int, max_rounds: int, *, stopping: bool) -> LoopVerdict:
+    def verdict(
+        self, round_number: int, max_rounds: int, *, stopping: bool, cause: str | None = None
+    ) -> LoopVerdict:
         """The loop-control verdict for a loop this guard budgets, every counter on it — so a
-        loop that runs on reservations still reports in the one shape every agent's card reads."""
-        exhausted = self.exhausted_counters()
-        counter = exhausted[0] if exhausted else ""
-        report = self.report(counter) if counter else None
+        loop that runs on reservations still reports in the one shape every agent's card reads.
+
+        `cause` is the counter that made the loop stop, as the caller decided it. A stop with no
+        cause is the loop finishing its work: a counter that happens to be spent then (a one-round
+        plan's one round) did not intervene, so the verdict names none.
+        """
+        report = self.report(cause) if stopping and cause else None
+        if report is not None:
+            layer, code, reason, checks = (
+                report.layer,
+                report.reason_code,
+                report.reason,
+                report.checks,
+            )
+        else:
+            layer, reason, checks = None, "", []
+            code = FINISHED_CODE if stopping else "LOOP_CONTROL_CONTINUE"
         return LoopVerdict(
             decision="finalize" if stopping else "continue",
-            layer=report.layer if report is not None and stopping else None,
-            reason_code=report.reason_code
-            if report is not None and stopping
-            else "LOOP_CONTROL_CONTINUE",
-            reason=report.reason if report is not None and stopping else "",
-            checks=report.checks if report is not None else [],
+            layer=layer,
+            reason_code=code,
+            reason=reason,
+            checks=checks,
             round_number=round_number,
             max_rounds=max_rounds,
             budgets={
@@ -246,6 +269,12 @@ class BudgetGuard:
                 for name, state in self.snapshot().items()
             },
         )
+
+    def layer_of(self, counter: str) -> WatchdogLayer:
+        """The mechanism a counter's exhaustion is reported as."""
+        if counter == SECONDS:
+            return "wall_clock"
+        return self._layers.get(counter, self._layer)
 
     def _state(self, counter: str) -> CounterState:
         try:
@@ -261,7 +290,7 @@ class BudgetGuard:
         self._announced.add(name)
         report = self.report(name)
         self._logger.warning(
-            "Budget exhausted", counter=name, layer=self._layer, reason=report.reason
+            "Budget exhausted", counter=name, layer=self.layer_of(name), reason=report.reason
         )
         if self._on_exhausted is not None:
             self._on_exhausted(report)

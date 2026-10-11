@@ -561,8 +561,10 @@ observability:
   # each section the request is built from, its tokens, its share of the request and of the
   # model's window, and the stable prefix a provider can cache.
   context_card:
-    heading: "Context · {purpose} · {tokens} tokens · {window_share} of window"
-    heading_estimated: "Context · {purpose} · ~{tokens} tokens (estimated) · {window_share} of window"
+    # The share is the request's input (prompt sections and tool schemas, not the answer) over
+    # the model's window from `llm.context_windows`, which the heading names.
+    heading: "{purpose} · prompt {tokens} tokens · {window_share} of {window} window"
+    heading_estimated: "{purpose} · prompt ~{tokens} tokens (estimated) · {window_share} of {window} window"
     sections_title: Sections
     request_title: Request
     window_title: Window strategies and checks
@@ -577,6 +579,9 @@ observability:
     prefix_line: "stable prefix · {tokens} tokens · signature {signature}"
     prefix_none: "stable prefix · none"
     tokenizer_line: "counted with {tokenizer}"
+    aggregate_heading: "{purpose} · {count} requests · {low}–{high} tokens · peak {peak_share} of {window} window"
+    aggregate_title: Requests
+    aggregate_line: "{tokens} tokens · {share} of window · {model}"
     labels:
       profile: AGENT.md profile
       procedures: SKILL.md procedures
@@ -1433,8 +1438,8 @@ hallucination_check:
   # policy file). A web page is named by its full URL.
   evidence_sources:
     prefixes:
-      "http://": "Web page · {source}"
-      "https://": "Web page · {source}"
+      "http://": "{id}"
+      "https://": "{id}"
       "kb:": "KB article · {id}"
     kinds:
       tool_result: "Tool result · {source}"
@@ -1556,6 +1561,12 @@ hallucination_check:
   # sets the shape of its ids here, and a record about a different id can
   # no longer "contradict" a claim (it can still fail to support it).
   refute_identifier_pattern: null
+  # What a line must look like to contradict a claim. Records are short and exact, so the
+  # platform accepts any line; an agent reading web pages raises the bar (a menu or a heading
+  # is not a statement).
+  refuting_premise:
+    min_words: 1
+    max_capitalised_share: 1.0
   # The grounding cascade. A claim is first classed — record (a fact about
   # this case), rule (how things work, and every promise), or
   # conversational (never scored) — and is then checked only against the
@@ -2277,6 +2288,9 @@ tui:
     no_evidence: no evidence states this
     no_evidence_either_way: no evidence states or contradicts this
     lines_read: "read {count} lines"
+    step_branch: "├"
+    step_last: "└"
+    step_outcome: " → {decision}"
     confidence_bands: {pass: 0.85, warn: 0.6}
   # Words that name a state, wherever a card shows them as a value -> their tone.
   state_words:
@@ -2371,6 +2385,9 @@ web:
     reader_url_template: "https://r.jina.ai/{url}"
     date_meta_keys: [article:published_time, og:article:published_time, datepublished, date, dc.date, dcterms.created, pubdate, publish-date, article:modified_time]
     date_json_keys: [datePublished, dateCreated, dateModified]
+    # `header` is kept: an article's own header holds its title.
+    chrome_tags: [nav, footer, aside, form, button]
+    block_tags: [p, div, br, li, ul, ol, h1, h2, h3, h4, h5, h6, tr, section, article, blockquote, pre]
   tavily:
     base_url: https://api.tavily.com
     endpoint: /search

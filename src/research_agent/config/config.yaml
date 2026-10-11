@@ -24,7 +24,8 @@ features:
     enabled: true
     grounding: true                  # the answer is checked against what its tools returned; unsupported details are removed
   rubric: true                       # acceptance criteria; off = run with no contract items
-  reflection: true                   # gap analysis + follow-up queries after each batch
+  reflection: true                   # gap analysis + follow-up queries after each batch; the report revised against the audit
+  reflexion: true                    # lessons from earlier runs' audits, recalled at plan (needs memory.episodic)
   independent_audit: true               # independent audit of the delivered report
   citation_verification:             # verbatim-span rule + NLI claim support
     enabled: true
@@ -134,10 +135,18 @@ llm:
       <<: *default_chain
       extra_body: {chat_template_kwargs: {enable_thinking: false}}
     synthesizer: {<<: *default_chain, timeout_seconds: 120, hedge_after_seconds: 60}
-    # The judge: the same line-up as the writer since super's retirement (2026-10-03), with a
-    # longer limit for grading. It is therefore not independent of the synthesizer, and
-    # `research_agent.audit.independent_judge` is off so every audit records that.
-    judge: {<<: *default_chain, timeout_seconds: 120, hedge_after_seconds: 45}
+    # The judge: a critic independent of the writer (Producer-Critic, 2026-10-11). The writer
+    # leads with ultra; the judge's chain never includes it, so no backup can make the writer
+    # grade itself — if lightning and gpt-oss both fail, the criterion is "not judged" rather
+    # than self-graded. `research_agent.audit.independent_judge` holds start-up to that.
+    judge:
+      provider: nim
+      model: nvidia/nemotron-3.5-lightning-30b-a3b
+      timeout_seconds: 120
+      hedge_after_seconds: 45
+      extra_body: {chat_template_kwargs: {enable_thinking: false}}
+      fallbacks:
+        - {provider: nim, model: openai/gpt-oss-20b}
     # Multi-step tool calling: the model the platform recommends for it.
     answerer: *default_chain
 
@@ -178,6 +187,12 @@ hallucination_check:
   # Only evidence about the same day may contradict a dated claim: a forecast for 3 October is
   # not refuted by the line for 2 October (NLI calls that a contradiction: the numbers differ).
   refute_identifier_pattern: '\b\d{4}-\d{2}-\d{2}\b'
+  # A page's heading, menu or row of links is no statement, and NLI reads one as contradicting
+  # almost anything ("Topics Trending Collections Enterprise" against a claim it shares a page
+  # with, 0.99). Only a line of six or more words, under 60% of them capitalised, may refute.
+  refuting_premise:
+    min_words: 6
+    max_capitalised_share: 0.6
   withheld_reply: "I could not verify an answer from the sources I found. Try again, or use /research for a fuller run."
   # A web page states one fact across short lines (a name, then a title, then a past role):
   # four consecutive sentences of a result are also one premise, and an undecided claim gets
@@ -392,11 +407,22 @@ research_agent:
     answer_split_pattern: '\s*(?:,(?!\d)|;|\band\b)\s*'
     vague_answer_max_words: 3
     absolute_words: [best, always, never, everyone, obviously, perfect]
+    # "Concepts: all" became the rubric line "The sub-concept 'all' is explained…" (2026-10-11).
+    vague_subject_words: [all, everything, anything, any, whatever, every, them, of, it, you, decide, up, to, not, sure, dunno, idk, etc]
+    subject_fields: [options, claims, concepts, criteria]
+    vague_answers_before_delegating: 2
+    rubric_shapes:
+      decision_support: "every option is checked against every criterion, each with cited evidence"
+      landscape_brief: "each player's criteria are described with a citation; at least three players and three domains"
+      fact_verification: "each claim gets a verdict backed by entailed evidence from two independent domains"
+      explainer: "each concept must be supported by entailed claims from two independent domains, with no unresolved contradiction"
+      general: "each listed sub-area is covered with a citation; findings come from two independent domains"
     waive_all_keyword: all
     any_recency_words: [any, none, no limit]
     # Answers that decline an optional item: the Brief keeps its default.
     none_answers: [any, none, no preference, skip, "n/a", nothing]
     skipped_answer: "n/a"
+    distinct_domains_pattern: '(\d+)\s+independent\s+(?:domains?|websites?|sources?)'
     primary_sources_phrase: primary
     # What picks a size in the "how big" answer; "N pages" sets the page count itself.
     depth_words:
@@ -422,6 +448,15 @@ research_agent:
     max_gap_fill_rounds: 1
     concurrency: 2
 
+  # The loop-control mechanism each budget counter's exhaustion reports as (seconds is always
+  # the wall clock): rounds cap the run's steps, searches and pages are its tool budget.
+  budget_layers:
+    searches: tool_budget
+    fetches: tool_budget
+    tokens: token_budget
+    rounds: step_count
+    gap_fill_rounds: step_count
+
   # How big a run is, chosen in the interview ("small", "medium", "large" or "N pages"); small
   # when unanswered. Each budget is lowered to the ceiling above if it asks for more. The report
   # shows `report_entries` ledger entries, written within `report_max_tokens`.
@@ -442,6 +477,10 @@ research_agent:
   planning:
     max_queries_per_node: 2
     node_id_prefix: Q
+    # The must-pass criteria a plan has to put a sub-question on: the ones research answers
+    # (each option's criteria, each concept, each claim). Citations, domains and the report's
+    # own checks are met by the run as a whole, not by any one sub-question.
+    covered_checks: [subject_criterion_coverage, criterion_evidence, claim_verdict, concept_covered, distinct_subjects]
 
   # Deterministic coverage matching: stop rules, gap analysis, audit checks.
   matching:
@@ -471,8 +510,11 @@ research_agent:
   run_loop:
     next:
       batch_start: research another round
+      next_batch: run the next batch of sub-questions
+      reflect: check the evidence against the rubric
       synthesize: write the report
       gap_fill: fill the audit's gaps
+      revise: revise the report against the audit's findings
       finalize: finish the run
     because:
       another_round: the reflector planned follow-ups and the budget allows them
@@ -484,10 +526,18 @@ research_agent:
       gaps_to_fill: the audit found must-pass gaps and a gap-fill round is left
       gap_fill_planned: follow-ups were planned for the gaps
       no_follow_up: no follow-up fits what is left
+      writing_faults: the audit found faults in how the report is written, and a revision is left
+      revisions_spent: writing faults remain but no revision is left
+      revision_plateau: the last revision did not raise the audit score enough to try another
       rescue: nothing was admitted, so one rescue round searches again without the time window
+      batch_done: the batch finished and sub-questions that depended on it are now ready
+      round_done: every sub-question of this round has run
     stops: [synthesize, finalize]
 
   calls:
+    # Roles that make one request per page: their CONTEXT cards are drawn as one per batch
+    # (each request's full manifest still goes to the log as it starts).
+    context_aggregate_roles: [extractor]
     # The roles run on a reasoning model: its hidden reasoning counts against the cap,
     # so the default 3000 tokens can leave an empty answer on a long page.
     role_max_tokens:
@@ -554,12 +604,44 @@ research_agent:
     max_followups_per_round: 4
     # Gap-fill follow-ups are numbered from this round, apart from reflection's.
     gap_fill_round_offset: 100
+    # Producer-Critic on the report itself: a criterion failed for how the report is written
+    # (a judge's score, an unsupported or uncited sentence) is revised against the audit's
+    # findings; a criterion failed for want of evidence goes to gap-fill instead.
+    writing_checks: [tradeoffs_stated, explanation_accuracy, user_item, claims_entailed, citations_per_claim, links_resolved, counter_evidence_reported, known_unknown_acknowledged]
+    max_revisions: 2
+    min_score_gain: 0.02
+
+  # Reflexion: what a run's critics found, kept in episodic memory as lessons, and recalled for
+  # the next run of the same kind on a topic sharing its words. Written in code from verdicts.
+  reflexion:
+    max_lessons: 5
+    recall_limit: 3
+    search_limit: 40
+    min_term_chars: 4
+    top_codes: 2
+    category: research_lesson
+    session: research-lessons
+    wording:
+      failed: "A {kind} run on '{topic}' failed '{criterion}': {detail}"
+      rejected: "On '{topic}', pages were rejected most often as {codes}; plan sources and queries that avoid it"
+      budget: "A run on '{topic}' hit its {limits} limit before it finished"
+      revised: "On '{topic}', {n} revision(s) against the audit raised its score from {first:.2f} to {last:.2f}"
 
   synthesis:
     citation_pattern: '\[(E\d+)\]'
     entry_id_prefix: E
     templates_path: src/research_agent/synthesis/report_templates.yaml
     max_guard_rewrites: 1
+    # Leaked into run-23252f6025 (2026-10-11): "Sources E3–E7 are from Facebook and Instagram
+    # reels.", "E1 and E2 are search snippets only", "The evidence does not cover quiet places".
+    # Matched case-insensitively against each sentence with its citation markers removed.
+    working_note_patterns:
+      - '\bE\d+\b'
+      - '\bsearch snippets?\b'
+      - '\bcaveats?\b'
+      - '\bledger\b'
+      - '\b(?:the )?(?:evidence|sources?|entries)(?: provided| collected| found)? (?:does|do|did) not (?:cover|mention|include|say|state|address)\b'
+      - '\bno (?:evidence|source) (?:covers|mentions|addresses)\b'
 
   # The hosted injection model behind the phrase check on fetched pages. A phrase hit is dropped
   # only if the model agrees (score >= threshold); scan_all also scores pages with no phrase hit.
@@ -698,6 +780,8 @@ research_agent:
       revise_heading: "rewrote the answer without {claims} unsupported claim(s) · {tokens} tokens · {seconds:.1f}s"
       tool_call: "{tool}({arguments})"
       observation_heading: "{tool} · {lines} line(s) returned"
+      # A search names the provider that answered it (`search.provider_name`, `search.route`).
+      observation_heading_via: "{tool} · {provider} · {lines} line(s) returned"
       observation_failed: "{tool} · {error}"
       answered: "Answered · {steps} step(s) · {calls} tool call(s) · {tokens} tokens · {seconds:.1f}s"
       no_results: "No results."
@@ -773,10 +857,11 @@ research_agent:
     not_used: not used
 
   audit:
-    # When true, `judge` must resolve to a different model than `synthesizer`. Off since
-    # 2026-10-03: with nemotron-super retired, both run on nemotron-ultra (the account's strongest
-    # model). Recorded on every audit result, so a report never claims an independence it lacks.
-    independent_judge: false
+    # When true, `judge` must resolve to a different model than `synthesizer` (checked at
+    # start-up). Off 2026-10-03 to 2026-10-11 while both ran on ultra; on again with the judge's
+    # own chain. Each audit also checks it at run time: a criterion judged by the model that
+    # wrote the report marks that audit not independent, so a report never claims otherwise.
+    independent_judge: true
     # lexical: deterministic (what tests inject); platform: the configured NLI
     # cross-encoder.
     entailment_model: platform
@@ -819,7 +904,8 @@ research_agent:
       worker_fetch: FETCH
       content_defense: CONTENT DEFENCE
       reflect_gap_analysis: REFLECT
-      budget_tick: BUDGET
+      revise: REVISE
+      lessons: LESSONS
       page_result: EXTRACT
       batch_summary: BATCH RESULT
       synthesize: SYNTHESIZE
@@ -838,33 +924,12 @@ research_agent:
       show: "Show an archived run's report"
     history_headers: [run, status, archetype, topic, unmet]
     clip_chars: 110
-    budget_headline: [searches, fetches]
-    quiet_budget_counters: [rounds, gap_fill_rounds]
     actions:
       SCOPING:
         - {label: "✓ Done Interviewing", command: done, variant: primary}
       RUBRIC_REVIEW:
         - {label: "▶ Approve & Run", command: approve, variant: success}
       # RUNNING / STOPPED: the platform's run buttons (`tui.run_controls`), the same as every agent.
-    phase_colors:
-      SCOPING: "bold #D6B978"
-      RUBRIC_REVIEW: "bold #E2C792"
-      RUNNING: "bold #59F06A"
-      AUDITING: "bold #F4D35E"
-      STOPPED: "bold #F4D35E"
-      DELIVERED: "bold #59F06A"
-      CANCELLED: "bold #FF5C5C"
-      FAILED: "bold #FF5C5C"
-
-    status_line_styles:
-      coverage: "#D6B978"
-      evidence: "#E2C792"
-      budget: "#8A8A8A"
-
-    checklist_styles:
-      covered: "#59F06A"
-      waived: "#F4D35E"
-      open: "#8A8A8A"
     # Rejection and gap codes, in words.
     reasons:
       recency: results older than the approved time window
@@ -950,7 +1015,13 @@ research_agent:
       batch.section.questions: Sub-questions
       batch.section.waiting: Held back
       batch.section.parallel: Parallelism
-      search.heading: "{node} · \"{query}\""
+      search.heading: "{node} · {route} · \"{query}\""
+      search.provider_name.duckduckgo: ddgs
+      search.provider_name.tavily: tavily
+      search.route.merged: "{provider} + {extra} (weak result, merged)"
+      search.route.fallback: "{provider} ({failed} failed)"
+      search.route.cached: " · cached"
+      search.route.mode: " · {mode}"
       search.provider: "Provider: {provider}"
       search.unknown_provider: unknown
       search.window: "Time window: {window}"
@@ -1093,19 +1164,32 @@ research_agent:
       final.section.budget: Budget used
       final.section.cost: Model cost by role
       final.section.saved: Saved
-      budget.at_start: at the start
+      lessons.heading: "{n} lesson(s) from earlier runs of this kind on a similar topic"
+      lessons.section: Recalled (used to avoid a past failure, never as evidence)
+      lessons.line: "{lesson} · run {run}, {when}"
+      revise.heading: "Revision {n} of {max} · {findings} finding(s) · {changed} sentence(s) rewritten or added"
+      revise.finding: "{id} · {criterion} — {reason}"
+      revise.diff: "{kept} sentence(s) kept · {added} rewritten or added · {removed} removed"
       plan.unavailable: "Planning stopped: the model did not respond ({error}). Nothing was researched; try again."
       plan.heading: "{nodes} sub-question(s) · {batches} batch(es) · {validity}"
       plan.valid: valid
       plan.valid_repaired: valid after one repair
       plan.rejected: "Plan rejected twice: {error}"
-      plan.line: "{id} · {question} ← {items}"
+      plan.line: "{id} · {question} → {items}"
+      plan.needs: " · needs {deps}"
+      plan.queries: "queries: {queries}"
+      plan.rationale: "Plan: {rationale}"
+      plan.no_rationale: the model gave no rationale
+      plan.batch_first: "Batch 1 · {count} sub-question(s) in parallel"
+      plan.batch_after: "Batch {n} · {count} sub-question(s), after batch {previous}"
+      plan.budget: "Budget: {meters}"
+      plan.check.untraced: "✗ not traced: no sub-question serves {items} (reflection may still reach them)"
       plan.asked: "Break “{topic}” into at most {nodes} sub-question(s) that together cover every criterion:"
       plan.period: "Period: {start} → {end} (resolved from today, not by the model)"
       plan.repaired_because: "↻ the first plan was repaired: {problems}"
       plan.check.acyclic: "✓ acyclic: every sub-question can run once its dependencies have"
       plan.check.traced: "✓ traced: every acceptance criterion is answered by a sub-question"
-      guard.heading: "Every cited sentence checked against its sources · {supported}/{checked} supported as written · {rewritten} rewritten"
+      guard.heading: "{supported}/{checked} supported as written · {rewritten} rewritten"
       guard.outcome: "PASSED · {heading}"
       guard.outcome_dropped: "TRIMMED · {heading}"
       guard.heading_dropped: "Cited sentences checked against their sources · {supported}/{checked} supported as written · {rewritten} rewritten · {dropped} removed"
@@ -1116,26 +1200,13 @@ research_agent:
       stop.no_follow_up: no follow-up could close the remaining gaps
       stop.critique_sufficient: "{reason}; the critique agrees the evidence answers the question"
       stop.critique_no_follow_up: the critique found the answer incomplete, but no follow-up could close it
+      stop.critique_skipped: "{reason}; no round is left to act on a critique, so none was asked"
       stop.critique_no_room: "{reason}; the critique found the answer incomplete: {critique}"
       stop.budget: "budget exhausted ({counters})"
       stop.max_rounds: maximum rounds reached
-      budget.after_batch: "after batch {batch}"
-      budget.heading: "Budget · {label} · {meters}"
-      budget.meter: "{name} {spent}/{cap}"
-      budget.line: "{name}: {spent} of {cap}"
-      budget.section.all: Everything counted
-      budget.section.limit: The limit
-      budget.cap_reached: "Limit reached · {reason}"
-      budget.cap_note: "Calls already in flight finish; no new ones start."
       budget.name.searches: searches
       budget.name.fetches: pages read
       budget.name.tokens: model tokens
       budget.name.seconds: seconds
       budget.name.rounds: research rounds
       budget.name.gap_fill_rounds: gap-filling rounds
-      status.phase: "{phase}"
-      status.coverage: "Scope coverage {covered}/{total} covered · {waived} waived"
-      status.evidence: "Evidence {n} item(s) · {rejected} source(s) rejected"
-      status.budget: "Budget {meters}"
-      status.meter: "{name} {spent}/{cap}"
-      status.detail.checklist: "Checklist"

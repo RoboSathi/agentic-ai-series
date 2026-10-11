@@ -23,6 +23,12 @@ from research_agent.domain.sources import is_primary
 Check = Callable[[CheckSpec, CheckContext], Awaitable[CheckOutcome]]
 # A figure in a claim ("6,200", "410"): how two sources are seen to disagree.
 _FIGURE = re.compile(r"\d[\d,]*")
+_CONTRADICTION = "contradiction"
+# Checks whose evidence lists what was found (the agreeing domains, the entities), not what is
+# missing: the reflector reads `found` for these and `missing` for the rest.
+FOUND_EVIDENCE_CHECKS = frozenset(
+    {"claim_verdict", "concept_covered", "distinct_subjects", "distinct_domains"}
+)
 
 COVERAGE_CHECKS = frozenset(
     {
@@ -81,13 +87,56 @@ async def distinct_domains(spec: CheckSpec, ctx: CheckContext) -> CheckOutcome:
 
 
 async def claim_verdict(spec: CheckSpec, ctx: CheckContext) -> CheckOutcome:
-    claim = str(spec.params["subject"])
+    """A subject cross-checked: independent domains whose claims about it are entailed by the
+    span they quote, and which no other domain's claim contradicts.
+
+    Mentioning the subject is not enough: a claim its own span does not support proves
+    nothing, and two sites that disagree have not cross-checked each other. Without an
+    entailment model (an ablation, the lexical tests) the mention is all there is to count,
+    and the detail says so.
+    """
+    subject = str(spec.params["subject"])
     need = int(spec.params.get("min_sources", 1))
-    hosts = distinct_hosts(ctx.about(claim))
-    score = min(len(hosts) / need, 1.0)
-    return CheckOutcome(
-        score=score, detail=f"{len(hosts)} independent source(s)", evidence=sorted(hosts)
-    )
+    about = ctx.about(subject)
+    if ctx.entailment is None:
+        hosts = distinct_hosts(about)
+        detail = f"{len(hosts)} domain(s) mention it (no entailment model)"
+        return CheckOutcome(
+            score=min(len(hosts) / need, 1.0), detail=detail, evidence=sorted(hosts)
+        )
+    supported = [entry for entry in about if await _supported_by_span(entry, ctx)]
+    contested = await _contested_hosts(supported, ctx, int(spec.params.get("max_pairs", 0)))
+    agreeing = sorted(distinct_hosts(supported) - contested)
+    missing = max(need - len(agreeing), 0)
+    detail = f"{len(agreeing)} of {need} independent domain(s) support it"
+    if contested:
+        detail += f"; contradicted between {', '.join(sorted(contested))}"
+    if missing:
+        detail += f"; needs {missing} more"
+    return CheckOutcome(score=min(len(agreeing) / need, 1.0), detail=detail, evidence=agreeing)
+
+
+async def _supported_by_span(entry: EvidenceEntry, ctx: CheckContext) -> bool:
+    assert ctx.entailment is not None
+    return (await ctx.entailment.entails(entry.span, entry.claim)).entailed
+
+
+async def _contested_hosts(
+    entries: list[EvidenceEntry], ctx: CheckContext, max_pairs: int
+) -> set[str]:
+    """Hosts one of whose claims another host's claim contradicts (at most `max_pairs` asked)."""
+    assert ctx.entailment is not None
+    pairs = [
+        (a, b)
+        for i, a in enumerate(entries)
+        for b in entries[i + 1 :]
+        if host(a.source_url) != host(b.source_url)
+    ][: max_pairs or None]
+    contested: set[str] = set()
+    for a, b in pairs:
+        if (await ctx.entailment.entails(a.claim, b.claim)).label == _CONTRADICTION:
+            contested |= {host(a.source_url), host(b.source_url)}
+    return contested
 
 
 async def concept_covered(spec: CheckSpec, ctx: CheckContext) -> CheckOutcome:
@@ -235,8 +284,6 @@ _DETERMINISTIC: dict[str, Check] = {
     "criterion_evidence": criterion_evidence,
     "distinct_subjects": distinct_subjects,
     "distinct_domains": distinct_domains,
-    "claim_verdict": claim_verdict,
-    "concept_covered": concept_covered,
     "citations_per_claim": citations_per_claim,
     "links_resolved": links_resolved,
     "blocked_domains_absent": blocked_domains_absent,
@@ -255,6 +302,9 @@ def build_registry() -> AcceptanceCheckRegistry[CheckContext]:
     for name, check in _DETERMINISTIC.items():
         registry.register("deterministic", name, check)
     registry.register("nli", "claims_entailed", claims_entailed)
+    # A subject cross-checked: entailed claims from independent domains (`claim_verdict`).
+    registry.register("nli", "claim_verdict", claim_verdict)
+    registry.register("nli", "concept_covered", concept_covered)
     for name in _JUDGED:
         registry.register("judge", name, judged)
     return registry

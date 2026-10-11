@@ -78,6 +78,13 @@ class RunState(TypedDict, total=False):
     # Why the independent audit could not run at all (empty: it ran, or was withheld).
     audit_error: str
     gap_fill_round: int
+    # Revisions of the report against the audit's findings, and each audit's weighted score.
+    revision: int
+    audit_scores: list[float]
+    # The model that wrote the report in hand (a backup counts as itself).
+    writer_model: str
+    # Earlier runs' lessons recalled at plan (Reflexion), as the prompts carry them.
+    lessons: list[str]
     status: RunStatus | None
     stop_reason: str
     toggles: dict[str, bool]

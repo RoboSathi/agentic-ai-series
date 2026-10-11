@@ -232,6 +232,7 @@ class StepEvents:
         because: str,
         criteria: Mapping[str, Any] | None = None,
         because_words: Mapping[str, str] | None = None,
+        counter_names: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         """LOOP CONTROL, one schema for every agent, and only what says something.
 
@@ -239,8 +240,10 @@ class StepEvents:
         ran). `intervened` appears only when a governor mechanism changed the course — which
         one, and its reason — never "no check objected". Failing checks only; every budget as
         it stands. A warning when a mechanism intervened, a plain card otherwise. Returns the
-        fields, so the caller logs exactly what the card shows.
+        fields, so the caller logs exactly what the card shows. `counter_names` words an agent's
+        counters as its reader knows them ("pages read" for `fetches`).
         """
+        names = counter_names or {}
         reasons = {**self._words().loop_control.because, **(because_words or {})}
         fields: dict[str, Any] = {
             "decision": verdict.decision,
@@ -250,13 +253,13 @@ class StepEvents:
         if verdict.intervened:
             words = get_settings().loop_control.card
             fields["intervened"] = words.intervention.format(
-                layer=verdict.layer or verdict.reason_code, reason=verdict.reason
+                layer=verdict.layer or verdict.reason_code, reason=_spent_reason(verdict, names)
             )
             if verdict.fingerprint:
                 fields["fingerprint"] = verdict.fingerprint
         if criteria:
             fields["criteria"] = dict(criteria)
-        fields["budgets"] = budget_lines(verdict)
+        fields["budgets"] = budget_lines(verdict, names)
         # Other failing checks only (a flag the verdict did not act on, such as the historical
         # baseline): the deciding one is already the `intervened` line.
         line = get_settings().loop_control.card.check_line
@@ -303,13 +306,29 @@ def loop_heading(verdict: "LoopVerdict", next_step: str = "") -> str:
     )
 
 
-def budget_lines(verdict: "LoopVerdict") -> list[str]:
+def budget_lines(verdict: "LoopVerdict", names: Mapping[str, str] | None = None) -> list[str]:
     """Each counter as `tokens: 4,210 of 30,000`."""
-    line = get_settings().loop_control.card.budget_line
     return [
-        line.format(counter=name, spent=f"{budget.spent:,.6g}", cap=f"{budget.cap:,.6g}")
+        _budget_line(name, budget.spent, budget.cap, names or {})
         for name, budget in verdict.budgets.items()
     ]
+
+
+def _budget_line(counter: str, spent: float, cap: float, names: Mapping[str, str]) -> str:
+    line = get_settings().loop_control.card.budget_line
+    return line.format(
+        counter=names.get(counter, counter), spent=f"{spent:,.6g}", cap=f"{cap:,.6g}"
+    )
+
+
+def _spent_reason(verdict: "LoopVerdict", names: Mapping[str, str]) -> str:
+    """Why a budget stopped the loop, as its budget line in the agent's own words (`planned
+    rounds: 1 of 1`) when the agent names that counter; any other reason as it was given."""
+    deciding = next((c for c in verdict.checks if c.reason_code == verdict.reason_code), None)
+    observed = deciding.observed if deciding is not None else {}
+    if {"counter", "spent", "cap"} <= observed.keys() and observed["counter"] in names:
+        return _budget_line(observed["counter"], observed["spent"], observed["cap"], names)
+    return verdict.reason
 
 
 def gatekeeper_fields(call: "ToolCall", decision: "AuthorityDecision") -> dict[str, Any]:

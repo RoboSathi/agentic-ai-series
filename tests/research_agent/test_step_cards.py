@@ -220,9 +220,7 @@ class TestTheReportCheckIsTheSharedCard:
         from research_agent.graph.run_nodes import _sentence_check
         from research_agent.synthesis.citation_guard import SentenceCheck
 
-        cited = EvidenceRef(
-            where="Web page · https://www.wef.org/r [E3]", excerpt="Hiring rose 4%."
-        )
+        cited = EvidenceRef(where="www.wef.org/r [E3]", excerpt="Hiring rose 4%.")
         nli = Reading(step=1, check="NLI DeBERTa", result="entailment 0.950",
                       decision="supported", tone="pass", evidence=[cited])  # fmt: skip
         removed = Reading(step=3, check="rewrite · extractor", decision="removed", tone="fail")
@@ -239,13 +237,14 @@ class TestTheReportCheckIsTheSharedCard:
     def test_a_supported_sentence_names_the_model_and_its_source(self) -> None:
         card = self._card()
         assert "✓ Hiring rose [E3]. [SUPPORTED]" in card
-        assert "1  NLI DeBERTa      entailment 0.950 → supported" in card
-        assert 'Web page · https://www.wef.org/r [E3]  "Hiring rose 4%."' in card
+        # The verdict is said once, on the claim: the step says what read it and how surely.
+        assert '└ NLI DeBERTa entailment 0.950 · www.wef.org/r [E3]: "Hiring rose 4%."' in card
+        assert "Supported by" not in card and "→ supported" not in card
 
     def test_a_removed_sentence_says_so(self) -> None:
         card = self._card()
         assert "✗ Hiring doubled [E3]. [REMOVED]" in card
-        assert "3  rewrite · extractor  removed" in card
+        assert "└ rewrite · extractor: removed" in card
 
 
 class TestTheAuditCard:

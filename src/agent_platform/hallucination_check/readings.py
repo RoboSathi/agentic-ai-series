@@ -220,8 +220,8 @@ def _confirmer_reading(verdict: DetectionVerdict) -> Reading | None:
 
 
 def _deciding(lines: list[EvidenceCheck]) -> EvidenceCheck | None:
-    """The line that decided, else the one the model was surest of."""
-    return max(lines, key=lambda c: (c.decisive, c.nli_score), default=None)
+    """The line the verdict rests on, else a decisive one, else the one the model was surest of."""
+    return max(lines, key=lambda c: (c.chosen, c.decisive, c.nli_score), default=None)
 
 
 def _decided(label: str) -> tuple[str, Tone, str]:

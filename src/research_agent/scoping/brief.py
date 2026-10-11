@@ -47,6 +47,7 @@ class BriefBuilder:
         self._settings = settings
         self._split = re.compile(settings.answer_split_pattern, re.IGNORECASE)
         self._pages = re.compile(settings.pages_pattern, re.IGNORECASE)
+        self._domains = re.compile(settings.distinct_domains_pattern, re.IGNORECASE)
         self._budget = budget
         self._depths = depths
         self._window = TimeWindowParser(settings.time_window)
@@ -171,8 +172,10 @@ class BriefBuilder:
         for clause in _CLAUSE.split(answer):
             domains = [domain.casefold() for domain in _DOMAIN.findall(clause)]
             (blocked if _AVOID.search(clause) else preferred).extend(domains)
+        independent = self._domains.search(answer)
         return SourcePolicy(
             preferred_domains=tuple(preferred),
             blocked_domains=tuple(blocked),
             primary_sources_preferred=self._settings.primary_sources_phrase in answer.casefold(),
+            **({"min_distinct_domains": int(independent.group(1))} if independent else {}),
         )

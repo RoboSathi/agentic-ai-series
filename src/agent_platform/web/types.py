@@ -73,12 +73,25 @@ class SearchHit(BaseModel):
     published_date: str = ""
 
 
+class SearchRoute(BaseModel):
+    """How a search was answered: which provider, which failed first, what was merged in, and
+    whether the answer came from the cache or a replay rather than a live call."""
+
+    answered_by: str = ""
+    failed: list[str] = Field(default_factory=list)
+    # The provider whose hits were merged into a weak answer ("" when none was).
+    augmented_with: str = ""
+    cached: bool = False
+    mode: str = ""
+
+
 class SearchResponse(BaseModel):
     """What a provider returned for one request."""
 
     request: SearchRequest
     hits: list[SearchHit] = Field(default_factory=list)
     provider: str = ""
+    route: SearchRoute = Field(default_factory=SearchRoute)
     # Provider-written prose (e.g. an "answer" field). Kept only so it can
     # be shown as untrusted; the gateway never turns it into a page.
     provider_summary: str = ""

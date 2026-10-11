@@ -99,8 +99,8 @@ fact_verification:
       weight: 3
       must_pass: true
   per_subject:
-    - text: "The claim '{subject}' has a verdict backed by independent sources."
-      check: {kind: deterministic, name: claim_verdict, params: {min_sources: 2}}
+    - text: "The claim '{subject}' has a verdict backed by entailed evidence from two independent domains, with no unresolved contradiction."
+      check: {kind: nli, name: claim_verdict, params: {min_sources: 2, max_pairs: 12}}
       threshold: 1.0
       weight: 3
       must_pass: true
@@ -123,8 +123,8 @@ explainer:
       threshold: 0.7
       must_pass: false
   per_subject:
-    - text: "The sub-concept '{subject}' is explained and cross-checked in two sources."
-      check: {kind: deterministic, name: concept_covered, params: {min_sources: 2}}
+    - text: "The sub-concept '{subject}' is supported by entailed claims from two independent domains, with no unresolved contradiction."
+      check: {kind: nli, name: concept_covered, params: {min_sources: 2, max_pairs: 12}}
       threshold: 1.0
       weight: 3
       must_pass: true

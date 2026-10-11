@@ -10,7 +10,7 @@ Limits is attached by `with_limits`, from verdicts.
 
 import re
 from collections import Counter, deque
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,7 @@ import yaml
 
 from agent_platform.evidence import EvidenceEntry, LedgerSnapshot
 from agent_platform.logging import instrument
+from agent_platform.observability.step_card import ModelCall
 from research_agent.config.settings import DepthProfile
 from research_agent.domain.report import (
     COVERAGE_AND_LIMITS,
@@ -37,6 +38,7 @@ from research_agent.synthesis.citation_check import (
     cited_ids,
     enforce_citations,
     normalize_citations,
+    strip_working_notes,
 )
 from research_agent.synthesis.limits import render_limits
 
@@ -51,8 +53,10 @@ class Synthesizer:
         templates_path: Path,
         citation_pattern: str,
         depths: Mapping[Depth, DepthProfile],
+        working_notes: Sequence[str] = (),
     ) -> None:
         self._caller = caller
+        self._notes = [re.compile(pattern, re.IGNORECASE) for pattern in working_notes]
         self._depths = depths
         self._templates: dict[str, Any] = yaml.safe_load(templates_path.read_text())
         self._pattern = re.compile(citation_pattern)
@@ -62,8 +66,15 @@ class Synthesizer:
         return self._pattern
 
     async def draft(
-        self, contract: Contract, ledger: LedgerSnapshot, gaps: list[str]
+        self,
+        contract: Contract,
+        ledger: LedgerSnapshot,
+        gaps: list[str],
+        previous: Report | None = None,
+        findings: list[dict[str, Any]] | None = None,
     ) -> CitationCheck:
+        """The report from the ledger; after a gap-fill, a revision of `previous` that keeps
+        what the audit accepted and fixes what its `findings` flagged, with the new evidence."""
         headings = list(self._templates[contract.brief.archetype]["sections"])
         if not ledger.entries:
             # Nothing was established: a model asked to write from no evidence can only
@@ -77,11 +88,55 @@ class Synthesizer:
             return CitationCheck(report=empty, removed=[], unknown_ids=[])
         size = self._depths[contract.brief.depth]
         shown = _spread(ledger, size.report_entries)
+        sections = self.written_sections(previous) if previous is not None else None
         answer, call = await self._caller.call_traced(
-            prompt.build(contract, shown, headings, gaps),
+            prompt.build(contract, shown, headings, gaps, sections, findings),
             prompt.SynthesisAnswer,
             max_tokens=size.report_max_tokens,
         )
+        return self._checked(answer, call, contract, ledger)
+
+    async def revise(
+        self,
+        contract: Contract,
+        ledger: LedgerSnapshot,
+        previous: Report,
+        findings: list[dict[str, Any]],
+        lessons: Sequence[str] = (),
+    ) -> CitationCheck:
+        """The report revised against the audit's findings: only what they flag changes."""
+        headings = list(self._templates[contract.brief.archetype]["sections"])
+        size = self._depths[contract.brief.depth]
+        answer, call = await self._caller.call_traced(
+            prompt.build_revision(
+                contract,
+                _spread(ledger, size.report_entries),
+                headings,
+                self.written_sections(previous),
+                findings,
+                lessons,
+            ),
+            prompt.SynthesisAnswer,
+            max_tokens=size.report_max_tokens,
+        )
+        return self._checked(answer, call, contract, ledger)
+
+    def written_sections(self, report: Report) -> list[dict[str, str]]:
+        """The sections the model wrote, without those code appends (limits, unknowns)."""
+        appended = _appended_headings(self._templates["appended"])
+        return [
+            {"heading": s.heading, "body": s.body}
+            for s in report.sections
+            if s.heading not in appended and s.body.strip()
+        ]
+
+    def _checked(
+        self,
+        answer: prompt.SynthesisAnswer,
+        call: ModelCall | None,
+        contract: Contract,
+        ledger: LedgerSnapshot,
+    ) -> CitationCheck:
         report = Report(
             title=answer.title,
             status="PARTIAL",
@@ -91,7 +146,9 @@ class Synthesizer:
             ],
             known_unknowns=[unknown.question for unknown in contract.brief.known_unknowns],
         )
-        return enforce_citations(report, ledger, self._pattern).model_copy(update={"call": call})
+        checked = enforce_citations(report, ledger, self._pattern)
+        cleaned = strip_working_notes(checked, self._notes, self._pattern)
+        return cleaned.model_copy(update={"call": call})
 
     def with_limits(
         self,
