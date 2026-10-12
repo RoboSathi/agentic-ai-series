@@ -1,5 +1,7 @@
 """`python -m agent_platform.evals` (what `make eval` runs) and the console's `/eval`."""
 
+from typing import Any
+
 import pytest
 
 from agent_platform.commands.evals import EvalCommand
@@ -56,6 +58,32 @@ class TestCli:
         monkeypatch.setattr(cli, "_print_timings", lambda clock, total: None)
         assert cli.main(["run"]) == 1
         assert ran == ["promptfoo"]
+
+    def test_every_overview_is_shown_together_after_the_last_section(
+        self, plugin: FakePlugin, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        events: list[str] = []
+
+        async def golden(self: EvalPipeline, sections: list[str], full: bool, shown: Any) -> None:
+            for section in sections:
+                shown(section, section)
+
+        def security(self: EvalPipeline, full: bool) -> str:
+            events.append("ran promptfoo")
+            return "promptfoo"
+
+        monkeypatch.setattr(EvalPipeline, "golden", golden)
+        monkeypatch.setattr(EvalPipeline, "security", security)
+        monkeypatch.setattr(cli, "_show", lambda outcome: events.append(f"shown {outcome}"))
+        monkeypatch.setattr(cli, "_print_timings", lambda clock, total: events.append("timed"))
+        cli.main(["run"])
+        assert events == [
+            "ran promptfoo",
+            "shown oracle",
+            "shown deepeval",
+            "shown promptfoo",
+            "timed",
+        ]
 
     def test_the_section_ctrl_c_stopped_is_named_and_timed(self) -> None:
         from agent_platform.evals.core.pipeline.orchestrator import SectionClock

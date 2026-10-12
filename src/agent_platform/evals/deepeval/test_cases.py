@@ -1,9 +1,10 @@
 """A transcript as DeepEval's `ConversationalTestCase`.
 
 Every turn the customer took and every reply the agent gave, in order;
-each reply carries the tools the agent called for it and the evidence it
-could ground on (`retrieval_context`), so a faithfulness metric checks the
-reply against what the agent was actually shown. The case's scenario and
+each reply carries the tools the agent called for it. The evidence the agent
+could ground on (`retrieval_context`) is the whole conversation's, so it
+rides once, on the last reply: a G-Eval reads the conversation whole, and
+repeating it on every turn would multiply the prompt for nothing. The case's scenario and
 the outcome the written policy requires travel with it, so a G-Eval judges
 against the expected outcome rather than its own idea of a good answer.
 """
@@ -31,6 +32,7 @@ def conversation(
     """The case and its transcript, as one multi-turn test case."""
     test_case = deepeval.test_case
     evidence = capped(transcript.evidence, evidence_cap)
+    last = min(len(case.turns), len(transcript.replies)) - 1
     turns: list[Any] = []
     for index, message in enumerate(case.turns):
         turns.append(test_case.Turn(role=_USER, content=message))
@@ -40,7 +42,7 @@ def conversation(
                     role=_ASSISTANT,
                     content=transcript.replies[index],
                     tools_called=_tools(test_case, transcript.tool_calls, index) or None,
-                    retrieval_context=evidence or None,
+                    retrieval_context=(evidence or None) if index == last else None,
                 )
             )
     return test_case.ConversationalTestCase(

@@ -61,8 +61,9 @@ metrics concurrent inside it, and the judge runs with thinking off.
   took — the one path rule is a forbidden tool that *executed*, because executing is an outcome.
 - **DeepEval grades what only language can show**: did the reply resolve the request, explain
   a refusal, claim only what happened, stay grounded in its evidence. One dimension per metric
-  (`ConversationalGEval` with evaluation steps and rubric bands; `TurnFaithfulness`;
-  `TurnRelevancy`), each judged against the case's own scenario and expected outcome.
+  (`ConversationalGEval` with evaluation steps and rubric bands — faithfulness among them, one
+  judge call per case where `TurnFaithfulness` makes ~4 per reply; `TurnRelevancy`), each
+  judged against the case's own scenario and expected outcome.
 - **Promptfoo holds the agent to the same invariants under attack.** Its assertions reuse the
   oracle's rules (`promptfoo/assertions.py: oracle_assert`), so "unsafe" is defined once.
 

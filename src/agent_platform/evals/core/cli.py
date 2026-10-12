@@ -2,8 +2,8 @@
 
 The agent is found through `evals.plugin` in configuration, so this module
 never names one. Every suite ends with a colour-coded overview in the
-terminal and the path of its full Markdown report; the run ends with how
-long each section took.
+terminal and the path of its full Markdown report — all of them together,
+once the progress bars are done — and then how long each section took.
 
     run [--section all|oracle|deepeval|promptfoo|intent] [--full]
                               the sections (default: oracle, DeepEval, then Promptfoo), over
@@ -66,7 +66,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _run(args: argparse.Namespace) -> int:
-    """The chosen suites, each one run even when another raised; then the timing table."""
+    """The chosen suites, each one run even when another raised; then every section's
+    overview together, and the timing table."""
     started = time.perf_counter()
     LoggerFactory.set_console_level(get_settings().evals.console_level)
     outcomes: list[StageOutcome] = []
@@ -76,9 +77,11 @@ def _run(args: argparse.Namespace) -> int:
             errors = _run_sections(args.section, args.full, pipeline, outcomes)
         except KeyboardInterrupt:
             progress.stop()
+            _show_all(outcomes)
             _print_interrupted(pipeline, args.invocation)
             _print_timings(pipeline.clock, time.perf_counter() - started)
             return _INTERRUPTED
+    _show_all(outcomes)
     _print_timings(pipeline.clock, time.perf_counter() - started)
     return _FAILED if errors else _OK
 
@@ -101,7 +104,7 @@ def _print_interrupted(pipeline: EvalPipeline, invocation: str) -> None:
 def _run_sections(
     section: str, full: bool, pipeline: EvalPipeline, outcomes: list[StageOutcome]
 ) -> int:
-    """Run the chosen sections, showing each overview as it finishes; return how many failed.
+    """Run the chosen sections, keeping each overview as it finishes; return how many failed.
 
     Every section runs even when an earlier one raised.
     """
@@ -113,7 +116,7 @@ def _run_sections(
             errors += 1
             _print_error(name, result)
         else:
-            outcomes.append(_show(result))
+            outcomes.append(result)
 
     golden = [name for name in GOLDEN_SECTIONS if section in (ALL, name)]
     work: list[tuple[str, Callable[[], object]]] = []
@@ -151,6 +154,12 @@ def _runs(args: argparse.Namespace) -> int:
     )
     overview.print(console)
     return _OK
+
+
+def _show_all(outcomes: list[StageOutcome]) -> None:
+    """Every finished section's overview, in the order the sections ran."""
+    for outcome in outcomes:
+        _show(outcome)
 
 
 def _show(outcome: StageOutcome) -> StageOutcome:

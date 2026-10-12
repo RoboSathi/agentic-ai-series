@@ -121,7 +121,7 @@ class QualityMetricSpec(BaseModel):
     """One DeepEval metric to run over the golden transcripts.
 
     `kind` names the DeepEval metric (`conversational_geval`,
-    `turn_faithfulness`, `turn_relevancy`). A G-Eval grades one dimension:
+    `turn_relevancy`). A G-Eval grades one dimension:
     its `criteria`, the `evaluation_steps` a judge follows, and the `rubric`
     bands that say what each score means — an unanchored scale is one a
     judge cannot apply the same way twice.

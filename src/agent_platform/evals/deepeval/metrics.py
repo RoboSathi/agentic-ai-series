@@ -1,12 +1,14 @@
 """Metric specs (an agent's `metrics.yaml`) as DeepEval conversational metrics (Factory).
 
-Three kinds, each the standard DeepEval metric for a multi-turn agent:
+Two kinds, each the standard DeepEval metric for a multi-turn agent:
 
 - `conversational_geval` — one quality dimension, anchored: criteria, the
   steps a judge follows, and rubric bands saying what each score means;
-- `turn_faithfulness` — every reply's claims checked against the evidence
-  the agent was shown for it (the judge-side twin of the runtime guard);
+  one judge call per case;
 - `turn_relevancy` — every reply answers what the customer just asked.
+
+Faithfulness is a G-Eval shown the evidence, not `TurnFaithfulness`: that
+metric makes ~4 judge calls per reply to answer the same question.
 """
 
 from collections.abc import Callable
@@ -15,7 +17,7 @@ from typing import Any
 from agent_platform.config import get_settings
 from agent_platform.evals.core.contracts import QualityMetricSpec
 
-GEVAL, FAITHFULNESS, RELEVANCY = "conversational_geval", "turn_faithfulness", "turn_relevancy"
+GEVAL, RELEVANCY = "conversational_geval", "turn_relevancy"
 
 
 class UnknownMetricKindError(ValueError):
@@ -30,7 +32,6 @@ def build_metrics(deepeval: Any, specs: list[QualityMetricSpec], model: Any) -> 
     """One DeepEval metric per spec, every one graded by `model`."""
     builders: dict[str, Callable[[Any, QualityMetricSpec, Any], Any]] = {
         GEVAL: _geval,
-        FAITHFULNESS: _faithfulness,
         RELEVANCY: _relevancy,
     }
     metrics = []
@@ -76,15 +77,6 @@ def _shown_param(deepeval: Any, metric: str, value: str) -> Any:
         names = ", ".join(sorted(item.value for item in showable))
         raise UnshowableParamError(f"'{value}' (metric {metric}); showable: {names}")
     return param
-
-
-def _faithfulness(deepeval: Any, spec: QualityMetricSpec, model: Any) -> Any:
-    return deepeval.metrics.TurnFaithfulnessMetric(
-        threshold=spec.threshold,
-        model=model,
-        include_reason=get_settings().evals.deepeval.include_reason,
-        async_mode=True,
-    )
 
 
 def _relevancy(deepeval: Any, spec: QualityMetricSpec, model: Any) -> Any:

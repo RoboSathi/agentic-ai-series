@@ -61,7 +61,14 @@ SPECS = [
             RubricBand(score_range=(6, 10), expected_outcome="yes"),
         ],
     ),
-    QualityMetricSpec(name="faithfulness", kind="turn_faithfulness", threshold=0.5),
+    QualityMetricSpec(
+        name="faithfulness",
+        kind="conversational_geval",
+        threshold=0.5,
+        criteria="grounded?",
+        evaluation_steps=["check each claim against the evidence"],
+        params=["role", "content", "retrieval_context"],
+    ),
     QualityMetricSpec(name="relevancy", kind="turn_relevancy", threshold=0.5),
 ]
 
@@ -71,14 +78,15 @@ class _Reason(BaseModel):
 
 
 class TestTestCase:
-    def test_each_reply_carries_its_own_turns_tools_and_the_evidence(self) -> None:
+    def test_each_reply_carries_its_own_tools_and_the_last_one_the_evidence(self) -> None:
         test_case = conversation(import_deepeval(), CASE, TRANSCRIPT, FRAME, evidence_cap=0)
         assert [turn.role for turn in test_case.turns] == ["user", "assistant"] * 2
         first, second = test_case.turns[1], test_case.turns[3]
         assert [tool.name for tool in first.tools_called] == ["support.get_order_status"]
         assert first.tools_called[0].output["standing"] == "VALID"
         assert second.tools_called is None
-        assert first.retrieval_context == ["order ships monday"]
+        assert first.retrieval_context is None
+        assert second.retrieval_context == ["order ships monday"]
         assert test_case.expected_outcome == "told when" and test_case.chatbot_role == "support"
 
     def test_the_evidence_is_capped_oldest_first(self) -> None:
@@ -110,11 +118,7 @@ class TestMetrics:
     def test_the_agents_metrics_build(self) -> None:
         deepeval = import_deepeval()
         specs = CsaEvalPlugin().quality_metrics()
-        assert {spec.kind for spec in specs} == {
-            "conversational_geval",
-            "turn_faithfulness",
-            "turn_relevancy",
-        }
+        assert {spec.kind for spec in specs} == {"conversational_geval", "turn_relevancy"}
         model = judge_model(deepeval, ScriptedLLM())
         assert len(build_metrics(deepeval, specs, model)) == len(specs)
 
