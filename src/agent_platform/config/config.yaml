@@ -649,6 +649,12 @@ observability:
     tool_served: "Prefetched: {tool} · for {skill} · from {source}"
     gatekeeper: "Gatekeeper: {verdict} · {standing}{subject}"
     gatekeeper_subject: " · {subject}"
+    # TOOL RESULT for a call however far it got (`StepEvents.tool_outcome`): only the Gatekeeper
+    # refuses; a repeat or malformed call was not run, named by the stage that stopped it.
+    tool_done: "{tool} → done"
+    tool_failed: "{tool} failed"
+    tool_refused: "{tool} refused by the Gatekeeper"
+    tool_not_run: "{tool} not run · {stage}"
     # Shown at each point the loop decides whether to go round again.
     loop_control:
       summary: "Round {round} of {max_rounds} · next: {next_step}"
@@ -787,6 +793,14 @@ analytics:
       denied_function: "The function '{name}' is not allowed."
       unknown_metric: "There is no metric '{name}'. Call list_metrics to see what exists."
       unknown_dimension: "The metric '{name}' has no breakdown '{by}'; it has: {dimensions}."
+      # DuckDB could not bind or run the query (a wrong column, view or type): its error, each
+      # view's real columns, and the closest match to the name it quoted.
+      not_runnable: "The query could not run: {error} Columns: {columns}.{hint} Fix the SQL and try again."
+      did_you_mean: " Did you mean: {names}?"
+    # Attached to a result the model should check before answering from it.
+    notes:
+      empty: "0 rows. Check the filter values (agent ids, outcomes, dates) against describe_view's sample rows before saying there is no data."
+      truncated: "Only the first {rows} rows were returned. Aggregate (GROUP BY) or filter instead of reading rows."
     timed_out: "The query ran longer than {seconds}s and was stopped. Aggregate more, or filter first."
   mcp_server:
     name: agentic-analytics
@@ -1581,6 +1595,23 @@ hallucination_check:
     row: "level {level} · {name}"
     confidence: token confidence
     entailment: NLI entailment
+  # The HALLUCINATION CHECK card's shared wording (`hallucination_check/card.py`): every agent's
+  # claims are tallied in these words, whatever decided them.
+  card:
+    # A claim's verdict as the tally names it. "undetermined" reads as "unverified": no evidence
+    # spoke to it either way, and it never blocks.
+    verdict_names:
+      supported: supported
+      undetermined: unverified
+      unsupported: unsupported
+      low_confidence: low confidence
+      refuted: contradicted
+    tally: "{counts} of {total} claim{plural}{note}"
+    plural: s
+    no_claims: no checkable claims
+    # The detector name prefix of the word-overlap fallback, which is not NLI.
+    lexical: lexical
+    lexical_note: " · lexical fallback (NLI model unavailable)"
   # What decided a claim, as its card line names it.
   methods:
     record: record
@@ -2409,9 +2440,32 @@ mcp:
   python_placeholder: "{python}"
   # 0 keeps a tool's whole text result (the model sees everything the server said).
   result_text_limit: 0
+  # The client side of the handshake, and which server-to-client events it takes.
+  client:
+    # Who the client says it is (`clientInfo`).
+    name: agentic-harness
+    version: "1.0"
+    # auto: `server/discover`, falling back to `initialize` on a legacy server; legacy forces
+    # `initialize`; a protocol version pins it.
+    mode: auto
+    # Protocol versions from this one on are negotiated with `server/discover`; earlier ones
+    # with `initialize` (the card names which one this connection used).
+    discover_from: "2026-07-28"
+    discover_method: server/discover
+    initialize_method: initialize
+    # The lowest server log level the client opts in to (`notifications/message`); every one
+    # received is logged in full to mcp.log.
+    log_level: info
+    # Server log levels also drawn on the live feed (MCP NOTIFICATION), and those drawn as failed.
+    card_log_levels: [warning, error, critical, alert, emergency]
+    failed_log_levels: [error, critical, alert, emergency]
   # The MCP SERVER card an agent draws when it connects (`mcp/presentation.py`).
   card:
-    heading: "{server} · MCP {protocol} · {tools} tools offered"
+    heading: "{server} · MCP {protocol} · {tools} tools offered · {duration_ms} ms"
+    handshake_title: Handshake
+    handshake_line: "{method} · protocol {protocol} · {duration_ms} ms"
+    client_line: "client: {client}"
+    capabilities_line: "server capabilities: {capabilities}"
     server_title: Server
     instructions_title: Server instructions
     tools_title: Tools offered (as the server describes them; governed locally)
@@ -2426,6 +2480,15 @@ mcp:
     # The MCP CALL card, drawn before each MCP tool's TOOL RESULT.
     call_heading: "{server} · MCP {method} {tool} · {duration_ms} ms"
     call_failed_heading: "{server} · MCP {method} {tool} · server reported an error · {duration_ms} ms"
+    # A call that got no answer at all (timeout, session gone): MCP CALL, failed.
+    call_raised_heading: "{server} · MCP {method} {tool} · no answer · {duration_ms} ms"
+    # The protocol's own cards (`mcp/client/events.py`).
+    connect_failed_heading: "{server} · MCP connection failed · {error}"
+    tools_changed_heading: "{server} · MCP {method} · tools re-listed next turn"
+    server_log_heading: "{server} · server log {level} · {message}"
+    session_failed_heading: "{server} · MCP session ended · {error}"
+    error_title: Error
+    message_title: Message
 
 # Console slash commands (/help, /audit, /queue …). These are operator
 # views of the harness, so the limits here are about what fits on a

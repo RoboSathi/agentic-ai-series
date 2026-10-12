@@ -31,12 +31,19 @@ from agent_platform.observability.llm_fields import (
 )
 from agent_platform.observability.loop_reporter import LoopReporter
 from agent_platform.observability.status_feed import StageReporter
-from agent_platform.observability.tool_fields import display_tool_name, tool_request_fields
+from agent_platform.observability.tool_fields import (
+    display_tool_name,
+    tool_request_fields,
+    tool_result_fields,
+)
 from agent_platform.observability.types import StatusKind
 
 if TYPE_CHECKING:
     from agent_platform.gatekeeper.types import AuthorityDecision
+    from agent_platform.hallucination_check.card import GroundingCard
     from agent_platform.loop_control.types import LoopVerdict
+    from agent_platform.observability.step_card import StepCard
+    from agent_platform.tools.path import ToolOutcome
     from agent_platform.tools.types import ToolCall, ToolResult
 
 LLM_REQUEST = "llm_request"
@@ -219,6 +226,49 @@ class StepEvents:
             TOOL_RESULT, status, summary=summary, fields=fields, event_kind="tool_result"
         )
 
+    def tool_outcome(
+        self,
+        name: str,
+        path: "ToolOutcome | None",
+        reason: str,
+        *,
+        refused: bool = False,
+        preview: tuple[str, Mapping[str, Any]] | None = None,
+    ) -> None:
+        """TOOL RESULT for a call however far it got: refused, not run, failed, or done.
+
+        Only the Gatekeeper refuses (blocked); a repeat or a malformed call was not run
+        (a warning, named by the stage that stopped it). A call that ran is shown with its
+        result, and an agent's own `preview` (summary, fields) replaces the full output.
+        """
+        words = self._words()
+        tool = display_tool_name(name)
+        if path is None or path.call is None or path.execution is None:
+            stage = path.stage if path is not None else ""
+            fields = {"tool": tool, "result": stage, "reason": reason}
+            if refused:
+                self.tool_result("blocked", words.tool_refused.format(tool=tool), fields)
+            else:
+                summary = words.tool_not_run.format(tool=tool, stage=stage)
+                self.tool_result("warning", summary, fields)
+            return
+        result = path.execution.result
+        shown = tool_result_fields(path.call, result, outcome=path.execution)
+        if not result.success:
+            self.tool_result("failed", words.tool_failed.format(tool=tool), shown, result=result)
+            return
+        summary, extra = preview or (words.tool_done.format(tool=tool), {})
+        if preview is not None:
+            shown.pop("output", None)  # the agent's preview says it more readably
+        self.tool_result("completed", summary, {**shown, **extra}, result=result)
+
+    def step_card(self, stage: str, status: StatusKind, summary: str, card: "StepCard") -> None:
+        """A step's own card (`step_card.StepCard`): asked, model, reasoning, response,
+        decision, evidence — one card, its model call drawn inside it."""
+        self._loop.emit(
+            stage, status, summary=summary, fields=card.fields(), event_kind="narrative"
+        )
+
     def mcp_call(self, exchange: Mapping[str, Any]) -> None:
         """MCP CALL: the protocol's side of one call — server, method, how long, whether it failed."""
         words = get_settings().mcp.card
@@ -285,11 +335,16 @@ class StepEvents:
         return fields
 
     def hallucination_check(
-        self, status: StatusKind, summary: str, fields: Mapping[str, Any]
+        self, status: StatusKind, summary: str, fields: "Mapping[str, Any] | GroundingCard"
     ) -> None:
-        """HALLUCINATION CHECK: the levels first (token confidence), then the agent's own."""
+        """HALLUCINATION CHECK: the levels first (token confidence), then the agent's own.
+
+        `fields` is the shared card (`hallucination_check/card.py`), or a result already
+        in its shape (the support agent's `ResponseGuardrailResult` dump).
+        """
+        shown = fields if isinstance(fields, Mapping) else fields.fields()
         self._loop.emit(
-            HALLUCINATION_CHECK, status, summary=summary, fields=fields, event_kind="grounding"
+            HALLUCINATION_CHECK, status, summary=summary, fields=shown, event_kind="grounding"
         )
 
     @staticmethod

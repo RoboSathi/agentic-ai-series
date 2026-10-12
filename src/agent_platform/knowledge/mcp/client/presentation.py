@@ -29,9 +29,19 @@ def server_card(description: McpServerDescription) -> tuple[str, dict[str, list[
         server=info.name or spec.name,
         protocol=info.protocol_version,
         tools=len(description.tools),
+        duration_ms=info.duration_ms,
     )
     target = " ".join(spec.command) if spec.command else spec.url
     sections = {
+        words.handshake_title: [
+            words.handshake_line.format(
+                method=info.handshake,
+                protocol=info.protocol_version,
+                duration_ms=info.duration_ms,
+            ),
+            words.client_line.format(client=info.client),
+            words.capabilities_line.format(capabilities=", ".join(info.capabilities)),
+        ],
         words.server_title: [
             words.server_line.format(
                 name=" ".join(part for part in (info.name or spec.name, info.version) if part),

@@ -762,6 +762,11 @@ class StepEventWords(BaseModel):
     # What `{subject}` in the Gatekeeper heading reads as when the call is about something
     # ("order 10532"); empty when it is about nothing.
     gatekeeper_subject: str
+    # TOOL RESULT headings by how far the call got: `{tool}`, and `{stage}` for one not run.
+    tool_done: str
+    tool_failed: str
+    tool_refused: str
+    tool_not_run: str
     loop_control: LoopControlWords
 
 
@@ -821,6 +826,16 @@ class QueryRejectionWords(BaseModel):
     denied_function: str
     unknown_metric: str
     unknown_dimension: str
+    # `{error}`, `{columns}`, `{hint}` (`did_you_mean` with `{names}`, or nothing).
+    not_runnable: str
+    did_you_mean: str
+
+
+class QueryNoteWords(BaseModel):
+    """What a result says when it may not answer the question: empty, or cut (`{rows}`)."""
+
+    empty: str
+    truncated: str
 
 
 class AnalyticsQuerySettings(BaseModel):
@@ -836,6 +851,7 @@ class AnalyticsQuerySettings(BaseModel):
     # Functions no query may call, even over the curated views (lower case).
     denied_functions: list[str]
     rejections: QueryRejectionWords
+    notes: QueryNoteWords
     timed_out: str
 
 
@@ -1863,6 +1879,17 @@ class ReadingWords(BaseModel):
     leads: dict[str, str]
 
 
+class HallucinationCardWords(BaseModel):
+    """The HALLUCINATION CHECK card's shared wording (`hallucination_check/card.py`)."""
+
+    verdict_names: dict[str, str]
+    tally: str
+    plural: str
+    no_claims: str
+    lexical: str
+    lexical_note: str
+
+
 class HallucinationLevelWords(BaseModel):
     """How the hallucination check's levels are named (`hallucination_check/levels.py`)."""
 
@@ -1997,6 +2024,7 @@ class HallucinationCheckSettings(YamlBackedSettings):
     enforce_grounding: bool
     confidence: ConfidenceSettings
     levels: HallucinationLevelWords
+    card: HallucinationCardWords
     methods: HallucinationMethodWords
     facts: FactSettings
     # Whether a verifiable claim no evidence grounds is a hallucination (cut and queued),
@@ -2706,10 +2734,30 @@ class McpServerSettings(BaseModel):
     envelope: McpToolEnvelope | None = None
 
 
+class McpClientSettings(BaseModel):
+    """The client side of an MCP session (`mcp/client/sdk_session.py`)."""
+
+    name: str
+    version: str
+    mode: str
+    discover_from: str
+    discover_method: str
+    initialize_method: str
+    log_level: Literal[
+        "debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"
+    ]
+    card_log_levels: list[str]
+    failed_log_levels: list[str]
+
+
 class McpCardWords(BaseModel):
     """How an MCP server is drawn on a card (`mcp/presentation.py`)."""
 
     heading: str
+    handshake_title: str
+    handshake_line: str
+    client_line: str
+    capabilities_line: str
     server_title: str
     instructions_title: str
     tools_title: str
@@ -2725,6 +2773,13 @@ class McpCardWords(BaseModel):
     # the exchange may be named (server, method, tool, duration_ms, is_error).
     call_heading: str
     call_failed_heading: str
+    call_raised_heading: str
+    connect_failed_heading: str
+    tools_changed_heading: str
+    server_log_heading: str
+    session_failed_heading: str
+    error_title: str
+    message_title: str
 
 
 class McpSettings(YamlBackedSettings):
@@ -2740,6 +2795,7 @@ class McpSettings(YamlBackedSettings):
     python_placeholder: str
     # Characters of a tool's text result handed on; 0 keeps all of it.
     result_text_limit: int = Field(ge=0)
+    client: McpClientSettings
     card: McpCardWords
 
     model_config = SettingsConfigDict(env_prefix="MCP__")

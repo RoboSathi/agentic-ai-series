@@ -21,6 +21,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel, Field
 
 from agent_platform.config import get_settings
+from agent_platform.interface.presentation.text_tree import message_lines
 from agent_platform.llm.tokenizer import Tokenizer, shared_tokenizer
 from agent_platform.llm.types import Message, Role
 
@@ -72,6 +73,9 @@ class PromptSection(BaseModel):
     # Byte-identical from call to call within a session: part of the cacheable prefix.
     stable: bool = False
     parts: list["PromptSection"] = Field(default_factory=list)
+    # The section as a card shows it (a tool's JSON as a tree, calls as `key=value`); empty:
+    # `content` as written. Display only — `content` is what is counted and sent.
+    shown: list[str] = Field(default_factory=list)
 
 
 class PromptManifest(BaseModel):
@@ -266,9 +270,9 @@ class PromptBuilder:
             else self._settings.separator.join(render_message(item) for item in messages)
         )
         role = messages[0].role
-        self._conversation.append(
-            (self._section(name, role, rendered, source, False), list(messages))
-        )
+        section = self._section(name, role, rendered, source, False)
+        section.shown = [line for item in messages for line in shown_message(item)]
+        self._conversation.append((section, list(messages)))
         return self
 
     def tools(self, specs: Sequence[dict[str, Any]] | None) -> "PromptBuilder":
@@ -343,6 +347,12 @@ def render_message(message: Message) -> str:
     for call in message.tool_calls or []:
         lines.append(f"  → {call.name}({call.arguments})")
     return "\n".join(lines)
+
+
+def shown_message(message: Message) -> list[str]:
+    """A message as a card shows it: never JSON (`text_tree.message_lines`)."""
+    calls = [(call.name, call.arguments) for call in message.tool_calls or []]
+    return message_lines(str(message.role), message.content, calls)
 
 
 def tool_names(specs: Iterable[Any]) -> list[str]:

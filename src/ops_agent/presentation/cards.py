@@ -8,7 +8,15 @@ came back in those terms, never "0 rows" for something that has no rows.
 
 from typing import Any
 
-from ops_agent.config.settings import OpsAgentSettings
+from agent_platform.observability.step_card import Line, StepCard
+from agent_platform.observability.types import StatusKind
+from ops_agent.config.settings import OpsAgentSettings, get_agent_settings
+from ops_agent.domain import QueryRecord
+from ops_agent.guardrails.sql_review import SqlReview
+
+# The SQL review's card is the platform's REFLECT step card.
+REFLECT_STAGE = "reflect"
+_PASS, _WARN = "pass", "warn"
 
 _QUERY_KEYS = frozenset({"sql", "columns", "rows"})
 _METRICS, _VIEWS, _COLUMNS, _NAME = "metrics", "views", "columns", "name"
@@ -42,4 +50,41 @@ def result_card(
     return cards.result_done.format(tool=tool), {}
 
 
-__all__ = ["result_card"]
+def review_card(
+    review: SqlReview, queries: list[QueryRecord], question: str, used: int, again: bool
+) -> tuple[StatusKind, str, StepCard]:
+    """(status, heading, card) for one SQL review: asked, the model's part, the decision."""
+    settings = get_agent_settings().sql_review
+    words = settings.card
+    card = StepCard().asked(
+        words.asked.format(question=question),
+        *(
+            words.query_line.format(number=number, sql=" ".join(query.sql.split()))
+            for number, query in enumerate(queries, 1)
+        ),
+    )
+    card.model(review.call, response=False)
+    if review.failed:
+        decision = words.decision_failed.format(error=review.failed)
+        return "warning", words.failed_heading, card.decision(_toned(decision, _WARN))
+    card.reasoning(*([review.rationale] if review.rationale else []))
+    card.response(*review.issues, *([review.hint] if review.hint else []))
+    issues = words.issues_suffix.format(count=len(review.issues)) if review.issues else ""
+    heading = words.heading.format(verdict=review.verdict.upper(), issues=issues)
+    if not review.revise:
+        return "completed", heading, card.decision(_toned(words.decision_accept, _PASS))
+    limit = settings.max_reflections
+    decided = (
+        words.decision_revise.format(used=used, max=limit)
+        if again
+        else words.decision_capped.format(max=limit)
+    )
+    return "warning", heading, card.decision(_toned(decided, _WARN))
+
+
+def _toned(text: str, tone: str) -> Line:
+    """A card line in a tone (`tui.tone_styles`): the decision reads in its outcome's colour."""
+    return {"text": text, "tone": tone}
+
+
+__all__ = ["REFLECT_STAGE", "result_card", "review_card"]

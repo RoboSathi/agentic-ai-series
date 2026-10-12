@@ -25,12 +25,14 @@ from langchain_core.runnables import RunnableConfig
 from agent_platform.context.types import Chunk
 from agent_platform.gatekeeper.types import AuthorityContext
 from agent_platform.hallucination_check import PASSAGE, Observation
+from agent_platform.interface.presentation.text_tree import inline_arguments, readable_lines
 from agent_platform.llm.embeddings import tokenize
 from agent_platform.llm.prompt import PromptManifest, manifest_from_messages
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message, ModelToolCall
 from agent_platform.logging import describe_error, get_logger, instrument
 from agent_platform.loop_control import LoopVerdict
 from agent_platform.observability.llm_fields import llm_request_fields, llm_response_fields
+from agent_platform.observability.step_events import HALLUCINATION_CHECK
 from agent_platform.observability.tool_fields import display_tool_name, tool_request_fields
 from agent_platform.tools.path import DUPLICATE, INVALID, UNKNOWN, ToolPath, ToolTurn
 from agent_platform.tools.registry import NamespacedToolRegistry
@@ -63,7 +65,6 @@ THOUGHT, ACTION, OBSERVATION, REVISE, ANSWER = (
     "revise",
     "answer",
 )
-HALLUCINATION_CHECK = "hallucination_check"
 LOOP_STAGES = frozenset({THOUGHT, ACTION, OBSERVATION})
 # The loop's nodes, as LOOP CONTROL names where it goes next (words: `messages.loop_next`).
 ACT, GROUND, FINAL, REASON, FINALIZE = "act", "ground", "final", "reason", "finalize"
@@ -209,7 +210,9 @@ class AnswerNodes:
             turn, messages, tools, self._call_timeout(turn), manifest=manifest
         )
         calls = ", ".join(
-            self._notes.tool_call.format(tool=display_tool_name(c.name), arguments=c.arguments)
+            self._notes.tool_call.format(
+                tool=display_tool_name(c.name), arguments=inline_arguments(c.arguments)
+            )
             for c in result.tool_calls or []
         )
         heading = (self._notes.thought_tools if calls else self._notes.thought_answer).format(
@@ -385,7 +388,7 @@ class AnswerNodes:
         self._emit(
             turn,
             ACTION,
-            self._notes.tool_call.format(tool=name, arguments=call.arguments),
+            self._notes.tool_call.format(tool=name, arguments=inline_arguments(call.arguments)),
             tool_request_fields(call.name, call.arguments),
             event_kind="tool_request",
         )
@@ -447,7 +450,8 @@ class AnswerNodes:
 
     def _observe(self, turn: Turn, tool: str, text: str, result: ToolResult) -> None:
         limit = get_agent_settings().tui.clip_chars
-        lines = [clip(line, limit) for line in text.splitlines() if line.strip()]
+        # A tool's JSON answer reads as a tree, never as JSON.
+        lines = [clip(line, limit) for line in readable_lines(text) if line.strip()]
         provider = str(result.data.get(PROVIDER_KEY) or "")
         if not result.success:
             heading = self._notes.observation_failed.format(tool=tool, error=clip(text, limit))

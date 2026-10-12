@@ -28,6 +28,10 @@ class McpServerInfo(BaseModel):
     instructions: str = ""
     # The capabilities it declared (tools, resources, prompts, logging, ...).
     capabilities: list[str] = Field(default_factory=list)
+    # How the version was negotiated (`initialize` or `server/discover`), who asked, how long.
+    handshake: str = ""
+    client: str = ""
+    duration_ms: float = 0.0
 
 
 class McpCallResult(BaseModel):

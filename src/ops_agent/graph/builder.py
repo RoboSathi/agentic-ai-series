@@ -4,7 +4,9 @@ Each declared feature builds a stage; a withheld one is never built:
 
     prompt_injection     the message is screened before the model reads it
     gatekeeper           each MCP call is authorized against `ops_agent.policy`
-    hallucination_guard  every figure in the answer is checked against the query results
+    hallucination_guard  the SQL the model wrote is reviewed against the question (revise:
+                         back to the model, bounded); every figure in the answer is checked
+                         against the query results, and a sentence the model guessed is cut
     memory.procedural    the agent's skills are synced into procedural memory and selected per turn
 
 Everything else is always on: the MCP client (governed by the local envelope),
@@ -28,6 +30,7 @@ from agent_platform.knowledge.mcp import (
     SdkMcpTransport,
     server_spec,
 )
+from agent_platform.knowledge.mcp.client.events import McpEvents
 from agent_platform.llm.client import LLMClient, create_llm_client
 from agent_platform.loop_control import LoopBudget, build_loop_governor
 from agent_platform.memory.procedural.skills import build_agent_instructions
@@ -57,7 +60,7 @@ from ops_agent.graph.agent import OUTCOMES, OpsAgent
 from ops_agent.graph.graph import build_graph
 from ops_agent.graph.nodes import OpsNodes
 from ops_agent.graph.tool_calls import GovernedCalls
-from ops_agent.guardrails import FigureCheck
+from ops_agent.guardrails import FigureCheck, OpsGrounding, SqlReviewer
 
 
 def build_agent(
@@ -108,14 +111,16 @@ def build_agent(
     procedural = SkillStore() if posture.is_on("memory.procedural") else None
     screen = _screen(platform) if posture.is_on("prompt_injection") else None
     declare_screens(settings.agent.id, screen.declared_checks() if screen else [])
+    model = bounded(llm or _llm(reporter), posture)
+    guarded = posture.is_on("hallucination_guard")
     nodes = OpsNodes(
-        bounded(llm or _llm(reporter), posture),
+        model,
         registry,
         calls,
         agent,
         reporter=reporter,
-        figures=FigureCheck(agent) if posture.is_on("hallucination_guard") else None,
-        confidence=_confidence() if posture.is_on("hallucination_guard") else None,
+        grounding=_grounding(agent) if guarded else None,
+        reviewer=SqlReviewer(model, agent.sql_review) if guarded else None,
     )
     window, working = _context_window(posture, agent, screen=InstructionDataSeparator())
     if window is not None and window.fetch_tool is not None:
@@ -124,7 +129,7 @@ def build_agent(
         build_graph(nodes),
         nodes,
         registry,
-        _sources(transport or SdkMcpTransport()),
+        _sources(transport or SdkMcpTransport(), McpEvents(reporter)),
         agent,
         reporter=reporter,
         screen=screen,
@@ -162,17 +167,18 @@ def _llm(reporter: StageReporter | None) -> LLMClient:
     return create_llm_client(observer=StageReporterModelObserver(lambda: reporter))
 
 
-def _confidence() -> ConfidenceCheck | None:
-    """Token confidence, step 1 of the hallucination check — unless withheld in config."""
-    check = ConfidenceCheck()
-    return check if check.enabled else None
+def _grounding(agent: OpsAgentSettings) -> OpsGrounding:
+    """The figures check, behind token confidence (level 1) unless that is withheld in config."""
+    return OpsGrounding(FigureCheck(agent), agent, confidence=ConfidenceCheck())
 
 
-def _sources(transport: McpTransport) -> list[McpToolSource]:
-    """One governed tool source per configured MCP server."""
+def _sources(transport: McpTransport, events: McpEvents) -> list[McpToolSource]:
+    """One governed tool source per configured MCP server, its protocol events on the feed."""
     servers = get_settings().mcp.servers
     policy = ConfiguredGovernancePolicy(servers)
-    return [GovernedMcpToolSource(server_spec(server), transport, policy) for server in servers]
+    return [
+        GovernedMcpToolSource(server_spec(server), transport, policy, events) for server in servers
+    ]
 
 
 def _gatekeeper(

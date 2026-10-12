@@ -75,12 +75,16 @@ class McpSession(Protocol):
 
     async def close(self) -> None: ...
 
+    def tools_changed(self) -> bool:
+        """Whether the server said its tool list changed since it was last listed."""
+        ...
+
 
 @runtime_checkable
 class McpTransport(Protocol):
-    """Opens a session to a server over one wire protocol."""
+    """Opens a session to a server over one wire protocol, reporting to `events`."""
 
-    async def connect(self, server: McpServerSpec) -> McpSession: ...
+    async def connect(self, server: McpServerSpec, events: Any = None) -> McpSession: ...
 
 
 @runtime_checkable
@@ -96,6 +100,10 @@ class McpToolSource(Protocol):
 
     def describe(self) -> McpServerDescription | None:
         """The connected server and the tools it offered (None before it connected)."""
+        ...
+
+    def stale(self) -> bool:
+        """Whether the server changed its tools since they were listed (re-list them)."""
         ...
 
 

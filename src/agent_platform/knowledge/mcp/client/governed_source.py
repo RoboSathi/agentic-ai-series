@@ -22,6 +22,7 @@ from agent_platform.knowledge.mcp.client.contracts import (
     McpTransport,
     ToolGovernancePolicy,
 )
+from agent_platform.knowledge.mcp.client.events import LoggedMcpEvents, McpEventSink
 from agent_platform.knowledge.mcp.client.presentation import call_exchange
 from agent_platform.knowledge.mcp.client.schema import arguments_model
 from agent_platform.knowledge.mcp.common.types import McpToolInfo
@@ -46,11 +47,17 @@ class GovernedMcpToolSource:
     """One server's tools, connected on first use and governed locally."""
 
     def __init__(
-        self, server: McpServerSpec, transport: McpTransport, policy: ToolGovernancePolicy
+        self,
+        server: McpServerSpec,
+        transport: McpTransport,
+        policy: ToolGovernancePolicy,
+        events: McpEventSink | None = None,
     ) -> None:
         self._server = server
         self._transport = transport
         self._policy = policy
+        # Every protocol event goes here: the log always, the live feed when an agent binds one.
+        self._events = events or LoggedMcpEvents()
         self._session: McpSession | None = None
         self._listed: list[McpToolInfo] = []
         self._logger = get_logger("mcp")
@@ -67,7 +74,14 @@ class GovernedMcpToolSource:
                 offered_as=definition.model_name,
                 envelope=self._policy.envelope_for(self._server, self._tool(definition.name)),
             )
+        description = self.describe()
+        if description is not None:
+            self._events.tools_listed(description)
         return definitions
+
+    def stale(self) -> bool:
+        """Whether the server changed its tools since they were listed."""
+        return self._session is not None and self._session.tools_changed()
 
     def describe(self) -> McpServerDescription | None:
         """The connected server and the tools it offered (None before it connected)."""
@@ -100,7 +114,11 @@ class GovernedMcpToolSource:
 
     async def _open(self) -> McpSession:
         if self._session is None:
-            self._session = await self._transport.connect(self._server)
+            try:
+                self._session = await self._transport.connect(self._server, self._events)
+            except Exception as exc:
+                self._events.connect_failed(self._server.name, str(exc) or repr(exc))
+                raise
         return self._session
 
     def _definition(self, tool: McpToolInfo) -> ToolDefinition:

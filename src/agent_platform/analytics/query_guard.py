@@ -43,6 +43,12 @@ class QueryGuard:
         bounded = f"SELECT * FROM ({statement.sql(dialect=self._settings.dialect)}) AS q"
         return f"{bounded} LIMIT {self._settings.max_rows + 1}"
 
+    def views_in(self, sql: str) -> list[str]:
+        """The curated views a query (one that passed `check`) reads, in order of mention."""
+        statement = self._single_statement(sql)
+        names = (table.name.lower() for table in statement.find_all(exp.Table))
+        return list(dict.fromkeys(name for name in names if name in self._views))
+
     def _single_statement(self, sql: str) -> exp.Query:
         words = self._settings.rejections
         try:

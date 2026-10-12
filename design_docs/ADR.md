@@ -565,6 +565,47 @@ injects a fake client.
 **Consequences.** The suite runs offline and deterministic. A test that only passes with live
 embeddings is pinning a ranking; assert the contract instead.
 
+### P-30 — One HALLUCINATION CHECK card format; each agent keeps its own check
+
+**Decision.** `hallucination_check/card.py` owns the card's *format* only: `GroundingCard`
+(result, tally, levels level 1 first, the token confidences, rule, `ClaimCheck` rows, removed
+and corrected sentences, agent extras), `claim_tally`, `outcome_line`, `grounding_status` (what
+was sent → completed / warning / blocked), `log_grounding` and `record_grounding_check`. No
+check logic moved: the support agent's `ResponseGuardrail` decides exactly as before and now
+calls the extracted tally, outcome and recording helpers (identical output). A contract test
+validates its result as a `GroundingCard`, so the formats cannot drift. The TUI draws level 1
+as the coloured confidence block and every later level as its row, for every agent.
+
+**Consequences.** The support agent's card gains its "level 2" row; nothing it decides changes.
+The stage key is defined once (`step_events.HALLUCINATION_CHECK`).
+
+### P-31 — Every MCP protocol event is reported; the important ones are cards
+
+**Decision.** `knowledge/mcp/client/events.py`: a session reports to an `McpEventSink` —
+opening, handshake (`initialize` or `server/discover`, client info, capabilities, duration),
+tools listed, a call that got no answer, every server notification (log messages at the
+client's opted-in level, `tools/list_changed`, progress), clean close, session error.
+`LoggedMcpEvents` writes each in full to `mcp.log`; `McpEvents` also draws MCP SERVER (the
+handshake, or the connection failing), MCP CALL failed (no answer), MCP NOTIFICATION (tool list
+changed; a server log at warning or above, `mcp.client.card_log_levels`) and MCP SESSION
+(ended on an error). A changed tool list marks the source stale and it is re-listed next turn.
+The analytics server logs each request and refusal, and tells the client a refusal (warning)
+and a result to double-check (info) over `notifications/message`. An agent binds the sink in
+its composition root; it draws no MCP card of its own.
+
+### P-32 — No JSON on a card
+
+**Decision.** Tool arguments read as `key=value` (`text_tree.inline_arguments`), a tool's JSON
+answer as a tree (`readable_lines`, `message_lines`), in the LLM REQUEST transcript, the CONTEXT
+card (display lines in `PromptSection.shown`; `content` stays what is counted and sent) and
+narrative cards. The same helpers serve every agent.
+
+### P-33 — A tool call's TOOL RESULT is named by how far it got
+
+**Decision.** `StepEvents.tool_outcome`: refused by the Gatekeeper (blocked), not run and the
+stage that stopped it (warning), failed, or done — with an agent's own preview replacing the
+raw output on success. Wording under `observability.step_events`.
+
 ---
 
 ## 9. Research agent
@@ -844,6 +885,33 @@ It declares `prompt_injection`, `gatekeeper`, `hallucination_guard` and procedur
 `always` skill, `analytics-investigation`); it keeps no episodic memory.
 
 **Supersedes.** ADR 0008 (ops agent).
+
+### O-02 — The ops check is the support agent's, figures in place of NLI
+
+**Decision.** `OpsGrounding`: level 1 token confidence, level 2 every figure looked for in the
+query rows (`FigureCheck`, by sentence and row), then the platform's confidence `gate` exactly as
+the support agent applies it — a degenerate sentence, or one holding a figure written below
+`slot_min_prob` that no row holds, is cut (TRIMMED; nothing left: the configured withheld
+reply, BLOCKED). A figure a row holds is confirmed whatever its probability. A confidently
+written figure no row holds is kept and named as unverified in the reply (FLAGGED, a warning).
+The card is P-30's, each figure's step quoting the query and row that hold it.
+
+**Supersedes.** O-01's "level 1 is shown, not used".
+
+### O-03 — The SQL is reviewed against the question before the answer is grounded
+
+**Decision.** Deterministic first: DuckDB binder, catalog, parser and conversion errors come back
+as a guided rejection naming the view's real columns and the closest match; a result with no
+rows or cut rows carries a note to check. Then a Reflection critic (`SqlReviewer`): once the
+model answers, one model call reads the question, the model-written SQL (`run_query` only — a
+catalogue metric runs the catalogue's formula), a few rows and the draft, and says accept or
+revise. Revise sends the finding back to the model, at most `sql_review.max_reflections` times a
+turn; the governor's budgets count the call. A critic that fails or answers out of form
+accepts, and its REFLECT step card says the answer went on unreviewed. Built with
+`hallucination_guard`; no new feature.
+
+**Why both.** The figures check proves a number came from a query, not that the query answered
+the question; only reading the SQL against the question catches the wrong filter or aggregate.
 
 ---
 

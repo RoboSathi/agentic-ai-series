@@ -123,6 +123,50 @@ ops_agent:
   free_numbers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 100]
   # A skill's prefetch read is shown to the model as a call with this id (ADR 0010).
   prefetch_call_id: "prefetch-{tool}"
+  # Reflection on the SQL (with `hallucination_guard`): once the model answers, a second call
+  # reads the SQL it wrote against the question; "revise" sends it back to fix the query, at
+  # most `max_reflections` times a turn. The figures check then grounds what it answers.
+  sql_review:
+    # Only SQL the model wrote: compute_metric runs the catalogue's own formula.
+    reviewed_tools: [analytics.run_query]
+    max_reflections: 1
+    sample_rows: 5
+    temperature: 0.0
+    max_tokens: 600
+    timeout_seconds: 45
+    # How the step card names the call, and the purpose its log line carries.
+    role: sql_reviewer
+    purpose: sql_review
+    accept: accept
+    revise: revise
+    instructions: >-
+      You review the SQL an analyst agent wrote to answer a question about AI agents'
+      runtime analytics (DuckDB, read-only curated views). Judge only whether the queries
+      can answer the question as it was asked: the right view and columns; filters that
+      match the question (agent, period, outcome, channel); the right aggregation (count
+      or distinct count, mean or percentile, a rate's numerator and denominator);
+      grouping; joins that do not multiply rows; units. An empty or truncated result is
+      suspicious when the question expects data. Do not judge style or performance.
+      Reply with JSON only, no prose and no code fence:
+      {"verdict": "accept" or "revise", "rationale": "one sentence on why",
+      "issues": ["each problem, short"], "hint": "one sentence on what to change"}.
+      Say accept unless an issue would make the answer wrong.
+    request: "Question: {question}\n\nDraft answer: {draft}\n\nQueries run:\n{queries}"
+    query_block: "Query {number} ({rows} rows{truncated}):\n{sql}\nColumns: {columns}\nFirst rows: {sample}"
+    truncated_mark: ", truncated"
+    # The reviewer's finding, as the model reads it on the way back to `propose`.
+    revise_message: "A reviewer checked the SQL behind your answer against the question and found: {issues}. {hint} Fix the query (describe_view first if a column is in doubt), run it, and answer again."
+    card:
+      heading: "SQL review · {verdict}{issues}"
+      issues_suffix: " — {count} issue(s)"
+      failed_heading: "SQL review · could not judge · answer kept"
+      asked: "Do these queries answer: {question}"
+      query_line: "Query {number}: {sql}"
+      decision_revise: "REVISE · back to the model to fix the query (review {used} of {max})"
+      decision_capped: "REVISE wanted, but the reviews are spent ({max}): the answer goes on"
+      decision_accept: "ACCEPT · the answer goes to the hallucination check"
+      decision_failed: "ACCEPT · the review failed ({error}), so the answer goes on unreviewed"
+      unparsed: "the reviewer did not answer in the agreed form"
   words:
     stopped: "I stopped after {steps} steps without an answer. Try a narrower question."
     # The model could not be reached (after its own retries and backups), or ran past the deadline.
@@ -135,11 +179,12 @@ ops_agent:
     rows_heading: "Result ({shown} of {total} rows{more})"
     more_rows: ", more not shown"
     ungrounded: "Note: these figures are not in any query result, so treat them as unverified: {numbers}"
+    # Every sentence of the answer was cut by the hallucination check.
+    withheld: "I could not back the figures in that answer with any query result, so I have not sent it. Please ask again, or narrow the question."
     sources_heading: "Queries run: {count}"
-  # The loop's own cards (LLM, tool, Gatekeeper, MCP CALL, LOOP CONTROL, HALLUCINATION CHECK)
-  # are the platform's (`observability/step_events.py`); only the server card is this agent's.
-  stages:
-    server: mcp_server
+  # Every card is the platform's: the loop's (LLM, tool, Gatekeeper, MCP CALL, LOOP CONTROL,
+  # HALLUCINATION CHECK — `observability/step_events.py`) and the protocol's (MCP SERVER,
+  # NOTIFICATION, SESSION — `knowledge/mcp/client/events.py`).
   # Only what the platform's labels do not already name (agent_platform/interface/tui/labels.py).
   stage_labels: {}
   cards:
@@ -148,16 +193,16 @@ ops_agent:
     result_views: "{tool} → {count} views"
     result_columns: "{tool} → {count} columns of {view}"
     result_done: "{tool} → done"
-    not_run: "{tool} not run · {stage}"
-    failed: "{tool} failed"
-    refused: "{tool} refused by the Gatekeeper"
-    grounded: "PASSED · every figure appears in a query result"
-    ungrounded: "FLAGGED · {count} figure(s) found in no query result, shown as unverified"
-    # Level 2 of the hallucination check, for this agent: figures against query results.
+    # The HALLUCINATION CHECK card is the platform's (`hallucination_check/card.py`); these are
+    # only the words for this agent's level 2 (figures against query rows).
+    # Kept, confidently written, but in no row: sent and named in the reply.
+    unverified: "FLAGGED · {count} figure(s) found in no query result, shown as unverified"
+    rule: "each figure looked for in the query rows · a figure written at low confidence that no row holds is cut"
     figure_level: figures in query results
     figure_tally: "{supported} of {figures} figure(s) found in a query result"
     no_figures: no figures to check
-    figure_found: "query {query}'s result"
-    # Level 1 can change no ops verdict (a figure is found or it is not): it is shown, not used.
-    confidence_signal: "shown as a signal: a figure is found in a query result or it is not, so token confidence changes no verdict here"
+    # A figure's step: what read it, and where it was found.
+    query_check: query results
+    query_where: "Query {query} · row {row}"
+    not_found: in no query result
     queries_searched: "{count} query result(s)"
