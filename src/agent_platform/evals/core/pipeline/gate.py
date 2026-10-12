@@ -28,18 +28,23 @@ class GateResult(BaseModel):
     reasons: list[str] = Field(default_factory=list)
 
 
-def evaluate_gate(store: DuckDbEvalStore, run_id: str) -> GateResult:
-    """Apply the gate to the latest scores of every stage that ran."""
+def evaluate_gate(store: DuckDbEvalStore, run_id: str, stage: str | None = None) -> GateResult:
+    """Apply the gate to the latest scores of one stage (`stage`), or of every stage that ran.
+
+    The oracle and DeepEval grade the same golden run; each section's verdict is its own, so a
+    broken invariant is the oracle's FAIL, never DeepEval's.
+    """
     threshold = get_settings().evals.gate.soft_pass_rate
+    where, params = _scope(run_id, stage)
     hard = store.query(
         "SELECT count(*) AS scores, count(DISTINCT CASE WHEN NOT passed THEN case_id END) "
-        "AS failed FROM v_scores WHERE run_id = ? AND severity = 'hard'",
-        (run_id,),
+        f"AS failed FROM v_scores WHERE {where} AND severity = 'hard'",
+        params,
     )[0]
     soft = store.query(
         "SELECT avg(CASE WHEN passed THEN 1.0 ELSE 0.0 END) AS rate FROM v_scores "
-        "WHERE run_id = ? AND severity = 'soft'",
-        (run_id,),
+        f"WHERE {where} AND severity = 'soft'",
+        params,
     )[0]
     rate = soft["rate"]
     reasons: list[str] = []
@@ -57,3 +62,9 @@ def evaluate_gate(store: DuckDbEvalStore, run_id: str) -> GateResult:
         soft_threshold=threshold,
         reasons=reasons,
     )
+
+
+def _scope(run_id: str, stage: str | None) -> tuple[str, tuple[str, ...]]:
+    if stage is None:
+        return "run_id = ?", (run_id,)
+    return "run_id = ? AND stage = ?", (run_id, stage)

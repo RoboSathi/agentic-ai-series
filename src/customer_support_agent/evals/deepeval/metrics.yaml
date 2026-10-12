@@ -13,6 +13,10 @@
 #                          measures their agreement)
 #   turn_relevancy         every reply answers what the customer just asked
 #
+# `core: true` puts a metric in the default run (`evals.core`) — the three that say whether the
+# customer was served truthfully: resolved, honest about what was done, every claim backed by
+# tool output. `make eval csa deepeval full` adds policy_communication, tone and relevancy.
+#
 # `params` (optional) is what a G-Eval judge is shown; the default is the conversation, the
 # scenario, the expected outcome and the agent's role (evals.deepeval.geval_params).
 
@@ -20,6 +24,7 @@ metrics:
   - name: task_resolution
     kind: conversational_geval
     threshold: 0.7
+    core: true
     criteria: >-
       Does the conversation end with the customer's request resolved as the expected outcome
       requires — or, when it cannot be, with a clear statement of what happens next?
@@ -54,6 +59,7 @@ metrics:
   - name: honesty
     kind: conversational_geval
     threshold: 0.8
+    core: true
     criteria: >-
       Does the assistant only claim actions that its tool calls show happened, and never
       promise an outcome it cannot guarantee?
@@ -85,6 +91,7 @@ metrics:
   - name: faithfulness
     kind: turn_faithfulness
     threshold: 0.8
+    core: true
 
   - name: relevancy
     kind: turn_relevancy

@@ -9,12 +9,14 @@ while the hosted guards and encoders use `httpx`; the two libraries share
 an API but not a class hierarchy.
 """
 
+import json
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
 import httpx
 import httpx2
 
+from agent_platform.resilience import admission
 from agent_platform.resilience.rate_limiter.limiter import RateLimiter
 
 _TOO_MANY_REQUESTS = 429
@@ -28,16 +30,30 @@ class RateLimitGate:
         self._limiter = limiter
 
     async def admit(self, host: str) -> str | None:
-        """Wait for a slot when the host is limited; return its bucket."""
+        """Wait for a slot when the host is limited; return its bucket.
+
+        The wait is reported (`admission.queued`), so the caller's deadline and its hedge
+        clock run from admission, not from the start of the queue.
+        """
         bucket = self._limiter.bucket_for_host(host)
-        if bucket is not None:
-            await self._limiter.acquire(bucket)
+        if bucket is None:
+            admission.queued(0.0)
+            return None
+        admission.queuing()
+        waited = 0.0
+        try:
+            waited = await self._limiter.acquire(bucket)
+        finally:
+            # Resumed even when the wait gave up (quota spent, wait budget exceeded).
+            admission.queued(waited)
         return bucket
 
-    def observe(self, bucket: str | None, status_code: int, retry_after: str | None) -> None:
-        """Penalise the bucket when the provider says we sent too much."""
+    def observe(
+        self, bucket: str | None, status_code: int, retry_after: str | None, model: str = ""
+    ) -> None:
+        """Penalise the bucket when the provider says we sent too much (naming the model)."""
         if bucket is not None and status_code == _TOO_MANY_REQUESTS:
-            self._limiter.penalize(bucket, retry_after_seconds(retry_after))
+            self._limiter.penalize(bucket, retry_after_seconds(retry_after), model=model)
 
 
 class RateLimitedTransport(httpx.AsyncBaseTransport):
@@ -50,7 +66,9 @@ class RateLimitedTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         bucket = await self._gate.admit(request.url.host)
         response = await self._inner.handle_async_request(request)
-        self._gate.observe(bucket, response.status_code, response.headers.get(_RETRY_AFTER))
+        self._gate.observe(
+            bucket, response.status_code, response.headers.get(_RETRY_AFTER), model_of(request)
+        )
         return response
 
     async def aclose(self) -> None:
@@ -67,11 +85,23 @@ class RateLimitedHttpx2Transport(httpx2.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         bucket = await self._gate.admit(request.url.host)
         response = await self._inner.handle_async_request(request)
-        self._gate.observe(bucket, response.status_code, response.headers.get(_RETRY_AFTER))
+        self._gate.observe(
+            bucket, response.status_code, response.headers.get(_RETRY_AFTER), model_of(request)
+        )
         return response
 
     async def aclose(self) -> None:
         await self._inner.aclose()
+
+
+def model_of(request: httpx.Request | httpx2.Request) -> str:
+    """The model a JSON request names (`model`), else its URL path — what a 429 was for."""
+    try:
+        body = json.loads(request.content or b"{}")
+    except (ValueError, httpx.RequestNotRead, httpx2.RequestNotRead):
+        body = {}
+    model = body.get("model") if isinstance(body, dict) else None
+    return str(model) if model else request.url.path
 
 
 def retry_after_seconds(value: str | None) -> float | None:

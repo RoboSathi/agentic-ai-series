@@ -28,18 +28,26 @@ from agent_platform.evals.core.contracts import (
 from agent_platform.evals.core.fingerprint import AgentFingerprint, compute_fingerprint
 from agent_platform.evals.core.pipeline.budget import BudgetSnapshot
 from agent_platform.evals.core.pipeline.runs import COMPLETED, ERRORED, close_stage, open_run
+from agent_platform.evals.core.progress import EvalProgress, NoProgress
 from agent_platform.evals.core.store import DuckDbEvalStore, RunRecord, StageRecord
 from agent_platform.logging import get_logger
+
+# The progress section generation reports under (named in `evals.reporting.overview.sections`).
+SECTION = "agent"
 
 
 class GenerationStage:
     """Runs the agent under test over a suite, reusing whatever it can."""
 
-    def __init__(self, plugin: EvalPlugin, store: DuckDbEvalStore) -> None:
+    def __init__(
+        self, plugin: EvalPlugin, store: DuckDbEvalStore, progress: EvalProgress | None = None
+    ) -> None:
         self._plugin = plugin
         self._store = store
+        self._progress = progress or NoProgress()
         self._concurrency = get_settings().evals.generation.max_concurrency
         self._logger = get_logger("evals")
+        self._finished = 0
 
     async def run(self, suite: str, cases: list[GoldenCase]) -> RunRecord:
         """Generate (or reuse) a transcript for every case; return the run.
@@ -60,7 +68,11 @@ class GenerationStage:
             if not item.transcript.error
         }
         pending = [case for case in cases if case.case_id not in done]
+        self._progress.start(SECTION, len(cases))
+        self._finished = len(done)
+        self._progress.advance(SECTION, self._finished)
         reused = await self._generate(run, pending, fingerprint.value)
+        self._progress.finish(SECTION)
         errored = sum(1 for item in self._store.transcripts(run.run_id) if item.transcript.error)
         detail = f"{errored} errored" if errored else ""
         close_stage(
@@ -90,6 +102,7 @@ class GenerationStage:
                 continue
             self._store.save_transcript(run, case, cached.transcript, reused_from=cached.run_id)
             reused += 1
+            self._one_done()
         agent = self._plugin.agent_under_test()
         gate = asyncio.Semaphore(self._concurrency)
 
@@ -97,12 +110,17 @@ class GenerationStage:
             async with gate:
                 transcript = await self._attempt(agent, case)
             self._store.save_transcript(run, case, transcript)
+            self._one_done()
             self._logger.info(
                 "Case generated", case_id=case.case_id, error=transcript.error or None
             )
 
         await asyncio.gather(*(one(case) for case in fresh_cases))
         return reused
+
+    def _one_done(self) -> None:
+        self._finished += 1
+        self._progress.advance(SECTION, self._finished)
 
     async def _attempt(self, agent: AgentUnderTest, case: GoldenCase) -> Transcript:
         """One case; an exception becomes an errored transcript, not a crashed run."""

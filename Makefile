@@ -35,15 +35,26 @@ ops_OFFLINE_PROFILE :=
 ops_EVALS :=
 
 # Targets whose second goal names the agent they act on.
-AGENT_SCOPED := agent data runs queue audit pii-reveal dream show-memory clean-memory memory-reindex model-check llm-check models eval intent-eval
+AGENT_SCOPED := agent data runs queue audit pii-reveal dream show-memory clean-memory memory-reindex models eval intent-eval
+
+# `make eval <agent> [section] [full]`: one section (default: all three), over the agent's
+# core cases, attacks and metrics unless `full` is typed.
+EVAL_SECTIONS := oracle deepeval promptfoo
+EVAL_TIERS := full
 
 ifneq ($(filter $(firstword $(MAKECMDGOALS)),$(AGENT_SCOPED)),)
-AGENT_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
-AGENT := $(filter $(AGENTS),$(AGENT_ARGS))
-# The agent name is a goal only so it can be typed; it is not a target.
-ifneq ($(AGENT_ARGS),)
-$(eval $(AGENT_ARGS):;@:)
+GOAL_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+# The agent name (and an eval's section and tier) are goals only so they can be typed;
+# they are not targets.
+ifneq ($(GOAL_ARGS),)
+$(eval $(GOAL_ARGS):;@:)
 endif
+ifeq (eval,$(firstword $(MAKECMDGOALS)))
+EVAL_SECTION := $(filter $(EVAL_SECTIONS),$(GOAL_ARGS))
+EVAL_FULL := $(filter $(EVAL_TIERS),$(GOAL_ARGS))
+endif
+AGENT_ARGS := $(filter-out $(EVAL_SECTION) $(EVAL_FULL),$(GOAL_ARGS))
+AGENT := $(filter $(AGENTS),$(AGENT_ARGS))
 # Only a named, known, single agent chooses the config layer. Whichever
 # agent is named sets it, so the overlay cannot silently default to one.
 ifeq ($(words $(AGENT_ARGS)) $(words $(AGENT)),1 1)
@@ -90,8 +101,6 @@ endif
 ifdef RPM
 export RESILIENCE__RATE_LIMIT__BUCKETS__NVIDIA__MAX_REQUESTS := $(RPM)
 endif
-# `make eval <agent> STAGE=deepeval|promptfoo` runs one suite; no STAGE runs golden + red team.
-EVAL_STAGES := deepeval promptfoo
 
 # Bright, bold colours: the dark 0;3x set is hard to read on a dark terminal.
 GREEN := \033[1;92m
@@ -123,7 +132,8 @@ help:
 	@echo "  make audit <agent> [DECISION=…|STANDING=…|KIND=…|SINCE=24h|N=…|TRACE=<id>]   The audit trail, coloured"
 	@echo "  make queue <agent> [KIND=…|ID=…] [ACTION=approve|deny ID=… COMMENT=…]   Human review queue (same as /queue)"
 	@echo "  make pii-reveal <agent> T=<token> WHY=<reason>   What a PII token stood for (audited; needs PII_VAULT_KEY)"
-	@echo "  make model-check [agent]  Probe every hosted model and run every local model, per agent (BENCH=1 times them; alias: llm-check)"
+	@echo "  make model-check          Every model the system uses (NVIDIA + local), each probed once and listed with what"
+	@echo "                            it is used for, across the platform and every agent (BENCH=1 times chat models; alias: llm-check)"
 	@echo "  make models [agent]       Download (if missing) and run each agent's local models (run by make install)"
 	@echo ""
 	@echo "$(GREEN)Analytics$(NC) (no agent name):"
@@ -148,28 +158,29 @@ help:
 	@echo "  make memory-reindex <agent>  Rebuild the derived search index from the memory files"
 	@echo ""
 	@echo "$(GREEN)Evals$(NC) (agents with a suite: $(strip $(foreach a,$(AGENTS),$(if $($(a)_EVALS),$(a)))))"
-	@echo "  make eval <agent>                  Full run: golden set (oracle + DeepEval), then red team (Promptfoo)"
-	@echo "  make eval <agent> STAGE=deepeval   Golden set only: hard DB invariants + LLM-judged quality"
-	@echo "  make eval <agent> STAGE=promptfoo  Red team only: curated attacks, every one must be defended"
-	@echo "  make intent-eval <agent>           Intent classifier bake-off only (offline, no model calls)"
-	@echo "  Prints a colour-coded overview per suite and the time each section took; full reports →"
-	@echo "  src/<pkg>/evals/reports/<stage>-<run_id>.md. Every section always runs; a failed gate is"
-	@echo "  a result, not an error. Unchanged agent code reuses transcripts; RPM=<n> sets the budget."
+	@echo "  make eval <agent>             Oracle, DeepEval, then Promptfoo over the core set (~12 min for csa)"
+	@echo "  make eval <agent> oracle      Golden cases → business invariants in the DB (no judge calls)"
+	@echo "  make eval <agent> deepeval    Golden cases → LLM-judged conversation quality"
+	@echo "  make eval <agent> promptfoo   Red-team attacks; every one must be defended"
+	@echo "  … full                        Add to any of the above: every case, attack and metric"
+	@echo "  make intent-eval <agent>      Intent classifier bake-off (offline, no model calls)"
+	@echo "  Each section prints its table and writes src/<pkg>/evals/reports/<section>-<run_id>.md,"
+	@echo "  every case with its result and why. Unchanged agent code reuses transcripts; RPM=<n> sets the budget."
 
 # Fails the run unless exactly one known agent was named after the target.
 _agent:
 	@if [ "$(words $(AGENT_ARGS))" = "0" ]; then \
 	  echo "$(YELLOW)Usage: make $(firstword $(MAKECMDGOALS)) <agent>   (agents: $(AGENTS))$(NC)"; exit 2; fi
 	@if [ "$(words $(AGENT_ARGS))" != "1" ]; then \
-	  echo "$(YELLOW)Name exactly one agent, got: $(AGENT_ARGS)   (agents: $(AGENTS))$(NC)"; exit 2; fi
+	  echo "$(YELLOW)Name exactly one agent, got: $(AGENT_ARGS)   (agents: $(AGENTS)$(if $(filter eval,$(firstword $(MAKECMDGOALS))),; sections: $(EVAL_SECTIONS) [full]))$(NC)"; exit 2; fi
 	@if [ -z "$(AGENT)" ]; then \
 	  echo "$(YELLOW)Unknown agent '$(AGENT_ARGS)'   (agents: $(AGENTS))$(NC)"; exit 2; fi
 	@if [ -n "$(PROFILE)" ] && [ ! -f "src/$($(AGENT)_PKG)/config/profiles/$(PROFILE).yaml" ]; then \
 	  echo "$(YELLOW)No profile '$(PROFILE)' for $(AGENT) (src/$($(AGENT)_PKG)/config/profiles/)$(NC)"; exit 2; fi
 	@if [ -n "$(filter eval intent-eval,$(firstword $(MAKECMDGOALS)))" ] && [ -z "$($(AGENT)_EVALS)" ]; then \
 	  echo "$(YELLOW)'$(AGENT)' has no eval suite   (make help → Evals)$(NC)"; exit 2; fi
-	@if [ "$(firstword $(MAKECMDGOALS))" = "eval" ] && [ -n "$(STAGE)" ] && [ -z "$(filter $(STAGE),$(EVAL_STAGES))" ]; then \
-	  echo "$(YELLOW)Unknown STAGE '$(STAGE)'   (STAGE=$(subst $(space),|,$(EVAL_STAGES)), or none for the full run)$(NC)"; exit 2; fi
+	@if [ "$(words $(EVAL_SECTION))" -gt 1 ]; then \
+	  echo "$(YELLOW)Name at most one section, got: $(EVAL_SECTION)   (make eval <agent> [$(subst $(space),|,$(EVAL_SECTIONS))] [full])$(NC)"; exit 2; fi
 
 install:
 	python3 -m venv venv
@@ -201,7 +212,7 @@ agent: _agent
 	$(PYTHON) -m agent_platform.tui
 
 # Every agent's models, one agent at a time (its overlay names its roles and local models):
-# `make model-check`, or `make model-check ra`. BENCH=1 also times each chat model.
+# `make models` downloads and runs every agent's local models, or one agent's: `make models ra`.
 MODEL_CHECK_AGENTS = $(or $(AGENT),$(AGENTS))
 
 # Download (if missing), load and run every local model each agent uses — a fresh checkout's
@@ -210,9 +221,9 @@ models:
 	@$(foreach a,$(MODEL_CHECK_AGENTS),echo "$(BLUE)── $($(a)_NAME) ($(a)) ──$(NC)" && \
 		AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(PYTHON) -m agent_platform.llm.local_probes && ) true
 
+# Every model the whole system uses: the platform's config, then each agent's layer over it.
 llm-check model-check:
-	@$(foreach a,$(MODEL_CHECK_AGENTS),echo "$(BLUE)── $($(a)_NAME) ($(a)) ──$(NC)" && \
-		AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(PYTHON) -m agent_platform.llm.cli $(if $(BENCH),--bench) && ) true
+	$(PYTHON) -m agent_platform.llm.cli $(foreach a,$(AGENTS),--layer $(a)=$($(a)_OVERLAY)) $(if $(BENCH),--bench)
 
 # Kept so `make data csa` still works; generated data is `make dummy-data <kind>`.
 data: _agent
@@ -273,13 +284,14 @@ refund-limit:
 	$(CSA_ENV) $(PYTHON) -m customer_support_agent.admin.refund_limit $(REFUND_LIMIT)
 
 # -- evals -----------------------------------------------------------------------
-# Each suite prints a colour-coded overview and writes src/<pkg>/evals/reports/<stage>-<run_id>.md.
+# Each section prints a colour-coded overview and writes src/<pkg>/evals/reports/<section>-<run_id>.md.
 
 eval: _agent
-	$(EVALS) run $(if $(STAGE),--stage $(STAGE))
+	$(EVALS) run $(if $(EVAL_SECTION),--section $(EVAL_SECTION)) $(if $(EVAL_FULL),--full) \
+	  --invocation "make eval $(strip $(AGENT) $(EVAL_SECTION) $(EVAL_FULL))"
 
 intent-eval: _agent
-	$(EVALS) run --stage intent
+	$(EVALS) run --section intent --invocation "make intent-eval $(AGENT)"
 
 # -- analytics -------------------------------------------------------------------
 # The active source's Parquet (curated views) is refreshed by a running console every

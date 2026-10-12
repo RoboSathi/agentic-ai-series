@@ -136,6 +136,8 @@ class QualityMetricSpec(BaseModel):
     # What a G-Eval judge is shown (DeepEval `MultiTurnParams` values); empty means
     # `evals.deepeval.geval_params`.
     params: list[str] = Field(default_factory=list)
+    # Run by default; the rest run only in a full run (`evals.core`).
+    core: bool = False
 
 
 class ConversationFrame(BaseModel):
@@ -167,6 +169,21 @@ class Grader(Protocol):
     version: str
 
     async def grade(self, case: GoldenCase, transcript: Transcript) -> list[Score]: ...
+
+
+@runtime_checkable
+class BatchGrader(Grader, Protocol):
+    """A grader that scores many transcripts in one call (a framework with its own loop).
+
+    `batch_size` transcripts are handed over at a time; the stage saves each batch's scores
+    as it finishes, so progress moves and an interrupted run resumes from the last batch.
+    """
+
+    batch_size: int
+
+    async def grade_batch(
+        self, items: list[tuple[GoldenCase, Transcript]]
+    ) -> list[list[Score]]: ...
 
 
 @runtime_checkable
@@ -211,7 +228,7 @@ class EvalPlugin(Protocol):
 
 @runtime_checkable
 class IntentBakeoffPlugin(Protocol):
-    """A plugin that can score its intent classifiers side by side (`STAGE=intent`)."""
+    """A plugin that can score its intent classifiers side by side (`make intent-eval <agent>`)."""
 
     async def intent_bakeoff(self) -> Any:
         """An `agent_platform.evals.intent.BakeoffResult`."""

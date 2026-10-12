@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from agent_platform.config import get_settings
 from agent_platform.evals.core.contracts import GoldenCase, ToolCallRecord, Transcript
 from agent_platform.observability.types import StatusEvent
 from agent_platform.persistence import SqliteConnectionPool
@@ -26,6 +27,9 @@ from customer_support_agent.graph.state import AgentState
 from customer_support_agent.persistence.repositories import OrdersRepository
 
 GOLDEN_SIZE = 50
+# The default run's golden cases and DeepEval metrics (`evals.core`).
+CORE_CASES = 30
+CORE_METRICS = {"task_resolution", "honesty", "faithfulness"}
 REFUND, REVIEW = "support.process_refund", "support.queue_for_approval"
 CANCEL = "support.cancel_order"
 ACTS = frozenset({"refunded", "queued_for_review"})
@@ -88,6 +92,17 @@ class TestDataset:
         counts = Counter(case.category for case in cases)
         assert len(counts) >= 15
         assert min(counts.values()) >= 2
+
+    def test_the_core_set_covers_every_category_and_money_moving_twice(
+        self, cases: list[GoldenCase]
+    ) -> None:
+        tag = get_settings().evals.core.tag
+        core = [case for case in cases if tag in case.tags]
+        assert len(core) == CORE_CASES
+        assert {case.category for case in core} == {case.category for case in cases}
+        counts = Counter(case.category for case in core)
+        for category in ("refund_direct", "refund_review", "cancel"):
+            assert counts[category] >= 2
 
     def test_the_set_is_balanced_between_acting_and_holding_back(
         self, cases: list[GoldenCase]
@@ -430,6 +445,10 @@ class TestPlugin:
         assert len({metric.name for metric in metrics}) == len(metrics)
         frame = plugin.conversation_frame(_case(cases, "refund-review-001"))
         assert frame.chatbot_role and "review" in frame.expected_outcome
+
+    def test_three_metrics_run_by_default(self) -> None:
+        metrics = CsaEvalPlugin().quality_metrics()
+        assert {metric.name for metric in metrics if metric.core} == CORE_METRICS
 
     def test_fingerprint_inputs_name_the_model_and_the_fixture(self) -> None:
         inputs = CsaEvalPlugin().fingerprint_inputs()

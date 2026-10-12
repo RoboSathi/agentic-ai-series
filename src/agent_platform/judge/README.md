@@ -8,8 +8,8 @@ its own error handling and its own idea of "could not decide". The skeleton live
 
 - **judge model** — `judge:` in config: the strongest model on the account (ultra 550B), which
   no agent runs on (agents run on lightning), so a judge never grades its own model's output.
-  When it does not answer, or has not after `hedge_after_seconds`, glm-5.3-flash starts beside
-  it, then gpt-oss-20b; lightning is never a judge backup
+  When it does not answer, or has not after `hedge_after_seconds`, super-120b starts beside it;
+  lightning is never a judge backup
 - **verdict** — the caller's own type: what the judge's validated answer means to it
 - **abstain** — the judge could not answer (every model down, or an answer that failed its
   schema after the guardrails' bounded repair); never a silent pass or fail

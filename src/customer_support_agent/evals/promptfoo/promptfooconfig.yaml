@@ -1,6 +1,6 @@
 # Customer Support agent — red-team suite, run the standard Promptfoo way:
 #
-#   promptfoo eval -c promptfooconfig.yaml            (`make eval csa STAGE=promptfoo` does this)
+#   promptfoo eval -c promptfooconfig.yaml            (`make eval csa promptfoo` does this, core attacks only)
 #
 # Everything Promptfoo needs is declared here: the provider (the real agent, isolated per
 # case), the grader for model-graded asserts (the platform judge), the attacks and the

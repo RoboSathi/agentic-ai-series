@@ -3,9 +3,10 @@
 One grader for every metric an agent declares: each case becomes a
 `ConversationalTestCase` and goes through `deepeval.evaluate()` with the
 agent's metrics, all judged by the platform judge (`judge:`). DeepEval runs
-its own event loop, so the call is made in a worker thread — one case at a
-time per process, because DeepEval keeps its test run in a process-wide
-manager; the metrics of that case still run concurrently. Its console
+its own event loop, so the call is made on a daemon thread, a batch of cases
+at a time (`evals.deepeval.batch_size`), the cases and their metrics running
+concurrently inside it (`max_concurrent`); DeepEval keeps its test run in a
+process-wide manager, so one `evaluate()` runs at a time. Its console
 output, cache and telemetry are switched off — the eval store and the
 Markdown report are the record.
 
@@ -18,7 +19,8 @@ as `<metric>.error`, which is never reused, rather than as a low score.
 import asyncio
 import os
 import threading
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from agent_platform.config import get_settings
 from agent_platform.evals.core.contracts import (
@@ -49,7 +51,7 @@ class DeepEvalUnavailableError(RuntimeError):
 
 
 class DeepEvalGrader:
-    """Every quality metric of one agent, over one transcript at a time."""
+    """Every quality metric of one agent, over a batch of transcripts per `evaluate()` call."""
 
     kind: GraderKind = "deepeval"
     name = "deepeval"
@@ -66,29 +68,37 @@ class DeepEvalGrader:
         self._frame = frame
         self._client = client
         judge, settings = get_settings().judge, get_settings().evals.deepeval
+        self.batch_size = settings.batch_size
         self.version = canonical_hash(
             [[spec.model_dump() for spec in specs], judge.model_dump(), settings.model_dump()]
         )[:_VERSION_CHARS]
 
     async def grade(self, case: GoldenCase, transcript: Transcript) -> list[Score]:
-        frame: ConversationFrame = self._frame(case)
-        return await asyncio.to_thread(self._evaluate, case, transcript, frame)
+        return (await self.grade_batch([(case, transcript)]))[0]
+
+    async def grade_batch(self, items: list[tuple[GoldenCase, Transcript]]) -> list[list[Score]]:
+        """Scores per item, in order — one `evaluate()` over the whole batch."""
+        frames: list[ConversationFrame] = [self._frame(case) for case, _ in items]
+        return await in_daemon_thread(lambda: self._evaluate(items, frames))
 
     def _evaluate(
-        self, case: GoldenCase, transcript: Transcript, frame: ConversationFrame
-    ) -> list[Score]:
-        """One `evaluate()` call — in this worker thread, on DeepEval's own loop."""
+        self, items: list[tuple[GoldenCase, Transcript]], frames: list[ConversationFrame]
+    ) -> list[list[Score]]:
+        """One `evaluate()` call — in its own thread, on DeepEval's own loop."""
         deepeval = self._deepeval
         model = judge_model(deepeval, self._client)
         metrics = build_metrics(deepeval, self._specs, model)
         cap = get_settings().judge.max_evidence_chars
-        test_case = conversation(deepeval, case, transcript, frame, cap)
+        test_cases = [
+            conversation(deepeval, case, transcript, frame, cap)
+            for (case, transcript), frame in zip(items, frames, strict=True)
+        ]
         settings = get_settings().evals.deepeval
         from deepeval.evaluate.configs import AsyncConfig, CacheConfig, DisplayConfig, ErrorConfig
 
         with _EVALUATE_LOCK:
             result = deepeval.evaluate(
-                test_cases=[test_case],
+                test_cases=test_cases,
                 metrics=metrics,
                 async_config=AsyncConfig(run_async=True, max_concurrent=settings.max_concurrent),
                 display_config=DisplayConfig(show_indicator=False, print_results=False),
@@ -98,10 +108,14 @@ class DeepEvalGrader:
         names = {
             metric.__name__: spec.name for metric, spec in zip(metrics, self._specs, strict=True)
         }
-        data = [item for test in result.test_results for item in (test.metrics_data or [])]
-        share = len(data) or 1
+        by_case = {str(test.name): list(test.metrics_data or []) for test in result.test_results}
+        share = sum(len(data) for data in by_case.values()) or 1
         return [
-            self._score(case, item, names.get(item.name, item.name), model, share) for item in data
+            [
+                self._score(case, item, names.get(item.name, item.name), model, share)
+                for item in by_case.get(case.case_id, [])
+            ]
+            for case, _ in items
         ]
 
     def _score(self, case: GoldenCase, item: Any, metric: str, model: Any, share: int) -> Score:
@@ -118,10 +132,44 @@ class DeepEvalGrader:
             threshold=float(item.threshold) if item.threshold is not None else None,
             tier="calibrated_llm_judge",
             rationale=str(item.error or item.reason or ""),
-            # The judge's spend for the case, shared evenly over its metrics.
+            # The judge's spend for the batch, shared evenly over its scores.
             cost_usd=model.cost_usd / share,
             llm_calls=round(model.calls / share),
         )
+
+
+ResultT = TypeVar("ResultT")
+
+
+async def in_daemon_thread(work: Callable[[], ResultT]) -> ResultT:
+    """Run blocking work on a daemon thread and await it.
+
+    Not `asyncio.to_thread`: the default executor's threads are joined when the loop shuts
+    down, so Ctrl+C would wait for a whole DeepEval batch to finish. A daemon thread is
+    abandoned with the process instead.
+    """
+    loop = asyncio.get_running_loop()
+    done: asyncio.Future[ResultT] = loop.create_future()
+
+    def target() -> None:
+        try:
+            result = work()
+        except BaseException as exc:  # handed to the awaiting task, which raises it
+            loop.call_soon_threadsafe(_settle, done, None, exc)
+        else:
+            loop.call_soon_threadsafe(_settle, done, result, None)
+
+    threading.Thread(target=target, name="deepeval", daemon=True).start()
+    return await done
+
+
+def _settle(future: "asyncio.Future[ResultT]", result: Any, error: BaseException | None) -> None:
+    if future.cancelled():
+        return
+    if error is not None:
+        future.set_exception(error)
+    else:
+        future.set_result(result)
 
 
 def import_deepeval() -> Any:

@@ -9,8 +9,12 @@ import json
 from typing import Any
 
 from agent_platform.config import get_settings
+from agent_platform.evals.core.pipeline.trials import base_case_id
 from agent_platform.evals.core.reporting.markdown import cell, fenced, quote, rate, table
+from agent_platform.evals.core.reporting.overview import FAIL_STATE, PASS_STATE, WARN_STATE
 from agent_platform.evals.core.store import DuckDbEvalStore, RunRecord, StoredTranscript
+
+_HARD = "hard"
 
 
 class ReportSections:
@@ -22,6 +26,7 @@ class ReportSections:
         self._z = settings.confidence_z
         self._limit = settings.max_cases_listed
         self._excerpt = settings.excerpt_chars
+        self._states = settings.overview.states
 
     @property
     def z(self) -> float:
@@ -107,6 +112,47 @@ class ReportSections:
             ],
         )
 
+    def case_results(self, run_id: str, stage: str, scores: bool = False) -> str:
+        """Every case one stage graded: its result, and each check it failed with the reason.
+
+        A case FAILs on any hard check, is BELOW on a soft one only, and PASSes otherwise.
+        `scores` adds each metric's value (DeepEval's 0–1 scores; the oracle's are 1 or 0).
+        """
+        rows = self._store.query(
+            "SELECT case_id, category, metric, severity, value, passed, rationale FROM v_scores "
+            "WHERE run_id = ? AND stage = ? ORDER BY case_id, metric",
+            (run_id, stage),
+        )
+        by_case: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            by_case.setdefault(row["case_id"], []).append(row)
+        headers = ["case", "category", "result", "checks passed"]
+        headers += ["scores"] if scores else []
+        return table(
+            [*headers, "failed checks — why"],
+            [self._case_row(checks, scores) for checks in by_case.values()],
+        )
+
+    def _case_row(self, checks: list[dict[str, Any]], scores: bool) -> list[str]:
+        failed = [check for check in checks if not check["passed"]]
+        state = (
+            FAIL_STATE
+            if any(check["severity"] == _HARD for check in failed)
+            else WARN_STATE
+            if failed
+            else PASS_STATE
+        )
+        row = [
+            checks[0]["case_id"],
+            checks[0]["category"],
+            self._states[state],
+            f"{len(checks) - len(failed)}/{len(checks)}",
+        ]
+        if scores:
+            row.append(", ".join(f"{check['metric']} {check['value']:.2f}" for check in checks))
+        why = "; ".join(f"**{check['metric']}**: {check['rationale'] or ''}" for check in failed)
+        return [*row, cell(why)]
+
     def failures(self, run_id: str, stage: str) -> list[dict[str, Any]]:
         return self._store.query(
             "SELECT case_id, category, metric, severity, value, rationale FROM v_failures "
@@ -137,16 +183,57 @@ class ReportSections:
             blocks.append(f"_…and {len(by_case) - self._limit} more failing cases._")
         return "\n\n".join(blocks)
 
-    def cost_table(self, run_id: str) -> str:
-        stages = self._store.query(
-            "SELECT stage, cases, reused, provider_requests, throttled, throttle_wait_s, "
-            "http_429, seconds FROM v_stage_cost WHERE run_id = ? "
-            "AND batch_id IN (SELECT batch_id FROM v_latest_batches) ORDER BY started_at",
-            (run_id,),
+    def trials(self, run_id: str, stage: str) -> str:
+        """pass@k and pass^k per base case, when cases ran more than once."""
+        trials = get_settings().evals.trials
+        if trials <= 1:
+            return f"_Each case ran once (`evals.trials: {trials}`); pass@k and pass^k need k > 1._"
+        rows = self._store.query(
+            "SELECT case_id, bool_and(passed) AS clean FROM v_scores WHERE run_id = ? "
+            "AND stage = ? GROUP BY case_id",
+            (run_id, stage),
         )
+        by_case: dict[str, list[bool]] = {}
+        for row in rows:
+            by_case.setdefault(base_case_id(row["case_id"]), []).append(bool(row["clean"]))
+        any_pass = sum(any(results) for results in by_case.values())
+        all_pass = sum(all(results) for results in by_case.values())
+        total = len(by_case)
+        return table(
+            ["k", "cases", "pass@k (some trial clean)", "pass^k (every trial clean)"],
+            [[trials, total, f"{any_pass}/{total}", f"{all_pass}/{total}"]],
+        )
+
+    def facts_line(self, run: RunRecord, stages: tuple[str, ...], judge: bool) -> str:
+        """One line under an overview: cases, models, what the run spent on these stages."""
+        marks = ", ".join("?" for _ in stages)
+        spend = self._store.query(
+            "SELECT sum(provider_requests) AS requests, sum(http_429) AS rejected, "
+            f"sum(seconds) AS seconds FROM v_stage_cost WHERE run_id = ? AND stage IN ({marks}) "
+            "AND batch_id IN (SELECT batch_id FROM v_latest_batches)",
+            (run.run_id, *stages),
+        )[0]
+        models = f"agent {run.model}" + (f" · judge {run.judge_model}" if judge else "")
+        return (
+            f"{run.case_count} cases · {models} · {spend['requests'] or 0} provider requests · "
+            f"{spend['rejected'] or 0} × 429 · {spend['seconds'] or 0}s"
+        )
+
+    def cost_table(self, run_id: str, stages: tuple[str, ...] | None = None) -> str:
+        """What each stage spent (`stages`: only those, e.g. a section's own and generation)."""
+        rows = [
+            row
+            for row in self._store.query(
+                "SELECT stage, cases, reused, provider_requests, throttled, throttle_wait_s, "
+                "http_429, seconds FROM v_stage_cost WHERE run_id = ? "
+                "AND batch_id IN (SELECT batch_id FROM v_latest_batches) ORDER BY started_at",
+                (run_id,),
+            )
+            if stages is None or row["stage"] in stages
+        ]
         return table(
             ["stage", "cases", "reused", "provider requests", "throttled", "wait (s)", "429s", "s"],
-            [list(row.values()) for row in stages],
+            [list(row.values()) for row in rows],
         )
 
     def turns(self, run_id: str) -> dict[str, list[str]]:

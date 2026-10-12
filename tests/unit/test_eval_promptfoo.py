@@ -26,10 +26,14 @@ from agent_platform.evals.promptfoo import (
 )
 from agent_platform.evals.promptfoo.agent_provider import case_from_vars
 from agent_platform.evals.promptfoo.report import PromptfooReport
+from agent_platform.evals.promptfoo.runner import attack_count
 from customer_support_agent.evals.plugin import CsaEvalPlugin
 from customer_support_agent.evals.promptfoo import assertions
 from tests.conftest import ScriptedLLM
 from tests.unit.test_eval_core import FakeAgent, FakePlugin
+
+# The CSA red-team set's default run (`tier: core` in attacks.yaml).
+CORE_ATTACKS = 20
 
 
 def _result(case_id: str, refunds: list[dict[str, Any]], passed: bool) -> dict[str, Any]:
@@ -95,6 +99,23 @@ class TestSuite:
         assert "--grader" not in command and "-r" not in command
         assert "--no-cache" in command
 
+    def test_the_default_runs_only_the_core_attacks_and_full_runs_all(self) -> None:
+        core = get_settings().evals.core
+        store = DuckDbEvalStore(":memory:")
+        command = PromptfooSuite(CsaEvalPlugin(), store).command(Path("out.json"))
+        filter_at = command.index("--filter-metadata")
+        assert command[filter_at + 1] == f"{core.attack_metadata_key}={core.tag}"
+        full = PromptfooSuite(CsaEvalPlugin(), store, full=True).command(Path("out.json"))
+        assert "--filter-metadata" not in full
+
+    def test_the_attack_count_matches_what_the_filter_runs(self, tmp_path: Path) -> None:
+        config = tmp_path / "promptfooconfig.yaml"
+        config.write_text(
+            "tests:\n  - {metadata: {tier: core}}\n  - {metadata: {}}\n  - {vars: {}}\n"
+        )
+        assert attack_count(config) == 3
+        assert attack_count(config, ("tier", "core")) == 1
+
     def test_the_config_declares_its_provider_grader_and_attacks(self) -> None:
         config_path = Path(CsaEvalPlugin().security_config())
         config = yaml.safe_load(config_path.read_text())
@@ -138,6 +159,10 @@ class TestReport:
         assert path.name == f"promptfoo-{run.run_id}.md"
         body = path.read_text()
         assert "## By red-team plugin" in body and "rbac" in body and "sec-2" in body
+        attacks = body.split("## Every attack")[1].split("##")[0]
+        states = get_settings().evals.reporting.overview.states
+        assert "| sec-1 |" in attacks and states["defended"] in attacks
+        assert "| sec-2 | rbac | jailbreak | high | " + states["breached"] in attacks
         console = Console(record=True, width=160)
         report.overview(run, path).print(console)
         states = get_settings().evals.reporting.overview.states
@@ -157,6 +182,16 @@ class TestAttacks:
     def test_every_attack_has_its_place_in_the_taxonomy(self) -> None:
         for attack in self._attacks():
             assert {"pluginId", "strategy", "severity"} <= set(attack["metadata"])
+
+    def test_the_core_attacks_cover_every_plugin_strategy_and_critical_one(self) -> None:
+        core = get_settings().evals.core
+        attacks = self._attacks()
+        chosen = [a for a in attacks if a["metadata"].get(core.attack_metadata_key) == core.tag]
+        assert len(chosen) == CORE_ATTACKS
+        for key in ("pluginId", "strategy"):
+            assert {a["metadata"][key] for a in chosen} == {a["metadata"][key] for a in attacks}
+        critical = [a for a in attacks if a["metadata"]["severity"] == "critical"]
+        assert all(a in chosen for a in critical)
 
     def test_the_suite_holds_a_control_that_must_be_answered(self) -> None:
         outcomes = {a["vars"]["payload"]["expected"]["outcome"] for a in self._attacks()}

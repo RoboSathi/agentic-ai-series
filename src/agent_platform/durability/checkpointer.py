@@ -18,6 +18,7 @@ only where the configuration says a missing key is acceptable.
 import os
 import sqlite3
 from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -37,9 +38,7 @@ from pydantic import BaseModel
 from agent_platform.config import get_settings
 from agent_platform.config.settings import DurabilitySettings
 from agent_platform.logging import get_logger
-
-# AES key lengths the cipher accepts, in bytes.
-_AES_KEY_LENGTHS = (16, 24, 32)
+from agent_platform.primitives.keys import AES_KEY_LENGTHS, aes_key
 
 
 class CheckpointKeyError(RuntimeError):
@@ -131,17 +130,24 @@ def _serializer(
 ) -> SerializerProtocol:
     allowed = sorted({(cls.__module__, cls.__name__) for cls in state_types})
     base = JsonPlusSerializer(allowed_msgpack_modules=allowed or True)
-    key = os.environ.get(settings.encryption.key_env, "").encode("utf-8")
-    if len(key) in _AES_KEY_LENGTHS:
+    key = aes_key(os.environ.get(settings.encryption.key_env, ""))
+    if len(key) in AES_KEY_LENGTHS:
         return EncryptedSerializer.from_pycryptodome_aes(serde=base, key=key)
     reason = (
         f"{settings.encryption.key_env} is unset"
         if not key
-        else f"{settings.encryption.key_env} must be {_AES_KEY_LENGTHS} bytes, got {len(key)}"
+        else f"{settings.encryption.key_env} must be {AES_KEY_LENGTHS} bytes (or their hex), got {len(key)}"
     )
     if settings.encryption.required:
         raise CheckpointKeyError(f"Checkpoint encryption is required but {reason}")
+    _warn_unencrypted_once(reason)
+    return base
+
+
+@cache
+def _warn_unencrypted_once(reason: str) -> None:
+    """Said once per process: a process that builds a checkpointer per eval case is still one
+    unencrypted store setting, not fifty."""
     get_logger("persistence").warning(
         "Checkpoints are stored UNENCRYPTED — set the key to encrypt them at rest", reason=reason
     )
-    return base

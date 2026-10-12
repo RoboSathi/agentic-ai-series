@@ -91,8 +91,8 @@ audit:
   policy_source: research contract (audit)
 
 # The research roles' default model and its protection: nemotron-lightning, thinking off (with
-# it on it narrates its reasoning into the answer), backed up by gpt-oss-20b and then glm-5.3-flash,
-# so a call always gets some answer. Ultra is deliberately absent from every writing role (2026-10-12): it is the
+# it on it narrates its reasoning into the answer), backed up by super-120b (NVIDIA models only,
+# 2026-10-12), so a call always gets some answer. Ultra is deliberately absent from every writing role (2026-10-12): it is the
 # judge's model, and a writer that could fall back onto it would be audited by its own model.
 x-default-chain: &default_chain
   provider: nim
@@ -101,10 +101,7 @@ x-default-chain: &default_chain
   hedge_after_seconds: 25
   extra_body: {chat_template_kwargs: {enable_thinking: false}}
   fallbacks:
-    - {provider: nim, model: openai/gpt-oss-20b}
-    - provider: nim
-      model: z-ai/glm-5.3-flash
-      extra_body: {chat_template_kwargs: {enable_thinking: false}}
+    - {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
 
 llm:
   # Role -> model. `judge` must differ from `synthesizer` while
@@ -139,7 +136,7 @@ llm:
     # The judge: a critic independent of the writer (Producer-Critic, 2026-10-11). The writer runs
     # on lightning; the judge leads with ultra, the strongest model on the account, and its chain
     # never includes lightning, so no backup can make the writer grade itself — if ultra and
-    # glm-5.3-flash and gpt-oss all fail, the criterion is "not judged" rather than self-graded.
+    # super-120b both fail, the criterion is "not judged" rather than self-graded.
     # `research_agent.audit.independent_judge` holds start-up to that.
     judge:
       provider: nim
@@ -148,9 +145,8 @@ llm:
       hedge_after_seconds: 45
       fallbacks:
         - provider: nim
-          model: z-ai/glm-5.3-flash
+          model: nvidia/nemotron-3-super-120b-a12b
           extra_body: {chat_template_kwargs: {enable_thinking: false}}
-        - {provider: nim, model: openai/gpt-oss-20b}
     # Multi-step tool calling: the model the platform recommends for it.
     answerer: *default_chain
 

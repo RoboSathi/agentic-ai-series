@@ -13,9 +13,9 @@ and this agent's audit.
 ## Decision
 
 - Every writing role (interviewer, planner, researcher, extractor, reflector, synthesizer,
-  answerer) runs on lightning with thinking off, backed by gpt-oss-20b. Ultra is in none of
+  answerer) runs on lightning with thinking off, backed by super-120b (NVIDIA models only). Ultra is in none of
   their chains.
-- The audit judge leads with ultra, backed by gpt-oss-20b — never lightning, so no backup can
+- The audit judge leads with ultra, backed by super-120b — never lightning, so no backup can
   make the writer grade itself. `audit.independent_judge` still holds start-up to that.
 - The audit's `LlmJudge` is now a subclass of the platform's `agent_platform.judge.LlmJudge`:
   same prompt, same `CheckOutcome`, same "not judged" — now the skeleton's abstain.

@@ -1,11 +1,24 @@
 # evals — this agent's golden set, oracle, metrics and red team
 
 Everything agent-specific the platform eval pipeline needs, behind `CsaEvalPlugin` (named in
-this agent's config as `evals.plugin`). Run with `make eval csa [STAGE=deepeval|promptfoo]`
-(the intent bake-off: `make intent-eval csa`);
-reports land in `reports/` as `{deepeval,promptfoo,intent}-<run_id>.md`.
+this agent's config as `evals.plugin`). Run with `make eval csa [oracle|deepeval|promptfoo]
+[full]` (the intent bake-off: `make intent-eval csa`); each section prints its table and
+writes `reports/<section>-<run_id>.md`, listing every case with its result and why.
 
-- **Golden set** (`dataset/golden_cases.yaml`) — 50 cases in 16 categories, balanced between
+**Core and full.** A default run is the core set — about 12 minutes; `full` runs everything,
+about 35–40 (both bound by the shared provider budget, not by the code):
+
+| | core (default) | full |
+|---|---|---|
+| golden cases | 30 — every category, money-moving ones 2–3× | 50 |
+| attacks | 20 — every critical one, every plugin and strategy, the control | 27 |
+| DeepEval metrics | task_resolution, honesty, faithfulness | + policy_communication, tone, relevancy |
+
+A case is core when `core` is in its `tags`; an attack, when its metadata has `tier: core`; a
+metric, when it says `core: true` (`evals.core` names the tag). A full run after a core run
+reuses the core transcripts.
+
+- **Golden set** (`dataset/golden_cases.yaml`) — 50 cases (30 core) in 16 categories, balanced between
   cases where the agent must act (refund, review, cancel) and must not (already refunded,
   issued but unsettled, declined, ineligible, not the customer's, partial, ambiguous). Each
   is labelled from the written policy against a hand-built, time-stable fixture
@@ -24,7 +37,7 @@ reports land in `reports/` as `{deepeval,promptfoo,intent}-<run_id>.md`.
   asked-for fact mentioned. No path rules.
 - **DeepEval metrics** (`deepeval/metrics.yaml`) — task resolution, policy communication,
   honesty, tone (anchored `ConversationalGEval`), faithfulness, relevancy.
-- **Red team** (`promptfoo/`) — 26 curated attacks in Promptfoo's taxonomy (rbac, bfla, bola,
+- **Red team** (`promptfoo/`) — 26 curated attacks (20 core) in Promptfoo's taxonomy (rbac, bfla, bola,
   excessive-agency, pii, prompt-extraction, indirect-prompt-injection, harmful; strategies
   prompt-injection, jailbreak, base64, crescendo) plus one benign control that must be
   answered. `promptfooconfig.yaml` declares the provider (`provider.py`) and grader

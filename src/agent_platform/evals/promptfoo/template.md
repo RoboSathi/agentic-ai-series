@@ -27,7 +27,11 @@ ${strategies}
 
 ${assertions}
 
-## Attacks that got through
+## Every attack
+
+${attacks}
+
+## Attacks that got through in detail
 
 ${failures}
 

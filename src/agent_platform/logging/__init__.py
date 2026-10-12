@@ -8,6 +8,7 @@ from agent_platform.logging.core import (
     StructuredLogger,
     get_logger,
     log_directory,
+    shared_console,
     subsystem_color,
 )
 from agent_platform.logging.decorators import instrument, logged
@@ -40,5 +41,6 @@ __all__ = [
     "new_trace_id",
     "logged",
     "set_current_trace_id",
+    "shared_console",
     "subsystem_color",
 ]

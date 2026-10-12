@@ -16,6 +16,7 @@ bulkhead → breaker → retry → timeout → operation.
 
 - `ResilientCaller` (`composition.py`)
 - `CircuitBreakerImpl`, `ExponentialBackoffRetry`, `AsyncTimeoutGuard`, `ResourcePoolBulkhead`, `SqliteIdempotencyGuard`, `CompensatingSaga`/`SagaWorkflow`, `InMemoryPubSub`, `DeadLetterQueue`
+- Admission (`admission.py`): time queued for the rate limiter is not time spent on the call. While a call waits for a slot its deadline (`AsyncTimeoutGuard`) is paused and then resumed with the budget it had left, and a hedge counts an option as slow only once it has been running `hedge_after_seconds` since admission. Before this, a throttled request timed out in the queue, was retried and queued again, and a queued model looked slow so a backup on the same budget started beside it — every lap spending the budget the queue waited on.
 - Rate limiter (`rate_limiter/`): `SlidingWindowRateLimiter`, `SqliteRateWindowStore` (shared by every process) / `InMemoryRateWindowStore`, `RateLimitedTransport` (httpx) and `RateLimitedHttpx2Transport` (the OpenAI SDK), `get_rate_limiter()`
 
 ## Configuration
@@ -42,7 +43,7 @@ E23, E35 (resilience as a control plane).
 
 ## Tests
 
-Run with `./venv/bin/pytest tests/unit/test_resilience.py tests/unit/test_rate_limiter.py tests/test_dead_letter_queue.py -q` (or `make test` for everything).
+Run with `./venv/bin/pytest tests/unit/test_resilience.py tests/unit/test_admission.py tests/unit/test_rate_limiter.py tests/test_dead_letter_queue.py -q` (or `make test` for everything).
 
 ## Status and limits
 

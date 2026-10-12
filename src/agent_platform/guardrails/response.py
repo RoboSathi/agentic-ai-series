@@ -66,6 +66,10 @@ __all__ = [
 ]
 
 
+# How a structured envelope starts: a JSON object, or one fenced in a code block.
+_JSON_STARTS = ("{", "```")
+
+
 class CustomerResponse(BaseModel):
     """Provider-neutral structured envelope for a customer-facing reply."""
 
@@ -198,7 +202,22 @@ class ResponseGuardrail:
         self._logger = get_logger("guardrails")
 
     def validate_schema(self, raw: str) -> tuple[str | None, dict[str, Any]]:
-        """Validate a structured response envelope."""
+        """Validate a structured response envelope — when the model answered with one.
+
+        A hosted provider that ignores guided JSON (NIM) answers in plain text, and a plain
+        reply is accepted as the reply: there is nothing to repair, so it is not run through
+        the validator (whose "could not be repaired" warning on every such turn read as a
+        broken model). Factual grounding remains the blocking control either way.
+        """
+        text = raw.strip()
+        if text and not text.startswith(_JSON_STARTS):
+            return text, {
+                "schema_valid": False,
+                "schema_fallback": "plain_text_provider_output",
+                "validation_attempts": 0,
+                "repaired": False,
+                "errors": [],
+            }
         result = self._validator.validate(raw, CustomerResponse)
         fields: dict[str, Any] = {
             "schema_valid": result.valid,
