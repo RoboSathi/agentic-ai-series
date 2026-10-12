@@ -21,12 +21,13 @@ module, config file or document here names one.
 | [context](context/README.md) | Context assembly, strategies, failure detection |
 | [loop_control](loop_control/README.md) | Loop watchdogs and contracts |
 | [durability](durability/README.md) | Checkpointed, resumable runs; HITL interrupts |
-| [evals](evals/README.md) | NOLLM cascade, eval pyramid, and the eval pipeline |
+| [evals](evals/README.md) | Three graders over an agent's suites: oracle, DeepEval, Promptfoo |
 | [executor](executor/README.md) | Running approved tool calls |
 | [gatekeeper](gatekeeper/README.md) | Deterministic authorization of every action |
 | [guardrails](guardrails/README.md) | Structured output and the response guardrail |
 | [hallucination_check](hallucination_check/README.md) | Claim-level grounding |
 | [intent](intent/README.md) | Intent-classification contracts and provider |
+| [judge](judge/README.md) | The LLM judge: one model chain, one skeleton, calibration |
 | [llm](llm/README.md) | Model adapters, rate-limited HTTP, `make llm-check` |
 | [logging](logging/README.md) | File/console logs and traced calls |
 | [mcp](mcp/README.md) | Model Context Protocol (parked) |
@@ -37,6 +38,7 @@ module, config file or document here names one.
 | [prompt_compilation](prompt_compilation/README.md) | Compiled prompts (parked) |
 | [resilience](resilience/README.md) | Nygard patterns and the cross-process rate limiter |
 | [sandbox](sandbox/README.md) | Execution isolation (parked) |
+| [scoring](scoring/README.md) | The NOLLM scoring cascade: claims resolved cheapest tier first |
 | [security](security/README.md) | RBAC, PII, prompt injection, moderation, hosted guards |
 | [tools](tools/README.md) | Typed tools and retrieval-based selection |
 | [tui](tui/README.md) | The operator console |

@@ -18,8 +18,6 @@ from typing import Protocol, runtime_checkable
 from agent_platform.config import get_settings
 from agent_platform.context.retrieval import RelevanceRanker
 from agent_platform.context.types import Chunk
-from agent_platform.evals.entailment import EntailmentModel, entailment_backend
-from agent_platform.evals.types import Claim, Verdict
 from agent_platform.hallucination_check.claims import ClaimDecomposer
 from agent_platform.hallucination_check.confirmer import ClaimConfirmer
 from agent_platform.hallucination_check.resolver import GroundingResolver
@@ -32,6 +30,8 @@ from agent_platform.hallucination_check.types import (
 )
 from agent_platform.llm.embeddings import tokenize
 from agent_platform.logging import get_logger, logged
+from agent_platform.scoring.entailment import EntailmentModel, entailment_backend
+from agent_platform.scoring.types import Claim, Verdict
 
 # Asks the same question again, n more times. Injected rather than held,
 # because the detector must not own an LLM client: a checker that can

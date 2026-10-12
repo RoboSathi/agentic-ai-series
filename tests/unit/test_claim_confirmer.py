@@ -13,8 +13,6 @@ import pytest
 
 from agent_platform.config import get_settings
 from agent_platform.config.settings import ClaimConfirmerSettings, GroundingTierSettings
-from agent_platform.evals import create_scoring_cascade
-from agent_platform.evals.entailment import EntailmentResult
 from agent_platform.guardrails.response import ResponseGuardrail
 from agent_platform.hallucination_check import DetectionLadder, Observation, tool_evidence
 from agent_platform.hallucination_check.confirmer import (
@@ -23,6 +21,8 @@ from agent_platform.hallucination_check.confirmer import (
     create_claim_confirmer,
 )
 from agent_platform.hallucination_check.resolver import CONFIRM_TIER, GroundingResolver
+from agent_platform.scoring import create_scoring_cascade
+from agent_platform.scoring.entailment import EntailmentResult
 
 ABOUT = Observation(
     "Kumar Karan\nEngineering Manager — AI @ Turing\nLead Instructor @ Scaler Academy",

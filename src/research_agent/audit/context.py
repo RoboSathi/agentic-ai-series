@@ -13,8 +13,8 @@ from datetime import date
 from typing import Protocol
 from urllib.parse import urlparse
 
-from agent_platform.evals.entailment import EntailmentModel
 from agent_platform.evidence import EvidenceEntry, LedgerSnapshot
+from agent_platform.scoring.entailment import EntailmentModel
 from agent_platform.verification.acceptance import CheckOutcome, CheckSpec
 from research_agent.domain.matching import TermMatcher
 from research_agent.domain.report import COVERAGE_AND_LIMITS, Report
@@ -22,12 +22,20 @@ from research_agent.domain.rubric import Contract
 from research_agent.domain.sources import within_window
 
 
+@dataclass(frozen=True)
+class JudgeItem:
+    """One judge-type acceptance item, with exactly what the judge may read for it."""
+
+    spec: CheckSpec
+    report: Report
+    ledger: LedgerSnapshot
+    today: date
+
+
 class Judge(Protocol):
     """Scores one judge-type item against the report (a model call)."""
 
-    async def judge(
-        self, spec: CheckSpec, report: Report, ledger: LedgerSnapshot, today: date
-    ) -> CheckOutcome: ...
+    async def judge(self, request: JudgeItem) -> CheckOutcome: ...
 
 
 @dataclass(frozen=True)

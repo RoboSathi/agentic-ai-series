@@ -39,12 +39,6 @@ from agent_platform.durability import (
     model_types,
 )
 from agent_platform.durability.checkpointer import SqliteCheckpointer
-from agent_platform.evals.entailment import (
-    EntailmentModel,
-    LexicalEntailmentModel,
-    create_entailment_model,
-)
-from agent_platform.evals.scoring import create_scoring_cascade
 from agent_platform.evidence import EvidenceLedger, NonEmptySpanValidator, VerbatimSpanValidator
 from agent_platform.executor import ToolExecutorImpl
 from agent_platform.executor.registry_handler import RegistryToolHandler
@@ -82,6 +76,12 @@ from agent_platform.observability.units import OutcomeCatalog, declare_screens
 from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agent_platform.resilience import ResilientCaller, ResourcePoolBulkhead
 from agent_platform.resilience.dead_letter_queue import DeadLetterQueue
+from agent_platform.scoring import create_scoring_cascade
+from agent_platform.scoring.entailment import (
+    EntailmentModel,
+    LexicalEntailmentModel,
+    create_entailment_model,
+)
 from agent_platform.security import (
     MessageScreener,
     PromptInjectionGuard,

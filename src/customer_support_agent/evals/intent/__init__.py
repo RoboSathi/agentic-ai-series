@@ -1,1 +1,1 @@
-"""The intent classifier bake-off (`make intent-bakeoff csa`)."""
+"""The intent classifier bake-off (`make eval csa STAGE=intent`)."""

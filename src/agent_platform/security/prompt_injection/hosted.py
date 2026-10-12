@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from typing import Any, Protocol, runtime_checkable
 
@@ -117,6 +118,104 @@ class HostedJailbreakGuard:
                 api_called=True,
                 latency_ms=latency_ms,
             )
+
+
+class ChatJailbreakGuard:
+    """A chat model prompted as a jailbreak classifier — a guard's fallback.
+
+    Asked the configured `classifier_prompt` over the latest message; its JSON answer is read
+    at `verdict_key` and `score_key`. An answer that is not that JSON is *unavailable*, not a
+    pass: a fallback that cannot classify must not wave a message through.
+    """
+
+    def __init__(
+        self,
+        settings: SecurityGuardModelSettings,
+        client: httpx.AsyncClient | None = None,
+        resilient: ResilientCaller | None = None,
+    ) -> None:
+        self._settings = settings
+        self._client = client
+        self._resilient = resilient or ResilientCaller(settings.resilience_key)
+        self._logger = get_logger("prompt_injection")
+
+    @property
+    def model(self) -> str:
+        return self._settings.model
+
+    async def classify(self, text: str) -> GuardVerdict:
+        settings = self._settings
+        started = time.perf_counter()
+        payload = {
+            "model": settings.model,
+            "messages": [
+                {"role": "system", "content": settings.classifier_prompt},
+                {"role": "user", "content": text},
+            ],
+            "max_tokens": settings.max_tokens,
+            "temperature": 0,
+            "stream": False,
+            **settings.extra_body,
+        }
+        try:
+            data = await post_json_with_poll(
+                base_url=settings.base_url.rstrip("/"),
+                endpoint=settings.endpoint,
+                payload=payload,
+                api_key=settings.api_key,
+                timeout=settings.timeout_seconds,
+                client=self._client,
+                resilient=self._resilient,
+                idempotency_key=_call_key(settings.resilience_key, text),
+                error_label="jailbreak-fallback",
+            )
+            answer = _json_answer(data)
+            flagged = bool(answer[settings.verdict_key])
+        except Exception as exc:
+            return self._unavailable(exc, started)
+        return GuardVerdict(
+            decision="flagged" if flagged else "allow",
+            flagged=flagged,
+            score=_as_float(answer.get(settings.score_key)),
+            model=settings.model,
+            provider=settings.provider,
+            reason=settings.flagged_reason if flagged else settings.allowed_reason,
+            endpoint=settings.endpoint,
+            api_called=True,
+            latency_ms=round((time.perf_counter() - started) * 1000, 2),
+            raw=data,
+        )
+
+    def _unavailable(self, exc: Exception, started: float) -> GuardVerdict:
+        latency_ms = round((time.perf_counter() - started) * 1000, 2)
+        error_fields = dependency_failure_fields(exc)
+        self._logger.warning(
+            "Jailbreak fallback unavailable",
+            model=self._settings.model,
+            latency_ms=latency_ms,
+            **error_fields,
+        )
+        return GuardVerdict(
+            decision="unavailable",
+            model=self._settings.model,
+            provider=self._settings.provider,
+            reason=str(error_fields["reason"]),
+            error_code=str(error_fields["error_code"]),
+            http_status=error_fields["http_status"],
+            endpoint=self._settings.endpoint,
+            api_called=True,
+            latency_ms=latency_ms,
+        )
+
+
+def _json_answer(data: dict[str, Any]) -> dict[str, Any]:
+    """The JSON object a chat classifier answered with (a fenced block is unwrapped)."""
+    content = str(data["choices"][0]["message"].get("content") or "").strip()
+    start, end = content.find("{"), content.rfind("}")
+    parsed = json.loads(content[start : end + 1])
+    if not isinstance(parsed, dict):
+        raise ValueError("the classifier did not answer with a JSON object")
+    return parsed
 
 
 def _as_float(value: Any) -> float | None:

@@ -21,7 +21,7 @@ from agent_platform.context import (
     is_identifier_query,
 )
 from agent_platform.context.failure import RotMonitor
-from agent_platform.evals import create_scoring_cascade
+from agent_platform.scoring import create_scoring_cascade
 
 _CORPUS = [
     Chunk(content="Order ORD-10042 shipped on March 3 by express courier.", source="orders"),

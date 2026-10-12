@@ -7,10 +7,10 @@ from typing import Any
 
 import pytest
 
-from agent_platform.evals.entailment import EntailmentResult
 from agent_platform.evidence import EvidenceEntry, LedgerSnapshot
 from agent_platform.memory import DreamEvent
 from agent_platform.observability.types import StatusEvent
+from agent_platform.scoring.entailment import EntailmentResult
 from agent_platform.verification.acceptance import CheckSpec, CheckVerdict
 from research_agent.audit.checks import claim_verdict
 from research_agent.audit.independent import AuditResult

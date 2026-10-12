@@ -34,8 +34,8 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
-from agent_platform.evals import Claim, NollmScoringCascadeImpl
 from agent_platform.logging import get_logger, instrument
+from agent_platform.scoring import Claim, NollmScoringCascadeImpl
 from customer_support_agent.config import get_agent_settings
 
 

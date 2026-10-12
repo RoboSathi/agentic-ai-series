@@ -38,12 +38,12 @@ class _Exploding(ScriptedLLM):
 class TestBuildProbes:
     def test_one_probe_per_configured_hosted_endpoint(self) -> None:
         names = [probe.name for probe in build_probes()]
-        assert names == ["agent_chat", "eval_judge", "embeddings", "content_safety", "jailbreak"]
+        assert names == ["agent_chat", "judge", "embeddings", "content_safety", "jailbreak"]
 
     def test_the_judge_probe_targets_the_judge_model_not_the_agents(self) -> None:
-        judge = next(probe for probe in build_probes() if probe.name == "eval_judge")
+        judge = next(probe for probe in build_probes() if probe.name == "judge")
         assert isinstance(judge, ChatProbe)
-        assert judge._model == get_settings().evals.judge.model
+        assert judge._model == get_settings().judge.model
 
     def test_a_disabled_guard_is_skipped(self, restore_settings: None) -> None:
         get_settings().security.guards.jailbreak.enabled = False
@@ -62,7 +62,7 @@ class TestChatProbe:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(probes, "create_pinned_llm_client", lambda *_: _Exploding())
-        result = await ChatProbe("eval_judge", "nim", "m", True, get_settings()).probe()
+        result = await ChatProbe("judge", "nim", "m", True, get_settings()).probe()
         assert result.status == "failed"
         assert result.http_status == 404
 

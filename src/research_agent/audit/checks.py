@@ -13,11 +13,11 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from agent_platform.evals.entailment import EntailmentModel
 from agent_platform.evidence import EvidenceEntry
 from agent_platform.hallucination_check import plain_text
+from agent_platform.scoring.entailment import EntailmentModel
 from agent_platform.verification.acceptance import AcceptanceCheckRegistry, CheckOutcome, CheckSpec
-from research_agent.audit.context import CheckContext, distinct_hosts, host
+from research_agent.audit.context import CheckContext, JudgeItem, distinct_hosts, host
 from research_agent.domain.sources import is_primary
 
 Check = Callable[[CheckSpec, CheckContext], Awaitable[CheckOutcome]]
@@ -276,7 +276,9 @@ async def sentence_entailed(
 async def judged(spec: CheckSpec, ctx: CheckContext) -> CheckOutcome:
     if ctx.judge is None or ctx.report is None:
         return CheckOutcome(score=0.0, detail="no judge or no report")
-    return await ctx.judge.judge(spec, ctx.report, ctx.ledger, ctx.contract.frozen_at.date())
+    return await ctx.judge.judge(
+        JudgeItem(spec, ctx.report, ctx.ledger, ctx.contract.frozen_at.date())
+    )
 
 
 _DETERMINISTIC: dict[str, Check] = {

@@ -1912,6 +1912,35 @@ class JoinedPremiseSettings(BaseModel):
     max_chars: int = Field(ge=1)
 
 
+class CascadeTierToggles(BaseModel):
+    """Per-tier toggles for the NOLLM scoring cascade (E10)."""
+
+    exact_assertion: bool
+    deterministic_rule: bool
+    embedding_similarity: bool
+    nli_entailment: bool
+    calibrated_llm_judge: bool
+    human_adjudication: bool
+
+
+class NliSettings(BaseModel):
+    """Lexical entailment fallback used when no NLI endpoint is wired."""
+
+    min_overlap: float
+    negation_markers: list[str]
+
+
+class ScoringCascadeSettings(BaseModel):
+    """The NOLLM scoring cascade: which tiers run, and where each one decides."""
+
+    tiers: CascadeTierToggles
+    embedding_similarity_threshold: float
+    embedding_dissimilarity_threshold: float
+    nli_entailment_threshold: float
+    judge_confidence_threshold: float
+    nli: NliSettings
+
+
 class HallucinationCheckSettings(YamlBackedSettings):
     """Detection ladder thresholds (LLD)."""
 
@@ -2007,6 +2036,7 @@ class HallucinationCheckSettings(YamlBackedSettings):
     # Hallucination repair is deliberately bounded. A model that repeats an
     # unsupported claim must not be given an unbounded generative retry loop.
     max_repair_attempts: int = Field(default=1, ge=0, le=3)
+    scoring: ScoringCascadeSettings
 
     model_config = SettingsConfigDict(env_prefix="HALLUCINATION_CHECK__")
 
@@ -2133,6 +2163,19 @@ class PiiSettings(BaseModel):
     model_recognizers: list[str]
 
 
+class GuardFallbackSettings(BaseModel):
+    """One chat model asked in turn when a hosted guard does not answer."""
+
+    model: str
+    base_url: str
+    endpoint: str
+    timeout_seconds: float
+    max_tokens: int
+    extra_body: dict[str, Any] = Field(default_factory=dict)
+    # The dependency name of this fallback's own retry/circuit-breaker stack.
+    resilience_key: str
+
+
 class SecurityGuardModelSettings(BaseModel):
     """Hosted security-model endpoint settings; credentials stay in env vars.
 
@@ -2165,6 +2208,18 @@ class SecurityGuardModelSettings(BaseModel):
     flagged_uncategorised_reason: str = ""
     allowed_reason: str
     missing_key_reason: str
+    # Chat models asked in turn when this guard does not answer; every one unavailable is
+    # what the fail-closed policy applies to.
+    fallbacks: list[GuardFallbackSettings] = Field(default_factory=list)
+    # A chat fallback for a guard whose primary is not a chat model (the jailbreak classifier):
+    # the prompt it is asked with, and the JSON keys its verdict and score are read from.
+    classifier_prompt: str = ""
+    verdict_key: str = ""
+    score_key: str = ""
+
+    def as_fallback(self, fallback: GuardFallbackSettings) -> "SecurityGuardModelSettings":
+        """These settings, pointed at one fallback model (same key, same wording)."""
+        return self.model_copy(update=fallback.model_dump())
 
     @property
     def api_key(self) -> str:
@@ -2200,6 +2255,8 @@ class SecurityGuardSettings(BaseModel):
     # A flag in advisory categories only: shown, not blocked (`{guard}`, `{categories}`).
     hosted_advisory_reason: str
     fail_closed_reason: str
+    # A verdict a fallback gave (`{reason}`, `{model}` that answered, `{primary}` that did not).
+    fallback_reason: str
 
 
 class PromptInjectionSettings(BaseModel):
@@ -2368,26 +2425,8 @@ class ResilienceSettings(YamlBackedSettings):
     model_config = SettingsConfigDict(env_prefix="RESILIENCE__")
 
 
-class CascadeTierToggles(BaseModel):
-    """Per-tier toggles for the NOLLM scoring cascade (E10)."""
-
-    exact_assertion: bool
-    deterministic_rule: bool
-    embedding_similarity: bool
-    nli_entailment: bool
-    calibrated_llm_judge: bool
-    human_adjudication: bool
-
-
-class NliSettings(BaseModel):
-    """Lexical entailment fallback used when no NLI endpoint is wired."""
-
-    min_overlap: float
-    negation_markers: list[str]
-
-
 class JudgeSettings(ModelRef, ModelChainSettings):
-    """The LLM judge: which model grades, its backups, and how it samples (E11).
+    """The LLM judge: which model grades, its backups, and how it samples.
 
     The judge's model is its own setting, deliberately not the agent's: a
     model grading its own output is the self-preference bias a judge
@@ -2397,8 +2436,19 @@ class JudgeSettings(ModelRef, ModelChainSettings):
 
     temperature: float
     max_tokens: int
-    # Cap on the evidence text a rubric judge is shown (0 = all of it).
+    # Cap on the evidence text a judge is shown (0 = all of it).
     max_evidence_chars: int
+
+
+class JudgeSectionSettings(YamlBackedSettings, JudgeSettings):
+    """`judge:` — the platform's one judge model, and how a verdict is asked for."""
+
+    _yaml_section = "judge"
+    # How a verdict that fails its schema is treated before the judge abstains.
+    validation_mode: Literal["reject", "auto_repair"]
+    kappa_acceptable: float = Field(ge=0.0, le=1.0)
+
+    model_config = SettingsConfigDict(env_prefix="JUDGE__")
 
 
 class EvalStoreSettings(BaseModel):
@@ -2432,28 +2482,49 @@ class EvalFingerprintSettings(BaseModel):
     # does — the eval machinery itself — so editing a report never forces
     # the agent to be re-run.
     exclude_paths: list[str]
+    # An agent's additions to `exclude_paths` (an overlay's list would replace the platform's).
+    agent_exclude_paths: list[str] = Field(default_factory=list)
     # Config sections that cannot change agent behaviour.
     exclude_config_sections: list[str]
+
+    @property
+    def all_exclude_paths(self) -> list[str]:
+        return [*self.exclude_paths, *self.agent_exclude_paths]
 
 
 class EvalGateSettings(BaseModel):
     """When a run fails, and when the pipeline stops."""
 
-    stop_on_invariant_failure: bool
     soft_pass_rate: float
 
 
+class EvalOverviewSettings(BaseModel):
+    """The colour-coded box tables `make eval` prints after each stage."""
+
+    max_failures: int
+    reason_chars: int
+    # Section key (agent, oracle, deepeval, promptfoo, intent, total) → its name in the summary.
+    sections: dict[str, str]
+    section_error: str
+    # Outcome words (`pass`, `fail`, `warn`, `defended`, `breached`, `incomplete`), coloured by
+    # `tui.command_output.state_styles`.
+    states: dict[str, str]
+
+
 class EvalReportingSettings(BaseModel):
-    """The Markdown reports every stage writes."""
+    """The Markdown report each framework writes per run, and the terminal overview."""
 
     output_dir: str
+    # Framework (`deepeval`, `promptfoo`, `intent`) → file name, with `{run_id}`.
+    files: dict[str, str]
     confidence_z: float
     max_cases_listed: int
-    # Transcript metadata key holding the runtime hallucination guard's
-    # rate, compared against the judge's verdicts in the judge report.
+    excerpt_chars: int
+    # Transcript metadata key with the runtime guard's hallucination rate, and the metric
+    # whose verdicts are compared with it.
     runtime_guard_key: str
-    # Report file per stage (plus `summary` and `diff`), inside a run's folder.
-    files: dict[str, str]
+    guard_metric: str
+    overview: EvalOverviewSettings
 
     @property
     def resolved_output_dir(self) -> Path:
@@ -2461,11 +2532,13 @@ class EvalReportingSettings(BaseModel):
 
 
 class EvalDeepEvalSettings(BaseModel):
-    """DeepEval, run as an optional quality stage through the harness's own client."""
+    """DeepEval, run as the golden suite's quality grader through the platform judge."""
 
-    # Reasons cost an extra model call per metric; off keeps the stage cheap.
     include_reason: bool
     telemetry_opt_out: bool
+    max_concurrent: int
+    geval_params: list[str]
+    quiet: bool
 
 
 class EvalPromptfooSettings(BaseModel):
@@ -2473,47 +2546,44 @@ class EvalPromptfooSettings(BaseModel):
 
     runner: list[str]
     package: str
-    suite: str
     max_concurrency: int
-    # How long one test may run in a Promptfoo Python worker. A multi-turn
-    # attack is several full agent turns, each behind the shared rate limit.
-    provider_timeout_ms: int
-    provider_scheme: str
     output_dir: str
     extra_args: list[str]
     # Environment the Promptfoo process (and its Python workers) gets.
     env: dict[str, str]
+    # The attack metadata keys (Promptfoo's red-team taxonomy) the report groups by.
+    plugin_key: str
+    strategy_key: str
+    severity_key: str
 
     @property
     def resolved_output_dir(self) -> Path:
         return resolve_path(self.output_dir)
 
 
+class EvalSuiteNames(BaseModel):
+    """The two suites every agent with evals has."""
+
+    golden: str
+    security: str
+
+
 class EvalsSettings(YamlBackedSettings):
-    """Eval pyramid and NOLLM cascade (LLD §18)."""
+    """The eval framework: oracle, DeepEval and Promptfoo over an agent's suites."""
 
     _yaml_section = "evals"
     enabled: bool
     # The channel eval traffic is stamped with, so runtime metrics can exclude it.
     channel: str
-    manifest_version: str
-    manifest_path: str
-    # Further manifests merged over the platform's, in order. Empty here:
-    # a golden-task eval is necessarily about some product's behaviour, so
-    # an agent declares its own rather than adding to everyone's.
-    additional_manifest_paths: list[str] = []
-    cascade: CascadeTierToggles
-    embedding_similarity_threshold: float
-    embedding_dissimilarity_threshold: float
-    nli_entailment_threshold: float
-    judge_confidence_threshold: float
-    kappa_acceptable: float
-    nli: NliSettings
-    judge: JudgeSettings
+    # The evaluator's version, recorded with every audit entry.
+    version: str
     # `module.path:attribute` of the running agent's EvalPlugin. Empty
     # here: the platform names no agent.
     plugin: str
-    suites: list[str]
+    run_id_prefix: str
+    suites: EvalSuiteNames
+    trials: int = Field(ge=1)
+    trial_separator: str
     store: EvalStoreSettings
     generation: EvalGenerationSettings
     fingerprint: EvalFingerprintSettings
@@ -2523,18 +2593,6 @@ class EvalsSettings(YamlBackedSettings):
     promptfoo: EvalPromptfooSettings
 
     model_config = SettingsConfigDict(env_prefix="EVALS__")
-
-    @property
-    def resolved_manifest_path(self) -> Path:
-        return resolve_path(self.manifest_path)
-
-    @property
-    def resolved_manifest_paths(self) -> list[Path]:
-        """Every manifest that contributes, platform first."""
-        return [
-            self.resolved_manifest_path,
-            *(resolve_path(entry) for entry in self.additional_manifest_paths),
-        ]
 
 
 class ToolsSettings(YamlBackedSettings):
@@ -3041,6 +3099,9 @@ class AppConfig(BaseSettings):
     durability: DurabilitySettings = Field(default_factory=lambda: DurabilitySettings())  # type: ignore[call-arg]
     loop_control: LoopControlSettings = Field(default_factory=lambda: LoopControlSettings())  # type: ignore[call-arg]
     money: MoneySettings = Field(default_factory=lambda: MoneySettings())  # type: ignore[call-arg]
+    judge: JudgeSectionSettings = Field(
+        default_factory=lambda: JudgeSectionSettings()  # type: ignore[call-arg]
+    )
     evals: EvalsSettings = Field(default_factory=lambda: EvalsSettings())  # type: ignore[call-arg]
     tools: ToolsSettings = Field(default_factory=lambda: ToolsSettings())  # type: ignore[call-arg]
     tui: TuiSettings = Field(default_factory=lambda: TuiSettings())  # type: ignore[call-arg]

@@ -14,8 +14,6 @@ import pytest
 from agent_platform.config import get_settings
 from agent_platform.config.settings import GroundingTierSettings, JoinedPremiseSettings
 from agent_platform.context.types import Chunk
-from agent_platform.evals import create_scoring_cascade
-from agent_platform.evals.entailment import EntailmentResult
 from agent_platform.guardrails.response import ResponseGuardrail
 from agent_platform.hallucination_check import (
     NOT_EXECUTED_MARKER,
@@ -26,6 +24,8 @@ from agent_platform.hallucination_check import (
     Observation,
     tool_evidence,
 )
+from agent_platform.scoring import create_scoring_cascade
+from agent_platform.scoring.entailment import EntailmentResult
 
 Decide = Callable[[str, str], str]
 

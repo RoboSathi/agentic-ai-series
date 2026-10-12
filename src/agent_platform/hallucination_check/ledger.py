@@ -136,7 +136,9 @@ class FactLedger:
         self._settings = settings or config.facts
         pattern = identifier if identifier is not None else config.refute_identifier_pattern
         self._identifier = re.compile(pattern) if pattern else None
-        self._negations = tuple(m.casefold() for m in get_settings().evals.nli.negation_markers)
+        self._negations = tuple(
+            m.casefold() for m in get_settings().hallucination_check.scoring.nli.negation_markers
+        )
         self._promise = re.compile(config.promissory_pattern, re.IGNORECASE)
         self._units = [
             (re.compile(rf"(\d+(?:\.\d+)?)\s*(?:{unit})\b", re.IGNORECASE), Decimal(seconds))

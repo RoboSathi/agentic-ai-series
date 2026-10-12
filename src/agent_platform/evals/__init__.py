@@ -1,102 +1,38 @@
-"""Eval pyramid and the NOLLM scoring cascade (LLD §18)."""
+"""The eval framework: three graders over an agent's suites (LLD §18).
 
-from agent_platform.evals.entailment import (
-    EntailmentModel,
-    EntailmentResult,
-    LexicalEntailmentModel,
-    create_entailment_model,
-)
-from agent_platform.evals.judge import (
-    AgreementReport,
-    CalibratedJudge,
-    JudgeCalibrator,
-    LlmJudge,
-)
-from agent_platform.evals.manifest import EvalManifest, load_manifest
-from agent_platform.evals.provenance import (
-    BiasReport,
-    GoldenDatasetProvenanceLedger,
-    LabelProvenance,
-)
-from agent_platform.evals.pyramid import (
-    ComponentEvalRunner,
-    EvalRunner,
-    GoldenTaskE2ERunner,
-    IntegrationEvalRunner,
-    ProductionShadowEvalRunner,
-    PyramidRunner,
-    SystemUnderTest,
-)
-from agent_platform.evals.scoring import (
-    NOLLM_TIERS,
-    TIER_ORDER,
-    CalibratedJudgeScorer,
-    DeterministicRuleScorer,
-    EmbeddingSimilarityScorer,
-    ExactAssertionScorer,
-    HumanAdjudicationScorer,
-    NliEntailmentScorer,
-    NollmScoringCascade,
-    NollmScoringCascadeImpl,
-    Scorer,
-    create_scoring_cascade,
-    lexical_overlap,
-)
-from agent_platform.evals.types import (
-    Claim,
-    EvalCase,
-    EvalManifestEntry,
-    EvalOutcome,
-    EvalReport,
-    PyramidLevel,
-    ScoreResult,
-    ScorerTier,
-    Verdict,
-    VerdictLabel,
+- `oracle/`    — the agent's hard rules over the outcome, zero model calls (hard gate);
+- `deepeval/`  — conversation quality, judged by the platform judge (soft gate);
+- `promptfoo/` — the red-team suite, run by Promptfoo (hard gate);
+- `intent/`    — the intent classifier bake-off;
+- `core/`      — contracts, store, pipeline, reports, CLI.
+
+An agent takes part by naming an `EvalPlugin` in its config (`evals.plugin`).
+"""
+
+from agent_platform.evals.core.contracts import (
+    AgentUnderTest,
+    ConversationFrame,
+    EvalPlugin,
+    GoldenCase,
+    Grader,
+    IntentBakeoffPlugin,
+    QualityMetricSpec,
+    Score,
+    ToolCallRecord,
+    Transcript,
+    UsageRecord,
 )
 
 __all__ = [
-    "NOLLM_TIERS",
-    "TIER_ORDER",
-    "AgreementReport",
-    "BiasReport",
-    "CalibratedJudge",
-    "CalibratedJudgeScorer",
-    "Claim",
-    "ComponentEvalRunner",
-    "DeterministicRuleScorer",
-    "EmbeddingSimilarityScorer",
-    "EntailmentModel",
-    "EntailmentResult",
-    "EvalCase",
-    "EvalManifest",
-    "EvalManifestEntry",
-    "EvalOutcome",
-    "EvalReport",
-    "EvalRunner",
-    "ExactAssertionScorer",
-    "GoldenDatasetProvenanceLedger",
-    "GoldenTaskE2ERunner",
-    "HumanAdjudicationScorer",
-    "IntegrationEvalRunner",
-    "JudgeCalibrator",
-    "LabelProvenance",
-    "LexicalEntailmentModel",
-    "create_entailment_model",
-    "LlmJudge",
-    "NliEntailmentScorer",
-    "NollmScoringCascade",
-    "NollmScoringCascadeImpl",
-    "ProductionShadowEvalRunner",
-    "PyramidLevel",
-    "PyramidRunner",
-    "ScoreResult",
-    "Scorer",
-    "ScorerTier",
-    "SystemUnderTest",
-    "Verdict",
-    "VerdictLabel",
-    "create_scoring_cascade",
-    "lexical_overlap",
-    "load_manifest",
+    "AgentUnderTest",
+    "ConversationFrame",
+    "EvalPlugin",
+    "GoldenCase",
+    "Grader",
+    "IntentBakeoffPlugin",
+    "QualityMetricSpec",
+    "Score",
+    "ToolCallRecord",
+    "Transcript",
+    "UsageRecord",
 ]

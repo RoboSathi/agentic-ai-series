@@ -1,6 +1,6 @@
 # The intent router with no rules in front of the classifier: every turn reaches the
 # model (`make agent csa PROFILE=no_phrase_rules`, and both contenders of
-# `make intent-bakeoff csa`). The order validator still reads `intents[].phrases`.
+# `make eval csa STAGE=intent`). The order validator still reads `intents[].phrases`.
 customer_support_agent:
   intent_router:
     phrase_rules: false

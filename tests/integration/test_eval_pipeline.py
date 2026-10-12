@@ -3,7 +3,7 @@
 The model is scripted — what is under test is the harness around it:
 each case running in its own copy of the fixture, the transcript being
 assembled from what the agent actually did, the oracle judging the side
-effects, the store caching, and the reports being written.
+effects, the store caching, and the report being written.
 """
 
 from pathlib import Path
@@ -11,8 +11,10 @@ from pathlib import Path
 import pytest
 
 from agent_platform.config import get_settings
-from agent_platform.evals.pipeline.orchestrator import EvalPipeline
-from agent_platform.evals.store import DuckDbEvalStore
+from agent_platform.evals.core.contracts import GoldenCase, QualityMetricSpec
+from agent_platform.evals.core.pipeline.orchestrator import EvalPipeline
+from agent_platform.evals.core.reporting import report_path
+from agent_platform.evals.core.store import DuckDbEvalStore
 from agent_platform.llm.types import CompletionRequest, CompletionResult
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.dummy_data import generate_dummy_data as dummy
@@ -49,11 +51,17 @@ class ScriptedCsaPlugin(CsaEvalPlugin):
         super().__init__()
         self._llm = StatelessScriptedLLM(script)
 
+    def load_cases(self, suite: str) -> list[GoldenCase]:
+        return [case for case in super().load_cases(suite) if case.case_id in CASE_IDS]
+
     def prepare(self) -> None:
         self._fixture.ensure_built()
 
     def agent_under_test(self) -> CsaAgentUnderTest:
         return CsaAgentUnderTest(self._fixture, run_key="it", llm=self._llm)
+
+    def quality_metrics(self) -> list[QualityMetricSpec]:
+        return []  # the judge is not under test here
 
 
 REFUND_90001 = [
@@ -69,43 +77,40 @@ def security_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(get_settings().llm.embedding, "backend", "hashing")
 
 
-async def test_generate_oracle_and_reports(security_off: None) -> None:
+async def test_generate_oracle_and_report(security_off: None) -> None:
     plugin = ScriptedCsaPlugin(REFUND_90001)
     plugin.prepare()
     store = DuckDbEvalStore(":memory:")
-    pipeline = EvalPipeline(plugin, store)
-    cases = [case for case in plugin.load_cases("golden") if case.case_id in CASE_IDS]
+    outcome = await EvalPipeline(plugin, store).golden()
 
-    run = await pipeline.generate("golden", cases)
-    gate = await pipeline.grade("oracle", run.run_id)
-
-    transcripts = {item.case_id: item.transcript for item in store.transcripts(run.run_id)}
+    transcripts = {item.case_id: item.transcript for item in store.transcripts(outcome.run_id)}
     refund = transcripts["refund-direct-001"]
     assert [row["order_id"] for row in refund.side_effects["refunds"]] == [90001]
     # The refund skill's reads are answered from the deterministic checks' row, so
     # no tool runs for them: the model's call is the only one.
-    assert [call.name for call in refund.tool_calls] == [
-        "support.process_refund",
-    ]
-    assert refund.tool_calls[-1].status == "completed"
+    assert [call.name for call in refund.tool_calls] == ["support.process_refund"]
+    call = refund.tool_calls[-1]
+    assert call.status == "completed" and call.turn == 0
+    # The Gatekeeper's standing reaches the transcript, and the oracle grades it.
+    assert call.standing == "VOIDABLE"
+    changed = refund.side_effects["order_changes"]
+    assert changed and changed[0]["before_status"] == changed[0]["after_status"] == "delivered"
     # Cases are isolated: the refund in one case is not visible in another.
     assert transcripts["already-refunded-001"].side_effects["refunds"] == []
     # The script refunds 90001 for every case, so the over-limit case must
     # fail its outcome — the oracle is checking side effects, not the reply.
     failures = store.query(
-        "SELECT case_id, metric FROM v_hard_failures WHERE run_id = ?", (run.run_id,)
+        "SELECT case_id, metric FROM v_hard_failures WHERE run_id = ?", (outcome.run_id,)
     )
-    assert ("refund-review-001", "outcome_matches") in {
-        (r["case_id"], r["metric"]) for r in failures
-    }
-    assert gate.verdict == "FAIL"
+    failed = {(r["case_id"], r["metric"]) for r in failures}
+    assert ("refund-review-001", "outcome_matches") in failed
+    assert ("refund-direct-001", "standing_matches") not in failed
+    assert outcome.gate.verdict == "FAIL"
+    assert outcome.report == report_path("deepeval", outcome.run_id) and outcome.report.exists()
 
-    folder = get_settings().evals.reporting.resolved_output_dir / run.run_id
-    assert (folder / get_settings().evals.reporting.files["oracle"]).exists()
-
-    again = await pipeline.generate("golden", cases)
-    assert again.run_id == run.run_id
-    assert all(item.transcript.replies for item in store.transcripts(run.run_id))
+    again = await EvalPipeline(plugin, store).golden()
+    assert again.run_id == outcome.run_id
+    assert all(item.transcript.replies for item in store.transcripts(outcome.run_id))
 
 
 class TestDummyData:

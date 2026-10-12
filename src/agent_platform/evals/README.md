@@ -1,84 +1,114 @@
-# evals — the eval framework
+# evals — three graders over an agent's suites
 
-Two things live here.
+An agent's evals are graded three ways, each the right tool for one kind of question
+(Anthropic's grader taxonomy: code-based, model-based, adversarial):
 
-1. **The eval pyramid and the NOLLM scoring cascade** (E09–E11): the six-tier
-   cascade (exact → rule → embedding → NLI → LLM judge → human) that every
-   subsystem resolves claims through, the checked-in eval manifest, judge
-   calibration (Cohen's κ) and golden-label provenance.
-2. **The eval pipeline** that runs an agent over its golden set and scores it:
-   generate → oracle → security → judge → deepeval, persisted in DuckDB,
-   with a detailed Markdown report per stage.
+| Grader | Kind | Grades | Gate |
+|---|---|---|---|
+| **Oracle** (`oracle/`) | code, zero model calls | the *outcome*: the state a case left behind, against ground truth | hard — 100% |
+| **DeepEval** (`deepeval/`) | model-graded, the platform judge | the conversation: one anchored quality dimension per metric | soft — `gate.soft_pass_rate` |
+| **Promptfoo** (`promptfoo/`) | adversarial | curated red-team attacks; every assertion must hold | hard — 100% |
 
-The platform supplies every mechanism and names no agent. An agent takes
-part through one seam, `EvalPlugin`, named in its config (`evals.plugin`).
+Plus the **intent bake-off** (`intent/`): an agent's intent classifiers scored side by side
+(accuracy, macro-F1, coverage at the threshold, Brier/ECE, latency) — a component eval, offline.
+
+The platform supplies every mechanism and names no agent. An agent takes part through one
+seam, `EvalPlugin`, named in its config (`evals.plugin`).
 
 ```
-make eval             # every stage, in order; stops after the oracle on a broken invariant
-make eval-generate    # run the agent over the golden set (reuses unchanged transcripts)
-make eval-oracle      # deterministic business invariants — zero model calls
-make eval-security    # Promptfoo attack suite
-make eval-judge       # rubric quality + claim-level hallucination, one call per case
-make eval-deepeval    # DeepEval metrics (optional extra: pip install -e '.[evals]')
-make eval-report RUN=<id>   make eval-diff A=<id> B=<id>   make eval-runs   make eval-sql
+make eval <agent>                    golden set (oracle + DeepEval), then red team (Promptfoo)
+make eval <agent> STAGE=deepeval     golden set only
+make eval <agent> STAGE=promptfoo    red team only
+make intent-eval <agent>             intent classifier bake-off only (offline)
 ```
-Options: `RPM=<n>` (provider budget), `FRESH=1`, `LIMIT=<n>`, `CASE=<id>`, `TAG=<tag>`,
-`RUN=<id>`, `EVAL_CONTINUE_ON_INVARIANT_FAILURE=1`.
+
+Every section always runs — a broken invariant is a finding to read beside the quality
+scores, not a reason to skip them — and a failed gate is a result, not an error: `make eval`
+exits non-zero only when a section could not run at all (the others still run). Each suite
+prints a colour-coded overview (box tables, outcome words in the console's state colours),
+the run ends with the time each section took, and each framework writes one report per run:
+`src/<pkg>/evals/reports/{deepeval,promptfoo,intent}-<run_id>.md`, where
+`run_id = <agent>-<suite>-<hash>-<YYYYMMDD-HHMMSS>` (UTC).
+
+## Why each grader exists
+
+- **The oracle is the only grader that reads ground truth.** The judges read the
+  conversation; "did money move that shouldn't have?" is a fact about the database, and an
+  LLM can be talked into anything a conversation can say. It is free and repeatable, and runs
+  first; DeepEval still runs after it whatever it found. It grades what the agent *produced*, not the path it
+  took — the one path rule is a forbidden tool that *executed*, because executing is an outcome.
+- **DeepEval grades what only language can show**: did the reply resolve the request, explain
+  a refusal, claim only what happened, stay grounded in its evidence. One dimension per metric
+  (`ConversationalGEval` with evaluation steps and rubric bands; `TurnFaithfulness`;
+  `TurnRelevancy`), each judged against the case's own scenario and expected outcome.
+- **Promptfoo holds the agent to the same invariants under attack.** Its assertions reuse the
+  oracle's rules (`promptfoo/assertions.py: oracle_assert`), so "unsafe" is defined once.
+
+## Layout
+
+```
+core/       contracts (EvalPlugin, GoldenCase, Transcript, Score), fingerprint, store (DuckDB),
+            pipeline (generate, grade, gate, trials, orchestrator), reporting (sections, writer,
+            overview), cli
+oracle/     InvariantOracle — runs an agent's Rule list; versioned by rules + inputs
+deepeval/   model (the platform judge as a DeepEvalBaseLLM), test_cases (Transcript →
+            ConversationalTestCase), metrics (spec → metric), grader (deepeval.evaluate()),
+            report + template
+promptfoo/  runner (npx promptfoo eval -c <agent config>, ingest), agent_provider,
+            grader_provider (llm-rubric via the platform judge), assertions, report + template
+intent/     scoring (accuracy, macro-F1, Brier, ECE, latency), report
+```
 
 ## Vocabulary
 
-- **suite** — a named set of cases (`golden`, `security`)
-- **GoldenCase** — turns plus an agent-owned `payload` (fixture refs, expectations); hashed into `case_hash`
-- **run** — one suite generated against one agent fingerprint and one dataset version
-- **transcript** — everything the agent did for a case: replies, tool calls, evidence, side effects, usage
-- **grader** — turns a case and transcript into `Score`s; kinds `oracle`, `judge`, `deepeval`, `promptfoo`
-- **hard / soft** — hard metrics gate at 100% (one failure fails the run); soft ones at a pass rate
-- **agent fingerprint** — content hash of the source tree, the effective config and the agent's inputs — uncommitted edits count, git does not decide
-- **grader fingerprint** — names + versions of a stage's graders; scores are reused only while it and the transcript are unchanged
+- **suite** — `golden` (oracle + DeepEval) or `security` (Promptfoo)
+- **GoldenCase** — turns plus an agent-owned `payload`; hashed into `case_hash`
+- **run** — one suite generated against one agent fingerprint and one case set
+- **transcript** — replies, tool calls (turn, gatekeeper ruling, standing, result), evidence, side effects, usage
+- **hard / soft** — hard metrics gate at 100%; soft ones at a pass rate
+- **trial** — with `evals.trials` = k each case runs k times; the report shows pass@k (some trial clean) and pass^k (every trial clean)
+- **agent fingerprint** — content hash of the source tree, effective config and the agent's inputs; any change regenerates by itself
+- **grader fingerprint** — names + versions of a stage's graders; scores are reused while it and the transcript are unchanged
 
 ## Public interface
 
-- Contracts (`contracts.py`): `GoldenCase`, `Transcript`, `ToolCallRecord`, `UsageRecord`, `Score`, `Rubric`, `QualityMetricSpec`; Protocols `EvalPlugin`, `AgentUnderTest`, `Grader`
-- `resolve_eval_plugin()` (`plugin.py`), `compute_fingerprint()` (`fingerprint.py`)
-- Pipeline (`pipeline/`): `GenerationStage`, `GradingStage`, `evaluate_gate`, `EvalPipeline` (one method per make target)
-- Store (`store/`): `DuckDbEvalStore` — tables `eval_runs`, `eval_cases`, `eval_transcripts`, `eval_stages`, `eval_scores`; views `v_run_summary`, `v_metric_pass_rates`, `v_category_breakdown`, `v_failures`, `v_hard_failures`, `v_cost_latency`, `v_stage_cost`, `v_metric_trend`
-- Graders (`graders/`): `RubricJudge` — rubric criteria + claim-level hallucination in one call
-- Adapters (`adapters/`): DeepEval (`deepeval_graders`), Promptfoo (`PromptfooSuite`, the agent provider and the judge grader provider)
-- Reports (`reporting/`): `EvalReporter` → `reports/evals/<run_id>/00_summary.md … 05_deepeval.md`, `diff_*.md`; Wilson intervals on every rate
-- Cascade and pyramid (unchanged): `create_scoring_cascade`, `NollmScoringCascadeImpl`, `LlmJudge`, `JudgeCalibrator`, `load_manifest`, `GoldenDatasetProvenanceLedger`
-- CLI: `python -m agent_platform.evals {generate,oracle,judge,deepeval,security,run,report,diff,runs,sql}`
+- `EvalPlugin` (agent_id, load_cases, prepare, agent_under_test, oracle, quality_metrics, conversation_frame, security_config, fingerprint_inputs); optional `IntentBakeoffPlugin`
+- `InvariantOracle`, `Rule`, `RuleVerdict` (`oracle/`)
+- `DeepEvalGrader` (`deepeval/`); `PromptfooSuite` (`promptfoo/`); `BakeoffResult` (`intent/`)
+- `EvalPipeline.golden() / security() / intent() / report(run_id)` → `StageOutcome` (gate, report path, overview)
+- `DuckDbEvalStore` — tables `eval_runs`, `eval_cases`, `eval_transcripts`, `eval_stages`, `eval_scores`; views `v_scores`, `v_run_summary`, `v_metric_pass_rates`, `v_failures`, `v_stage_cost`, `v_metric_trend`, …
+- CLI: `python -m agent_platform.evals run [--stage …] | report [--run ID] | runs`
 
 ## Configuration
 
-Section `evals:` — cascade thresholds and toggles; `judge` (its own `model`, a different vendor
-from the agent's, and `max_tokens` for a reasoning model); `plugin`; `suites`; `store.db_path`
-(`data/evals.duckdb`, its own file because DuckDB admits one process per file); `generation.max_concurrency`;
-`fingerprint` (source roots, excluded paths and config sections); `gate`
-(`stop_on_invariant_failure`, `soft_pass_rate`); `deepeval`; `promptfoo` (pinned package, runner, env);
-`reporting` (output dir, `confidence_z`, file names). The suite's soft threshold comes from its
-manifest entry (`suite:` + `regression_threshold`) when declared.
+`judge:` — the model every model-graded verdict uses (see `agent_platform/judge`).
+`evals:` — `plugin`, `run_id_prefix`, `suites`, `trials`, `store`, `generation.max_concurrency`,
+`fingerprint` (roots, `exclude_paths` + an agent's `agent_exclude_paths`), `gate` (`soft_pass_rate`), `deepeval`
+(`include_reason`, `max_concurrent`, `geval_params`, `quiet`), `promptfoo` (pinned package,
+runner, taxonomy keys), `reporting` (output dir, file names, Wilson `confidence_z`, the overview
+and its section names).
 
 ## Seams
 
-- An agent implements `EvalPlugin`: cases, a `prepare()` step, its `AgentUnderTest`, its oracle, its judge rubric, its quality metrics, its Promptfoo config, and fingerprint inputs.
-- DeepEval and Promptfoo are never runtime dependencies: DeepEval is the optional `evals` extra, imported lazily by one adapter; Promptfoo is a Node tool run through `npx` at a pinned version. `tests/unit/test_platform_boundary.py` enforces both.
+- DeepEval and Promptfoo are never runtime dependencies: DeepEval is the optional `evals`
+  extra, imported lazily inside `deepeval/`; Promptfoo is a Node tool run through `npx` at a
+  pinned version. `tests/unit/test_platform_boundary.py` enforces both.
+- DeepEval keeps its test run in a process-wide manager, so `evaluate()` runs one case at a
+  time per process (the metrics of that case run concurrently), in a worker thread.
 
 ## Collaborators
 
-- Every model call (agent, judge, DeepEval, Promptfoo's grader) goes through `llm` and the shared `resilience.rate_limiter` budget.
+- `agent_platform.judge` — every model-graded verdict (DeepEval metrics, Promptfoo's `llm-rubric`).
+- `agent_platform.presentation` — the overview is drawn by the console's `CommandView`.
+- Every model call goes through `llm` and the shared `resilience.rate_limiter` budget.
 - `/eval` in the console reads the same store and views as the reports.
-
-## Episodes
-
-E09 (the pyramid and manifest), E10 (the NOLLM cascade), E11 (judge calibration and label provenance).
 
 ## Tests
 
-Run with `./venv/bin/pytest tests/unit/test_evals.py tests/unit/test_eval_framework.py tests/unit/test_eval_adapters.py tests/integration/test_eval_pipeline.py -q` (or `make test` for everything).
+`./venv/bin/pytest tests/unit/test_eval_core.py tests/unit/test_eval_deepeval.py tests/unit/test_eval_promptfoo.py tests/unit/test_eval_cli.py tests/integration/test_eval_pipeline.py -q` — all offline (scripted agent and judge).
 
 ## Status and limits
 
-Generation is cached by (case hash, agent fingerprint) and resumable; grading by
-(transcript hash, grader fingerprint). A grader that raises records an error score that is
-never reused. The golden-task and production-shadow pyramid runners remain for E09's component
-view; the golden suite itself runs through the pipeline above.
+Generation is cached by (case hash, agent fingerprint) and resumable; grading by (transcript
+hash, grader fingerprint). A grader that raises records `<metric>.error`, never reused.
+An agent with no `evals.plugin` has no suite; `make eval` refuses it.

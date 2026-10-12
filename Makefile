@@ -1,7 +1,6 @@
 .PHONY: gen-key help install clean lint type-check format test verify agent llm-check model-check models data refund-limit \
 	clean-memory show-memory dream memory-reindex queue audit runs dummy-data analytics-export analytics-drop-legacy dashboard dashboard-install dashboard-refresh \
-	eval eval-generate eval-oracle eval-security eval-judge eval-deepeval eval-report eval-diff \
-	eval-runs eval-sql intent-bakeoff _agent
+	eval intent-eval _agent
 
 # -- agent registry -------------------------------------------------------------
 # The platform names no agent (`agent_platform/config.yaml` ships
@@ -36,8 +35,7 @@ ops_OFFLINE_PROFILE :=
 ops_EVALS :=
 
 # Targets whose second goal names the agent they act on.
-AGENT_SCOPED := agent data runs queue audit pii-reveal dream show-memory clean-memory memory-reindex model-check llm-check models eval eval-generate eval-oracle eval-security eval-judge \
-	eval-deepeval eval-report eval-diff eval-runs eval-sql intent-bakeoff
+AGENT_SCOPED := agent data runs queue audit pii-reveal dream show-memory clean-memory memory-reindex model-check llm-check models eval intent-eval
 
 ifneq ($(filter $(firstword $(MAKECMDGOALS)),$(AGENT_SCOPED)),)
 AGENT_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
@@ -53,16 +51,11 @@ export AGENTIC_OVERLAYS := $($(AGENT)_OVERLAY)
 # A profile is a named posture of the agent's own config:
 # `make agent csa PROFILE=<name>` (src/<pkg>/config/profiles/). Evals and
 # `make data` always use the agent's offline profile, whatever was typed.
-ifneq ($(filter data eval eval-%,$(firstword $(MAKECMDGOALS))),)
+ifneq ($(filter data eval intent-eval,$(firstword $(MAKECMDGOALS))),)
 override PROFILE := $($(AGENT)_OFFLINE_PROFILE)
 endif
 ifneq ($(PROFILE),)
 export AGENTIC_OVERLAYS := $(AGENTIC_OVERLAYS):src/$($(AGENT)_PKG)/config/profiles/$(PROFILE).yaml
-endif
-# An ablation is one more config layer over the agent's own:
-# `make eval-generate ra ABLATION=no_rubric_audit` (src/<pkg>/evals/ablations/).
-ifdef ABLATION
-export AGENTIC_OVERLAYS := $(AGENTIC_OVERLAYS):src/$($(AGENT)_PKG)/evals/ablations/$(ABLATION).yaml
 endif
 endif
 endif
@@ -97,15 +90,8 @@ endif
 ifdef RPM
 export RESILIENCE__RATE_LIMIT__BUCKETS__NVIDIA__MAX_REQUESTS := $(RPM)
 endif
-# Keep going past a broken business invariant: `EVAL_CONTINUE_ON_INVARIANT_FAILURE=1 make eval csa`.
-ifdef EVAL_CONTINUE_ON_INVARIANT_FAILURE
-export EVALS__GATE__STOP_ON_INVARIANT_FAILURE := false
-endif
-
-# Case selection and cache control for the eval targets.
-EVAL_SELECT := $(if $(FRESH),--fresh) $(if $(LIMIT),--limit $(LIMIT)) \
-	$(foreach c,$(CASE),--case $(c)) $(foreach t,$(TAG),--tag $(t))
-EVAL_RUN := $(if $(RUN),--run $(RUN)) $(if $(FRESH),--fresh)
+# `make eval <agent> STAGE=deepeval|promptfoo` runs one suite; no STAGE runs golden + red team.
+EVAL_STAGES := deepeval promptfoo
 
 # Bright, bold colours: the dark 0;3x set is hard to read on a dark terminal.
 GREEN := \033[1;92m
@@ -161,21 +147,14 @@ help:
 	@echo "  make clean-memory <agent> Empty long-term memory (keeps checkpoints, business records, audit)"
 	@echo "  make memory-reindex <agent>  Rebuild the derived search index from the memory files"
 	@echo ""
-	@echo "$(GREEN)Evals$(NC) (agent name required; order: generate → oracle → security → judge → deepeval):"
-	@echo "  make eval <agent>         The whole pipeline; stops after the oracle on a broken invariant"
-	@echo "  make eval-generate <agent>   Run the agent over the golden set (reuses unchanged transcripts)"
-	@echo "  make eval-oracle <agent>     Deterministic invariants (no model calls)"
-	@echo "  make eval-security <agent>   Security suite (csa: Promptfoo; ra: seeded hostile pages)"
-	@echo "  make eval-judge <agent>      LLM judge: rubric quality + hallucination"
-	@echo "  make eval-deepeval <agent>   DeepEval quality metrics"
-	@echo "  make eval-report <agent>     Rebuild the Markdown reports (RUN=<id>, default latest)"
-	@echo "  make eval-diff <agent> A=<run> B=<run>   Regression report between two runs"
-	@echo "  make eval-runs <agent>       List recent runs"
-	@echo "  make eval-sql <agent>        Query the eval store (SQL=\"select ...\" or interactive)"
-	@echo "  make intent-bakeoff <agent>  Intent classifiers side by side on labelled messages (csa)"
-	@echo ""
-	@echo "  Options: RPM=<n>  FRESH=1  LIMIT=<n>  CASE=<id>  TAG=<tag>  RUN=<id>  ABLATION=<name>  PROFILE=<name>"
-	@echo "           EVAL_CONTINUE_ON_INVARIANT_FAILURE=1"
+	@echo "$(GREEN)Evals$(NC) (agents with a suite: $(strip $(foreach a,$(AGENTS),$(if $($(a)_EVALS),$(a)))))"
+	@echo "  make eval <agent>                  Full run: golden set (oracle + DeepEval), then red team (Promptfoo)"
+	@echo "  make eval <agent> STAGE=deepeval   Golden set only: hard DB invariants + LLM-judged quality"
+	@echo "  make eval <agent> STAGE=promptfoo  Red team only: curated attacks, every one must be defended"
+	@echo "  make intent-eval <agent>           Intent classifier bake-off only (offline, no model calls)"
+	@echo "  Prints a colour-coded overview per suite and the time each section took; full reports →"
+	@echo "  src/<pkg>/evals/reports/<stage>-<run_id>.md. Every section always runs; a failed gate is"
+	@echo "  a result, not an error. Unchanged agent code reuses transcripts; RPM=<n> sets the budget."
 
 # Fails the run unless exactly one known agent was named after the target.
 _agent:
@@ -187,10 +166,10 @@ _agent:
 	  echo "$(YELLOW)Unknown agent '$(AGENT_ARGS)'   (agents: $(AGENTS))$(NC)"; exit 2; fi
 	@if [ -n "$(PROFILE)" ] && [ ! -f "src/$($(AGENT)_PKG)/config/profiles/$(PROFILE).yaml" ]; then \
 	  echo "$(YELLOW)No profile '$(PROFILE)' for $(AGENT) (src/$($(AGENT)_PKG)/config/profiles/)$(NC)"; exit 2; fi
-	@if [ -n "$(ABLATION)" ] && [ ! -f "src/$($(AGENT)_PKG)/evals/ablations/$(ABLATION).yaml" ]; then \
-	  echo "$(YELLOW)No ablation '$(ABLATION)' for $(AGENT) (src/$($(AGENT)_PKG)/evals/ablations/)$(NC)"; exit 2; fi
-	@if [ "$(filter eval eval-%,$(firstword $(MAKECMDGOALS)))" != "" ] && [ -z "$($(AGENT)_EVALS)" ]; then \
-	  echo "$(YELLOW)'$(AGENT)' has no eval suite$(NC)"; exit 2; fi
+	@if [ -n "$(filter eval intent-eval,$(firstword $(MAKECMDGOALS)))" ] && [ -z "$($(AGENT)_EVALS)" ]; then \
+	  echo "$(YELLOW)'$(AGENT)' has no eval suite   (make help → Evals)$(NC)"; exit 2; fi
+	@if [ "$(firstword $(MAKECMDGOALS))" = "eval" ] && [ -n "$(STAGE)" ] && [ -z "$(filter $(STAGE),$(EVAL_STAGES))" ]; then \
+	  echo "$(YELLOW)Unknown STAGE '$(STAGE)'   (STAGE=$(subst $(space),|,$(EVAL_STAGES)), or none for the full run)$(NC)"; exit 2; fi
 
 install:
 	python3 -m venv venv
@@ -294,44 +273,13 @@ refund-limit:
 	$(CSA_ENV) $(PYTHON) -m customer_support_agent.admin.refund_limit $(REFUND_LIMIT)
 
 # -- evals -----------------------------------------------------------------------
-# Every target writes its Markdown report under reports/evals/<run_id>/.
+# Each suite prints a colour-coded overview and writes src/<pkg>/evals/reports/<stage>-<run_id>.md.
 
 eval: _agent
-	$(EVALS) run $(EVAL_SELECT)
+	$(EVALS) run $(if $(STAGE),--stage $(STAGE))
 
-eval-generate: _agent
-	$(EVALS) generate $(EVAL_SELECT)
-
-eval-oracle: _agent
-	$(EVALS) oracle $(EVAL_RUN)
-
-eval-security: _agent
-	$(EVALS) security $(if $(FRESH),--fresh)
-
-eval-judge: _agent
-	$(EVALS) judge $(EVAL_RUN)
-
-eval-deepeval: _agent
-	$(EVALS) deepeval $(EVAL_RUN)
-
-eval-report: _agent
-	$(EVALS) report $(if $(RUN),--run $(RUN))
-
-eval-diff: _agent
-	@test -n "$(A)" -a -n "$(B)" || (echo "$(YELLOW)Usage: make eval-diff <agent> A=<run> B=<run>$(NC)" && exit 1)
-	$(EVALS) diff $(A) $(B)
-
-eval-runs: _agent
-	$(EVALS) runs
-
-eval-sql: _agent
-	$(EVALS) sql $(SQL)
-
-# Intent classifiers side by side on labelled messages (the agent's `evals.intent_bakeoff`):
-# `make intent-bakeoff csa`. Downloads each contender's model once.
-intent-bakeoff: _agent
-	@test -d src/$($(AGENT)_PKG)/evals/intent || (echo "$(YELLOW)'$(AGENT)' has no intent bake-off$(NC)" && exit 2)
-	$(PYTHON) -m $($(AGENT)_PKG).evals.intent
+intent-eval: _agent
+	$(EVALS) run --stage intent
 
 # -- analytics -------------------------------------------------------------------
 # The active source's Parquet (curated views) is refreshed by a running console every

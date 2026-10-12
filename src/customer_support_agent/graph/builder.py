@@ -38,7 +38,6 @@ from agent_platform.durability import (
     create_checkpointer,
     model_types,
 )
-from agent_platform.evals import NollmScoringCascadeImpl, create_scoring_cascade
 from agent_platform.executor import ToolExecutorImpl
 from agent_platform.gatekeeper import Gatekeeper, GatekeeperImpl
 from agent_platform.gatekeeper.ledger import CumulativeLedger
@@ -73,6 +72,7 @@ from agent_platform.observability.tracer import LocalTracer
 from agent_platform.observability.units import OutcomeCatalog
 from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agent_platform.resilience import CompensatingSaga, DeadLetterQueue, SqliteIdempotencyGuard
+from agent_platform.scoring import NollmScoringCascadeImpl, create_scoring_cascade
 from agent_platform.security import (
     Authorizer,
     PIIFilterImpl,

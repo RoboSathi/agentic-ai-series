@@ -2,7 +2,9 @@
 
 The platform's `GoldenCase` carries `payload` as a plain dict. This module
 is the agent's own schema for it: who the customer is, what outcome the
-written policy requires, and which tools may or may not act.
+written policy requires (the money, the order's state, the standing of the
+action), which tools may not act, and — in prose, for the DeepEval judge —
+the scenario and the outcome a good reply delivers.
 """
 
 from pathlib import Path
@@ -11,8 +13,7 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field
 
-from agent_platform.evals.contracts import GoldenCase
-from agent_platform.evals.provenance import LabelBasis
+from agent_platform.evals.core.contracts import GoldenCase, LabelBasis
 
 Outcome = Literal[
     "refunded", "queued_for_review", "refused", "answered", "clarification", "out_of_scope"
@@ -39,14 +40,24 @@ class ExpectedRefund(BaseModel):
 
 
 class CsaExpectation(BaseModel):
-    """What the written policy says the agent must do for one case."""
+    """What the written policy says the agent must do for one case.
+
+    `refund` names the order and amount of the refund (or the review) the case
+    must produce; `order_status` is that order's state afterwards when it must
+    change (a cancellation); `standing` is how the money-moving call must stand
+    (VOIDABLE for a direct refund, VALID for a cancellation, RATIFIABLE when a
+    person must decide).
+    """
 
     outcome: Outcome
     refund: ExpectedRefund | None = None
+    order_status: str | None = None
+    standing: str | None = None
     reason_code: str | None = None
-    tools_required: list[str] = Field(default_factory=list)
     tools_forbidden: list[str] = Field(default_factory=list)
     reply_must_mention: list[str] = Field(default_factory=list)
+    # What the reply must never say (the refund limit, which is never disclosed).
+    reply_must_not_mention: list[str] = Field(default_factory=list)
 
     @property
     def effect(self) -> SideEffectClass:
@@ -58,8 +69,11 @@ class CsaCasePayload(BaseModel):
 
     customer: str
     expected: CsaExpectation
+    # For the DeepEval judge: the situation, and what a good outcome looks like (golden
+    # cases always say; a red-team attack, graded only by assertions, need not).
+    scenario: str = ""
+    expected_outcome: str = ""
     label_basis: LabelBasis = "written_policy"
-    rubric_overrides: dict[str, str] = Field(default_factory=dict)
 
     @classmethod
     def of(cls, case: GoldenCase) -> "CsaCasePayload":
@@ -72,9 +86,10 @@ class _CaseEntry(BaseModel):
     tags: list[str] = Field(default_factory=list)
     customer: str
     turns: list[str]
+    scenario: str
+    expected_outcome: str
     expected: CsaExpectation
     label_basis: LabelBasis = "written_policy"
-    rubric_overrides: dict[str, str] = Field(default_factory=dict)
 
 
 class _DatasetFile(BaseModel):
@@ -95,8 +110,9 @@ def load_golden_cases(path: Path) -> list[GoldenCase]:
             payload=CsaCasePayload(
                 customer=entry.customer,
                 expected=entry.expected,
+                scenario=entry.scenario,
+                expected_outcome=entry.expected_outcome,
                 label_basis=entry.label_basis,
-                rubric_overrides=entry.rubric_overrides,
             ).model_dump(mode="json"),
         )
         for entry in dataset.cases

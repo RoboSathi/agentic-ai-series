@@ -39,7 +39,7 @@ NEW_MODULES = (
     "verification/acceptance.py",
 )
 # A pre-existing use of the English word "brief" (a lock held briefly).
-ALLOWED = {("evals/store/duckdb_store.py", "brief")}
+ALLOWED = {("evals/core/store/duckdb_store.py", "brief")}
 
 
 @cache

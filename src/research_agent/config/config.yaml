@@ -90,20 +90,21 @@ audit:
   prompt_source: research_agent/prompts
   policy_source: research contract (audit)
 
-# The research roles' default model and its protection: nemotron-ultra (the strongest on the
-# account; nemotron-super, the default until 2026-10-03, reached end of life that day), backed up
-# by nemotron-lightning (thinking off: with it on it narrates into the answer) and then gpt-oss-20b
-# last, so a call always gets some answer. The same line-up as the platform's `llm.chain`.
+# The research roles' default model and its protection: nemotron-lightning, thinking off (with
+# it on it narrates its reasoning into the answer), backed up by gpt-oss-20b and then glm-5.3-flash,
+# so a call always gets some answer. Ultra is deliberately absent from every writing role (2026-10-12): it is the
+# judge's model, and a writer that could fall back onto it would be audited by its own model.
 x-default-chain: &default_chain
   provider: nim
-  model: nvidia/nemotron-3-ultra-550b-a55b
+  model: nvidia/nemotron-3.5-lightning-30b-a3b
   timeout_seconds: 60
   hedge_after_seconds: 25
+  extra_body: {chat_template_kwargs: {enable_thinking: false}}
   fallbacks:
-    - provider: nim
-      model: nvidia/nemotron-3.5-lightning-30b-a3b
-      extra_body: {chat_template_kwargs: {enable_thinking: false}}
     - {provider: nim, model: openai/gpt-oss-20b}
+    - provider: nim
+      model: z-ai/glm-5.3-flash
+      extra_body: {chat_template_kwargs: {enable_thinking: false}}
 
 llm:
   # Role -> model. `judge` must differ from `synthesizer` while
@@ -135,17 +136,20 @@ llm:
       <<: *default_chain
       extra_body: {chat_template_kwargs: {enable_thinking: false}}
     synthesizer: {<<: *default_chain, timeout_seconds: 120, hedge_after_seconds: 60}
-    # The judge: a critic independent of the writer (Producer-Critic, 2026-10-11). The writer
-    # leads with ultra; the judge's chain never includes it, so no backup can make the writer
-    # grade itself — if lightning and gpt-oss both fail, the criterion is "not judged" rather
-    # than self-graded. `research_agent.audit.independent_judge` holds start-up to that.
+    # The judge: a critic independent of the writer (Producer-Critic, 2026-10-11). The writer runs
+    # on lightning; the judge leads with ultra, the strongest model on the account, and its chain
+    # never includes lightning, so no backup can make the writer grade itself — if ultra and
+    # glm-5.3-flash and gpt-oss all fail, the criterion is "not judged" rather than self-graded.
+    # `research_agent.audit.independent_judge` holds start-up to that.
     judge:
       provider: nim
-      model: nvidia/nemotron-3.5-lightning-30b-a3b
+      model: nvidia/nemotron-3-ultra-550b-a55b
       timeout_seconds: 120
       hedge_after_seconds: 45
-      extra_body: {chat_template_kwargs: {enable_thinking: false}}
       fallbacks:
+        - provider: nim
+          model: z-ai/glm-5.3-flash
+          extra_body: {chat_template_kwargs: {enable_thinking: false}}
         - {provider: nim, model: openai/gpt-oss-20b}
     # Multi-step tool calling: the model the platform recommends for it.
     answerer: *default_chain

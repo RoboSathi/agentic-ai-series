@@ -16,13 +16,14 @@ import json
 import re
 import shutil
 import time
+from bisect import bisect_right
 from pathlib import Path
 from typing import Any
 
 from agent_platform.audit import SqliteAuditLedger
 from agent_platform.config import get_settings
 from agent_platform.durability import create_checkpointer, model_types
-from agent_platform.evals.contracts import GoldenCase, ToolCallRecord, Transcript, UsageRecord
+from agent_platform.evals.core.contracts import GoldenCase, ToolCallRecord, Transcript, UsageRecord
 from agent_platform.llm.client import LLMClient, create_llm_client
 from agent_platform.llm.recording import RecordingLLMClient
 from agent_platform.logging.trace_context import bound_channel
@@ -105,8 +106,11 @@ class CsaAgentUnderTest:
         started = time.perf_counter()
         replies: list[str] = []
         states: list[AgentState] = []
+        # Where each turn's events begin on the feed, so a tool call knows its turn.
+        turn_starts: list[int] = []
         try:
             for turn in case.turns:
+                turn_starts.append(len(feed.events))
                 # Eval traffic is told apart by its channel (ADR 0009 D5).
                 with bound_channel(get_settings().evals.channel):
                     state = await agent.handle(
@@ -114,7 +118,9 @@ class CsaAgentUnderTest:
                     )
                 states.append(state)
                 replies.append(state.response)
-            return self._transcript(case, replies, states, feed.events, llm, pool, started)
+            return self._transcript(
+                case, replies, states, feed.events, turn_starts, llm, pool, started
+            )
         finally:
             set_current_customer(None)
             checkpointer.conn.close()
@@ -150,6 +156,7 @@ class CsaAgentUnderTest:
         replies: list[str],
         states: list[AgentState],
         events: list[StatusEvent],
+        turn_starts: list[int],
         llm: RecordingLLMClient,
         pool: SqliteConnectionPool,
         started: float,
@@ -159,7 +166,7 @@ class CsaAgentUnderTest:
             suite=case.suite,
             case_id=case.case_id,
             replies=replies,
-            tool_calls=tool_calls_from(events),
+            tool_calls=tool_calls_from(events, turn_starts),
             evidence=[*llm.grounding_messages(roles), *record_evidence(events)],
             side_effects=side_effects(pool, self._facts),
             metadata=_metadata(states, events),
@@ -194,10 +201,13 @@ class CsaAgentUnderTest:
         return self._router
 
 
-def tool_calls_from(events: list[StatusEvent]) -> list[ToolCallRecord]:
-    """Rebuild each tool call — request, gatekeeper ruling, result — from the feed."""
+def tool_calls_from(
+    events: list[StatusEvent], turn_starts: list[int] | None = None
+) -> list[ToolCallRecord]:
+    """Rebuild each tool call — request, gatekeeper ruling and standing, result — from the feed."""
+    starts = turn_starts or [0]
     calls: list[ToolCallRecord] = []
-    for event in events:
+    for index, event in enumerate(events):
         fields = event.fields
         if event.event_kind == _TOOL_REQUEST:
             calls.append(
@@ -208,11 +218,13 @@ def tool_calls_from(events: list[StatusEvent]) -> list[ToolCallRecord]:
                         for key, value in fields.items()
                         if key.startswith(_ARGUMENT_PREFIX)
                     },
+                    turn=bisect_right(starts, index) - 1,
                     status=_NOT_EXECUTED,
                 )
             )
         elif calls and event.event_kind == _GATEKEEPER and "decision" in fields:
             calls[-1].decision = str(fields["decision"])
+            calls[-1].standing = str(fields.get("standing") or "")
             calls[-1].reason_code = str(fields.get("reason_code", ""))
         elif calls and event.event_kind == _TOOL_RESULT:
             calls[-1].status = str(fields.get("execution_status") or fields.get("result", ""))
@@ -267,12 +279,17 @@ def side_effects(pool: SqliteConnectionPool, facts: FixtureFacts) -> dict[str, A
     changed = [
         {
             "order_id": row["order_id"],
-            "before": facts.orders[row["order_id"]].refund_status,
-            "after": row["refund_status"],
+            "before_status": facts.orders[row["order_id"]].order_status,
+            "after_status": row["order_status"],
+            "before_refund": facts.orders[row["order_id"]].refund_status,
+            "after_refund": row["refund_status"],
         }
-        for row in pool.execute("SELECT order_id, refund_status FROM orders").rows
+        for row in pool.execute("SELECT order_id, order_status, refund_status FROM orders").rows
         if row["order_id"] in facts.orders
-        and facts.orders[row["order_id"]].refund_status != row["refund_status"]
+        and (
+            facts.orders[row["order_id"]].refund_status != row["refund_status"]
+            or facts.orders[row["order_id"]].order_status != row["order_status"]
+        )
     ]
     return {"refunds": refunds, "review_requests": reviews, "order_changes": changed}
 

@@ -247,9 +247,9 @@ class CustomerSupportHost:
 
     @staticmethod
     def _opened_knowledge_base() -> KnowledgeBase:
-        from agent_platform.evals import create_scoring_cascade
         from agent_platform.llm.local_reranker import create_reranker
         from agent_platform.memory.semantic.rag import create_knowledge_base
+        from agent_platform.scoring import create_scoring_cascade
 
         return create_knowledge_base(reranker=create_reranker(fallback=create_scoring_cascade()))
 
@@ -268,7 +268,7 @@ class CustomerSupportHost:
         A model that cannot load does not stop the console: the claim
         checker latches to the lexical fallback and logs why.
         """
-        from agent_platform.evals.entailment import preload_entailment_model
+        from agent_platform.scoring.entailment import preload_entailment_model
 
         preload_entailment_model()
 

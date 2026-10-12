@@ -79,8 +79,9 @@ class VersionManifest:
             ),
             ComponentVersion(
                 component="evaluator",
-                version=settings.evals.manifest_version,
-                source="evals/eval_manifest.yaml",
+                version=settings.evals.version,
+                # The evaluator is the judge model behind the graders.
+                source=settings.judge.model,
             ),
             ComponentVersion(
                 component="model", version=provider.model, source=settings.llm.provider

@@ -12,7 +12,6 @@ the classifier is built exactly as the agent builds it and scored twice:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -20,12 +19,12 @@ from pydantic import BaseModel
 
 from agent_platform.config import get_settings, reload_settings
 from agent_platform.config.yaml_config import clear_overlays, use_overlay
-from agent_platform.evals.intent_bakeoff import (
+from agent_platform.evals.intent import (
+    BakeoffResult,
     IntentScore,
     LabelledMessage,
     Prediction,
     predict,
-    render_report,
     score,
 )
 from agent_platform.intent import create_intent_classifier
@@ -45,8 +44,8 @@ def load_cases(path: Path) -> list[LabelledMessage]:
     return _CaseFile.model_validate(yaml.safe_load(path.read_text())).cases
 
 
-async def run() -> Path:
-    """Score every contender, write the report, and return where it went."""
+async def run() -> BakeoffResult:
+    """Score every contender, model alone and through the router (the platform writes the report)."""
     bakeoff = get_agent_settings().evals.intent_bakeoff
     cases = load_cases(bakeoff.resolved_cases_path)
     scores: dict[str, IntentScore] = {}
@@ -59,8 +58,7 @@ async def run() -> Path:
                 misses[label] = [p for p in predictions if not p.correct]
     finally:
         _apply([])
-    z = get_settings().evals.reporting.confidence_z
-    return _write(render_report(bakeoff.report_title, scores, misses, z))
+    return BakeoffResult(title=bakeoff.report_title, scores=scores, misses=misses)
 
 
 async def _contender(
@@ -103,13 +101,3 @@ def _score(predictions: list[Prediction], sweep: bool) -> IntentScore:
     threshold = get_agent_settings().intent_router.routing(provider).confidence_threshold
     levels = bakeoff.threshold_sweep if sweep else []
     return score(predictions, threshold, bakeoff.calibration_bins, levels)
-
-
-def _write(report: str) -> Path:
-    bakeoff = get_agent_settings().evals.intent_bakeoff
-    folder = bakeoff.resolved_report_dir
-    folder.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime(bakeoff.stamp_format)
-    path = folder / bakeoff.report_file.format(stamp=stamp)
-    path.write_text(report, encoding="utf-8")
-    return path

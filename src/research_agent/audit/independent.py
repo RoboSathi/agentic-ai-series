@@ -19,7 +19,6 @@ covered actually unmet?
 """
 
 from collections.abc import Callable
-from datetime import date
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -27,15 +26,16 @@ from pydantic import BaseModel, Field
 
 from agent_platform.durability.isolated import IsolatedGraphRunner
 from agent_platform.evidence import LedgerSnapshot
-from agent_platform.logging import describe_error, get_logger, instrument
+from agent_platform.judge import JudgeCall
+from agent_platform.judge import LlmJudge as PlatformLlmJudge
+from agent_platform.logging import instrument
 from agent_platform.verification.acceptance import (
     AcceptanceCheckRegistry,
     CheckKind,
     CheckOutcome,
-    CheckSpec,
     CheckVerdict,
 )
-from research_agent.audit.context import CheckContext
+from research_agent.audit.context import CheckContext, JudgeItem
 from research_agent.domain.report import Report
 from research_agent.domain.rubric import Contract
 from research_agent.llm.structured import StructuredCaller
@@ -73,43 +73,41 @@ class AuditState(TypedDict, total=False):
     verdicts: list[CheckVerdict]
 
 
-class LlmJudge:
-    """Judge-type items, scored by the `judge` role's model."""
+class LlmJudge(PlatformLlmJudge[JudgeItem, judge_prompt.JudgeAnswer, CheckOutcome]):
+    """Judge-type items, scored by the `judge` role's model.
+
+    The platform judge's skeleton (`agent_platform.judge.LlmJudge`): ask, decide, and abstain
+    when no answer can be had — here, a criterion nobody could judge is *unverified*: it
+    earns no credit and, if it must pass, holds the run below COMPLETE; it is not a gap to
+    research more for, and one unreachable judge no longer fails the whole run. The asking
+    goes through this agent's own `StructuredCaller`, so the call is routed to the `judge`
+    role's model chain, validated against the role's schema and charged to the run's budget.
+    """
 
     def __init__(self, caller: StructuredCaller) -> None:
+        super().__init__("research_agent")
         self._caller = caller
-        self._logger = get_logger("research_agent")
-        # The models that answered since `models_used` was last read (a backup counts as itself).
-        self._used: set[str] = set()
 
-    def models_used(self) -> set[str]:
-        """The models that judged since the last read, and forget them (one audit's worth)."""
-        used, self._used = self._used, set()
-        return used
+    async def _answer(self, request: JudgeItem) -> tuple[judge_prompt.JudgeAnswer, JudgeCall]:
+        # Traced: the AUDIT card shows the judge's work, so no LLM CALL card per criterion.
+        criterion = str(request.spec.params.get("text", request.spec.name))
+        answer, call = await self._caller.call_traced(
+            judge_prompt.build(
+                criterion, request.spec.name, request.report, request.ledger, request.today
+            ),
+            judge_prompt.JudgeAnswer,
+        )
+        model = (call.backup or call.model) if call is not None else ""
+        return answer, JudgeCall(model=model, calls=1)
 
-    async def judge(
-        self, spec: CheckSpec, report: Report, ledger: LedgerSnapshot, today: date
+    def verdict(
+        self, request: JudgeItem, answer: judge_prompt.JudgeAnswer, call: JudgeCall
     ) -> CheckOutcome:
-        """The judge's score — or, when the judge and every backup failed, *not judged*.
-
-        A criterion nobody could judge is unverified: it earns no credit and, if it must pass,
-        holds the run below COMPLETE; it is not a gap to research more for. One unreachable
-        judge no longer fails the whole run.
-        """
-        criterion = str(spec.params.get("text", spec.name))
-        try:
-            # Traced: the AUDIT card shows the judge's work, so no LLM CALL card per criterion.
-            answer, call = await self._caller.call_traced(
-                judge_prompt.build(criterion, spec.name, report, ledger, today),
-                judge_prompt.JudgeAnswer,
-            )
-            if call is not None:
-                self._used.add(call.backup or call.model)
-        except Exception as exc:
-            self._logger.warning("Judge unavailable", item=spec.item_id, error=describe_error(exc))
-            detail = say("judge.unavailable", error=describe_error(exc))
-            return CheckOutcome(score=0.0, detail=detail, applicable=False)
         return CheckOutcome(score=answer.score, detail=answer.rationale, evidence=answer.evidence)
+
+    def abstain(self, request: JudgeItem, reason: str) -> CheckOutcome:
+        detail = say("judge.unavailable", error=reason)
+        return CheckOutcome(score=0.0, detail=detail, applicable=False)
 
 
 @instrument("research_agent")

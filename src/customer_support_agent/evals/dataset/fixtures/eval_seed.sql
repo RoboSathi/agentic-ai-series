@@ -7,9 +7,10 @@
 --
 -- Each order is here to exercise one rule:
 --   direct refund (<= the per-action limit), review (above it), exactly at
---   and one cent over the limit, already refunded, already queued for
---   review, still pending, still shipped, cancelled, and orders that
---   belong to someone else.
+--   and one cent over the limit, already refunded (settled `completed`, and
+--   paid but still voidable `issued`), declined for good (`denied`), already
+--   queued for review, still pending (cancellable, below and above the
+--   limit), still shipped, cancelled, and orders that belong to someone else.
 -- Applied on top of schema.sql and the refunds ledger table; the agent
 -- policy seed (limits, permissions) is applied after it.
 
@@ -54,11 +55,33 @@ INSERT INTO orders (
     (90020, 905, '2026-08-25T10:00:00+00:00', 'delivered', 'none',           2200,  'Mouse Pad',             'SKU-MPAD-20',  1, 2200,  'USD', 'UPS',   '1Z90020', NULL,                        '2026-08-28T10:00:00+00:00', NULL),
     (90021, 905, '2026-08-26T10:00:00+00:00', 'delivered', 'none',           30000, 'Office Chair',          'SKU-CHAIR-21', 1, 30000, 'USD', 'FedEx', 'FX90021', NULL,                        '2026-09-02T10:00:00+00:00', NULL);
 
+-- Refund states the orders above do not cover. An `issued` refund has paid out but not yet
+-- settled (`refund_settles_at` far ahead, so no settlement sweep closes it mid-case); a
+-- `denied` one was declined by a person and is final.
+INSERT INTO orders (
+    order_id, user_id, timestamp, order_status, refund_status, amount_cents,
+    product_name, product_sku, quantity, unit_price_cents, currency,
+    carrier, tracking_number, estimated_delivery_date, delivered_at, current_location,
+    refund_settles_at
+) VALUES
+    -- Ada: refunded, still voidable.
+    (90022, 901, '2026-09-01T10:00:00+00:00', 'delivered', 'issued',  2600,  'Monitor Light Bar',   'SKU-LBAR-22', 1, 2600,  'USD', 'UPS',   '1Z90022', NULL, '2026-09-04T10:00:00+00:00', NULL, '2099-01-01T00:00:00+00:00'),
+    -- Grace: an over-limit refund a person approved, still voidable.
+    (90023, 902, '2026-09-02T10:00:00+00:00', 'delivered', 'issued',  8000,  'Noise Machine',       'SKU-NOIS-23', 1, 8000,  'USD', 'DHL',   'DH90023', NULL, '2026-09-05T10:00:00+00:00', NULL, '2099-01-01T00:00:00+00:00'),
+    -- Linus: a refund a person declined.
+    (90024, 903, '2026-09-03T10:00:00+00:00', 'delivered', 'denied',  3500,  'Desk Organizer',      'SKU-DORG-24', 1, 3500,  'USD', 'USPS',  '9400090024', NULL, '2026-09-07T10:00:00+00:00', NULL, NULL),
+    -- Donald: a pending order below the limit (cancel refunds it directly).
+    (90025, 904, '2026-09-25T10:00:00+00:00', 'pending',   'none',    2400,  'HDMI Cable',          'SKU-HDMI-25', 2, 1200,  'USD', NULL,    NULL,         '2026-10-09T00:00:00+00:00', NULL, NULL, NULL),
+    -- Katherine: a pending order above the limit (cancel now, refund waits for a person).
+    (90026, 905, '2026-09-26T10:00:00+00:00', 'pending',   'none',    9000,  'Standing Desk Mat',   'SKU-DMAT-26', 1, 9000,  'USD', NULL,    NULL,         '2026-10-10T00:00:00+00:00', NULL, NULL, NULL);
+
 -- The refunds already paid, so "already refunded" is true in the ledger
 -- as well as in the order's status.
 INSERT INTO refunds (refund_id, order_id, user_id, amount_cents, reason, reversed, issued_at) VALUES
     ('seed-refund-90003', 90003, 901, 4500, 'seeded: damaged on arrival', 0, '2026-08-09T10:00:00+00:00'),
-    ('seed-refund-90013', 90013, 902, 9900, 'seeded: wrong size',         0, '2026-08-14T10:00:00+00:00');
+    ('seed-refund-90013', 90013, 902, 9900, 'seeded: wrong size',         0, '2026-08-14T10:00:00+00:00'),
+    ('seed-refund-90022', 90022, 901, 2600, 'seeded: flickering',         0, '2026-09-08T10:00:00+00:00'),
+    ('seed-refund-90023', 90023, 902, 8000, 'seeded: approved by review', 0, '2026-09-09T10:00:00+00:00');
 
 -- The review already waiting for a person: an item in the platform's review queue (ADR 0012).
 INSERT INTO platform_review_queue (agent_id, kind, status, session_id, subject_id, summary, detail, created_at) VALUES

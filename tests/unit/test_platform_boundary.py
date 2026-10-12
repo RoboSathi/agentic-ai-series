@@ -147,11 +147,12 @@ class TestTheePlatformNamesNoAgent:
 
 # Offline eval tools: optional extras, never on an agent's request path.
 OPTIONAL_EVAL_TOOLS = ("deepeval", "promptfoo")
-EVAL_ADAPTERS = COMMONS / "evals" / "adapters"
+# Each tool's own folder in the platform's eval package is the one place that may import it.
+EVAL_ADAPTERS = COMMONS / "evals"
 
 
 class TestEvalToolsAreNotRuntimeDependencies:
-    """DeepEval and Promptfoo stay behind the eval adapters, imported lazily."""
+    """DeepEval and Promptfoo stay behind their eval folders, imported lazily."""
 
     @pytest.mark.parametrize("tool", OPTIONAL_EVAL_TOOLS)
     def test_only_the_adapters_import_an_eval_tool(self, tool: str) -> None:
@@ -160,7 +161,7 @@ class TestEvalToolsAreNotRuntimeDependencies:
             str(path)
             for path in sorted(agents.rglob("*.py"))
             if "__pycache__" not in path.parts
-            and EVAL_ADAPTERS not in path.parents
+            and EVAL_ADAPTERS / tool not in path.parents
             and any(
                 line.strip().startswith((f"import {tool}", f"from {tool}"))
                 for line in path.read_text().splitlines()

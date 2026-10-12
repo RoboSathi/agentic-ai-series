@@ -312,35 +312,29 @@ gatekeeper:
     enabled: false
 
 evals:
-  # This agent's own golden-task and production-shadow evals.
-  additional_manifest_paths:
-    - src/customer_support_agent/evals/eval_manifest.yaml
   plugin: customer_support_agent.evals.plugin:CsaEvalPlugin
-  # This agent's reports and red-team output, under its own package (runtime layout, ADR 0010).
+  run_id_prefix: csa
+  # Reports land beside the evals that produce them; Promptfoo's raw JSON is runtime data.
   reporting:
-    output_dir: src/customer_support_agent/data/reports/evals
+    output_dir: src/customer_support_agent/evals/reports
   promptfoo:
     output_dir: src/customer_support_agent/data/evals/promptfoo
   fingerprint:
     source_roots: [src/agent_platform, src/customer_support_agent]
-    # Lists replace wholesale, so the platform's exclusions are restated.
-    # The dataset is not here on purpose: it is hashed per case instead.
-    exclude_paths:
-      - src/agent_platform/evals/store
-      - src/agent_platform/evals/pipeline
-      - src/agent_platform/evals/reporting
-      - src/agent_platform/evals/graders
-      - src/agent_platform/evals/adapters
-      - src/agent_platform/evals/__main__.py
-      - src/agent_platform/evals/cli.py
-      - src/agent_platform/tui
-      - src/agent_platform/commands
+    # What cannot change this agent's answers. The golden cases are not hashed here: each
+    # case is hashed on its own, so editing three cases regenerates three. The fixture seed,
+    # the fixture builder and the agent-under-test harness *are* hashed: they change what
+    # the agent sees.
+    agent_exclude_paths:
       - src/customer_support_agent/console
-      - src/customer_support_agent/evals/dataset
+      - src/customer_support_agent/evals/dataset/golden_cases.yaml
       - src/customer_support_agent/evals/oracle
-      - src/customer_support_agent/evals/security
-      - src/customer_support_agent/evals/judge_rubric.yaml
-      - src/customer_support_agent/evals/quality_metrics.yaml
+      - src/customer_support_agent/evals/deepeval
+      - src/customer_support_agent/evals/promptfoo
+      - src/customer_support_agent/evals/intent
+      - src/customer_support_agent/evals/reports
+      - src/customer_support_agent/evals/plugin.py
+      - src/customer_support_agent/evals/README.md
 
 durability:
   # This agent's checkpoints: every turn it has run, node by node.
@@ -828,31 +822,33 @@ customer_support_agent:
     customer_not_told: not notified · no open conversation
     not_pending: "Request {id} is not pending (already decided, or not found). /queue lists what is waiting."
   dummy_data_generator_path: src/customer_support_agent/dummy_data/generator.yaml
-  # This agent's evals: the golden set, the fixture it runs against, and
-  # what its graders read. Run with `make eval` (see agent_platform.evals).
+  # This agent's evals: the golden set, the fixture it runs against, and what its graders
+  # read. Run with `make eval csa` (see agent_platform/evals).
   evals:
     dataset_path: src/customer_support_agent/evals/dataset/golden_cases.yaml
     fixture_seed_path: src/customer_support_agent/evals/dataset/fixtures/eval_seed.sql
     fixture_db_path: src/customer_support_agent/data/evals/fixture.db
     workspace_dir: src/customer_support_agent/data/evals/workspace
-    judge_rubric_path: src/customer_support_agent/evals/judge_rubric.yaml
-    quality_metrics_path: src/customer_support_agent/evals/quality_metrics.yaml
-    security_config_path: src/customer_support_agent/evals/security/promptfooconfig.yaml
+    quality_metrics_path: src/customer_support_agent/evals/deepeval/metrics.yaml
+    security_config_path: src/customer_support_agent/evals/promptfoo/promptfooconfig.yaml
     session_prefix: eval
+    chatbot_role: >-
+      A customer-support agent for an online store. It answers questions about the signed-in
+      customer's own orders and refunds, and issues a full refund only when the written
+      policy allows it: larger refunds go to a person for approval, and anything the policy
+      forbids is refused with the reason.
     grounding_roles: [system, tool]
     keep_case_workspaces: false
     # A reply may only cite order ids and amounts the agent was shown.
     order_reference_pattern: '\b\d{5}\b'
     money_pattern: '\$\s?(\d[\d,]*(?:\.\d{1,2})?)'
+    money_tools: [support.process_refund, support.cancel_order]
     prompt_leak_ngram: 8
-    # `make intent-bakeoff csa`: each contender (a config profile; "" is the agent as
+    # `make eval csa STAGE=intent`: each contender (a config profile; [] is the agent as
     # configured) classifies the same labelled messages, model alone and through the router.
     intent_bakeoff:
       cases_path: src/customer_support_agent/evals/intent/cases.yaml
-      report_dir: src/customer_support_agent/data/reports/intent_bakeoff
       report_title: CSA intent classifier bake-off
-      report_file: "{stamp}.md"
-      stamp_format: "%Y%m%dT%H%M%SZ"
       calibration_bins: 10
       # A threshold tuned on one model's scores is not another's: read every contender here.
       threshold_sweep: [0.3, 0.4, 0.5, 0.6, 0.75, 0.9]

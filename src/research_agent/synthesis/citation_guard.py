@@ -25,7 +25,6 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from agent_platform.config import get_settings
-from agent_platform.evals.entailment import EntailmentModel, EntailmentResult
 from agent_platform.evidence import LedgerSnapshot
 from agent_platform.hallucination_check import plain_text
 from agent_platform.hallucination_check.confirmer import ClaimConfirmer
@@ -39,6 +38,7 @@ from agent_platform.hallucination_check.readings import (
 )
 from agent_platform.logging import instrument
 from agent_platform.observability.step_card import ModelCall
+from agent_platform.scoring.entailment import EntailmentModel, EntailmentResult
 from research_agent.audit.context import sentences
 from research_agent.domain.report import Report, ReportSection
 from research_agent.llm.structured import StructuredCaller

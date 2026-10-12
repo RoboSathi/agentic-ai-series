@@ -214,8 +214,8 @@ def _agent_chat_probe(config: AppConfig) -> EndpointProbe:
 
 
 def _judge_probe(config: AppConfig) -> EndpointProbe:
-    judge = config.evals.judge
-    return ChatProbe("eval_judge", judge.provider, judge.model, config.evals.enabled, config)
+    judge = config.judge
+    return ChatProbe("judge", judge.provider, judge.model, config.evals.enabled, config)
 
 
 def _embedding_probe(config: AppConfig) -> EndpointProbe:

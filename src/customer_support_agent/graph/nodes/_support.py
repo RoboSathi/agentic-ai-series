@@ -22,7 +22,6 @@ from agent_platform.context import (
 from agent_platform.context.types import Chunk
 from agent_platform.deterministic_checks import DeterministicChecker
 from agent_platform.durability import DurableGraphRunner, RunRegistry, SqliteCheckpointer
-from agent_platform.evals import NollmScoringCascadeImpl
 from agent_platform.executor import ToolExecutor
 from agent_platform.gatekeeper import Gatekeeper
 from agent_platform.gatekeeper.mandate import MandateIssuer
@@ -51,6 +50,7 @@ from agent_platform.primitives.money import Money, money_or_none
 from agent_platform.resilience import (
     DeadLetterQueue,
 )
+from agent_platform.scoring import NollmScoringCascadeImpl
 from agent_platform.security import MessageScreener, SecuritySuite
 from agent_platform.security.auth.policy import AgentPolicy
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
