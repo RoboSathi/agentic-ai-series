@@ -135,6 +135,9 @@ class ContextFinding(BaseModel):
     detail: str
     # Position of the chunk in the window, when the finding is about one.
     index: int | None = None
+    # The line of the chunk that tripped the detector, when one line did (an injected
+    # instruction); the person reading the card needs the text, not the chunk's name.
+    line: str = ""
     # What mitigation did: "dropped", "kept (higher authority)", "flagged", "excised".
     action: str = "flagged"
     # Lines to cut out of the chunk rather than dropping it whole (an unverified claim the

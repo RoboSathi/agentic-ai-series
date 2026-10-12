@@ -18,6 +18,7 @@ from agent_platform.observability.types import utc_now
 from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.primitives.money import Money
 from agent_platform.review import ReviewItem, ReviewQueue
+from agent_platform.security.pii.active import redact_if_on
 from customer_support_agent.domain.models import (
     REFUNDABLE_ORDER_STATUSES,
     HitlRequest,
@@ -404,7 +405,7 @@ class HitlQueueRepository:
     """
 
     def __init__(self, pool: SqliteConnectionPool) -> None:
-        self._queue = ReviewQueue(pool, agent_id=get_settings().agent.id)
+        self._queue = ReviewQueue(pool, agent_id=get_settings().agent.id, redact=redact_if_on)
         self._kinds: tuple[str, ...] = get_args(ReviewAction)
         self._logger = get_logger("customer_support_agent")
 

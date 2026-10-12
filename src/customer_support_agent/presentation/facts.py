@@ -47,6 +47,10 @@ def order_facts(order: Order) -> list[Chunk]:
         "order_total": _amount(order.amount),
         "delivered_on": (order.delivered_at or "")[:_DATE_CHARS],
         "due_on": (order.estimated_delivery_date or "")[:_DATE_CHARS],
+        # Where it is: the carrier's own words, which a reply may repeat exactly.
+        "carrier": order.carrier or "",
+        "tracking_number": order.tracking_number or "",
+        "current_location": order.current_location or "",
     }
     facts = [
         _fact(subject, name, value, stated[name].format(order_id=subject, value=value), _RECORD)

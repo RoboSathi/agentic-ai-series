@@ -40,6 +40,9 @@ class ReviewScreen(Screen[None]):
         self._service: ReviewService | None = None
         self._items: dict[str, ReviewItem] = {}
         self._selected: ReviewItem | None = None
+        # `ListView.clear()` removes asynchronously, so a rebuilt row must never reuse
+        # the id of the one it replaces (the same rule as `ActionBar`).
+        self._generation = 0
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -62,11 +65,12 @@ class ReviewScreen(Screen[None]):
         self._service = self._command.service()
         listing = self.query_one(f"#{LIST_ID}", ListView)
         listing.clear()
+        self._generation += 1
         self._items = {}
         visible = self._service.visible(self._command.subject())
         self.sub_title = self._words.title.format(n=len(visible))
         for item in visible:
-            key = f"{_ITEM_PREFIX}{item.id}"
+            key = f"{_ITEM_PREFIX}{self._generation}-{item.id}"
             self._items[key] = item
             line = f"{item.kind} · " + " · ".join(self._service.cells(item))
             listing.append(ListItem(Label(line), id=key))
@@ -105,7 +109,7 @@ class ReviewScreen(Screen[None]):
             return
         title = self._words.decided.format(
             id=outcome.item_id, kind=outcome.kind, status=outcome.status, reviewer=reviewer,
-            comment=" ".join(comment.split()),
+            comment=self._service.redact(" ".join(comment.split())),
         )  # fmt: skip
         for line in (title, *outcome.lines):
             self._note(line)

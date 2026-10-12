@@ -8,6 +8,7 @@ decide can be missed by looking in the wrong place.
 """
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 from agent_platform.config import get_settings
@@ -16,6 +17,19 @@ from agent_platform.primitives.clock import utc_now
 from agent_platform.review.types import ReviewItem, ReviewStatus
 
 _PENDING = "pending"
+
+Redactor = Callable[[str], str]
+
+
+def _redacted(value: Any, redact: Redactor) -> Any:
+    """`value` with every string in it, however deep, passed through `redact`."""
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, dict):
+        return {key: _redacted(item, redact) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redacted(item, redact) for item in value]
+    return value
 
 
 class ReviewQueue:
@@ -26,7 +40,11 @@ class ReviewQueue:
         store: PlatformStore | SqliteConnectionPool | None = None,
         *,
         agent_id: str | None = None,
+        redact: Redactor | None = None,
     ) -> None:
+        # What is written is what a person later reads and an audit later quotes, so
+        # personal data is taken out on the way in, not on the way to a screen.
+        self._redact = redact
         self._store = as_platform_store(store, agent_id=agent_id)
         self._agent_id = agent_id or self._store.agent_id
         self._table = get_settings().review.table
@@ -57,6 +75,13 @@ class ReviewQueue:
 
     def add(self, item: ReviewItem) -> ReviewItem:
         """Queue an item; returns it with its id."""
+        if self._redact is not None:
+            item = item.model_copy(
+                update={
+                    "summary": self._redact(item.summary),
+                    "detail": _redacted(item.detail, self._redact),
+                }
+            )
         self._store.execute(
             f"INSERT INTO {self._table} (agent_id, kind, status, session_id, subject_id, "
             "summary, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -113,6 +138,8 @@ class ReviewQueue:
 
     def sign(self, item_id: int, decided_by: str, comment: str) -> None:
         """Record who decided and why, whichever path settled the status."""
+        if self._redact is not None:
+            comment = self._redact(comment)
         self._store.execute(
             f"UPDATE {self._table} SET decided_by = ?, comment = ?, "
             "decided_at = COALESCE(decided_at, ?) WHERE agent_id = ? AND id = ?",

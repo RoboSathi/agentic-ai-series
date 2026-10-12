@@ -651,7 +651,8 @@ observability:
     tool_prefetched: "Prefetched: {tool} · for {skill}"
     # A prefetch read answered from a row an earlier stage already read: no tool ran.
     tool_served: "Prefetched: {tool} · for {skill} · from {source}"
-    gatekeeper: "Gatekeeper: {verdict} · {standing}"
+    gatekeeper: "Gatekeeper: {verdict} · {standing}{subject}"
+    gatekeeper_subject: " · {subject}"
     # Shown at each point the loop decides whether to go round again.
     loop_control:
       summary: "Round {round} of {max_rounds} · next: {next_step}"
@@ -949,7 +950,7 @@ context:
     assembled: Context window assembled
     withheld: Context assembly withheld
     unhealthy: "Context health: {modes} — {action}"
-    removed: "{count} chunk(s) removed"
+    removed: "{count} removed: {sources}"
     nothing_removed: flagged, nothing removed
     finding_line: "{mode} · {source} · {rule}: {detail} → {action}"
     # The card's findings, one entry per problem: its heading, then these labelled lines.
@@ -958,11 +959,20 @@ context:
     size_title: Window
     size_line: "{used_tokens} of {budget_tokens} tokens · {chunks} chunk(s) kept · {dropped} dropped"
     findings_title: Findings
-    source_line: "{mark} {source} · {mode} · {action} · {count} statement(s)"
+    # One finding as a tree: what tripped, the line itself, and what was removed (or kept).
+    finding_card: "{mark} {mode} · {rule}"
+    snippet_chars: 160
+    max_removed_lines: 5
+    more_removed: "…and {count} more removed"
+    flagged_line: 'flagged line: "{line}"'
+    statement_line: 'statement: "{line}"'
+    removed_chunk: "REMOVED: all of {source}"
+    removed_line: 'REMOVED: line "{line}" from {source}'
+    kept_source: "kept: {source} ({action})"
     marks: {fail: "✗", warn: "!", pass: "✓"}
     detail_title: Detail
     detail_note: "every statement and score is in the agent's context.log"
-    finding_labels: {statements: statements, detail: measured, sources: sources}
+    finding_labels: {statements: statements, detail: measured, sources: sources, line: flagged line, removed: removed lines}
     routine_modes: [distraction]
     not_acted_on: flagged
     dropped_action: dropped
@@ -2228,9 +2238,12 @@ evals:
   generation:
     # Cases in flight at once. The rate limiter, not this, bounds spend.
     max_concurrency: 2
-  # What `make eval` shows on the console while the progress bar runs: warnings and up (a
-  # 429 and the model it hit, a model fallback, a guard fallback). The log files keep everything.
-  console_level: WARNING
+  # What `make eval` shows on the console while the progress bar runs: errors only. A 429, a
+  # model fallback or a guard fallback is routine under load and would scroll the progress
+  # away; every record also goes to `<log_file>.log` in the agent's log folder, and the
+  # per-subsystem files keep everything.
+  console_level: ERROR
+  log_file: eval
   fingerprint:
     # A transcript is reused only while every byte under these roots is
     # unchanged — committed or not — so an uncommitted fix is re-evaluated.

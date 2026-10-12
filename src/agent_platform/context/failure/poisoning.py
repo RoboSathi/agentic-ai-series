@@ -59,7 +59,8 @@ class PoisoningCheck:
             if phrases:
                 found.append(
                     finding("poisoning", "poisoning_injection", source=label(chunk),
-                            action="dropped", index=index, phrases=phrases)
+                            action="dropped", index=index, phrases=phrases,
+                            line=_lines_with(chunk.content, phrases))
                 )  # fmt: skip
         return found
 
@@ -99,6 +100,17 @@ class PoisoningCheck:
                     )  # fmt: skip
                     break
         return found
+
+
+def _lines_with(content: str, phrases: list[str]) -> str:
+    """The lines of `content` that hold one of the matched phrases, as the card shows them."""
+    wanted = [phrase.casefold() for phrase in phrases]
+    lines = [
+        " ".join(line.split())
+        for line in content.splitlines()
+        if any(phrase in line.casefold() for phrase in wanted)
+    ]
+    return " ⏎ ".join(lines)
 
 
 def _verified(chunk: Chunk) -> bool:

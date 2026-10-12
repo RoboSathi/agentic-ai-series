@@ -8,7 +8,7 @@ the conversation, not of the window.
 """
 
 from agent_platform.config import get_settings
-from agent_platform.context.failure.common import finding, label
+from agent_platform.context.failure.common import finding, label, snippet
 from agent_platform.context.similarity import TextSimilarity
 from agent_platform.context.types import AssembledContext, ContextFinding
 
@@ -44,7 +44,8 @@ class DistractionCheck:
             return []
         dropped = [
             finding("distraction", "distraction_chunk", source=label(chunk), action="dropped",
-                    index=index, score=score, floor=settings.min_relevance)
+                    index=index, score=score, floor=settings.min_relevance,
+                    line=snippet(chunk.content))
             for index, (chunk, score) in enumerate(zip(context.chunks, scores))
             if chunk.kind == "retrieved" and not chunk.pinned and score < settings.min_relevance
         ]  # fmt: skip

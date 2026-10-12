@@ -68,7 +68,7 @@ class OrderChecks(DeterministicChecker):
         # carry its own, and two readers that disagree are how an agent
         # validates one order and acts on another.
         self._references = references or OrderReferenceResolver.from_orders(
-            get_agent_settings().order_reference, orders
+            get_agent_settings().order_reference, orders, PhraseReader().negated_at
         )
         self._refund_policy = refund_policy or RefundPolicy(orders)
         self._cancellation_policy = cancellation_policy or CancellationPolicy(orders)

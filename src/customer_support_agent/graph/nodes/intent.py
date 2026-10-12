@@ -50,7 +50,11 @@ class IntentNodes(NodeSupport):
         intent = await self._intents.classify_async(
             state.query, previous=self._last_supported_intent.get(state.session_id)
         )
-        if isinstance(state.metadata.get(ORDER_SNAPSHOT), dict):
+        # Placed by an order only when *this message* asks about one: an order carried from
+        # an earlier turn is not what "who am I?" is about.
+        if isinstance(state.metadata.get(ORDER_SNAPSHOT), dict) and (
+            self._order_reference.names_order(state.query, state.customer_id)
+        ):
             intent = self._intents.placed_by_order(intent)
         self._logger.info(
             "Customer Support intent resolved",

@@ -95,7 +95,12 @@ class ContextFailureDetector:
             }
         )
         if any(finding.mode == "rot" for finding in findings):
-            mitigated = reduce_history(mitigated)
+            reduced = reduce_history(mitigated)
+            cut = _lines_lost(mitigated, reduced)
+            findings = [
+                f.model_copy(update={"excise": cut}) if f.mode == "rot" else f for f in findings
+            ]
+            mitigated = reduced
         if mitigated != context:
             self._logger.warning(
                 "Context mitigated before the model call",
@@ -126,6 +131,18 @@ def _excised(
         return context
     chunks = [_cut(chunk, cuts.get(index, [])) for index, chunk in enumerate(context.chunks)]
     return context.model_copy(update={"chunks": chunks})
+
+
+def _lines_lost(before: AssembledContext, after: AssembledContext) -> list[str]:
+    """The transcript lines a reduction removed, oldest first, so the card can name them."""
+    kept = {line for chunk in after.chunks for line in chunk.content.splitlines()}
+    return [
+        " ".join(line.split())
+        for chunk in before.chunks
+        if chunk.kind == "history"
+        for line in chunk.content.splitlines()
+        if line.strip() and line not in kept
+    ]
 
 
 def _cut(chunk: Chunk, lines: list[str]) -> Chunk:

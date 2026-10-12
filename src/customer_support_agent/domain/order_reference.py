@@ -41,6 +41,9 @@ WRITE_INTENT = "write_intent"
 # Whether an order is this customer's own: (order id, customer id).
 OwnsOrder = Callable[[int, int], bool]
 
+# Whether the words just before an offset in a message refuse what follows: (message, offset).
+NegatedAt = Callable[[str, int], bool]
+
 
 class OrderReferenceRules(Protocol):
     """How a customer's words are read as naming an order (configured by the agent)."""
@@ -70,17 +73,23 @@ class OrderReferenceResolver:
     order the customer had stopped talking about.
     """
 
-    def __init__(self, rules: OrderReferenceRules, owns: OwnsOrder | None = None) -> None:
+    def __init__(
+        self,
+        rules: OrderReferenceRules,
+        owns: OwnsOrder | None = None,
+        negated_at: NegatedAt | None = None,
+    ) -> None:
         self._named = [
             re.compile(pattern, re.IGNORECASE)
             for pattern in (*rules.anchored_patterns, *rules.compact_patterns)
         ]
         self._shape = re.compile(rules.id_shape)
         self._owns = owns
+        self._negated_at = negated_at
 
     @classmethod
     def from_orders(
-        cls, rules: OrderReferenceRules, orders: OrderLookup
+        cls, rules: OrderReferenceRules, orders: OrderLookup, negated_at: NegatedAt | None = None
     ) -> "OrderReferenceResolver":
         """A resolver that checks ownership against the customer's own orders."""
         return cls(
@@ -88,6 +97,7 @@ class OrderReferenceResolver:
             lambda order_id, customer_id: (
                 orders.get_for_customer(order_id, customer_id) is not None
             ),
+            negated_at,
         )
 
     def resolve(
@@ -105,12 +115,34 @@ class OrderReferenceResolver:
         return named if decided else self._from_memory(memory)
 
     def _from_message(self, query: str, customer_id: int | None) -> tuple[bool, int | None]:
-        """What this message names: (whether it named anything, and the order if it settles on one)."""
-        for pattern in self._named:
-            match = pattern.search(query)
-            if match is not None:
+        """What this message names: (whether it named anything, and the order if it settles on one).
+
+        An order the customer refused ("do not refund order 10511") is named but is not the
+        one under discussion: reading it as such is how the order they said to leave alone
+        became the one acted on.
+        """
+        matches = [m for pattern in self._named for m in pattern.finditer(query)]
+        for match in matches:
+            if not self._refused(query, match.start()):
                 return True, int(match.group("id"))
+        if matches:
+            return True, None
         return self._from_ownership(query, customer_id)
+
+    def _refused(self, query: str, start: int) -> bool:
+        return self._negated_at is not None and self._negated_at(query, start)
+
+    def names_order(self, query: str, customer_id: int | None) -> bool:
+        """Whether this message itself asks about an order, never one carried from earlier."""
+        return self._from_message(query, customer_id)[1] is not None
+
+    def named(self, query: str, customer_id: int | None) -> set[int]:
+        """Every order this message mentions, refused or not."""
+        found = {int(m.group("id")) for pattern in self._named for m in pattern.finditer(query)}
+        if self._owns is None or customer_id is None:
+            return found
+        shaped = {int(token) for token in self._shape.findall(query)}
+        return found | {order for order in shaped if self._owns(order, customer_id)}
 
     def _from_ownership(self, query: str, customer_id: int | None) -> tuple[bool, int | None]:
         """A bare id-shaped number, believed only because the record says it is theirs."""

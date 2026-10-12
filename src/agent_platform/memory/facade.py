@@ -187,6 +187,7 @@ class MemoryFacade:
         """Hold one compact value in the session's working memory."""
         if self.working is None:
             return WriteResult(route="discard", written=False, reason="no working memory")
+        value = self._redact(value)
         memory = self.working.get(session_id)
         memory.set(key, value)
         fact = MemoryFact(

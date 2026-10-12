@@ -19,6 +19,8 @@ from customer_support_agent.config.settings import PhraseNegationSettings
 # Typographic apostrophes a customer's keyboard may send ("didn’t").
 _APOSTROPHES = str.maketrans({"’": "'", "‘": "'"})
 _WORD = re.compile(r"[\w']+")
+# Where one clause ends and the next begins.
+_CLAUSE_END = re.compile(r"[,;.!?]")
 
 
 def normalised(text: str) -> str:
@@ -32,6 +34,9 @@ class PhraseReader:
     def __init__(self, settings: PhraseNegationSettings | None = None) -> None:
         negation = settings or get_agent_settings().intent_router.negation
         self._window = negation.window_words
+        self._breaks = [
+            re.compile(rf"\b{re.escape(normalised(word))}\b") for word in negation.clause_breaks
+        ]
         self._markers = [
             re.compile(rf"\b{re.escape(normalised(marker))}\b") for marker in negation.markers
         ]
@@ -47,8 +52,16 @@ class PhraseReader:
         starts = _starts(lowered, phrase)
         return bool(starts) and all(self._negated_at(lowered, start) for start in starts)
 
+    def negated_at(self, text: str, start: int) -> bool:
+        """Whether the words just before `start` in `text` refuse what begins there."""
+        return self._negated_at(normalised(text), start)
+
     def _negated_at(self, lowered: str, start: int) -> bool:
-        preceding = " ".join(_WORD.findall(lowered[:start])[-self._window :])
+        """A negation counts only inside the clause: "do not refund A, but refund B" asks for B."""
+        clause = _CLAUSE_END.split(lowered[:start])[-1]
+        for contrast in self._breaks:
+            clause = contrast.split(clause)[-1]
+        preceding = " ".join(_WORD.findall(clause)[-self._window :])
         return any(marker.search(preceding) for marker in self._markers)
 
 

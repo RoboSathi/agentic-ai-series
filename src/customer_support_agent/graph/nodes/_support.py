@@ -561,8 +561,10 @@ class NodeSupport:
         """
         if self._working_memory is None or not state.session_id:
             return
-        self._working_memory.get(state.session_id).set(key, value)
         safe_value = self._security.redact(str(value))
+        self._working_memory.get(state.session_id).set(
+            key, self._security.redact(value) if isinstance(value, str) else value
+        )
         self._done(
             "working_memory_write",
             event_kind="memory",

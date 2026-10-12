@@ -23,6 +23,7 @@ from agent_platform.hallucination_check import TrustCalibrationTracker, TrustRep
 from agent_platform.logging import get_logger, logged
 from agent_platform.primitives.money import Money
 from agent_platform.resilience import SagaResult
+from agent_platform.security.pii.active import restore_if_on
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.models import HitlRequest, Order, ReviewAction
 from customer_support_agent.persistence.repositories import HitlQueueRepository, OrdersRepository
@@ -204,7 +205,13 @@ class ReviewQueueService:
             reason=request.detail.reason if request.detail is not None else rationale,
             session_id=request.session_id,
             removed=removed,
-            follow_up=template.format(removed=" ".join(removed)) if approved and removed else "",
+            # What the customer is sent is real text: a person approved it, so its tokens
+            # are put back; everywhere else it stays as it was stored.
+            follow_up=(
+                restore_if_on(template.format(removed=" ".join(removed)))
+                if approved and removed
+                else ""
+            ),
         )
 
     def _find(self, request_id: int) -> HitlRequest | None:

@@ -762,6 +762,9 @@ class StepEventWords(BaseModel):
     tool_prefetched: str
     tool_served: str
     gatekeeper: str
+    # What `{subject}` in the Gatekeeper heading reads as when the call is about something
+    # ("order 10532"); empty when it is about nothing.
+    gatekeeper_subject: str
     loop_control: LoopControlWords
 
 
@@ -1212,7 +1215,7 @@ class ContextWindowWording(BaseModel):
     withheld: str
     # `{modes}` the failure modes found, `{action}` what mitigation did.
     unhealthy: str
-    # `{count}` chunks dropped by mitigation.
+    # `{count}` sources dropped or cut by mitigation, `{sources}` their names.
     removed: str
     nothing_removed: str
     # One finding: `{mode}`, `{source}`, `{rule}`, `{detail}`, `{action}`.
@@ -1221,8 +1224,20 @@ class ContextWindowWording(BaseModel):
     size_title: str
     size_line: str
     findings_title: str
-    source_line: str
     marks: dict[str, str]
+    # One finding as a tree: `{mark} {mode} · {rule}` over the lines below. `{line}` is the
+    # offending text, `{source}` the chunk it was in, `{action}` what was done with a kept one.
+    finding_card: str
+    # How long a quoted line may be, and how many removed lines a finding names before
+    # "and {count} more" (`more_removed`).
+    snippet_chars: int = Field(gt=0)
+    max_removed_lines: int = Field(gt=0)
+    more_removed: str
+    flagged_line: str
+    statement_line: str
+    removed_chunk: str
+    removed_line: str
+    kept_source: str
     detail_title: str
     detail_note: str
     # Keys of one finding's entry on the card: statements, detail, sources.
@@ -2611,6 +2626,8 @@ class EvalsSettings(YamlBackedSettings):
     trial_separator: str
     # The console's log level during `make eval` (the log files are unchanged).
     console_level: str
+    # The file (`<name>.log`, in the agent's log folder) every record of an eval run goes to.
+    log_file: str
     store: EvalStoreSettings
     generation: EvalGenerationSettings
     fingerprint: EvalFingerprintSettings

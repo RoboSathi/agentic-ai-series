@@ -55,6 +55,9 @@ class PhraseNegationSettings(BaseModel):
     markers: list[str]
     # How many words before a phrase are read for a negation.
     window_words: int = Field(gt=0)
+    # Words that open a new clause: a negation before one does not reach what follows it
+    # ("do not refund A but refund B").
+    clause_breaks: list[str]
     # Why an intent the customer refused was not granted, as the INTENT card says it.
     refused_reason: str
 

@@ -69,7 +69,9 @@ def _run(args: argparse.Namespace) -> int:
     """The chosen suites, each one run even when another raised; then every section's
     overview together, and the timing table."""
     started = time.perf_counter()
-    LoggerFactory.set_console_level(get_settings().evals.console_level)
+    settings = get_settings().evals
+    LoggerFactory.set_console_level(settings.console_level)
+    LoggerFactory.log_everything_to(settings.log_file)
     outcomes: list[StageOutcome] = []
     with ProgressBar() as progress:
         pipeline = EvalPipeline(_prepared_plugin(), progress=progress)

@@ -194,10 +194,14 @@ class StepEvents:
             if decision.verdict == _ESCALATE
             else "blocked"
         )
-        heading = self._words().gatekeeper.format(
-            verdict=decision.verdict.upper(), standing=decision.standing
-        )
         fields = {**gatekeeper_fields(call, decision), **(extra or {})}
+        heading = self._words().gatekeeper.format(
+            verdict=decision.verdict.upper(),
+            standing=decision.standing,
+            subject=self._words().gatekeeper_subject.format(subject=subject_part(fields))
+            if subject_part(fields)
+            else "",
+        )
         self._loop.emit(GATEKEEPER, status, summary=heading, fields=fields, event_kind="gatekeeper")
 
     def tool_result(
@@ -331,6 +335,19 @@ def _spent_reason(verdict: "LoopVerdict", names: Mapping[str, str]) -> str:
     return verdict.reason
 
 
+def subject_part(fields: Mapping[str, Any]) -> str:
+    """What an action is about, for a one-line summary ("order 10042"), or ''.
+
+    The subject fields are the agent's own declaration (`agent.subject_fields`); the platform
+    only reads which of them a card's fields carry.
+    """
+    for subject in get_settings().agent.subject_fields:
+        value = fields.get(subject.field)
+        if subject.summarise and value is not None:
+            return f"{subject.label} {value}"
+    return ""
+
+
 def gatekeeper_fields(call: "ToolCall", decision: "AuthorityDecision") -> dict[str, Any]:
     """The ruling and the deterministic checks behind it, as every agent's GATEKEEPER card shows."""
     fields: dict[str, Any] = {
@@ -358,4 +375,5 @@ __all__ = [
     "MCP_PROTOCOL",
     "StepEvents",
     "gatekeeper_fields",
+    "subject_part",
 ]

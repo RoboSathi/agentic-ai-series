@@ -30,6 +30,7 @@ from textual.widgets.option_list import Option
 
 from agent_platform.config import get_settings
 from agent_platform.hallucination_check.resolver import CONFIRM_TIER
+from agent_platform.observability.step_events import subject_part
 from agent_platform.observability.types import StatusEvent
 from agent_platform.presentation.text_tree import as_structure, value_lines
 from agent_platform.primitives.money import money_or_none
@@ -694,7 +695,7 @@ class StageEventWidget(Collapsible):
                         except (TypeError, ValueError, json.JSONDecodeError):
                             parsed = {}
                     given = parsed if isinstance(parsed, Mapping) else {}
-                    subject = _subject_part(given)
+                    subject = subject_part(given)
                     amount = given.get("amount")
                     parts = [
                         "Tool Requested",
@@ -735,7 +736,7 @@ class StageEventWidget(Collapsible):
             verdict = fields.get("decision") or fields.get("verdict")
             standing = fields.get("standing")
             action = fields.get("action")
-            subject = _subject_part(fields)
+            subject = subject_part(fields)
             amount = _first_present(fields, AMOUNT_FIELDS)
             parts = []
             if verdict:
@@ -841,7 +842,7 @@ class StageEventWidget(Collapsible):
         tool = fields.get("tool") or fields.get("action")
         tool_name = self._labels.tool_label(str(tool)) if tool else "tool"
         result = fields.get("result")
-        subject = _subject_part(fields)
+        subject = subject_part(fields)
         amount = _first_present(fields, AMOUNT_FIELDS)
         parts = [tool_name]
         if subject:
@@ -1775,15 +1776,6 @@ def _label(name: str) -> str:
         if subject.field == name:
             return subject.label
     return FIELD_LABELS.get(name, name)
-
-
-def _subject_part(fields: Mapping[str, Any]) -> str:
-    """What an action is about, for a one-line summary ("order 10042"), or ''."""
-    for subject in get_settings().agent.subject_fields:
-        value = fields.get(subject.field)
-        if subject.summarise and value is not None:
-            return f"{subject.label} {value}"
-    return ""
 
 
 def _first_present(

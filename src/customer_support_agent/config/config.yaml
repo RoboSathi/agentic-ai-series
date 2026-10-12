@@ -220,6 +220,9 @@ hallucination_check:
       order_status: {type: text}
       refund_status: {type: text}
       product: {type: text}
+      carrier: {type: text}
+      tracking_number: {type: text}
+      current_location: {type: text}
       delivered_on: {type: date, terms: ['\bdeliver']}
       due_on: {type: date, terms: ['\bdue\b', '\barriv', '\bexpected\b', '\bestimated\b']}
       order_total: {type: money, terms: ['\btotal', '\bamount\b', '\bcost', '\bpaid\b', '\bprice\b', '\brefund']}
@@ -371,6 +374,9 @@ customer_support_agent:
       order_total: "Order {order_id} totals {value}."
       delivered_on: "Order {order_id} was delivered on {value}."
       due_on: "Order {order_id} is due on {value}."
+      carrier: "Order {order_id} is shipped by {value}."
+      tracking_number: "Order {order_id} has the tracking number {value}."
+      current_location: "Order {order_id} is currently at {value}."
       refund_eligible: "Order {order_id} is eligible for a refund."
       settlement_window: "An issued refund settles within {minutes} minutes."
       support_contact: "The customer can contact {value}."
@@ -559,6 +565,7 @@ customer_support_agent:
     negation:
       markers: ["don't", "dont", "do not", "didn't", "didnt", "did not", "doesn't", "does not", "won't", "wont", "will not", "haven't", "havent", "have not", "hasn't", "has not", "isn't", "is not", "not", "no", "never", "without", "can't", "cannot"]
       window_words: 4
+      clause_breaks: ["but", "however", "instead", "except", "though", "although", "rather"]
       refused_reason: "The customer said they do not want {intent}."
     order_reference:
       intent: ORDER_STATUS

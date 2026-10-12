@@ -338,6 +338,22 @@ class LoggerFactory:
             logger.addHandler(handler)
 
     @classmethod
+    def log_everything_to(cls, name: str) -> None:
+        """Also write every subsystem's records to one file, `<name>.log` in the agent's folder.
+
+        For a run whose console is a progress display: the detail stays readable in one file
+        instead of scrolling past the bar. Calling it again with the same name is a no-op.
+        """
+        sink = cls._file_handler(name)
+        if any(
+            getattr(h, "baseFilename", None) == getattr(sink, "baseFilename", "")
+            for h in cls._subscribers
+        ):
+            sink.close()
+            return
+        cls.subscribe(sink)
+
+    @classmethod
     def unsubscribe(
         cls,
         handler: logging.Handler,

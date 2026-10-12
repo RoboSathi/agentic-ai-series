@@ -63,9 +63,8 @@ class PrefetchNodes(NodeSupport):
         }
         return {"metadata": metadata}
 
-    @staticmethod
     def _still_needed(
-        state: AgentState, offered: list[Any], reads: list[tuple[str, Any, dict[str, Any]]]
+        self, state: AgentState, offered: list[Any], reads: list[tuple[str, Any, dict[str, Any]]]
     ) -> list[Any]:
         """The offer, less what this turn has no use for: reads prefetch answers, finders.
 
@@ -73,6 +72,10 @@ class PrefetchNodes(NodeSupport):
         redundant call; offering a tool that finds an order, once the order is known,
         invites a detour.
         """
+        # Prefetch answers one order. When the customer names several, the read for
+        # the others is still the model's to make, and the finder is still useful.
+        if len(self._order_reference.named(state.query, state.customer_id)) > 1:
+            return list(offered)
         answered = {tool.qualified_name for _, tool, _ in reads}
         needless = (
             set(get_agent_settings().prefetch.needless_when_order_known)

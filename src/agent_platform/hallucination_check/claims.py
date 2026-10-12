@@ -16,6 +16,7 @@ from functools import cache
 from agent_platform.config import get_settings
 from agent_platform.hallucination_check.types import AtomicClaim, ClaimClass
 from agent_platform.llm.embeddings import tokenize
+from agent_platform.primitives.pii_tokens import bare_token, framed_token
 
 # Sentence boundaries, and the connectives that join two claims into one
 # sentence — both produce claims that must be checked separately.
@@ -188,14 +189,25 @@ def _normalised(value: str) -> str:
     return plain
 
 
+def _without_tokens(text: str) -> str:
+    """`text` with each PII token blanked to spaces, so offsets into it stay valid.
+
+    A token is an opaque handle, not a figure the reply states: the digits inside
+    `[PERSON:3f9a1c2b7e10]` or a bare `f0ca051ccfa3` are not numbers to be sourced.
+    """
+    blank = lambda match: " " * len(match.group())  # noqa: E731
+    return bare_token().sub(blank, framed_token().sub(blank, text))
+
+
 def specific_spans(text: str) -> list[tuple[int, int]]:
     """Where each identifier, amount, date or weekday sits in `text`, as (start, end)."""
-    return [match.span() for match in _SPECIFIC.finditer(text)]
+    return [match.span() for match in _SPECIFIC.finditer(_without_tokens(text))]
 
 
 def specifics(text: str) -> set[str]:
     """The identifiers, amounts, dates and weekdays a text names, normalised for comparison."""
-    return {form for value in _SPECIFIC.findall(text) for form in _forms(value)} - {""}
+    found = _SPECIFIC.findall(_without_tokens(text))
+    return {form for value in found for form in _forms(value)} - {""}
 
 
 def _forms(value: str) -> set[str]:

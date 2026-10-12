@@ -19,6 +19,7 @@ from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 from agent_platform.config import get_settings
 from agent_platform.logging import get_logger
+from agent_platform.primitives.pii_tokens import framed_token
 from agent_platform.security.pii.types import PIISpan, RedactionMode
 from agent_platform.security.pii.vault import PIIVault, create_pii_vault
 
@@ -185,6 +186,22 @@ class PIIFilterImpl:
             ),
             "",
         )
+
+    def restore(self, text: str) -> str:
+        """`text` with each vault token put back to the value it stands for.
+
+        For the one path where a person has approved text that is going to the customer.
+        A token the vault does not know is left as it is, and without a vault nothing is.
+        """
+        vault = self._vault
+        if vault is None:
+            return text
+
+        def value(match: re.Match[str]) -> str:
+            revealed = vault.reveal(match.group(0))
+            return revealed.value if revealed is not None else match.group(0)
+
+        return framed_token().sub(value, text)
 
     def tokens(self, text: str) -> list[RedactedSpan]:
         """What redacting `text` replaces: each span's category, recognizer, score and token.

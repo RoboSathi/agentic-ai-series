@@ -10,7 +10,7 @@ the refund, sends the removed sentences, activates the skill), then
 settles the item, signs it and audits it.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Protocol, runtime_checkable
 
 from agent_platform.audit import AuditEntry, AuditLedger, NullAuditLedger
@@ -53,7 +53,9 @@ class ReviewService:
         queue: ReviewQueue,
         handlers: Sequence[ReviewHandler],
         audit: AuditLedger | None = None,
+        redact: Callable[[str], str] | None = None,
     ) -> None:
+        self._redact = redact
         self._queue = queue
         self._handlers = {kind: handler for handler in handlers for kind in handler.kinds}
         self._audit = audit or NullAuditLedger()
@@ -91,6 +93,10 @@ class ReviewService:
         """One item as its kind's table row."""
         return self._handlers[item.kind].cells(item)
 
+    def redact(self, text: str) -> str:
+        """`text` without the personal data in it, when this service is given a way to."""
+        return self._redact(text) if self._redact is not None else text
+
     async def decide(
         self,
         item_id: int,
@@ -103,6 +109,9 @@ class ReviewService:
         note = " ".join(comment.split())
         if len(note) < self._settings.min_comment_chars:
             raise ReviewError(self._settings.words.needs_comment)
+        # A reviewer types what they see, and what they see can be a customer's own words:
+        # the comment is recorded, audited and echoed without the personal data in it.
+        note = self.redact(note)
         item = self.item(item_id, subject)
         if item.status != "pending":
             raise ReviewError(

@@ -80,8 +80,10 @@ class TestAPoisonedWindowIsNot:
         assert warning.status == "warning" and "poisoning" in (warning.summary or "")
         words = get_settings().context.window
         assert "486 of 3000 tokens" in warning.fields[words.size_title][0]
-        [line] = warning.fields[words.findings_title]
-        assert line["tone"] == "fail" and "10975 · poisoning · dropped" in line["text"]
+        lines = warning.fields[words.findings_title]
+        assert all(line["tone"] == "fail" for line in lines)
+        assert any("poisoning" in line["text"] for line in lines)
+        assert any("REMOVED: all of 10975" in line["text"] for line in lines)
 
 
 class _Nodes(ContextNodes):

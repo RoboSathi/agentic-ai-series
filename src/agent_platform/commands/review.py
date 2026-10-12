@@ -31,6 +31,7 @@ from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.review import ReviewItem, ReviewQueue
 from agent_platform.review.handlers import MemoryReviewHandler, QuarantineHandler
 from agent_platform.review.service import EVERYONE, ReviewError, ReviewHandler, ReviewService
+from agent_platform.security.pii.active import redact_if_on
 
 _SHOW = "show"
 # Where a queue is read, and so how its hint says to decide.
@@ -85,7 +86,9 @@ class QueueCommand(PoolBackedCommand):
         # The agent's own ledger: written from a console or a terminal alike without
         # contending for the shared one, and read back by `/audit` and `make audit`.
         ledger = SqliteAuditLedger(self.pool, agent_id=get_settings().agent.id)
-        return ReviewService(ReviewQueue(self.pool), handlers, ledger)
+        return ReviewService(
+            ReviewQueue(self.pool, redact=redact_if_on), handlers, ledger, redact=redact_if_on
+        )
 
     async def run(self, args: list[str]) -> CommandResult:
         action = args[0].casefold() if args else ""

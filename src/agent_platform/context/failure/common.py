@@ -34,6 +34,7 @@ def finding(
     index: int | None = None,
     excise: list[str] | None = None,
     statements: list[str] | None = None,
+    line: str = "",
     **values: Any,
 ) -> ContextFinding:
     """A finding worded from `context.findings.templates[template]`, its action from `actions`."""
@@ -46,9 +47,17 @@ def finding(
         detail=lines.detail.format(**values),
         action=words.actions[action],
         index=index,
+        line=line,
         excise=excise or [],
         statements=statements or [],
     )
+
+
+def snippet(text: str) -> str:
+    """The start of `text` on one line, as long as a card line may be."""
+    flat = " ".join(text.split())
+    limit = get_settings().context.window.snippet_chars
+    return flat if len(flat) <= limit else flat[:limit].rstrip() + "…"
 
 
 def label(chunk: Chunk) -> str:

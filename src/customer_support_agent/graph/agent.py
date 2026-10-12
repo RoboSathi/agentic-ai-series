@@ -123,6 +123,7 @@ from customer_support_agent.graph.nodes.propose import ProposalNodes
 from customer_support_agent.graph.nodes.review_wait import ReviewWaitNodes
 from customer_support_agent.graph.nodes.screening import ScreeningNodes
 from customer_support_agent.graph.state import AgentState
+from customer_support_agent.intent.phrases import PhraseReader
 from customer_support_agent.intent.router import CustomerSupportIntentRouter, Intent
 from customer_support_agent.loop_control import IndependentScorer, OutputQualityGate
 from customer_support_agent.memory.signals import turn_signals
@@ -282,10 +283,11 @@ class CustomerSupportAgent(
         # from what they said and what the record holds. One resolver, so
         # the path that answers and the path that acts cannot drift.
         rules = get_agent_settings().order_reference
+        negated_at = PhraseReader().negated_at
         self._order_reference = (
-            OrderReferenceResolver.from_orders(rules, orders)
+            OrderReferenceResolver.from_orders(rules, orders, negated_at)
             if orders is not None
-            else OrderReferenceResolver(rules)
+            else OrderReferenceResolver(rules, negated_at=negated_at)
         )
         self._deterministic_checks = deterministic_checks
         # Who each session has proved itself to be. Authentication is per
@@ -740,7 +742,7 @@ class CustomerSupportAgent(
         if self._working_memory is None or not reply:
             return
         memory = self._working_memory.get(session_id)
-        memory.history.append({"role": "assistant", "content": reply})
+        memory.history.append({"role": "assistant", "content": self._security.redact(reply)})
         memory.history = memory.history[-(memory.max_history * 2) :]
 
     async def _recover_conversation(self, session_id: str) -> None:
@@ -869,9 +871,15 @@ class CustomerSupportAgent(
             # on the account — and replaying that verbatim into every
             # later prompt is the largest avoidable cost in the window.
             remembered = state.metadata.get("memory_response")
+            # Working memory is checkpointed and replayed into later prompts: it holds the
+            # turn as the customer's tokens, never their personal data.
             working.add_history(
-                state.model_query or state.query,
-                str(remembered) if isinstance(remembered, str) and remembered else state.response,
+                self._security.redact(state.model_query or state.query),
+                self._security.redact(
+                    str(remembered)
+                    if isinstance(remembered, str) and remembered
+                    else state.response
+                ),
             )
         working.clear_current_turn()
 
