@@ -28,14 +28,15 @@ project.zip
 #   data/<package>/  every other runtime file: memory, research runs, web cache, analytics
 #                    Parquet, eval workspaces.
 # Neither is versioned. (A few research-run samples predate this rule and stay tracked.)
-db/
-data/
+db/*
+data/*
 
 # Reports: one per eval framework per run (`make eval <agent>`), rebuilt from the eval store.
 # The folders are kept, their contents are not.
 reports/**
 !reports/**/
-!reports/**/.gitkeep
+!reports/**/.gitkeep'
+
 
 # Any database that lands anywhere else is still runtime state.
 *.db

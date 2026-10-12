@@ -195,11 +195,9 @@ llm:
       adapter: hosted
       key_env_vars: [nvidia_api_key]
       base_url: https://integrate.api.nvidia.com/v1
-      # NIM entitlements are per-account. nvidia/nemotron-3-super-120b-a12b, the primary until
-      # 2026-10-03, reached end of life that day (HTTP 410 Gone). Every agent runs on lightning;
-      # ultra, the strongest model on the account, is kept for the judge (`judge:`). NIM does
-      # NOT honor guided_json/response_format — see guardrails.constrained_backend.
-      model: nvidia/nemotron-3.5-lightning-30b-a3b
+      #NIM does NOT honor guided_json/response_format — see guardrails.constrained_backend.
+      model: nvidia/nemotron-3-super-120b-a12b
+      # nvidia/nemotron-3-super-120b-a12b, nvidia/nemotron-3.5-lightning-30b-a3b
       timeout_seconds: 60
       input_cost_per_1k_tokens: 0.0002
       # NIM publishes no cached-prefix discount: a cached token is priced as any other.
