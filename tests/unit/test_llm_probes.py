@@ -1,4 +1,4 @@
-"""`make llm-check`: one real, minimal request per hosted endpoint."""
+"""`make model-check`: every model the system configures, inventoried once and probed once."""
 
 from typing import Any
 
@@ -7,13 +7,9 @@ import pytest
 from agent_platform.config import get_settings
 from agent_platform.llm import probes
 from agent_platform.llm.benchmark import BenchmarkResult, ChatModel, _summary, chat_models
+from agent_platform.llm.inventory import ModelUse, grouped, merge, uses_in
 from agent_platform.llm.local_probes import build_local_probes
-from agent_platform.llm.probes import (
-    ChatProbe,
-    GuardProbe,
-    SkippedProbe,
-    build_probes,
-)
+from agent_platform.llm.probes import ChatProbe, GuardProbe, guard_probe
 from agent_platform.security.guard_types import GuardVerdict
 from tests.conftest import ScriptedLLM
 
@@ -35,20 +31,52 @@ class _Exploding(ScriptedLLM):
         raise error
 
 
-class TestBuildProbes:
-    def test_one_probe_per_configured_hosted_endpoint(self) -> None:
-        names = [probe.name for probe in build_probes()]
-        assert names == ["agent_chat", "judge", "embeddings", "content_safety", "jailbreak"]
+class TestInventory:
+    def test_every_hosted_model_is_listed_with_what_uses_it(self) -> None:
+        config = get_settings()
+        uses = uses_in(config, "platform")
+        models = {(use.kind, use.model) for use in uses}
+        assert ("chat", config.llm.provider_settings().model) in models
+        assert ("chat", config.judge.model) in models
+        for fallback in config.llm.chain.fallbacks:
+            assert ("chat", fallback.model) in models
+        words = config.llm.check.uses
+        assert {use.use for use in uses} >= {words["chat"], words["judge"]}
+        assert all(use.layer == "platform" for use in uses)
 
-    def test_the_judge_probe_targets_the_judge_model_not_the_agents(self) -> None:
-        judge = next(probe for probe in build_probes() if probe.name == "judge")
-        assert isinstance(judge, ChatProbe)
-        assert judge._model == get_settings().judge.model
+    def test_a_fallback_alone_is_not_required(self) -> None:
+        def use(model: str, primary: bool, layer: str = "platform") -> ModelUse:
+            kind = "chat"
+            return ModelUse(
+                kind=kind, provider="nim", model=model, use="u", layer=layer, primary=primary
+            )
 
-    def test_a_disabled_guard_is_skipped(self, restore_settings: None) -> None:
-        get_settings().security.guards.jailbreak.enabled = False
-        jailbreak = next(probe for probe in build_probes() if probe.name == "jailbreak")
-        assert isinstance(jailbreak, SkippedProbe)
+        entries = {
+            entry.model: entry
+            for entry in merge([use("a", True), use("b", False), use("b", True, "csa")])
+        }
+        assert entries["a"].required and entries["b"].required
+        assert not merge([use("c", False)])[0].required
+
+    def test_a_model_named_twice_is_one_entry_with_every_layer(self) -> None:
+        assert grouped([("chat", "platform"), ("chat", "csa"), ("judge", "platform")]) == [
+            "chat (platform, csa)",
+            "judge (platform)",
+        ]
+
+    def test_a_disabled_guard_is_not_listed(self, restore_settings: None) -> None:
+        config = get_settings()
+        config.security.guards.jailbreak.enabled = False
+        kinds = {use.model for use in uses_in(config, "platform") if use.kind == "guard"}
+        assert config.security.guards.jailbreak.model not in kinds
+
+    def test_a_guard_probe_targets_the_guard_that_names_the_model(self) -> None:
+        config = get_settings()
+        model = config.security.guards.content_safety.model
+        probe = guard_probe(config, model, required=True)
+        assert isinstance(probe, GuardProbe) and probe._model == model
+        with pytest.raises(KeyError):
+            guard_probe(config, "no/such-model", required=True)
 
 
 class TestChatProbe:
@@ -85,18 +113,6 @@ class TestGuardProbe:
 def test_every_configured_local_model_gets_a_probe() -> None:
     names = {probe.name for probe in build_local_probes()}
     assert {"nli", "dialogue_summarizer"} <= names
-
-
-def test_each_distinct_role_model_is_probed_under_its_role_names() -> None:
-    settings = get_settings().model_copy(deep=True)
-    role = settings.llm.provider_settings()
-    settings.llm.roles = {
-        "planner": _role(role.model),
-        "writer": _role(role.model),
-        "judge": _role("another/model"),
-    }
-    names = {probe.name for probe in build_probes(settings)}
-    assert "roles: planner, writer" in names and "roles: judge" in names
 
 
 def test_chat_models_are_listed_once_with_every_use() -> None:

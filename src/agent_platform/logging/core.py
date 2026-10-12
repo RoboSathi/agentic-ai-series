@@ -282,10 +282,27 @@ class RichLogger:
         self._logger.debug(message, extra={_STRUCTURED_FIELDS: fields})
 
 
+_SHARED_CONSOLE: Console | None = None
+
+
+def shared_console() -> Console:
+    """The one console every log handler writes to.
+
+    One console, so a live display on it (an eval's progress bar) is redrawn around log
+    lines instead of being written over by them.
+    """
+    global _SHARED_CONSOLE
+    if _SHARED_CONSOLE is None:
+        _SHARED_CONSOLE = Console(theme=Theme(get_settings().logging.console_theme))
+    return _SHARED_CONSOLE
+
+
 class LoggerFactory:
     """Builds one configured logger per subsystem (LLD §2)."""
 
     _loggers: dict[str, logging.Logger] = {}
+    # A process-wide console level that replaces `logging.console_level` (None: the config's).
+    _console_level: str | None = None
 
     # Handlers that want every subsystem's records, now and in future.
     _subscribers: list[logging.Handler] = []
@@ -334,6 +351,15 @@ class LoggerFactory:
             logger.removeHandler(handler)
 
     @classmethod
+    def set_console_level(cls, level: str) -> None:
+        """Change what reaches the console, for every subsystem now and later (files keep all)."""
+        cls._console_level = level
+        for logger in cls._loggers.values():
+            for handler in logger.handlers:
+                if isinstance(handler, RichHandler):
+                    handler.setLevel(level)
+
+    @classmethod
     def reset(cls) -> None:
         """Drop cached loggers so config changes take effect."""
 
@@ -364,7 +390,7 @@ class LoggerFactory:
         logger.handlers.clear()
 
         if settings.console_enabled:
-            logger.addHandler(cls._console_handler(settings.console_level))
+            logger.addHandler(cls._console_handler(cls._console_level or settings.console_level))
 
         if settings.file_enabled:
             logger.addHandler(cls._file_handler(subsystem))
@@ -384,7 +410,7 @@ class LoggerFactory:
     ) -> logging.Handler:
         settings = get_settings().logging
         handler = RichHandler(
-            console=Console(theme=Theme(settings.console_theme)),
+            console=shared_console(),
             markup=True,
             rich_tracebacks=True,
             show_time=True,

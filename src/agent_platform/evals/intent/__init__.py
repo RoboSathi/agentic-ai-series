@@ -1,4 +1,4 @@
-"""The intent bake-off: an agent's classifiers scored side by side (`STAGE=intent`)."""
+"""The intent bake-off: an agent's classifiers scored side by side (`make intent-eval <agent>`)."""
 
 from agent_platform.evals.intent.scoring import (
     BakeoffResult,

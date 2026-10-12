@@ -28,7 +28,7 @@ the previous subject ("what about 10010?").
 - `intent_router.phrase_rules` — route by `intents[].phrases` before the classifier (default on).
 - `intents`, `default_intent`, `intent_router.instructions` (the question Laya is asked), `followup`.
 - Profiles: `bert_intent` (BERT instead of Laya), `no_phrase_rules` (rules and regex rejects off).
-- Comparison: `make eval csa STAGE=intent` (`evals.intent_bakeoff`) scores every contender.
+- Comparison: `make intent-eval csa` (`evals.intent_bakeoff`) scores every contender.
 
 ## Seams
 

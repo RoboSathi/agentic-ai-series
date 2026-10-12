@@ -75,12 +75,15 @@ def _report(store: DuckDbEvalStore, run_id: str | None) -> CommandResult:
     gate = evaluate_gate(store, run.run_id)
     result = CommandResult(title=f"{run.run_id} — {gate.verdict}")
     result.headers = ["stage", "metric", "severity", "passed", "mean"]
+    stages: list[str] = []
     for row in store.query(
         "SELECT stage, metric, severity, passed, cases, mean_value FROM v_metric_pass_rates "
         "WHERE run_id = ? ORDER BY stage, severity, metric",
         (run.run_id,),
     ):
         failing = row["passed"] < row["cases"]
+        if row["stage"] not in stages:
+            stages.append(row["stage"])
         result.row(
             row["stage"],
             row["metric"],
@@ -90,7 +93,8 @@ def _report(store: DuckDbEvalStore, run_id: str | None) -> CommandResult:
             style="red" if failing and row["severity"] == "hard" else "yellow" if failing else "",
         )
     result.line("; ".join(gate.reasons) or "every gate cleared")
-    result.line(f"Full report: {_report_file(run.suite, run.run_id)}")
+    for stage in stages:
+        result.line(f"Full report ({stage}): {_report_file(stage, run.run_id)}")
     return result
 
 
@@ -120,13 +124,11 @@ def _case(store: DuckDbEvalStore, case_id: str, run_id: str | None) -> CommandRe
     return result
 
 
-def _report_file(suite: str, run_id: str) -> str:
-    """Where `make eval` wrote this run's report (the security suite is Promptfoo's)."""
+def _report_file(stage: str, run_id: str) -> str:
+    """Where `make eval` wrote one section's report of this run (each stage writes its own)."""
     from agent_platform.evals.core.reporting.writer import report_path
 
-    evals = get_settings().evals
-    framework = "promptfoo" if suite == evals.suites.security else "deepeval"
-    return str(report_path(framework, run_id))
+    return str(report_path(stage, run_id))
 
 
 def _shown(value: Any) -> str:

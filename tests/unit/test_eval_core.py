@@ -300,6 +300,11 @@ class TestGate:
         gate = evaluate_gate(store, await self._graded(store, FakeGrader(fail={"c1"})))
         assert gate.verdict == FAIL and gate.hard_failed_cases == 1
 
+    async def test_each_stage_has_its_own_verdict(self, store: DuckDbEvalStore) -> None:
+        run_id = await self._graded(store, FakeGrader(fail={"c1"}))
+        assert evaluate_gate(store, run_id, "oracle").verdict == FAIL
+        assert evaluate_gate(store, run_id, "deepeval").verdict == INCOMPLETE
+
     async def test_soft_failures_gate_on_the_configured_pass_rate(
         self, store: DuckDbEvalStore
     ) -> None:
@@ -310,40 +315,111 @@ class TestGate:
         assert gate.verdict == (PASS if 2 / 3 >= gate.soft_threshold else FAIL)
 
 
+def _with_judge(
+    plugin: FakePlugin, monkeypatch: pytest.MonkeyPatch, judge: FakeGrader | None = None
+) -> FakeGrader:
+    """Give the plugin one core and one non-core metric, judged by a scripted grader."""
+    plugin.quality_metrics = lambda: [  # type: ignore[method-assign]
+        QualityMetricSpec(name="core_m", kind="turn_relevancy", threshold=0.5, core=True),
+        QualityMetricSpec(name="extra_m", kind="turn_relevancy", threshold=0.5),
+    ]
+    chosen = judge or FakeGrader(name="quality", kind="deepeval", severity="soft")
+    seen: list[list[str]] = []
+
+    def build(self: EvalPipeline, metrics: list[QualityMetricSpec]) -> FakeGrader:
+        seen.append([metric.name for metric in metrics])
+        return chosen
+
+    monkeypatch.setattr(EvalPipeline, "_deepeval", build)
+    chosen.metrics_seen = seen  # type: ignore[attr-defined]
+    return chosen
+
+
 class TestGoldenPipeline:
-    async def test_the_run_writes_one_deepeval_report_named_for_the_run(
+    async def test_each_section_writes_its_own_report_named_for_the_run(
+        self, store: DuckDbEvalStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plugin = FakePlugin(grader=FakeGrader(fail={"c2"}))
+        _with_judge(plugin, monkeypatch)
+        oracle, deepeval = await EvalPipeline(plugin, store).golden()  # type: ignore[arg-type]
+        assert (oracle.section, deepeval.section) == ("oracle", "deepeval")
+        assert oracle.run_id == deepeval.run_id
+        assert oracle.report == report_path("oracle", oracle.run_id)
+        assert deepeval.report == report_path("deepeval", deepeval.run_id)
+        body = oracle.report.read_text()
+        assert "Gate: FAIL" in body and "### c2" in body
+        assert oracle.failed and not deepeval.failed
+
+    async def test_the_oracle_report_lists_every_case_with_why_it_failed(
         self, store: DuckDbEvalStore
     ) -> None:
-        outcome = await EvalPipeline(FakePlugin(grader=FakeGrader(fail={"c2"})), store).golden()  # type: ignore[arg-type]
-        assert outcome.report == report_path("deepeval", outcome.run_id)
-        body = outcome.report.read_text()
-        assert outcome.report.name == f"deepeval-{outcome.run_id}.md"
-        assert "Gate: FAIL" in body and "### c2" in body
-        assert outcome.failed
+        (oracle,) = await EvalPipeline(FakePlugin(grader=FakeGrader(fail={"c1"})), store).golden()  # type: ignore[arg-type]
+        cases = oracle.report.read_text().split("## Every case")[1].split("##")[0]
+        states = get_settings().evals.reporting.overview.states
+        assert "| c0 | other | " + states["pass"] + " | 1/1 |" in cases
+        assert "| c1 | cat | " + states["fail"] + " | 0/1 | **fake_metric**: broke |" in cases
+        assert "| c2 |" in cases
+
+    async def test_one_section_runs_alone(
+        self, store: DuckDbEvalStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plugin = FakePlugin()
+        judge = _with_judge(plugin, monkeypatch)
+        (outcome,) = await EvalPipeline(plugin, store).golden(["oracle"])  # type: ignore[arg-type]
+        stages = store.query(
+            "SELECT DISTINCT stage FROM eval_stages WHERE run_id = ?", (outcome.run_id,)
+        )
+        assert {row["stage"] for row in stages} == {"generate", "oracle"}
+        assert judge.graded == []
+        (judged,) = await EvalPipeline(plugin, store).golden(["deepeval"])  # type: ignore[arg-type]
+        assert judged.run_id == outcome.run_id and plugin.agent.calls == ["c0", "c1", "c2"]
 
     async def test_a_broken_invariant_never_skips_the_judge(
         self, store: DuckDbEvalStore, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         plugin = FakePlugin(grader=FakeGrader(fail={"c0"}))
-        plugin.quality_metrics = lambda: [  # type: ignore[method-assign]
-            QualityMetricSpec(name="m", kind="turn_relevancy", threshold=0.5)
-        ]
-        judge = FakeGrader(name="quality", kind="deepeval", severity="soft")
-        monkeypatch.setattr(EvalPipeline, "_deepeval", lambda self, metrics: judge)
-        outcome = await EvalPipeline(plugin, store).golden()  # type: ignore[arg-type]
-        stages = store.query(
-            "SELECT DISTINCT stage FROM eval_stages WHERE run_id = ?", (outcome.run_id,)
-        )
-        assert {row["stage"] for row in stages} == {"generate", "oracle", "deepeval"}
+        judge = _with_judge(plugin, monkeypatch)
+        pipeline = EvalPipeline(plugin, store)  # type: ignore[arg-type]
+        await pipeline.golden()
         assert judge.graded == ["c0", "c1", "c2"]
-        assert "quality_metric" in outcome.report.read_text()
-        assert list(outcome.timings) == ["agent", "oracle", "deepeval"]
-        assert all(seconds >= 0 for seconds in outcome.timings.values())
+        assert list(pipeline.clock.elapsed) == ["agent", "oracle", "deepeval"]
+
+    async def test_a_section_that_raises_is_reported_and_the_next_still_runs(
+        self, store: DuckDbEvalStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plugin = FakePlugin(grader=FakeGrader(raises=True))
+        _with_judge(plugin, monkeypatch)
+        seen: list[tuple[str, str]] = []
+
+        def sink(section: str, result: object) -> None:
+            seen.append((section, type(result).__name__))
+
+        await EvalPipeline(plugin, store).golden(sink=sink)  # type: ignore[arg-type]
+        assert [section for section, _ in seen] == ["oracle", "deepeval"]
+
+    async def test_core_is_the_default_and_full_adds_the_rest(
+        self, store: DuckDbEvalStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tag = get_settings().evals.core.tag
+        cases = [c.model_copy(update={"tags": [tag]}) if c.case_id != "c2" else c for c in _cases()]
+        plugin = FakePlugin()
+        plugin.load_cases = lambda suite: cases  # type: ignore[method-assign]
+        judge = _with_judge(plugin, monkeypatch)
+        await EvalPipeline(plugin, store).golden()  # type: ignore[arg-type]
+        assert plugin.agent.calls == ["c0", "c1"]
+        await EvalPipeline(plugin, store).golden(full=True)  # type: ignore[arg-type]
+        assert plugin.agent.calls == ["c0", "c1", "c2"]  # the core transcripts are reused
+        assert judge.metrics_seen == [["core_m"], ["core_m", "extra_m"]]  # type: ignore[attr-defined]
+
+    async def test_an_agent_with_no_core_runs_everything(self, store: DuckDbEvalStore) -> None:
+        plugin = FakePlugin()
+        await EvalPipeline(plugin, store).golden()  # type: ignore[arg-type]
+        assert plugin.agent.calls == ["c0", "c1", "c2"]
 
     async def test_the_overview_is_a_coloured_table_with_the_gate(
         self, store: DuckDbEvalStore
     ) -> None:
-        outcome = await EvalPipeline(FakePlugin(grader=FakeGrader(fail={"c1"})), store).golden()  # type: ignore[arg-type]
+        (outcome,) = await EvalPipeline(FakePlugin(grader=FakeGrader(fail={"c1"})), store).golden()  # type: ignore[arg-type]
         console = Console(record=True, width=160)
         outcome.overview.print(console)
         text = console.export_text()
@@ -351,12 +427,18 @@ class TestGoldenPipeline:
         assert "fake_metric" in text and states["fail"] in text and "c1" in text
         assert str(outcome.report) in text
 
-    async def test_a_report_is_rebuilt_from_the_store(self, store: DuckDbEvalStore) -> None:
-        pipeline = EvalPipeline(FakePlugin(), store)  # type: ignore[arg-type]
+    async def test_reports_are_rebuilt_from_the_store(
+        self, store: DuckDbEvalStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plugin = FakePlugin()
+        _with_judge(plugin, monkeypatch)
+        pipeline = EvalPipeline(plugin, store)  # type: ignore[arg-type]
         first = await pipeline.golden()
-        first.report.unlink()
-        rebuilt = pipeline.report(first.run_id)
-        assert rebuilt.report.exists() and rebuilt.gate.verdict == PASS
+        for outcome in first:
+            outcome.report.unlink()
+        rebuilt = pipeline.report(first[0].run_id)
+        assert [outcome.section for outcome in rebuilt] == ["oracle", "deepeval"]
+        assert all(outcome.report.exists() for outcome in rebuilt)
 
     def test_no_run_is_a_readable_error(self, store: DuckDbEvalStore) -> None:
         with pytest.raises(NoRunError):
@@ -391,12 +473,12 @@ class TestOtherStages:
         monkeypatch.setattr(get_settings().evals, "trials", 2)
         separator = get_settings().evals.trial_separator
         flaky = FakeGrader(fail={f"c1{separator}2"})
-        outcome = await EvalPipeline(FakePlugin(grader=flaky), store).golden()  # type: ignore[arg-type]
+        (outcome,) = await EvalPipeline(FakePlugin(grader=flaky), store).golden()  # type: ignore[arg-type]
         body = outcome.report.read_text()
         assert "| 2 | 3 | 3/3 | 2/3 |" in body  # c1 passed once: pass@2 yes, pass^2 no
 
     async def test_the_judge_is_measured_against_the_runtime_guard(
-        self, store: DuckDbEvalStore
+        self, store: DuckDbEvalStore, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         guard = get_settings().evals.reporting.guard_metric
         grader = FakeGrader(name="g", kind="deepeval", severity="soft")
@@ -406,8 +488,9 @@ class TestOtherStages:
             return [score.model_copy(update={"metric": guard}) for score in scores]
 
         grader.grade = grade  # type: ignore[method-assign]
-        pipeline = EvalPipeline(FakePlugin(grader=grader), store)  # type: ignore[arg-type]
-        outcome = await pipeline.golden()
+        plugin = FakePlugin()
+        _with_judge(plugin, monkeypatch, grader)
+        (outcome,) = await EvalPipeline(plugin, store).golden(["deepeval"])  # type: ignore[arg-type]
         assert "Cohen's κ" in outcome.report.read_text()
 
 

@@ -340,6 +340,9 @@ class LLMCheckSettings(BaseModel):
     # own retries with it), so one stalled model cannot hold the whole check for minutes.
     timeout_seconds: float
     local: LocalCheckSettings
+    # Use key (chat, judge_fallback, nli, …) → how `make model-check` describes it.
+    uses: dict[str, str]
+    platform_layer: str
     benchmark: BenchmarkSettings
     styles: CheckStyleSettings
 
@@ -2492,6 +2495,18 @@ class EvalFingerprintSettings(BaseModel):
         return [*self.exclude_paths, *self.agent_exclude_paths]
 
 
+class EvalCoreSettings(BaseModel):
+    """The core subset `make eval` runs by default; `full` runs everything.
+
+    An agent marks its core golden cases with `tag` (in the case's `tags`), its core attacks
+    with `tag` under `attack_metadata_key` in their Promptfoo metadata, and its core DeepEval
+    metrics with `core: true`.
+    """
+
+    tag: str
+    attack_metadata_key: str
+
+
 class EvalGateSettings(BaseModel):
     """When a run fails, and when the pipeline stops."""
 
@@ -2506,6 +2521,10 @@ class EvalOverviewSettings(BaseModel):
     # Section key (agent, oracle, deepeval, promptfoo, intent, total) → its name in the summary.
     sections: dict[str, str]
     section_error: str
+    interrupted: str
+    default_invocation: str
+    marked_interrupted: str
+    unfinished_section: str
     # Outcome words (`pass`, `fail`, `warn`, `defended`, `breached`, `incomplete`), coloured by
     # `tui.command_output.state_styles`.
     states: dict[str, str]
@@ -2537,6 +2556,7 @@ class EvalDeepEvalSettings(BaseModel):
     include_reason: bool
     telemetry_opt_out: bool
     max_concurrent: int
+    batch_size: int = Field(ge=1)
     geval_params: list[str]
     quiet: bool
 
@@ -2551,6 +2571,9 @@ class EvalPromptfooSettings(BaseModel):
     extra_args: list[str]
     # Environment the Promptfoo process (and its Python workers) gets.
     env: dict[str, str]
+    # Where each finished attack is ticked (an env var naming a file), and how often it is read.
+    progress_env: str
+    progress_poll_seconds: float
     # The attack metadata keys (Promptfoo's red-team taxonomy) the report groups by.
     plugin_key: str
     strategy_key: str
@@ -2582,8 +2605,11 @@ class EvalsSettings(YamlBackedSettings):
     plugin: str
     run_id_prefix: str
     suites: EvalSuiteNames
+    core: EvalCoreSettings
     trials: int = Field(ge=1)
     trial_separator: str
+    # The console's log level during `make eval` (the log files are unchanged).
+    console_level: str
     store: EvalStoreSettings
     generation: EvalGenerationSettings
     fingerprint: EvalFingerprintSettings

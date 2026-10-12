@@ -22,6 +22,7 @@ from agent_platform.logging import get_logger
 from agent_platform.observability.types import utc_now
 
 _SQL_DIR = Path(__file__).resolve().parent
+_RUNNING, _INTERRUPTED = "running", "interrupted"
 _LOCK_MESSAGE = "lock"
 
 
@@ -37,6 +38,8 @@ class DuckDbEvalStore:
             Path(self._path).parent.mkdir(parents=True, exist_ok=True)
         self._memory: Any = None
         self._lock = threading.RLock()
+        # Runs this process opened or staged: the only ones an interrupt may close.
+        self._touched: set[str] = set()
         self._logger = get_logger("evals")
         self._ensure_schema()
 
@@ -71,9 +74,34 @@ class DuckDbEvalStore:
         return [_run(row) for row in rows]
 
     def create_run(self, run: RunRecord) -> None:
+        self._touched.add(run.run_id)
         payload = run.model_dump()
         payload["fingerprint_parts"] = json.dumps(run.fingerprint_parts)
         self._insert("eval_runs", payload)
+
+    def mark_interrupted(self) -> list[str]:
+        """Close what this process left running when it was interrupted — and nothing else.
+
+        Only the runs this store opened or staged in this process: another `make eval`
+        running beside it keeps its own state. Finished transcripts and scores stay, so the
+        next run of the same agent and cases finds the run and resumes from them. Returns
+        the stages it closed, as `run_id/stage`.
+        """
+        if not self._touched:
+            return []
+        runs = tuple(sorted(self._touched))
+        marks = ", ".join("?" for _ in runs)
+        where = f"status = '{_RUNNING}' AND run_id IN ({marks})"
+        stages = [
+            f"{row['run_id']}/{row['stage']}"
+            for row in self.query(f"SELECT run_id, stage FROM eval_stages WHERE {where}", runs)
+        ]
+        for table in ("eval_stages", "eval_runs"):
+            self.execute(
+                f"UPDATE {table} SET status = ?, finished_at = ? WHERE {where}",
+                (_INTERRUPTED, utc_now(), *runs),
+            )
+        return stages
 
     def set_run_status(self, run_id: str, status: str) -> None:
         self.execute(
@@ -180,6 +208,7 @@ class DuckDbEvalStore:
     # -- stages and scores ---------------------------------------------------
 
     def start_stage(self, stage: StageRecord) -> None:
+        self._touched.add(stage.run_id)
         self._insert("eval_stages", stage.model_dump())
 
     def finish_stage(self, stage: StageRecord) -> None:

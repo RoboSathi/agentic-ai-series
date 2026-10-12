@@ -50,7 +50,7 @@ class RateLimiter(Protocol):
 
     async def acquire(self, bucket: str) -> float: ...
 
-    def penalize(self, bucket: str, retry_after_seconds: float | None) -> None: ...
+    def penalize(self, bucket: str, retry_after_seconds: float | None, model: str = "") -> None: ...
 
 
 class SlidingWindowRateLimiter:
@@ -140,7 +140,7 @@ class SlidingWindowRateLimiter:
             await self._sleep(wait)
             waited += wait
 
-    def penalize(self, bucket: str, retry_after_seconds: float | None) -> None:
+    def penalize(self, bucket: str, retry_after_seconds: float | None, model: str = "") -> None:
         """Honour a provider 429: stop every process spending this bucket."""
         delay = (
             retry_after_seconds
@@ -149,7 +149,7 @@ class SlidingWindowRateLimiter:
         )
         self.stats.bucket(bucket).rejections += 1
         self._logger.warning(
-            "Provider rejected a request (429)", bucket=bucket, retry_after_s=delay
+            "Provider rejected a request (429)", bucket=bucket, model=model, retry_after_s=delay
         )
         self._store.penalize(bucket, self._clock() + delay)
 

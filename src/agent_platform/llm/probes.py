@@ -1,13 +1,12 @@
-"""Endpoint probes for `make llm-check` — one per hosted model the repo calls.
+"""Endpoint probes for `make model-check` — one per hosted model the system calls.
 
 Each probe sends the smallest *real* request its adapter can make,
 through the same adapter the agent uses (and so through the rate
 limiter). Listing models is not proof: NIM entitlements are per account,
 so a model can be listed and still refuse to answer.
 
-Probes are built from configuration, never from a hardcoded list: add a
-hosted model to config and its probe appears; switch a section off and
-its probe reports `skipped`.
+Which models to probe is the inventory's job (`llm.inventory`): every model every
+configuration layer names, once; a section switched off names no model.
 """
 
 import asyncio
@@ -19,9 +18,9 @@ from pydantic import BaseModel
 from agent_platform.config import AppConfig, get_settings
 from agent_platform.config.settings import ProviderName, SecurityGuardModelSettings
 from agent_platform.llm.client import create_pinned_llm_client
-from agent_platform.llm.embeddings import HOSTED, HostedEmbeddingClient
+from agent_platform.llm.embeddings import HostedEmbeddingClient
 from agent_platform.llm.types import CompletionRequest, Message
-from agent_platform.resilience import ResilientCaller
+from agent_platform.resilience import ResilientCaller, admission
 from agent_platform.security.content_moderation.hosted import HostedContentSafetyGuard
 from agent_platform.security.guard_types import GuardVerdict
 from agent_platform.security.prompt_injection.hosted import HostedJailbreakGuard
@@ -75,8 +74,11 @@ class _TimedProbe:
     async def timed(self, call: Callable[[], Awaitable[ProbeResult]]) -> ProbeResult:
         started = time.perf_counter()
         try:
-            async with asyncio.timeout(self._timeout):
-                return await call()
+            # The deadline covers the endpoint, not the rate-limit queue: a probe queued behind a
+            # running eval for its slot is waiting, not failing (`resilience.admission`).
+            async with asyncio.timeout(self._timeout) as scope:
+                with admission.deadline_scope(scope):
+                    return await call()
         except TimeoutError:
             return self.result("failed", started, detail=f"no response within {self._timeout:g}s")
         except Exception as exc:
@@ -165,79 +167,17 @@ class GuardProbe(_TimedProbe):
         return self.result("ok", started, detail=verdict.decision)
 
 
-class SkippedProbe:
-    """An endpoint configuration switched off — reported, not called."""
-
-    def __init__(self, name: str, target: str, model: str, reason: str) -> None:
-        self.name = name
-        self._result = ProbeResult(
-            name=name, target=target, model=model, status="skipped", required=False, detail=reason
-        )
-
-    async def probe(self) -> ProbeResult:
-        return self._result
-
-
-def build_probes(settings: AppConfig | None = None) -> list[EndpointProbe]:
-    """Every hosted endpoint the configuration names, in a stable order."""
-    config = settings or get_settings()
-    return [
-        _agent_chat_probe(config),
-        _judge_probe(config),
-        *_role_probes(config),
-        _embedding_probe(config),
-        _guard_probe(config, "content_safety", "content_moderation", _content_safety_guard),
-        _guard_probe(config, "jailbreak", "prompt_injection", _jailbreak_guard),
-    ]
-
-
-def _role_probes(config: AppConfig) -> list[EndpointProbe]:
-    """One probe per distinct model the running agent's roles name, labelled with its roles.
-
-    The roles are the agent's (its overlay declares them); a model already probed as the
-    platform's chat model or the eval judge is probed again here under its role names, so a
-    role whose model this account cannot invoke is visible as that role.
-    """
-    by_model: dict[tuple[ProviderName, str], list[str]] = {}
-    for role, spec in sorted(config.llm.roles.items()):
-        by_model.setdefault((spec.provider, spec.model), []).append(role)
-    return [
-        ChatProbe(f"roles: {', '.join(roles)}", provider, model, config.llm.enabled, config)
-        for (provider, model), roles in by_model.items()
-    ]
-
-
-def _agent_chat_probe(config: AppConfig) -> EndpointProbe:
-    provider = config.llm.provider
-    model = config.llm.provider_settings(provider).model
-    return ChatProbe("agent_chat", provider, model, config.llm.enabled, config)
-
-
-def _judge_probe(config: AppConfig) -> EndpointProbe:
-    judge = config.judge
-    return ChatProbe("judge", judge.provider, judge.model, config.evals.enabled, config)
-
-
-def _embedding_probe(config: AppConfig) -> EndpointProbe:
-    embedding = config.llm.embedding
-    if embedding.backend != HOSTED:
-        return SkippedProbe(
-            "embeddings", embedding.backend, embedding.model, "embedding.backend is not hosted"
-        )
-    return EmbeddingProbe(config)
-
-
-def _guard_probe(
-    config: AppConfig, name: str, feature: str, factory: GuardFactory
-) -> EndpointProbe:
+def guard_probe(config: AppConfig, model: str, required: bool) -> EndpointProbe:
+    """The probe for the security guard that names `model` (jailbreak or content safety)."""
     guards = config.security.guards
-    guard: SecurityGuardModelSettings = getattr(guards, name)
-    if not (guards.enabled and guard.enabled):
-        return SkippedProbe(name, guard.base_url, guard.model, "guard disabled in config")
-    # Reachability is checked either way; it is only *required* when the
-    # agent's declared posture actually uses it.
-    required = config.features.is_on(feature)
-    return GuardProbe(name, guard, required, factory, config.llm.check.prompt)
+    for name, factory in (
+        ("jailbreak", _jailbreak_guard),
+        ("content_safety", _content_safety_guard),
+    ):
+        settings: SecurityGuardModelSettings = getattr(guards, name)
+        if settings.model == model:
+            return GuardProbe(model, settings, required, factory, config.llm.check.prompt)
+    raise KeyError(f"no security guard uses '{model}'")
 
 
 def _content_safety_guard(settings: SecurityGuardModelSettings) -> HostedContentSafetyGuard:

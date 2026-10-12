@@ -46,6 +46,12 @@ dependencies = [
     "mcp>=2.0",
     # Parses NL-to-SQL queries so the MCP server can allow SELECTs over curated views only.
     "sqlglot>=25.0",
+    # PII detection (`security.pii.engine: presidio`): Presidio's recognizers over spaCy NER.
+    # spaCy is pinned to the 3.8 line the local `en_core_web_lg` 3.8.0 pipeline was built for
+    # (`make models` downloads it to local_models/spacy). Without these two, PII detection
+    # silently fell back to the regex patterns ("Presidio unavailable").
+    "presidio-analyzer>=2.2",
+    "spacy>=3.8,<3.9",
 ]
 
 [project.optional-dependencies]

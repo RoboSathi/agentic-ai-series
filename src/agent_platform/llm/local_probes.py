@@ -50,6 +50,10 @@ class LocalModelProbe:
         self._load = load
         self._infer = infer
 
+    @property
+    def model(self) -> str:
+        return self._model
+
     async def probe(self) -> LocalProbeResult:
         base = LocalProbeResult(name=self.name, model=self._model, path=self._path, status="ok")
         # A model not on disk yet is downloaded by its own loader here, like on first use.

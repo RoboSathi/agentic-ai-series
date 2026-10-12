@@ -16,19 +16,41 @@ The platform supplies every mechanism and names no agent. An agent takes part th
 seam, `EvalPlugin`, named in its config (`evals.plugin`).
 
 ```
-make eval <agent>                    golden set (oracle + DeepEval), then red team (Promptfoo)
-make eval <agent> STAGE=deepeval     golden set only
-make eval <agent> STAGE=promptfoo    red team only
-make intent-eval <agent>             intent classifier bake-off only (offline)
+make eval <agent>              oracle, DeepEval, then Promptfoo — over the core set
+make eval <agent> oracle       golden cases → the agent's business invariants (no judge calls)
+make eval <agent> deepeval     golden cases → LLM-judged conversation quality
+make eval <agent> promptfoo    red-team attacks
+… full                         add to any of the above: every case, attack and metric
+make intent-eval <agent>       intent classifier bake-off (offline)
 ```
 
-Every section always runs — a broken invariant is a finding to read beside the quality
-scores, not a reason to skip them — and a failed gate is a result, not an error: `make eval`
-exits non-zero only when a section could not run at all (the others still run). Each suite
-prints a colour-coded overview (box tables, outcome words in the console's state colours),
-the run ends with the time each section took, and each framework writes one report per run:
-`src/<pkg>/evals/reports/{deepeval,promptfoo,intent}-<run_id>.md`, where
-`run_id = <agent>-<suite>-<hash>-<YYYYMMDD-HHMMSS>` (UTC).
+Each **section** is one grader with its own gate and its own report. The oracle and DeepEval
+grade the same golden transcripts, so the agent runs once for both (and not at all while its
+fingerprint is unchanged); asking for one runs only that one. A full run runs every section —
+a broken invariant is a finding to read beside the quality scores, not a reason to skip them —
+and a failed gate is a result, not an error: `make eval` exits non-zero only when a section
+could not run at all (the others still run). Each section prints a colour-coded overview (box
+tables, outcome words in the console's state colours) and writes
+`src/<pkg>/evals/reports/<section>-<run_id>.md` — every case with its result, and every failed
+check with its reason — where `run_id = <agent>-<suite>-<hash>-<YYYYMMDD-HHMMSS>` (UTC). The run
+ends with the time each section took.
+
+**Core and full.** A default run covers the agent's *core* cases, attacks and metrics
+(`evals.core`): every behaviour once or twice, in minutes rather than the better part of an
+hour, because the provider budget — not the code — sets the pace. An agent marks a case core
+with the tag in its `tags`, an attack with `<attack_metadata_key>: <tag>` in its Promptfoo
+metadata (run with Promptfoo's own `--filter-metadata`), a metric with `core: true`. `full`
+runs them all; an agent that marks nothing core always runs everything. Core and full are
+different case sets, so different runs — but transcripts are cached per case, so a full run
+after a core one generates only the rest.
+
+While it runs, `make eval` shows one progress bar per section (agent runs, oracle,
+DeepEval, Promptfoo) with the percentage done and its time; the console shows warnings only
+(`evals.console_level`) — a 429 names the model it hit, a model fallback names the model that
+failed, its HTTP status and the backup — while the log files keep everything. Ctrl+C marks the
+run interrupted, prints the time so far and exits 130; the next run resumes from what finished.
+DeepEval grades `evals.deepeval.batch_size` cases per `evaluate()` call, the cases and their
+metrics concurrent inside it, and the judge runs with thinking off.
 
 ## Why each grader exists
 
@@ -61,7 +83,9 @@ intent/     scoring (accuracy, macro-F1, Brier, ECE, latency), report
 
 ## Vocabulary
 
-- **suite** — `golden` (oracle + DeepEval) or `security` (Promptfoo)
+- **suite** — `golden` (graded by the oracle and DeepEval) or `security` (Promptfoo)
+- **section** — one grader over a suite, with its own gate and report: `oracle`, `deepeval`, `promptfoo` (plus `intent`)
+- **core / full** — the default subset of cases, attacks and metrics (`evals.core`), or all of them
 - **GoldenCase** — turns plus an agent-owned `payload`; hashed into `case_hash`
 - **run** — one suite generated against one agent fingerprint and one case set
 - **transcript** — replies, tool calls (turn, gatekeeper ruling, standing, result), evidence, side effects, usage
@@ -75,16 +99,17 @@ intent/     scoring (accuracy, macro-F1, Brier, ECE, latency), report
 - `EvalPlugin` (agent_id, load_cases, prepare, agent_under_test, oracle, quality_metrics, conversation_frame, security_config, fingerprint_inputs); optional `IntentBakeoffPlugin`
 - `InvariantOracle`, `Rule`, `RuleVerdict` (`oracle/`)
 - `DeepEvalGrader` (`deepeval/`); `PromptfooSuite` (`promptfoo/`); `BakeoffResult` (`intent/`)
-- `EvalPipeline.golden() / security() / intent() / report(run_id)` → `StageOutcome` (gate, report path, overview)
+- `EvalPipeline.golden(sections, full, sink) → [StageOutcome]` (one per section, each handed to `sink` as it finishes) / `security(full)` / `intent()` → `StageOutcome` (section, gate, report path, overview); `report(run_id) → [StageOutcome]`; `pipeline.clock` times each section; `EvalProgress` (`core/progress.py`) is how stages report progress, `ProgressBar` draws it
+- `BatchGrader` — a grader handed transcripts a batch at a time (DeepEval)
 - `DuckDbEvalStore` — tables `eval_runs`, `eval_cases`, `eval_transcripts`, `eval_stages`, `eval_scores`; views `v_scores`, `v_run_summary`, `v_metric_pass_rates`, `v_failures`, `v_stage_cost`, `v_metric_trend`, …
-- CLI: `python -m agent_platform.evals run [--stage …] | report [--run ID] | runs`
+- CLI: `python -m agent_platform.evals run [--section all|oracle|deepeval|promptfoo|intent] [--full] | report [--run ID] | runs`
 
 ## Configuration
 
 `judge:` — the model every model-graded verdict uses (see `agent_platform/judge`).
-`evals:` — `plugin`, `run_id_prefix`, `suites`, `trials`, `store`, `generation.max_concurrency`,
+`evals:` — `plugin`, `run_id_prefix`, `suites`, `core` (`tag`, `attack_metadata_key`), `trials`, `store`, `generation.max_concurrency`,
 `fingerprint` (roots, `exclude_paths` + an agent's `agent_exclude_paths`), `gate` (`soft_pass_rate`), `deepeval`
-(`include_reason`, `max_concurrent`, `geval_params`, `quiet`), `promptfoo` (pinned package,
+(`include_reason`, `max_concurrent`, `batch_size`, `geval_params`, `quiet`), `promptfoo` (pinned package,
 runner, taxonomy keys), `reporting` (output dir, file names, Wilson `confidence_z`, the overview
 and its section names).
 
@@ -105,7 +130,7 @@ and its section names).
 
 ## Tests
 
-`./venv/bin/pytest tests/unit/test_eval_core.py tests/unit/test_eval_deepeval.py tests/unit/test_eval_promptfoo.py tests/unit/test_eval_cli.py tests/integration/test_eval_pipeline.py -q` — all offline (scripted agent and judge).
+`./venv/bin/pytest tests/unit/test_eval_core.py tests/unit/test_eval_progress.py tests/unit/test_eval_deepeval.py tests/unit/test_eval_promptfoo.py tests/unit/test_eval_cli.py tests/integration/test_eval_pipeline.py -q` — all offline (scripted agent and judge).
 
 ## Status and limits
 

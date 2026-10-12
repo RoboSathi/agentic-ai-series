@@ -81,7 +81,7 @@ async def test_generate_oracle_and_report(security_off: None) -> None:
     plugin = ScriptedCsaPlugin(REFUND_90001)
     plugin.prepare()
     store = DuckDbEvalStore(":memory:")
-    outcome = await EvalPipeline(plugin, store).golden()
+    (outcome,) = await EvalPipeline(plugin, store).golden(["oracle"])
 
     transcripts = {item.case_id: item.transcript for item in store.transcripts(outcome.run_id)}
     refund = transcripts["refund-direct-001"]
@@ -106,9 +106,14 @@ async def test_generate_oracle_and_report(security_off: None) -> None:
     assert ("refund-review-001", "outcome_matches") in failed
     assert ("refund-direct-001", "standing_matches") not in failed
     assert outcome.gate.verdict == "FAIL"
-    assert outcome.report == report_path("deepeval", outcome.run_id) and outcome.report.exists()
+    assert outcome.report == report_path("oracle", outcome.run_id) and outcome.report.exists()
+    # The default run is the core set; every case in it is listed in the report.
+    core = [case for case in plugin.load_cases("golden") if "core" in case.tags]
+    assert len(transcripts) == len(core)
+    body = outcome.report.read_text()
+    assert all(f"| {case.case_id} |" in body for case in core)
 
-    again = await EvalPipeline(plugin, store).golden()
+    (again,) = await EvalPipeline(plugin, store).golden(["oracle"])
     assert again.run_id == outcome.run_id
     assert all(item.transcript.replies for item in store.transcripts(outcome.run_id))
 

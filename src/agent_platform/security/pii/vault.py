@@ -24,9 +24,9 @@ from agent_platform.config.settings import PiiVaultSettings
 from agent_platform.logging import get_logger, log_context_fields
 from agent_platform.observability.types import utc_now
 from agent_platform.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
+from agent_platform.primitives.keys import AES_KEY_LENGTHS, aes_key
 
 # AES-128/192/256: the key lengths the cipher accepts, in bytes.
-_AES_KEY_LENGTHS = (16, 24, 32)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS platform_pii_vault (
@@ -82,8 +82,8 @@ class SqlitePIIVault:
         agent_id: str | None = None,
         settings: PiiVaultSettings | None = None,
     ) -> None:
-        if len(key) not in _AES_KEY_LENGTHS:
-            raise VaultKeyError(f"the vault key must be {_AES_KEY_LENGTHS} bytes, got {len(key)}")
+        if len(key) not in AES_KEY_LENGTHS:
+            raise VaultKeyError(f"the vault key must be {AES_KEY_LENGTHS} bytes, got {len(key)}")
         self._key = key
         self._settings = settings or get_settings().security.pii.vault
         self._chars = get_settings().security.pii.token_chars
@@ -153,13 +153,13 @@ def vault_key(settings: PiiVaultSettings | None = None) -> bytes | None:
     A required vault with no usable key is an error at start-up, not a silent downgrade.
     """
     resolved = settings or get_settings().security.pii.vault
-    key = os.environ.get(resolved.key_env, "").encode("utf-8")
-    if len(key) in _AES_KEY_LENGTHS:
+    key = aes_key(os.environ.get(resolved.key_env, ""))
+    if len(key) in AES_KEY_LENGTHS:
         return key
     reason = (
         f"{resolved.key_env} is unset"
         if not key
-        else f"{resolved.key_env} must be {_AES_KEY_LENGTHS} bytes, got {len(key)}"
+        else f"{resolved.key_env} must be {AES_KEY_LENGTHS} bytes, got {len(key)}"
     )
     if resolved.required:
         raise VaultKeyError(f"The PII vault is required but {reason}")

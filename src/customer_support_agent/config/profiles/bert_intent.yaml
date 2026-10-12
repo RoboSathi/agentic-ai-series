@@ -1,5 +1,5 @@
 # The intent classifier as the fine-tuned BERT instead of Laya (`make agent csa PROFILE=bert_intent`,
-# and the `bert` contenders of `make eval csa STAGE=intent`). Its threshold and label mapping are
+# and the `bert` contenders of `make intent-eval csa`). Its threshold and label mapping are
 # `customer_support_agent.intent_router.classifiers.huggingface_local` in the agent's config.
 llm:
   intent_classifier:

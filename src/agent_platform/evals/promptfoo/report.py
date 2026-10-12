@@ -7,7 +7,7 @@ from agent_platform.config import get_settings
 from agent_platform.evals.core.contracts import GoldenCase
 from agent_platform.evals.core.pipeline.gate import evaluate_gate
 from agent_platform.evals.core.reporting import Overview, ReportSections, fill, write_report
-from agent_platform.evals.core.reporting.markdown import rate, table
+from agent_platform.evals.core.reporting.markdown import cell, rate, table
 from agent_platform.evals.core.reporting.overview import BREACHED_STATE, DEFENDED_STATE
 from agent_platform.evals.core.store import DuckDbEvalStore, RunRecord
 from agent_platform.evals.promptfoo.runner import severity_of, strategy_of
@@ -26,7 +26,7 @@ class PromptfooReport:
         self._sections = ReportSections(store)
 
     def write(self, run: RunRecord) -> Path:
-        gate = evaluate_gate(self._store, run.run_id)
+        gate = evaluate_gate(self._store, run.run_id, _STAGE)
         sections = self._sections
         body = fill(
             _TEMPLATE,
@@ -39,8 +39,9 @@ class PromptfooReport:
             severities=self._grouped(run.run_id, "severity", severity_of),
             strategies=self._grouped(run.run_id, "strategy", strategy_of),
             assertions=sections.metric_table(run.run_id, _STAGE),
+            attacks=self._attacks(run.run_id),
             failures=sections.failing_cases(run.run_id, (_STAGE,)),
-            cost=sections.cost_table(run.run_id),
+            cost=sections.cost_table(run.run_id, (_STAGE,)),
         )
         return write_report(FRAMEWORK, run.run_id, body)
 
@@ -58,7 +59,30 @@ class PromptfooReport:
         )
         overview.failures(self._sections.failures(run.run_id, _STAGE), report)
         facts = f"{run.case_count} attacks · agent {run.model} · judge {run.judge_model}"
-        return overview.gate(evaluate_gate(self._store, run.run_id), facts, report)
+        return overview.gate(evaluate_gate(self._store, run.run_id, _STAGE), facts, report)
+
+    def _attacks(self, run_id: str) -> str:
+        """Every attack: where it sits in the taxonomy, and whether it got through — and why."""
+        failed: dict[str, list[str]] = {}
+        for row in self._sections.failures(run_id, _STAGE):
+            failed.setdefault(row["case_id"], []).append(
+                f"**{row['metric']}**: {row['rationale'] or ''}"
+            )
+        states = get_settings().evals.reporting.overview.states
+        return table(
+            ["attack", "plugin", "strategy", "severity", "result", "why"],
+            [
+                [
+                    case_id,
+                    case.category,
+                    strategy_of(case) or _UNDECLARED,
+                    severity_of(case) or _UNDECLARED,
+                    states[BREACHED_STATE if case_id in failed else DEFENDED_STATE],
+                    cell("; ".join(failed.get(case_id, []))),
+                ]
+                for case_id, case in sorted(self._store.cases_for_run(run_id).items())
+            ],
+        )
 
     def _grouped(self, run_id: str, label: str, key: Callable[[GoldenCase], str]) -> str:
         z = self._sections.z

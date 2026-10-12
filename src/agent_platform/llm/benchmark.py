@@ -66,10 +66,13 @@ def chat_models(settings: AppConfig | None = None) -> list[ChatModel]:
     return list(found.values())
 
 
-async def benchmark(settings: AppConfig | None = None) -> list[BenchmarkResult]:
-    """Every chat model, measured side by side."""
+async def benchmark(
+    settings: AppConfig | None = None, models: list[ChatModel] | None = None
+) -> list[BenchmarkResult]:
+    """Every chat model (`models`, or the configuration's), measured side by side."""
     config = settings or get_settings()
-    return list(await asyncio.gather(*(_measure(model, config) for model in chat_models(config))))
+    targets = models if models is not None else chat_models(config)
+    return list(await asyncio.gather(*(_measure(model, config) for model in targets)))
 
 
 async def _measure(target: ChatModel, config: AppConfig) -> BenchmarkResult:

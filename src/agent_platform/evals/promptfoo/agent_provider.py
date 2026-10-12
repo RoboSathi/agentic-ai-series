@@ -11,6 +11,7 @@ A fresh agent-under-test per call: `asyncio.run` gives every call its own
 event loop, and an HTTP client from a finished loop cannot be reused.
 """
 
+import os
 from typing import Any
 
 from agent_platform.config import get_settings
@@ -31,6 +32,8 @@ def call_api(prompt: str, options: dict[str, Any], context: dict[str, Any]) -> d
         transcript = asyncio.run(_prepared().agent_under_test().run(case))
     except Exception as exc:
         return {"error": f"{type(exc).__name__}: {exc}"}
+    finally:
+        _tick(case.case_id)
     return {
         "output": transcript.reply,
         "metadata": {
@@ -45,6 +48,14 @@ def call_api(prompt: str, options: dict[str, Any], context: dict[str, Any]) -> d
         },
         "cost": transcript.usage.cost_usd,
     }
+
+
+def _tick(case_id: str) -> None:
+    """One attack done: a line in the run's progress file, which the runner counts."""
+    path = os.environ.get(get_settings().evals.promptfoo.progress_env)
+    if path:
+        with open(path, "a", encoding="utf-8") as ticks:
+            ticks.write(case_id + "\n")
 
 
 def case_from_vars(prompt: str, test_vars: dict[str, Any]) -> GoldenCase:

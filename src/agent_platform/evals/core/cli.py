@@ -5,12 +5,20 @@ never names one. Every suite ends with a colour-coded overview in the
 terminal and the path of its full Markdown report; the run ends with how
 long each section took.
 
-    run [--stage all|deepeval|promptfoo|intent]   the suites (default: golden, then red team)
-    report [--run RUN_ID]                         rebuild a run's report
-    runs                                          recent runs
+    run [--section all|oracle|deepeval|promptfoo|intent] [--full]
+                              the sections (default: oracle, DeepEval, then Promptfoo), over
+                              the agent's core cases, attacks and metrics — or, with --full,
+                              every one of them
+    report [--run RUN_ID]     rebuild a run's reports
+    runs                      recent runs
 
 A failed gate is a result, not an error: the exit code is non-zero only
 when a section could not run at all (every other section still runs).
+While it runs, one progress bar per section shows the percentage done and
+the time taken; the console shows warnings only (`evals.console_level` —
+a 429 and the model it hit, a model or guard fallback), the log files
+everything. Ctrl+C stops cleanly: the run is marked interrupted, the time so
+far is shown, and the next `make eval` resumes from what finished.
 """
 
 import argparse
@@ -18,26 +26,33 @@ import asyncio
 import time
 from collections.abc import Callable, Sequence
 
-from rich.console import Console
-
 from agent_platform.config import get_settings
 from agent_platform.evals.core.contracts import EvalPlugin
 from agent_platform.evals.core.pipeline.orchestrator import (
+    AGENT_SECTION,
+    DEEPEVAL_SECTION,
+    GOLDEN_SECTIONS,
+    INTENT_SECTION,
+    ORACLE_SECTION,
+    PROMPTFOO_SECTION,
     EvalPipeline,
     NoIntentBakeoffError,
     NoRunError,
+    SectionClock,
     StageOutcome,
 )
 from agent_platform.evals.core.plugin import resolve_eval_plugin
 from agent_platform.evals.core.reporting import Overview
+from agent_platform.evals.core.reporting.progress_bar import ProgressBar
 from agent_platform.evals.core.store import DuckDbEvalStore
+from agent_platform.logging import LoggerFactory, shared_console
 
-_OK, _FAILED = 0, 1
+_OK, _FAILED, _INTERRUPTED = 0, 1, 130
 _SECONDS_PER_MINUTE, _SECONDS_PER_HOUR = 60, 3600
-ALL, DEEPEVAL, PROMPTFOO, INTENT, TOTAL = "all", "deepeval", "promptfoo", "intent", "total"
-STAGES = (ALL, DEEPEVAL, PROMPTFOO, INTENT)
+ALL, TOTAL = "all", "total"
+SECTIONS = (ALL, ORACLE_SECTION, DEEPEVAL_SECTION, PROMPTFOO_SECTION, INTENT_SECTION)
 
-console = Console(highlight=False)
+console = shared_console()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -53,27 +68,72 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _run(args: argparse.Namespace) -> int:
     """The chosen suites, each one run even when another raised; then the timing table."""
     started = time.perf_counter()
-    pipeline = EvalPipeline(_prepared_plugin())
-    suites: list[tuple[str, Callable[[], StageOutcome]]] = []
-    if args.stage in (ALL, DEEPEVAL):
-        suites.append((DEEPEVAL, lambda: asyncio.run(pipeline.golden())))
-    if args.stage in (ALL, PROMPTFOO):
-        suites.append((PROMPTFOO, lambda: pipeline.security()))
-    if args.stage == INTENT:
-        suites.append((INTENT, lambda: asyncio.run(pipeline.intent())))
-    outcomes, errors = [], 0
-    for section, run in suites:
+    LoggerFactory.set_console_level(get_settings().evals.console_level)
+    outcomes: list[StageOutcome] = []
+    with ProgressBar() as progress:
+        pipeline = EvalPipeline(_prepared_plugin(), progress=progress)
         try:
-            outcomes.append(_show(run()))
-        except Exception as exc:
-            errors += 1
-            _print_error(section, exc)
-    _print_timings(outcomes, time.perf_counter() - started)
+            errors = _run_sections(args.section, args.full, pipeline, outcomes)
+        except KeyboardInterrupt:
+            progress.stop()
+            _print_interrupted(pipeline, args.invocation)
+            _print_timings(pipeline.clock, time.perf_counter() - started)
+            return _INTERRUPTED
+    _print_timings(pipeline.clock, time.perf_counter() - started)
     return _FAILED if errors else _OK
 
 
+def _print_interrupted(pipeline: EvalPipeline, invocation: str) -> None:
+    """What stopped, what was kept, and the exact command that resumes it."""
+    words = get_settings().evals.reporting.overview
+    names = words.sections
+    section = pipeline.clock.unfinished
+    console.print(
+        f"[yellow]{words.interrupted.format(section=names.get(section or '', section or ''), invocation=invocation or words.default_invocation)}[/yellow]"
+    )
+    marked = pipeline.store.mark_interrupted()
+    if marked:
+        console.print(
+            f"[yellow]{words.marked_interrupted.format(stages=', '.join(marked))}[/yellow]"
+        )
+
+
+def _run_sections(
+    section: str, full: bool, pipeline: EvalPipeline, outcomes: list[StageOutcome]
+) -> int:
+    """Run the chosen sections, showing each overview as it finishes; return how many failed.
+
+    Every section runs even when an earlier one raised.
+    """
+    errors = 0
+
+    def shown(name: str, result: StageOutcome | Exception) -> None:
+        nonlocal errors
+        if isinstance(result, Exception):
+            errors += 1
+            _print_error(name, result)
+        else:
+            outcomes.append(_show(result))
+
+    golden = [name for name in GOLDEN_SECTIONS if section in (ALL, name)]
+    work: list[tuple[str, Callable[[], object]]] = []
+    if golden:
+        work.append((AGENT_SECTION, lambda: asyncio.run(pipeline.golden(golden, full, shown))))
+    if section in (ALL, PROMPTFOO_SECTION):
+        work.append((PROMPTFOO_SECTION, lambda: shown(PROMPTFOO_SECTION, pipeline.security(full))))
+    if section == INTENT_SECTION:
+        work.append((INTENT_SECTION, lambda: shown(INTENT_SECTION, asyncio.run(pipeline.intent()))))
+    for name, run in work:
+        try:
+            run()
+        except Exception as exc:
+            shown(name, exc)
+    return errors
+
+
 def _report(args: argparse.Namespace) -> int:
-    _show(EvalPipeline(resolve_eval_plugin()).report(args.run))
+    for outcome in EvalPipeline(resolve_eval_plugin()).report(args.run):
+        _show(outcome)
     return _OK
 
 
@@ -106,13 +166,18 @@ def _print_error(section: str, exc: Exception) -> None:
     console.print(f"[red]{message}[/red]")
 
 
-def _print_timings(outcomes: list[StageOutcome], total: float) -> None:
-    """How long each section took, then the whole run."""
-    names = get_settings().evals.reporting.overview.sections
+def _print_timings(clock: SectionClock, total: float) -> None:
+    """How long each section took (the one Ctrl+C stopped, marked so), then the whole run."""
+    words = get_settings().evals.reporting.overview
+    names = words.sections
     rows = [
-        [names.get(section, section), duration(seconds)]
-        for outcome in outcomes
-        for section, seconds in outcome.timings.items()
+        [
+            words.unfinished_section.format(section=names.get(section, section))
+            if section == clock.unfinished
+            else names.get(section, section),
+            duration(seconds),
+        ]
+        for section, seconds in clock.elapsed.items()
     ]
     overview = Overview("Time taken")
     overview.table("", ["section", "time"], [*rows, [names[TOTAL], duration(total)]])
@@ -140,10 +205,16 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     run = commands.add_parser("run", help="run the agent's eval suites")
-    run.add_argument("--stage", choices=STAGES, default=ALL)
+    run.add_argument("--section", choices=SECTIONS, default=ALL)
+    run.add_argument(
+        "--full", action="store_true", help="every case, attack and metric, not just the core"
+    )
+    run.add_argument(
+        "--invocation", default="", help="the command that started this run (shown to resume it)"
+    )
     run.set_defaults(handler=_run)
 
-    report = commands.add_parser("report", help="rebuild a run's report and overview")
+    report = commands.add_parser("report", help="rebuild a run's reports and overviews")
     report.add_argument("--run", default=None, help="run id (default: latest golden run)")
     report.set_defaults(handler=_report)
 

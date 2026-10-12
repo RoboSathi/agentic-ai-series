@@ -55,8 +55,8 @@
 
 ### One shared judge (`agent_platform/judge`)
 
-- `judge:` is a top-level config section: Nemotron Ultra 550B, backed by glm-5.3-flash then
-  gpt-oss-20b (the only other models this account serves that answered a probe, 2026-10-12).
+- `judge:` is a top-level config section: Nemotron Ultra 550B, backed by Nemotron super-120b
+  (NVIDIA models only, Karan 2026-10-12; never lightning, the agents' model).
 - **Every agent runs on lightning; ultra is the judge's** (Karan, 2026-10-12). Ultra is removed
   from `llm.chain`; lightning is not a judge backup. A judge never grades its own model.
 - `LlmJudge` is a Template Method — `_answer` (hook) → `verdict`; any failure → `abstain`, never
@@ -69,12 +69,13 @@
 
 - `agent_platform/evals/{core,oracle,deepeval,promptfoo,intent}`; the scoring cascade moves to
   `agent_platform/scoring` (a leaf package — `hallucination_check` sits in an import cycle).
-- `make eval <agent> [STAGE=deepeval|promptfoo]`, and `make intent-eval <agent>` for the
-  intent bake-off, are the only targets. No `CASE`/`FRESH`/`LIMIT`/`RUN` knobs: the content fingerprint
-  regenerates whatever changed.
-- One report per framework per run in `src/<pkg>/evals/reports/`:
-  `{deepeval,promptfoo,intent}-<run_id>.md`, `run_id = <agent>-<suite>-<hash>-<YYYYMMDD-HHMMSS>`.
-  Each stage also prints a colour-coded overview through the console's `CommandView`.
+- `make eval <agent> [oracle|deepeval|promptfoo] [full]`, and `make intent-eval <agent>` for
+  the intent bake-off, are the only targets (amended 2026-10-12; `STAGE=` is gone). No
+  `CASE`/`FRESH`/`LIMIT`/`RUN` knobs: the content fingerprint regenerates whatever changed.
+- One report per section per run in `src/<pkg>/evals/reports/`:
+  `{oracle,deepeval,promptfoo,intent}-<run_id>.md`, each listing every case with its result
+  and every failed check with its reason; `run_id = <agent>-<suite>-<hash>-<YYYYMMDD-HHMMSS>`.
+  Each section also prints a colour-coded overview through the console's `CommandView`.
 
 ## Consequences
 
@@ -85,11 +86,28 @@
   quality must be watched (ra-0024).
 - Cascade tier 5 still declines (no judge is wired into it); the seam (`scoring.CalibratedJudge`)
   is unchanged.
-- Every hosted model has fallbacks (amended 2026-10-12): the agents' chain lightning →
-  gpt-oss-20b → glm-5.3-flash; the jailbreak guard NemoGuard → glm-5.3-flash → gpt-oss-20b and
-  the content-safety guard nemotron-3.5-content-safety → gpt-oss-20b → glm-5.3-flash, each
+- Every hosted model has fallbacks, NVIDIA models only (amended 2026-10-12): the agents' chain
+  lightning → super-120b; the jailbreak guard NemoGuard → super-120b → lightning and the
+  content-safety guard nemotron-3.5-content-safety → super-120b → lightning, each
   fallback a chat model prompted as the classifier (`security.guard_chain.GuardChain`); the
   fail-closed policy applies only when every one is unavailable. Embeddings have no
   cross-model fallback: another model's vectors do not match the stored index.
+- Throttling no longer loops (amended 2026-10-12): the rate limiter waits inside the HTTP
+  transport, so a queued call used to time out in the queue (an 8 s guard deadline against a
+  30 s 429 penalty), retry, queue again; and a queued model looked "slow", so a hedge started a
+  backup on the same budget. `resilience.admission` pauses a call's deadline while it queues
+  and makes the hedge measure from admission. The eval judge runs with thinking off (1.1 s vs
+  8.5 s per verdict, same verdict), DeepEval grades in batches, and `make eval` shows a
+  progress bar per section, warnings only on the console, and handles Ctrl+C.
 - DeepEval's test-run manager is process-wide, so `evaluate()` runs one case at a time per
   process; the metrics of a case still run concurrently.
+- Each grader is its own section (amended 2026-10-12): `make eval csa oracle` runs only the
+  oracle, with its own gate (`evaluate_gate(…, stage)`) and its own report, so a broken
+  invariant is the oracle's FAIL, never DeepEval's. The oracle and DeepEval still share one
+  generation of the golden transcripts.
+- A default run is the agent's core set (amended 2026-10-12): a full CSA run took 35–45
+  minutes, almost all of it queued on the provider's 35 requests a minute (~6 agent calls a
+  case, ~12 judge calls a case for six metrics). `evals.core` marks the default subset —
+  for CSA 30 of 50 cases (every category, money-moving ones two or three times), 20 of 27
+  attacks (every critical one, every plugin and strategy, the control) and 3 of 6 metrics
+  (task_resolution, honesty, faithfulness) — about 12 minutes; `full` runs everything.

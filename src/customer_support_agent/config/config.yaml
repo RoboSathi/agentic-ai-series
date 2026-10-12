@@ -844,7 +844,7 @@ customer_support_agent:
     money_pattern: '\$\s?(\d[\d,]*(?:\.\d{1,2})?)'
     money_tools: [support.process_refund, support.cancel_order]
     prompt_leak_ngram: 8
-    # `make eval csa STAGE=intent`: each contender (a config profile; [] is the agent as
+    # `make intent-eval csa`: each contender (a config profile; [] is the agent as
     # configured) classifies the same labelled messages, model alone and through the router.
     intent_bakeoff:
       cases_path: src/customer_support_agent/evals/intent/cases.yaml

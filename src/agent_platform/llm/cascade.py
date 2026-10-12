@@ -16,6 +16,7 @@ from agent_platform.llm.client import LLMClient
 from agent_platform.llm.observer import ModelCallObserver, NullModelObserver
 from agent_platform.llm.types import CompletionRequest, CompletionResult, HealthCheckResult
 from agent_platform.logging import get_logger
+from agent_platform.resilience import dependency_failure_fields
 from agent_platform.resilience.hedge import HedgedCall, StartReason
 
 
@@ -121,8 +122,20 @@ class CascadingLLMClient(LLMClient):
         primary, backup = self._tiers[0].model, self._tiers[index].model
         # A weak answer (empty, cut off) is not a failed call: say which it was.
         cause = WEAK if isinstance(error, _EscalationError) else reason
+        failure = (
+            dependency_failure_fields(error)
+            if isinstance(error, Exception) and not isinstance(error, _EscalationError)
+            else {}
+        )
         self._logger.warning(
-            "Backup model started", label=self._label, primary=primary, backup=backup, reason=cause
+            "Backup model started",
+            label=self._label,
+            primary=primary,
+            failed=self._tiers[index - 1].model,
+            backup=backup,
+            reason=cause,
+            http_status=failure.get("http_status"),
+            error=failure.get("reason"),
         )
         self._observer.backup_started(self._label, primary, backup, cause)
 
