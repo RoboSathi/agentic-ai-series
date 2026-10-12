@@ -90,6 +90,15 @@ mcp:
         side_effecting: false
         requires_authority_rank: 5
         required_permission: read_analytics
+      # Free SQL is the riskiest surface the server offers: it needs its own permission, so a
+      # policy that grants only the catalogue tools gets it refused by the Gatekeeper.
+      tools:
+        run_query:
+          surface: locked
+          reversible: true
+          side_effecting: false
+          requires_authority_rank: 5
+          required_permission: query_analytics
 
 ops_agent:
   title: Ops Analyst
@@ -100,7 +109,7 @@ ops_agent:
   policy:
     role: analyst
     authority_rank: 4
-    permissions: [read_analytics]
+    permissions: [read_analytics, query_analytics]
   max_steps: 8
   # The turn's budgets beside its step cap (the platform loop governor enforces them): tool
   # calls, tokens across every model call, and a wall-clock deadline that cancels a call
@@ -126,14 +135,18 @@ ops_agent:
   free_numbers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 100]
   # A skill's prefetch read is shown to the model as a call with this id (ADR 0010).
   prefetch_call_id: "prefetch-{tool}"
-  # Reflection on the SQL (with `hallucination_guard`): once the model answers, a second call
-  # reads the SQL it wrote against the question; "revise" sends it back to fix the query, at
-  # most `max_reflections` times a turn. The figures check then grounds what it answers.
+  # Reflection on the data an answer rests on (with `hallucination_guard`), after the query
+  # runs and before the model writes its answer, so the answer is written once, from reviewed
+  # rows. SQL the model wrote (run_query) is read by a critic model against the question;
+  # "revise" sends the finding back with the result, at most `max_reviews` times a turn. A
+  # catalogue call (compute_metric) has no model-written SQL: the server's deterministic checks
+  # decide it, and the card says so without a model call.
   sql_review:
-    # Every call an answer can rest on: run_query (the model's SQL) and compute_metric (the
-    # catalogue's formula, with the model's metric, agent and period — the arguments it can get wrong).
-    reviewed_tools: [analytics.run_query, analytics.compute_metric]
-    max_reflections: 1
+    # Calls whose result an answer can rest on (a REFLECT card follows the step that ran one).
+    data_tools: [analytics.run_query, analytics.compute_metric]
+    # Of those, the ones whose SQL the model wrote (only these get the critic model).
+    reviewed_tools: [analytics.run_query]
+    max_reviews: 2
     sample_rows: 5
     temperature: 0.0
     max_tokens: 600
@@ -144,33 +157,46 @@ ops_agent:
     accept: accept
     revise: revise
     instructions: >-
-      You review the SQL an analyst agent wrote to answer a question about AI agents'
-      runtime analytics (DuckDB, read-only curated views). Judge only whether the queries
-      can answer the question as it was asked: the right view and columns; filters that
-      match the question (agent, period, outcome, channel); the right aggregation (count
-      or distinct count, mean or percentile, a rate's numerator and denominator);
-      grouping; joins that do not multiply rows; units. An empty or truncated result is
-      suspicious when the question expects data. Do not judge style or performance.
-      Reply with JSON only, no prose and no code fence:
+      You review SQL an analyst agent wrote while answering a question about AI agents'
+      runtime analytics (DuckDB, read-only curated views). A query may be one step toward
+      the answer (finding the right ids or columns) rather than the answer itself. Say
+      revise only when the query would give a wrong figure for the question: the wrong
+      view or columns; filters that do not match the question (agent, period, outcome,
+      channel); the wrong aggregation (count or distinct count, mean or percentile, a
+      rate's numerator and denominator); grouping; joins that multiply rows; units; or an
+      empty or truncated result where the question expects data. Do not judge style or
+      performance. Reply with JSON only, no prose and no code fence:
       {"verdict": "accept" or "revise", "rationale": "one sentence on why",
       "issues": ["each problem, short"], "hint": "one sentence on what to change"}.
-      Say accept unless an issue would make the answer wrong.
-    request: "Question: {question}\n\nDraft answer: {draft}\n\nQueries run:\n{queries}"
+    request: "Question: {question}\n\nQueries run:\n{queries}"
     query_block: "Query {number} ({rows} rows{truncated}):\n{sql}\nColumns: {columns}\nFirst rows: {sample}"
     truncated_mark: ", truncated"
-    # The reviewer's finding, as the model reads it on the way back to `propose`.
-    revise_message: "A reviewer checked the SQL behind your answer against the question and found: {issues}. {hint} Fix the query (describe_view first if a column is in doubt), run it, and answer again."
+    # The reviewer's finding, as the model reads it on its next step (before it answers).
+    revise_message: "A reviewer checked the SQL you just ran against the question and found: {issues}. {hint} Fix the query (describe_view first if a column is in doubt) and run it again before answering."
     card:
       heading: "SQL review · {verdict}{issues}"
       issues_suffix: " — {count} issue(s)"
-      failed_heading: "SQL review · could not judge · answer kept"
+      failed_heading: "SQL review · could not judge · the model goes on"
       asked: "Do these queries answer: {question}"
       query_line: "Query {number}: {sql}"
-      decision_revise: "REVISE · back to the model to fix the query (review {used} of {max})"
-      decision_capped: "REVISE wanted, but the reviews are spent ({max}): the answer goes on"
-      decision_accept: "ACCEPT · the answer goes to the hallucination check"
-      decision_failed: "ACCEPT · the review failed ({error}), so the answer goes on unreviewed"
+      decision_revise: "REVISE · the model fixes the query before answering (review {used} of {max})"
+      decision_capped: "REVISE wanted, but the reviews are spent ({max}): the model goes on unreviewed"
+      decision_accept: "ACCEPT · the model answers from these rows"
+      decision_failed: "ACCEPT · the review failed ({error}), so the model goes on unreviewed"
       unparsed: "the reviewer did not answer in the agreed form"
+      # A step whose data came from catalogue calls only: decided in code, no model call.
+      deterministic_heading: "Data check · catalogue formula · no SQL written by the model"
+      deterministic_by: "the analytics server's checks"
+      call_line: "{tool}({arguments})"
+      deterministic_reasoning:
+        - "The model wrote no SQL: the server ran the catalogue's own formula for each metric."
+        - "Its arguments were checked deterministically by the server: the metric exists, the agent id has data in the source, a breakdown is one of the metric's, the period is a whole number of days."
+        - "A model review would add a call and nothing a check does not already prove."
+      deterministic_decision: "ACCEPT · no SQL to verify — the catalogue formula answered"
+      formula_line: "Query {number} (catalogue): {sql}"
+      # The model wrote SQL, but this turn's reviews are spent.
+      capped_heading: "SQL review · reviews spent · not reviewed"
+      capped_by: the review cap (sql_review.max_reviews)
   words:
     stopped: "I stopped after {steps} steps without an answer. Try a narrower question."
     # The model could not be reached (after its own retries and backups), or ran past the deadline.

@@ -63,13 +63,22 @@ class SqlReviewCard(BaseModel):
     decision_accept: str
     decision_failed: str
     unparsed: str
+    deterministic_heading: str
+    deterministic_by: str
+    call_line: str
+    deterministic_reasoning: list[str]
+    deterministic_decision: str
+    formula_line: str
+    capped_heading: str
+    capped_by: str
 
 
 class SqlReviewSettings(BaseModel):
     """Reflection on the SQL the model wrote, before the answer is grounded."""
 
+    data_tools: list[str]
     reviewed_tools: list[str]
-    max_reflections: int = Field(ge=0)
+    max_reviews: int = Field(ge=0)
     sample_rows: int = Field(ge=0)
     temperature: float
     max_tokens: int = Field(ge=1)

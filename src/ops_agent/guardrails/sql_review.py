@@ -5,13 +5,18 @@ a type is wrong; both come back to the model as errors it fixes. Neither can say
 a query that ran answers the question: the wrong view, a filter the question did not ask
 for, a count where a distinct count was meant, a rate whose denominator is off. The
 figures check cannot either — a figure faithfully copied from the wrong query is
-"supported". So once the model answers, one more call reads the question, the SQL, a
-few rows and the draft, and says accept or revise (Reflexion's critic). A revise goes
-back to the model as a reviewer's finding, a bounded number of times a turn; the loop
-governor's budgets still hold every step.
+"supported". So after the SQL runs and before the model answers, one more call reads the
+question, the SQL and a few of its rows, and says accept or revise (the Reflection
+pattern's critic). A revise goes back to the model as a reviewer's finding, so it fixes the
+query before it writes anything; the answer is written once, from reviewed rows. Bounded
+per turn; the loop governor's budgets still hold every step.
+
+Only SQL the model wrote is read. A catalogue call (`compute_metric`) runs the catalogue's
+own formula with arguments the server checks deterministically; there is nothing for a
+model to review, and the REFLECT card says so.
 
 The critic is a quality check, not a safety control: a call that fails, times out or
-answers out of form accepts, and the card says the answer went on unreviewed.
+answers out of form accepts, and the card says the model went on unreviewed.
 """
 
 import asyncio
@@ -59,13 +64,17 @@ class SqlReviewer:
         self._settings = settings
         self._logger = get_logger("ops_agent")
 
+    def data(self, queries: list[QueryRecord]) -> list[QueryRecord]:
+        """The queries an answer can rest on (a REFLECT card follows the step that ran one)."""
+        return [query for query in queries if query.tool in self._settings.data_tools]
+
     def reviewed(self, queries: list[QueryRecord]) -> list[QueryRecord]:
-        """The queries whose SQL the model wrote (the only ones worth reviewing)."""
+        """The queries whose SQL the model wrote (the only ones a critic model reads)."""
         return [query for query in queries if query.tool in self._settings.reviewed_tools]
 
-    async def review(self, question: str, queries: list[QueryRecord], draft: str) -> SqlReview:
+    async def review(self, question: str, queries: list[QueryRecord]) -> SqlReview:
         """Accept or revise, with the issues found; accept when the critic cannot judge."""
-        request = self._request(question, queries, draft)
+        request = self._request(question, queries)
         started = time.perf_counter()
         try:
             async with asyncio.timeout(self._settings.timeout_seconds):
@@ -86,10 +95,10 @@ class SqlReviewer:
         )
         return Message(role="user", content=text)
 
-    def _request(self, question: str, queries: list[QueryRecord], draft: str) -> CompletionRequest:
+    def _request(self, question: str, queries: list[QueryRecord]) -> CompletionRequest:
         settings = self._settings
         blocks = "\n\n".join(self._block(number, query) for number, query in enumerate(queries, 1))
-        content = settings.request.format(question=question, draft=draft, queries=blocks)
+        content = settings.request.format(question=question, queries=blocks)
         return CompletionRequest(
             messages=[
                 Message(role="system", content=settings.instructions),

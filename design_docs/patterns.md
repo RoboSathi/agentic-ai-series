@@ -101,7 +101,7 @@ stopped by the model or a stop rule, and the budget only caps them (ADR P-06).
 | procedural memory | `prompts/AGENT.md` + `prompts/skills/analytics-investigation` | One `always` skill, versioned in `SkillStore` and audited per turn |
 | tool_use (MCP) | `graph/builder.py` · `_sources` → `GovernedMcpToolSource` | The only tools are a remote server's, arriving as governed `ToolDefinition`s |
 | guardrails | `graph/agent.py` · `_screened` | The person's message is screened for injection before the model reads it |
-| reflection | `graph/graph.py` · propose → review → propose; `guardrails/sql_review.py` · `SqlReviewer` | A critic reads the model-written SQL against the question; revise goes back to the model, `sql_review.max_reflections` times a turn (O-03) |
+| reflection | `graph/graph.py` · propose → execute → review → propose; `guardrails/sql_review.py` · `SqlReviewer` | After a data query runs and before the model answers: a critic reads model-written SQL against the question (revise: fixed before answering, `sql_review.max_reviews` a turn); a catalogue call is decided in code (O-03) |
 | hallucination_check | `guardrails/grounding.py` · `OpsGrounding`: level 1 `ConfidenceCheck`, level 2 `FigureCheck`, the platform `gate` | Every figure must appear in a query row; a guessed one no row holds is cut; the card is the platform's (P-30, O-02) |
 | protocol observability | platform `knowledge/mcp/client/events.py` · `McpEvents`, bound in `graph/builder.py` | Handshake, notifications, failed calls and sessions on the feed; every event in `mcp.log` (P-31) |
 | human-verifiable output | `presentation/reply.py` | The reply carries the SQL it ran and the rows it rests on |

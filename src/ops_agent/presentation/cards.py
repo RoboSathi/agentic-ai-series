@@ -8,7 +8,9 @@ came back in those terms, never "0 rows" for something that has no rows.
 
 from typing import Any
 
+from agent_platform.interface.presentation.text_tree import inline_arguments
 from agent_platform.observability.step_card import Line, StepCard
+from agent_platform.observability.tool_fields import display_tool_name
 from agent_platform.observability.types import StatusKind
 from ops_agent.config.settings import OpsAgentSettings, get_agent_settings
 from ops_agent.domain import QueryRecord
@@ -56,13 +58,7 @@ def review_card(
     """(status, heading, card) for one SQL review: asked, the model's part, the decision."""
     settings = get_agent_settings().sql_review
     words = settings.card
-    card = StepCard().asked(
-        words.asked.format(question=question),
-        *(
-            words.query_line.format(number=number, sql=" ".join(query.sql.split()))
-            for number, query in enumerate(queries, 1)
-        ),
-    )
+    card = StepCard().asked(words.asked.format(question=question), *_asked_lines(queries))
     card.model(review.call, response=False)
     if review.failed:
         decision = words.decision_failed.format(error=review.failed)
@@ -73,7 +69,7 @@ def review_card(
     heading = words.heading.format(verdict=review.verdict.upper(), issues=issues)
     if not review.revise:
         return "completed", heading, card.decision(_toned(words.decision_accept, _PASS))
-    limit = settings.max_reflections
+    limit = settings.max_reviews
     decided = (
         words.decision_revise.format(used=used, max=limit)
         if again
@@ -82,9 +78,52 @@ def review_card(
     return "warning", heading, card.decision(_toned(decided, _WARN))
 
 
+def deterministic_card(
+    queries: list[QueryRecord], question: str, *, capped: bool = False
+) -> tuple[StatusKind, str, StepCard]:
+    """(status, heading, card) for a step decided in code: no model call.
+
+    Catalogue calls only: the model wrote no SQL, and the server's checks are the review.
+    `capped`: the model wrote SQL but this turn's reviews are spent, so it goes on unreviewed.
+    """
+    settings = get_agent_settings().sql_review
+    words = settings.card
+    card = StepCard().asked(words.asked.format(question=question), *_asked_lines(queries))
+    if capped:
+        card.decided_in_code(words.capped_by)
+        decision = words.decision_capped.format(max=settings.max_reviews)
+        return "warning", words.capped_heading, card.decision(_toned(decision, _WARN))
+    card.decided_in_code(words.deterministic_by, *words.deterministic_reasoning)
+    card.decision(_toned(words.deterministic_decision, _PASS))
+    card.evidence(
+        *(
+            words.formula_line.format(number=number, sql=" ".join(query.sql.split()))
+            for number, query in enumerate(queries, 1)
+        )
+    )
+    return "completed", words.deterministic_heading, card
+
+
+def _asked_lines(queries: list[QueryRecord]) -> list[Line]:
+    """Each query as the card asks about it: model-written SQL as SQL, a catalogue call by
+    its arguments (`compute_metric(name=…, agent_id=…, days=…)`)."""
+    settings = get_agent_settings().sql_review
+    words = settings.card
+    return [
+        words.query_line.format(number=number, sql=" ".join(query.sql.split()))
+        if query.tool in settings.reviewed_tools
+        else words.call_line.format(
+            tool=display_tool_name(query.tool),
+            # Only what the model passed: an omitted optional argument arrives as None.
+            arguments=inline_arguments({k: v for k, v in query.arguments.items() if v is not None}),
+        )
+        for number, query in enumerate(queries, 1)
+    ]
+
+
 def _toned(text: str, tone: str) -> Line:
     """A card line in a tone (`tui.tone_styles`): the decision reads in its outcome's colour."""
     return {"text": text, "tone": tone}
 
 
-__all__ = ["REFLECT_STAGE", "result_card", "review_card"]
+__all__ = ["REFLECT_STAGE", "deterministic_card", "result_card", "review_card"]

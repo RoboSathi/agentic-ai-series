@@ -15,6 +15,8 @@ class QueryRecord(BaseModel):
     truncated: bool = False
     # The tool that answered it (qualified): which SQL the model wrote, which the catalogue did.
     tool: str = ""
+    # The arguments it was called with (a catalogue call's metric, agent, period).
+    arguments: dict[str, Any] = Field(default_factory=dict)
 
 
 __all__ = ["QueryRecord"]

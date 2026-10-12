@@ -910,29 +910,47 @@ The card is P-30's, each figure's step quoting the query and row that hold it.
 
 **Supersedes.** O-01's "level 1 is shown, not used".
 
-### O-03 — The SQL is reviewed against the question before the answer is grounded
+### O-03 — REFLECT: the data is checked after the query runs and before the model answers
 
-**Decision.** Deterministic first: DuckDB binder, catalog, parser and conversion errors come back
-as a guided rejection naming the view's real columns and the closest match; a result with no
-rows or cut rows carries a note to check. Then a Reflection critic (`SqlReviewer`): once the
-model answers, one model call reads the question, the model-written SQL (`run_query` only — a
-catalogue metric runs the catalogue's formula), a few rows and the draft, and says accept or
-revise. Revise sends the finding back to the model, at most `sql_review.max_reflections` times a
-turn; the governor's budgets count the call. `compute_metric` answers are reviewed too: the
-formula is the catalogue's, but the metric, agent and period are the model's choice.
+**Decision.** Deterministic first: the server's walls run before any SQL executes (QueryGuard;
+DuckDB binder, catalog, parser and conversion errors returned as a guided rejection naming the
+view's real columns and the closest match; an unknown agent id refused with the known ones),
+and a result with no rows or cut rows carries a note. Then REFLECT, a node between
+`execute` and the model's next step (`propose → execute → review → propose`), after every
+step that ran a data query:
+- **Model-written SQL (`run_query`):** a Reflection critic (`SqlReviewer`) reads the
+  question, the SQL and a few of the rows it returned, and says accept or revise. Revise
+  appends the finding, and the model fixes the query before it writes anything; accept lets
+  it answer from those rows. The answer is written once, from reviewed data. At most
+  `sql_review.max_reviews` reviews a turn; past the cap the model goes on, and the card says
+  the SQL was not reviewed. Several queries in one step share one review. The call counts
+  against the governor's budgets; a critic that fails or answers out of form accepts.
+- **Catalogue calls only (`compute_metric`):** no model call. The model wrote no SQL; the
+  server ran the catalogue's formula with arguments it checks deterministically. The REFLECT
+  card is decided in code (`StepCard.decided_in_code`) and says exactly that.
 
-**Not reviewed.** A turn the governor stopped (a budget or the step cap) goes straight to
-grounding, as does an answer that rests on no query.
-
-**Fewer wandering calls.** An `agent_id` the source holds no data for is refused with the ids
-it does hold (`list_metrics` also lists them), instead of returning 0 rows the model then
-explores; an empty result says only that, with the right filters, there is no data. The token
-budget is sized so the step cap, not the token cap, ends a long investigation. A critic that fails or answers out of form
-accepts, and its REFLECT step card says the answer went on unreviewed. Built with
-`hallucination_guard`; no new feature.
+**Why after execution, not before.** The store is a read-only sealed copy, so running a query
+harms nothing, and the rows are evidence: only after a query runs can a reviewer see an empty
+result or a wrong id. What must never run is stopped before execution by the server's walls,
+not by a model.
 
 **Why both.** The figures check proves a number came from a query, not that the query answered
 the question; only reading the SQL against the question catches the wrong filter or aggregate.
+
+**Fewer wandering calls.** `list_metrics` lists the agent ids; an empty result says only that,
+with the right filters, there is no data. The token budget is sized so the step cap, not the
+token cap, ends a long investigation.
+
+### O-04 — Free SQL is its own permission; tool results are data
+
+**Decision.** A tool may carry its own envelope (`mcp.servers[].tools.<name>`) over its
+server's. `run_query` requires `query_analytics`, which the catalogue tools do not, so a
+policy that grants only `read_analytics` has free SQL refused by the Gatekeeper. Every tool
+result reaches the model inside the platform's data delimiters (`InstructionDataSeparator`,
+with `prompt_injection`); an injection phrasing found in a result is logged. MCP in front of
+the store is where these controls live for any client: credentials and the connection stay
+server-side, only curated views are visible, SQL is parsed and allow-listed, results are
+bounded, and every call is governed and audited locally.
 
 ---
 

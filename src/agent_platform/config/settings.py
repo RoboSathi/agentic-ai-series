@@ -2736,6 +2736,8 @@ class McpServerSettings(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     namespace: str
     envelope: McpToolEnvelope | None = None
+    # A tool's own envelope, by the server's tool name, over the server's.
+    tools: dict[str, McpToolEnvelope] = Field(default_factory=dict)
 
 
 class McpClientSettings(BaseModel):

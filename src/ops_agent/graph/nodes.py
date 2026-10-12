@@ -27,6 +27,7 @@ from agent_platform.loop_control import LoopDecision, LoopGovernor, LoopVerdict,
 from agent_platform.observability import StageReporter
 from agent_platform.observability.step_events import StepEvents
 from agent_platform.observability.tool_fields import display_tool_name
+from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
 from agent_platform.tools import NamespacedToolRegistry
 from agent_platform.tools.types import ToolCall
 from ops_agent.config.settings import OpsAgentSettings
@@ -35,7 +36,12 @@ from ops_agent.graph.state import OpsState
 from ops_agent.graph.tool_calls import CallOutcome, GovernedCalls
 from ops_agent.guardrails import OpsGrounding, OpsGroundingResult, SqlReviewer
 from ops_agent.presentation import present
-from ops_agent.presentation.cards import REFLECT_STAGE, result_card, review_card
+from ops_agent.presentation.cards import (
+    REFLECT_STAGE,
+    deterministic_card,
+    result_card,
+    review_card,
+)
 
 PROPOSE, EXECUTE, REVIEW, GROUND = "propose", "execute", "review", "ground"
 # Why the loop chose its next step (wording: `observability.step_events.loop_control`).
@@ -59,6 +65,7 @@ class OpsNodes:
         reporter: StageReporter | None = None,
         grounding: OpsGrounding | None = None,
         reviewer: SqlReviewer | None = None,
+        separator: InstructionDataSeparator | None = None,
     ) -> None:
         self._llm = llm
         self._registry = registry
@@ -70,6 +77,9 @@ class OpsNodes:
         self._grounding = grounding
         # Reflection on the SQL the model wrote, before the answer is grounded (None: withheld).
         self._reviewer = reviewer
+        # Tool results are data, never instructions: delimited before the model reads them
+        # (with `prompt_injection`; None when that feature is withheld).
+        self._separator = separator
         self._logger = get_logger("ops_agent")
         self._guard_log = get_logger("guardrails")
 
@@ -124,45 +134,49 @@ class OpsNodes:
         if stopped:
             return stopped
         last = state["messages"][-1]
-        if last.role == "assistant" and last.tool_calls:
-            return EXECUTE
-        return REVIEW if self._unreviewed(state) else GROUND
+        return EXECUTE if last.role == "assistant" and last.tool_calls else GROUND
 
     @property
     def reviews(self) -> bool:
-        """Whether the SQL review was built (the graph has a `review` node)."""
+        """Whether the data review was built (the graph has a `review` node)."""
         return self._reviewer is not None
 
-    def _unreviewed(self, state: OpsState) -> list[QueryRecord]:
-        """The model-written queries since the last review, while reviews remain this turn."""
+    def after_execute(self, state: OpsState) -> str:
+        """REFLECT after a step that ran a data query, before the model answers from it."""
+        return REVIEW if self._step_data(state) else PROPOSE
+
+    def _step_data(self, state: OpsState) -> list[QueryRecord]:
+        """The data queries this step ran (none when the review is withheld)."""
         if self._reviewer is None:
             return []
-        if state["reviews"] > self._settings.sql_review.max_reflections:
-            return []
-        return self._reviewer.reviewed(state["queries"][state["reviewed"] :])
+        return self._reviewer.data(state["queries"][state["reviewed"] :])
 
     async def review(self, state: OpsState) -> dict[str, Any]:
-        """The SQL review: accept (on to grounding), or revise (back to the model, bounded)."""
+        """REFLECT on the step's data: the critic reads model-written SQL against the question
+        (revise: the model fixes it before answering); catalogue calls are decided in code."""
         assert self._reviewer is not None
-        queries = self._unreviewed(state)
-        found = await self._reviewer.review(state["question"], queries, state["answer"])
+        data = self._step_data(state)
+        written = self._reviewer.reviewed(data)
+        update: dict[str, Any] = {"reviewed": len(state["queries"])}
+        self._steps.begin(None)
+        if not written or state["reviews"] >= self._settings.sql_review.max_reviews:
+            status, heading, card = deterministic_card(
+                data, state["question"], capped=bool(written)
+            )
+            self._steps.step_card(REFLECT_STAGE, status, heading, card)
+            return update
+        found = await self._reviewer.review(state["question"], written)
         if found.call is not None:
             # The review is a model call of the turn: it counts against the turn's budgets.
             self._calls.governor.after_model(found.call.tokens, found.cost_usd)
         reviews = state["reviews"] + 1
-        again = found.revise and reviews <= self._settings.sql_review.max_reflections
-        status, heading, card = review_card(found, queries, state["question"], reviews, again)
-        self._steps.begin(None)
+        again = found.revise and reviews < self._settings.sql_review.max_reviews
+        status, heading, card = review_card(found, data, state["question"], reviews, again)
         self._steps.step_card(REFLECT_STAGE, status, heading, card)
-        update: dict[str, Any] = {"reviews": reviews, "reviewed": len(state["queries"])}
         if again:
+            # The finding goes with the result: the model fixes the query before it answers.
             update["messages"] = [self._reviewer.revise_message(found)]
-        return update
-
-    def after_review(self, state: OpsState) -> str:
-        """Back to the model when the review asked for a revision it may still have."""
-        last = state["messages"][-1]
-        return PROPOSE if last.role == "user" else GROUND
+        return {**update, "reviews": reviews}
 
     def _report_loop(self, verdict: LoopVerdict, *, wants_tools: bool) -> None:
         """LOOP CONTROL: the governor's verdict, whether the model asked for tools, what follows."""
@@ -213,7 +227,9 @@ class OpsNodes:
             self._report_call(call.name, outcome)
             messages += [
                 Message(role="assistant", content="", tool_calls=[call]),
-                Message(role="tool", content=outcome.text, tool_call_id=call.id),
+                Message(
+                    role="tool", content=self._as_data(name, outcome.text), tool_call_id=call.id
+                ),
             ]
             ran += [call.name] if outcome.succeeded else []
         return messages, ran
@@ -227,7 +243,8 @@ class OpsNodes:
             self._steps.tool_request(call.name, call.arguments)
             outcome = await self._calls.run(call, state["session_id"], on_decision=self._decided)
             self._report_call(call.name, outcome)
-            replies.append(Message(role="tool", content=outcome.text, tool_call_id=call.id))
+            content = self._as_data(call.name, outcome.text)
+            replies.append(Message(role="tool", content=content, tool_call_id=call.id))
             failures += 0 if outcome.succeeded else 1
             if outcome.query is not None:
                 queries.append(outcome.query)
@@ -270,6 +287,20 @@ class OpsNodes:
             checked.status, card.outcome if checked.escalated else card.tally, card
         )
         return checked
+
+    def _as_data(self, tool: str, text: str) -> str:
+        """A tool's result as the model reads it: inside the data delimiters, never as an
+        instruction; an injection phrasing in it is logged (the result is not changed)."""
+        if self._separator is None:
+            return text
+        separated = self._separator.separate("", text)
+        if separated.suspicious_phrases:
+            self._logger.warning(
+                "Injection phrasing in a tool result",
+                tool=tool,
+                phrases=separated.suspicious_phrases,
+            )
+        return separated.delimited_data
 
     def _decided(self, call: ToolCall, decision: AuthorityDecision) -> None:
         """The Gatekeeper's ruling on one call, as it ruled (the audit entry is its own)."""

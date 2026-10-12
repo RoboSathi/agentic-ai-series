@@ -30,15 +30,23 @@ from agent_platform.tools.types import ToolDefinition, ToolResult
 
 
 class ConfiguredGovernancePolicy:
-    """The envelope each server's tools run under, from `mcp.servers[].envelope`."""
+    """The envelope each server's tools run under: a tool's own (`mcp.servers[].tools`), else
+    its server's (`mcp.servers[].envelope`), else the most restrictive default.
+
+    A per-tool envelope narrows one tool without the others, e.g. free SQL needing a
+    permission the catalogue tools do not, so the Gatekeeper can refuse it on its own.
+    """
 
     def __init__(self, servers: list[McpServerSettings] | None = None) -> None:
         settings = get_settings().mcp
+        configured = servers or settings.servers
         self._default = settings.default_envelope
-        self._envelopes = {server.name: server.envelope for server in (servers or settings.servers)}
+        self._envelopes = {server.name: server.envelope for server in configured}
+        self._tools = {server.name: server.tools for server in configured}
 
     def envelope_for(self, server: McpServerSpec, tool: McpToolInfo) -> dict[str, Any]:
-        envelope = self._envelopes.get(server.name) or self._default
+        own = self._tools.get(server.name, {}).get(tool.name)
+        envelope = own or self._envelopes.get(server.name) or self._default
         return envelope.model_dump()
 
 

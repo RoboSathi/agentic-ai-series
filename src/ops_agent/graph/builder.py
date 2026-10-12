@@ -127,6 +127,7 @@ def build_agent(
         reporter=reporter,
         grounding=_grounding(agent) if guarded else None,
         reviewer=SqlReviewer(model, agent.sql_review) if guarded else None,
+        separator=InstructionDataSeparator() if posture.is_on("prompt_injection") else None,
     )
     window, working = _context_window(posture, agent, screen=InstructionDataSeparator())
     if window is not None and window.fetch_tool is not None:
