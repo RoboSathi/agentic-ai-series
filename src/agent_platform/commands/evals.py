@@ -11,20 +11,19 @@ from typing import Any
 
 from agent_platform.commands.types import CommandError, CommandResult
 from agent_platform.config import get_settings
-from agent_platform.evals import load_manifest
-from agent_platform.evals.pipeline.gate import evaluate_gate
-from agent_platform.evals.store import DuckDbEvalStore
+from agent_platform.evals.core.pipeline.gate import evaluate_gate
+from agent_platform.evals.core.store import DuckDbEvalStore
 
-_SUBCOMMANDS = ("runs", "report", "case", "manifest")
+_SUBCOMMANDS = ("runs", "report", "case")
 
 
 class EvalCommand:
-    """Recent eval runs, one run's scores, one case, or the eval manifest."""
+    """Recent eval runs, one run's scores, or one case."""
 
     group = "Evals"
     name = "eval"
     summary = "Eval runs, reports and cases (run them with `make eval`)"
-    usage = "/eval [runs | report [run] | case <case_id> [run] | manifest]"
+    usage = "/eval [runs | report [run] | case <case_id> [run]]"
 
     def __init__(self, store: DuckDbEvalStore | None = None) -> None:
         self._store = store
@@ -35,8 +34,6 @@ class EvalCommand:
 
     async def run(self, args: list[str]) -> CommandResult:
         action, rest = (args[0], args[1:]) if args else ("runs", [])
-        if action == "manifest":
-            return self._manifest()
         if action not in _SUBCOMMANDS:
             raise CommandError(f"Unknown /eval action '{action}'")
         return await asyncio.to_thread(self._read, action, rest)
@@ -50,21 +47,6 @@ class EvalCommand:
         if not rest:
             raise CommandError("Name a case: /eval case <case_id> [run]")
         return _case(store, rest[0], rest[1] if len(rest) > 1 else None)
-
-    @staticmethod
-    def _manifest() -> CommandResult:
-        manifest = load_manifest()
-        result = CommandResult(title=f"Eval manifest — {len(manifest.entries)} entries")
-        result.headers = ["component", "level", "suite", "scorer", "threshold"]
-        for entry in manifest.entries:
-            result.row(
-                entry.component,
-                entry.level,
-                entry.suite or "",
-                entry.scorer,
-                f"{entry.regression_threshold:.0%}",
-            )
-        return result
 
 
 def _runs(store: DuckDbEvalStore) -> CommandResult:
@@ -90,7 +72,7 @@ def _report(store: DuckDbEvalStore, run_id: str | None) -> CommandResult:
     run = store.get_run(run_id) if run_id else store.latest_run()
     if run is None:
         raise CommandError("No such eval run — /eval runs lists them.")
-    gate = evaluate_gate(store, run.run_id, run.suite)
+    gate = evaluate_gate(store, run.run_id)
     result = CommandResult(title=f"{run.run_id} — {gate.verdict}")
     result.headers = ["stage", "metric", "severity", "passed", "mean"]
     for row in store.query(
@@ -108,8 +90,7 @@ def _report(store: DuckDbEvalStore, run_id: str | None) -> CommandResult:
             style="red" if failing and row["severity"] == "hard" else "yellow" if failing else "",
         )
     result.line("; ".join(gate.reasons) or "every gate cleared")
-    folder = get_settings().evals.reporting.resolved_output_dir / run.run_id
-    result.line(f"Full reports: {folder}")
+    result.line(f"Full report: {_report_file(run.suite, run.run_id)}")
     return result
 
 
@@ -137,6 +118,15 @@ def _case(store: DuckDbEvalStore, case_id: str, run_id: str | None) -> CommandRe
             style="" if row["passed"] else "red",
         )
     return result
+
+
+def _report_file(suite: str, run_id: str) -> str:
+    """Where `make eval` wrote this run's report (the security suite is Promptfoo's)."""
+    from agent_platform.evals.core.reporting.writer import report_path
+
+    evals = get_settings().evals
+    framework = "promptfoo" if suite == evals.suites.security else "deepeval"
+    return str(report_path(framework, run_id))
 
 
 def _shown(value: Any) -> str:

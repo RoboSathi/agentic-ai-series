@@ -10,10 +10,10 @@ module was always fine; the wiring was missing.
 import pytest
 
 from agent_platform.config import get_settings
-from agent_platform.evals.entailment import LexicalEntailmentModel, create_entailment_model
 from agent_platform.memory import MemoryFacade
 from agent_platform.observability.postmortem import Postmortem, PostmortemRegister
 from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.scoring.entailment import LexicalEntailmentModel, create_entailment_model
 from agent_platform.security import PIIFilterImpl
 from customer_support_agent.loop_control import (
     GroundedCritic,
@@ -123,7 +123,7 @@ class TestDeliberation:
 
     @pytest.mark.asyncio
     async def test_the_evaluator_is_independent_of_the_generator(self) -> None:
-        from agent_platform.evals import create_scoring_cascade
+        from agent_platform.scoring import create_scoring_cascade
 
         loop = OutputQualityGate(evaluator=IndependentScorer(create_scoring_cascade()))
         assert await loop.score("Order 10001 was delivered", ["Order 10001 was delivered"]) > 0.0
@@ -186,7 +186,7 @@ class TestRetrievalOverTheOrderCorpus:
         self, seeded_pool: SqliteConnectionPool
     ) -> None:
         from agent_platform.context import Task
-        from agent_platform.evals import create_scoring_cascade
+        from agent_platform.scoring import create_scoring_cascade
         from customer_support_agent.domain.identity import Customer, set_current_customer
         from customer_support_agent.graph.builder import OrderCorpusContextSource
         from customer_support_agent.persistence.repositories import OrdersRepository
@@ -202,7 +202,7 @@ class TestRetrievalOverTheOrderCorpus:
     ) -> None:
         """A retriever over every customer's orders is one bug from a leak."""
         from agent_platform.context import Task
-        from agent_platform.evals import create_scoring_cascade
+        from agent_platform.scoring import create_scoring_cascade
         from customer_support_agent.domain.identity import Customer, set_current_customer
         from customer_support_agent.graph.builder import OrderCorpusContextSource
         from customer_support_agent.persistence.repositories import OrdersRepository
@@ -217,7 +217,7 @@ class TestRetrievalOverTheOrderCorpus:
         self, seeded_pool: SqliteConnectionPool
     ) -> None:
         from agent_platform.context import Task
-        from agent_platform.evals import create_scoring_cascade
+        from agent_platform.scoring import create_scoring_cascade
         from customer_support_agent.domain.identity import set_current_customer
         from customer_support_agent.graph.builder import OrderCorpusContextSource
         from customer_support_agent.persistence.repositories import OrdersRepository

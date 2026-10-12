@@ -10,10 +10,10 @@ refusal wording (`memory.dream.refusal_markers`).
 """
 
 from agent_platform.config import get_settings
-from agent_platform.evals.entailment import create_entailment_model
 from agent_platform.llm.local_summarizer import LocalDialogueSummarizer
 from agent_platform.memory import MemoryProfile
 from agent_platform.memory.dream import SessionSummarizer
+from agent_platform.scoring.entailment import create_entailment_model
 
 
 def support_memory_profile() -> MemoryProfile:

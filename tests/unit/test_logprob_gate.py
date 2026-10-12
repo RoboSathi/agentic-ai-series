@@ -11,7 +11,6 @@ from collections.abc import Iterator
 
 import pytest
 
-from agent_platform.evals import create_scoring_cascade
 from agent_platform.guardrails import ResponseGuardrail
 from agent_platform.hallucination_check import DetectionLadder
 from agent_platform.hallucination_check.confidence import (
@@ -30,6 +29,7 @@ from agent_platform.observability.unit_context import (
     bound_turn,
     remember_generation,
 )
+from agent_platform.scoring import create_scoring_cascade
 
 
 def _tokens(*pairs: tuple[str, float]) -> list[tuple[str, float]]:

@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from agent_platform.evals.intent import render_report
 from agent_platform.intent import IntentCandidate
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.config.settings import reload_agent_settings
@@ -43,7 +44,6 @@ def scripted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Path]:
     def settings_with_tmp_paths() -> None:
         section = get_agent_settings().evals.intent_bakeoff
         section.cases_path = str(cases)
-        section.report_dir = str(tmp_path / "reports")
         section.contenders = {"scripted": []}
 
     real_apply = bakeoff._apply
@@ -59,24 +59,20 @@ def scripted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Path]:
 
 
 @pytest.mark.asyncio
-async def test_writes_one_report_with_both_modes(scripted: Path) -> None:
-    path = await bakeoff.run()
+async def test_scores_both_modes_and_renders_one_report(scripted: Path) -> None:
+    result = await bakeoff.run()
 
-    report = path.read_text()
-    assert path.parent == scripted / "reports"
-    assert "scripted · model" in report
-    assert "scripted · router" in report
+    assert set(result.scores) == {"scripted · model", "scripted · router"}
+    report = render_report(result.title, result.scores, result.misses, z=1.96)
+    assert "scripted · model" in report and "scripted · router" in report
 
 
 @pytest.mark.asyncio
 async def test_rules_score_in_the_router_row_but_not_the_model_row(scripted: Path) -> None:
-    path = await bakeoff.run()
+    result = await bakeoff.run()
 
-    summary = path.read_text().split("## Recall by intent")[0]
-    model_row = next(line for line in summary.splitlines() if "scripted · model" in line)
-    router_row = next(line for line in summary.splitlines() if "scripted · router" in line)
-    assert "1/3" in model_row
-    assert "2/3" in router_row
+    assert result.scores["scripted · model"].correct == 1
+    assert result.scores["scripted · router"].correct == 2
 
 
 def test_loads_the_shipped_cases() -> None:

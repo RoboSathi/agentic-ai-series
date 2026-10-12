@@ -4,12 +4,12 @@ import pytest
 
 from agent_platform.config import get_settings
 from agent_platform.config.settings import RoleModelSettings
-from agent_platform.evals.entailment import LexicalEntailmentModel, negation_pattern
 from agent_platform.hallucination_check.claims import ClaimDecomposer, specifics
 from agent_platform.hallucination_check.direct import amounts
 from agent_platform.llm.roles import RoleModelRouter
 from agent_platform.llm.types import CompletionRequest, Message
 from agent_platform.llm.typography import TypographyNormaliser
+from agent_platform.scoring.entailment import LexicalEntailmentModel, negation_pattern
 from tests.conftest import ScriptedLLM
 
 

@@ -1,14 +1,15 @@
-"""`python -m agent_platform.evals` and the Promptfoo provider entry points."""
-
-from typing import Any
+"""`python -m agent_platform.evals` (what `make eval` runs) and the console's `/eval`."""
 
 import pytest
 
-from agent_platform.evals import cli
-from agent_platform.evals.adapters import promptfoo_agent_provider, promptfoo_judge_provider
-from agent_platform.evals.store import DuckDbEvalStore
-from tests.conftest import ScriptedLLM
-from tests.unit.test_eval_framework import FakeAgent, FakeGrader, FakePlugin
+from agent_platform.commands.evals import EvalCommand
+from agent_platform.commands.types import CommandError
+from agent_platform.config import get_settings
+from agent_platform.evals.core import cli
+from agent_platform.evals.core.pipeline.orchestrator import EvalPipeline, StageOutcome
+from agent_platform.evals.core.reporting import report_path
+from agent_platform.evals.core.store import DuckDbEvalStore
+from tests.unit.test_eval_core import FakeGrader, FakePlugin
 
 
 @pytest.fixture
@@ -19,66 +20,92 @@ def plugin(monkeypatch: pytest.MonkeyPatch) -> FakePlugin:
 
 
 class TestCli:
-    def test_generate_then_oracle_then_report(self, plugin: FakePlugin) -> None:
-        assert cli.main(["generate", "--limit", "2"]) == 0
-        assert plugin.agent.calls == ["c0", "c1"]
-        # A broken hard invariant makes the oracle stage exit non-zero.
-        assert cli.main(["oracle"]) == 1
-        assert cli.main(["report"]) == 0
-        assert cli.main(["runs"]) == 0
-        assert cli.main(["sql", "select count(*) as n from eval_runs"]) == 0
+    def test_a_failed_gate_is_a_result_not_an_error(
+        self, plugin: FakePlugin, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert cli.main(["run", "--stage", "deepeval"]) == 0
+        run = DuckDbEvalStore().latest_run("golden")
+        assert run is not None and report_path("deepeval", run.run_id).exists()
+        printed = capsys.readouterr().out
+        assert "fake_metric" in printed and run.run_id in printed and "FAIL" in printed
 
-    def test_selection_by_case_and_tag(self, plugin: FakePlugin) -> None:
-        assert cli.main(["generate", "--case", "c2"]) == 0
-        assert plugin.agent.calls == ["c2"]
+    def test_the_run_ends_with_the_time_each_section_took(
+        self, plugin: FakePlugin, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cli.main(["run", "--stage", "deepeval"])
+        printed = capsys.readouterr().out
+        sections = get_settings().evals.reporting.overview.sections
+        for key in ("agent", "oracle", "total"):
+            assert sections[key] in printed.split("Time taken")[-1]
 
-    def test_a_stage_with_no_run_is_a_message(self, plugin: FakePlugin) -> None:
-        DuckDbEvalStore().execute("DELETE FROM eval_runs")
-        assert cli.main(["judge"]) == 1
-
-    def test_run_stops_after_a_broken_invariant(
+    def test_a_section_that_raises_does_not_stop_the_next(
         self, plugin: FakePlugin, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        called: list[str] = []
-        monkeypatch.setattr(cli, "_security", lambda args: called.append("security") or 0)
-        assert cli.main(["run", "--fresh"]) == 1
-        assert called == []
+        ran: list[str] = []
 
-    def test_diff_between_two_runs(self, plugin: FakePlugin) -> None:
-        cli.main(["generate"])
-        base = DuckDbEvalStore().latest_run("golden")
-        plugin.fingerprint_inputs = lambda: {"model": "other"}  # type: ignore[method-assign]
-        cli.main(["generate"])
-        head = DuckDbEvalStore().latest_run("golden")
-        assert base and head and base.run_id != head.run_id
-        assert cli.main(["diff", base.run_id, head.run_id]) == 0
+        async def broken(self: EvalPipeline) -> StageOutcome:
+            raise RuntimeError("judge down")
 
+        monkeypatch.setattr(EvalPipeline, "golden", broken)
+        monkeypatch.setattr(EvalPipeline, "security", lambda _: ran.append("promptfoo") or None)
+        monkeypatch.setattr(cli, "_show", lambda outcome: outcome)
+        monkeypatch.setattr(cli, "_print_timings", lambda outcomes, total: None)
+        assert cli.main(["run"]) == 1
+        assert ran == ["promptfoo"]
 
-class TestPromptfooProviders:
-    def test_the_agent_provider_returns_reply_and_transcript(
-        self, monkeypatch: pytest.MonkeyPatch
+    def test_durations_read_at_a_glance(self) -> None:
+        assert cli.duration(42.4) == "42s"
+        assert cli.duration(506) == "8m 26s"
+        assert cli.duration(3780) == "1h 03m"
+
+    def test_the_full_run_is_golden_then_the_red_team(
+        self, plugin: FakePlugin, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        fake = FakePlugin()
-        monkeypatch.setattr(promptfoo_agent_provider, "_plugin", fake)
-        result = promptfoo_agent_provider.call_api(
-            "attack", {}, {"vars": {"case_id": "c0", "category": "x"}}
-        )
-        assert result["output"] == "answer c0"
-        assert result["metadata"]["transcript"]["case_id"] == "c0"
+        order: list[str] = []
+        golden = EvalPipeline.golden
 
-    def test_an_agent_failure_is_a_provider_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        fake = FakePlugin(agent=FakeAgent(fail={"c0"}))
-        monkeypatch.setattr(promptfoo_agent_provider, "_plugin", fake)
-        result = promptfoo_agent_provider.call_api(
-            "x", {}, {"vars": {"case_id": "c0", "category": "x"}}
-        )
-        assert "error" in result
+        async def traced(self: EvalPipeline) -> StageOutcome:
+            order.append("golden")
+            outcome = await golden(self)
+            monkeypatch.setattr(
+                EvalPipeline, "security", lambda _: order.append("promptfoo") or outcome
+            )
+            return outcome
 
-    def test_the_judge_provider_uses_the_judge_client(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        llm = ScriptedLLM([{"content": '{"pass": true, "score": 1, "reason": "ok"}'}])
-        monkeypatch.setattr(promptfoo_judge_provider, "create_judge_client", lambda *_: llm)
-        result: dict[str, Any] = promptfoo_judge_provider.call_api("grade this", {}, {})
-        assert '"pass": true' in result["output"]
-        assert llm.requests[0].messages[0].content == "grade this"
+        monkeypatch.setattr(EvalPipeline, "golden", traced)
+        assert cli.main(["run"]) == 0
+        assert order == ["golden", "promptfoo"]
+
+    def test_report_rebuilds_and_runs_lists(self, plugin: FakePlugin) -> None:
+        cli.main(["run", "--stage", "deepeval"])
+        assert cli.main(["report"]) == 0
+        assert cli.main(["runs"]) == 0
+
+    def test_an_agent_with_no_bakeoff_is_a_message(self, plugin: FakePlugin) -> None:
+        assert cli.main(["run", "--stage", "intent"]) == 1
+
+    def test_an_unknown_stage_is_refused(self) -> None:
+        with pytest.raises(SystemExit):
+            cli.main(["run", "--stage", "judge"])
+
+
+class TestEvalCommand:
+    async def test_no_runs_is_a_message_not_an_error(self) -> None:
+        result = await EvalCommand(DuckDbEvalStore(":memory:")).run([])
+        assert result.ok and any("No eval runs" in line for line in result.lines)
+
+    async def test_report_and_case_read_the_store(self) -> None:
+        store = DuckDbEvalStore(":memory:")
+        outcome = await EvalPipeline(FakePlugin(grader=FakeGrader(fail={"c1"})), store).golden()  # type: ignore[arg-type]
+        command = EvalCommand(store)
+        report = await command.run(["report"])
+        assert report.title.endswith("FAIL")
+        assert any(str(report_path("deepeval", outcome.run_id)) in line for line in report.lines)
+        case = await command.run(["case", "c1"])
+        assert any(row.cells[1] == "FAIL" for row in case.rows)
+        runs = await command.run(["runs"])
+        assert runs.rows[0].style == "red"
+
+    async def test_an_unknown_action_is_an_error(self) -> None:
+        with pytest.raises(CommandError):
+            await EvalCommand(DuckDbEvalStore(":memory:")).run(["manifest"])

@@ -30,7 +30,7 @@ Episodes demonstrate a pattern by running this agent, not a separate reference c
 | factory | graph/builder.py (composition root) |
 | builder | scoping/brief.py · BriefBuilder |
 | observer | observability/telemetry.py (StageReporter + AuditLedger) · WebGateway observer |
-| decorator | research_agent/evals/agent_under_test.py · RecordingLLMClient around every role client |
+| template method | audit/independent.py · LlmJudge on agent_platform.judge.LlmJudge (ask → verdict, abstain on failure; ra-0024) |
 | facade | agent_platform MemoryFacade, used by archive/store.py |
 | retry + idempotency + circuit breaker | agent_platform/web/gateway.py · live search and fetch through ResilientCaller |
 | bulkhead | agent_platform/scheduling/scheduler.py · per-batch concurrency cap |

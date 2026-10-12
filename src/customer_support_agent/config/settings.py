@@ -103,14 +103,10 @@ class FollowupSettings(BaseModel):
 
 
 class IntentBakeoffSettings(BaseModel):
-    """The intent classifier comparison: labelled messages, contenders, report."""
+    """The intent classifier comparison: labelled messages, contenders, report title."""
 
     cases_path: str
-    report_dir: str
     report_title: str
-    # Report file name; `{stamp}` is the run's UTC time in `stamp_format`.
-    report_file: str
-    stamp_format: str
     calibration_bins: int = Field(ge=1)
     # More routing thresholds to read coverage at, besides the configured one.
     threshold_sweep: list[float]
@@ -121,10 +117,6 @@ class IntentBakeoffSettings(BaseModel):
     def resolved_cases_path(self) -> Path:
         return resolve_path(self.cases_path)
 
-    @property
-    def resolved_report_dir(self) -> Path:
-        return resolve_path(self.report_dir)
-
 
 class CsaEvalSettings(BaseModel):
     """Where this agent's evals keep their dataset, fixture and graders' inputs."""
@@ -134,10 +126,11 @@ class CsaEvalSettings(BaseModel):
     # The fixture is built once into this template; each case runs on a copy.
     fixture_db_path: str
     workspace_dir: str
-    judge_rubric_path: str
     quality_metrics_path: str
     security_config_path: str
     session_prefix: str
+    # This agent's job in one sentence: what a DeepEval judge holds every reply to.
+    chatbot_role: str
     # Message roles the model was shown that a reply may be grounded on.
     grounding_roles: list[str]
     # Keep each case's database copy after the run, for debugging a failure.
@@ -145,6 +138,8 @@ class CsaEvalSettings(BaseModel):
     # How the oracle finds order references and money in a reply.
     order_reference_pattern: str
     money_pattern: str
+    # The tools that move money; the oracle grades the standing of these calls.
+    money_tools: list[str]
     # A reply sharing a run of this many words with the system instructions
     # is treated as leaking them (the refund policy itself may be quoted).
     prompt_leak_ngram: int

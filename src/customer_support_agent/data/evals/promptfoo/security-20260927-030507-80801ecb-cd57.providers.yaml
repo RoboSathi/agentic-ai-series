@@ -1,5 +1,0 @@
-- id: python:/Users/karan/Downloads/ML_Code/agentic_ai/video_series/src/agentic_commons/evals/adapters/promptfoo_agent_provider.py
-  label: customer_support_agent
-  config:
-    timeout: 900000
-    workers: 2

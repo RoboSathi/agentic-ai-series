@@ -13,9 +13,11 @@ from agent_platform.security.content_moderation import (
     HostedContentSafetyGuard,
 )
 from agent_platform.security.content_moderation.types import ModerationVerdict
+from agent_platform.security.guard_chain import GuardChain
 from agent_platform.security.pii.detector import PIIFilterImpl, RedactedSpan
 from agent_platform.security.pii.types import PIISpan, RedactionMode
 from agent_platform.security.prompt_injection import (
+    ChatJailbreakGuard,
     HostedJailbreakGuard,
     JailbreakGuard,
     PromptInjectionGuard,
@@ -73,31 +75,15 @@ class SecuritySuite:
         self.injection = injection
         self.moderator = moderator
         guard_settings = get_settings().security.guards
+        hosted = guard_settings.enabled
         self.jailbreak_guard = jailbreak_guard or (
-            HostedJailbreakGuard(
-                base_url=guard_settings.jailbreak.base_url,
-                endpoint=guard_settings.jailbreak.endpoint,
-                timeout_seconds=guard_settings.jailbreak.timeout_seconds,
-                model=guard_settings.jailbreak.model,
-                resilient=jailbreak_resilient
-                or ResilientCaller(guard_settings.jailbreak.resilience_key),
-            )
-            if injection is not None and guard_settings.enabled and guard_settings.jailbreak.enabled
+            _jailbreak_chain(jailbreak_resilient)
+            if injection is not None and hosted and guard_settings.jailbreak.enabled
             else None
         )
         self.content_safety_guard = content_safety_guard or (
-            HostedContentSafetyGuard(
-                base_url=guard_settings.content_safety.base_url,
-                endpoint=guard_settings.content_safety.endpoint,
-                timeout_seconds=guard_settings.content_safety.timeout_seconds,
-                model=guard_settings.content_safety.model,
-                max_tokens=guard_settings.content_safety.max_tokens,
-                resilient=content_safety_resilient
-                or ResilientCaller(guard_settings.content_safety.resilience_key),
-            )
-            if moderator is not None
-            and guard_settings.enabled
-            and guard_settings.content_safety.enabled
+            _content_safety_chain(content_safety_resilient)
+            if moderator is not None and hosted and guard_settings.content_safety.enabled
             else None
         )
         self._logger = get_logger("security")
@@ -312,3 +298,37 @@ class SecuritySuite:
     def enabled(self) -> bool:
         """Whether any content-level screening was wired at all."""
         return self.injection is not None or self.moderator is not None
+
+
+def _jailbreak_chain(resilient: ResilientCaller | None) -> GuardChain:
+    """The hosted jailbreak classifier, then each configured chat fallback."""
+    settings = get_settings().security.guards.jailbreak
+    primary = HostedJailbreakGuard(
+        base_url=settings.base_url,
+        endpoint=settings.endpoint,
+        timeout_seconds=settings.timeout_seconds,
+        model=settings.model,
+        resilient=resilient or ResilientCaller(settings.resilience_key),
+    )
+    fallbacks = [ChatJailbreakGuard(settings.as_fallback(item)) for item in settings.fallbacks]
+    return GuardChain([primary, *fallbacks])
+
+
+def _content_safety_chain(resilient: ResilientCaller | None) -> GuardChain:
+    """The hosted content-safety model, then each configured fallback, asked the same way."""
+    settings = get_settings().security.guards.content_safety
+    guards = [
+        HostedContentSafetyGuard(
+            base_url=spec.base_url,
+            endpoint=spec.endpoint,
+            timeout_seconds=spec.timeout_seconds,
+            model=spec.model,
+            max_tokens=spec.max_tokens,
+            resilient=(resilient if index == 0 else None) or ResilientCaller(spec.resilience_key),
+            settings=spec,
+        )
+        for index, spec in enumerate(
+            [settings, *(settings.as_fallback(item) for item in settings.fallbacks)]
+        )
+    ]
+    return GuardChain(guards)

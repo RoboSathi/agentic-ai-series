@@ -30,11 +30,6 @@ from agent_platform.config import get_settings
 from agent_platform.config.settings import GroundingTierSettings
 from agent_platform.context.retrieval import DenseRetriever, RelevanceRanker
 from agent_platform.context.types import Chunk
-from agent_platform.evals.entailment import (
-    EntailmentModel,
-    EntailmentResult,
-    create_entailment_model,
-)
 from agent_platform.hallucination_check.claims import ClaimClassifier
 from agent_platform.hallucination_check.confirmer import ClaimConfirmer
 from agent_platform.hallucination_check.direct import (
@@ -59,6 +54,11 @@ from agent_platform.hallucination_check.types import (
 )
 from agent_platform.llm.embeddings import tokenize
 from agent_platform.logging import instrument
+from agent_platform.scoring.entailment import (
+    EntailmentModel,
+    EntailmentResult,
+    create_entailment_model,
+)
 
 # `Chunk.metadata` key for the order in which an observation was made this
 # turn. Only staleness reads it: a later observation of the same thing
@@ -140,7 +140,9 @@ class GroundingResolver:
             else None
         )
         self._refuting = settings.refuting_premise
-        self._negations = tuple(m.casefold() for m in get_settings().evals.nli.negation_markers)
+        self._negations = tuple(
+            m.casefold() for m in get_settings().hallucination_check.scoring.nli.negation_markers
+        )
         self._entailment = entailment or create_entailment_model()
         self._classifier = classifier or ClaimClassifier()
         self._direct = DirectChecker()
@@ -832,7 +834,7 @@ class GroundingResolver:
     def _retrieval_method(self) -> str:
         """Report the actual retrieval path used by the injected ranker."""
         cascade = getattr(self._retriever, "_ranker", None)
-        enabled = getattr(get_settings().evals.cascade, "embedding_similarity", False)
+        enabled = get_settings().hallucination_check.scoring.tiers.embedding_similarity
         return "embedding" if enabled and cascade is not None else "lexical_fallback"
 
     @property

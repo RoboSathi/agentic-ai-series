@@ -481,7 +481,7 @@ views:
       suite: The golden set.
       started_at: When the run started.
       run_id: The eval run.
-      stage: The grading stage (oracle, security, judge, ...).
+      stage: The grading stage (oracle, deepeval or promptfoo).
       metric: The metric graded.
       pass_rate: Share of cases that passed the metric.
       mean_value: The metric's mean score.

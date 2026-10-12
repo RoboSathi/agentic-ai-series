@@ -22,9 +22,9 @@ import pytest
 
 from agent_platform.config import get_settings
 from agent_platform.context.similarity import LexicalSimilarity
-from agent_platform.evals import create_scoring_cascade
 from agent_platform.loop_control import LoopBudget, LoopGovernor, action_fingerprint
 from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.scoring import create_scoring_cascade
 from agent_platform.tools import NamespacedToolRegistry, ToolCall, ToolRetrievalSelector
 from customer_support_agent.graph import build_agent
 from customer_support_agent.persistence import HitlQueueRepository, OrdersRepository

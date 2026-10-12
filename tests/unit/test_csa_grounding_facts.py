@@ -9,11 +9,11 @@ claim here is the record itself.
 """
 
 from agent_platform.context.types import Chunk
-from agent_platform.evals import create_scoring_cascade
 from agent_platform.guardrails import ResponseGuardrail, ResponseGuardrailResult
 from agent_platform.hallucination_check import DetectionLadder
 from agent_platform.hallucination_check.direct import RECORD_STATE_MISMATCH
 from agent_platform.primitives.money import Money
+from agent_platform.scoring import create_scoring_cascade
 from customer_support_agent.domain.identity import Customer
 from customer_support_agent.domain.models import Order
 from customer_support_agent.presentation.facts import order_facts, policy_facts, session_facts

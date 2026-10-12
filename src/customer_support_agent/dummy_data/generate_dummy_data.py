@@ -5,7 +5,7 @@ random seed) and rebuilds agentic.db from schema.sql + seed_data.sql +
 this agent's runtime policy. Then, because regenerated orders make any
 state that remembers the old ones stale, it resets the checkpoint file
 and the episodic logs (`--keep-memory` keeps them), and rebuilds the
-eval fixture with the same builder `make eval-generate` uses.
+eval fixture with the same builder `make eval csa` uses.
 
 The eval history (`data/evals.duckdb`) and observability analytics are
 never touched: a data reset is not a reason to lose trend lines.

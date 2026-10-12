@@ -15,7 +15,6 @@ from agent_platform.context.offload import (
 from agent_platform.context.similarity import LexicalSimilarity
 from agent_platform.context.strategies import OffloadStrategy
 from agent_platform.context.types import TRUST
-from agent_platform.evals.entailment import EntailmentResult
 from agent_platform.llm.prompt import CONTEXT_WINDOW, WINDOW_STABLE, PromptBuilder
 from agent_platform.llm.tokenizer import CharEstimateTokenizer
 from agent_platform.logging.trace_context import bound_log_context
@@ -25,6 +24,7 @@ from agent_platform.observability.context_card import (
     note_prefix,
     request_findings,
 )
+from agent_platform.scoring.entailment import EntailmentResult
 
 TASK = Task(query="was order 10001 refunded", session_id="s")
 

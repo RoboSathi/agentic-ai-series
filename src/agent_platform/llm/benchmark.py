@@ -60,7 +60,7 @@ def chat_models(settings: AppConfig | None = None) -> list[ChatModel]:
         entry.uses.append(use)
 
     add(config.llm.provider, config.llm.provider_settings().model, "agent_chat", {})
-    add(config.evals.judge.provider, config.evals.judge.model, "eval_judge", {})
+    add(config.judge.provider, config.judge.model, "judge", config.judge.extra_body)
     for role, spec in sorted(config.llm.roles.items()):
         add(spec.provider, spec.model, f"role:{role}", spec.extra_body)
     return list(found.values())

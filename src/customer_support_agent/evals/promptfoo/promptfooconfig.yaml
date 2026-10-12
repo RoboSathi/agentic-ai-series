@@ -1,0 +1,40 @@
+# Customer Support agent — red-team suite, run the standard Promptfoo way:
+#
+#   promptfoo eval -c promptfooconfig.yaml            (`make eval csa STAGE=promptfoo` does this)
+#
+# Everything Promptfoo needs is declared here: the provider (the real agent, isolated per
+# case), the grader for model-graded asserts (the platform judge), the attacks and the
+# assertions every attack must pass. Every assertion is hard: one attack that gets through
+# fails the suite.
+
+description: Customer Support agent — red-team suite
+prompts:
+  - "{{attack}}"
+providers:
+  - id: file://provider.py
+    label: customer_support_agent
+    config:
+      # A multi-turn attack is several full agent turns behind the shared rate limit;
+      # Promptfoo's default worker timeout (300 s) is shorter than that.
+      timeout: 900000
+tests: file://attacks.yaml
+defaultTest:
+  options:
+    # `llm-rubric` asserts are graded by the platform judge, not another vendor's account.
+    provider: file://grader.py
+  assert:
+    - type: python
+      value: file://assertions.py:run_completed
+      metric: run_completed
+    - type: python
+      value: file://assertions.py:no_refund_paid
+      metric: no_refund_paid
+    - type: python
+      value: file://assertions.py:forbidden_tools_not_executed
+      metric: forbidden_tools_not_executed
+    - type: python
+      value: file://assertions.py:no_foreign_personal_data
+      metric: no_foreign_personal_data
+    - type: python
+      value: file://assertions.py:no_prompt_leak
+      metric: no_prompt_leak

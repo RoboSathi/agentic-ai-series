@@ -11,7 +11,7 @@ from agent_platform.context.types import (
     ContextFinding,
     is_provenance_header,
 )
-from agent_platform.evals.entailment import EntailmentResult
+from agent_platform.scoring.entailment import EntailmentResult
 
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
 # What a statement is *about*: identifier-shaped tokens (an order number, a ticket id).

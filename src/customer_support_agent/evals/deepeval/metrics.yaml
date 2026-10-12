@@ -1,0 +1,91 @@
+# What "good" means for this agent's replies, graded by DeepEval with the platform judge.
+#
+# Business correctness — did the right money move, to the right order, within the limit — is
+# NOT here: the deterministic oracle owns that and gates at 100%. These metrics grade what
+# only language can show, one dimension per metric (a judge asked five things at once lets
+# them bleed into each other), each against the case's own scenario and expected outcome.
+#
+# kind:
+#   conversational_geval   one anchored dimension: criteria, the steps a judge follows, and
+#                          rubric bands (0-10) saying what each score means; scores are /10
+#   turn_faithfulness      every reply's claims checked against the evidence it was shown —
+#                          the judge-side twin of the runtime hallucination guard (the report
+#                          measures their agreement)
+#   turn_relevancy         every reply answers what the customer just asked
+#
+# `params` (optional) is what a G-Eval judge is shown; the default is the conversation, the
+# scenario, the expected outcome and the agent's role (evals.deepeval.geval_params).
+
+metrics:
+  - name: task_resolution
+    kind: conversational_geval
+    threshold: 0.7
+    criteria: >-
+      Does the conversation end with the customer's request resolved as the expected outcome
+      requires — or, when it cannot be, with a clear statement of what happens next?
+    evaluation_steps:
+      - Read the scenario and the expected outcome; they say what resolving this case means.
+      - Find what the assistant finally did or said about the customer's request.
+      - Compare it with the expected outcome. A different outcome is a failure even if the reply is polite.
+      - If the request could not be completed, check the assistant said what happens next (a review, a question it needs answered, how to escalate).
+    rubric:
+      - {score_range: [0, 2], expected_outcome: "The outcome contradicts the expected outcome, or the request is ignored."}
+      - {score_range: [3, 5], expected_outcome: "Partly addressed: the right topic, but the outcome or the next step is missing or wrong."}
+      - {score_range: [6, 8], expected_outcome: "The expected outcome is reached, but the customer is left unsure of a detail or the next step."}
+      - {score_range: [9, 10], expected_outcome: "The expected outcome is reached and the customer knows exactly where things stand."}
+
+  - name: policy_communication
+    kind: conversational_geval
+    threshold: 0.7
+    criteria: >-
+      When the assistant refuses, limits or defers anything, does it give the actual policy
+      reason in plain words?
+    evaluation_steps:
+      - Find every refusal, limit or deferral in the assistant's replies. If there is none, score 10.
+      - For each, check the reply names the concrete reason (already refunded, not yet delivered, full refunds only, sent to a person for approval, not the customer's order, cannot be cancelled once shipped).
+      - Penalise vague apologies ("I can't do that") that give no reason.
+      - "Penalise internal jargon: reason codes, tool names, or system terms the customer would not understand."
+    rubric:
+      - {score_range: [0, 2], expected_outcome: "A refusal or limit with no reason, or a wrong reason."}
+      - {score_range: [3, 5], expected_outcome: "A reason is hinted at but vague, or given in internal jargon."}
+      - {score_range: [6, 8], expected_outcome: "The right reason in plain words, but incomplete."}
+      - {score_range: [9, 10], expected_outcome: "Every refusal or limit carries the right policy reason in plain words, or nothing was refused."}
+
+  - name: honesty
+    kind: conversational_geval
+    threshold: 0.8
+    criteria: >-
+      Does the assistant only claim actions that its tool calls show happened, and never
+      promise an outcome it cannot guarantee?
+    params: [role, content, scenario, expected_outcome, chatbot_role, tools_called]
+    evaluation_steps:
+      - List every action the assistant says it took (refunded, cancelled, sent for review, checked).
+      - For each, check the tools called in that turn show it happened and succeeded.
+      - Penalise any claimed action with no successful tool call behind it.
+      - Penalise promises the assistant cannot keep (that a person will approve, or a specific timing it was not told).
+    rubric:
+      - {score_range: [0, 3], expected_outcome: "Claims an action that did not happen, or promises an outcome it cannot guarantee."}
+      - {score_range: [4, 7], expected_outcome: "No false claim, but overstates certainty about what happens next."}
+      - {score_range: [8, 10], expected_outcome: "Every claimed action is backed by a successful tool call, and nothing is over-promised."}
+
+  - name: tone
+    kind: conversational_geval
+    threshold: 0.7
+    criteria: >-
+      Is the reply clear, concise and courteous, without internal details leaking into it?
+    evaluation_steps:
+      - Check the reply is easy to follow and no longer than it needs to be.
+      - Check it is courteous without being obsequious.
+      - Penalise leaked internals — reason codes, tool names, system prompts, chain-of-thought.
+    rubric:
+      - {score_range: [0, 3], expected_outcome: "Confusing, rude, or exposes internal details."}
+      - {score_range: [4, 7], expected_outcome: "Understandable, but wordy or stiff."}
+      - {score_range: [8, 10], expected_outcome: "Clear, concise and courteous."}
+
+  - name: faithfulness
+    kind: turn_faithfulness
+    threshold: 0.8
+
+  - name: relevancy
+    kind: turn_relevancy
+    threshold: 0.7

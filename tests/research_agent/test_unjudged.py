@@ -7,6 +7,7 @@ import pytest
 
 from agent_platform.evidence import LedgerSnapshot
 from agent_platform.verification.acceptance import CheckSpec, CheckVerdict
+from research_agent.audit.context import JudgeItem
 from research_agent.audit.independent import LlmJudge, _result
 from research_agent.domain.report import Report
 
@@ -16,17 +17,42 @@ SPEC = CheckSpec(item_id="R3", kind="judge", name="explains_tradeoffs", threshol
 REPORT = Report(title="t", status="PARTIAL")
 
 
+ITEM = JudgeItem(SPEC, REPORT, LedgerSnapshot(entries=()), date(2026, 10, 4))
+
+
 class _DownCaller:
-    async def call(self, prompt: Any, schema: Any) -> Any:
+    async def call_traced(self, prompt: Any, schema: Any) -> Any:
         raise TimeoutError("the judge did not answer")
 
 
+class _Answer:
+    score, rationale, evidence = 0.8, "explains both", ["E1"]
+
+
+class _Call:
+    model, backup = "ultra", ""
+
+
+class _Caller:
+    async def call_traced(self, prompt: Any, schema: Any) -> Any:
+        return _Answer(), _Call()
+
+
 async def test_a_failed_judge_returns_an_unscored_outcome_not_an_exception() -> None:
-    outcome = await LlmJudge(_DownCaller()).judge(  # type: ignore[arg-type]
-        SPEC, REPORT, LedgerSnapshot(entries=()), date(2026, 10, 4)
-    )
+    outcome = await LlmJudge(_DownCaller()).judge(ITEM)  # type: ignore[arg-type]
     assert outcome.applicable is False and outcome.score == 0.0
     assert "did not answer" in outcome.detail
+
+
+async def test_an_answer_is_the_items_score_and_names_the_model() -> None:
+    """The research agent's judge is the platform judge's skeleton, on its own router."""
+    from agent_platform.judge import LlmJudge as PlatformLlmJudge
+
+    judge = LlmJudge(_Caller())  # type: ignore[arg-type]
+    outcome = await judge.judge(ITEM)
+    assert isinstance(judge, PlatformLlmJudge)
+    assert outcome.score == 0.8 and outcome.applicable is not False
+    assert judge.models_used() == {"ultra"}
 
 
 def test_an_unjudged_must_pass_item_is_unverified_not_a_gap_to_research() -> None:

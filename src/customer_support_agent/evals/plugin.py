@@ -1,7 +1,14 @@
 """This agent's eval plugin — everything agent-specific, behind one seam.
 
 Named in this agent's config (`evals.plugin`), which is how the platform's
-eval runner finds it without importing it.
+eval runner finds it without importing it. It hands the platform:
+
+- the golden cases and the isolated agent that answers them;
+- the oracle (this agent's business rules on the platform's `InvariantOracle`);
+- the DeepEval metrics, and the frame (role, scenario, expected outcome) each
+  case is judged against;
+- the Promptfoo red-team config;
+- the intent classifier bake-off.
 """
 
 from pathlib import Path
@@ -9,21 +16,23 @@ from typing import Any
 
 import yaml
 
-from agent_platform.config import get_settings
-from agent_platform.evals.contracts import (
+from agent_platform.config import get_settings, resolve_path
+from agent_platform.evals.core.contracts import (
     AgentUnderTest,
+    ConversationFrame,
     GoldenCase,
     Grader,
     QualityMetricSpec,
-    Rubric,
 )
+from agent_platform.evals.intent import BakeoffResult
+from agent_platform.primitives.hashing import canonical_hash
 from customer_support_agent.config.settings import CsaEvalSettings, get_agent_settings
 from customer_support_agent.evals.agent_under_test import CsaAgentUnderTest
-from customer_support_agent.evals.dataset.schema import load_golden_cases
+from customer_support_agent.evals.dataset.schema import CsaCasePayload, load_golden_cases
 from customer_support_agent.evals.fixture import EvalFixture
-from customer_support_agent.evals.oracle import CsaOracle
+from customer_support_agent.evals.oracle import csa_oracle
 
-_GOLDEN_SUITE = "golden"
+_METRICS_KEY = "metrics"
 
 
 class UnknownSuiteError(ValueError):
@@ -44,16 +53,16 @@ class CsaEvalPlugin:
         return get_settings().agent.id
 
     def load_cases(self, suite: str) -> list[GoldenCase]:
-        if suite != _GOLDEN_SUITE:
+        if suite != get_settings().evals.suites.golden:
             raise UnknownSuiteError(
-                f"'{suite}' has no golden cases here; security cases live in "
+                f"'{suite}' has no golden cases here; the red-team attacks live in "
                 f"{self._settings.security_config_path}"
             )
         return load_golden_cases(self._settings.resolved_dataset_path)
 
     def prepare(self) -> None:
         """Build the fixture and warm native models, before any event loop."""
-        from agent_platform.evals.entailment import preload_entailment_model
+        from agent_platform.scoring.entailment import preload_entailment_model
         from customer_support_agent.intent.router import load_intent_classifier
 
         self._fixture.ensure_built()
@@ -67,25 +76,35 @@ class CsaEvalPlugin:
         )
 
     def oracle(self) -> Grader:
-        return CsaOracle(self._fixture.facts())
-
-    def judge_rubric(self, suite: str) -> Rubric:
-        return Rubric.model_validate(_yaml(Path(self._settings.judge_rubric_path)))
+        return csa_oracle(self._fixture.facts(), self._settings)
 
     def quality_metrics(self) -> list[QualityMetricSpec]:
-        data = _yaml(Path(self._settings.quality_metrics_path))
-        return [QualityMetricSpec.model_validate(item) for item in data.get("metrics", [])]
+        data = _yaml(self._settings.quality_metrics_path)
+        return [QualityMetricSpec.model_validate(item) for item in data.get(_METRICS_KEY, [])]
+
+    def conversation_frame(self, case: GoldenCase) -> ConversationFrame:
+        payload = CsaCasePayload.of(case)
+        return ConversationFrame(
+            chatbot_role=self._settings.chatbot_role,
+            scenario=payload.scenario,
+            expected_outcome=payload.expected_outcome,
+        )
 
     def security_config(self) -> str:
         return self._settings.security_config_path
 
     def fingerprint_inputs(self) -> dict[str, str]:
+        """The agent's model, and the fixture world every case runs in."""
         llm = get_settings().llm
-        return {"model": llm.provider_settings().model}
+        seed = self._settings.resolved_fixture_seed_path.read_text(encoding="utf-8")
+        return {"model": llm.provider_settings().model, "fixture": canonical_hash(seed)}
+
+    async def intent_bakeoff(self) -> BakeoffResult:
+        from customer_support_agent.evals.intent.bakeoff import run
+
+        return await run()
 
 
-def _yaml(path: Path) -> dict[str, Any]:
-    from agent_platform.config import resolve_path
-
-    loaded = yaml.safe_load(resolve_path(str(path)).read_text())
+def _yaml(path: str) -> dict[str, Any]:
+    loaded = yaml.safe_load(Path(resolve_path(path)).read_text(encoding="utf-8"))
     return loaded if isinstance(loaded, dict) else {}

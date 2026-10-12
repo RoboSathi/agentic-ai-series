@@ -13,8 +13,8 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
-from agent_platform.evals.entailment import EntailmentModel
 from agent_platform.memory.dream.events import DreamEvent, MemoryAction
+from agent_platform.scoring.entailment import EntailmentModel
 
 # The category a dream gives the summary that stands for a session.
 SUMMARY_CATEGORY = "session_summary"

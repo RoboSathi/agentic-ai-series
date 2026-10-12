@@ -44,7 +44,7 @@ class HostedContentSafetyGuard:
         self._endpoint = endpoint if endpoint.startswith("/") else f"/{endpoint}"
         self._timeout = timeout_seconds
         self._model = model
-        self._max_tokens = max(16, min(max_tokens, 128))
+        self._max_tokens = max_tokens
         self._client = client
         self._resilient = resilient or ResilientCaller(self._settings.resilience_key)
         self._logger = get_logger("content_moderation")

@@ -6,8 +6,6 @@ from typing import Any
 import pytest
 
 from agent_platform.context import Chunk
-from agent_platform.evals import NOLLM_TIERS, Claim, create_scoring_cascade
-from agent_platform.evals.entailment import EntailmentResult, LexicalEntailmentModel
 from agent_platform.guardrails.response import ResponseGuardrail
 from agent_platform.hallucination_check import (
     ClaimDecomposer,
@@ -15,6 +13,8 @@ from agent_platform.hallucination_check import (
     GroundingReasoningDiagnoser,
     TrustCalibrationTracker,
 )
+from agent_platform.scoring import NOLLM_TIERS, Claim, create_scoring_cascade
+from agent_platform.scoring.entailment import EntailmentResult, LexicalEntailmentModel
 
 _EVIDENCE = [
     Chunk(

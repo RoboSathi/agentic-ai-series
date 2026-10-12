@@ -62,8 +62,8 @@ class ResearchHost:
         for the life of the process. A model that cannot
         load does not stop the console: it is logged, and its caller falls back.
         """
-        from agent_platform.evals.entailment import preload_entailment_model
         from agent_platform.hallucination_check.confirmer import preload_claim_confirmer
+        from agent_platform.scoring.entailment import preload_entailment_model
         from research_agent.graph.builder import warm_kind_examples
 
         _start_presidio()

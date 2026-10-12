@@ -190,7 +190,7 @@ def offline_nli_model() -> Iterator[None]:
     replaces that one seam with the deterministic, offline lexical model.
     A test that needs a real cross-encoder injects one.
     """
-    from agent_platform.evals.entailment import LexicalEntailmentModel
+    from agent_platform.scoring.entailment import LexicalEntailmentModel
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr("agent_platform.llm.local_nli.shared_local_nli_model", LexicalEntailmentModel)

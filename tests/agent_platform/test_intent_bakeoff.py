@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_platform.evals.intent_bakeoff import (
+from agent_platform.evals.intent.scoring import (
     LabelledMessage,
     Prediction,
     predict,

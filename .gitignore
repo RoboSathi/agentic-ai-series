@@ -41,8 +41,12 @@ local_models/*
 # Patches
 *.patch
 patches/*
-# Eval reports (generated from data/evals.duckdb)
-reports/
+# Eval reports: one per framework per run (`make eval <agent>`), rebuilt from the eval store;
+# each agent's src/<pkg>/evals/reports/ folder is kept, its contents are not.
+**/reports/*
+!**/reports/.gitkeep
+# Promptfoo's raw JSON per red-team run (ingested into the eval store).
+src/*/data/evals/promptfoo/
 
 # Analytics mart (Parquet, regenerated).
 data/analytics/

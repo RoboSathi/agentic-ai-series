@@ -3,7 +3,7 @@
 Built once into a template file (schema, the refunds ledger, the golden
 seed, then this agent's runtime policy), and copied per case so no case
 can see another's refunds. The same builder serves `make dummy-data` and
-`make eval-generate`, so the two can never disagree about the fixture.
+`make eval`, so the two can never disagree about the fixture.
 
 The oracle reads the fixture's *facts* (who owns what, what each order
 totals, what the limit is) straight from the seed, never through the
@@ -11,6 +11,7 @@ agent's own repositories — grading the agent with its own code would
 check nothing.
 """
 
+import json
 import shutil
 import sqlite3
 from pathlib import Path
@@ -27,6 +28,7 @@ from customer_support_agent.persistence.schema import ensure_schema
 _POLICY_SEED = Path(__file__).resolve().parents[1] / "dummy_data" / "agent_policy_seed.sql"
 _AGENT_ID_TOKEN = "__AGENT_ID__"
 _AGENT_VERSION_TOKEN = "__AGENT_VERSION__"
+_ORDER_KEY = "order_id"
 
 
 class FixtureOrder(BaseModel):
@@ -53,6 +55,8 @@ class FixtureFacts(BaseModel):
     direct_limit_cents: int
     seeded_refund_ids: list[str]
     seeded_review_ids: list[int]
+    # Orders a review was already waiting on before the case began.
+    seeded_review_orders: list[int]
 
     def user(self, code: str) -> FixtureUser:
         return self.users[code]
@@ -123,21 +127,25 @@ class EvalFixture:
                 (REFUND_ACTION_CLASS,),
             ).fetchone()
             refund_ids = [row[0] for row in connection.execute("SELECT refund_id FROM refunds")]
-            review_ids = [
-                row[0] for row in connection.execute("SELECT id FROM platform_review_queue")
-            ]
+            reviews = list(connection.execute("SELECT id, detail FROM platform_review_queue"))
         return FixtureFacts(
             users={user.user_code: user for user in users},
             orders={order.order_id: order for order in orders},
             direct_limit_cents=int(limit[0]) if limit else 0,
             seeded_refund_ids=refund_ids,
-            seeded_review_ids=review_ids,
+            seeded_review_ids=[row[0] for row in reviews],
+            seeded_review_orders=[_review_order(row[1]) for row in reviews],
         )
 
     def _stale(self) -> bool:
         built = self._template.stat().st_mtime
         sources = (self._settings.resolved_fixture_seed_path, _POLICY_SEED)
         return any(source.stat().st_mtime > built for source in sources)
+
+
+def _review_order(detail: str) -> int:
+    """The order a seeded review item is about (its `detail` JSON)."""
+    return int(json.loads(detail)[_ORDER_KEY])
 
 
 def policy_seed_sql() -> str:

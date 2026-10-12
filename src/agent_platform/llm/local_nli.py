@@ -12,14 +12,14 @@ from functools import cache
 
 from agent_platform.config import get_settings
 from agent_platform.config.settings import EncoderSettings
-from agent_platform.evals.entailment import (
+from agent_platform.llm.local_models import LocalSequenceClassifier
+from agent_platform.logging import get_logger
+from agent_platform.scoring.entailment import (
     EntailmentModel,
     EntailmentResult,
     LexicalEntailmentModel,
     entailment_from_probabilities,
 )
-from agent_platform.llm.local_models import LocalSequenceClassifier
-from agent_platform.logging import get_logger
 
 
 class LocalNliModel:
