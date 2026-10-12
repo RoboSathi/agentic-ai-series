@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from agent_platform.verification.acceptance import CheckVerdict
+from agent_platform.runtime.verification.acceptance import CheckVerdict
 from research_agent.domain.rubric import Rubric
 
 Outcome = Literal["PASS", "PARTIAL", "FAIL"]

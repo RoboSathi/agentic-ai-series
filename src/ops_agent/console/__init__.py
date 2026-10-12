@@ -3,9 +3,9 @@
 from collections.abc import Mapping
 from typing import Any
 
-from agent_platform.commands.skills import SkillsCommand
-from agent_platform.commands.types import Command
 from agent_platform.config import FeatureSet
+from agent_platform.interface.commands.skills import SkillsCommand
+from agent_platform.interface.commands.types import Command
 from agent_platform.memory.procedural.skills import SkillCatalog
 from agent_platform.observability import StageReporter
 from ops_agent.config import get_agent_settings

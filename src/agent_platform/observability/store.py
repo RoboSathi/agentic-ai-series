@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_platform.config import get_settings
-from agent_platform.persistence.types import ExecutionResult
+from agent_platform.core.persistence.types import ExecutionResult
 
 
 class DuckDbObservabilityStore:

@@ -16,9 +16,9 @@ from typing import NamedTuple
 
 from agent_platform.config import get_settings
 from agent_platform.context.types import Chunk
+from agent_platform.core.primitives.money import Money, money_or_none
 from agent_platform.hallucination_check.claims import money_pattern, specifics
 from agent_platform.hallucination_check.states import StateFinding, StateModel
-from agent_platform.primitives.money import Money, money_or_none
 
 # How a refused or failed tool call is written into evidence. It grounds a
 # statement that the call was refused, never one that its effect happened.

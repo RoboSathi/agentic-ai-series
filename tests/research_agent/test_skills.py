@@ -10,11 +10,11 @@ from types import SimpleNamespace
 import pytest
 
 from agent_platform.config import get_settings
+from agent_platform.core.persistence import SqliteConnectionPool
 from agent_platform.guardrails.guards import PydanticValidator
 from agent_platform.llm.types import Message
 from agent_platform.memory import MemoryFact, Provenance, SkillStore
 from agent_platform.memory.procedural.skills import build_agent_instructions
-from agent_platform.persistence import SqliteConnectionPool
 from research_agent.config import get_agent_settings
 from research_agent.graph.run_nodes import RunNodes
 from research_agent.llm.structured import StructuredCaller

@@ -17,12 +17,10 @@ from agent_platform.audit import AuditLedger, create_audit_ledger
 from agent_platform.config import FeatureSet, active_features, get_settings
 from agent_platform.context import ContextWindow, FiveStagePipeline, WorkingMemoryContextSource
 from agent_platform.context.factory import build_context_management
-from agent_platform.executor import RegistryToolHandler, ToolExecutorImpl
+from agent_platform.core.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agent_platform.gatekeeper import CumulativeLedger, Gatekeeper, GatekeeperImpl
 from agent_platform.hallucination_check.confidence import ConfidenceCheck
-from agent_platform.llm.client import LLMClient, create_llm_client
-from agent_platform.loop_control import LoopBudget, build_loop_governor
-from agent_platform.mcp import (
+from agent_platform.knowledge.mcp import (
     ConfiguredGovernancePolicy,
     GovernedMcpToolSource,
     McpToolSource,
@@ -30,6 +28,8 @@ from agent_platform.mcp import (
     SdkMcpTransport,
     server_spec,
 )
+from agent_platform.llm.client import LLMClient, create_llm_client
+from agent_platform.loop_control import LoopBudget, build_loop_governor
 from agent_platform.memory.procedural.skills import build_agent_instructions
 from agent_platform.memory.procedural.store import SkillStore
 from agent_platform.memory.working import WorkingMemoryStore
@@ -40,8 +40,8 @@ from agent_platform.observability.model_observer import StageReporterModelObserv
 from agent_platform.observability.store import DuckDbObservabilityStore
 from agent_platform.observability.types import utc_now
 from agent_platform.observability.units import OutcomeCatalog, declare_screens
-from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agent_platform.resilience.dead_letter_queue import DeadLetterQueue
+from agent_platform.runtime.executor import RegistryToolHandler, ToolExecutorImpl
 from agent_platform.security import MessageScreener, PromptInjectionGuard, SecuritySuite
 from agent_platform.security.auth.auth import Authorizer
 from agent_platform.security.auth.policy import AgentPolicy

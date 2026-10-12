@@ -14,9 +14,9 @@ from decimal import Decimal
 from functools import cache
 
 from agent_platform.config import get_settings
+from agent_platform.core.primitives.pii_tokens import bare_token, framed_token
 from agent_platform.hallucination_check.types import AtomicClaim, ClaimClass
 from agent_platform.llm.embeddings import tokenize
-from agent_platform.primitives.pii_tokens import bare_token, framed_token
 
 # Sentence boundaries, and the connectives that join two claims into one
 # sentence — both produce claims that must be checked separately.

@@ -23,6 +23,7 @@ from typing import Any
 
 from agent_platform.audit import AuditLedger
 from agent_platform.config import get_settings
+from agent_platform.core.persistence import PlatformStore
 from agent_platform.logging import get_logger, instrument
 from agent_platform.memory.deterministic import DeterministicClaims, normalize_key
 from agent_platform.memory.episodic.memory import EpisodicStore
@@ -45,7 +46,6 @@ from agent_platform.memory.types import (
 )
 from agent_platform.memory.working.memory import WorkingMemoryStore
 from agent_platform.memory.write_pipeline import MemoryReporter, MemoryWritePipelineImpl
-from agent_platform.persistence import PlatformStore
 
 # One cascade candidate: the fact, its relevance, and the tier that found it.
 _Hit = tuple[MemoryFact, float, RecallTier]

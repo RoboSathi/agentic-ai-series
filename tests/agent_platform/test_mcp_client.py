@@ -13,7 +13,7 @@ from agent_platform.analytics import ParquetExporter
 from agent_platform.analytics.source_db import SourceDatabase
 from agent_platform.config import get_settings
 from agent_platform.config.settings import McpServerSettings, McpToolEnvelope
-from agent_platform.mcp import (
+from agent_platform.knowledge.mcp import (
     ConfiguredGovernancePolicy,
     GovernedMcpToolSource,
     McpServerSpec,
@@ -21,8 +21,8 @@ from agent_platform.mcp import (
     SdkMcpTransport,
     server_spec,
 )
-from agent_platform.mcp.client.schema import arguments_model
-from agent_platform.mcp.server.analytics import build_server
+from agent_platform.knowledge.mcp.client.schema import arguments_model
+from agent_platform.knowledge.mcp.server.analytics import build_server
 from agent_platform.observability.facts import DuckDbFactStore, ModelCallFact
 from agent_platform.observability.store import DuckDbObservabilityStore
 from agent_platform.tools import NamespacedToolRegistry

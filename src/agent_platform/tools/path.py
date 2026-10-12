@@ -25,13 +25,13 @@ from pydantic import BaseModel, ConfigDict
 
 from agent_platform.audit import STANDING_FIELD, AuditEntry, AuditLedger
 from agent_platform.audit.types import Decision
-from agent_platform.executor import ApprovedToolCall, ExecutionOutcome, ToolExecutor
 from agent_platform.gatekeeper import Gatekeeper
 from agent_platform.gatekeeper.types import AuthorityContext, AuthorityDecision
 from agent_platform.llm.types import ModelToolCall
 from agent_platform.logging import get_current_trace_id, get_logger
 from agent_platform.loop_control.types import TOOL_STAGE, LoopVerdict
 from agent_platform.observability.facts import ToolCallFact, fact_store
+from agent_platform.runtime.executor import ApprovedToolCall, ExecutionOutcome, ToolExecutor
 from agent_platform.tools.registry import NamespacedToolRegistry
 from agent_platform.tools.types import ToolCall
 

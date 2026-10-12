@@ -15,7 +15,7 @@ paying for a completion to read a table aloud is waste.
 from pydantic import BaseModel
 
 from agent_platform.context.types import Chunk
-from agent_platform.presentation import Align, box_table
+from agent_platform.interface.presentation import Align, box_table
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.config.settings import OrderDetailPhrases
 from customer_support_agent.domain.models import Order, User

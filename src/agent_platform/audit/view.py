@@ -20,9 +20,9 @@ from pydantic import BaseModel
 from agent_platform.audit.ledger import AuditReader
 from agent_platform.audit.types import STANDING_FIELD, AuditEntry, Decision
 from agent_platform.config import get_settings
+from agent_platform.interface.presentation.text_table import Align, box_table
+from agent_platform.interface.presentation.text_tree import TreeNode, tree_lines
 from agent_platform.observability.types import utc_now
-from agent_platform.presentation.text_table import Align, box_table
-from agent_platform.presentation.text_tree import TreeNode, tree_lines
 
 
 class AuditQuery(BaseModel):

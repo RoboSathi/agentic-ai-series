@@ -1,1428 +1,673 @@
-# LLD — Agentic AI Systems Platform (`agentic-harness-core`)
+# LLD — Agentic Harness Platform
 
-**Companion documents:** `PRD.md`, `HLD.md`, `Program_Design.md`.
+Component-level design: for each package, what it owns, its public interface, its
+configuration, and its seams. Part A is the platform (`src/agent_platform/`), in the order a
+reader should meet it; Part B is each agent; Part C the invariants no single module owns.
+Architecture is in [HLD.md](HLD.md); the reasons in [ADR.md](ADR.md).
 
-**Conventions used throughout this document**
+Every package's own `README.md` is a short pointer to its section here.
 
-- Interfaces are given as Python `Protocol`/`ABC` sketches — signatures
-  only, not implementations. A coding agent implements the body per
-  `Program_Design.md`'s TDD discipline (test first, ≤20-line methods).
-- Every subsystem states: **Purpose**, **Interfaces**, **Key classes**,
-  **LLD patterns applied**, **Sequence/flow**, **Config surface**,
-  **Test strategy**.
-- `[new]` marks a package not present in the uploaded walking-skeleton
-  code — the interface is still normative; the coding agent creates the
-  package under `agent_platform/<name>/`.
-- All concrete classes take their dependencies via constructor injection;
-  no subsystem imports a concrete implementation of another subsystem's
-  interface directly.
+**Contents**
 
----
-
-## 1. `config`
-
-**Purpose.** Single source of truth for all values; nothing hardcoded
-anywhere else in the repo. Tier-2 semantics: a mutable in-memory
-singleton, read live (no caching) on every check, so the TUI can flip a
-feature flag mid-run with no restart.
-
-**Interfaces**
-
-```python
-class FeatureToggle(Protocol):
-    def is_enabled(self, feature: str, sub_feature: str | None = None) -> bool: ...
-    def set(self, feature: str, sub_feature: str | None, value: bool) -> None: ...
-
-class AppConfig(BaseSettings):
-    """One pydantic-settings model per bounded context (LLMConfig,
-    GatekeeperConfig, MemoryConfig, ...), composed into a root AppConfig.
-    Env var convention: SECTION__FIELD, e.g. LLM__PROVIDER=nvidia_nim.
-    Exception: nvidia_api_key, hf_api_key stay bare lowercase."""
-```
-
-**Key classes.** `ConfigSingleton` (module-level instance, not a class
-attribute pattern — avoids hidden mutable state across tests), one
-`*Settings` model per subsystem.
-
-**LLD patterns applied.** Singleton (deliberately, and only here —
-everywhere else DI is used instead); Facade (`AppConfig` aggregates
-per-subsystem settings).
-
-**Sequence.** N/A — read/write is O(1), no cross-module flow beyond a
-plain `config.is_enabled(...)` call at each governance checkpoint.
-
-**Config surface.** Self-describing — this *is* the config surface.
-
-**Test strategy.** Unit: every default value has an explicit test (no
-implicit defaults trusted); toggling a feature off must be observable by
-every module documented as reading it — verified via one integration test
-per governance feature listed in `PRD.md` §7.
+- Part A — Platform
+  [config](#a1-config) · [logging](#a2-logging) · [core](#a3-core-primitives-persistence) ·
+  [llm](#a4-llm) · [judge](#a5-judge) · [scoring](#a6-scoring) · [tools](#a7-tools) ·
+  [loop_control](#a8-loop_control) · [runtime](#a9-runtime-executor-verification-scheduling) ·
+  [gatekeeper](#a10-gatekeeper) · [durability](#a11-durability) · [security](#a12-security) ·
+  [deterministic_checks](#a13-deterministic_checks) · [intent](#a14-intent) ·
+  [context](#a15-context) · [memory](#a16-memory) · [hallucination_check](#a17-hallucination_check) ·
+  [guardrails](#a18-guardrails) · [resilience](#a19-resilience) ·
+  [observability](#a20-observability) · [audit](#a21-audit) · [review](#a22-review) ·
+  [knowledge](#a23-knowledge-web-mcp-artifacts) · [interface](#a24-interface-tui-commands-presentation-host) ·
+  [evals](#a25-evals) · [analytics](#a26-analytics)
+- Part B — Agents
+  [Customer Support](#b1-customer-support-agent) · [Research](#b2-research-agent) ·
+  [Ops Analyst](#b3-ops-agent)
+- [Part C — Cross-subsystem invariants](#part-c--cross-subsystem-invariants)
 
 ---
 
-## 2. `logging`
+# Part A — Platform
 
-**Purpose.** Structured, per-subsystem, colored file logging — the
-authoritative record independent of the TUI.
+## A1. config
 
-**Interfaces**
+**Owns.** Every value in the repo. Loads the layered YAML, validates it into typed settings,
+and owns the feature tree that decides which harness controls an agent is given.
 
-```python
-class StructuredLogger(Protocol):
-    def bind(self, subsystem: str) -> "StructuredLogger": ...
-    def event(self, level: Level, message: str, **fields: Any) -> None: ...
-```
+- **Layers** (deep-merged, later wins): platform `config/config.yaml` → agent overlays
+  (`AGENTIC_OVERLAYS`, `:`-separated; a profile is one more layer) → run overlays
+  (`use_overlay`) → `config/local.yaml` (gitignored) → `SECTION__FIELD` environment variables.
+  Mappings merge; scalars and lists replace (a list that merged element-wise could never be
+  shortened). YAML anchors and merge keys (`<<:`) are supported; `x-`-prefixed top-level keys
+  hold anchors only.
+- **Section** — one top-level key validated by one `YamlBackedSettings` class, env prefix
+  `SECTION__`. Bare provider keys (`nvidia_api_key`, `tavily_api_key`, `langchain_api_key`) are
+  plain env vars and never appear in a settings dump.
+- **Interface.** `get_settings()` / `reload_settings()` (the `AppConfig` singleton);
+  `YamlBackedSettings`; `use_overlay` / `clear_overlays` / `config_sources`; `FeatureSet`,
+  `active_features`, `set_active_features` (`features.py`); `resolve_path` / `REPO_ROOT`
+  (`paths.py` — paths resolve against the repo, never the CWD); `load_environment`
+  (`environment.py` — `.env` fills the process environment once; an exported variable wins);
+  `VersionManifest` (`versions.py` — independently versioned components).
+- **Feature tree.** The nine platform features (ADR P-07); an agent may declare its own
+  (the research agent's `rubric`, `reflection`, `independent_audit`, …). Read once in the
+  composition root. `/harness` moves the live `FeatureSet`; `/config` is read-only.
+- **Guard.** `tests/customer_support_agent/test_config_surface.py`: no YAML key that no
+  settings model declares.
 
-**Key classes.** `LoggerFactory` (one per subsystem, color-coded),
-`LogRecord` (typed, includes trace_id when available).
+## A2. logging
 
-**LLD patterns applied.** Factory (`LoggerFactory.for_subsystem(name)`);
-Decorator (a `@logged` decorator used during the Phase-0 walking-skeleton
-to make every stub self-log without duplicating boilerplate).
+**Owns.** Structured per-subsystem logs to files (always) and the console (optional), and the
+`@instrument` decorator that records what a traced call was given and returned — in full,
+never truncated by default.
 
-**Config surface.** `LOGGING__LEVEL`, `LOGGING__DIR`,
-`LOGGING__PER_SUBSYSTEM_COLOR` (bool, TUI convenience only).
+- **Interface.** `get_logger(subsystem)`, `log_directory()` (`core.py`); `@instrument`,
+  `@logged` (`decorators.py`); `get_current_trace_id` / `set_current_trace_id`
+  (`trace_context.py`).
+- **Layout.** `logs/<agent id>/<subsystem>.log`; `run_label` adds a sub-folder for runs that
+  are not the live agent. `payload_max_chars: 0` keeps everything.
+- **Config.** `logging:` — levels, console/file switches, `dir`, `file_format`,
+  `payload_max_chars`, rotation.
 
-**Test strategy.** Unit: log file rotation, per-subsystem file routing,
-structured-field serialization. No integration test needed — every other
-module's integration test implicitly exercises this.
+## A3. core (primitives, persistence)
+
+**`core/primitives`** — layer-0 value types, no dependency on any other platform package:
+`Money` (integer cents; never a float), `canonical_hash` / `text_hash`, `aes_key`, PII token
+shapes, an injectable clock.
+
+**`core/persistence`** — thread-safe SQLite access and the platform's own per-agent tables
+(agent identity, permissions, budgets, review queue, PII vault). An agent's business tables
+and repositories live in the agent.
+
+- **Interface.** `SqliteConnectionPool` (`execute`, `execute_many`, `execute_script`,
+  `query_one`, `iter_rows`); `PlatformStore` (Protocol), `SqlitePlatformStore`; `Repository`
+  (Protocol); `IN_MEMORY`.
+- **Config.** `persistence.db_path` — a neutral default; each agent overlays
+  `db/<package>/agent.db`.
+- **Seam.** A pool is injectable everywhere (`build_agent(pool=...)`); tests use `:memory:`.
+
+## A4. llm
+
+**Owns.** The only place a model provider is called.
+
+- **Clients.** `LLMClient` (ABC: `complete`, `health_check`, `model`, `tier`);
+  `OpenAICompatibleClient` / hosted and grammar-constrained adapters (`llm.providers.<key>.adapter`);
+  `CascadingLLMClient`; `ResilientLLMClient` (one `ResilientCaller` per model).
+- **`ModelChainBuilder`** (`chain.py`) — the only place a chain is composed: per-model
+  resilience, hedged backups (`hedge_after_seconds`), `RecordedClient` (writes a
+  `fact_model_call` per attempt), `SteppedClient` (counts steps), the PII boundary when `pii`
+  is declared. `llm.chain` configures the default chain; `llm/roles.py` (`RoleModelRouter`)
+  resolves an agent's named roles and refuses two roles that must differ resolving to one model.
+- **Embeddings and encoders.** `HostedEmbeddingClient`, `HashingEmbeddingClient` (offline);
+  local NLI (`local_nli.py`), local reranker (`local_reranker.py`), local summarizer, local
+  Laya, local e5 embeddings — all through the shared `local_models.py` loader, which downloads
+  into `local_models/` on first use.
+- **HTTP.** `create_http_client` / `create_sdk_http_client` (`http.py`): `httpx` clients whose
+  transport is the cross-process rate limiter.
+- **Metering.** `llm/metering.py` — the context-variable usage sink (ADR P-23).
+- **Prompts.** `llm/prompt.py` (`PromptBuilder`) builds a request from named sections; drawn as
+  the CONTEXT card.
+- **Probes.** `local_probes.py` (`make models`), `cli.py` (`make model-check`, `BENCH=1`).
+- **Config.** `llm:` — `provider`, `providers.<name>` (base URL, model, timeout, cost rates,
+  key env vars), `chain`, `logprobs`, `tokenizer`, `context_windows`, `embedding`, `encoders`,
+  `intent_classifier`, `check`. Agents add `llm.roles`.
+
+## A5. judge
+
+**Owns.** The LLM judge every eval grader and the research audit build on.
+
+- `create_judge_client()` — the `judge:` model and its backups, through `ModelChainBuilder`.
+- `LlmJudge[Request, Answer, Verdict]` — Template Method: `judge(request)` calls the `_answer`
+  hook, then `verdict`; any failure goes to `abstain` (never a silent pass or fail);
+  `models_used()` says who judged.
+- `ModelJudge` — implement `render(request) -> messages`; the platform judge model, the grading
+  rules (`prompts/judge_rules.md`: evidence only, reason before verdict, quote what earns a pass,
+  say so when undecidable) and bounded schema repair are supplied.
+- `ask_validated` / `ask_text` — one judge call for a framework with its own loop (DeepEval).
+- `JudgeCalibrator` — Cohen's κ against a second rater.
+- **Config.** `judge:` — `provider`, `model`, `fallbacks`, `timeout_seconds`,
+  `hedge_after_seconds`, `temperature`, `max_tokens`, `max_evidence_chars`, `validation_mode`,
+  `kappa_acceptable`.
+
+## A6. scoring
+
+**Owns.** The NOLLM scoring cascade — runtime infrastructure, not an eval. Retrieval relevance,
+tool fitness, grounding and memory consolidation resolve claims here, cheapest tier first:
+exact assertion → deterministic rule → embedding similarity → NLI entailment → calibrated LLM
+judge → human adjudication. A tier that cannot decide declines so the next may try.
+
+- `create_scoring_cascade()`, `NollmScoringCascadeImpl` (`nollm_scorer_ratio`, `tier_counts`);
+  one scorer class per tier; `EntailmentModel`, `LexicalEntailmentModel` (offline),
+  `create_entailment_model`.
+- A leaf package: imports configuration, embeddings and logging, nothing that imports it.
+- Tier 5 declines until a `CalibratedJudge` is wired in.
+
+## A7. tools
+
+**Owns.** Typed tool definitions in a namespaced registry, retrieval-based selection, and the
+single tool path.
+
+- `ToolRegistry` / `NamespacedToolRegistry`; `ToolDefinition`, `ToolCall`, `ToolResult`,
+  `ToolHandler`, `ToolSource` (`types.py`).
+- `ToolRetrievalSelector` — offers a turn only relevant tools, none below a relevance floor.
+- **Model names** (`names.py`): the model and the cards see `process_refund`, never
+  `support__process_refund`; qualified names stay in policy, audit, facts and evals.
+- **`ToolPath`** (`path.py`) — every model-proposed call: registry (`unknown`, `invalid`) →
+  loop governor (`duplicate`) → Gatekeeper (`not_offered`, `refused`) or UNGOVERNED → Executor
+  (`executed`: succeeded or failed). Records the stage reached as `fact_tool_call` (ADR P-11).
+- **Surface classes** — locked, editable, append-only, human-controlled.
+- **Config.** `tools:` — `enabled`, `selection_k`, `selection_min_score`, `model_names`.
+
+## A8. loop_control
+
+**Owns.** One authority over every agent's loop: `LoopGovernor`.
+
+- Governs the step cap, budgets (tool calls, tokens, cost, wall clock), a deadline that
+  cancels a call still running, repeat detection (exact → canonical → semantic), cycle
+  detection, convergence (new evidence per step) and a historical baseline.
+- Answers with one contract, `LoopVerdict`: `continue | suppress | finalize | abort | pause`,
+  the layer that decided, its reason, every budget line and every check. Routers read only
+  its decision (`route_on_verdict`); every agent draws the same LOOP CONTROL card from it.
+- **Lifecycle.** `begin_turn` → per step `begin_step` → `call_limits` / `deadline` →
+  `after_model` → per action `before_action` → `after_action` → `finish(outcome)`;
+  `restore(state)` continues a checkpointed run.
+- `TerminalOutcome`: `answered | finalized_on_cap | aborted | cancelled | escalated | failed`.
+- `LoopState` (the governor's whole memory, kept in the agent's checkpointed state),
+  `LoopStateMachine` (legal phase transitions).
+- `BudgetGuard` (`budget.py`) — synchronous reserve → commit/release on named counters plus a
+  wall clock, for parallel workers.
+- `build_loop_governor(budget, facts=, agent_id=)` — composition root only. Caps are each
+  agent's own config, mapped onto `LoopBudget`.
+
+## A9. runtime (executor, verification, scheduling)
+
+**`runtime/executor`** — the deterministic execution boundary. Runs a tool call the
+Gatekeeper approved, and nothing else: deadline, idempotency, lifecycle events and an audit
+hook around the handler. Only an `ApprovedToolCall` reaches it. Always on — with the
+Gatekeeper withheld the call carries `ungoverned` (standing UNGOVERNED).
+`ToolExecutor` (Protocol), `ToolExecutorImpl`, `current_execution_key()` (the key a call runs
+under, for a handler whose effect can later be voided), `RegistryToolHandler`
+(self-implementing tools such as MCP's).
+
+**`runtime/verification`** — did the side effect happen? `ReadBackVerifier` reads back what
+should have changed through an agent's `EffectSource` and compares it with the
+`IntendedEffect`; a result that cannot be verified never becomes authoritative evidence.
+`acceptance.py` — `AcceptanceCheckRegistry` of named checks by kind (deterministic, NLI,
+judge), used by the research audit.
+
+**`runtime/scheduling`** — dependency-aware concurrent scheduling. `TaskGraph` (validation,
+cycle finding, waves) and `AsyncDagScheduler` (bounded concurrency; a node's failure blocks its
+dependents and nothing else).
+
+## A10. gatekeeper
+
+**Owns.** Whether the agent has the **authority** to run the exact call the model proposed.
+Not whether the action is correct for the record (the tool checks that, once, with a
+conditional write) and not whether the input is safe (screening does that). Calls no model,
+touches no database per call, audits every decision (ADR P-09).
+
+**Questions, in order; the first failure decides.** Is the agent enabled → was the tool offered
+this turn → does the call target the record the conversation established (**mandate**) → does
+the role hold the tool's permission (**RBAC**) → does the instruction's source rank allow it
+(**authority hierarchy**) → is it within the agent's own bounds (its business rules, e.g. a
+refund limit) → where a deployment has one, the cumulative budget.
+
+| Standing | When | Effect |
+|---|---|---|
+| VOID | denied | nothing runs, nothing is queued |
+| RATIFIABLE | escalated (beyond the agent's bounds) | queued for a person; approval is RATIFIED |
+| VOIDABLE | allowed, and the tool declares `voidable` | runs; undoable until it settles |
+| VALID | allowed | runs |
+| UNGOVERNED | the Gatekeeper is withheld | runs through the Executor; audited as such |
+
+- **Interface.** `Gatekeeper` (Protocol), `GatekeeperImpl`; `AuthorityHierarchyResolver`,
+  `RoleAuthorizer` (`hierarchy.py`); `CumulativeLedger` (`ledger.py`, the structuring defence);
+  `DeterministicBusinessRules` (Protocol, `AllowAllBusinessRules`); mandates (`mandate.py`);
+  `Tier2Advisor` (a semantic advisor that can flag, never allow); `CheckReport`,
+  `AuthorityContext`, `AuthorityDecision`, `Verdict`, `Standing`.
+- **Config.** `gatekeeper:` — `authority_grant_max_rank`, `authority_hierarchy`, `ledger`,
+  `mandate`, `tier2`, `surface_policy`. Built only when `features.gatekeeper`.
+- **Seam.** An agent supplies its business rules and mandate policy.
+
+## A11. durability
+
+**Owns.** Runs that survive failure. Every turn is a checkpointed LangGraph thread; a failed
+node resumes without repeating committed side effects; a human-in-the-loop pause is the same
+mechanism.
+
+- `create_checkpointer(state_types=, path=)` → `SqliteCheckpointer` (AES-encrypted with
+  `LANGGRAPH_AES_KEY`; sync SQLite bridged for async).
+- `DurableGraphRunner` — `start`, `resume(thread, decision)`, `abort`, `values`, `history`.
+- `RunRegistry` — run records, `resumable`, `recover_orphans`, `purge_expired`.
+- `hitl.await_decision` — the interrupt a graph pauses on; `IsolatedGraphRunner`
+  (`isolated.py`) — a sub-graph that accepts only declared input keys
+  (`UndeclaredInputError`).
+- **Run controls** (`controls.py`, `stop_report.py`): Stop prints the agent's state (each
+  agent supplies `describe_progress(values)`), then Resume or Abort; Abort keeps the run's
+  record. Every `DurableAgent` gets them.
+- **Config.** `durability:` — `db_path` (agent overlays `db/<package>/checkpoints.db`), `mode`,
+  `retention_days`, `preview_chars`, `encryption`.
+
+## A12. security
+
+**Owns.** Who is acting with what permissions, PII, prompt injection and content moderation —
+each deterministic first, paired with an optional hosted guard and its fallbacks.
+
+- `SecuritySuite` (`suite.py`) — one facade over every control; `MessageScreener`
+  (`screening.py`) — the shared front-door screen.
+- **Auth** (`auth/`): `Authorizer`, `AgentPolicy` (role, authority rank, permissions,
+  per-action and window limits — read from the agent's database), `AgentPolicyRepository`,
+  `Principal`, `Permission`.
+- **PII** (`pii/`): `PIIFilterImpl` (detect, redact, minimise) over Presidio + local spaCy,
+  regex recognizers as fallback; `PiiBoundary` (tokenises provider traffic); the vault
+  (`HMAC` tokens, AES-GCM values, retention) and `reveal` (`make pii-reveal`, audited first).
+- **Prompt injection** (`prompt_injection/`): phrase rules and instruction/data separation
+  (untrusted text wrapped in delimiters), `HostedJailbreakGuard`, `ChatJailbreakGuard` (a chat
+  model prompted as the classifier).
+- **Content moderation** (`content_moderation/`): term rules, `HostedContentSafetyGuard`.
+- `GuardChain` — a guard and its fallbacks asked in turn; the first verdict that is not
+  `unavailable` wins. `security.guards.fail_open_on_unavailable: false` blocks the turn only
+  when every one is unavailable.
+- **Config.** `security:` — `auth`, `pii` (engine, entities, vault), `prompt_injection`,
+  `content_moderation`, `guards`. Stages exist per `features.pii`, `prompt_injection`,
+  `content_moderation`.
+
+## A13. deterministic_checks
+
+**Owns.** The contract for checks that run before any model is asked: does the thing named
+exist, is it the caller's, is the request possible? A request in, findings out; every
+concrete checker belongs to an agent (ADR P-08).
+
+- `DeterministicChecker` (Protocol): `check(request) -> DeterministicCheckResult`;
+  `DeterministicCheckRequest` (`subject_id`: opaque), `DeterministicCheckFinding`
+  (applicable, passed, reason, evidence), `DeterministicCheckResult`.
+- No config section; the stage exists when `features.deterministic_checks` is on.
+
+## A14. intent
+
+**Owns.** Running a classifier and reporting candidates with scores. Which intents exist,
+their tools and thresholds are an agent's business.
+
+- `IntentClassifierInterface` (Protocol); `HuggingFaceIntentClassifier` (a fine-tuned
+  sequence classifier through a label mapping); `LayaIntentClassifier` (a decision model asked
+  one choice question over the agent's label descriptions, injected at build time);
+  `create_intent_classifier(choices, instructions)`.
+- `IntentAssessment` (chosen intent, disposition `supported | clarify | out_of_scope`,
+  candidates, source), `IntentCandidate`.
+- **Config.** `llm.intent_classifier:` — `enabled`, `provider` (`huggingface_local` |
+  `laya_local`), model, `local_model_dir`, `download_if_missing`, `max_length`, `laya:`.
+  Load before an event loop opens (macOS tokenizer start-up).
+
+## A15. context
+
+**Owns.** What the model is handed: which candidates enter, how they rank, what is reduced,
+offloaded or isolated to fit the token budget, and whether the result shows a known failure.
+
+- **Pipeline.** `FiveStagePipeline`: gather → score → fit (strategies, then cut) → format →
+  order. `ContextAssembler`; `CandidateSource` (Protocol) — e.g.
+  `WorkingMemoryContextSource`, the knowledge-base source.
+- **Strategies** (`strategies.py`, `StrategySelector`): consolidate, isolate, cache (always),
+  then retrieve, offload, reduce (while over budget). Offloaded text waits in session working
+  memory and comes back through the `fetch_offloaded_context` tool.
+- **Retrieval.** `LexicalRetriever` (BM25), `DenseRetriever`, `HybridRetriever`,
+  `GraphRetriever`; `CrossEncoderReranker` (local).
+- **Trust.** A chunk's provenance class (`system`, `verified`, `retrieved`, `user`, `model`)
+  decides who wins a clash.
+- **Failure detection** (`failure/`, one module per mode): poisoning (injection, or an
+  unverified claim a verified source contradicts — prose facts only), clash (local NLI),
+  distraction (similarity to the task), confusion (near-copies, too many tools), rot (quality
+  falling as the window grows).
+- **Config.** `context:` — budget, retrieval, rerank, strategies, similarity, trust,
+  `failure_detection`. Exists per `features.context` (+ `rerank`, `failure_detection`).
+
+## A16. memory
+
+**Owns.** The four CoALA stores — working, episodic, semantic, procedural — all real, plus
+governed writes, dreams, skills, a deterministic recall tier and document RAG.
+
+- **Files** (`files/`, ADR P-13): `MemoryDirectory`, frontmatter records under `.history/`,
+  regenerated views, `MEMORY.md` per store, a derived FTS5 index. Root per agent:
+  `data/<package>/memory/`.
+- **Stores.** `WorkingMemoryStore` (this conversation), `EpisodicStore` (what happened),
+  `SemanticStore` (what is true; also the knowledge index), `SkillStore` (how to do things).
+- **Governance.** `MemoryFacade` (the governed entry point); `MemoryWritePipelineImpl`:
+  extract → classify → provenance → conflict → confidence → authorize → route (auto-commit,
+  curator queue, discard); `MemoryCommand`, `MemoryPrincipal`, `MemoryAuthorizer`. Categories
+  that may never be written from conversational assertion are configured.
+- **Dreams** (`dream/`): `DreamEvent`, `FileDreamInbox` (`pending/` → `consolidated/`),
+  `TurnRecorder`, `Dream`, `MemoryProfile` (three consolidators; `MemoryProfile.default()`),
+  `RecurringSignalSkills`. Composition for any agent is in `interface/host/memory.py`.
+- **Skills** (`procedural/skills/`, ADR P-12): `SkillDocument`, `SkillCatalog` (sync files →
+  store), `SkillSelector` (always ∪ triggered, else BM25, capped), `AgentInstructions`
+  (`select`, `announce`, `render`, `compose`), `build_agent_instructions`.
+- **RAG** (`semantic/rag/`): chunking, sqlite-vec + FTS index, reciprocal-rank fusion,
+  retriever, knowledge-base context source.
+- **Config.** `memory:` — `files`, `dream` (retention, `skill_threshold`, refusal markers,
+  learned-skill wording), `semantic.rag`, `write_pipeline`, provenance and retrieval weights,
+  `recency_half_life_days`, `governance`, `deterministic`. `skills:` — `profile_path`,
+  `skills_dir`, `selection`, `render.sections_sent`, `max_prompt_chars`.
+- **Commands.** `make dream | show-memory | clean-memory | memory-reindex <agent>`; `/memory`,
+  `/dream`.
+
+## A17. hallucination_check
+
+**Owns.** Claim-level grounding of a draft reply against the evidence the agent actually had
+(ADR P-16, P-17).
+
+- **Levels** (`levels.py`). Level 1, token confidence (`confidence.py`), for every agent; level
+  2, the agent's grounding. Both travel in the one `hallucination_check` event.
+- **Claims** (`claims.py`): split into atomic claims (a line break ends a claim; markdown
+  stripped; a lead-in line claims nothing), each classed `record | rule | conversational`.
+- **Resolution order.**
+  `record → direct check → fact ledger → state model → tool_result (NLI) → second opinion*`;
+  `rule → direct check* → fact ledger → policy → system prompt → memory (NLI)`;
+  `conversational → not checked`. (* only for a date or number no evidence contains; the second
+  opinion is confirm-only and opt-in.)
+- **Direct check** (`direct.py`): ids and amounts the record lacks, refused calls
+  (`NOT EXECUTED`). **Fact ledger** (`ledger.py`): typed facts from `fact_chunk`; comparisons
+  computed, flags affirmed or denied; any disagreement refutes (`FACT_MISMATCH`).
+  **State model** (`states.py`): the refund state machine, judged against the latest status.
+- **Evidence** (`evidence/`): `observations.py` turns tool results into one premise per
+  sentence in call order, plus passage windows (`tool_evidence`, `Observation`);
+  `ledger.py` / `validator.py` hold the append-only `EvidenceLedger` with the verbatim-span rule
+  (`VerbatimSpanValidator`, `NonEmptySpanValidator`).
+- **Resolver** (`resolver.py`): drops overtaken reads, then one consistent world — any current
+  entailment outvotes any contradiction.
+- `DetectionLadder`, `GroundingReasoningDiagnoser`, `TrustCalibrationTracker` (`checker.py`);
+  `ClaimConfirmer` (`confirmer.py`).
+- **Config.** `hallucination_check:` — thresholds, premise width (`passage_window`,
+  `joined_premise`), `tiers`, classifier vocabulary, refund state machine, `facts`,
+  `confidence`, `unsupported_is_hallucination`, `undetermined_marker`, `confirmer`.
+
+## A18. guardrails
+
+**Owns.** Model output conforms before it is used: validate against a schema, repair or reject,
+or constrain generation. `ResponseGuardrail` runs a customer-facing reply through the
+hallucination check with a bounded repair loop that fails closed to a person.
+
+- `PydanticValidator`, `LlmConstrainedGenerator`, `fail_loud` (`guards.py`);
+  `ResponseGuardrail`, `ResponseGuardrailResult`, `CustomerResponse` (`response.py`);
+  `OutputValidator`, `ConstrainedGenerator` (Protocols), `GuardrailViolationError`.
+- **Config.** `guardrails:` — `enabled`, `mode` (`reject | auto_repair | constrained`),
+  `max_repair_attempts`, `constrained_backend`. The grounding half exists per
+  `features.hallucination_guard`.
+
+## A19. resilience
+
+**Owns.** Nygard's patterns, implemented and composed by `ResilientCaller` in one fixed order:
+bulkhead → breaker → retry → timeout → operation.
+
+- `CircuitBreakerImpl`, `ExponentialBackoffRetry` (retrying a side effect without an
+  idempotency key is refused), `AsyncTimeoutGuard`, `ResourcePoolBulkhead`,
+  `SqliteIdempotencyGuard`, `CompensatingSaga` / `SagaWorkflow` (compensates in reverse, also on
+  cancellation), `InMemoryPubSub`, `DeadLetterQueue` (quarantines as review items),
+  `HedgedCall` (`hedge/`).
+- **Admission** (`admission.py`): a call's deadline pauses while it waits for a rate-limit slot
+  (ADR P-21).
+- **Rate limiter** (`rate_limiter/`): `SlidingWindowRateLimiter` over `SqliteRateWindowStore`
+  (shared by every process); `RateLimitedTransport` (httpx) and `RateLimitedHttpx2Transport`
+  (the OpenAI SDK); per-bucket monthly quotas (`QuotaExhaustedError`, never retried).
+- **Config.** `resilience:` — one block per pattern with its own `enabled`; `rate_limit`
+  (`store_path`, `window_seconds`, `buckets.<name>.{max_requests, hosts, monthly_quota}`).
+  `RPM=<n>` overrides the NVIDIA bucket for one invocation.
+
+## A20. observability
+
+**Owns.** Everything the harness reports about itself while it runs.
+
+- **Feed and cards.** `StageReporter`, `StatusEvent`, `InMemoryLiveStatusFeed`; shared card
+  field builders (`llm_fields.py`, `tool_fields.py`), `LoopReporter` ("Step N"), the CONTEXT
+  card (`context_card.py`), model-chain cards (`model_observer.py`). An empty field is dropped;
+  a `quiet` event is logged and counted but draws no card.
+- **Facts** (ADR P-24): `FactStore`, the Tier-1 fact models (`facts.py`); the turn bracket and
+  task API (`units.py`: `open_task`, `close_task`, `mark_cancelled`, `end_session`,
+  `OutcomeCatalog`); the check recorder (`checks.py`: `record_check`, `record_screen`,
+  `recorded_dependency`).
+- **Store.** `DuckDbObservabilityStore` — `db/agent_platform/observability.duckdb` (one writer).
+- **Tracing.** `LocalTracer`, `traced`; `LangSmithExporter`, `turn_trace` (ADR P-27).
+- **SRE.** `CostAggregatorImpl`, `SLORegistry` / `SLOTracker`, `LittlesLawQueueModel` (review
+  staffing), `PostmortemRegister`.
+- **Config.** `observability:` — `enabled`, `langsmith`, `persist_traces`, `slo_targets`,
+  `review_queue`, `llm_purposes`.
+
+## A21. audit
+
+**Owns.** The append-only decision trail: who asked, for what, under which authority and
+policy version, the verdict and its standing. It decides nothing; it remembers.
+
+- `AuditLedger` (Protocol: `record`, `count`, `by_decision`, `reconstruct(trace_id)`);
+  `SqliteAuditLedger`, the DuckDB ledger, `NullAuditLedger`; `create_audit_ledger`;
+  `AuditEntry`, `Decision` (`allow | deny | escalate`).
+- `AuditTrail` (`view.py`) merges the shared DuckDB ledger and the agent's own SQLite ledger;
+  one renderer serves `/audit` and `make audit <agent>` (filters `DECISION`, `STANDING`, `KIND`,
+  `SINCE`, `N`; `TRACE=<id>` as a tree). Tokens only.
+- **Config.** `audit:` — `enabled`, and the version stamps on every entry
+  (`policy_version`, `data_version`, `prompt_version`, `tool_schema_version`).
+
+## A22. review
+
+**Owns.** One human-review queue for every agent (ADR P-14).
+
+- `ReviewQueue` (`platform_review_queue` in the agent's database), `ReviewService`,
+  `ReviewHandler`, `ReviewError`; platform handlers `MemoryReviewHandler`, `QuarantineHandler`.
+- **Kinds.** Platform: `memory_fact`, `skill`, `quarantine`; an agent registers its own.
+- **Doors.** `/review` (`interface/commands/review.py`), `make review <agent>`
+  (`interface/commands/review_cli.py`), the Review screen (`ctrl+r`,
+  `interface/tui/review_screen.py`).
+- **Config.** `review:` — table, `min_comment_chars`, kinds, audit action and trace templates,
+  console reviewer, every word shown.
+
+## A23. knowledge (web, mcp, artifacts)
+
+**`knowledge/web`** — one gateway for agents' web access, live / record / replay.
+`create_web_gateway()`; `WebGateway` (observer-notified `search`, `fetch`); `SearchRouter`
+over `SearchProvider` adapters (`DuckDuckGoProvider`, `TavilyProvider`); `SearchCache` (on
+disk, 24 h); `HttpFetcher` with a reader fallback for JS-only pages; `FixtureStore`;
+`SearchResponse.provider_summary` (display only). Live calls go through `ResilientCaller` and
+the rate limiter. Config: `web:` (mode, providers, routing, cache dir, fixtures dir).
+
+**`knowledge/mcp`** — Model Context Protocol, by side of the wire (ADR P-25).
+`common/` (types, stdio), `client/` (`SdkMcpTransport`, `SdkMcpSession` — an Active Object
+owning the SDK client in its own task; `GovernedMcpToolSource`, `ConfiguredGovernancePolicy`,
+schema-built argument models, the MCP SERVER card), `server/analytics/` (`build_server`;
+`python -m agent_platform.knowledge.mcp.server.analytics`). Config: an agent's
+`mcp.servers[]` (name, transport, command — `{python}` is this interpreter — namespace,
+envelope) and `mcp.default_envelope`.
+
+**`knowledge/artifacts`** — frozen, hashed artifacts. `FrozenArtifact` (canonical hash,
+`verify`), `ArtifactStore` (Protocol), `DirectoryArtifactStore`, `ArtifactTamperedError`.
+
+## A24. interface (tui, commands, presentation, host)
+
+**`interface/host`** — the shell ↔ agent contract. `AgentHost` (title, placeholder, prepare,
+build, commands, stage_labels, session_rows) and the optional hooks (ADR P-05);
+`resolve_host` / `load_spec` (from `agent.host`, `module:Class`); `memory.py` composes
+governed long-term memory and dreams for any agent.
+
+**`interface/tui`** — one Textual app (`AgenticTuiApp`, `python -m agent_platform.interface.tui`).
+A live feed of collapsible stage cards, a status line above the input (the live stage, elapsed
+time, tokens), slash commands with tab completion, side panels when a host offers them, the
+Review screen (`ctrl+r`), and run controls (Stop → Resume / Abort). A card shows a field only if
+it explains what happened, is not derivable from another field, and is read by something;
+outcome colours only.
+
+**`interface/commands`** — what an operator types. Commands return data (`CommandResult`),
+never pixels, and never reach a model. `CommandRegistry` (`dispatch`, `completions`,
+`argument_completions`) is the only place a slash is parsed.
+
+| Command | Group | Owner | Does |
+|---|---|---|---|
+| `/help [command]` | Console | platform | Lists commands, or explains one |
+| `/clear` | Console | platform | Clears the feed |
+| `/audit [filters]` | Inspect | platform | The audit trail as a table, or one trace as a tree |
+| `/stats` | Inspect | platform | This console session's numbers (turns, latency, tokens, checks), as a tree |
+| `/review [list\|show\|approve\|deny]` | Inspect | platform | The human-review queue; a comment on every decision |
+| `/memory` | Inspect | platform | Long-term memory as tables (scoped to a verified subject) |
+| `/dream` | Inspect | platform | Consolidate pending dream events now |
+| `/eval` | Evals | platform | Recent eval runs from the eval store |
+| `/harness [path] [on\|off]` | Control | platform | Report or move the feature tree (hot reload) |
+| `/resume`, `/abort` | Runs | platform (durable agents) | Continue or end a stopped run |
+| `/skills [list\|show\|history]` | Agent | csa, ops | The agent's skills and their versions |
+| `/void [order]` | Agent | csa | List issued refunds, or void one before it settles |
+| `/cancel` | Agent | csa, ra | Stop the run in progress (checkpoint kept) |
+| `/kb` | Agent | csa | The knowledge-base index |
+| `/research [question]`, `/done`, `/waive <id\|all>`, `/approve` | Agent | ra | Conversational acts forwarded to the agent as turns |
+
+**`interface/presentation`** — plain-text renderers shared by `make` output and the console:
+`box_table`, `tree_lines` / `TreeNode`, `CommandView`, terminal colouring. Human-readable output
+is a box-drawn table or tree.
+
+## A25. evals
+
+**Owns.** Three graders over an agent's suites, plus the intent bake-off (ADR P-28).
+
+- **Layout.** `core/` (contracts — `EvalPlugin`, `GoldenCase`, `Transcript`, `Score`;
+  fingerprint; `DuckDbEvalStore`; pipeline — generate, grade, gate, trials, orchestrator;
+  reporting; cli), `oracle/` (`InvariantOracle`, `Rule`), `deepeval/` (the platform judge as a
+  `DeepEvalBaseLLM`, `ConversationalTestCase` builder, metrics, grader, report), `promptfoo/`
+  (runner over `npx promptfoo eval -c`, agent and grader providers, `oracle_assert`, report),
+  `intent/` (accuracy, macro-F1, coverage, Brier, ECE, latency).
+- **Seam.** `EvalPlugin` (agent_id, load_cases, prepare, agent_under_test, oracle,
+  quality_metrics, conversation_frame, security_config, fingerprint_inputs), named in the
+  agent's `evals.plugin`.
+- **Caching.** Generation by (case hash, agent fingerprint), grading by (transcript hash,
+  grader fingerprint). Ctrl+C marks the run interrupted; the next run resumes.
+- **Store.** `db/agent_platform/evals.duckdb` — `eval_runs`, `eval_cases`, `eval_transcripts`,
+  `eval_stages`, `eval_scores` and views (`v_run_summary`, `v_failures`, `v_metric_trend`, …).
+- **Reports.** `reports/<package>/evals/<section>-<run_id>.md`, `run_id =
+  <agent>-<suite>-<hash>-<YYYYMMDD-HHMMSS>`.
+- DeepEval is an optional extra imported lazily; Promptfoo is a Node tool at a pinned version.
+  Neither is a runtime dependency.
+- **Config.** `evals:` — `plugin`, `suites`, `core`, `trials`, `store`, `fingerprint`, `gate`,
+  `deepeval`, `promptfoo`, `reporting`.
+
+## A26. analytics
+
+**Owns.** The analytics source contract (ADR P-24, P-26). Schema detail is in
+[analytics_schema.md](analytics_schema.md).
+
+- **Semantic layer** (`semantic_layer.yaml` + agents' own layers, found by convention): each
+  curated view's SQL and column meanings; the Tier-1 metric catalogue (`{view, expr, by}` plus
+  `label`, `hint`, `group`).
+- **Export** (`exporter.py`): renders every view to Parquet by atomic rename on the process
+  holding the DuckDB lock (a running console every `analytics.export_interval_seconds`, or
+  `make analytics-export`); fails if a view's columns drift from their documentation; free text
+  masked by `analytics.redact_patterns`; writes `manifest.json`.
+- **Sources.** `live` (`db/agent_platform/observability.duckdb` → `data/agent_platform/analytics/`)
+  and `dummy` (`db/agent_platform/dummy_observability.duckdb` →
+  `data/agent_platform/analytics_dummy/`, generated by `make dummy-data analytics` from every
+  agent's `analytics/dummy.yaml`).
+- `query_guard.py` (`QueryGuard`), `metric_sql.py`, `catalog.py`, `dashboards.py` (generates the
+  Rill project under `analytics/dashboards/rill/`), `refresh.py`, `cli.py`
+  (`python -m agent_platform.analytics export | dashboards | models | drop-legacy | dummy`).
 
 ---
 
-## 3. `llm`
+# Part B — Agents
 
-**Purpose.** The only place any provider SDK is imported. Cascading
-(cheapest sufficient tier first, E44) lives here, not in callers.
+Each agent composes the platform the same way: `config/config.yaml` (its overlay),
+`graph/builder.py::build_agent` (the composition root), `console/` (its `AgentHost`), and its
+own domain packages. Agent subpackages often share a name with the platform package they plug
+into (`gatekeeper/`, `memory/`, `review/`, …): that is where the agent's side of the seam lives.
 
-**Interfaces**
+## B1. Customer Support agent
 
-```python
-class LLMClient(ABC):
-    @abstractmethod
-    async def complete(self, request: CompletionRequest) -> CompletionResult: ...
+`src/customer_support_agent/` — a refund agent that composes every platform feature.
 
-class ModelCascade(Protocol):
-    async def complete_cascaded(
-        self, request: CompletionRequest, tiers: list[LLMClient]
-    ) -> CompletionResult: ...
-```
-
-**Key classes.** `NvidiaNimClient(LLMClient)`, `LocalLlamaCppClient(LLMClient)`,
-`CascadingLLMClient` (wraps an ordered list of `LLMClient`, escalates on a
-configurable confidence/cost signal reusing the NOLLM cascade shape).
-
-**LLD patterns applied.** Adapter (`NvidiaNimClient`/`LocalLlamaCppClient`
-adapt each provider's wire format to `CompletionRequest`/`Result`);
-Strategy (`ModelCascade` escalation policy is swappable).
-
-**Sequence.**
-
-```mermaid
-sequenceDiagram
-    participant Caller
-    participant Cascade as CascadingLLMClient
-    participant T1 as tier[0] (cheap/local)
-    participant T2 as tier[1] (NVIDIA NIM)
-    Caller->>Cascade: complete_cascaded(request, [local, nim])
-    Cascade->>T1: complete(request)
-    T1-->>Cascade: result (low confidence)
-    Cascade->>Cascade: escalation policy check
-    Cascade->>T2: complete(request)
-    T2-->>Cascade: result
-    Cascade-->>Caller: result (+ which tier resolved it, for cost tracking)
-```
-
-**Config surface.** `LLM__PROVIDER`, `LLM__LOCAL_BASE_URL`,
-`LLM__CASCADE_ENABLED`, `LLM__CASCADE_TIERS` (ordered list).
-
-**Test strategy.** Unit: each adapter mocked at the HTTP boundary (never
-hits a real endpoint in unit tests). Integration: one live-endpoint smoke
-test per provider, gated behind an env flag so CI can skip it without
-credentials.
-
----
-
-## 4. `persistence`
-
-**Purpose.** All SQLite access — the only module that opens a DB
-connection.
-
-**Interfaces**
-
-```python
-class Repository(Protocol[T]):
-    def get(self, id: str) -> T | None: ...
-    def save(self, entity: T) -> None: ...
-    def query(self, **filters: Any) -> list[T]: ...
-```
-
-**Key classes.** `SqliteConnectionPool`, one `*Repository` per aggregate
-(e.g. `OrderRepository`, `TicketRepository` live in
-`customer_support_agent/core/repositories.py` and depend on this
-module's connection pool, not on `sqlite3` directly).
-
-**LLD patterns applied.** Repository pattern; Adapter (isolates SQLite
-specifics behind `Repository[T]` so a future backend swap doesn't ripple).
-
-**Config surface.** `PERSISTENCE__DB_PATH` (package-relative, never
-CWD-relative — see `Program_Design.md` known-failure-patterns).
-
-**Test strategy.** Unit: in-memory SQLite (`:memory:`) fixture per test,
-no shared state across tests. Integration: file-backed DB, verifies
-concurrent-write behavior used by the audit ledger.
-
----
-
-## 5. `audit`
-
-**Purpose.** Append-only, regulator-ready evidence chain (E33). Every
-consequential decision is attributable to a versioned (model, policy,
-data, authority) tuple.
-
-**Interfaces**
-
-```python
-class AuditEntry(BaseModel):
-    trace_id: str
-    actor: str
-    authority_context: AuthorityContext
-    model_version: str
-    policy_version: str
-    data_version: str
-    decision: Literal["allow", "deny", "escalate"]
-    timestamp: datetime
-
-class AuditLedger(Protocol):
-    def record(self, entry: AuditEntry) -> None: ...
-    def reconstruct(self, trace_id: str) -> list[AuditEntry]: ...
-```
-
-**Key classes.** `SqliteAuditLedger(AuditLedger)` — append-only table,
-no UPDATE/DELETE statements ever issued (enforced by a repository method
-set that simply doesn't expose them).
-
-**LLD patterns applied.** Append-only log (Event Sourcing style, reused
-from E23's checkpoint discipline).
-
-**Test strategy.** Unit: `reconstruct()` returns entries in causal order
-for a synthetic trace. Integration: every Gatekeeper decision in a full
-request-lifecycle test produces exactly one `AuditEntry`.
-
----
-
-## 6. `observability`
-
-**Purpose.** Distributed tracing (Dapper-style), SLOs/error budgets,
-human-review queue math (Little's Law), and cost-stack aggregation.
-
-> **Note — `economics` is not a separate package.** Cost/TCO/ROI/Amdahl
-> analysis (E44–E46) is a generic, mostly-narrative discipline (worked
-> examples over data this module already emits), not a distinct
-> engineering surface. `observability` is the single place cost is
-> tracked in code; `CostAggregator` below is that surface. No
-> `agent_platform/economics/` package is created.
-
-**Interfaces**
-
-```python
-class Tracer(Protocol):
-    def start_span(self, name: str, parent: Span | None = None) -> Span: ...
-
-class SLOTracker(Protocol):
-    def record(self, metric: SLOMetric, value: float) -> None: ...
-    def error_budget_remaining(self, slo_name: str) -> float: ...
-
-class ReviewQueueModel(Protocol):
-    def required_capacity(self, arrival_rate_per_hr: float, service_time_min: float) -> float: ...
-
-class CostStack(BaseModel):
-    input_tokens: float
-    output_tokens: float
-    tool_calls: float
-    retrieval: float
-    evaluator_calls: float
-    human_review: float
-    orchestration: float
-    infrastructure: float
-
-class CostAggregator(Protocol):
-    def record(self, request_id: str, component: str, cost_usd: float) -> None: ...
-    def cost_per_successful_outcome(self, window: TimeWindow) -> float:
-        """Denominator is SUCCESSFUL outcomes (passed their eval), never
-        raw call count — a cheaper-but-wronger call is not a saving
-        (E44)."""
-```
-
-**Key classes.** `LangSmithTracer` + `LocalTracer` (dual-write, since
-LangSmith is an external dependency the walking skeleton must not
-hard-require), `SLORegistry` (task success, unauthorized-action rate,
-hallucination rate, escalation rate, loop-abort rate, tool failure rate,
-cost/success, recovery success, policy-violation rate — the E37 list),
-`LittlesLawQueueModel` implementing `L = λW`, `CostAggregatorImpl`
-(subscribes to trace spans and tags each with a `CostStack` component —
-one aggregator, not a cost line reinvented per module).
-
-**LLD patterns applied.** Observer (spans notify the trace sink, and
-`CostAggregatorImpl` in turn subscribes to spans rather than being
-called explicitly by every cost-incurring module); Facade (`SLORegistry`
-aggregates all E37 metrics behind one query surface).
-
-**Sequence.** See HLD §4 — `observability` is invoked on every branch,
-including denials.
-
-**Analytics facts (ADR 0009).** Every agent gets the Tier-1 metrics without
-writing analytics code, because each fact is appended by a platform choke point
-the agent cannot bypass:
-
-| Choke point | Fact |
+| Package | Owns |
 |---|---|
-| `units.turn_bracket` (inside `turn_trace`) + task API `open_task` / `close_task` | `fact_turn`, `fact_task_event` |
-| `llm.call_log.SteppedClient` / `RecordedClient` (applied by `ModelChainBuilder`) | `fact_model_call` (steps, attempts, backups) |
-| `tools.path.ToolPath` (the single tool path) | `fact_tool_call` (invalid, unknown, not_offered, refused, duplicate, executed) |
-| `observability.checks` (screener, grounding, the four dependency factories) | `fact_check` |
-
-`FactStore` (`facts.py`) stamps the common keys (agent, session, task, turn, step,
-channel) from the bound context and never raises. An agent declares only its
-outcomes (`analytics.tasks` in its overlay, each with `success` / `terminal`
-flags) and, optionally, its own Tier-2 facts and semantic layer. The metric
-catalogue, analytics sources, MCP tools and generated dashboards are in
-`design_docs/analytics_schema.md`.
-
-**Config surface.** `OBSERVABILITY__LANGSMITH_ENABLED`,
-`OBSERVABILITY__SLO_TARGETS` (per-metric thresholds, keyed by catalogue metric),
-`ANALYTICS__*` (sources, tasks and reserved outcomes, default channel, dashboards).
-
-**Test strategy.** Unit: `LittlesLawQueueModel` against the E38 worked
-example (100 cases/hr × 2 min ⇒ >3.3 reviewer-hours/hr). Unit:
-`cost_per_successful_outcome` excludes a call that failed its eval from
-the denominator (E44's "cheaper-but-wronger is not a saving"). Integration:
-a full trace's spans reconstruct a legal causal order (Lamport-ordered,
-E23/E42).
-
----
-
-## 7. `context` (context assembly & management)
-
-**Purpose.** The five-stage pipeline (E08) plus context-failure
-detection (E17) and the six management strategies (E18) plus production
-RAG (E19).
-
-**Interfaces**
-
-```python
-class ContextAssembler(Protocol):
-    def assemble(self, task: Task, budget_tokens: int) -> AssembledContext: ...
-
-class ContextStrategy(ABC):
-    @abstractmethod
-    def apply(self, context: AssembledContext) -> AssembledContext: ...
-    # concrete: OffloadStrategy, ReduceStrategy, RetrieveStrategy,
-    #           IsolateStrategy, CacheStrategy, ConsolidateStrategy
-
-class Retriever(Protocol):
-    def retrieve(self, query: str, k: int) -> list[Chunk]: ...
-```
-
-**Key classes.** `FiveStagePipeline` (gather_candidates →
-score_relevance → fit_to_budget → format → order, each a private
-≤20-line method), `HybridRetriever` (lexical + dense, E19),
-`CrossEncoderReranker`, `GraphRetriever` (GraphRAG, optional), the six
-`ContextStrategy` implementations, `ContextFailureDetector` (synthesis
-eval at configurable token checkpoints).
-
-**LLD patterns applied.** Strategy (`ContextStrategy` family, chosen per
-E18); Chain of Responsibility (`FiveStagePipeline`'s five stages);
-Composite retriever pattern (`HybridRetriever` composes lexical + dense +
-optional graph, matching E19's decision rule: identifier-shaped →
-lexical, relationship-shaped → graph, narrative → dense).
-
-**Sequence.**
-
-```mermaid
-flowchart LR
-    A[gather_candidates] --> B[score_relevance]
-    B --> C[fit_to_budget]
-    C --> D[format]
-    D --> E[order]
-    E --> F{token budget<br/>exceeded at runtime?}
-    F -- yes --> G[apply ContextStrategy:<br/>Reduce/Offload/Consolidate]
-    G --> E
-    F -- no --> H[AssembledContext]
-```
-
-**Config surface.** `CONTEXT__TOKEN_BUDGET`, `CONTEXT__STRATEGIES_ENABLED`
-(per-strategy bool), `CONTEXT__RETRIEVAL_MODE` (lexical/dense/hybrid/graph).
-
-**Test strategy.** Unit: each pipeline stage tested independently with a
-fixed candidate set. Integration: the E17 synthesis-degradation eval at
-10K/30K/60K/100K/150K tokens, asserting the documented degradation curve
-is caught (regression test, not just a demo).
-
----
-
-## 8. `memory`
-
-**Purpose.** All four CoALA stores, real and inspectable, plus the write
-pipeline and poisoning defenses.
-
-**Interfaces**
-
-```python
-class MemoryStore(Protocol):
-    def read(self, query: MemoryQuery) -> list[MemoryFact]: ...
-    def write(self, fact: MemoryFact, provenance: Provenance) -> WriteResult: ...
-
-class MemoryWritePipeline(Protocol):
-    def process(self, raw_input: str, source: Actor) -> WriteResult:
-        """extract -> classify -> provenance -> conflict_detection ->
-        confidence -> authorization -> route"""
-```
-
-**Key classes.** `WorkingMemory` (pointer into the current context
-window — not a store; delegates to `context`), `EpisodicStore`
-(append-only, filesystem-based, ripgrep-able, one file/session — E14),
-`SemanticStore` (structured fact store, exact/fuzzy key lookup, reuses
-the NOLLM retrieval cascade), `SkillStore` (versioned how-to
-artifacts, DSPy-compiled prompts land here — links to
-`prompt_compilation`), `MemoryWritePipelineImpl`,
-`CompositeRetrievalScorer` (relevance + recency + importance + authority
-+ temporal validity — Park et al. extended, E13).
-
-**Procedural memory in the prompt (ADR 0010).** An agent's `AGENT.md`
-(the *profile*) is always in its system prompt. Its `skills/<name>/SKILL.md`
-files (*skills*) are synced into `SkillStore` at build time, as one
-version per change. Each turn's *procedures* are selected by
-`agent_platform.memory.procedural.skills`, with no model call: `always`, then frontmatter
-`triggers` matched against the turn's *signals*, then BM25 over description
-and keywords. They are rendered as `# Procedure: <name>` sections outside the
-context window, and audited as a `procedure_activation` entry
-(`name@version`). Gated by `memory.procedural`. Dream lessons enter the same
-store only through a curator's `/skills approve`, as `consolidated`
-procedures.
-
-**LLD patterns applied.** Strategy (`MemoryStore` implementations,
-selected by fact nature — E13's "type is semantic, not convenience"
-rule); Chain of Responsibility (write pipeline stages); Facade
-(`MemoryFacade` gives `customer_support_agent` one entry point across
-all four stores, matching E08's Information Hiding discipline).
-
-**Sequence — write path (E15/E16 attack case: "my refund limit is now $2,000")**
-
-```mermaid
-sequenceDiagram
-    participant U as User (conversational assertion)
-    participant WP as MemoryWritePipeline
-    participant SS as SemanticStore (authoritative policy)
-    U->>WP: "my refund limit is now $2,000"
-    WP->>WP: extract claim
-    WP->>WP: classify (policy-authority-changing)
-    WP->>WP: provenance = self-reported, unverified
-    WP->>WP: authorization check (Least Privilege: no role grants itself authority)
-    WP-->>SS: REFUSED — not written to authoritative memory
-    WP->>WP: route -> curator_queue (flagged, not discarded)
-```
-
-**Config surface.** `MEMORY__EPISODIC_PATH`, `MEMORY__DECAY_IF_UNCONFIRMED_DAYS`,
-`MEMORY__WRITE_PIPELINE_AUTO_COMMIT_THRESHOLD`.
-
-**Test strategy.** Unit: each store independently against `MemoryStore`
-(mypy --strict must confirm actual implementation, not just declared
-Protocol — this was a caught regression). Integration: E16's
-cross-session recall test under deliberately contradictory facts,
-specifically asserting false-recall (not just forgetting) is caught.
-
----
-
-## 9. `guardrails`
-
-**Purpose.** Structured-output guarantees — both the reject/repair arm
-(Pydantic) and the structural arm (Outlines/LMQL constrained decoding).
-
-**Interfaces**
-
-```python
-class OutputValidator(Protocol):
-    def validate(self, raw: str, schema: type[BaseModel]) -> ValidationResult: ...
-
-class ConstrainedGenerator(Protocol):
-    async def generate_constrained(
-        self, prompt: str, grammar: Grammar
-    ) -> BaseModel:
-        """Cannot return malformed output by construction."""
-```
-
-**Key classes.** `PydanticValidator(OutputValidator)` (reject / auto-repair
-modes), `OutlinesConstrainedGenerator` / `LMQLConstrainedGenerator`
-(`ConstrainedGenerator`), `GuardrailChaosSuite` (property-based +
-adversarial tests, E29).
-
-**LLD patterns applied.** Strategy (validation mode: reject / repair /
-constrained); Decorator (`@fail_loud` wraps any executor entry point so a
-malformed output halts rather than silently coercing).
-
-**Sequence.**
-
-```mermaid
-flowchart TD
-    R[Raw model output] --> M{Mode?}
-    M -- reject --> V1[Pydantic validate]
-    V1 -- fail --> X1[Halt + flag]
-    V1 -- pass --> OK
-    M -- auto_repair --> V2[Pydantic validate]
-    V2 -- fail --> RP[Attempt repair] --> V2
-    V2 -- pass --> OK
-    M -- constrained --> CG[Outlines/LMQL constrained decode]
-    CG --> OK[Structurally valid ToolCall/Plan]
-```
-
-**Config surface.** `GUARDRAILS__MODE` (reject/auto_repair/constrained),
-`GUARDRAILS__SCHEMA_REGISTRY`.
-
-**Test strategy.** Property-based (Hypothesis or equivalent): constrained
-path *never* produces a schema violation across a generated input space.
-Latency test: constrained vs. retry-loop tail latency comparison (E28's
-payoff), asserted as a regression bound, not just eyeballed.
-
----
-
-## 10. `hallucination_check`
-
-**Purpose.** Measurement-first hallucination handling — detection
-ladder, grounding-vs-reasoning diagnosis, trust calibration.
-
-**Interfaces**
-
-```python
-class HallucinationDetector(Protocol):
-    async def score(self, claim: Claim, evidence: list[Chunk]) -> DetectionVerdict:
-        """Escalates: confidence -> entropy -> NLI -> judge -> human,
-        per the reused NOLLM cascade."""
-
-class FailureDiagnoser(Protocol):
-    def diagnose(self, claim: Claim, retrieval_result: RetrievalResult) -> Literal["grounding", "reasoning"]: ...
-```
-
-**Key classes.** `DetectionLadder(HallucinationDetector)` (reuses
-`evals.NollmScoringCascade`), `ClaimDecomposer` (breaks a generation into
-atomic claims), `GroundingReasoningDiagnoser(FailureDiagnoser)`,
-`TrustCalibrationTracker` (automation bias / algorithm aversion metrics,
-feeds `observability.SLORegistry`).
-
-**LLD patterns applied.** Strategy/Chain (detection ladder tiers);
-reuse-not-reimplement of `evals`'s cascade (explicit dependency, not a
-parallel implementation).
-
-**Test strategy.** Unit: `ClaimDecomposer` against fixed multi-claim
-generations. Integration: E26's differential-diagnosis test — same
-surface symptom, two fixtures (evidence present/absent), asserting the
-diagnoser routes correctly to grounding vs. reasoning.
-
----
-
-## 11. `gatekeeper`
-
-**Purpose.** The single, always-invoked mediation point. No execution
-path bypasses it (E12's exit invariant).
-
-**Interfaces**
-
-```python
-class ToolCall(BaseModel):
-    action: str
-    params: dict[str, Any]
-    surface: SurfaceClass  # Locked | Editable | Append-only | Human-controlled
-
-class AuthorityContext(BaseModel):
-    actor: str
-    granted_by_rank: int  # Authority Hierarchy rank 1-5 only can grant/expand
-    cumulative_ledger_key: str
-
-class Gatekeeper(Protocol):
-    def evaluate(self, call: ToolCall, authority: AuthorityContext) -> AuthorityDecision:
-        """Answers 4 questions: surface? who? what authority? cumulative
-        state crossed threshold? Tier-1 only; may call Tier-2 for an
-        advisory flag but Tier-2 has no veto power."""
-
-class Tier2Advisor(Protocol):
-    def flag(self, call: ToolCall) -> AdvisoryFlag: ...
-```
-
-**Key classes.** `GatekeeperImpl(Gatekeeper)`, `CumulativeLedger`
-(defeats structuring attacks — E02), `AuthorityHierarchyResolver` (ranks
-provider>org>product>workspace>user_task>runtime_reminders>
-tool_observations>untrusted_content; only ranks 1-5 authorize),
-`SurfaceClassifier`, `SemanticTier2Advisor(Tier2Advisor)` (LLM-backed,
-structurally incapable of blocking — enforced by the interface itself
-returning `AdvisoryFlag`, never `AuthorityDecision`).
-
-**LLD patterns applied.** Reference Monitor (Gatekeeper itself); Chain of
-Responsibility (four questions evaluated in sequence, short-circuits on
-first deny); Facade (single `evaluate()` entry point hides the ledger,
-hierarchy resolver, and surface classifier).
-
-**Sequence — structuring attack defended (E02 cold open)**
-
-```mermaid
-sequenceDiagram
-    participant Agent
-    participant GK as GatekeeperImpl
-    participant Ledger as CumulativeLedger
-    loop 80x $50 refunds
-        Agent->>GK: evaluate(ToolCall($50 refund), authority)
-        GK->>Ledger: record_and_check(actor, $50)
-        Ledger-->>GK: cumulative = running total
-        alt cumulative <= threshold
-            GK-->>Agent: allow
-        else cumulative > threshold ($4000)
-            GK-->>Agent: deny (structuring detected)
-        end
-    end
-```
-
-**Config surface.** `GATEKEEPER__LEDGER_THRESHOLDS` (per action class),
-`GATEKEEPER__TIER2_ENABLED`, `GATEKEEPER__SURFACE_POLICY`.
-
-**Test strategy.** Unit: every (surface × authority rank × cumulative
-state) combination in a truth table. Integration/adversarial: the four
-E12 live attacks (bypass sandbox, injected privileged write, agent edits
-own policy, structuring) as permanent regression tests, plus E30's
-prompt-injection suite.
-
----
-
-## 11.1 `gatekeeper.mandate` — what a write may act on
-
-**Purpose.** The other Gatekeeper checks ask whether an action is
-*legal*. None asks *what it acts on*, and those are different questions:
-a refund for the right customer, within every limit, is still the wrong
-refund if it names an order the conversation was never about.
-
-Before this, WRITE authorization was implicit in tool availability —
-classifying an intent as a refund request put the refund tool on the
-menu, and the `offered` check only confirmed the menu had been respected.
-Exposure and authorization were the same act, so anything that widened
-exposure widened authority.
-
-**What this check is not.** It does not certify that the person
-*requested* the action. It once tried to, by matching their message
-against a list of phrases, and that failed in both directions in
-production: `"redunf for order 10979"` — one typo — denied a legitimate
-refund, while the bare word "refund" in the list turned `"do not refund
-order 10979"` into authorization to refund it. Deciding what a sentence
-means is language work and belongs to the model; deciding whether the
-action may proceed is deterministic and belongs to the agent's business
-rules (ownership, eligibility, prior refunds, amount, limits). This check
-is the narrow question between them: *which record*.
-
-**Interfaces**
-
-```python
-class ActionMandate(BaseModel):
-    subject_id: str          # opaque, like DeterministicCheckRequest's
-    action: str
-    target: str
-    max_amount: float = UNBOUNDED
-    granted_by: str = "user_task"
-    turn: int
-
-class MandateIssuer(Protocol):
-    def mandates_for(
-        self, subject_id: str, query: str, turn: int,
-        context: Mapping[str, object] | None = None,
-    ) -> list[ActionMandate]: ...
-```
-
-**Where it runs.** A `mandate` check sits immediately after `offered` in
-`GatekeeperImpl._CHECK_ORDER`. A side-effecting call naming a record the
-turn did not establish is denied `TARGET_NOT_IN_SCOPE`. Reads are
-skipped. A `None` set means no issuer is wired and is reported as such;
-an *empty* set means the issuer looked and found no established target,
-so a write has nothing it may legitimately act on.
-
-**The rule the platform imposes.** A mandate is issued from what the
-person supplied and what the record holds — never from model output. A
-mandate derived from the model's own proposal authorizes the model to
-authorize itself. `context` carries what the turn established before the
-model ran; an issuer that reaches into `query` to decide *whether* the
-person wanted something has put language work back in the authorization
-path.
-
-**Config surface.** `GATEKEEPER__MANDATE__TARGET_PARAM` — which call
-parameter names the thing being acted on. Empty in the platform
-defaults; the agent that has targets says what they are called.
-
----
-
-## 12. `security`
-
-### 12.1 `security/auth` — RBAC + PoLP
-
-**Interfaces**
-
-```python
-class RoleStore(Protocol):
-    def permissions_for(self, role: str) -> set[Permission]: ...
-
-class PrivilegeElevator(Protocol):
-    def elevate(self, actor: str, permission: Permission, ttl_seconds: int) -> ElevationGrant: ...
-```
-
-**Key classes.** `RBACRoleStore` (NIST RBAC model), `JustInTimeElevator`
-(scoped, time-boxed grants only — never a standing elevation).
-
-### 12.2 `security/pii`
-
-**Interfaces**
-
-```python
-class PIIFilter(Protocol):
-    def detect(self, text: str) -> list[PIISpan]: ...
-    def redact(self, text: str, mode: Literal["mask", "tokenize", "remove"]) -> str: ...
-    def minimize(self, payload: dict, allowed_fields: set[str]) -> dict: ...
-```
-
-**Key classes.** `PatternPIIDetector`, `NERPIIDetector`, `PIIFilterImpl`
-— applied at three distinct surfaces per E32: PII-in-input (tool-call
-minimization), PII-in-memory (reuses `memory`'s provenance tagging),
-PII-in-logs (mandatory pass before `observability` persists a trace).
-
-### 12.3 `security/prompt_injection`
-
-**Interfaces**
-
-```python
-class InjectionGuard(Protocol):
-    def separate(self, instructions: str, data: str) -> SeparatedContext: ...
-    def scope_tools(self, context: SeparatedContext) -> list[ToolCall]: ...
-```
-
-**Key classes.** `InstructionDataSeparator`, `ToolScopeLimiter` — L1-L3
-of the E35 six-layer defense; L4-L6 (Gatekeeper, anomaly detection,
-void/voidable/ratifiable) are *not* reimplemented here, they're direct
-references to `gatekeeper` and `evals` per the "strongest layer was never
-a detector" thesis.
-
-**Void / voidable / ratifiable (built 2026-10-04).** It is the Gatekeeper's
-*standing* on each decision (`gatekeeper.types.Standing`): VOID when denied —
-nothing runs or is queued; RATIFIABLE when escalated — a person may adopt it
-(recorded RATIFIED); VOIDABLE when allowed and the tool declares `voidable` —
-for this agent, a refund is `issued` and can be voided until it settles
-(`RefundSettlement`); VALID otherwise; UNGOVERNED with the Gatekeeper withheld.
-
-### 12.4 `security/content_moderation`
-
-**Interfaces** — `ContentModerator.moderate(text) -> ModerationVerdict`,
-a thin Tier-2 advisory classifier, same non-blocking constraint as the
-Gatekeeper's Tier-2.
-
-**LLD patterns applied (whole `security` package).** Strategy (PII
-redaction mode); Facade (`SecuritySuite` aggregates auth/pii/injection/
-moderation for a single call site in `customer_support_agent`).
-
-**Test strategy.** Unit per detector/filter. Integration: E31's OWASP
-control-mapping table run as an actual test suite — one test per mapped
-OWASP risk, asserting the claimed control fires.
-
----
-
-## 13. `resilience`
-
-**Purpose.** The seven Nygard-grounded patterns, real implementations.
-
-**Interfaces**
-
-```python
-class CircuitBreaker(Protocol):
-    def call(self, fn: Callable[[], T]) -> T: ...
-    @property
-    def state(self) -> Literal["closed", "open", "half_open"]: ...
-
-class RetryPolicy(Protocol):
-    def execute(self, fn: Callable[[], T], idempotency_key: str) -> T: ...
-
-class Bulkhead(Protocol):
-    def acquire(self, pool: str) -> ContextManager[None]: ...
-
-class Saga(Protocol):
-    def run(self, steps: list[SagaStep]) -> SagaResult:
-        """Each SagaStep pairs an action with a compensating action."""
-
-class IdempotencyGuard(Protocol):
-    def once(self, key: str, fn: Callable[[], T]) -> T: ...
-
-class PubSub(Protocol):
-    def publish(self, topic: str, event: Event) -> None: ...
-    def subscribe(self, topic: str, handler: Callable[[Event], None]) -> Subscription: ...
-```
-
-**Key classes.** `CircuitBreakerImpl` (its own FSM: Closed→Open→Half-Open,
-explicitly the canonical worked example of `control_loop`'s
-discipline applied to a dependency — E23/E35); `TimeoutOnlyCircuitBreaker`
-(the earlier E18-introduced narrow variant, kept as a documented
-**subclass** of `CircuitBreakerImpl` per the resolved naming-collision
-decision, not a separate implementation); `ExponentialBackoffRetry`
-(rejects a retry attempt if no `idempotency_key` was supplied — this is
-enforced, not just documented); `ResourcePoolBulkhead`;
-`CompensatingSaga`; `SqliteIdempotencyGuard`; `InMemoryPubSub` (v1) with
-an interface shaped for a future Kafka-backed swap (E42 forward
-reference).
-
-**LLD patterns applied.** State (Circuit Breaker); Decorator (retry/
-timeout/circuit-breaker are composable decorators around any `Callable`,
-stackable in a fixed order: timeout → retry → circuit breaker →
-bulkhead); Command (`SagaStep` bundles action + compensation as data).
-
-**Sequence — Refund Saga with injected crash (E35 demo)**
-
-```mermaid
-sequenceDiagram
-    participant Saga as CompensatingSaga
-    participant S1 as validate
-    participant S2 as reserve_amount
-    participant S3 as issue_refund
-    participant S4 as update_order
-    participant S5 as notify_customer
-    Saga->>S1: run
-    S1-->>Saga: ok
-    Saga->>S2: run
-    S2-->>Saga: ok
-    Saga->>S3: run
-    Note over S3: CRASH injected here
-    Saga->>Saga: detect incomplete transaction on recovery
-    Saga->>S2: compensate (release reservation)
-    Saga->>S1: compensate (invalidate validation)
-    Saga-->>Caller: SagaResult(failed, compensated=[S2,S1])
-```
-
-**Config surface.** `RESILIENCE__CIRCUIT_BREAKER__{FAILURE_THRESHOLD,
-HALF_OPEN_AFTER_S}`, `RESILIENCE__RETRY__MAX_ATTEMPTS`,
-`RESILIENCE__BULKHEAD__POOL_SIZE`.
-
-**Test strategy.** Unit: `CircuitBreakerImpl`'s FSM transition table
-tested exhaustively (illegal transitions rejected, mirroring
-`control_loop`'s own test discipline). Integration: bulkhead
-isolation proven by a test where one dependency is forced to exhaust its
-pool and an unrelated dependency's calls still succeed (E35's exit
-invariant).
-
----
-
-## 14. `sandbox` `[new — parked, TODO next phase]`
-
-**Purpose.** Docker-based execution isolation for tool calls (E34,
-scoped down to Docker only for this build — the full five-tier ladder
-from `process_policy` through `remote_worker` is documented as the
-long-run target but only the `container` tier via Docker is in scope
-for implementation next phase).
-
-**Status.** Stub package only in this phase: folder + interfaces exist
-and compile; no real Docker invocation yet. Nothing calls this package
-until its phase gate opens (see `Program_Design.md`).
-
-**Interfaces**
-
-```python
-class ExecutionSandbox(Protocol):
-    def run(self, call: ToolCall, isolation_tier: IsolationTier) -> ExecutionResult: ...
-
-IsolationTier = Literal["process_policy", "docker_container"]
-# "os_sandbox" / "microvm" / "remote_worker" remain documented (E34) but
-# out of scope for implementation until a deployment target exists.
-```
-
-**Key classes.** `DockerContainerSandbox(ExecutionSandbox)` (the only
-concrete implementation built next phase), `ProcessPolicySandbox`
-(trivial no-isolation fallback, useful for local dev), a stub
-`IsolationTierSelector` (returns `docker_container` for anything above a
-configured blast-radius threshold, else `process_policy` — the full
-Three-Gates-driven selector is future work).
-
-**LLD patterns applied.** Strategy (tier selection); Adapter
-(`DockerContainerSandbox` adapts the Docker SDK to `run()`).
-
-**Config surface.** `SANDBOX__ENABLED` (default `false` this phase),
-`SANDBOX__DEFAULT_TIER`, `SANDBOX__DOCKER_IMAGE`.
-
-**Test strategy (next phase).** Unit: `DockerContainerSandbox` against a
-mocked Docker client. Integration: one real container round-trip test,
-skipped in CI unless Docker is available (mirrors the `llm` module's
-credential-gated integration tests).
-
----
-
-## 15. `control_loop` `[new — parked, TODO next phase]`
-
-**Purpose.** Combines what earlier drafts of this document split into
-two packages — the FSM discipline (E23) and the `LoopController`
-watchdog stack (E20/E05) — into one `agent_platform/control_loop/`
-package. This is a deliberate merge, not a rename: both disciplines
-govern the same trajectory object (an FSM transition *is* what a loop
-step does), so one package owns "is this loop allowed to keep running,
-and is it in a legal state." `customer_support_agent` composes this
-package from its own thin `control_loop/` folder rather than
-reimplementing it — see §21.
-
-**Status.** Stub package this phase: interfaces below are the
-normative contract; implementations are TODO for the phase this gate
-opens (see `Program_Design.md` §4). `customer_support_agent`'s own
-`control_loop/` folder currently wires LangGraph's checkpointer
-directly and will be migrated to call this package once it's real —
-tracked as a explicit follow-up, not silently done today.
-
-**Interfaces**
-
-```python
-class ReactStep(Protocol):
-    async def step(self, trajectory: Trajectory) -> StepResult: ...
-
-class LoopController(Protocol):
-    def check(self, trajectory: Trajectory) -> LoopVerdict:
-        """Six layers: step_count, wall_clock, token_budget, cost_budget,
-        duplicate_action, semantic_stagnation. Returns CONTINUE or
-        ABORT(reason)."""
-
-class StateMachine(Protocol):
-    def legal_transitions(self, current: AgentState) -> set[AgentState]: ...
-    def transition(self, current: AgentState, target: AgentState) -> AgentState:
-        """Raises IllegalTransitionError if target not in legal_transitions(current)."""
-
-AgentState = Literal["IDLE","PLANNING","ACTING","WAITING_TOOL","WAITING_HUMAN","DONE","FAILED"]
-
-class Checkpoint(BaseModel):
-    state: AgentState
-    transition_history: list[Transition]
-    durable_facts: dict[str, Any]
-
-class CheckpointStore(Protocol):
-    def save(self, checkpoint: Checkpoint) -> None: ...
-    def restore(self, run_id: str) -> Checkpoint | None: ...
-```
-
-**Key classes (target, built next phase).** `ReactStepImpl` (composed
-from `tools.ToolCall` and `gatekeeper`), `LoopControllerImpl` (each
-watchdog layer its own private ≤20-line check method, fixed evaluation
-order so the *first* tripped layer is the reported abort reason —
-mirrors `gatekeeper`'s Chain of Responsibility style),
-`DuplicateActionDetector`, `SemanticStagnationDetector`
-(embedding-similarity across recent steps), `AgentFSM(StateMachine)`
-(the IDLE...FAILED table), `SqliteCheckpointStore(CheckpointStore)`
-(adapts LangGraph's checkpointer protocol so `control_loop` owns the
-*invariant*, LangGraph owns the *mechanism*), `CausalOrderingClock`
-(Lamport happened-before, reused for multi-worker/multi-agent cases —
-E23/E42).
-
-**As built (2026-10-11).** One `LoopGovernor` (`loop_control/governor.py`) is the single
-authority for every agent: step cap, budgets (tool calls, tokens, cost, wall clock), a deadline
-scope that cancels an in-flight call, exact/canonical/semantic repeat suppression, cycle
-detection, convergence (evidence gained per step) and a historical baseline over `fact_turn`.
-Every mechanism answers with one `LoopVerdict`; routers read it through `route_on_verdict`.
-`LoopState` (with `LoopStateMachine` for the phase table) rides in each agent's LangGraph
-state, so LangGraph's checkpointer persists it — the separate `CheckpointStore`, `ReactStep`
-and `LoopController` protocols were dropped as unused.
-
-**LLD patterns applied.** Chain of Responsibility (six watchdog
-layers); Strategy (each layer independently swappable/toggleable per
-PRD G6); State (the FSM itself); Memento (`Checkpoint` as a restorable
-snapshot — a serialized `(state, transition_history)` pair, not an
-arbitrary snapshot).
-
-**Sequence — crash recovery restores a legal state (E23 demo, target
-behavior once built)**
-
-```mermaid
-sequenceDiagram
-    participant Agent
-    participant FSM as AgentFSM
-    participant CP as SqliteCheckpointStore
-    Agent->>FSM: transition(ACTING, WAITING_TOOL)
-    FSM-->>Agent: ok
-    Agent->>CP: save(checkpoint)
-    Note over Agent: CRASH before refund side-effect confirmation
-    Agent->>CP: restore(run_id)
-    CP-->>Agent: last checkpoint (WAITING_TOOL, no completed side effect)
-    Agent->>FSM: legal_transitions(WAITING_TOOL)
-    FSM-->>Agent: {ACTING, FAILED}
-    Note over Agent: resumes into a LEGAL state, refund not duplicated
-```
-
-**Sequence — six-layer watchdog (E20, target behavior once built)**
-
-```mermaid
-flowchart TD
-    S[trajectory.step_count++] --> L1{step_count > max?}
-    L1 -- yes --> AB[ABORT: step_count]
-    L1 -- no --> L2{wall_clock > max?}
-    L2 -- yes --> AB2[ABORT: wall_clock]
-    L2 -- no --> L3{token_budget exceeded?}
-    L3 -- yes --> AB3[ABORT: token_budget]
-    L3 -- no --> L4{cost_budget exceeded?}
-    L4 -- yes --> AB4[ABORT: cost_budget]
-    L4 -- no --> L5{duplicate action detected?}
-    L5 -- yes --> AB5[ABORT: duplicate_action]
-    L5 -- no --> L6{semantic stagnation?}
-    L6 -- yes --> AB6[ABORT: semantic_stagnation]
-    L6 -- no --> C[CONTINUE]
-```
-
-**Config surface.** `CONTROL_LOOP__MAX_STEPS`,
-`CONTROL_LOOP__MAX_WALL_CLOCK_S`, `CONTROL_LOOP__MAX_TOKENS`,
-`CONTROL_LOOP__MAX_COST_USD`,
-`CONTROL_LOOP__STAGNATION_SIMILARITY_THRESHOLD`,
-`CONTROL_LOOP__CHECKPOINT_BACKEND` (sqlite; pluggable),
-`CONTROL_LOOP__ILLEGAL_TRANSITION_POLICY` (raise vs. log-and-FAILED).
-
-**Test strategy (next phase).** Unit: full legal-transition truth
-table, every illegal pair asserted to raise; one test per watchdog
-layer, each independently inducible. Integration: the E23
-crash-recovery scenario and E20's "kill an induced loop at its own
-layer" demo (six fixtures, six expected abort reasons), both as
-permanent regression tests once implemented.
-
----
-
-## 16. `multi_agent` `[new — stub only, design parked]`
-
-**Purpose (future).** Orchestrator-subagent shape (E07), topology
-selection (E41), compounding-reliability economics (E40), and MCP/A2A
-communication (E42) — with removal/coordination-cost discipline (E43).
-
-**Status.** Explicitly **not designed yet**. This phase creates an
-empty `agent_platform/multi_agent/` package (folder, `__init__.py`,
-no other content) so the module boundary exists in the repo layout and
-nothing downstream needs to be restructured when the real design
-lands. No interfaces are normative yet — do not implement against
-guesses here; when this module's phase opens, follow the interview-style
-design process in `Program_Design.md` §3 before writing any interface.
-
-**Test strategy.** A single import-smoke test (`import
-agent_platform.multi_agent` succeeds) is the only test this phase.
-
----
-
-## 16.1 `mcp` `[built — 2026-10-08, ADR 0008]`
-
-**Purpose.** An MCP server publishes tools, resources and
-prompts over a transport, and an agent that speaks the protocol can use
-them without its author having written any of them.
-
-**Why here rather than in `multi_agent`.** MCP is a *tool-transport*
-concern first. Whatever a server offers must arrive as an ordinary
-`ToolDefinition` and enter through the same `NamespacedToolRegistry` as
-everything else, so the Gatekeeper sees one kind of proposal and not two.
-`McpToolSource` is structurally a `tools.ToolSource`: the seam already
-exists, and this package only names what fills it. A remote tool reaching
-the executor by a private side door would be a tool nobody authorized.
-
-**The governance question, which is the part to design before any code.**
-A `ToolDefinition` carries `surface`, `blast_radius`, `reversible`,
-`side_effecting` and `requires_authority_rank` — and a remote server is
-not a trustworthy source for any of them. A server describing its own
-tool as reversible has asserted, not established, that. So
-`McpToolSource` takes a `ToolGovernancePolicy`: the envelope is supplied
-locally, per server, by whoever decided to trust that server. The
-description is the server's; the authority is not. Same rule as the
-Authority Hierarchy — a tool catalogue is a tool observation.
-
-**Status.** Built over the official MCP SDK (ADR 0008). `SdkMcpTransport`
-opens stdio or HTTP servers named in an agent's `mcp.servers`;
-`SdkMcpSession` keeps one session per server, owned by a task of its own
-(the SDK's cancel scopes belong to the task that entered them);
-`GovernedMcpToolSource` lists the server's tools as `ToolDefinition`s,
-arguments validated by a model built from each tool's schema, envelope from
-`ConfiguredGovernancePolicy` (`mcp.servers[].envelope`, else the most
-restrictive `mcp.default_envelope`). First consumer: the ops agent, over
-the platform's own analytics MCP server (`agent_platform.mcp.server.analytics`:
-`list_metrics`, `compute_metric`, `list_views`, `describe_view`, `run_query`).
-The session logs the protocol in full to `mcp.log`: the handshake (server name,
-version, protocol, capabilities, instructions), each tool listed (description and
-input schema), each registration, and each call (arguments, result, duration).
-`mcp/presentation.server_card` turns a `describe()` into the MCP SERVER card any
-consuming agent draws.
-
----
-
-## 17. `prompt_compilation` `[new — parked, TODO next phase]`
-
-**Purpose.** DSPy-based compiled prompts as an alternative to
-hand-written strings, versioned as procedural-memory artifacts (E21).
-
-**Status.** Stub package this phase — interfaces below are normative;
-implementation is TODO for the phase this gate opens.
-
-**Interfaces**
-
-```python
-class Signature(Protocol):
-    """Typed input->output contract, independent of wording."""
-
-class Optimizer(Protocol):
-    def compile(self, signature: Signature, metric: EvalMetric, trainset: list[Example]) -> CompiledModule: ...
-
-class CompiledModule(Protocol):
-    async def run(self, **inputs: Any) -> Any: ...
-    version: str
-```
-
-**Key classes (target, built next phase).** `DspySignatureAdapter`,
-`TeleprompterOptimizer(Optimizer)` (wraps a DSPy teleprompter),
-`CompiledPromptRegistry` — every `CompiledModule` it stores is
-simultaneously registered with `memory.SkillStore` (E14
-forward-link) and with the deployment version registry (E39
-forward-link).
-
-**LLD patterns applied.** Builder (`Optimizer.compile` builds a
-`CompiledModule` from signature+metric+trainset); Strategy (swap
-teleprompter algorithm without touching the signature).
-
-**Test strategy (next phase).** Regression: a compiled module's eval
-score must not regress across a model swap (E21's live demo, as a CI
-gate — reuses `evals`).
-
----
-
-
-## 18. `evals`
-
-**Purpose.** The Eval Pyramid (E09) and NOLLM Scoring Cascade (E10),
-reused by every other subsystem's test strategy rather than each
-reinventing scoring.
-
-**Interfaces**
-
-```python
-class Scorer(Protocol):
-    def score(self, output: Any, expected: Any) -> ScoreResult: ...
-
-class NollmScoringCascade(Protocol):
-    def resolve(self, claim: Claim) -> Verdict:
-        """exact_assertion -> deterministic_rule -> embedding_similarity
-        -> nli_entailment -> calibrated_llm_judge -> human_adjudication.
-        Tracks nollm_scorer_ratio."""
-
-class EvalManifestEntry(BaseModel):
-    component: str
-    input_distribution: str
-    expected_properties: list[str]
-    scorer: str
-    regression_threshold: float
-```
-
-**Key classes.** `NollmScoringCascadeImpl`, `ComponentEvalRunner`,
-`IntegrationEvalRunner`, `GoldenTaskE2ERunner`, `ProductionShadowEvalRunner`
-(the four pyramid levels), `JudgeCalibrator` (Cohen's kappa, pairwise
-comparison per E11), `GoldenDatasetProvenanceLedger`.
-
-**LLD patterns applied.** Chain of Responsibility (the NOLLM cascade,
-the single implementation four other subsystems depend on — `context`
-retrieval tiering, `tools` selection, `llm` model cascading,
-`hallucination_check` detection ladder, all call *this*
-implementation rather than each having their own).
-
-**Test strategy.** The eval manifest itself is the test plan — checked
-into the repo, not a spreadsheet (E09's exit artifact). CI runs
-component + integration levels on every PR; golden-task E2E nightly;
-production shadow continuously against the running `customer_support_agent`.
-
----
-
-## 19. `tools`
-
-**Purpose.** Typed tool calls, registry, retrieval-based selection at
-scale.
-
-**Interfaces**
-
-```python
-class ToolDefinition(BaseModel):
-    name: str
-    namespace: str
-    schema: type[BaseModel]
-    description: str
-
-class ToolRegistry(Protocol):
-    def register(self, tool: ToolDefinition) -> None: ...
-    def select(self, task: Task, k: int) -> list[ToolDefinition]:
-        """Retrieval over tool descriptions, reusing the NOLLM cascade
-        (exact match -> metadata filter -> embedding similarity)."""
-```
-
-**Key classes.** `NamespacedToolRegistry`, `ToolRetrievalSelector`
-(delegates scoring to `evals.NollmScoringCascade`).
-
-**LLD patterns applied.** Registry pattern; Facade.
-
-**Test strategy.** Integration: E22's 50-tool degradation-then-recovery
-demo as a regression test — unfiltered exposure must show the documented
-accuracy drop, namespacing+retrieval must recover it, both asserted
-numerically against the four exit metrics (token budget, selection
-accuracy, irrelevant-tool exposure rate, latency).
-
----
-
-## 20. `tui`
-
-**Purpose — current phase.** A single **live status feed** (Claude-Code
-style): as a request moves through the harness, every subsystem it
-passes through emits a short, human-readable status line — not just the
-final response. Each line shows a spinner while its stage is in flight,
-a completion mark when it finishes, running token counts, and lets the
-person select and copy any portion of the visible text. This is a
-summary surface only — full structured/debug detail for the same event
-goes to the corresponding log file in `logs/`, never only to the TUI.
-
-**Purpose — next phase `[deferred, TODO]`.** DB browser, memory
-inspector (all 4 CoALA stores), and audit-trail view. These are
-designed below at interface level so the boundary is stable, but **no
-implementation ships this phase** — `AgenticTuiApp` this phase mounts
-only the live status feed.
-
-**Interfaces — current phase**
-
-```python
-class StatusEvent(BaseModel):
-    stage: str                                    # canonical key, e.g. "prompt_injection_check"
-    status: Literal["started", "completed", "failed"]
-    timestamp: datetime
-    tokens_delta: int | None = None               # set on llm_call/llm_response events
-
-class LiveStatusFeed(Protocol):
-    def emit(self, event: StatusEvent) -> None: ...
-    def events_for(self, run_id: str) -> Iterator[StatusEvent]: ...
-
-class StageLabeler(Protocol):
-    def label_for(self, stage: str) -> str:
-        """Maps a canonical stage key to the human-readable line shown
-        in the feed — see the mapping table below. Every stage key any
-        subsystem emits THIS phase must have an entry; missing entries
-        fail a dedicated contract test, not a silent fallback string."""
-
-class ClipboardService(Protocol):
-    def copy_selection(self, text: str) -> None:
-        """Copies the person's current text selection. Implemented via
-        OSC 52 terminal escape sequence (works over SSH, no local
-        clipboard daemon required) with a local-clipboard fallback."""
-```
-
-**Stage label mapping (initial set — extend as new stages are wired in;
-this table itself is the content of `StageLabelRegistry`, not prose to
-duplicate in code comments)**
-
-| Canonical stage key | Human-readable label shown in feed |
+| `graph/` | `CustomerSupportAgent` (`handle`, `resume`), the wiring (`edges.py`), nodes (`nodes/`: authenticate, screening, intent, context, prefetch, propose, execute, finalize, review_wait), the composition root (`builder.py`) |
+| `domain/` | `Order`, `User`, `OrderStatus`, `RefundStatus`; `Customer` identity (a context variable the model never sets); `OrderReferenceResolver` (the order under discussion); `RefundPolicy`, `CancellationPolicy` — the single source of business truth; `ports.py` |
+| `deterministic_checks/` | `OrderChecks`: an explicitly named order exists, is the customer's, is not refunded, is refundable — before any model call |
+| `intent/` | `CustomerSupportIntentRouter`: deterministic rejects → phrase rules → Laya (or BERT) at its own threshold; follow-ups ("what about 10010?"); the read-intent suggestion for an unplaced turn |
+| `tools/` | Five typed `support` tools: `get_order_status`, `list_orders`, `get_refund_status` (reads), `process_refund`, `cancel_order` (writes); `CustomerSupportToolHandler` |
+| `gatekeeper/` | `CustomerSupportBusinessRules` (the per-action refund limit from the persisted policy → RATIFIABLE) and `EstablishedOrderScope` (writes only target the order under discussion → else VOID) |
+| `resilience/` | `RefundSaga`, `CancellationSaga`, `RefundSettlement` (issued → settles; `/void`) |
+| `verification/` | `RefundEffectSource`: reads the refunds ledger and order back |
+| `review/` | `ReviewQueueService` (approve resumes the waiting durable run); referral of escalated refunds |
+| `console/` | `CustomerSupportHost` (prepare: warm the classifier and NLI, sync the knowledge base, recover orphaned runs; settlement sweep as `HousekeepingHost`); `/void`, `/cancel`, `/kb`, `/skills`, the support review handler (`refund`, `cancel_and_refund`, `reply`) |
+| `loop_control/` | `OutputQualityGate`: `PlanLookup` (configured tool order per intent), `GroundedCritic` (one deterministic critique), at most one repair, `IndependentScorer` |
+| `presentation/` | Order menu and details rendered from the record; grounding facts (`facts.py`); stage-card fields |
+| `prompts/` | `AGENT.md` (profile), `skills/*/SKILL.md` (order-status, order-details, list-orders, refund-workflow, refund-status, cancel-order), reply prompts, `customer_policy.md` |
+| `memory/` | `support_memory_profile()` — session summaries by BART, checked by NLI |
+| `persistence/` | `schema.sql`, `OrdersRepository`, `UsersRepository`, `RefundLedgerRepository`, `require_seeded` |
+| `security/` | `CustomerAuthenticator` — seven-character user codes from an unambiguous alphabet |
+| `observability/`, `analytics/` | `TurnAccountant` (SLO outcomes); Tier-2 facts, semantic layer and dummy profile |
+| `knowledge_base/` | Informational articles retrieved as semantic memory; they never decide |
+| `dummy_data/` | `generator.yaml`, seed SQL, `make dummy-data csa` (100 users, 1,000 orders, fixed seed) |
+| `evals/` | `CsaEvalPlugin`, golden cases (50; 30 core), fixture (`EVAL001`–`EVAL005`, orders 90001+), oracle rules, DeepEval metrics, Promptfoo red team (27 attacks; 20 core), intent bake-off cases |
+| `admin/` | `make refund-limit` |
+
+**Turn flow.** See [HLD §5.1](HLD.md#51-customer-support) and §6.1. The order row the
+deterministic checks read is reused by prefetch and the read path. Every turn is a durable
+thread; a refund above the limit is queued and the run pauses in `await_approval`, while the
+customer keeps chatting.
+
+**Domain rules** (ADR C-01 – C-03): refundable = delivered, or cancelled before delivery;
+already refunded = never again; full refund only; the direct limit is a database row; an issued
+refund is voidable until it settles.
+
+## B2. Research agent
+
+`src/research_agent/` — a scoped, contract-bound research agent with a direct-answer path.
+
+| Package | Owns |
 |---|---|
-| `prompt_injection_check` | Checking for prompt injection… |
-| `pii_filtering` | Filtering PII… |
-| `order_status_check` | Checking order status… |
-| `refund_eligibility_check` | Checking refund eligibility… |
-| `llm_call` | Calling model… |
-| `llm_response_received` | Model responded |
-| `output_parsing` | Parsing output… |
-| `working_memory_check` | Checking working memory… |
-| `context_assembly` | Assembling context… |
-| `gatekeeper_evaluation` | Checking authorization… |
-| `tool_execution` | Executing `{tool_name}`… |
-| `guardrail_validation` | Validating output structure… |
+| `graph/` | `ResearchAgent.handle` (dispatch on the session's phase); three graphs — `answer_graph.py` (reason ⇄ act → ground → finalize), `scoping_graph.py`, `run_graph.py`; their nodes; `builder.py` |
+| `scoping/` | Research kind (`kind.py`: cues → example classifier → LLM), checklists per kind, hybrid termination (`termination.py`), the anti-sycophancy guard, time windows, `BriefBuilder` |
+| `rubric/` | Templates per kind, the deterministic generator, the editor, freeze and hash |
+| `planning/` | The planner and the plan validation gate (acyclic, bounded, traced) |
+| `research/` | The worker (bounded act–observe per sub-question), the three content defences, extraction (verbatim spans), reflection (`GapAnalyzer`), stop rules (one per kind), recency |
+| `synthesis/` | The report writer, the citation guard, Coverage & Limits (built in code) |
+| `audit/` | Named acceptance checks and `IndependentAuditor` (`audit_report(contract, report, ledger_snapshot)`) |
+| `archive/` | The three-artifact archive and run index; `make runs ra` |
+| `tools/` | Direct-answer tools: web search, page fetch, weather, clock — all through the platform tool path |
+| `guardrails/` | The person's message screen (`input_screen.py`), page evidence for the direct answer |
+| `memory/` | `research_memory_profile()`; `RunEventWriter` (run dream events) |
+| `domain/` | `ScopeBrief`, `KnownUnknown`, `Rubric`, `Contract`, `Budget`, `Plan` |
+| `console/` | `ResearchHost`: greeting, side panels (checklist, budget meters), cancel key, forwarded commands |
+| `llm/`, `prompts/`, `context/`, `observability/`, `presentation/`, `analytics/` | Structured role calls; role instructions and `AGENT.md`; the direct answer's context window; telemetry; cards; Tier-2 facts |
 
-**Key classes — current phase.** `AgenticTuiApp` (Textual `App`, single
-shell — this phase mounts one panel), `LiveStatusPanel` (renders the
-`StatusEvent` stream: spinner for the in-flight stage, checkmark on
-`completed`, cross on `failed`, each line's text selectable/copyable),
-`StageLabelRegistry(StageLabeler)`, `TokenCounterWidget` (running total
-for the session **and** a per-turn count, both visible simultaneously),
-`Osc52ClipboardService(ClipboardService)`.
+**What each role may see.** Only the extractor reads raw page text. The planner, reflector and
+synthesizer see the contract, the ledger's verbatim claims and run bookkeeping. The audit sees
+exactly `(contract, report, ledger_snapshot)`.
 
-**Key classes — next phase `[deferred, TODO — interfaces only, not
-built]`.** `DbBrowserPanel`, `MemoryInspectorPanel` (would read all four
-`MemoryStore`s directly, never a cached/stubbed view — per the
-platform's original never-stub-memory requirement), `AuditTrailPanel`,
-`FeatureTogglePanel` (writes to `config`'s singleton — the live-toggle
-surface for PRD's G6). `TuiPanel` remains the shared interface these
-implement when built:
+**Budgets.** Searches, fetches, tokens, seconds, rounds, DAG nodes, gap-fill rounds,
+concurrency — reserved synchronously before every await.
 
-```python
-class TuiPanel(Protocol):
-    def render(self) -> RenderableType: ...
-    def refresh(self) -> None: ...
-```
+**Statuses.** COMPLETE (every must-pass item met, no budget exhausted), PARTIAL (anything less;
+Coverage & Limits says why), CANCELLED, FAILED (plan invalid twice).
 
-**LLD patterns applied.** Observer (`LiveStatusPanel` subscribes to
-`LiveStatusFeed`; every harness stage `emit()`s rather than the panel
-polling); Facade (`AgenticTuiApp` composes panels — one this phase,
-four once the deferred set lands); Strategy (`ClipboardService`
-implementation swappable per terminal environment).
+## B3. Ops agent
 
-**Sequence — a request's stages appear live in the feed**
+`src/ops_agent/` — the MCP demonstration agent.
 
-```mermaid
-sequenceDiagram
-    participant GK as gatekeeper
-    participant SEC as security
-    participant LLM as llm
-    participant Feed as LiveStatusFeed
-    participant Panel as LiveStatusPanel
-
-    SEC->>Feed: emit(prompt_injection_check, started)
-    Feed->>Panel: notify
-    Panel->>Panel: show spinner "Checking for prompt injection…"
-    SEC->>Feed: emit(prompt_injection_check, completed)
-    Panel->>Panel: show checkmark
-    LLM->>Feed: emit(llm_call, started)
-    Panel->>Panel: show spinner "Calling model…"
-    LLM->>Feed: emit(llm_response_received, completed, tokens_delta=812)
-    Panel->>Panel: checkmark + update token counters
-    GK->>Feed: emit(gatekeeper_evaluation, started)
-    Panel->>Panel: show spinner "Checking authorization…"
-    GK->>Feed: emit(gatekeeper_evaluation, completed)
-    Panel->>Panel: checkmark
-```
-
-**Config surface.** `TUI__REFRESH_INTERVAL_MS`,
-`TUI__SHOW_TOKEN_COUNT` (default `true`),
-`TUI__COPY_METHOD` (`osc52` | `pyperclip`).
-
-**Test strategy.** Unit: `StageLabelRegistry` completeness — every
-`stage` key any subsystem this phase actually emits has a mapping
-entry (fails loudly, not a silent fallback). Unit: `LiveStatusPanel`
-transitions spinner → checkmark/cross correctly against a fixture
-event stream. Integration: one smoke test runs a full request through
-`customer_support_agent` and asserts the feed shows a `started`/
-`completed` pair for every documented stage in order, token counters
-increment on `llm_response_received`, and — the regression test for
-scope creep — that no DB browser / memory inspector / audit panel is
-mounted this phase.
+| Package | Owns |
+|---|---|
+| `graph/` | `propose ⇄ execute → ground` (`graph.py`); `GovernedCalls` (VALID when allowed, VOID refused, UNGOVERNED when withheld); `builder.py` (`_sources` → `GovernedMcpToolSource`) |
+| `guardrails/` | `FigureCheck` — every number in the answer must appear in a query result (level 2) |
+| `presentation/` | The reply with its SQL and rows |
+| `prompts/` | `AGENT.md` and one `always` skill, `analytics-investigation` (prefetches `list_metrics`, `list_views`) |
+| `console/` | The ops host; `/skills` |
+| `domain/`, `analytics/` | Its policy and declared outcomes |
 
 ---
 
-## 21. `customer_support_agent` (the running product)
+# Part C — Cross-subsystem invariants
 
-**Purpose.** LangGraph-based refund agent; composes every subsystem
-above. Owns *no* duplicate logic — this is the invariant that was
-violated once (E01/E02 duplication) and fixed; regression-tested going
-forward.
-
-**Structure.** `core/` no longer exists. Each folder pairs with the
-`agent_platform` package it composes, so the mapping is visible in the
-tree; see `Program_Design.md` §1 for the full listing.
-
-- `graph/` — the LangGraph app. `state.py` (AgentState), `edges.py`
-  (wiring and the routing predicates), `builder.py` (the composition
-  root), `agent.py` (dependencies and one turn's lifecycle), and
-  `nodes/` — one module per concern, mixed into the agent over a single
-  injected dependency set declared once in `nodes/_support.py`.
-- `domain/` — `Order`, `User`, `HitlRequest`, ambient identity. Orders
-  carry the product, price breakdown and parcel tracking, with
-  `whereabouts` answering "where is my order" deterministically from the
-  record rather than leaving a delivery date for the model to invent.
-- `persistence/` — `schema.sql` (single source of truth for the DDL) and
-  the four repositories.
-- `tools/` — domain tools, each registered with `tools.ToolRegistry` and
-  gated by `gatekeeper`. Tools belong to the agent; the platform provides
-  the registry, the selector and the executor.
-- `gatekeeper/` — `business_rules.py` (the deterministic rules the
-  reference monitor calls into) and `mandates.py` (what this customer
-  actually asked for — see §11.1).
-- `verification/` — what a write claimed, and how to read it back (§24).
-- `console/` — this agent's slash commands and its `AgentHost`.
-- `control_loop/` — thin composition layer: calls
-  `agent_platform.control_loop`'s `LoopControllerImpl` and `AgentFSM`
-  when that package is built (see `agent_platform/control_loop`,
-  currently parked/TODO). Until then this folder wires LangGraph's own
-  checkpointer directly — a tracked, explicit interim state, not a
-  silent duplication of the future package's logic.
-- `prompts/` — `system_prompt.py` (hand-written baseline) and
-  `customer_policy.md` (policy source of truth, read by
-  `memory.SemanticStore` at startup, never CWD-relative).
-- `dev/run_demo.py`, `dev/seed_db.py` — developer-only entry points, not
-  shipped logic.
-
-**LLD patterns applied.** Facade (the graph presents one entry point to
-`episodes/`/`tui`); everywhere a concrete `agent_platform` class would
-otherwise be imported directly, it's injected via the graph's
-construction function instead (`build_graph(llm, gatekeeper, memory,
-loop_controller, ...) -> StateGraph`).
-
-**Test strategy.** `tests/unit/test_customer_support_graph.py`,
-`test_customer_support_tools.py`, `test_customer_support_repositories.py`
-(present in the uploaded skeleton) — extend, don't replace.
-`tests/integration/test_customer_support_agent.py` runs the full request
-lifecycle (HLD §4) end-to-end against a seeded DB.
-
----
-
-## 22. `episodes/` and `design_patterns/`
-
-> **Retired** by [ADR 0006](adr/0006-retire-episodes-and-pattern-library.md):
-> both packages were removed. The text below is kept as history.
-
-**Purpose.** `episodes/eNN/app.py` — minimal, runnable, exercises the
-harness at episode NN's maturity (no forward-dependency on a subsystem
-not yet "live" for that episode, per the config toggles). `design_patterns/`
-— one folder per WF/AG pattern from Module 1, each a small independent
-program (not routed through `customer_support_agent`) so a pattern can
-be understood in isolation.
-
-**Key classes.** No new abstractions — these packages only *compose*
-subsystems above, via the same injected-`build_graph`-style constructors.
-
-**Test strategy.** Each `episodes/eNN` gets exactly one smoke test:
-"does `app.py` run to completion and produce the episode's documented
-exit artifact." `design_patterns/<pattern>` gets one unit test per
-pattern proving the pattern's defining property (e.g. the ReAct pattern
-test asserts a trajectory of ≥2 thought/action/observation triples for a
-task that a single completion fails).
-
----
-
-## 24. `verification` — did it actually happen?
-
-**Purpose.** An executor returning success means the call did not raise.
-It does not mean the money moved. Nothing checked the difference:
-`set_refund_status` returned `affected > 0` and every layer above read
-that as proof.
-
-**Interfaces**
-
-```python
-class IntendedEffect(BaseModel):
-    action: str
-    target: str
-    expected: dict[str, Any]
-
-class EffectSource(Protocol):
-    def intended(self, call: ToolCall, result: ToolResult) -> IntendedEffect | None: ...
-    def observed(self, effect: IntendedEffect) -> dict[str, Any]: ...
-
-class EffectVerifier(Protocol):
-    async def verify(self, call: ToolCall, result: ToolResult) -> VerificationReport | None: ...
-```
-
-**Key classes.** `ReadBackVerifier(EffectVerifier)` — re-reads and
-compares. The platform owns the comparison because comparing values is
-generic; it owns neither `intended` nor `observed`, which are the
-agent's (`customer_support_agent/verification/refund_effects.py`).
-
-**On failure.** The result never enters `authoritative_tool_results`, so
-no customer-facing claim rests on it; `escalated` is set; an audit entry
-records `EFFECT_NOT_VERIFIED`; no budget is committed. `None` means
-there was nothing to verify — a read, or a failed call — and is
-deliberately not treated as a passed check.
-
-**Test strategy.** A phantom effect (the tool claims a refund, nothing
-was written) and a half-done one (the order is marked refunded with
-nothing in the ledger — the saga's own failure mode) must both fail
-verification.
-
----
-
-## 23. Cross-subsystem invariants (tested at the integration level, owned by no single module)
+Tested at the integration level; owned by no single module.
 
 | Invariant | Verified by |
 |---|---|
-| No execution path bypasses `gatekeeper` | `tests/integration/test_gatekeeper_bypass_attempts.py` |
-| No malformed output reaches a side-effecting executor | `tests/integration/test_guardrail_invariant.py` |
-| Every side effect has a trace, PII-filtered before persistence | `tests/integration/test_trace_completeness.py` |
-| Every retry is idempotent | `tests/integration/test_resilience_idempotency.py` |
-| No `MemoryStore` Protocol without a real implementation | mypy --strict, CI-gated |
-| No side-effecting result becomes authoritative without a verification report | `tests/integration/test_effect_verification.py` |
-| No write executes outside the established target's scope | `tests/unit/test_gatekeeper.py::TestWritesAreScopedToTheEstablishedOrder` |
-| `agent_platform` names no specific agent | `tests/unit/test_platform_boundary.py` |
-| Coverage ≥ 80% on every merged module | CI-gated, no exceptions without sign-off |
+| `agent_platform` names no specific agent, in code, config or docs | `tests/agent_platform/test_platform_boundary.py`, `test_roles_and_boundary.py` |
+| No module sits loose at a package root | `tests/agent_platform/test_package_layout.py` |
+| No agent subpackage imports another in a cycle; domain never imports persistence | `tests/agent_platform/test_agent_layering.py` |
+| Every model-proposed call takes the one tool path; the Executor runs only approved (or audited UNGOVERNED) calls | `tests/integration/test_cross_subsystem_invariants.py`, `tests/customer_support_agent/test_gatekeeper.py` |
+| No write executes outside the established target's scope | `test_gatekeeper.py::TestWritesAreScopedToTheEstablishedOrder` |
+| Attacks against the harness are defended | `tests/integration/test_e12_attacks.py`, the Promptfoo suite |
+| No side-effecting result is authoritative without read-back | refund flow tests; verification owed dedicated unit tests |
+| Every retry of a side effect is idempotent | `tests/agent_platform/test_resilience.py` |
+| A Protocol has a real implementation | `mypy --strict` |
+| No YAML key that no settings model declares | `tests/customer_support_agent/test_config_surface.py` |
+| Tests never call a provider | `tests/conftest.py::no_provider_calls` |
+| Coverage ≥ 80% | `pytest-cov` `fail_under` (`make verify`) |

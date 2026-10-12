@@ -13,6 +13,7 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
+from agent_platform.core.primitives.money import Money, money_or_none
 from agent_platform.deterministic_checks import (
     DeterministicChecker,
     DeterministicCheckFinding,
@@ -20,7 +21,6 @@ from agent_platform.deterministic_checks import (
     DeterministicCheckResult,
 )
 from agent_platform.logging import get_logger
-from agent_platform.primitives.money import Money, money_or_none
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.cancellation_policy import CancellationPolicy
 from customer_support_agent.domain.models import Order

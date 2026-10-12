@@ -10,7 +10,7 @@ from typing import Any
 from agent_platform.config import get_settings
 from agent_platform.durability.stop_report import stage_name
 from agent_platform.durability.types import ABORTABLE_STATUSES
-from agent_platform.host.protocols import HostAction
+from agent_platform.interface.host.protocols import HostAction
 
 STOP, RESUME, ABORT = "stop", "resume", "abort"
 CANCEL_COMMAND, RESUME_COMMAND, ABORT_COMMAND = "/cancel", "/resume", "/abort"

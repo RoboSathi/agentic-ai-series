@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from agent_platform.scheduling import (
+from agent_platform.runtime.scheduling import (
     AsyncDagScheduler,
     BatchSummary,
     InvalidTaskGraphError,

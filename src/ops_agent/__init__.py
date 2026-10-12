@@ -1,7 +1,7 @@
 """The ops agent — the platform's third product: questions about the agents, answered from data.
 
 It is the first consumer of the platform's MCP client: its only tools are the
-analytics MCP server's (`agent_platform.mcp.server.analytics`), arriving as
+analytics MCP server's (`agent_platform.knowledge.mcp.server.analytics`), arriving as
 ordinary governed tools, authorized by the Gatekeeper, run by the Executor and
 audited like any other.
 

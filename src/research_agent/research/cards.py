@@ -13,12 +13,12 @@ from typing import Any, NamedTuple
 
 from pydantic import BaseModel, Field
 
-from agent_platform.evidence.types import EvidenceEntry
+from agent_platform.hallucination_check.evidence.types import EvidenceEntry
+from agent_platform.interface.presentation.text_tree import TreeNode, tree_lines
 from agent_platform.observability.step_card import Line as StepLine
 from agent_platform.observability.step_card import ModelCall, StepCard
-from agent_platform.presentation.text_tree import TreeNode, tree_lines
-from agent_platform.scheduling import TaskGraph
-from agent_platform.verification.acceptance import CheckVerdict
+from agent_platform.runtime.scheduling import TaskGraph
+from agent_platform.runtime.verification.acceptance import CheckVerdict
 from research_agent.audit.verdict import DEFAULT_WEIGHT, AuditVerdict
 from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.report import Report

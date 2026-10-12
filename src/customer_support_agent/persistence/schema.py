@@ -13,8 +13,8 @@ import hashlib
 from pathlib import Path
 
 from agent_platform.config import get_settings
-from agent_platform.persistence import SqliteConnectionPool
-from agent_platform.primitives.money import Money
+from agent_platform.core.persistence import SqliteConnectionPool
+from agent_platform.core.primitives.money import Money
 from agent_platform.review import ReviewQueue
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.models import HitlRequest, ReplyReview

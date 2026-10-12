@@ -1,7 +1,7 @@
 """Dreams: consolidating an agent's dream events into long-term memory (ADR 0012).
 
 A completed turn (or run) writes a `DreamEvent` to the agent's inbox,
-`data/memory/dream_events/`. `make dream <agent>` runs a `Dream`, which
+`data/<package>/memory/dream_events/`. `make dream <agent>` runs a `Dream`, which
 asks the agent's `MemoryProfile` what the pending events amount to —
 summaries, facts, skills — and writes them through governed memory.
 """

@@ -1,29 +1,7 @@
-# observability — a turn, as the numbers SLOs watch
+# observability — a turn as the numbers SLOs watch
 
-`TurnAccountant` turns a finished turn into a `TurnOutcome` — success,
-escalation, unauthorized action, hallucination, tool failure — from the
-turn's decisions, and settles it into the platform's SLO trackers.
+`TurnAccountant` turns a finished turn into a `TurnOutcome` and settles it into the platform's SLO trackers.
 
-## Vocabulary
-
-- **TurnOutcome** — the per-turn facts the SLO targets are measured on
-
-## Public interface
-
-- `TurnAccountant`, `TurnOutcome` (`accounting.py`)
-
-## Configuration
-
-The targets live in `observability.slo_targets` (platform).
-
-## Collaborators
-
-- `agent_platform.observability.SLORegistry`.
-
-## Episodes
-
-E37 (SLOs and error budgets).
-
-## Tests
-
-Run with `./venv/bin/pytest tests/unit/test_design_gaps.py -q` (or `make test` for everything).
+- **Entry points:** `TurnAccountant`, `TurnOutcome` (`accounting.py`)
+- **Configuration:** `observability.slo_targets` (platform)
+- **Design:** [LLD §B1](../../../design_docs/LLD.md#b1-customer-support-agent)

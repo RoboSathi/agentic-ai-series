@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from agent_platform.config import get_settings
-from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.core.persistence import SqliteConnectionPool
 from agent_platform.security.pii import PatternPIIDetector, PIIFilterImpl, SqlitePIIVault
 from agent_platform.security.pii.vault import VaultKeyError, vault_key
 

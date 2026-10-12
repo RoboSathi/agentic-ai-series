@@ -1,47 +1,7 @@
 # config — the single source of every value
 
-Every value in the repo comes from configuration, never from a Python
-default. This module loads the layered YAML, validates it into typed
-settings, and owns the feature tree that decides which harness controls an
-agent is given.
+Loads the layered YAML (platform defaults → agent overlays → profiles → `local.yaml` → `SECTION__FIELD` env vars), validates it into typed settings, and owns the feature tree an agent's composition root reads once.
 
-## Vocabulary
-
-- **layer** — one YAML file in the merge: platform `config.yaml` → agent overlays (`AGENTIC_OVERLAYS`) → run overlays (`use_overlay`) → `local.yaml`
-- **section** — one top-level key, validated by one `YamlBackedSettings` class, with env prefix `SECTION__`
-- **feature** — a control you can remove and still have a running agent (`features:`); nine exist, sub-features are parent-gated
-- **FeatureSet** — the immutable feature tree; read once, in the composition root
-
-## Public interface
-
-- `get_settings()` / `reload_settings()` — the `AppConfig` singleton
-- `YamlBackedSettings` — base class: YAML section, deep-merged with env and kwargs
-- `use_overlay(path)` / `clear_overlays()` / `config_sources()` — the overlay chain
-- `FeatureSet`, `active_features`, `set_active_features` (`features.py`)
-- `resolve_path` / `REPO_ROOT` — paths resolve against the repo, never the shell's CWD
-- `load_environment` (`environment.py`) — the repo's `.env` fills the process environment once (an exported variable wins); `AppConfig` does not parse it, so a bare key there (`PII_VAULT_KEY`, `nvidia_api_key`) is never an "extra input"
-- `VersionManifest` (`versions.py`) — the independently versioned components (E39)
-
-## Configuration
-
-`config.yaml` here is the platform default. Env overrides use `SECTION__FIELD`, nested with
-`__`, and are **deep-merged**: `RESILIENCE__RETRY__MAX_ATTEMPTS=7` changes one field and keeps its
-siblings. Bare provider keys (`nvidia_api_key`) are plain env vars and never appear
-in a settings dump.
-
-## Seams
-
-- An agent names itself only in its own overlay; `overlays:` here is empty on purpose.
-- `/harness` moves the live `FeatureSet` without touching disk; `/config` is read-only.
-
-## Collaborators
-
-- Everything reads it. `tests/unit/test_config_surface.py` keeps the surface honest: no orphan YAML keys, no unread fields, no overlay restating an inherited value.
-
-## Episodes
-
-E01 (the harness as a set of features), E22, E28, E37, E39, E48c.
-
-## Tests
-
-Run with `./venv/bin/pytest tests/unit/test_config.py tests/unit/test_features.py tests/unit/test_config_surface.py -q` (or `make test` for everything).
+- **Entry points:** `get_settings()`, `YamlBackedSettings`, `use_overlay`, `FeatureSet` (`features.py`), `resolve_path` / `REPO_ROOT` (`paths.py`), `load_environment`
+- **Configuration:** `config.yaml` here (platform defaults); `local.yaml.example`
+- **Design:** [LLD §A1](../../../design_docs/LLD.md#a1-config) · [ADR P-07](../../../design_docs/ADR.md#p-07--the-harness-is-the-set-of-declared-features)

@@ -1,13 +1,13 @@
 """Evidence ledger: append-only, and the verbatim-span rule."""
 
-from agent_platform.evidence import (
+from agent_platform.core.primitives.hashing import text_hash
+from agent_platform.hallucination_check.evidence import (
     EvidenceCandidate,
     EvidenceEntry,
     EvidenceLedger,
     SpanRejection,
     VerbatimSpanValidator,
 )
-from agent_platform.primitives.hashing import text_hash
 
 PAGE = "The Veltrane cell stores 410 Wh/kg. It entered pilot production in 2025."
 

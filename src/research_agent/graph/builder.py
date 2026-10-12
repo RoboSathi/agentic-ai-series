@@ -19,7 +19,6 @@ from typing import Any
 
 import yaml
 
-from agent_platform.artifacts import DirectoryArtifactStore
 from agent_platform.audit import AuditLedger, create_audit_ledger
 from agent_platform.config import FeatureSet, active_features, get_settings, set_active_features
 from agent_platform.config.paths import resolve_path
@@ -32,6 +31,7 @@ from agent_platform.context import (
     WorkingMemoryContextSource,
 )
 from agent_platform.context.factory import ContextManagement, build_context_management
+from agent_platform.core.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agent_platform.durability import (
     DurableGraphRunner,
     RunRegistry,
@@ -39,15 +39,19 @@ from agent_platform.durability import (
     model_types,
 )
 from agent_platform.durability.checkpointer import SqliteCheckpointer
-from agent_platform.evidence import EvidenceLedger, NonEmptySpanValidator, VerbatimSpanValidator
-from agent_platform.executor import ToolExecutorImpl
-from agent_platform.executor.registry_handler import RegistryToolHandler
 from agent_platform.guardrails.guards import PydanticValidator
 from agent_platform.guardrails.response import ResponseGuardrail
 from agent_platform.hallucination_check.checker import DetectionLadder
 from agent_platform.hallucination_check.confidence import ConfidenceCheck
 from agent_platform.hallucination_check.confirmer import create_claim_confirmer
+from agent_platform.hallucination_check.evidence import (
+    EvidenceLedger,
+    NonEmptySpanValidator,
+    VerbatimSpanValidator,
+)
 from agent_platform.intent.exemplar import ExemplarIntentClassifier
+from agent_platform.knowledge.artifacts import DirectoryArtifactStore
+from agent_platform.knowledge.web import WebGateway, create_web_gateway
 from agent_platform.llm.embeddings import EmbeddingClient, create_embedding_client
 from agent_platform.llm.http import create_http_client
 from agent_platform.llm.local_embeddings import LocalSentenceEmbedder
@@ -73,9 +77,10 @@ from agent_platform.observability.model_observer import StageReporterModelObserv
 from agent_platform.observability.store import DuckDbObservabilityStore
 from agent_platform.observability.types import utc_now
 from agent_platform.observability.units import OutcomeCatalog, declare_screens
-from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agent_platform.resilience import ResilientCaller, ResourcePoolBulkhead
 from agent_platform.resilience.dead_letter_queue import DeadLetterQueue
+from agent_platform.runtime.executor import ToolExecutorImpl
+from agent_platform.runtime.executor.registry_handler import RegistryToolHandler
 from agent_platform.scoring import create_scoring_cascade
 from agent_platform.scoring.entailment import (
     EntailmentModel,
@@ -93,7 +98,6 @@ from agent_platform.security.pii.boundary import bounded_roles
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
 from agent_platform.security.prompt_injection.hosted import HostedJailbreakGuard
 from agent_platform.tools.path import ToolPath
-from agent_platform.web import WebGateway, create_web_gateway
 from research_agent.archive.store import ResearchArchive
 from research_agent.audit.checks import build_registry
 from research_agent.audit.context import CheckContext

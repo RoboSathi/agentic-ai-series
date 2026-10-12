@@ -15,20 +15,20 @@ committed, because no budget was consulted.
 from typing import Any
 
 from agent_platform.audit import AuditEntry
-from agent_platform.executor import (
-    ApprovedToolCall,
-    ExecutionOutcome,
-)
 from agent_platform.gatekeeper import AuthorityContext, AuthorityDecision
 from agent_platform.gatekeeper.mandate import MandateSet
 from agent_platform.llm.types import Message, ModelToolCall
 from agent_platform.logging.trace_context import get_current_trace_id
 from agent_platform.observability.types import utc_now
 from agent_platform.observability.units import close_task, current_task_kind, open_task
+from agent_platform.runtime.executor import (
+    ApprovedToolCall,
+    ExecutionOutcome,
+)
+from agent_platform.runtime.verification import VerificationReport
 from agent_platform.tools.names import display_tool_name
 from agent_platform.tools.path import DUPLICATE, NOT_OFFERED, ToolOutcome, ToolTurn
 from agent_platform.tools.types import ToolCall, ToolResult
-from agent_platform.verification import VerificationReport
 from customer_support_agent.config.settings import get_agent_settings
 from customer_support_agent.graph.loop_decision import after_execute_step
 from customer_support_agent.graph.nodes._support import (

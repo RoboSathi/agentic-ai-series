@@ -16,7 +16,7 @@ from typing import Any
 
 import yaml
 
-from agent_platform.evidence import EvidenceEntry, LedgerSnapshot
+from agent_platform.hallucination_check.evidence import EvidenceEntry, LedgerSnapshot
 from agent_platform.logging import instrument
 from agent_platform.observability.step_card import ModelCall
 from research_agent.config.settings import DepthProfile

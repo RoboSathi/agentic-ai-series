@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agent_platform.persistence.platform import PlatformStore, as_platform_store
-from agent_platform.primitives.money import Money
+from agent_platform.core.persistence.platform import PlatformStore, as_platform_store
+from agent_platform.core.primitives.money import Money
 
 _REQUIRED_COLUMNS = {
     "agent_id",

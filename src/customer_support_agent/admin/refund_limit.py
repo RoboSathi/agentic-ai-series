@@ -11,8 +11,8 @@ import argparse
 from collections.abc import Sequence
 from datetime import datetime, timezone
 
+from agent_platform.core.primitives.money import InvalidAmountError, Money
 from agent_platform.logging import get_logger
-from agent_platform.primitives.money import InvalidAmountError, Money
 from agent_platform.security.auth.policy import AgentPolicy, AgentPolicyRepository
 from customer_support_agent.admin._store import agent_store
 from customer_support_agent.config import get_agent_settings

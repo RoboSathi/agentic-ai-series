@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agent_platform.scheduling import TaskNode
+from agent_platform.runtime.scheduling import TaskNode
 
 
 class SubQuestion(BaseModel):

@@ -10,11 +10,11 @@ from typing import Any
 from textual.app import App
 from textual.widgets import Button, Input
 
-from agent_platform.commands.review import QueueCommand
-from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.core.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.interface.commands.review import QueueCommand
+from agent_platform.interface.tui.review_screen import APPROVE_ID, COMMENT_ID, DENY_ID, ReviewScreen
 from agent_platform.resilience import DeadLetterQueue
 from agent_platform.review import ReviewQueue
-from agent_platform.tui.review_screen import APPROVE_ID, COMMENT_ID, DENY_ID, ReviewScreen
 
 
 class _Host(App[None]):

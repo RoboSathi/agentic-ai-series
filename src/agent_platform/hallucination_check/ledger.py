@@ -35,8 +35,8 @@ from pydantic import BaseModel
 from agent_platform.config import get_settings
 from agent_platform.config.settings import FactAttributeSettings, FactSettings
 from agent_platform.context.types import Chunk, ChunkKind
+from agent_platform.core.primitives.money import money_or_none
 from agent_platform.hallucination_check.claims import money_pattern, specifics
-from agent_platform.primitives.money import money_or_none
 
 # `Chunk.metadata` key holding the fact a chunk states.
 FACT_KEY = "fact"

@@ -2,7 +2,7 @@
 
 from agent_platform.config import get_settings
 from agent_platform.evals.core.contracts import EvalPlugin
-from agent_platform.host import load_spec
+from agent_platform.interface.host import load_spec
 
 
 class EvalPluginNotConfiguredError(RuntimeError):

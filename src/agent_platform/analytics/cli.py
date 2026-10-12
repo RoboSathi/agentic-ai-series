@@ -19,8 +19,8 @@ from agent_platform.analytics.dashboards import DashboardGenerator
 from agent_platform.analytics.dummy import generate_world
 from agent_platform.analytics.exporter import ExportedView, ParquetExporter, SourceManifest
 from agent_platform.config import get_settings
+from agent_platform.interface.presentation.text_tree import TreeNode, tree_lines
 from agent_platform.observability.store import DuckDbObservabilityStore
-from agent_platform.presentation.text_tree import TreeNode, tree_lines
 
 EXPORT, DASHBOARDS, MODELS, DROP_LEGACY, DUMMY = (
     "export",

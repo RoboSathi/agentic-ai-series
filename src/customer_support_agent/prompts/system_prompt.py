@@ -21,9 +21,9 @@ for the final, customer-facing turn.
 from collections.abc import Sequence
 
 from agent_platform.config import get_settings
+from agent_platform.core.primitives.money import Money
 from agent_platform.llm.prompt import POLICY, PromptPart
 from agent_platform.memory.procedural.skills import load_skill_documents, render_profile
-from agent_platform.primitives.money import Money
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.prompts.policy import policy_text
 

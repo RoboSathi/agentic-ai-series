@@ -20,9 +20,9 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel
 
+from agent_platform.knowledge.web import SearchHit
 from agent_platform.logging import instrument
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
-from agent_platform.web import SearchHit
 from research_agent.config.settings import ResearchSettings
 from research_agent.domain.scope import ScopeBrief
 

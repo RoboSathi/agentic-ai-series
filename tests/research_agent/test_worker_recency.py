@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from agent_platform.evidence import EvidenceLedger, NonEmptySpanValidator
+from agent_platform.hallucination_check.evidence import EvidenceLedger, NonEmptySpanValidator
+from agent_platform.knowledge.web import FetchedPage, SearchHit, SearchRequest, SearchResponse
 from agent_platform.loop_control import BudgetGuard
-from agent_platform.web import FetchedPage, SearchHit, SearchRequest, SearchResponse
 from research_agent.config import get_agent_settings
 from research_agent.domain.budget import Budget
 from research_agent.domain.evidence import ClaimCandidate

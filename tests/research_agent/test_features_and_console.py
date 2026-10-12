@@ -2,9 +2,9 @@
 
 import pytest
 
-from agent_platform.commands import CommandResult
-from agent_platform.commands.types import CommandError
-from agent_platform.host import CancellableHost, GreetingHost, StatusHost
+from agent_platform.interface.commands import CommandResult
+from agent_platform.interface.commands.types import CommandError
+from agent_platform.interface.host import CancellableHost, GreetingHost, StatusHost
 from research_agent.config import get_agent_settings
 from research_agent.console import ResearchHost
 

@@ -9,8 +9,8 @@ from datetime import timedelta
 import pytest
 
 from agent_platform.audit import STANDING_FIELD, AuditEntry, Decision, DuckDbAuditLedger
-from agent_platform.commands import CommandError
-from agent_platform.commands.inspection import AuditCommand
+from agent_platform.interface.commands import CommandError
+from agent_platform.interface.commands.inspection import AuditCommand
 from agent_platform.observability.store import DuckDbObservabilityStore
 from agent_platform.observability.types import utc_now
 

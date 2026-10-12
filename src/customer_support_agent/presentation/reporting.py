@@ -15,6 +15,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from agent_platform.core.primitives.money import money_or_none
 from agent_platform.observability.step_events import (
     gatekeeper_fields as platform_gatekeeper_fields,
 )
@@ -27,7 +28,6 @@ from agent_platform.observability.tool_fields import (
 from agent_platform.observability.tool_fields import (
     tool_result_fields as platform_tool_result_fields,
 )
-from agent_platform.primitives.money import money_or_none
 
 # Re-exported: the support agent's graph reads every card helper from here.
 __all__ = [

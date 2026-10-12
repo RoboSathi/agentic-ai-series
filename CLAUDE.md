@@ -20,14 +20,22 @@ the standard of Anthropic, OpenAI, or Google, not tutorial-grade scaffolding.
   - `src/research_agent/` — the second agent on the same platform (scoped,
     durable web research), composed the same way.
   - `src/ops_agent/` — the third agent: answers questions about how the
-    agents are running from the analytics mart, through the platform's
-    analytics MCP server (its only tools). See ADRs 0007 and 0008.
-  - `src/agent_platform/dashboards/rill/` — Rill dashboards over the same analytics
+    agents are running from the analytics source, through the platform's
+    analytics MCP server (its only tools). See ADR P-24, P-25, O-01.
+  - `src/agent_platform/analytics/dashboards/rill/` — Rill dashboards over the same analytics
     source (`make dashboard`).
   - Episodes are demonstrated by running these agents under config overlays
-    (features, profiles, ablations), not by separate per-episode scripts.
-    Each agent's `design_docs/patterns.md` maps the WF/AG patterns the series
-    teaches to where that agent uses them.
+    (features, profiles), not by separate per-episode scripts.
+    `design_docs/patterns.md` maps the WF/AG patterns the series teaches to
+    where each agent uses them.
+- Layout: `agent_platform` keeps its subsystems at the top level and groups
+  small leaves into `core/` (primitives, persistence), `interface/` (tui,
+  commands, presentation, host), `runtime/` (executor, scheduling,
+  verification) and `knowledge/` (web, mcp, artifacts). Runtime state lives
+  outside `src/`: `db/<package>/`, `data/<package>/`, `reports/<package>/`.
+- Design docs live only in top-level `design_docs/` (PRD, HLD, LLD, one
+  consolidated `ADR.md`, glossary, patterns, threat model, evals). Package
+  READMEs are short pointers into them. Record every new decision in `ADR.md`.
 
 ## Non-negotiable engineering standards
 
@@ -78,7 +86,7 @@ building anything non-trivial.
   trail.
 - **Orchestration**:LangGraph; Prefer LangGraph's built-in state management over hand-rolled state machines.
 - **Terminal UI**: Rich + Textual, one unified app
-  (`agent_platform/tui/app.py`) with panels/tabs for live trace, DB browser,
+  (`agent_platform/interface/tui/app.py`) with panels/tabs for live trace, DB browser,
   memory inspector, and audit view — in the spirit of Claude Code / opencode.
   The TUI is a *consumer* of `observability`/`persistence`/`memory`/`audit`,
   never a second source of truth. File logging is required independently of

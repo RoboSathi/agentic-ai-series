@@ -17,8 +17,8 @@ from collections import defaultdict
 
 from pydantic import BaseModel, Field
 
-from agent_platform.commands.types import CommandTable
 from agent_platform.config import get_settings
+from agent_platform.interface.commands.types import CommandTable
 from agent_platform.memory.dream.events import DreamEvent
 from agent_platform.memory.dream.inbox import FileDreamInbox
 from agent_platform.memory.dream.summaries import SUMMARY_CATEGORY

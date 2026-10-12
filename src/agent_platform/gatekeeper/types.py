@@ -16,9 +16,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from agent_platform.core.primitives.money import Money
 from agent_platform.gatekeeper.mandate import MandateSet
 from agent_platform.observability.types import utc_now
-from agent_platform.primitives.money import Money
 
 Verdict = Literal["allow", "deny", "escalate"]
 CheckStatus = Literal["PASS", "FAIL", "ESCALATE", "SKIPPED"]

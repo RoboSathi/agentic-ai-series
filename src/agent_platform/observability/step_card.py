@@ -23,8 +23,8 @@ from typing import Any, Self
 from pydantic import BaseModel
 
 from agent_platform.config import get_settings
+from agent_platform.interface.presentation.text_tree import value_lines
 from agent_platform.llm.types import CompletionResult
-from agent_platform.presentation.text_tree import value_lines
 
 # A narrative card line: plain text, or `{"text", "tone"}` (`tui.tone_styles`).
 Line = str | dict[str, str]

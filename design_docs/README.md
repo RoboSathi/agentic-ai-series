@@ -1,48 +1,32 @@
-# Design docs — platform-wide
+# Design docs
 
-This folder holds only what is true of the **platform** (`src/agent_platform`)
-and of the monolith as a whole. Each agent's own design lives inside its
-package:
+Every design document for the repository — the platform and all three agents — lives in this
+folder. Agent packages hold no design documents; each package's `README.md` is a short pointer
+to the section here that describes it.
 
-| agent | design docs |
+## Read in this order
+
+| Document | What it answers |
 |---|---|
-| `customer_support_agent` (csa) | [`src/customer_support_agent/design_docs/`](../src/customer_support_agent/design_docs/README.md) |
-| `research_agent` (ra) | [`src/research_agent/design_docs/`](../src/research_agent/design_docs/overview.md) |
-
-## Index
-
-| document | what it is |
-|---|---|
-| [`adr/0001-pattern-ownership.md`](adr/0001-pattern-ownership.md) | Pattern *composition* is agent-owned; only domain-free mechanisms go in commons |
-| [`adr/0002-agent-registry-and-make.md`](adr/0002-agent-registry-and-make.md) | `make <target> <agent>`: the Makefile agent registry |
-| [`adr/0003-commons-mechanisms-domain-free.md`](adr/0003-commons-mechanisms-domain-free.md) | The mechanisms added for a second agent, and the vocabulary guard |
-| [`adr/0004-host-hooks-panels-cancel.md`](adr/0004-host-hooks-panels-cancel.md) | Optional `AgentHost` hooks: greeting, side panels, cancel, forwarded turns |
-| [`adr/0005-baseline-repair.md`](adr/0005-baseline-repair.md) | The behaviour-preserving repair that made `make verify` green before ra work began |
-| [`adr/0006-retire-episodes-and-pattern-library.md`](adr/0006-retire-episodes-and-pattern-library.md) | `episodes/` and `design_patterns/` removed; episodes run the agents under config |
-| `PRD.md`, `HLD.md`, `LLD.md`, `Program_Design.md`, `Episodes.md` | The series' original product/design documents (see below) |
-
-## The earlier PRD / HLD / LLD / Program Design
-
-The build brief for the research agent assumed these documents were not in
-this repository. They are: `PRD.md`, `HLD.md`, `LLD.md` and
-`Program_Design.md` sit in this folder and predate the research agent.
-They describe the platform and the customer-support agent only, and they
-were **not edited** as part of adding ra. Where they and the code disagree
-(for example PRD G1, "every tool call passes the Gatekeeper", which
-`CLAUDE.md` records as retired now that the Gatekeeper is a toggleable
-feature), the code and the ADRs are current. **A human must reconcile
-them** — decide what to keep, what to supersede with ADRs, and where ra
-belongs in them.
+| [PRD.md](PRD.md) | Why the system exists, who it is for, every requirement and its build status, what is parked |
+| [HLD.md](HLD.md) | What it is made of: the platform's component map, how an agent is composed, the three agents' graphs, request lifecycles, deployment, stack |
+| [LLD.md](LLD.md) | How each component works: interfaces, configuration, seams — platform packages, then each agent, then the cross-subsystem invariants |
+| [ADR.md](ADR.md) | Why it is this way: the single decision log (consolidates platform ADRs 0001–0013 and research ADRs ra-0001–0024) |
+| [ubiquitous_language.md](ubiquitous_language.md) | What the words mean: one glossary for the platform, analytics and every agent |
+| [patterns.md](patterns.md) | Where each agent uses each WF/AG and LLD pattern the series teaches |
+| [threat_model.md](threat_model.md) | Assets, trust boundaries, threats and the control that answers each |
+| [evals.md](evals.md) | How each agent is evaluated: three graders, the shared judge, each suite |
+| [analytics_schema.md](analytics_schema.md) | The analytics contract column by column: facts, the metric catalogue, agent-owned tables |
+| [Program_Design.md](Program_Design.md) | Repository layout, the design process, coding standards, verification |
+| [Episodes.md](Episodes.md) | The episode plan (not finalised) |
 
 ## Conventions
 
-- **ADRs** use Context / Decision / Consequences / Alternatives rejected.
-  Platform ADRs are numbered `0001…` here; an agent's are `ra-0001…` (or
-  the agent's prefix) in its own `design_docs/adr/`.
-- **Dependencies point from agent to platform, never back.** Commons holds
-  no agent vocabulary (enforced for ra's words by
-  `tests/agent_platform/test_roles_and_boundary.py`).
-- **Agent docs describe the code as it exists.** csa's folder records only
-  what can be verified from its code; nothing is invented after the fact.
-- **Each agent's `design_docs/patterns.md`** records where it uses each
-  pattern the series teaches; edit it when the code moves.
+- **The code and these documents agree.** A change that moves the design updates the relevant
+  section here in the same change, and adds or amends an entry in [ADR.md](ADR.md).
+- **Decisions** are written once, in `ADR.md`, as the current decision; superseded versions are
+  listed in its appendix rather than kept as separate files.
+- **Dependencies point from agent to platform, never back.** The platform's documents name no
+  agent; agent-specific design is in the agent sections of each document.
+- **Diagrams** are Mermaid, so they render on GitHub and diff as text.
+- **Screenshots** for the root README live in [`images/`](images/).

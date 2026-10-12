@@ -21,6 +21,7 @@ from typing import Any, Protocol, TypeVar, runtime_checkable
 from pydantic import BaseModel
 
 from agent_platform.guardrails.guards import PydanticValidator
+from agent_platform.interface.presentation.text_tree import value_lines
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.prompt import PromptManifest
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
@@ -29,7 +30,6 @@ from agent_platform.loop_control import BudgetGuard
 from agent_platform.memory.procedural.skills import AgentInstructions
 from agent_platform.observability import StageReporter
 from agent_platform.observability.step_card import ModelCall
-from agent_platform.presentation.text_tree import value_lines
 from agent_platform.resilience import AsyncTimeoutGuard
 from research_agent.config.settings import InstructionSettings
 from research_agent.domain.budget import TOKENS

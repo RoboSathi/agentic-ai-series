@@ -1,5 +1,0 @@
-"""The analytics MCP server (`server.build_server`)."""
-
-from agent_platform.mcp.server.analytics.server import build_server
-
-__all__ = ["build_server"]

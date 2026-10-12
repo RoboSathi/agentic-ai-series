@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from agent_platform.evidence import EvidenceEntry, LedgerSnapshot
 from agent_platform.guardrails.guards import PydanticValidator
+from agent_platform.hallucination_check.evidence import EvidenceEntry, LedgerSnapshot
 from agent_platform.llm.client import LLMClient
 from agent_platform.scoring.entailment import LexicalEntailmentModel
 from research_agent.domain.report import Report, ReportSection

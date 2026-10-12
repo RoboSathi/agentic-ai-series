@@ -13,6 +13,7 @@ from typing import Protocol, runtime_checkable
 from agent_platform.audit.ledger import AuditLedger, NullAuditLedger
 from agent_platform.audit.types import AuditEntry
 from agent_platform.config import get_settings
+from agent_platform.core.primitives.money import Money, money_or_none
 from agent_platform.gatekeeper.contracts import AllowAllBusinessRules, DeterministicBusinessRules
 from agent_platform.gatekeeper.hierarchy import AuthorityHierarchyResolver
 from agent_platform.gatekeeper.ledger import CumulativeLedger
@@ -26,7 +27,6 @@ from agent_platform.gatekeeper.types import (
 )
 from agent_platform.logging import get_logger, instrument, logged
 from agent_platform.logging.trace_context import get_current_trace_id
-from agent_platform.primitives.money import Money, money_or_none
 from agent_platform.security.auth.policy import AgentPolicy
 from agent_platform.security.auth.types import AccessDecision, Principal
 from agent_platform.tools.types import ToolCall

@@ -39,8 +39,8 @@ from agent_platform.memory.procedural.skills import AgentInstructions
 from agent_platform.memory.procedural.skills.types import LEARNED
 from agent_platform.observability.step_events import HALLUCINATION_CHECK
 from agent_platform.observability.types import StatusKind
-from agent_platform.scheduling import AsyncDagScheduler, TaskGraph
-from agent_platform.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
+from agent_platform.runtime.scheduling import AsyncDagScheduler, TaskGraph
+from agent_platform.runtime.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
 from research_agent.archive.store import ResearchArchive
 from research_agent.audit.context import CheckContext
 from research_agent.audit.independent import AuditResult, IndependentAuditor

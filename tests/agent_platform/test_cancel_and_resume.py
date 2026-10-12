@@ -13,9 +13,9 @@ from typing import Any, TypedDict
 import pytest
 from langgraph.graph import END, START, StateGraph
 
+from agent_platform.core.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agent_platform.durability import RunRegistry, create_checkpointer
 from agent_platform.durability.runner import DurableGraphRunner
-from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
 
 
 class _State(TypedDict, total=False):

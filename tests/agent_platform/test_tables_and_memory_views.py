@@ -1,4 +1,4 @@
-"""Clean tables for `/queue`, `/memory` and `make show-memory`, and the seed they read.
+"""Clean tables for `/review`, `/memory` and `make show-memory`, and the seed they read.
 
 What is under test: a `CommandTable` draws as a box coloured cell by cell
 (grid, headings, ids, states), the same in the console and a terminal;
@@ -13,15 +13,15 @@ from typing import Any
 
 import pytest
 
-from agent_platform.commands import CommandResult, CommandTable, MemoryCommand
-from agent_platform.commands.review import TERMINAL, QueueCommand
-from agent_platform.commands.scope import ConsoleScope
 from agent_platform.config import get_settings
+from agent_platform.core.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.interface.commands import CommandResult, CommandTable, MemoryCommand
+from agent_platform.interface.commands.review import TERMINAL, QueueCommand
+from agent_platform.interface.commands.scope import ConsoleScope
+from agent_platform.interface.presentation.command_view import CommandView
 from agent_platform.memory import EpisodicStore, MemoryFact, Provenance, WorkingMemoryStore
 from agent_platform.memory.dream import DreamEvent, FileDreamInbox
 from agent_platform.memory.inspect import snapshot_tables, take_snapshot
-from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
-from agent_platform.presentation.command_view import CommandView
 from agent_platform.resilience import DeadLetterQueue
 
 
@@ -118,13 +118,13 @@ class TestTheQueueSaysHowToDecideWhereItIsRead:
         command = QueueCommand(self._queued())
         command.surface, command.make_agent = TERMINAL, "csa"
         result = await command.run([])
-        assert "make queue csa" in result.lines[-1]
+        assert "make review csa" in result.lines[-1]
         [table] = result.tables
         assert table.headers == get_settings().review.words.columns["quarantine"]
 
     async def test_the_console_names_the_command_and_the_screen(self) -> None:
         result = await QueueCommand(self._queued()).run([])
-        assert "/queue approve" in result.lines[-1] and "ctrl+r" in result.lines[-1]
+        assert "/review approve" in result.lines[-1] and "ctrl+r" in result.lines[-1]
 
 
 class TestTheDemoShop:

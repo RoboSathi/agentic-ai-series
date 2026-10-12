@@ -14,7 +14,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from agent_platform.artifacts import DirectoryArtifactStore, FrozenArtifact
+from agent_platform.knowledge.artifacts import DirectoryArtifactStore, FrozenArtifact
 from agent_platform.logging import instrument
 from agent_platform.memory import MemoryFacade
 from agent_platform.memory.types import MemoryCommand, MemoryPrincipal

@@ -8,9 +8,9 @@ start-up recovery and the operator console never need an event loop at all.
 
 from datetime import datetime
 
+from agent_platform.core.persistence import PlatformStore
 from agent_platform.durability.types import RESUMABLE_STATUSES, RunRecord, RunStatus
 from agent_platform.observability.types import utc_now
-from agent_platform.persistence import PlatformStore
 
 _TABLE = "platform_runs"
 

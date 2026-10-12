@@ -22,6 +22,7 @@ from typing import Any
 
 from agent_platform.audit import SqliteAuditLedger
 from agent_platform.config import get_settings
+from agent_platform.core.persistence import SqliteConnectionPool
 from agent_platform.durability import create_checkpointer, model_types
 from agent_platform.evals.core.contracts import GoldenCase, ToolCallRecord, Transcript, UsageRecord
 from agent_platform.llm.client import LLMClient, create_llm_client
@@ -30,7 +31,6 @@ from agent_platform.logging.trace_context import bound_channel
 from agent_platform.memory import EpisodicStore
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.types import StatusEvent
-from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.config.settings import CsaEvalSettings, get_agent_settings
 from customer_support_agent.domain.identity import Customer, set_current_customer
 from customer_support_agent.evals.dataset.schema import CsaCasePayload

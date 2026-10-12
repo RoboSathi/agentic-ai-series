@@ -15,10 +15,10 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from agent_platform.context.excerpt import relevant_excerpt
+from agent_platform.knowledge.web import FetchedPage
 from agent_platform.logging import instrument
 from agent_platform.observability.step_card import ModelCall
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
-from agent_platform.web import FetchedPage
 from research_agent.domain.evidence import ClaimCandidate
 from research_agent.llm.structured import StructuredCaller
 from research_agent.prompts import extractor as extractor_prompt

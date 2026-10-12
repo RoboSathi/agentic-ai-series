@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 
 from pydantic import BaseModel, Field
 
-from agent_platform.evidence import LedgerSnapshot
+from agent_platform.hallucination_check.evidence import LedgerSnapshot
 from agent_platform.observability.step_card import ModelCall
 from research_agent.domain.report import Report, ReportSection
 

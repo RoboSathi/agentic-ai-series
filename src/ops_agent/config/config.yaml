@@ -68,12 +68,12 @@ audit:
   policy_source: ops_agent.policy
 
 persistence:
-  db_path: src/ops_agent/db/agent.db
+  db_path: db/ops_agent/agent.db
 
 # Only procedural memory is composed: the skills, synced into these files at start-up.
 memory:
   files:
-    root: src/ops_agent/data/memory
+    root: data/ops_agent/memory
 
 # The analytics MCP server, launched over stdio with this interpreter. Its
 # tools run under the envelope below — what this deployment grants them,
@@ -82,7 +82,7 @@ mcp:
   servers:
     - name: analytics
       transport: stdio
-      command: ["{python}", "-m", "agent_platform.mcp.server.analytics"]
+      command: ["{python}", "-m", "agent_platform.knowledge.mcp.server.analytics"]
       namespace: analytics
       envelope:
         surface: locked
@@ -140,7 +140,7 @@ ops_agent:
   # are the platform's (`observability/step_events.py`); only the server card is this agent's.
   stages:
     server: mcp_server
-  # Only what the platform's labels do not already name (agent_platform/tui/labels.py).
+  # Only what the platform's labels do not already name (agent_platform/interface/tui/labels.py).
   stage_labels: {}
   cards:
     result_rows: "{tool} → {rows} rows"

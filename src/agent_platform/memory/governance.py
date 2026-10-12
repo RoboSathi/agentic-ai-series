@@ -20,6 +20,7 @@ from typing import Protocol, runtime_checkable
 from pydantic import BaseModel
 
 from agent_platform.config import get_settings
+from agent_platform.core.persistence import PlatformStore
 from agent_platform.memory.types import (
     MemoryOperation,
     MemoryPrincipal,
@@ -29,7 +30,6 @@ from agent_platform.memory.types import (
     WriteResult,
 )
 from agent_platform.observability.types import utc_now
-from agent_platform.persistence import PlatformStore
 from agent_platform.review.queue import ReviewQueue
 from agent_platform.review.types import ReviewItem
 

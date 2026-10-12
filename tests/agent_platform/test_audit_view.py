@@ -18,8 +18,8 @@ from agent_platform.audit.view import (
     trace_tree_lines,
 )
 from agent_platform.config import get_settings
+from agent_platform.core.persistence import IN_MEMORY, SqliteConnectionPool
 from agent_platform.observability.types import utc_now
-from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
 
 
 def _ledger() -> SqliteAuditLedger:

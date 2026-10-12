@@ -14,11 +14,11 @@ becomes a conversation turn.
 
 from typing import Any
 
-from agent_platform.commands import CommandError, CommandResult
-from agent_platform.commands._pool import PoolBackedCommand
-from agent_platform.commands.scope import ConsoleScope
 from agent_platform.config import get_settings
-from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.core.persistence import SqliteConnectionPool
+from agent_platform.interface.commands import CommandError, CommandResult
+from agent_platform.interface.commands._pool import PoolBackedCommand
+from agent_platform.interface.commands.scope import ConsoleScope
 from customer_support_agent.config import get_agent_settings
 
 

@@ -11,8 +11,8 @@ turn.
 from collections.abc import Callable
 from typing import Any
 
-from agent_platform.commands import CommandResult, ConsoleEffect
-from agent_platform.commands.types import CommandError
+from agent_platform.interface.commands import CommandResult, ConsoleEffect
+from agent_platform.interface.commands.types import CommandError
 
 AgentRef = Callable[[], Any]
 

@@ -20,10 +20,10 @@ from agent_platform.context.failure import ContextFailureDetector
 from agent_platform.context.pipeline import ContextAssembler
 from agent_platform.context.strategies import StrategySelector
 from agent_platform.context.types import AssembledContext, ContextFinding, Task
+from agent_platform.interface.presentation.text_tree import TreeNode, tree_lines
 from agent_platform.logging import get_logger, instrument
 from agent_platform.observability.status_feed import StageReporter
 from agent_platform.observability.types import EventKind
-from agent_platform.presentation.text_tree import TreeNode, tree_lines
 
 CONTEXT_STAGE = "context_assembly"
 _WARN = "warn"

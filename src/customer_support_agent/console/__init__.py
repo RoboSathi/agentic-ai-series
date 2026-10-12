@@ -14,13 +14,13 @@ import asyncio
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
-from agent_platform.commands.knowledge import KnowledgeBaseCommand
-from agent_platform.commands.runs import CancelCommand
-from agent_platform.commands.skills import SkillsCommand
-from agent_platform.commands.types import Command
 from agent_platform.config import FeatureSet, get_settings
 from agent_platform.durability.controls import run_actions
-from agent_platform.host import HostAction
+from agent_platform.interface.commands.knowledge import KnowledgeBaseCommand
+from agent_platform.interface.commands.runs import CancelCommand
+from agent_platform.interface.commands.skills import SkillsCommand
+from agent_platform.interface.commands.types import Command
+from agent_platform.interface.host import HostAction
 from agent_platform.logging import get_logger
 from agent_platform.memory.semantic.rag import KnowledgeBase
 from agent_platform.observability import StageReporter
@@ -210,8 +210,8 @@ class CustomerSupportHost:
         the retention window are deleted — checkpoints hold what customers
         said, and are not kept longer than configured.
         """
+        from agent_platform.core.persistence import SqliteConnectionPool, SqlitePlatformStore
         from agent_platform.durability import RunRegistry, create_checkpointer, purge_expired
-        from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
         from customer_support_agent.config import get_agent_settings
 
         store = SqlitePlatformStore(

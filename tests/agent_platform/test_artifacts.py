@@ -6,8 +6,12 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
-from agent_platform.artifacts import ArtifactTamperedError, DirectoryArtifactStore, FrozenArtifact
-from agent_platform.primitives.hashing import canonical_hash
+from agent_platform.core.primitives.hashing import canonical_hash
+from agent_platform.knowledge.artifacts import (
+    ArtifactTamperedError,
+    DirectoryArtifactStore,
+    FrozenArtifact,
+)
 
 
 class Thing(BaseModel):

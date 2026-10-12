@@ -5,8 +5,8 @@ from typing import Any
 
 import pytest
 
-from agent_platform.evidence import LedgerSnapshot
-from agent_platform.verification.acceptance import CheckSpec, CheckVerdict
+from agent_platform.hallucination_check.evidence import LedgerSnapshot
+from agent_platform.runtime.verification.acceptance import CheckSpec, CheckVerdict
 from research_agent.audit.context import JudgeItem
 from research_agent.audit.independent import LlmJudge, _result
 from research_agent.domain.report import Report

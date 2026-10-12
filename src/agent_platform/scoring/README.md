@@ -1,30 +1,7 @@
-# scoring — the NOLLM scoring cascade (E10)
+# scoring — the NOLLM scoring cascade
 
-Runtime infrastructure, not an eval: retrieval relevance, tool fitness, grounding and memory
-consolidation all resolve claims here, cheapest tier first — exact assertion → deterministic
-rule → embedding similarity → NLI entailment → calibrated LLM judge → human adjudication. A
-tier that cannot decide declines so the next may try; reaching the judge is a failure to
-resolve cheaply, not a first move. Moved out of `evals/` (2026-10-12): nothing here grades an
-agent's suite.
+Claims resolved cheapest tier first: exact assertion → deterministic rule → embedding similarity → NLI → calibrated judge → human. Runtime infrastructure, and a leaf package.
 
-A leaf package: it imports configuration, embeddings and logging, nothing that imports it
-(`hallucination_check` → `context` → `tools` → `guardrails` → `hallucination_check` is an
-existing cycle this package stays out of).
-
-## Public interface
-
-- `create_scoring_cascade()`, `NollmScoringCascadeImpl` (`nollm_scorer_ratio`, `tier_counts`)
-- Scorers: `ExactAssertionScorer`, `DeterministicRuleScorer`, `EmbeddingSimilarityScorer`,
-  `NliEntailmentScorer`, `CalibratedJudgeScorer` (needs a `CalibratedJudge`), `HumanAdjudicationScorer`
-- Entailment: `EntailmentModel`, `LexicalEntailmentModel`, `create_entailment_model`,
-  `preload_entailment_model`
-- Types: `Claim`, `Verdict`, `ScorerTier`
-
-## Configuration
-
-`hallucination_check.scoring` — `tiers` (per-tier toggles), the embedding and NLI thresholds,
-`judge_confidence_threshold`, and the lexical fallback (`nli.min_overlap`, `negation_markers`).
-
-## Tests
-
-`./venv/bin/pytest tests/unit/test_scoring_cascade.py -q`
+- **Entry points:** `create_scoring_cascade`, `NollmScoringCascadeImpl`, one scorer per tier, `EntailmentModel`, `create_entailment_model`
+- **Configuration:** `hallucination_check.scoring`
+- **Design:** [LLD §A6](../../../design_docs/LLD.md#a6-scoring)

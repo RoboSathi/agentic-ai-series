@@ -107,7 +107,7 @@ class ToolSource(Protocol):
     one cannot be authorized and therefore cannot be executed.
 
     This is the seam an MCP server enters through (see
-    `agent_platform.mcp`), and the reason `agent_platform` needs no
+    `agent_platform.knowledge.mcp`), and the reason `agent_platform` needs no
     knowledge of any particular agent's tools: the agent owns its tools,
     the platform owns the door they come in by.
     """

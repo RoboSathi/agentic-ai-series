@@ -11,10 +11,10 @@ from typing import Any
 
 import pytest
 
-from agent_platform.evidence import EvidenceLedger, VerbatimSpanValidator
+from agent_platform.core.primitives.hashing import text_hash
+from agent_platform.hallucination_check.evidence import EvidenceLedger, VerbatimSpanValidator
+from agent_platform.knowledge.web import FetchedPage, SearchHit, SearchRequest, SearchResponse
 from agent_platform.loop_control import BudgetGuard
-from agent_platform.primitives.hashing import text_hash
-from agent_platform.web import FetchedPage, SearchHit, SearchRequest, SearchResponse
 from research_agent.config import get_agent_settings
 from research_agent.domain.budget import FETCHES, ROUNDS, SEARCHES, Budget
 from research_agent.domain.evidence import ClaimCandidate
@@ -206,7 +206,7 @@ class TestARunThatAdmittedNothingGetsOneRescueRound:
         resources = _resources([], {})
         assert resources.snippets is not None
         page_hash = resources.snippets.remember(url, SNIPPET)
-        from agent_platform.evidence import EvidenceCandidate
+        from agent_platform.hallucination_check.evidence import EvidenceCandidate
 
         resources.ledger.append(
             EvidenceCandidate(claim="c", span=SNIPPET, source_url=url, source_hash=page_hash)

@@ -11,10 +11,10 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from agent_platform.commands.types import Command
 from agent_platform.config import FeatureSet, get_settings
 from agent_platform.durability.controls import run_actions
-from agent_platform.host import HostAction
+from agent_platform.interface.commands.types import Command
+from agent_platform.interface.host import HostAction
 from agent_platform.logging import get_logger
 from agent_platform.memory import MemoryProfile
 from agent_platform.observability import StageReporter

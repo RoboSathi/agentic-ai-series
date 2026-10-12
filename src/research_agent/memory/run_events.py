@@ -15,7 +15,7 @@ from collections import Counter
 from pydantic import BaseModel, Field
 
 from agent_platform.memory.dream import DreamEvent, DreamEventSink, DreamSignal
-from agent_platform.verification.acceptance import CheckVerdict
+from agent_platform.runtime.verification.acceptance import CheckVerdict
 from research_agent.config.settings import ResearchMemorySettings
 from research_agent.domain.rubric import Contract
 

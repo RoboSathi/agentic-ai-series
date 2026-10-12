@@ -13,10 +13,14 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from agent_platform.evidence import EvidenceEntry
 from agent_platform.hallucination_check import plain_text
+from agent_platform.hallucination_check.evidence import EvidenceEntry
+from agent_platform.runtime.verification.acceptance import (
+    AcceptanceCheckRegistry,
+    CheckOutcome,
+    CheckSpec,
+)
 from agent_platform.scoring.entailment import EntailmentModel
-from agent_platform.verification.acceptance import AcceptanceCheckRegistry, CheckOutcome, CheckSpec
 from research_agent.audit.context import CheckContext, JudgeItem, distinct_hosts, host
 from research_agent.domain.sources import is_primary
 

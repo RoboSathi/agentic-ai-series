@@ -43,14 +43,9 @@ class MessageSettings(BaseModel):
     propose_done: str
     # One step of a draft plan built from the interview's answers: `{part}`.
     plan_step: str
-    # The last line of a turn that waits on the user: what to do next. Each starts with
-    # `next_step_marker`, which the console colours.
-    next_step_marker: str
+    # The last line of a turn that waits on the user: what to do next.
     next_step_proposed: str
     next_step_rubric: str
-    # The menu offered beside them.
-    done_choice: str
-    approve_choice: str
     # The rubric as the user reviews it: `{id}`, `{gate}`, `{text}`, `{kind}`, `{check}`,
     # `{threshold}`, `{weight}`, `{origin}`; `{gate}` is `rubric_must` or `rubric_soft`.
     rubric_heading: str

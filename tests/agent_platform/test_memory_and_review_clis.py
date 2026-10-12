@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from agent_platform.commands import memory_cli, review_cli
 from agent_platform.config import get_settings
+from agent_platform.core.persistence import SqliteConnectionPool
+from agent_platform.interface.commands import memory_cli, review_cli
 from agent_platform.memory import MemoryFact, Provenance, SemanticStore
 from agent_platform.memory.dream import DreamEvent, FileDreamInbox, MemoryAction
-from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.resilience import DeadLetterQueue
 
 

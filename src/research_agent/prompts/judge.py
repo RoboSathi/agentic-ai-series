@@ -8,7 +8,7 @@ from datetime import date
 
 from pydantic import BaseModel, Field
 
-from agent_platform.evidence import LedgerSnapshot
+from agent_platform.hallucination_check.evidence import LedgerSnapshot
 from research_agent.domain.report import Report
 from research_agent.prompts.base import RolePrompt, dated
 

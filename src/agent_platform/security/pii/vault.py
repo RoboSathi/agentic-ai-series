@@ -21,10 +21,10 @@ from Crypto.Cipher import AES
 
 from agent_platform.config import get_settings
 from agent_platform.config.settings import PiiVaultSettings
+from agent_platform.core.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
+from agent_platform.core.primitives.keys import AES_KEY_LENGTHS, aes_key
 from agent_platform.logging import get_logger, log_context_fields
 from agent_platform.observability.types import utc_now
-from agent_platform.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
-from agent_platform.primitives.keys import AES_KEY_LENGTHS, aes_key
 
 # AES-128/192/256: the key lengths the cipher accepts, in bytes.
 

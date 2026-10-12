@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 # Re-exported: most of the platform still reads the clock from here.
-from agent_platform.primitives.clock import utc_now as utc_now
+from agent_platform.core.primitives.clock import utc_now as utc_now
 
 StatusKind = Literal[
     "started",

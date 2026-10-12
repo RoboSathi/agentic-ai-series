@@ -1,7 +1,7 @@
 # Analytics schema: facts, metrics, contracts and modules
 
-The specification behind ADR 0009, in the vocabulary of
-`analytics_ubiquitous_language.md`. It covers what each table holds, column by column;
+The specification behind [ADR P-24](ADR.md#p-24--analytics-is-a-platform-contract), in the vocabulary of
+[ubiquitous_language.md § Analytics](ubiquitous_language.md#analytics). It covers what each table holds, column by column;
 which choke point writes it; how each Tier-1 metric is computed; how an agent
 adds its own tables; what an eval reports; and the modules that implement this.
 

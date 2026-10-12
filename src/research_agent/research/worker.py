@@ -21,10 +21,10 @@ from datetime import date
 
 from pydantic import BaseModel, Field
 
-from agent_platform.evidence import EvidenceCandidate, EvidenceEntry
+from agent_platform.hallucination_check.evidence import EvidenceCandidate, EvidenceEntry
+from agent_platform.knowledge.web import FetchedPage, SearchHit, SearchRequest, SearchResponse
 from agent_platform.logging import describe_error, instrument
 from agent_platform.resilience import QuotaExhaustedError
-from agent_platform.web import FetchedPage, SearchHit, SearchRequest, SearchResponse
 from research_agent.config import get_agent_settings
 from research_agent.domain.budget import FETCHES, SEARCHES
 from research_agent.domain.evidence import ClaimCandidate

@@ -1,6 +1,6 @@
 """What this agent's write actions claim, and how to check them.
 
-`agent_platform.verification` owns the discipline — read the thing back,
+`agent_platform.runtime.verification` owns the discipline — read the thing back,
 compare it, refuse to call an unverified result authoritative. It owns
 none of the vocabulary: it does not know that a refund is recorded in two
 places, or that a queued review leaves an order `pending_review`.
@@ -11,8 +11,8 @@ look like after a call; `observed` goes and looks.
 
 from typing import Any
 
+from agent_platform.runtime.verification import IntendedEffect
 from agent_platform.tools.types import ToolCall, ToolResult
-from agent_platform.verification import IntendedEffect
 from customer_support_agent.persistence import (
     HitlQueueRepository,
     OrdersRepository,

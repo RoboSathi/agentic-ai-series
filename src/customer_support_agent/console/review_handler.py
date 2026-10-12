@@ -12,12 +12,12 @@ comment the platform requires and audits.
 from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
-from agent_platform.commands.review import QueueCommand
 from agent_platform.config import get_settings
+from agent_platform.core.persistence import SqliteConnectionPool
 from agent_platform.durability import DurableAgent
+from agent_platform.interface.commands.review import QueueCommand
+from agent_platform.interface.presentation.text_tree import value_lines
 from agent_platform.logging import get_logger
-from agent_platform.persistence import SqliteConnectionPool
-from agent_platform.presentation.text_tree import value_lines
 from agent_platform.review import ReviewItem, ReviewOutcome
 from agent_platform.review.handlers import none, raised
 from customer_support_agent.config import get_agent_settings

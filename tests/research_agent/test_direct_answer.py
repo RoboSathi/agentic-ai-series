@@ -9,8 +9,6 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agent_platform.audit.ledger import NullAuditLedger
-from agent_platform.executor import ToolExecutorImpl
-from agent_platform.executor.registry_handler import RegistryToolHandler
 from agent_platform.guardrails.guards import PydanticValidator
 from agent_platform.guardrails.response import ResponseGuardrail
 from agent_platform.hallucination_check import DetectionLadder
@@ -18,6 +16,8 @@ from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import ModelToolCall
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.types import StatusEvent
+from agent_platform.runtime.executor import ToolExecutorImpl
+from agent_platform.runtime.executor.registry_handler import RegistryToolHandler
 from agent_platform.scoring import create_scoring_cascade
 from agent_platform.scoring.entailment import LexicalEntailmentModel
 from agent_platform.tools.path import ToolPath

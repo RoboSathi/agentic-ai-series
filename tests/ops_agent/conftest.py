@@ -26,12 +26,12 @@ from agent_platform.config import (
     set_active_features,
     use_overlay,
 )
+from agent_platform.core.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.knowledge.mcp import McpServerSpec, SdkMcpTransport
+from agent_platform.knowledge.mcp.server.analytics import build_server
 from agent_platform.llm.types import ModelToolCall
-from agent_platform.mcp import McpServerSpec, SdkMcpTransport
-from agent_platform.mcp.server.analytics import build_server
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.store import DuckDbObservabilityStore
-from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
 from ops_agent.config import reload_agent_settings
 from ops_agent.graph.agent import OpsAgent
 from ops_agent.graph.builder import build_agent

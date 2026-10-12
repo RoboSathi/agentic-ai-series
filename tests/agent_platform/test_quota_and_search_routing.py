@@ -14,14 +14,7 @@ import pytest
 
 from agent_platform.config import get_settings
 from agent_platform.config.settings import RateLimitBucketSettings, RateLimitSettings
-from agent_platform.resilience import QuotaExhaustedError, ResilientCaller
-from agent_platform.resilience.rate_limiter import (
-    InMemoryRateWindowStore,
-    SlidingWindowRateLimiter,
-    SqliteRateWindowStore,
-)
-from agent_platform.resilience.retry import ExponentialBackoffRetry
-from agent_platform.web import (
+from agent_platform.knowledge.web import (
     FallbackFetcher,
     HttpFetcher,
     SearchRequest,
@@ -31,9 +24,16 @@ from agent_platform.web import (
     WebGateway,
     WebUnavailableError,
 )
-from agent_platform.web.cache import SearchCache
-from agent_platform.web.providers import DuckDuckGoProvider, SearchHit, window_name
-from agent_platform.web.router import RoutedProvider, SearchRouter
+from agent_platform.knowledge.web.cache import SearchCache
+from agent_platform.knowledge.web.providers import DuckDuckGoProvider, SearchHit, window_name
+from agent_platform.knowledge.web.router import RoutedProvider, SearchRouter
+from agent_platform.resilience import QuotaExhaustedError, ResilientCaller
+from agent_platform.resilience.rate_limiter import (
+    InMemoryRateWindowStore,
+    SlidingWindowRateLimiter,
+    SqliteRateWindowStore,
+)
+from agent_platform.resilience.retry import ExponentialBackoffRetry
 
 SEPTEMBER = datetime(2026, 9, 30, 23, 0, tzinfo=UTC).timestamp()
 OCTOBER = datetime(2026, 10, 1, 1, 0, tzinfo=UTC).timestamp()
@@ -112,7 +112,7 @@ class TestMonthlyQuota:
 class TestRequestKeys:
     def test_old_requests_keep_their_replay_key(self) -> None:
         # Recorded before `recent_days`/`topic` existed: the key must not move.
-        from agent_platform.primitives.hashing import canonical_hash
+        from agent_platform.core.primitives.hashing import canonical_hash
 
         plain = SearchRequest(query="iron air", max_results=3)
         legacy = {
@@ -292,7 +292,7 @@ class TestSearchCache:
 
 class TestReplayOfBoundedRequests:
     async def test_an_unbounded_recording_answers_a_bounded_request(self, tmp_path: Path) -> None:
-        from agent_platform.web import FixtureStore
+        from agent_platform.knowledge.web import FixtureStore
 
         fixtures = FixtureStore(tmp_path, "set")
         plain = SearchRequest(query="ai news", max_results=2)

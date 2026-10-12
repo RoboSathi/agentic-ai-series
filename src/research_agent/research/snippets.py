@@ -11,10 +11,14 @@ itself — each with a caveat the writer and the reader both see.
     SnippetAdmission one hit's snippet → ledger entries, with a caveat
 """
 
-from agent_platform.evidence import EvidenceCandidate, EvidenceEntry, EvidenceLedger
-from agent_platform.evidence.validator import SourceTextLookup
+from agent_platform.core.primitives.hashing import text_hash
 from agent_platform.hallucination_check import split_sentences
-from agent_platform.primitives.hashing import text_hash
+from agent_platform.hallucination_check.evidence import (
+    EvidenceCandidate,
+    EvidenceEntry,
+    EvidenceLedger,
+)
+from agent_platform.hallucination_check.evidence.validator import SourceTextLookup
 from research_agent.domain.trace import SeenHit
 
 

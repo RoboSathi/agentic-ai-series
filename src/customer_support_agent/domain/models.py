@@ -14,8 +14,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from agent_platform.core.primitives.money import Money
 from agent_platform.observability.types import utc_now
-from agent_platform.primitives.money import Money
 
 OrderStatus = Literal["pending", "shipped", "delivered", "cancelled"]
 # `issued`: paid, but not yet settled — still voidable until the batch closes

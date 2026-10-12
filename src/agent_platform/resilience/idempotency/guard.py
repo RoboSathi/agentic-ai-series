@@ -9,9 +9,9 @@ import json
 from typing import Any, Awaitable, Callable, Protocol, TypeVar, runtime_checkable
 
 from agent_platform.config import get_settings
+from agent_platform.core.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
+from agent_platform.core.primitives.clock import utc_now
 from agent_platform.logging import get_logger
-from agent_platform.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
-from agent_platform.primitives.clock import utc_now
 
 T = TypeVar("T")
 

@@ -9,12 +9,12 @@ from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from typing import Any
 
-from agent_platform.commands import CommandResult, ConsoleEffect
-from agent_platform.commands.types import Command
 from agent_platform.config import FeatureSet
-from agent_platform.host import CancellableHost, GreetingHost, StatusHost
+from agent_platform.interface.commands import CommandResult, ConsoleEffect
+from agent_platform.interface.commands.types import Command
+from agent_platform.interface.host import CancellableHost, GreetingHost, StatusHost
+from agent_platform.interface.tui.app import AgenticTuiApp
 from agent_platform.observability import StageReporter
-from agent_platform.tui.app import AgenticTuiApp
 
 
 class _Agent:

@@ -27,6 +27,8 @@ from agent_platform.config import (
     reload_settings,
     set_active_features,
 )
+from agent_platform.core.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.core.primitives.money import Money
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.tokenizer import shared_tokenizer
 from agent_platform.llm.types import (
@@ -37,8 +39,6 @@ from agent_platform.llm.types import (
     TokenUsage,
 )
 from agent_platform.logging.trace_context import set_current_trace_id
-from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
-from agent_platform.primitives.money import Money
 from agent_platform.resilience.rate_limiter import reset_rate_limiter
 from customer_support_agent.config.settings import reload_agent_settings
 from customer_support_agent.domain.identity import Customer, set_current_customer
@@ -455,7 +455,7 @@ def agent_policy(seeded_pool: SqliteConnectionPool) -> Any:
     `unconfigured` default that denies everything — which passes a
     "refused" assertion for entirely the wrong reason.
     """
-    from agent_platform.persistence import SqlitePlatformStore
+    from agent_platform.core.persistence import SqlitePlatformStore
     from agent_platform.security.auth.policy import AgentPolicyRepository
 
     agent_id = get_settings().agent.id

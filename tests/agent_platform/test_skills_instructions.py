@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from agent_platform.audit.ledger import SqliteAuditLedger
 from agent_platform.config import get_settings
 from agent_platform.config.settings import SkillSettings
+from agent_platform.core.persistence import SqliteConnectionPool
 from agent_platform.logging.trace_context import get_current_trace_id, set_current_trace_id
 from agent_platform.memory import SkillStore
 from agent_platform.memory.procedural.skills import (
@@ -23,7 +24,6 @@ from agent_platform.memory.procedural.skills import (
     build_agent_instructions,
     render_profile,
 )
-from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.tools import NamespacedToolRegistry
 from agent_platform.tools.types import ToolDefinition, ToolResult
 

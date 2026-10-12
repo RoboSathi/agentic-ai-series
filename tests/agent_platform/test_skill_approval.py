@@ -6,10 +6,10 @@ semantic fact retired that fact. And a skill could not be retired
 at all once its source file was gone.
 """
 
+from agent_platform.core.persistence import SqliteConnectionPool
 from agent_platform.memory import MemoryFact, Provenance, SemanticStore, SkillStore
 from agent_platform.memory.types import MemoryPrincipal
 from agent_platform.memory.write_pipeline import MemoryWritePipelineImpl
-from agent_platform.persistence import SqliteConnectionPool
 
 _CURATOR = MemoryPrincipal(actor="curator-1", role="curator")
 _QUEUED_CONFIDENCE = 0.5

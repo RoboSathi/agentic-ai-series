@@ -8,10 +8,10 @@ from typing import Any
 import agent_platform.guardrails  # noqa: F401
 from agent_platform.hallucination_check.readings import readings
 from agent_platform.hallucination_check.types import DetectionVerdict, EvidenceCheck
+from agent_platform.knowledge.web.fetcher import extract_text
 from agent_platform.llm.types import CompletionRequest, Message
 from agent_platform.loop_control import BudgetGuard
 from agent_platform.observability.model_observer import StageReporterModelObserver
-from agent_platform.web.fetcher import extract_text
 
 
 def _line(label: str, score: float, *, chosen: bool = False) -> EvidenceCheck:

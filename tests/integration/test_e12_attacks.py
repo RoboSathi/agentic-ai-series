@@ -11,9 +11,9 @@ from typing import Any
 import pytest
 
 from agent_platform.audit import SqliteAuditLedger
+from agent_platform.core.persistence import SqliteConnectionPool
 from agent_platform.gatekeeper import GatekeeperImpl
 from agent_platform.gatekeeper.ledger import CumulativeLedger
-from agent_platform.persistence import SqliteConnectionPool
 from agent_platform.security import Authorizer
 from customer_support_agent.graph import build_agent
 from customer_support_agent.persistence import OrdersRepository

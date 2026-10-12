@@ -37,8 +37,8 @@ from pydantic import BaseModel
 
 from agent_platform.config import get_settings
 from agent_platform.config.settings import DurabilitySettings
+from agent_platform.core.primitives.keys import AES_KEY_LENGTHS, aes_key
 from agent_platform.logging import get_logger
-from agent_platform.primitives.keys import AES_KEY_LENGTHS, aes_key
 
 
 class CheckpointKeyError(RuntimeError):

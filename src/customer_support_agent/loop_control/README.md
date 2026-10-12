@@ -1,33 +1,7 @@
-# loop_control — this agent's two loops
+# loop_control — the output quality gate
 
-The **tool-use loop** is the graph's `propose ⇄ execute` cycle, bounded by
-`max_tool_iterations` and governed by the platform's `LoopGovernor`. It is
-deliberately not ReAct. The **output quality gate** (`quality_gate.py`)
-looks a plan up in config, applies one deterministic critique, allows at
-most one repair, and scores the result independently of the model that wrote it.
+The tool-use loop itself is the platform's `LoopGovernor`. This package is the output quality gate: a plan looked up per intent, one deterministic critique, at most one repair, an independent score.
 
-## Vocabulary
-
-- **plan** — configured steps per intent (`customer_support_agent.plans`)
-- **critique** — one deterministic check of a draft against its plan
-
-## Public interface
-
-- `OutputQualityGate`, `Planner`, `PlanLookup`, `GroundedCritic`, `IndependentScorer`, `Reflector`, `Evaluator` (`quality_gate.py`)
-- The loop itself is the platform's `LoopGovernor` (`agent_platform.loop_control`)
-
-## Configuration
-
-`customer_support_agent.max_tool_iterations`, `plans`, `deliberation_markers`.
-
-## Collaborators
-
-- `agent_platform.loop_control`, `evals` scoring cascade.
-
-## Episodes
-
-E20.
-
-## Tests
-
-Run with `./venv/bin/pytest tests/unit/test_unrequested_action_regression.py tests/unit/test_design_gaps.py -q` (or `make test` for everything).
+- **Entry points:** `OutputQualityGate`, `PlanLookup`, `GroundedCritic`, `IndependentScorer` (`quality_gate.py`)
+- **Configuration:** `customer_support_agent.plans`, `max_tool_iterations`
+- **Design:** [LLD §B1](../../../design_docs/LLD.md#b1-customer-support-agent)

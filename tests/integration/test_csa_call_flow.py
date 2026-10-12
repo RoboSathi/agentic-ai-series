@@ -8,10 +8,10 @@ the model was asked at all.
 import pytest
 
 from agent_platform.config import FeatureSet, get_settings
+from agent_platform.core.persistence import SqliteConnectionPool
 from agent_platform.intent import IntentCandidate
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.types import StatusEvent
-from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.evals.fixture import policy_seed_sql
 from customer_support_agent.graph import build_agent
 from customer_support_agent.intent.router import CustomerSupportIntentRouter

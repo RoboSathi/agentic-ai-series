@@ -15,8 +15,8 @@ from agent_platform.analytics import ParquetExporter
 from agent_platform.analytics.query_guard import QueryGuard, QueryRejectedError
 from agent_platform.analytics.source_db import SourceDatabase
 from agent_platform.config import get_settings
+from agent_platform.knowledge.mcp.server.analytics import build_server
 from agent_platform.logging.trace_context import bound_log_context
-from agent_platform.mcp.server.analytics import build_server
 from agent_platform.observability.facts import DuckDbFactStore, ModelCallFact
 from agent_platform.observability.store import DuckDbObservabilityStore
 

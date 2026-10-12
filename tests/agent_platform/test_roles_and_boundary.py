@@ -27,16 +27,16 @@ BANNED_EVERYWHERE = ("archetype", "research", "brief")
 BANNED_IN_NEW = ("rubric",)
 # Modules added for the research agent: no research vocabulary at all.
 NEW_MODULES = (
-    "scheduling",
-    "artifacts",
-    "evidence",
-    "web",
-    "primitives/hashing.py",
+    "runtime/scheduling",
+    "knowledge/artifacts",
+    "hallucination_check/evidence",
+    "knowledge/web",
+    "core/primitives/hashing.py",
     "loop_control/budget.py",
     "durability/isolated.py",
     "durability/hitl.py",
     "llm/roles.py",
-    "verification/acceptance.py",
+    "runtime/verification/acceptance.py",
 )
 # A pre-existing use of the English word "brief" (a lock held briefly).
 ALLOWED = {("evals/core/store/duckdb_store.py", "brief")}

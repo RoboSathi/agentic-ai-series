@@ -18,10 +18,10 @@ only one of them would be tested.
 from pydantic import BaseModel, Field
 
 from agent_platform.audit import AuditEntry, AuditLedger, NullAuditLedger
+from agent_platform.core.primitives.money import Money
 from agent_platform.gatekeeper.types import AuthorityContext, Standing
 from agent_platform.hallucination_check import TrustCalibrationTracker, TrustReport
 from agent_platform.logging import get_logger, logged
-from agent_platform.primitives.money import Money
 from agent_platform.resilience import SagaResult
 from agent_platform.security.pii.active import restore_if_on
 from customer_support_agent.config import get_agent_settings

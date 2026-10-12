@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from agent_platform.config import get_settings
-from agent_platform.presentation.text_tree import TreeNode, tree_lines
+from agent_platform.interface.presentation.text_tree import TreeNode, tree_lines
 
 # mem0's reconcile vocabulary, plus the curator hand-off governance adds.
 ReconcileOp = Literal["ADD", "UPDATE", "DELETE", "NOOP", "QUEUED", "REFUSED"]

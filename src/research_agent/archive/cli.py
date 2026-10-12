@@ -12,8 +12,8 @@ from collections.abc import Sequence
 from rich.console import Console
 from rich.table import Table
 
-from agent_platform.artifacts import DirectoryArtifactStore
 from agent_platform.config import get_settings
+from agent_platform.knowledge.artifacts import DirectoryArtifactStore
 from research_agent.archive.store import REPORT_ARTIFACT
 from research_agent.config import get_agent_settings
 from research_agent.domain.report import Report

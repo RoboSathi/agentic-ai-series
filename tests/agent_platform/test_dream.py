@@ -17,7 +17,8 @@ from typing import Any
 import pytest
 
 from agent_platform.config import FeatureSet, get_settings
-from agent_platform.host.memory import build_dream
+from agent_platform.core.persistence import IN_MEMORY, SqliteConnectionPool
+from agent_platform.interface.host.memory import build_dream
 from agent_platform.memory import MemoryPrincipal, MemoryProfile, SkillStore
 from agent_platform.memory.dream import (
     Dream,
@@ -31,7 +32,6 @@ from agent_platform.memory.dream import (
 )
 from agent_platform.memory.procedural.skills import SkillCatalog, SkillSelector, parse_skill
 from agent_platform.observability.types import utc_now
-from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
 
 _MARKER = "Not permitted:"
 

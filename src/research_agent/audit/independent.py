@@ -25,11 +25,11 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
 from agent_platform.durability.isolated import IsolatedGraphRunner
-from agent_platform.evidence import LedgerSnapshot
+from agent_platform.hallucination_check.evidence import LedgerSnapshot
 from agent_platform.judge import JudgeCall
 from agent_platform.judge import LlmJudge as PlatformLlmJudge
 from agent_platform.logging import instrument
-from agent_platform.verification.acceptance import (
+from agent_platform.runtime.verification.acceptance import (
     AcceptanceCheckRegistry,
     CheckKind,
     CheckOutcome,

@@ -33,7 +33,7 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
-from agent_platform.primitives.money import Money
+from agent_platform.core.primitives.money import Money
 from agent_platform.tools.types import ToolCall
 
 # A mandate that names no ceiling does not bound the amount. Whether the

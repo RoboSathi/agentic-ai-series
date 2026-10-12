@@ -18,7 +18,6 @@ from typing import Any
 
 import pytest
 
-from agent_platform.artifacts import DirectoryArtifactStore
 from agent_platform.audit import SqliteAuditLedger
 from agent_platform.config import (
     REPO_ROOT,
@@ -29,13 +28,14 @@ from agent_platform.config import (
     set_active_features,
     use_overlay,
 )
+from agent_platform.core.persistence import IN_MEMORY, SqliteConnectionPool
 from agent_platform.durability import create_checkpointer, model_types
+from agent_platform.knowledge.artifacts import DirectoryArtifactStore
+from agent_platform.knowledge.web import FixtureStore, WebGateway
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import Message
 from agent_platform.memory import EpisodicStore
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
-from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
-from agent_platform.web import FixtureStore, WebGateway
 from research_agent.config import reload_agent_settings
 from research_agent.graph import build_agent
 from research_agent.graph.agent import ResearchAgent

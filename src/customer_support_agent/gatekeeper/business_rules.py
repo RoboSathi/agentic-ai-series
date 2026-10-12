@@ -14,9 +14,9 @@ proposal below the limit for less than the order's total is still refused,
 by the tool, as a partial refund.
 """
 
+from agent_platform.core.primitives.money import Money, money_or_none
 from agent_platform.gatekeeper.contracts import BusinessRuleResult, DeterministicBusinessRules
 from agent_platform.gatekeeper.types import AuthorityContext, CheckReport
-from agent_platform.primitives.money import Money, money_or_none
 from agent_platform.security.auth.policy import AgentPolicy
 from agent_platform.tools.types import ToolCall
 from customer_support_agent.config import get_agent_settings

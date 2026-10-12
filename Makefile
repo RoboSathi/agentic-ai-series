@@ -1,5 +1,5 @@
 .PHONY: gen-key help install clean lint type-check format test verify agent llm-check model-check models data refund-limit \
-	clean-memory show-memory dream memory-reindex queue audit runs dummy-data analytics-export analytics-drop-legacy dashboard dashboard-install dashboard-refresh \
+	clean-memory show-memory dream memory-reindex review queue audit runs dummy-data analytics-export analytics-drop-legacy dashboard dashboard-install dashboard-refresh \
 	eval intent-eval _agent
 
 # -- agent registry -------------------------------------------------------------
@@ -35,7 +35,7 @@ ops_OFFLINE_PROFILE :=
 ops_EVALS :=
 
 # Targets whose second goal names the agent they act on.
-AGENT_SCOPED := agent data runs queue audit pii-reveal dream show-memory clean-memory memory-reindex models eval intent-eval
+AGENT_SCOPED := agent data runs review queue audit pii-reveal dream show-memory clean-memory memory-reindex models eval intent-eval
 
 # `make eval <agent> [section] [full]`: one section (default: all three), over the agent's
 # core cases, attacks and metrics unless `full` is typed.
@@ -130,7 +130,7 @@ help:
 	@echo "                            SOURCE=dummy reads the demo world from make dummy-data (its own turns still go to live)"
 	@echo "  make runs ra              List archived research runs"
 	@echo "  make audit <agent> [DECISION=…|STANDING=…|KIND=…|SINCE=24h|N=…|TRACE=<id>]   The audit trail, coloured"
-	@echo "  make queue <agent> [KIND=…|ID=…] [ACTION=approve|deny ID=… COMMENT=…]   Human review queue (same as /queue)"
+	@echo "  make review <agent> [KIND=…|ID=…] [ACTION=approve|deny ID=… COMMENT=…]   Human review queue (same as /review)"
 	@echo "  make pii-reveal <agent> T=<token> WHY=<reason>   What a PII token stood for (audited; needs PII_VAULT_KEY)"
 	@echo "  make model-check          Every model the system uses (NVIDIA + local), each probed once and listed with what"
 	@echo "                            it is used for, across the platform and every agent (BENCH=1 times chat models; alias: llm-check)"
@@ -144,7 +144,7 @@ help:
 	@echo "  make analytics-export     Export the source's views to Parquet when no console is running;"
 	@echo "                            SOURCE=dummy exports the demo source"
 	@echo "  make analytics-drop-legacy Drop the fact tables ADR 0009 retired (platform_llm_calls, ...)"
-	@echo "  make dashboard-install    Install Rill into src/agent_platform/dashboards/.rill (checksum-verified, repo-local; skips if current, FORCE=1 reinstalls)"
+	@echo "  make dashboard-install    Install Rill into src/agent_platform/analytics/dashboards/.rill (checksum-verified, repo-local; skips if current, FORCE=1 reinstalls)"
 	@echo "  make dashboard            Re-export the source's Parquet, generate the dashboards (Agent Platform + one per agent),"
 	@echo "                            serve them; SOURCE=dummy serves the demo source"
 	@echo "  make dashboard-refresh    Re-export the source's Parquet and reload a running dashboard;"
@@ -164,7 +164,7 @@ help:
 	@echo "  make eval <agent> promptfoo   Red-team attacks; every one must be defended"
 	@echo "  … full                        Add to any of the above: every case, attack and metric"
 	@echo "  make intent-eval <agent>      Intent classifier bake-off (offline, no model calls)"
-	@echo "  Each section prints its table and writes src/<pkg>/evals/reports/<section>-<run_id>.md,"
+	@echo "  Each section prints its table and writes reports/<pkg>/evals/<section>-<run_id>.md,"
 	@echo "  every case with its result and why. Unchanged agent code reuses transcripts; RPM=<n> sets the budget."
 
 # Fails the run unless exactly one known agent was named after the target.
@@ -209,7 +209,7 @@ test:
 	./venv/bin/pytest tests/ --cov=src --cov-report=term-missing -q
 
 agent: _agent
-	$(PYTHON) -m agent_platform.tui
+	$(PYTHON) -m agent_platform.interface.tui
 
 # Every agent's models, one agent at a time (its overlay names its roles and local models):
 # `make models` downloads and runs every agent's local models, or one agent's: `make models ra`.
@@ -235,10 +235,11 @@ runs: _agent
 	@$(PYTHON) -m $($(AGENT)_RUNS) list
 
 # The one human review queue (ADR 0012): refunds, cut replies, quarantines, memory a curator
-# must confirm. `make queue csa`, `make queue ra KIND=skill`, `make queue csa ID=7`,
-# `make queue csa ACTION=approve ID=7 COMMENT="checked the order"`. Same as /queue.
-queue: _agent
-	@$(PYTHON) -m agent_platform.commands.review_cli --agent $(AGENT) -- $(if $(ACTION),$(ACTION) $(ID) "$(COMMENT)",$(if $(ID),show $(ID),$(KIND)))
+# must confirm. `make review csa`, `make review ra KIND=skill`, `make review csa ID=7`,
+# `make review csa ACTION=approve ID=7 COMMENT="checked the order"`. Same as /review.
+# `make queue` is kept as an alias.
+review queue: _agent
+	@$(PYTHON) -m agent_platform.interface.commands.review_cli --agent $(AGENT) -- $(if $(ACTION),$(ACTION) $(ID) "$(COMMENT)",$(if $(ID),show $(ID),$(KIND)))
 
 # The audit trail, coloured by outcome, from every ledger the agent writes to (ADR 0012):
 # `make audit csa`, `make audit ra DECISION=deny`, `make audit csa KIND=review. SINCE=24h N=50`,
@@ -264,8 +265,8 @@ CSA_ENV := AGENTIC_OVERLAYS=$(csa_OVERLAY)
 
 # -- long-term memory (every agent; ADR 0012) -----------------------------------------
 # `make dream ra`, `make show-memory csa SUBJECT=1`, `make clean-memory ops`: one platform
-# CLI, the agent chosen by its config layer. Files live in src/<pkg>/data/memory/.
-MEMORY_CLI := $(PYTHON) -m agent_platform.commands.memory_cli
+# CLI, the agent chosen by its config layer. Files live in data/<pkg>/memory/.
+MEMORY_CLI := $(PYTHON) -m agent_platform.interface.commands.memory_cli
 
 dream: _agent
 	@$(MEMORY_CLI) dream $(if $(SHOW),--show-memory)
@@ -284,7 +285,7 @@ refund-limit:
 	$(CSA_ENV) $(PYTHON) -m customer_support_agent.admin.refund_limit $(REFUND_LIMIT)
 
 # -- evals -----------------------------------------------------------------------
-# Each section prints a colour-coded overview and writes src/<pkg>/evals/reports/<section>-<run_id>.md.
+# Each section prints a colour-coded overview and writes reports/<pkg>/evals/<section>-<run_id>.md.
 
 eval: _agent
 	$(EVALS) run $(if $(EVAL_SECTION),--section $(EVAL_SECTION)) $(if $(EVAL_FULL),--full) \
@@ -298,7 +299,7 @@ intent-eval: _agent
 # analytics.export_interval_seconds; these work with no agent running.
 comma := ,
 space := $(empty) $(empty)
-DASHBOARDS_DIR := src/agent_platform/dashboards
+DASHBOARDS_DIR := src/agent_platform/analytics/dashboards
 RILL_DIR := $(DASHBOARDS_DIR)/.rill
 RILL := $(RILL_DIR)/rill
 RILL_PROJECT := $(DASHBOARDS_DIR)/rill

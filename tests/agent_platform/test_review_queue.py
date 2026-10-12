@@ -10,9 +10,9 @@ import pytest
 
 from agent_platform.audit.types import AuditEntry
 from agent_platform.config import get_settings
+from agent_platform.core.persistence import IN_MEMORY, SqliteConnectionPool
 from agent_platform.memory import MemoryCommand, MemoryPrincipal, SemanticStore, SkillStore
 from agent_platform.memory.write_pipeline import MemoryWritePipelineImpl
-from agent_platform.persistence import IN_MEMORY, SqliteConnectionPool
 from agent_platform.resilience import DeadLetterQueue
 from agent_platform.review import ReviewItem, ReviewQueue
 from agent_platform.review.handlers import MemoryReviewHandler, QuarantineHandler

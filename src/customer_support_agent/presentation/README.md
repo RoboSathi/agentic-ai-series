@@ -1,27 +1,7 @@
 # presentation — orders, for a person to read
 
-Deterministic rendering: the order menu a customer chooses from, one
-order's details, and the fields each stage card shows in the console. Where
-a reply can be built from the record, it is — a model is not asked to
-restate a delivery date.
+Deterministic rendering: the order menu, one order's details, grounding facts for the hallucination check, and the fields each stage card shows. Where a reply can be built from the record, it is.
 
-## Vocabulary
-
-- **order menu** — the numbered list a customer picks an order from
-
-## Public interface
-
-- `build_menu`, `OrderMenu`, `resolve_selection`, `render_order_list`, `render_order_detail`, `customer_orders`, `describe_customer` (`orders.py`)
-- Stage-card field builders: `tool_request_fields`, `tool_result_fields`, `gatekeeper_fields`, … (`reporting.py`)
-
-## Configuration
-
-No section of its own.
-
-## Collaborators
-
-- Used by the graph nodes; the eval harness rebuilds tool calls from the fields `reporting.py` emits.
-
-## Tests
-
-Run with `./venv/bin/pytest tests/unit/test_order_menu.py tests/test_order_reference_conversation.py -q` (or `make test` for everything).
+- **Entry points:** `build_menu`, `render_order_list`, `render_order_detail`, `order_record`, `facts.py`, `reporting.py`
+- **Configuration:** none
+- **Design:** [ADR C-05](../../../design_docs/ADR.md#c-05--grounding-reads-the-order-under-discussion-fresh)

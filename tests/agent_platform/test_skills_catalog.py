@@ -10,11 +10,11 @@ import pytest
 from agent_platform.audit.ledger import SqliteAuditLedger
 from agent_platform.config import get_settings
 from agent_platform.config.settings import SkillSettings
+from agent_platform.core.persistence import SqliteConnectionPool
 from agent_platform.logging.trace_context import set_current_trace_id
 from agent_platform.memory import MemoryFact, Provenance, SkillStore
 from agent_platform.memory.procedural.skills import SkillDocument
 from agent_platform.memory.procedural.skills.catalog import SkillCatalog
-from agent_platform.persistence import SqliteConnectionPool
 
 
 def _document(name: str, body: str = "steps") -> SkillDocument:

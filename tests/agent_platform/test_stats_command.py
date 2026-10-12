@@ -3,9 +3,9 @@
 import pytest
 
 from agent_platform.audit import AuditEntry, DuckDbAuditLedger
-from agent_platform.commands.scope import ConsoleScope
-from agent_platform.commands.stats import StatsCommand
 from agent_platform.config import get_settings
+from agent_platform.interface.commands.scope import ConsoleScope
+from agent_platform.interface.commands.stats import StatsCommand
 from agent_platform.logging.trace_context import bound_log_context
 from agent_platform.observability.facts import (
     CLOSED,

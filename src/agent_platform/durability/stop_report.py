@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from agent_platform.config import get_settings
-from agent_platform.presentation.text_tree import value_lines
+from agent_platform.interface.presentation.text_tree import value_lines
 
 
 def stage_name(node: str) -> str:

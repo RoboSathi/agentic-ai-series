@@ -4,10 +4,10 @@ And argument completion is positional: a command is told the words already
 typed, so `/harness <path> <Tab>` offers the two switches and nothing else.
 """
 
-from agent_platform.commands import CommandRegistry
-from agent_platform.commands.types import CommandResult
 from agent_platform.config import get_settings, set_active_features
-from agent_platform.tui.completion import TabCompleter
+from agent_platform.interface.commands import CommandRegistry
+from agent_platform.interface.commands.types import CommandResult
+from agent_platform.interface.tui.completion import TabCompleter
 
 
 class _Stub:

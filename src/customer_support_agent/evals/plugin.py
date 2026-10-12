@@ -17,6 +17,7 @@ from typing import Any
 import yaml
 
 from agent_platform.config import get_settings, resolve_path
+from agent_platform.core.primitives.hashing import canonical_hash
 from agent_platform.evals.core.contracts import (
     AgentUnderTest,
     ConversationFrame,
@@ -25,7 +26,6 @@ from agent_platform.evals.core.contracts import (
     QualityMetricSpec,
 )
 from agent_platform.evals.intent import BakeoffResult
-from agent_platform.primitives.hashing import canonical_hash
 from customer_support_agent.config.settings import CsaEvalSettings, get_agent_settings
 from customer_support_agent.evals.agent_under_test import CsaAgentUnderTest
 from customer_support_agent.evals.dataset.schema import CsaCasePayload, load_golden_cases

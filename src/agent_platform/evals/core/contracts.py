@@ -12,8 +12,8 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
-# Re-exported: the helper moved to the neutral `agent_platform.primitives.hashing`.
-from agent_platform.primitives.hashing import canonical_hash as canonical_hash
+# Re-exported: the helper moved to the neutral `agent_platform.core.primitives.hashing`.
+from agent_platform.core.primitives.hashing import canonical_hash as canonical_hash
 from agent_platform.scoring.types import ScorerTier
 
 GraderKind = Literal["oracle", "deepeval", "promptfoo"]

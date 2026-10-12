@@ -1,6 +1,6 @@
 """Acceptance-check registry: named checks by kind, evaluated against a context."""
 
-from agent_platform.verification.acceptance import (
+from agent_platform.runtime.verification.acceptance import (
     AcceptanceCheckRegistry,
     CheckOutcome,
     CheckSpec,

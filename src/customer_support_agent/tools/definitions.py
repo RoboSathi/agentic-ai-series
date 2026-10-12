@@ -12,9 +12,9 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, Field, WithJsonSchema
 
-from agent_platform.executor import ToolExecutionHandler
 from agent_platform.logging import get_logger, instrument
 from agent_platform.resilience import SagaResult
+from agent_platform.runtime.executor import ToolExecutionHandler
 from agent_platform.tools import ToolCall, ToolDefinition, ToolResult
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.cancellation_policy import CancellationPolicy

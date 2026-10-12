@@ -8,8 +8,8 @@ break silently during a refactor.
 
 import inspect
 
-from agent_platform.persistence import SqliteConnectionPool
-from agent_platform.primitives.money import Money
+from agent_platform.core.persistence import SqliteConnectionPool
+from agent_platform.core.primitives.money import Money
 from customer_support_agent.graph import build_agent
 from customer_support_agent.graph.agent import CustomerSupportAgent
 from customer_support_agent.persistence import OrdersRepository

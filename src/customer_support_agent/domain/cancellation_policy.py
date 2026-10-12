@@ -9,7 +9,7 @@ makes a cancellation *correct*, and those rules hold with the harness off.
 
 from typing import Any
 
-from agent_platform.primitives.money import InvalidAmountError, Money
+from agent_platform.core.primitives.money import InvalidAmountError, Money
 from customer_support_agent.domain.models import Order
 from customer_support_agent.domain.ports import OrderLookup
 from customer_support_agent.domain.refund_policy import RefundValidationResult

@@ -1,30 +1,7 @@
 # tools — what this agent can do
 
-Four typed tools under the `support` namespace: `get_order_status`,
-`get_refund_status` (read), `process_refund` (write, through the saga) and
-`queue_for_approval` (write, to the review queue). Each has a permission and
-an authority rank, and every call passes the Gatekeeper first.
+Five typed tools under the `support` namespace: `get_order_status`, `list_orders`, `get_refund_status` (reads), `process_refund` and `cancel_order` (writes, through the sagas). Each has a permission and an authority rank; every call takes the platform tool path.
 
-## Vocabulary
-
-- **namespace** — `support` — the model calls `support.process_refund`
-
-## Public interface
-
-- `SupportTools`, `CustomerSupportToolHandler`, `OrderLookupArgs`, `RefundArgs`, `ApprovalArgs`, `NAMESPACE` (`definitions.py`)
-
-## Configuration
-
-`customer_support_agent.intents[*].tools` decides which intent unlocks which tool.
-
-## Collaborators
-
-- `agent_platform.tools`, `gatekeeper`, `executor`; `domain.RefundPolicy`; `resilience.RefundSaga`.
-
-## Episodes
-
-E48b.
-
-## Tests
-
-Run with `./venv/bin/pytest tests/unit/test_customer_support_agent.py tests/unit/test_refund_eligibility.py -q` (or `make test` for everything).
+- **Entry points:** `SupportTools`, `CustomerSupportToolHandler` (`definitions.py`)
+- **Configuration:** `customer_support_agent.intents[*].tools`
+- **Design:** [LLD §B1](../../../design_docs/LLD.md#b1-customer-support-agent)

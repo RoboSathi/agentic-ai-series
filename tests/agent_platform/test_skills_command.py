@@ -2,13 +2,13 @@
 
 import pytest
 
-from agent_platform.commands import CommandError
-from agent_platform.commands.skills import SkillsCommand
 from agent_platform.config import get_settings
+from agent_platform.core.persistence import SqliteConnectionPool
+from agent_platform.interface.commands import CommandError
+from agent_platform.interface.commands.skills import SkillsCommand
 from agent_platform.memory import MemoryFact, Provenance, SemanticStore, SkillStore
 from agent_platform.memory.procedural.skills import SkillCatalog, SkillDocument
 from agent_platform.memory.write_pipeline import MemoryWritePipelineImpl
-from agent_platform.persistence import SqliteConnectionPool
 
 _QUEUED = 0.5
 
@@ -77,7 +77,7 @@ class TestListing:
 
 
 class TestApprovingIsNotHere:
-    """ADR 0012: a candidate is decided in `/queue`, with a comment — `/skills` only lists it."""
+    """ADR 0012: a candidate is decided in `/review`, with a comment — `/skills` only lists it."""
 
     async def test_approve_is_not_a_skills_action(
         self, command: SkillsCommand, pipeline: MemoryWritePipelineImpl
@@ -90,7 +90,7 @@ class TestApprovingIsNotHere:
     ) -> None:
         _queue(pipeline, "how_to")
         result = await command.run([])
-        assert any("/queue" in line for line in result.lines)
+        assert any("/review" in line for line in result.lines)
 
 
 class TestWithoutTheParts:

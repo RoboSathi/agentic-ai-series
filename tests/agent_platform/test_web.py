@@ -10,11 +10,8 @@ import httpx
 import pytest
 
 from agent_platform.config import get_settings
-from agent_platform.primitives.hashing import text_hash
-from agent_platform.resilience import ResilientCaller
-from agent_platform.resilience.circuit_breaker import CircuitBreakerImpl
-from agent_platform.resilience.retry import ExponentialBackoffRetry
-from agent_platform.web import (
+from agent_platform.core.primitives.hashing import text_hash
+from agent_platform.knowledge.web import (
     FallbackFetcher,
     FetchedPage,
     FixtureStore,
@@ -33,6 +30,9 @@ from agent_platform.web import (
     parse_tavily_response,
     url_key,
 )
+from agent_platform.resilience import ResilientCaller
+from agent_platform.resilience.circuit_breaker import CircuitBreakerImpl
+from agent_platform.resilience.retry import ExponentialBackoffRetry
 
 SEARCH_URL = "https://api.tavily.com/search"
 PAGE = "https://site.example/a"

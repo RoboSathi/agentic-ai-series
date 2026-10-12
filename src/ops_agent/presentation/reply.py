@@ -8,7 +8,7 @@ the TUI and in a log.
 
 from typing import Any
 
-from agent_platform.presentation.text_table import Align, box_table
+from agent_platform.interface.presentation.text_table import Align, box_table
 from ops_agent.config.settings import OpsAgentSettings
 from ops_agent.domain import QueryRecord
 

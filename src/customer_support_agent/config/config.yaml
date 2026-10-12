@@ -57,7 +57,6 @@ observability:
   slo_targets:
     task_success_rate: 0.95
     unauthorized_action_rate: 0.0
-    hallucination_rate: 0.05
     escalation_rate: 0.20
     tool_failure_rate: 0.05
     recovery_success_rate: 0.90
@@ -136,7 +135,7 @@ review:
 
 memory:
   files:
-    root: src/customer_support_agent/data/memory
+    root: data/customer_support_agent/memory
   # Whoever a fact or session is about is a customer, here.
   subject_label: "customer {subject}"
   no_subject_label: "shared (no customer)"
@@ -154,7 +153,7 @@ memory:
     # This agent's knowledge index and the corpus that feeds it. The
     # articles explain policy; the rules themselves stay in code.
     rag:
-      db_path: src/customer_support_agent/db/knowledge.db
+      db_path: db/customer_support_agent/knowledge.db
       corpus_dir: src/customer_support_agent/knowledge_base/articles
   write_pipeline:
     classification_hints:
@@ -187,7 +186,7 @@ security:
 
 # This agent's database; every default connection pool opens it.
 persistence:
-  db_path: src/customer_support_agent/db/agent.db
+  db_path: db/customer_support_agent/agent.db
 
 guardrails:
   # The guardrail card's block reasons, in this agent's words.
@@ -330,11 +329,11 @@ gatekeeper:
 evals:
   plugin: customer_support_agent.evals.plugin:CsaEvalPlugin
   run_id_prefix: csa
-  # Reports land beside the evals that produce them; Promptfoo's raw JSON is runtime data.
+  # Reports land in the repo's reports/ folder; Promptfoo's raw JSON is runtime data.
   reporting:
-    output_dir: src/customer_support_agent/evals/reports
+    output_dir: reports/customer_support_agent/evals
   promptfoo:
-    output_dir: src/customer_support_agent/data/evals/promptfoo
+    output_dir: data/customer_support_agent/evals/promptfoo
   fingerprint:
     source_roots: [src/agent_platform, src/customer_support_agent]
     # What cannot change this agent's answers. The golden cases are not hashed here: each
@@ -348,13 +347,12 @@ evals:
       - src/customer_support_agent/evals/deepeval
       - src/customer_support_agent/evals/promptfoo
       - src/customer_support_agent/evals/intent
-      - src/customer_support_agent/evals/reports
       - src/customer_support_agent/evals/plugin.py
       - src/customer_support_agent/evals/README.md
 
 durability:
   # This agent's checkpoints: every turn it has run, node by node.
-  db_path: src/customer_support_agent/db/checkpoints.db
+  db_path: db/customer_support_agent/checkpoints.db
 
 customer_support_agent:
   tasks:
@@ -854,8 +852,8 @@ customer_support_agent:
   evals:
     dataset_path: src/customer_support_agent/evals/dataset/golden_cases.yaml
     fixture_seed_path: src/customer_support_agent/evals/dataset/fixtures/eval_seed.sql
-    fixture_db_path: src/customer_support_agent/data/evals/fixture.db
-    workspace_dir: src/customer_support_agent/data/evals/workspace
+    fixture_db_path: db/customer_support_agent/eval_fixture.db
+    workspace_dir: data/customer_support_agent/evals/workspace
     quality_metrics_path: src/customer_support_agent/evals/deepeval/metrics.yaml
     security_config_path: src/customer_support_agent/evals/promptfoo/promptfooconfig.yaml
     session_prefix: eval

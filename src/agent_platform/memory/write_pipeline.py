@@ -34,6 +34,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from agent_platform.audit import AuditEntry, AuditLedger
 from agent_platform.config import get_settings
+from agent_platform.core.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
 from agent_platform.logging import get_logger, instrument, logged
 from agent_platform.memory.deterministic import Claim, DeterministicClaims, normalize_key
 from agent_platform.memory.episodic.memory import EpisodicStore
@@ -59,7 +60,6 @@ from agent_platform.memory.types import (
     WriteResult,
 )
 from agent_platform.observability.types import StatusKind, utc_now
-from agent_platform.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
 
 # Which store a category belongs in is a semantic decision (E13); these
 # are the two the pipeline can infer structurally, and everything else

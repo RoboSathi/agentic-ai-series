@@ -2,9 +2,9 @@
 
 import httpx
 
+from agent_platform.knowledge.web import WebGateway
 from agent_platform.tools.registry import NamespacedToolRegistry
 from agent_platform.tools.types import ToolDefinition
-from agent_platform.web import WebGateway
 from research_agent.config.settings import AnswerSettings
 from research_agent.guardrails.injection import InjectionScreen
 from research_agent.prompts import answer as prompt

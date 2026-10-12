@@ -4,7 +4,7 @@
 metric catalogue, and every agent's registered layer), `metric_sql` renders
 catalogue metrics,
 `exporter` writes the source as Parquet, `query_guard` decides which SQL a
-model may run over it. The MCP server over it is `agent_platform.mcp.server.analytics`.
+model may run over it. The MCP server over it is `agent_platform.knowledge.mcp.server.analytics`.
 Readers use the source, never the live databases.
 """
 

@@ -9,11 +9,11 @@ changing a card's wording is a config edit, never a code change.
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from agent_platform.web.types import SearchRoute
+from agent_platform.knowledge.web.types import SearchRoute
 from research_agent.config import get_agent_settings
 
 Line = dict[str, str]
-# The web gateway's mode for real provider calls (`agent_platform.web.types.WebMode`).
+# The web gateway's mode for real provider calls (`agent_platform.knowledge.web.types.WebMode`).
 _LIVE = "live"
 
 

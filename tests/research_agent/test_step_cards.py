@@ -11,7 +11,7 @@ from agent_platform.llm.client import LLMClient
 from agent_platform.observability import StageReporter
 from agent_platform.observability.status_feed import InMemoryLiveStatusFeed
 from agent_platform.observability.types import StatusEvent
-from agent_platform.verification.acceptance import CheckVerdict
+from agent_platform.runtime.verification.acceptance import CheckVerdict
 from research_agent.domain.plan import SubQuestion
 from research_agent.domain.rubric import Rubric, RubricCheck, RubricItem
 from research_agent.llm.structured import LLM_STAGE, StructuredCaller
@@ -204,7 +204,7 @@ class TestThePlanCard:
 
 
 def _entry(entry_id: str, url: str, span: str) -> Any:
-    from agent_platform.evidence.types import EvidenceEntry
+    from agent_platform.hallucination_check.evidence.types import EvidenceEntry
 
     return EvidenceEntry(entry_id=entry_id, claim=span, span=span, source_url=url, source_hash="h")
 
@@ -216,7 +216,7 @@ class TestTheReportCheckIsTheSharedCard:
         from rich.text import Text
 
         from agent_platform.hallucination_check.readings import EvidenceRef, Reading
-        from agent_platform.tui.widgets import _append_grounding
+        from agent_platform.interface.tui.widgets import _append_grounding
         from research_agent.graph.run_nodes import _sentence_check
         from research_agent.synthesis.citation_guard import SentenceCheck
 

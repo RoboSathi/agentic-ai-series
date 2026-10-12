@@ -12,65 +12,32 @@ venv/
 .DS_Store
 .idea
 logs/*
-src/agent_platform/data/*
 src/agent_platform/config/local.yaml
-src/customer_support_agent/dummy_data/*.db
-src/customer_support_agent/dummy_data/episodic/
 
 # Claude specific
 .claude
 CLAUDE.md
+last_claude_session.txt
 
 # Zip file
 project.zip
 
-# DuckDB
-data/observability.duckdb*
+# Runtime state lives outside src/, one folder per package (agent_platform or an agent):
+#   db/<package>/    every database: built from its seed (`make dummy-data csa`), by the
+#                    knowledge ingest at start-up, by the eval fixture builder, or at run time.
+#   data/<package>/  every other runtime file: memory, research runs, web cache, analytics
+#                    Parquet, eval workspaces.
+# Neither is versioned. (A few research-run samples predate this rule and stay tracked.)
+db/
+data/
 
-# Data/DB
-data/agent.db
-data/*
-src/customer_support_agent/dummy_data/*.db*
-src/research_agent/data/runs/*
-# Long-term memory (ADR 0011): each agent's files, written at run time, never versioned.
-src/*/data/memory/
+# Reports: one per eval framework per run (`make eval <agent>`), rebuilt from the eval store.
+# The folders are kept, their contents are not.
+reports/**
+!reports/**/
+!reports/**/.gitkeep
 
-# Local Models
-local_models/*
-
-# Patches
-*.patch
-patches/*
-# Eval reports: one per framework per run (`make eval <agent>`), rebuilt from the eval store;
-# each agent's src/<pkg>/evals/reports/ folder is kept, its contents are not.
-**/reports/*
-!**/reports/.gitkeep
-# Promptfoo's raw JSON per red-team run (ingested into the eval store).
-src/*/data/evals/promptfoo/
-
-# Analytics mart (Parquet, regenerated).
-data/analytics/
-# Rill: the repo-local binary (`make dashboard-install`), the source link `make dashboard`
-# makes, Rill's own runtime state, and the project generated from the semantic layer
-# (analytics/dashboards.py). Only rill.yaml is versioned.
-src/agent_platform/dashboards/.rill/
-src/agent_platform/dashboards/rill/data
-src/agent_platform/dashboards/rill/tmp/
-src/agent_platform/dashboards/rill/.env
-src/agent_platform/dashboards/rill/models/
-src/agent_platform/dashboards/rill/metrics/
-src/agent_platform/dashboards/rill/dashboards/
-
-# Runtime databases (ADR 0009 hygiene): the platform's own stores and eval workspaces.
-src/agent_platform/db/*.duckdb*
-# The generated analytics world (`make dummy-data analytics`): regenerated, never versioned.
-src/agent_platform/dummy_data/analytics/*
-!src/agent_platform/dummy_data/analytics/README.md
-src/agent_platform/db/*.sqlite*
-src/customer_support_agent/data/evals/workspace/
-
-# Every database is runtime state or rebuilt from its seed (make dummy-data csa, the
-# knowledge ingest at start-up, the eval fixture builder): never versioned, anywhere.
+# Any database that lands anywhere else is still runtime state.
 *.db
 *.db-wal
 *.db-shm
@@ -82,7 +49,22 @@ src/customer_support_agent/data/evals/workspace/
 *.sqlite-wal
 *.sqlite-shm
 
+# Rill: the repo-local binary (`make dashboard-install`), the source link `make dashboard`
+# makes, Rill's own runtime state, and the project generated from the semantic layer
+# (analytics/dashboards.py). Only rill.yaml is versioned.
+src/agent_platform/analytics/dashboards/.rill/
+src/agent_platform/analytics/dashboards/rill/data
+src/agent_platform/analytics/dashboards/rill/tmp/
+src/agent_platform/analytics/dashboards/rill/.env
+src/agent_platform/analytics/dashboards/rill/models/
+src/agent_platform/analytics/dashboards/rill/metrics/
+src/agent_platform/analytics/dashboards/rill/dashboards/
+
 # Models downloaded from Hugging Face (NLI, summariser, spaCy) and HF caches.
 local_models/
 **/local_models/
 .cache/huggingface/
+
+# Patches
+*.patch
+patches/*

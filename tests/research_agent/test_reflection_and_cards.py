@@ -7,11 +7,11 @@ from typing import Any
 
 import pytest
 
-from agent_platform.evidence import EvidenceEntry, LedgerSnapshot
+from agent_platform.hallucination_check.evidence import EvidenceEntry, LedgerSnapshot
 from agent_platform.memory import DreamEvent
 from agent_platform.observability.types import StatusEvent
+from agent_platform.runtime.verification.acceptance import CheckSpec, CheckVerdict
 from agent_platform.scoring.entailment import EntailmentResult
-from agent_platform.verification.acceptance import CheckSpec, CheckVerdict
 from research_agent.audit.checks import claim_verdict
 from research_agent.audit.independent import AuditResult
 from research_agent.config import get_agent_settings
@@ -292,7 +292,7 @@ class _Sink:
 
 class TestTheSearchHeadingNamesItsProvider:
     def test_each_route_is_worded(self) -> None:
-        from agent_platform.web.types import SearchRoute
+        from agent_platform.knowledge.web.types import SearchRoute
         from research_agent.presentation.narration import search_route
 
         assert search_route(SearchRoute(answered_by="duckduckgo", mode="live")) == "ddgs"

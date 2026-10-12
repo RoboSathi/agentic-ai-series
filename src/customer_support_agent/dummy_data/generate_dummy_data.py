@@ -7,7 +7,7 @@ state that remembers the old ones stale, it resets the checkpoint file
 and the episodic logs (`--keep-memory` keeps them), and rebuilds the
 eval fixture with the same builder `make eval csa` uses.
 
-The eval history (`data/evals.duckdb`) and observability analytics are
+The eval history (`db/agent_platform/evals.duckdb`) and observability analytics are
 never touched: a data reset is not a reason to lose trend lines.
 
 The data obeys the domain's own rules. Generating each column
@@ -30,8 +30,8 @@ import yaml
 from pydantic import BaseModel
 
 from agent_platform.config import get_settings
+from agent_platform.core.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agent_platform.logging import get_logger
-from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agent_platform.security.auth.policy import AgentPolicyRepository
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.models import REFUNDABLE_ORDER_STATUSES

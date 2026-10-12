@@ -12,9 +12,9 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from agent_platform.knowledge.web import SearchRequest, WebGateway
 from agent_platform.logging import logged
 from agent_platform.tools.types import ToolResult
-from agent_platform.web import SearchRequest, WebGateway
 from research_agent.config.settings import AnswerSettings
 from research_agent.guardrails.injection import InjectionScreen
 from research_agent.presentation.narration import search_route

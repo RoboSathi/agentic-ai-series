@@ -15,11 +15,11 @@ from pydantic import BaseModel, Field
 from agent_platform.config import get_settings
 from agent_platform.context import ContextWindow, Task
 from agent_platform.context.types import AssembledContext
+from agent_platform.knowledge.mcp import McpToolSource
+from agent_platform.knowledge.mcp.client.presentation import server_card
 from agent_platform.llm.prompt import TurnLayout
 from agent_platform.llm.types import Message
 from agent_platform.logging import get_current_trace_id, get_logger, instrument
-from agent_platform.mcp import McpToolSource
-from agent_platform.mcp.client.presentation import server_card
 from agent_platform.memory.procedural.skills import (
     Activation,
     AgentInstructions,

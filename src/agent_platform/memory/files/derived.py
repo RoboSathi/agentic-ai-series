@@ -13,7 +13,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from agent_platform.persistence import SqliteConnectionPool
+from agent_platform.core.persistence import SqliteConnectionPool
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS docs (

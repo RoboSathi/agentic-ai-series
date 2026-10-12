@@ -31,6 +31,7 @@ from agent_platform.context import (
 )
 from agent_platform.context.factory import build_context_management
 from agent_platform.context.types import TRUST
+from agent_platform.core.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agent_platform.deterministic_checks import DeterministicChecker
 from agent_platform.durability import (
     RunRegistry,
@@ -38,11 +39,10 @@ from agent_platform.durability import (
     create_checkpointer,
     model_types,
 )
-from agent_platform.executor import ToolExecutorImpl
 from agent_platform.gatekeeper import Gatekeeper, GatekeeperImpl
 from agent_platform.gatekeeper.ledger import CumulativeLedger
 from agent_platform.hallucination_check import DetectionLadder
-from agent_platform.host.memory import long_term_memory
+from agent_platform.interface.host.memory import long_term_memory
 from agent_platform.llm.client import LLMClient, create_llm_client
 from agent_platform.llm.local_reranker import create_reranker
 from agent_platform.loop_control import LoopBudget, build_loop_governor
@@ -70,8 +70,9 @@ from agent_platform.observability.langsmith import build_trace_exporter
 from agent_platform.observability.model_observer import StageReporterModelObserver
 from agent_platform.observability.tracer import LocalTracer
 from agent_platform.observability.units import OutcomeCatalog
-from agent_platform.persistence import SqliteConnectionPool, SqlitePlatformStore
 from agent_platform.resilience import CompensatingSaga, DeadLetterQueue, SqliteIdempotencyGuard
+from agent_platform.runtime.executor import ToolExecutorImpl
+from agent_platform.runtime.verification import ReadBackVerifier
 from agent_platform.scoring import NollmScoringCascadeImpl, create_scoring_cascade
 from agent_platform.security import (
     Authorizer,
@@ -84,7 +85,6 @@ from agent_platform.security.auth.policy import AgentPolicy, AgentPolicyReposito
 from agent_platform.security.pii.boundary import bounded
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
-from agent_platform.verification import ReadBackVerifier
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.deterministic_checks.order_validator import OrderChecks
 from customer_support_agent.domain.identity import current_customer_id

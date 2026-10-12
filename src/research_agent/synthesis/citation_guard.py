@@ -25,10 +25,9 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from agent_platform.config import get_settings
-from agent_platform.evidence import LedgerSnapshot
 from agent_platform.hallucination_check import plain_text
 from agent_platform.hallucination_check.confirmer import ClaimConfirmer
-from agent_platform.hallucination_check.evidence import TOOL_RESULT_KIND
+from agent_platform.hallucination_check.evidence import TOOL_RESULT_KIND, LedgerSnapshot
 from agent_platform.hallucination_check.readings import (
     EvidenceRef,
     Reading,

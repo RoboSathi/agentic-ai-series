@@ -11,9 +11,9 @@ from typing import Any, Protocol, runtime_checkable
 
 from agent_platform.audit.types import STANDING_FIELD, AuditEntry, Decision
 from agent_platform.config import get_settings
+from agent_platform.core.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
 from agent_platform.logging import get_logger, instrument, logged
 from agent_platform.observability.store import DuckDbObservabilityStore
-from agent_platform.persistence import PlatformStore, SqliteConnectionPool, as_platform_store
 
 _SQLITE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS platform_audit_entries (

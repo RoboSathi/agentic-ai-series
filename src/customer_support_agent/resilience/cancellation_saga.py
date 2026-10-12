@@ -13,8 +13,8 @@ caller saw, the refund on the state, total and refundability — so there is
 no separate re-read of the order before starting.
 """
 
+from agent_platform.core.primitives.money import Money
 from agent_platform.logging import instrument
-from agent_platform.primitives.money import Money
 from agent_platform.resilience import (
     CompensatingSaga,
     IdempotencyGuard,

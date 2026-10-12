@@ -197,7 +197,6 @@ hallucination_check:
   tool_results_are_pages: true
   joined_premise:
     enabled: true
-    max_chars: 1500
   embedding_top_k: 6
   # NLI cannot confirm a sentence that joins several of a page's lines ("Kumar Karan, a former
   # Engineering Manager at Turing and Lead Instructor at Scaler"): no one line states it. A
@@ -224,17 +223,17 @@ web:
     max_attempts: 2
 
 artifacts:
-  root: src/research_agent/data/runs
+  root: data/research_agent/runs
 
 persistence:
-  db_path: src/research_agent/db/agent.db
+  db_path: db/research_agent/agent.db
 
 durability:
-  db_path: src/research_agent/db/checkpoints.db
+  db_path: db/research_agent/checkpoints.db
 
 memory:
   files:
-    root: src/research_agent/data/memory
+    root: data/research_agent/memory
   dream:
     # A run is this agent's unit of work: findings recur across runs, not sessions.
     learned_skill:
@@ -347,11 +346,8 @@ research_agent:
     challenge_prefix: "Before we go on: "
     propose_done: "I have enough to plan. Draft plan:\n{plan}"
     plan_step: "Research {part}"
-    next_step_marker: "→ Next:"
     next_step_proposed: "→ Next: /done (or reply yes) builds the acceptance criteria · reply with anything else to change the plan"
     next_step_rubric: "→ Next: /approve (or reply yes) starts the research"
-    done_choice: "Done — build the acceptance criteria"
-    approve_choice: "Approve — start the research"
     rubric_heading: "## Acceptance criteria"
     rubric_line: "{id:<4} {gate} {text}  ({kind}:{check} ≥ {threshold}, weight {weight}, {origin})"
     rubric_must: "[must]"

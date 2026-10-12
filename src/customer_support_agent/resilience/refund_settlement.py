@@ -23,10 +23,10 @@ from typing import Literal
 from pydantic import BaseModel
 
 from agent_platform.audit import AuditEntry, AuditLedger, NullAuditLedger
+from agent_platform.core.primitives.money import Money
 from agent_platform.logging import get_logger, instrument, logged
 from agent_platform.logging.trace_context import get_current_trace_id
 from agent_platform.observability.types import utc_now
-from agent_platform.primitives.money import Money
 from agent_platform.resilience import IdempotencyGuard
 from customer_support_agent.domain.models import Order
 from customer_support_agent.persistence.repositories import (

@@ -209,8 +209,6 @@ class LayaIntentSettings(BaseModel):
     subfolder: str
     local_model_dir: str
     device: str
-    # Tokens of message plus question the encoder reads.
-    max_len: int = Field(ge=8)
     # The question's id in the request, and the key the message is sent under.
     question_id: str
     state_key: str
@@ -549,7 +547,6 @@ class LoopCardWords(BaseModel):
     sections: dict[str, str]
     budget_line: str
     check_line: str
-    outcome_line: str
 
 
 class LoopControlSettings(YamlBackedSettings):
@@ -593,7 +590,7 @@ class DurabilitySettings(YamlBackedSettings):
 
 
 class MoneySettings(YamlBackedSettings):
-    """How amounts are held and shown (see `agent_platform.primitives.money`)."""
+    """How amounts are held and shown (see `agent_platform.core.primitives.money`)."""
 
     _yaml_section = "money"
     currency: str
@@ -1424,7 +1421,6 @@ class MemoryWritePipelineSettings(BaseModel):
     interrogative_markers: list[str]
     auto_commit_threshold: float
     discard_threshold: float
-    decay_if_unconfirmed_days: int
     authority_changing_categories: list[str]
     classification_hints: dict[str, list[str]]
 
@@ -2732,7 +2728,7 @@ class McpCardWords(BaseModel):
 
 
 class McpSettings(YamlBackedSettings):
-    """MCP servers an agent consumes as tools (`agent_platform.mcp`)."""
+    """MCP servers an agent consumes as tools (`agent_platform.knowledge.mcp`)."""
 
     _yaml_section = "mcp"
     servers: list[McpServerSettings]
@@ -2868,9 +2864,8 @@ class CommandSettings(YamlBackedSettings):
     hidden: list[str] = Field(default_factory=list)
     default_limit: int
     value_preview_chars: int
-    # Memory trees (`make show-memory`, `/memory`, `make dream`): how much of
-    # a value one line shows, and how many events each session lists.
-    tree_preview_chars: int
+    # Memory trees (`make show-memory`, `/memory`, `make dream`): how many events
+    # each session lists.
     memory_tree_events_per_session: int
     memory_tables: MemoryTablesWords
     recent_window: int

@@ -28,10 +28,9 @@ from datetime import timedelta
 
 from pydantic import BaseModel, ConfigDict
 
-from agent_platform.executor import current_execution_key
+from agent_platform.core.primitives.money import Money
 from agent_platform.logging import instrument
 from agent_platform.observability.types import utc_now
-from agent_platform.primitives.money import Money
 from agent_platform.resilience import (
     CompensatingSaga,
     IdempotencyGuard,
@@ -40,6 +39,7 @@ from agent_platform.resilience import (
     SagaStep,
     SagaWorkflow,
 )
+from agent_platform.runtime.executor import current_execution_key
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.models import Order
 from customer_support_agent.persistence.repositories import (

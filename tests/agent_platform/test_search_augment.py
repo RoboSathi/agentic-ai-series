@@ -6,10 +6,10 @@ Nothing here opens a socket: the providers are scripted.
 from datetime import UTC, datetime
 
 from agent_platform.config.settings import SearchAugmentSettings
-from agent_platform.web import SearchRequest, SearchResponse
-from agent_platform.web.augment import SearchAugmentPolicy
-from agent_platform.web.providers import SearchHit
-from agent_platform.web.router import RoutedProvider, SearchRouter
+from agent_platform.knowledge.web import SearchRequest, SearchResponse
+from agent_platform.knowledge.web.augment import SearchAugmentPolicy
+from agent_platform.knowledge.web.providers import SearchHit
+from agent_platform.knowledge.web.router import RoutedProvider, SearchRouter
 
 QUERY = "india medal tally asian games"
 MID_OCTOBER = datetime(2026, 10, 15, 12, 0, tzinfo=UTC).timestamp()

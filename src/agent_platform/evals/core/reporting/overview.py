@@ -13,10 +13,10 @@ from typing import Any
 
 from rich.console import Console
 
-from agent_platform.commands.types import CommandResult, CommandTable
 from agent_platform.config import get_settings
 from agent_platform.evals.core.pipeline.gate import FAIL, PASS, GateResult
-from agent_platform.presentation.terminal import print_result
+from agent_platform.interface.commands.types import CommandResult, CommandTable
+from agent_platform.interface.presentation.terminal import print_result
 
 PASS_STATE, FAIL_STATE, WARN_STATE = "pass", "fail", "warn"
 DEFENDED_STATE, BREACHED_STATE, INCOMPLETE_STATE = "defended", "breached", "incomplete"

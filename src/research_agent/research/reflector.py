@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from agent_platform.logging import instrument
 from agent_platform.observability.step_card import ModelCall
-from agent_platform.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
+from agent_platform.runtime.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
 from research_agent.audit.checks import COVERAGE_CHECKS, FOUND_EVIDENCE_CHECKS
 from research_agent.audit.context import CheckContext
 from research_agent.domain.plan import SubQuestion

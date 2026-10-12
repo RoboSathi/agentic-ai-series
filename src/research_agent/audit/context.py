@@ -13,9 +13,9 @@ from datetime import date
 from typing import Protocol
 from urllib.parse import urlparse
 
-from agent_platform.evidence import EvidenceEntry, LedgerSnapshot
+from agent_platform.hallucination_check.evidence import EvidenceEntry, LedgerSnapshot
+from agent_platform.runtime.verification.acceptance import CheckOutcome, CheckSpec
 from agent_platform.scoring.entailment import EntailmentModel
-from agent_platform.verification.acceptance import CheckOutcome, CheckSpec
 from research_agent.domain.matching import TermMatcher
 from research_agent.domain.report import COVERAGE_AND_LIMITS, Report
 from research_agent.domain.rubric import Contract

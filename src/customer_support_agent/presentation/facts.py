@@ -15,8 +15,8 @@ the turn already made: the order row, the settings, the authenticated customer.
 from typing import Literal
 
 from agent_platform.context.types import Chunk
+from agent_platform.core.primitives.money import Money
 from agent_platform.hallucination_check.ledger import FLAG_TRUE, Fact, fact_chunk
-from agent_platform.primitives.money import Money
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.identity import Customer
 from customer_support_agent.domain.models import Order

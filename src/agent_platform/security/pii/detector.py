@@ -18,8 +18,8 @@ import secrets
 from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 from agent_platform.config import get_settings
+from agent_platform.core.primitives.pii_tokens import framed_token
 from agent_platform.logging import get_logger
-from agent_platform.primitives.pii_tokens import framed_token
 from agent_platform.security.pii.types import PIISpan, RedactionMode
 from agent_platform.security.pii.vault import PIIVault, create_pii_vault
 

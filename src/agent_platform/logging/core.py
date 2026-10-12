@@ -19,8 +19,8 @@ from rich.text import Text
 from rich.theme import Theme
 
 from agent_platform.config import get_settings
+from agent_platform.interface.presentation.text_tree import value_lines
 from agent_platform.logging.trace_context import log_context_fields
-from agent_platform.presentation.text_tree import value_lines
 
 Level = Literal["debug", "info", "warning", "error"]
 
