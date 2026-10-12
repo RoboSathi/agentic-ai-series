@@ -35,6 +35,7 @@ _SETTINGS = FactSettings(
     },
     comparisons={">": [r"\bexceeds?\b"], "<=": [r"\bwithin\b"]},
     duration_units={"minutes?": 60, "hours?": 3600},
+    references={"refund_limit": [r"\bamount\s+i\s+can\s+refund\b"]},
 )
 
 
@@ -136,3 +137,24 @@ class TestFactsTravelAsEvidence:
 
     def test_a_plain_chunk_carries_no_fact(self) -> None:
         assert facts_in([Chunk(content="Order 10986 is delivered", kind="tool_result")]) == []
+
+
+class TestAValueAgainstAFactThatIsNamedNotWritten:
+    """The limit is never written to a customer, yet a reply may say how an amount stands to it."""
+
+    _CLAIM = "Order 10986 totals $67.27, which exceeds the amount I can refund directly"
+
+    def test_a_total_above_the_named_limit_is_supported(self) -> None:
+        assert _judge(self._CLAIM, [*_ORDER, *_RULES]) is True
+
+    def test_a_total_below_the_named_limit_is_refuted(self) -> None:
+        low = [_fact("order_total", "$20.00"), *_RULES]
+        claim = "Order 10986 totals $20.00, which exceeds the amount I can refund directly"
+        assert _judge(claim, low) is False
+
+    def test_without_the_limit_fact_the_ledger_stays_quiet(self) -> None:
+        assert _judge(self._CLAIM, _ORDER) is None
+
+    def test_a_total_no_fact_holds_is_not_supported(self) -> None:
+        claim = "Order 10986 totals $99.99, which exceeds the amount I can refund directly"
+        assert _judge(claim, [*_ORDER, *_RULES]) is not True

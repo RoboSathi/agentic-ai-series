@@ -72,7 +72,7 @@ class ReviewScreen(Screen[None]):
         for item in visible:
             key = f"{_ITEM_PREFIX}{self._generation}-{item.id}"
             self._items[key] = item
-            line = f"{item.kind} · " + " · ".join(self._service.cells(item))
+            line = f"{self._words.label(item.kind)} · " + " · ".join(self._service.cells(item))
             listing.append(ListItem(Label(line), id=key))
         self._select(None)
 
@@ -108,7 +108,8 @@ class ReviewScreen(Screen[None]):
             self.query_one(f"#{DETAIL_ID}", Static).update(str(error))
             return
         title = self._words.decided.format(
-            id=outcome.item_id, kind=outcome.kind, status=outcome.status, reviewer=reviewer,
+            id=outcome.item_id, kind=self._words.label(outcome.kind), status=outcome.status,
+            reviewer=reviewer,
             comment=self._service.redact(" ".join(comment.split())),
         )  # fmt: skip
         for line in (title, *outcome.lines):
@@ -122,7 +123,9 @@ class ReviewScreen(Screen[None]):
         if item is None or self._service is None:
             detail.update(self._words.nothing_selected)
         else:
-            heading = self._words.show_title.format(id=item.id, kind=item.kind, status=item.status)
+            heading = self._words.show_title.format(
+                id=item.id, kind=self._words.label(item.kind), status=item.status
+            )
             fields = zip(self._service.columns(item.kind), self._service.cells(item), strict=True)
             lines = [f"{name}: {value}" for name, value in fields]
             detail.update("\n".join([heading, *lines]))

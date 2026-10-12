@@ -217,11 +217,19 @@ class ProposalNodes(NodeSupport):
             # The turn's skills still narrow it: what they use is what the
             # task they were chosen for needs (ADR 0010).
             by_skill = self._skill_tools(state)
+            # An unplaced turn is offered reads at most. With no skill active the skill set is
+            # empty, which means "no narrowing", and that must not become "every tool".
+            reads = (
+                set(get_agent_settings().intent_router.unknown_tools)
+                if state.metadata.get("intent_execution_route") == "llm_fallback"
+                else None
+            )
             return [
                 tool
                 for tool in self._registry.all_tools()
                 if (not allowed or tool.qualified_name in allowed)
                 and (not by_skill or tool.name in by_skill)
+                and (reads is None or tool.name in reads)
             ]
 
         by_intent = set(state.metadata.get("intent_tools", []))

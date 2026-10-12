@@ -90,18 +90,19 @@ audit:
   prompt_source: research_agent/prompts
   policy_source: research contract (audit)
 
-# The research roles' default model and its protection: nemotron-lightning, thinking off (with
+# The research roles' default model and its protection: nemotron-super, thinking off (with
 # it on it narrates its reasoning into the answer), backed up by super-120b (NVIDIA models only,
-# 2026-10-12), so a call always gets some answer. Ultra is deliberately absent from every writing role (2026-10-12): it is the
+# 2026-10-12), so a call always gets some answer. Super is deliberately absent from every writing role (2026-10-12): it is the
 # judge's model, and a writer that could fall back onto it would be audited by its own model.
 x-default-chain: &default_chain
   provider: nim
-  model: nvidia/nemotron-3.5-lightning-30b-a3b
+  model: nvidia/nemotron-3-super-120b-a12b
+  # nvidia/nemotron-3-ultra-550b-a55b
   timeout_seconds: 60
   hedge_after_seconds: 25
   extra_body: {chat_template_kwargs: {enable_thinking: false}}
   fallbacks:
-    - {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
+    - {provider: nim, model: nvidia/nemotron-3.5-lightning-30b-a3b}
 
 llm:
   # Role -> model. `judge` must differ from `synthesizer` while
@@ -133,11 +134,6 @@ llm:
       <<: *default_chain
       extra_body: {chat_template_kwargs: {enable_thinking: false}}
     synthesizer: {<<: *default_chain, timeout_seconds: 120, hedge_after_seconds: 60}
-    # The judge: a critic independent of the writer (Producer-Critic, 2026-10-11). The writer runs
-    # on lightning; the judge leads with ultra, the strongest model on the account, and its chain
-    # never includes lightning, so no backup can make the writer grade itself — if ultra and
-    # super-120b both fail, the criterion is "not judged" rather than self-graded.
-    # `research_agent.audit.independent_judge` holds start-up to that.
     judge:
       provider: nim
       model: nvidia/nemotron-3-ultra-550b-a55b

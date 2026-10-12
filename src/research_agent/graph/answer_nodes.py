@@ -576,7 +576,7 @@ class AnswerNodes:
             self._card_answer(turn, text, failed=True)
             turn.governor.finish("failed")
             return {"text": text}
-        text = state["text"] or self._notes.empty
+        text = self._without_invented_sources(turn, state["text"]) or self._notes.empty
         points = self._settings.pointwise
         if points.enabled:
             text = as_points(text, self._notes.sources_heading, points.marker, points.min_sentences)
@@ -604,6 +604,22 @@ class AnswerNodes:
             answer=text,
         )
         return {"text": text}
+
+    def _without_invented_sources(self, turn: Turn, text: str) -> str:
+        """An answer no tool informed cites nothing: a Sources line it wrote is invented.
+
+        A model answering from its own knowledge still writes "Sources: Web search" when the
+        prompt asks for one, which reads as research that never happened.
+        """
+        if turn.spent(TOOL_CALLS) > 0 or not self._sources.search(text):
+            return text
+        body = self._sources.split(text, maxsplit=1)[0].rstrip()
+        self._logger.warning(
+            "Removed a Sources line from an answer no tool informed",
+            question=turn.question,
+            removed=text[len(body) :].strip(),
+        )
+        return body
 
     def _card_answer(self, turn: Turn, text: str, failed: bool) -> None:
         heading = (

@@ -8,6 +8,7 @@ signal is an opaque string the agent derives (`intent:REQUEST_REFUND`):
 it is matched here, never interpreted.
 """
 
+import re
 from collections.abc import Sequence
 
 from agent_platform.config.settings import SkillSettings
@@ -26,6 +27,7 @@ class SkillSelector:
         self._always = settings.always_trigger
         self._reasons = settings.reasons
         self._selection = settings.selection
+        self._function_words = frozenset(w.casefold() for w in settings.selection.function_words)
 
     def select(
         self, skills: Sequence[Skill], signals: frozenset[str], query: str
@@ -47,9 +49,15 @@ class SkillSelector:
                 return ActivatedSkill(skill=skill, reason=reason)
         return None
 
+    def _content(self, query: str) -> str:
+        """The query's words that name a task, in order."""
+        words = re.findall(r"[\w']+", query.casefold())
+        return " ".join(word for word in words if word not in self._function_words)
+
     def _lexical(self, skills: list[Skill], query: str) -> list[ActivatedSkill]:
         """Skills the query names, best first, above the configured floor."""
-        if not skills or not query.strip():
+        query = self._content(query)
+        if not skills or not query:
             return []
         retriever = LexicalRetriever([Chunk(content=_searchable(skill)) for skill in skills])
         scored = [(retriever.score(query, index), skill) for index, skill in enumerate(skills)]

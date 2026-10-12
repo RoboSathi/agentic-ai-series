@@ -12,6 +12,7 @@ holds no product's vocabulary and can open against an agent it has never
 heard of.
 """
 
+import sys
 from collections.abc import Awaitable, Sequence
 from typing import Any, Callable
 
@@ -47,7 +48,7 @@ from agent_platform.host import (
     resolve_host,
 )
 from agent_platform.llm.metering import metered
-from agent_platform.logging import bound_channel, get_logger, new_session_id
+from agent_platform.logging import bound_channel, get_logger, log_directory, new_session_id
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.types import StatusEvent
 from agent_platform.observability.units import end_session
@@ -501,6 +502,35 @@ class AgenticTuiApp(App[None]):
         )
 
     async def _run_command(self, line: str) -> None:
+        """Run a slash command; a failure in running it is shown and logged, never fatal.
+
+        A worker that raises ends the whole console. The registry already turns a command's own
+        failure into a result; this guards what runs around it: applying its effect (an agent
+        rebuild, a session switch) and drawing its output.
+        """
+        try:
+            await self._dispatch_command(line)
+        except Exception as exc:  # noqa: BLE001 - the console outlives any one command
+            self._report_failure(get_settings().tui.command_failed, exc)
+
+    def _handle_exception(self, error: Exception) -> None:
+        """Whatever still escapes a handler ends the console: log it first, so it is on record.
+
+        Textual prints a traceback to the terminal and exits; nothing reaches the log file
+        unless it is written here. The guards around commands, rebuilds and turns mean this
+        is the last resort, not the path a failed command takes.
+        """
+        self._journal.exception("Console crashed", error=str(error))
+        super()._handle_exception(error)
+
+    def _report_failure(self, words: str, error: Exception) -> None:
+        """Log an error with its traceback, and say on screen what happened in one line."""
+        self._journal.exception("Console operation failed", error=str(error))
+        detail = f"{type(error).__name__}: {error}"
+        self._panel.note(words.format(error=detail), style=palette("error"))
+        self._schedule_follow_latest()
+
+    async def _dispatch_command(self, line: str) -> None:
         """Run a slash command; one that becomes a turn is shown once, by the turn.
 
         A conversational command (one that declares `forwards_turn`) is sent to
@@ -577,10 +607,15 @@ class AgenticTuiApp(App[None]):
         if self._factory is None:
             return
         previous = self._agent
-        self._agent = self._factory(StageReporter(self._feed, "tui"))
-        adopt = getattr(self._agent, "adopt_conversation", None)
-        if previous is not None and callable(adopt):
-            adopt(previous)
+        try:
+            rebuilt = self._factory(StageReporter(self._feed, "tui"))
+            adopt = getattr(rebuilt, "adopt_conversation", None)
+            if previous is not None and callable(adopt):
+                adopt(previous)
+        except Exception as exc:  # noqa: BLE001 - the agent on screen keeps running
+            self._report_failure(get_settings().tui.rebuild_failed, exc)
+            return
+        self._agent = rebuilt
         self._bind_live_commands()
 
     async def _run(self, query: str) -> None:
@@ -747,17 +782,12 @@ class AgenticTuiApp(App[None]):
         self._panel.scroll_page_down(animate=False)
         self.call_after_refresh(self._follow_if_at_bottom)
 
-    def on_mouse_scroll(self, event: events.MouseEvent) -> None:
-        # Mouse scroll events bubble to the App. Since the prompt is now a
-        # vertically scrollable TextArea, scrolling inside it must not put the
-        # feed into HISTORY mode. Only scrolls whose originating control is
-        # the feed (or one of its descendants) affect feed following.
-        control = event.control
-        if control is None or self._panel not in control.ancestors_with_self:
-            return
+    def on_live_status_panel_wheeled(self, _message: LiveStatusPanel.Wheeled) -> None:
+        """A wheel over the feed is the person reading history: stop pulling the view down.
 
-        # Treat feed scrolling as an intentional history view, and resume
-        # following when it reaches the bottom again.
+        Reaching the bottom again resumes following. The feed reports its own wheel: the
+        scroll event itself stops at the feed once it has scrolled, and never reaches here.
+        """
         self._set_following(False)
         self.call_after_refresh(self._follow_if_at_bottom)
 
@@ -789,12 +819,29 @@ def main() -> None:
     one line is the whole reason this package can be a platform: a
     second agent needs a config entry, not an edit here.
     """
-    host = resolve_host(get_settings().agent.host)
-    # Slow, native start-up work belongs before the event loop opens, not
-    # on the first turn — see `AgentHost.prepare`.
-    host.prepare()
+    try:
+        host = resolve_host(get_settings().agent.host)
+        # Slow, native start-up work belongs before the event loop opens, not
+        # on the first turn — see `AgentHost.prepare`.
+        host.prepare()
+        app = AgenticTuiApp(host=host)
+    except Exception as error:  # noqa: BLE001 - any build failure ends in a message, not a trace
+        _exit_cleanly(error)
+        return
 
     try:
-        AgenticTuiApp(host=host).run()
+        app.run()
     except KeyboardInterrupt:
         pass
+
+
+def _exit_cleanly(error: Exception) -> None:
+    """A start-up failure: the traceback goes to the log, one readable message to the terminal."""
+    settings = get_settings()
+    logs = log_directory()
+    get_logger("tui").exception("Agent failed to start", error=str(error))
+    message = settings.tui.startup_failed.format(
+        agent=settings.agent.id, error=f"{type(error).__name__}: {error}", logs=logs
+    )
+    print(message, file=sys.stderr)
+    raise SystemExit(1)

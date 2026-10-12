@@ -81,7 +81,12 @@ _CARD_STATUS: dict[str, StatusKind] = {
     "refused": "blocked",
     "discard": "warning",
 }
-_AUDIT_DECISION = {"auto_commit": "allow", "curator_queue": "escalate"}
+_AUDIT_DECISION = {
+    "auto_commit": "allow",
+    "curator_queue": "escalate",
+    "refused": "deny",
+    "discard": "deny",
+}
 
 
 @runtime_checkable
@@ -235,7 +240,7 @@ class MemoryWritePipelineImpl:
                 WriteResult(
                     route="refused",
                     written=False,
-                    reason=f"matches a memory-poisoning pattern ({rejected})",
+                    reason=get_settings().memory.card.screen_reason.format(pattern=rejected),
                     stage="screen",
                     tier_path=["D1:screen"],
                 )
@@ -726,19 +731,31 @@ def _headline(command: MemoryCommand, result: WriteResult) -> str:
 
 
 def _card_fields(command: MemoryCommand, result: WriteResult) -> dict[str, Any]:
+    """What a person needs to judge the write: the outcome, why, about what, and for whom.
+
+    The operation and route are already in the title. The tier path is a trace detail (it is
+    in the memory log); only the extractor that read a fact is worth naming here.
+    """
     fact = result.fact
-    fields: dict[str, Any] = {
-        "operation": command.operation,
-        "principal": f"{command.principal.actor} ({command.principal.role})",
-        "recorded_for": (
-            f"customer {command.principal.subject_id}" if command.principal.subject_id else "shared"
-        ),
-        "route": result.route,
-        "reason": result.reason,
-        "tier_path": " · ".join(result.tier_path) or "—",
-        "permission": result.permission or "—",
-        "curator_queue_id": result.curator_id,
-    }
+    card = get_settings().memory.card
+    memory = get_settings().memory
+    subject = command.principal.subject_id
+    fields: dict[str, Any] = {"route": result.route, "reason": result.reason}
+    if command.text:
+        said = " ".join(command.text.split())
+        fields["said"] = said if len(said) <= card.said_chars else said[: card.said_chars] + "…"
+    fields["for"] = (
+        memory.subject_label.format(subject=subject) if subject else memory.no_subject_label
+    )
+    if command.principal.role != "customer":
+        fields["by"] = f"{command.principal.actor} ({command.principal.role})"
+    if result.permission:
+        fields["permission"] = result.permission
+    if result.curator_id is not None:
+        fields["review"] = card.review_queue.format(id=result.curator_id)
+    extractor = _extractor(result.tier_path, card.gate_tiers)
+    if extractor:
+        fields["read_by"] = extractor
     if fact is not None and command.operation != "erase":
         fields.update(
             {
@@ -753,6 +770,12 @@ def _card_fields(command: MemoryCommand, result: WriteResult) -> dict[str, Any]:
             }
         )
     return fields
+
+
+def _extractor(tier_path: list[str], gates: list[str]) -> str:
+    """The named extractor a fact was read by, if one did ("D1:my_x_is_y" -> "my_x_is_y")."""
+    names = [entry.partition(":")[2] for entry in tier_path]
+    return next((name for name in names if name and name not in gates), "")
 
 
 def _audit_entry(command: MemoryCommand, result: WriteResult) -> AuditEntry:

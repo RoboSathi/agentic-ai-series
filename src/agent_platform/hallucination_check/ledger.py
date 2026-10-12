@@ -155,7 +155,9 @@ class FactLedger:
         conflicts = [reading for reading in readings if not reading.holds]
         if conflicts:
             return LedgerFinding(False, conflicts[0].rationale, conflicts[0].chunks)
-        if not readings or not self._accounted(claim, readings, named):
+        if not readings or self._dangling(claim, facts):
+            return None
+        if not self._accounted(claim, readings, named):
             return None
         chunks = list({id(c): c for r in readings for c in r.chunks}.values())
         return LedgerFinding(True, "; ".join(r.rationale for r in readings), chunks)
@@ -212,6 +214,10 @@ class FactLedger:
             values = self._typed(claim, kind)
             left = [v for v in values if v.end <= found.start()]
             right = [v for v in values if v.start >= found.end()]
+            if left and not right:
+                referred = self._against_reference(claim, found, relation, symbol, left[-1], facts)
+                if referred is not None:
+                    return referred
             if not left or not right:
                 continue
             first, second = left[-1], right[0]
@@ -225,6 +231,60 @@ class FactLedger:
                 f"{second.text} ({held[1][0].attribute})"
             )
             return _Reading(holds, rationale, [held[0][1], held[1][1]], [first.text, second.text])
+        return None
+
+    def _dangling(self, claim: str, facts: list[tuple[Fact, Chunk]]) -> bool:
+        """Whether the claim compares against a named fact the evidence does not hold.
+
+        "$67.27 exceeds the amount I can refund directly" with no limit in evidence is
+        undecided, however well the $67.27 is accounted for.
+        """
+        held = {fact.attribute for fact, _ in facts}
+        for phrases in self._settings.comparisons.values():
+            for phrase in phrases:
+                for found in re.finditer(phrase, claim, re.IGNORECASE):
+                    after = claim[found.end() :]
+                    if any(
+                        attribute not in held
+                        and any(re.search(p, after, re.IGNORECASE) for p in patterns)
+                        for attribute, patterns in self._settings.references.items()
+                    ):
+                        return True
+        return False
+
+    def _against_reference(
+        self,
+        claim: str,
+        found: re.Match[str],
+        relation: Callable[[Decimal, Decimal], bool],
+        symbol: str,
+        written: _Value,
+        facts: list[tuple[Fact, Chunk]],
+    ) -> _Reading | None:
+        """ "$122.26 exceeds the amount I can refund directly": the right side is a fact, named not written.
+
+        An agent may be forbidden to state a figure (a limit it must not disclose) yet still
+        say how a value stands against it. The configured phrase names the fact; the figure
+        is read from the fact, so nothing is added to the reply.
+        """
+        held = self._holding("money", written, facts)
+        if held is None:
+            return None
+        after = claim[found.end() :]
+        for attribute, phrases in self._settings.references.items():
+            if not any(re.search(phrase, after, re.IGNORECASE) for phrase in phrases):
+                continue
+            referred = next(((f, c) for f, c in facts if f.attribute == attribute), None)
+            amount = money_or_none(referred[0].value) if referred is not None else None
+            if referred is None or amount is None:
+                continue
+            holds = relation(written.number, Decimal(amount.cents))
+            verdict = "" if holds else "not "
+            rationale = (
+                f"{written.text} ({held[0].attribute}) is {verdict}{symbol} "
+                f"the {attribute} the facts hold"
+            )
+            return _Reading(holds, rationale, [held[1], referred[1]], [written.text])
         return None
 
     def _holding(

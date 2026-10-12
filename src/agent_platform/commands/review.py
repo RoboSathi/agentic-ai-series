@@ -120,7 +120,7 @@ class QueueCommand(PoolBackedCommand):
     ) -> CommandTable:
         """One kind's pending items, under that kind's own column headings."""
         return CommandTable(
-            title=self._words.kind_title.format(kind=kind, n=len(items)),
+            title=self._words.kind_title.format(kind=self._words.label(kind), n=len(items)),
             headers=service.columns(kind),
             rows=[service.cells(item) for item in items],
         )
@@ -134,7 +134,9 @@ class QueueCommand(PoolBackedCommand):
         service = self.service()
         item = service.item(self._id(_SHOW, args), self.subject())
         result = CommandResult(
-            title=self._words.show_title.format(id=item.id, kind=item.kind, status=item.status)
+            title=self._words.show_title.format(
+                id=item.id, kind=self._words.label(item.kind), status=item.status
+            )
         )
         fields = zip(service.columns(item.kind), service.cells(item), strict=True)
         result.table(
@@ -159,7 +161,7 @@ class QueueCommand(PoolBackedCommand):
         except ReviewError as error:
             raise CommandError(str(error)) from error
         title = self._words.decided.format(
-            id=item_id, kind=outcome.kind, status=outcome.status, reviewer=reviewer,
+            id=item_id, kind=self._words.label(outcome.kind), status=outcome.status, reviewer=reviewer,
             comment=" ".join(args[1:]),
         )  # fmt: skip
         result = CommandResult(title=title, ok=outcome.status != "failed")

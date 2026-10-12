@@ -193,25 +193,25 @@ class TestTheCardTellsTheTruth:
 
 
 class TestAnUnplacedTurn:
-    """The classifier could not place it and it names no order: reads only."""
+    """The classifier could not place it and it names no order: no skill, reads at most."""
 
     _UNPLACED = "something is not right, can you look into it"
 
-    async def test_it_gets_the_order_status_skill_only(
+    async def test_it_loads_no_skill_when_nothing_matches(
         self, seeded_pool: SqliteConnectionPool, audit: DuckDbAuditLedger
     ) -> None:
         turn = await _refund_turn(seeded_pool, audit, procedural=True, query=self._UNPLACED)
         assert turn.route == "llm_fallback"
-        names = [p["skill"].split(" v")[0] for p in turn.card().fields["skills"]]
-        assert names == ["order-status"]
+        assert "# Skill:" not in turn.system()
+        assert _activations(audit) == []
+        assert not [e for e in turn.stage("tool_request") if e.fields.get("prefetched_for")]
 
-    async def test_it_is_offered_reads_and_the_card_says_so(
+    async def test_it_is_offered_reads_only_and_never_a_write(
         self, seeded_pool: SqliteConnectionPool, audit: DuckDbAuditLedger
     ) -> None:
-        """A write needs a request the router recognised as one."""
+        """No skill must not mean every tool: a write needs a request the router placed."""
         turn = await _refund_turn(seeded_pool, audit, procedural=True, query=self._UNPLACED)
-        assert sorted(turn.offered()) == ["get_order_status", "list_orders"]
-        assert sorted(turn.card().fields["model_may_call"]) == sorted(turn.offered())
+        assert sorted(turn.offered()) == ["get_order_status", "get_refund_status", "list_orders"]
 
 
 class TestWithoutProceduralMemory:

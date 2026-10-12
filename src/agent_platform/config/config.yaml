@@ -966,6 +966,9 @@ context:
     more_removed: "…and {count} more removed"
     flagged_line: 'flagged line: "{line}"'
     statement_line: 'statement: "{line}"'
+    sourced_statement_line: 'line from {source}: "{line}"'
+    # How a chunk's kind is said when the card names where a line came from.
+    kind_words: {history: conversation, memory: pinned state, tool_result: tool result, retrieved: retrieved, policy: policy, system: system prompt}
     removed_chunk: "REMOVED: all of {source}"
     removed_line: 'REMOVED: line "{line}" from {source}'
     kept_source: "kept: {source} ({action})"
@@ -1118,7 +1121,7 @@ context:
       reduced: transcript reduced
     templates:
       poisoning_injection: {rule: injection phrasing in data, detail: "matched {phrases}"}
-      poisoning_claim: {rule: "unverified claim contradicts {against}", detail: "NLI contradiction {score:.2f}"}
+      poisoning_claim: {rule: "unverified claim contradicts {against}", detail: "NLI contradiction {score:.2f}: the verified line says otherwise, and the claim is the model's own earlier reply"}
       clash_field: {rule: "'{key}' disagrees", detail: "one field, two values"}
       clash_prose: {rule: statements contradict, detail: "NLI contradiction {score:.2f}"}
       distraction_chunk: {rule: unrelated to the task, detail: "similarity {score:.2f} below {floor:.2f}"}
@@ -1150,6 +1153,9 @@ context:
     max_sentences: 40
     min_sentence_chars: 12
     contradiction_score: 0.7
+    # A `key: value` line the harness pins (a pointer such as `order_under_discussion: order 1`)
+    # says where it is, not what is true; it is never the evidence a sentence is checked against.
+    state_line_pattern: '^\s*[a-z][a-z0-9_]*\s*:'
 
 # Agent profile (AGENT.md) and skills (SKILL.md) — procedural memory in the prompt (ADR 0010).
 # Each agent overlays the two paths; the platform never knows whose files they are.
@@ -1187,6 +1193,9 @@ skills:
     # Raw BM25 units over description + keywords. Below it a query has not
     # named the task, and no skill is better than a wrong one.
     min_lexical_score: 1.0
+    # Dropped from a query before it is scored: BM25 over a skill's description otherwise
+    # "matches" any sentence that shares its articles and auxiliaries.
+    function_words: [a, about, after, all, am, an, and, any, are, as, at, be, been, but, by, can, could, did, do, does, for, from, get, had, has, have, he, her, hi, him, his, how, i, if, in, into, is, it, its, just, me, my, 'no', not, of, 'on', one, or, our, out, please, she, so, some, that, the, their, them, then, there, these, they, this, to, up, us, was, we, were, what, when, where, which, who, why, will, with, would, you, your]
   # The most the profile plus the largest `max_active` skills may add to a prompt;
   # 0 leaves it unchecked. Each agent sets its own, at or below its old instructions.
   max_prompt_chars: 0
@@ -1400,6 +1409,12 @@ memory:
   # reports. Neutral here; an agent names its own (the support agent says "customer").
   subject_label: "subject {subject}"
   no_subject_label: agent-wide
+  # The memory-write card (write_pipeline.py): reason words and what is left out of it.
+  card:
+    screen_reason: 'refused: the message matches the blocked pattern "{pattern}", which is never remembered'
+    said_chars: 160
+    review_queue: "waiting for a person in the review queue (#{id})"
+    gate_tiers: [screen, question, no-pattern, fallback, none]
   # `make dream <agent>`: consolidate the agent's dream events into long-term memory (ADR 0012).
   dream:
     retention_days: 30
@@ -1478,6 +1493,11 @@ review:
       console: "Decide: /review approve|deny <id> <comment> · or on screen: ctrl+r. The comment is kept and audited."
       terminal: "Decide: make review {agent} ACTION=approve|deny ID=<id> COMMENT=\"<why>\" · or on screen: make agent {agent}, then ctrl+r."
     kind_title: "{kind} — {n} pending"
+    # What each kind is called on screen. The key is still what `/queue <kind>` takes.
+    kind_labels:
+      quarantine: quarantined message
+      memory_fact: memory fact
+      skill: learned skill
     time_format: "%Y-%m-%d %H:%M"
     none: "—"
     # Each kind's table headings. An agent adds its own kinds' in its overlay.
@@ -1641,6 +1661,8 @@ hallucination_check:
   # compared, and what a duration's unit is worth, is language, shipped here.
   facts:
     attributes: {}
+    # Phrases that name an attribute's value without writing it; an agent's overlay fills these.
+    references: {}
     comparisons:
       ">": ['\bexceeds?\b', '\bexceeding\b', '\bmore\s+than\b', '\bover\b', '\babove\b', '\bgreater\s+than\b', '\bhigher\s+than\b', '\blarger\s+than\b']
       "<": ['\bbelow\b', '\bunder\b', '\bless\s+than\b', '\blower\s+than\b', '\bsmaller\s+than\b']
@@ -1764,6 +1786,8 @@ hallucination_check:
     - '(?:i[''’]?m|i\s+am|we[''’]?re)\s+(?:\w+\s+)?(?:happy|glad|pleased|sorry|here)\b'
     - '(?:happy|glad|pleased)\s+to\b'
     - '(?:let\s+me\s+know|feel\s+free|is\s+there\s+anything|anything\s+else|no\s+problem|of\s+course|certainly|sure)\b'
+    # Declining to disclose something about itself says nothing about the case.
+    - '(?:i|we)(?:\s+am|[''’]m)?\s+(?:can[''’]?t|cannot|won[''’]t|unable\s+to|not\s+able\s+to)\s+(?:share|reveal|disclose|show|repeat|provide)\b'
   # A claim naming one of these is about this case and needs a record; an outcome stated as done
   # (with a promise marker, a promise). Business vocabulary: the agent's overlay names its ids and
   # outcomes. `(?!)` never matches, so a platform default classifies nothing as a record claim.
@@ -2580,6 +2604,10 @@ tui:
   # An expanded card: section titles, `key = value` / `key: value` keys, and plain values.
   # A value that says a state (PASS, FAIL, ...) takes that state's tone instead.
   section_title_style: "bold cyan"
+  timing_unit: ms
+  startup_failed: "{agent} could not start: {error}\nThe full traceback is in {logs}"
+  command_failed: "✗ That command failed: {error} (logged; the console is still running)"
+  rebuild_failed: "✗ The agent could not be rebuilt: {error}. The previous agent is still running; the traceback is in the log."
   body_styles:
     key: "#67E8F9"
     separator: "#E4E4E0"

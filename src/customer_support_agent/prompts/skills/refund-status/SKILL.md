@@ -4,15 +4,15 @@ description: Answer where a refund stands or when it will arrive, from the refun
 triggers: [intent:REFUND_STATUS]
 keywords: [refund status, where is my refund, when will i get my refund, track refund]
 prefetch: [get_refund_status]
-tools: [get_refund_status, list_orders]
+tools: [get_refund_status]
 ---
 
 ## Preconditions
 - The customer is asking about a refund already requested.
 
 ## Procedure
-1. The refund record is already above when the order is known; otherwise call
-   `list_orders` and use the one they mean.
+1. The refund record is already above when the order is known; otherwise ask which
+   order they mean.
 2. Answer from it: issued, settled or under review, and the amount.
 
 ## Boundaries

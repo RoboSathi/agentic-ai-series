@@ -126,7 +126,10 @@ class OrderReferenceResolver:
             if not self._refused(query, match.start()):
                 return True, int(match.group("id"))
         if matches:
-            return True, None
+            # Every named order was refused: a bare number the customer owns is the one
+            # they moved to ("do not refund 10546, but 10857").
+            refused = {int(match.group("id")) for match in matches}
+            return True, self._from_ownership(query, customer_id, excluding=refused)[1]
         return self._from_ownership(query, customer_id)
 
     def _refused(self, query: str, start: int) -> bool:
@@ -144,9 +147,14 @@ class OrderReferenceResolver:
         shaped = {int(token) for token in self._shape.findall(query)}
         return found | {order for order in shaped if self._owns(order, customer_id)}
 
-    def _from_ownership(self, query: str, customer_id: int | None) -> tuple[bool, int | None]:
+    def _from_ownership(
+        self,
+        query: str,
+        customer_id: int | None,
+        excluding: frozenset[int] | set[int] = frozenset(),
+    ) -> tuple[bool, int | None]:
         """A bare id-shaped number, believed only because the record says it is theirs."""
-        shaped = {int(token) for token in self._shape.findall(query)}
+        shaped = {int(token) for token in self._shape.findall(query)} - set(excluding)
         if not shaped or self._owns is None or customer_id is None:
             return False, None
         owned = {order_id for order_id in shaped if self._owns(order_id, customer_id)}

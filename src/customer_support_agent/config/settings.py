@@ -70,10 +70,26 @@ class OrderReferencePlacement(BaseModel):
     reason: str
 
 
+class SkillSuggestionSettings(BaseModel):
+    """When an unplaced turn is given the skill of the intent it came closest to.
+
+    The classifier did not reach its threshold, so the turn is UNKNOWN. A read intent that
+    still scored `floor` or more, and led the runner-up by `margin`, is offered as a hint:
+    its skill and read tools, never a write. Anything weaker gets no skill at all.
+    """
+
+    floor: float = Field(ge=0, le=1)
+    margin: float = Field(ge=0, le=1)
+
+
 class IntentRouterSettings(BaseModel):
     """Customer Support intent routing policy."""
 
     clarification_top_k: int
+    suggestion: SkillSuggestionSettings
+    # The read tools an unplaced (UNKNOWN) turn may be offered. A write needs a request the
+    # router placed as one; an empty skill set must never mean "every tool".
+    unknown_tools: list[str]
     order_reference: OrderReferencePlacement
     negation: PhraseNegationSettings
     # Whether `intents[].phrases` route a turn before the classifier sees it. The phrases

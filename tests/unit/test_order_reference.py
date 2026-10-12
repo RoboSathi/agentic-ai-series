@@ -21,6 +21,7 @@ from customer_support_agent.domain.order_reference import (
     OrderReferenceResolver,
 )
 from customer_support_agent.gatekeeper.mandates import EstablishedOrderScope
+from customer_support_agent.intent.phrases import PhraseReader
 
 _CUSTOMER = 7
 _RULES = get_agent_settings().order_reference
@@ -142,3 +143,21 @@ class TestDeterministicChecksReadTheSameReference:
             cancellation_policy=SimpleNamespace(),  # type: ignore[arg-type]
             references=resolver,
         )
+
+
+class TestTheCustomerMovesFromOneOrderToAnother:
+    """ "do not refund 10781, but 10786": the refused order is named, the bare one is meant."""
+
+    @staticmethod
+    def _refusing(query: str) -> int | None:
+        resolver = OrderReferenceResolver(_RULES, owns=_owns, negated_at=PhraseReader().negated_at)
+        return resolver.resolve(query, {}, _memory(None), customer_id=_CUSTOMER)
+
+    def test_the_order_they_moved_to_is_the_one_under_discussion(self) -> None:
+        assert self._refusing("do not refund order 10781, but 10786.") == 10786
+
+    def test_a_refusal_alone_names_no_order(self) -> None:
+        assert self._refusing("do not refund order 10781") is None
+
+    def test_the_refused_order_is_never_chosen(self) -> None:
+        assert self._refusing("do not refund order 10781, but 10781") is None

@@ -20,8 +20,10 @@ from typing import Any, cast
 from urllib.parse import urlparse
 
 from rich.text import Text
+from textual import events
 from textual.containers import Horizontal, VerticalScroll
 from textual.content import Content
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import Button, Collapsible, OptionList, Static
 from textual.widgets._collapsible import CollapsibleTitle
@@ -90,6 +92,11 @@ FIELD_PRIORITY = (
     "actor",
     "roles",
     "permission",
+    "said",
+    "for",
+    "by",
+    "review",
+    "read_by",
     "granted_by",
     "checks",
     "reason",
@@ -904,7 +911,8 @@ def _append_narrative(body: Text, event: StatusEvent) -> None:
     took = event.fields.get(NARRATIVE_TIMING_FIELD)
     if took is not None:
         body.append("\n  ")
-        _append_pair(body, "took", " ", _format_value(NARRATIVE_TIMING_FIELD, took))
+        unit = settings.timing_unit
+        _append_pair(body, "took", " ", f"{_format_value(NARRATIVE_TIMING_FIELD, took)} {unit}")
     if not body:
         body.append(event.summary or "", style=palette("emphasis"))
 
@@ -1628,6 +1636,15 @@ def _merge_loop_control_events(
 
 class LiveStatusPanel(VerticalScroll):
     """Scrollable dashboard containing semantic stage cards and notes."""
+
+    class Wheeled(Message):
+        """The person turned the wheel over the feed: they are reading, not following."""
+
+    def on_mouse_scroll_up(self, _event: events.MouseScrollUp) -> None:
+        self.post_message(self.Wheeled())
+
+    def on_mouse_scroll_down(self, _event: events.MouseScrollDown) -> None:
+        self.post_message(self.Wheeled())
 
     def __init__(
         self,

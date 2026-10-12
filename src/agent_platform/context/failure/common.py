@@ -34,6 +34,7 @@ def finding(
     index: int | None = None,
     excise: list[str] | None = None,
     statements: list[str] | None = None,
+    statement_sources: list[str] | None = None,
     line: str = "",
     **values: Any,
 ) -> ContextFinding:
@@ -50,6 +51,7 @@ def finding(
         line=line,
         excise=excise or [],
         statements=statements or [],
+        statement_sources=statement_sources or [],
     )
 
 
@@ -62,6 +64,21 @@ def snippet(text: str) -> str:
 
 def label(chunk: Chunk) -> str:
     return chunk.source or chunk.kind
+
+
+def origin(chunk: Chunk) -> str:
+    """Where a line came from, as a person reads it: the source and what kind of chunk it was.
+
+    Two chunks may share a source (working memory is both a pinned state chunk and the
+    transcript), so a card that names only the source blames the wrong one.
+    """
+    kind = get_settings().context.window.kind_words.get(chunk.kind, chunk.kind)
+    return f"{label(chunk)} · {kind}"
+
+
+def is_state_line(line: str) -> bool:
+    """A `key: value` line the harness pinned: where it is, not something about the world."""
+    return re.match(get_settings().context.failure_detection.state_line_pattern, line) is not None
 
 
 def body(chunk: Chunk) -> str:

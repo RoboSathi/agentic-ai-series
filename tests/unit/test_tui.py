@@ -358,3 +358,109 @@ class TestTheMultiLinePromptCompletes:
             panel = app._panel
             assert panel.max_scroll_y > 0, "the output must overflow for this to test anything"
             assert panel.scroll_y >= panel.max_scroll_y - 1, (panel.scroll_y, panel.max_scroll_y)
+
+
+class TestAFailureDoesNotEndTheConsole:
+    """A rebuild or a command that raises is logged and shown; the agent on screen keeps running."""
+
+    class _Agent:
+        pass
+
+    async def test_a_failed_rebuild_keeps_the_previous_agent_and_says_so(self) -> None:
+        built: list[object] = []
+
+        def factory(_reporter: object) -> object:
+            if built:
+                raise RuntimeError(
+                    "profile and skills reach 2622 chars, over max_prompt_chars 2600"
+                )
+            agent = self._Agent()
+            built.append(agent)
+            return agent
+
+        app = AgenticTuiApp(agent_factory=factory)
+        async with app.run_test(size=(100, 30)):
+            first = app._agent
+            app._rebuild_agent()
+            assert app._agent is first
+            text = app._panel.as_text()
+            assert "could not be rebuilt" in text
+            assert "over max_prompt_chars" in text
+
+    async def test_a_command_whose_effect_fails_is_reported_not_fatal(self) -> None:
+        def factory(_reporter: object) -> object:
+            raise RuntimeError("boom")
+
+        app = AgenticTuiApp()
+        app._factory = factory
+        async with app.run_test(size=(100, 30)) as pilot:
+
+            async def failing(_line: str) -> None:
+                raise ValueError("cannot draw")
+
+            app._dispatch_command = failing  # type: ignore[method-assign]
+            await app._run_command("/anything")
+            await pilot.pause()
+            assert "That command failed" in app._panel.as_text()
+            assert "cannot draw" in app._panel.as_text()
+
+
+class TestScrollingTheFeedStopsFollowing:
+    """A wheel over the feed leaves it where the person scrolled; new cards no longer pull it down.
+
+    The App once listened for `on_mouse_scroll`, a handler Textual never calls (the events are
+    MouseScrollUp/Down, and the feed stops them once it has scrolled), so following never
+    turned off and every new card scrolled the feed back to the bottom mid-turn.
+    """
+
+    @staticmethod
+    def _wheel_up(widget: object) -> object:
+        from textual import events
+
+        return events.MouseScrollUp(widget, 0, 0, 0, -1, 0, False, False, False)  # type: ignore[arg-type]
+
+    async def test_a_wheel_over_the_feed_turns_following_off(self) -> None:
+        from agent_platform.tui.app import AgenticTuiApp, ChatPrompt
+
+        app = AgenticTuiApp()
+        async with app.run_test(size=(100, 12)) as pilot:
+            app.query_one("#query", ChatPrompt).text = "/help"
+            await pilot.press("enter")
+            await pilot.pause()
+            panel = app._panel
+            assert panel.max_scroll_y > 0, "the output must overflow for this to test anything"
+            panel.post_message(self._wheel_up(panel))  # type: ignore[arg-type]
+            await pilot.pause()
+            await pilot.pause()
+            assert panel.scroll_y < panel.max_scroll_y
+            assert not app._follow_latest
+
+    async def test_a_new_card_does_not_pull_a_scrolled_feed_down(self) -> None:
+        from agent_platform.tui.app import AgenticTuiApp, ChatPrompt
+
+        app = AgenticTuiApp()
+        async with app.run_test(size=(100, 12)) as pilot:
+            app.query_one("#query", ChatPrompt).text = "/help"
+            await pilot.press("enter")
+            await pilot.pause()
+            panel = app._panel
+            panel.post_message(self._wheel_up(panel))  # type: ignore[arg-type]
+            await pilot.pause()
+            await pilot.pause()
+            where = panel.scroll_y
+            from agent_platform.observability.types import StatusEvent
+
+            app._on_status(StatusEvent(run_id="r", stage="intake", status="completed"))
+            await pilot.pause()
+            await pilot.pause()
+            assert panel.scroll_y == where
+
+    async def test_a_wheel_over_the_prompt_leaves_following_on(self) -> None:
+        from agent_platform.tui.app import AgenticTuiApp, ChatPrompt
+
+        app = AgenticTuiApp()
+        async with app.run_test(size=(100, 12)) as pilot:
+            prompt = app.query_one("#query", ChatPrompt)
+            prompt.post_message(self._wheel_up(prompt))  # type: ignore[arg-type]
+            await pilot.pause()
+            assert app._follow_latest

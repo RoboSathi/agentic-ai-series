@@ -1143,6 +1143,9 @@ class ContextFailureDetectionSettings(BaseModel):
     max_sentences: int = Field(ge=1)
     min_sentence_chars: int = Field(ge=1)
     contradiction_score: float = Field(ge=0, le=1)
+    # A line that states where the harness is, not something about the world
+    # (`order_under_discussion: order 10538`): it is never a fact a sentence is checked against.
+    state_line_pattern: str
 
 
 class FindingTemplate(BaseModel):
@@ -1235,6 +1238,10 @@ class ContextWindowWording(BaseModel):
     more_removed: str
     flagged_line: str
     statement_line: str
+    # A statement with the chunk it came from: `{source}`, `{line}`.
+    sourced_statement_line: str
+    # A chunk kind -> how the card names where a line came from ("history" -> "conversation").
+    kind_words: dict[str, str]
     removed_chunk: str
     removed_line: str
     kept_source: str
@@ -1541,6 +1548,9 @@ class SkillSelectionSettings(BaseModel):
 
     max_active: int = Field(gt=0)
     min_lexical_score: float = Field(ge=0.0)
+    # Words that carry no task ("is", "can", "you", "it"). They are dropped from a query before it
+    # is scored, so a skill is never chosen because a question was phrased politely.
+    function_words: list[str]
 
 
 class SkillRenderSettings(BaseModel):
@@ -1623,6 +1633,20 @@ class SkillSettings(YamlBackedSettings):
         return resolve_path(self.skills_dir)
 
 
+class MemoryCardWording(BaseModel):
+    """What the memory-write card says: only what a person needs to decide if it was right."""
+
+    # Why a message was refused by the poisoning screen: `{pattern}` is the rule it matched.
+    screen_reason: str
+    # How much of the message the card quotes.
+    said_chars: int = Field(gt=0)
+    # The review-queue entry the write is waiting in (`{id}`), shown only when there is one.
+    review_queue: str
+    # Gate outcomes that carry no extractor name: a tier path entry ending in one of these
+    # says where the write stopped, not how a fact was read.
+    gate_tiers: list[str]
+
+
 class MemorySettings(YamlBackedSettings):
     """All four CoALA stores plus the write pipeline (LLD §8)."""
 
@@ -1639,6 +1663,7 @@ class MemorySettings(YamlBackedSettings):
     importance: MemoryImportanceSettings
     subject_label: str
     no_subject_label: str
+    card: MemoryCardWording
     dream: DreamSettings
 
     model_config = SettingsConfigDict(env_prefix="MEMORY__")
@@ -1663,6 +1688,9 @@ class ReviewWords(BaseModel):
     decided: str
     hints: dict[str, str]
     kind_title: str
+    # A kind's key -> what a person reads for it ("reply" -> "reply cut by the hallucination
+    # check"). The key is what is stored and typed; only what is shown changes.
+    kind_labels: dict[str, str] = Field(default_factory=dict)
     time_format: str
     none: str
     columns: dict[str, list[str]]
@@ -1679,6 +1707,10 @@ class ReviewWords(BaseModel):
     approve_button: str
     deny_button: str
     nothing_selected: str
+
+    def label(self, kind: str) -> str:
+        """The words for a kind; an unlabelled kind is shown as its key."""
+        return self.kind_labels.get(kind, kind)
 
 
 class ReviewSettings(YamlBackedSettings):
@@ -1883,6 +1915,9 @@ class FactSettings(BaseModel):
     comparisons: dict[str, list[str]] = Field(default_factory=dict)
     # Duration unit pattern -> seconds ("minutes?" -> 60).
     duration_units: dict[str, int] = Field(default_factory=dict)
+    # Attribute name -> phrases that refer to its value without writing it ("the amount I can
+    # refund directly" -> the limit), so a comparison against it is computed from the fact.
+    references: dict[str, list[str]] = Field(default_factory=dict)
     # The attribute whose fact restates the record's state, for a corrected reply.
     state_attribute: str = ""
 
@@ -2957,6 +2992,14 @@ class TuiSettings(YamlBackedSettings):
     # Style of a card's section titles, its keys and values (`key`, `separator`, `value`,
     # `muted`), its lines by tone (pass, fail, warn, dim), and the words that name a state.
     section_title_style: str
+    # What follows a step's duration on a narrative card (`took 1968 ms`).
+    timing_unit: str
+    # Said on stderr when the agent cannot be built at start-up: `{agent}`, `{error}`, `{logs}`.
+    startup_failed: str
+    # Said in the feed when a command, or the agent rebuild a command asked for, fails; the
+    # agent already on screen keeps running. `{error}` is the exception type and message.
+    command_failed: str
+    rebuild_failed: str
     body_styles: dict[str, str]
     tone_styles: dict[str, str]
     state_words: dict[str, str]

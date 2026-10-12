@@ -76,14 +76,19 @@ At the same time, procedural memory existed only on paper:
 
 | Agent | Agent profile | Skills | Signals |
 |---|---|---|---|
-| Customer Support | `prompts/AGENT.md` | `order-status`, `order-details`, `list-orders`, `refund-workflow`, `refund-status`, `cancel-order` | `intent:{intent}`, `route:{intent_execution_route}` (`customer_support_agent.instruction_signals`) |
+| Customer Support | `prompts/AGENT.md` | `order-status`, `order-details`, `list-orders`, `refund-workflow`, `refund-status`, `cancel-order` | `intent:{intent}`, `route:{intent_execution_route}`, `intent:{intent_suggested}` for an unrouted turn's read-intent hint (`customer_support_agent.instruction_signals`) |
 | Ops | `prompts/AGENT.md` | `analytics-investigation` (`always`) | — |
 | Research | `prompts/AGENT.md`, below each profile role's `ROLE:` line | `research-planning`, `source-verification`, `report-synthesis` | `role:{role}` for roles in `research_agent.instructions.profile_roles` |
 
 ## Consequences
 
 - The refund rules now arrive with the refund procedure rather than on every turn.
-  - An unrouted turn (`route:llm_fallback`) still activates `refund-workflow` and `order-status`.
+  - An unrouted turn (`route:llm_fallback`) loads **no skill by default** (amended 2026-10-12).
+    It gets one only when its words name a task (lexical, over content words: function words
+    are dropped first, `skills.selection.function_words`) or when it nearly reached a *read*
+    intent (`intent_router.suggestion`: `floor`, `margin`). A skill that changes something is
+    never loaded on an unrouted turn, and the turn is offered `intent_router.unknown_tools`
+    at most: no skill must never mean every tool.
   - Keywords mirror the intent phrases, for when classification is withheld.
   - Reply-phrasing rules ("issued, settles shortly") stay in the profile, so grounding evidence
     is unchanged.

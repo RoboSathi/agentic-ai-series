@@ -163,6 +163,17 @@ async def test_an_answer_from_the_models_own_knowledge_is_not_grounded() -> None
     assert "hallucination_check" not in _stages(events)
 
 
+@pytest.mark.asyncio
+async def test_a_sources_line_on_an_answer_no_tool_informed_is_removed() -> None:
+    """No tool ran, so "Sources: Web search" names research that never happened."""
+    answerer, _ = _answerer(
+        [{"content": "RoboSathi is a robotics project.\n\nSources: Web search for RoboSathi"}]
+    )
+    answer = await answerer.answer("what is robosathi?")
+    assert "Sources" not in answer and "Web search" not in answer
+    assert "RoboSathi is a robotics project." in answer
+
+
 def _tool_calls_until_the_cap() -> list[dict[str, Any]]:
     """A different call each step, so it is the cap that stops the loop — not the governor
     suppressing a repeat or catching a cycle."""

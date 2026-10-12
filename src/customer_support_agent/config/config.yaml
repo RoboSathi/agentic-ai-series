@@ -111,18 +111,24 @@ llm:
 skills:
   profile_path: src/customer_support_agent/prompts/AGENT.md
   skills_dir: src/customer_support_agent/prompts/skills
-  # An unplaced turn (route llm_fallback) gets the order-status skill only, so it
-  # is offered reads: a write needs a request the router recognised as one.
+  # An unplaced turn (route llm_fallback) loads no skill unless its words match one
+  # (lexical) or it nearly reached a read intent (`intent_router.suggestion`); it is offered
+  # `intent_router.unknown_tools` at most, because a write needs a request the router
+  # recognised as one.
   selection:
     max_active: 3
   # Profile + the three largest skills may add at most this to a prompt (the old
   # instructions were 3,167).
-  max_prompt_chars: 2600
+  max_prompt_chars: 2800
 
 review:
   words:
     # This agent's review kinds: a refund or a cancellation's refund above its authority, and
-    # a reply the hallucination check cut.
+    # a reply the hallucination check cut. The key is stored and typed; the label is shown.
+    kind_labels:
+      refund: refund above the limit
+      cancel_and_refund: cancellation above the limit
+      reply: Hallucination Check (reply truncated)
     columns:
       refund: [ID, Order, Amount, Customer, Why queued, Raised]
       cancel_and_refund: [ID, Order, Amount, Customer, Why queued, Raised]
@@ -237,6 +243,13 @@ hallucination_check:
       customer_name: {type: text}
       customer_id: {type: number, terms: ['\baccount\b', '\bcustomer\s+(?:id|number)\b']}
       verified: {type: flag, affirm: ['\bverified\b'], deny: ['\bnot\s+verified\b', '\bunverified\b']}
+    # The limit is never written to a customer, so a reply says how an amount stands against it
+    # in words. These name it; the ledger reads the figure from the fact.
+    references:
+      refund_limit:
+        - '\bamount\s+(?:i|we)\s+can\s+(?:refund|handle|approve|issue)\b'
+        - '\b(?:my|our|the)\s+(?:refund\s+)?(?:limit|authority|authori[sz]ation)\b'
+        - '\b(?:i|we)\s+can\s+(?:refund|approve|issue)\s+(?:directly|myself|on\s+my\s+own)\b'
   # This agent's records: order ids, refund outcomes, and the refund state machine.
   # A claim naming one of these is about this case and needs a record.
   record_identifier_pattern: '\border\s*#?\s*\d{3,}\b'
@@ -555,6 +568,11 @@ customer_support_agent:
       tool: list_orders
     UNKNOWN: []
   intent_router:
+    # An unplaced turn gets a skill only when it nearly reached an intent that only reads.
+    suggestion:
+      floor: 0.35
+      margin: 0.15
+    unknown_tools: [get_order_status, get_refund_status, list_orders]
     clarification_top_k: 2
     # A turn no phrase or classifier placed, that names an order the deterministic
     # checks proved is the customer's, is a question about that order: answered from
@@ -762,6 +780,8 @@ customer_support_agent:
   instruction_signals:
     intent: "intent:{value}"
     intent_execution_route: "route:{value}"
+    # An unplaced turn that nearly reached a read intent carries that intent as its hint.
+    intent_suggested: "intent:{value}"
   console_reviewer: console_operator
   # A refund is issued first and settles later, as a card payment does: until
   # it settles it can be voided (`/void`), after that only refunded. Settling is

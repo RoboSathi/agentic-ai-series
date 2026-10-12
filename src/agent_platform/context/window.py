@@ -195,7 +195,12 @@ def finding_lines(findings: list[ContextFinding]) -> list[dict[str, str]]:
 def _evidence(finding: ContextFinding, words: ContextWindowWording) -> list[str]:
     """The text that tripped the detector, then what the detector measured."""
     shown = [words.flagged_line.format(line=finding.line)] if finding.line else []
-    shown += [words.statement_line.format(line=text) for text in finding.statements]
+    sources = finding.statement_sources
+    for number, text in enumerate(finding.statements):
+        if number < len(sources):
+            shown.append(words.sourced_statement_line.format(source=sources[number], line=text))
+        else:
+            shown.append(words.statement_line.format(line=text))
     return [*shown, finding.detail] if finding.detail else shown
 
 

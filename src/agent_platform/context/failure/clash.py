@@ -21,6 +21,7 @@ from agent_platform.context.failure.common import (
     entities,
     finding,
     label,
+    origin,
     same_subject,
     sentences,
 )
@@ -70,7 +71,8 @@ class ClashCheck:
             result = await self._nli.entails(a, b)
             if contradicts(result):
                 found += _resolve([(i, left), (j, right)], "clash_prose",
-                                  statements=[a, b], score=result.score)  # fmt: skip
+                                  statements=[a, b], score=result.score,
+                                  statement_sources=[origin(left), origin(right)])  # fmt: skip
         return found
 
     async def _pairs(
@@ -114,6 +116,7 @@ def _resolve(
     stated: list[tuple[int, Chunk]],
     template: str,
     statements: list[str] | None = None,
+    statement_sources: list[str] | None = None,
     **values: Any,
 ) -> list[ContextFinding]:
     """Keep the most trusted side of a clash; drop the rest, or flag a tie."""
@@ -127,6 +130,7 @@ def _resolve(
             index=index,
             action="tie" if tie else "kept_higher" if chunk_rank(chunk) == top else "dropped_lower",
             statements=statements,
+            statement_sources=statement_sources,
             **values,
         )
         for index, chunk in stated

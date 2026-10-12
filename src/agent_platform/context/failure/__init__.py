@@ -146,11 +146,22 @@ def _lines_lost(before: AssembledContext, after: AssembledContext) -> list[str]:
 
 
 def _cut(chunk: Chunk, lines: list[str]) -> Chunk:
+    """The chunk without the offending sentences, each cut from its own line only.
+
+    A line left holding nothing but its speaker prefix ("assistant:") goes with them.
+    """
     if not lines:
         return chunk
-    text = chunk.content
-    for line in lines:
-        text = text.replace(line, "")
+    prefix = get_settings().context.trust.model_line_prefix.casefold()
+    kept: list[str] = []
+    for row in chunk.content.splitlines():
+        cut = row
+        for line in lines:
+            cut = cut.replace(line, "", 1)
+        if cut != row and cut.strip().casefold() in ("", prefix):
+            continue
+        kept.append(cut)
+    text = "\n".join(kept)
     return chunk.model_copy(update={"content": text, "token_estimate": count_tokens(text)})
 
 

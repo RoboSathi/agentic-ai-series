@@ -142,10 +142,36 @@ class IntentNodes(NodeSupport):
                 "intent_score_type": intent.score_type,
                 "intent_candidates": [c.model_dump(mode="json") for c in intent.candidates],
                 "intent_tools": intent.allowed_tools,
+                "intent_suggested": self._suggested_intent(intent),
                 "intent_execution_route": intent_route,
                 "plan": [step.model_dump() for step in plan.steps],
             },
         }
+
+    @staticmethod
+    def _suggested_intent(intent: Intent) -> str | None:
+        """The read intent an unplaced turn nearly reached, as a hint for skill selection.
+
+        Never a write intent, and never when two intents are close: a refund or a cancellation
+        is asked for, not guessed at, and a tie is a question for the customer.
+        """
+        if intent.name != "UNKNOWN":
+            return None
+        settings = get_agent_settings()
+        modes = {item.name: item.mode for item in settings.intents}
+        ranked = sorted(
+            (c for c in intent.candidates if c.intent != "UNKNOWN"),
+            key=lambda c: c.score,
+            reverse=True,
+        )
+        if not ranked or modes.get(ranked[0].intent) != "read":
+            return None
+        policy = settings.intent_router.suggestion
+        runner_up = ranked[1].score if len(ranked) > 1 else 0.0
+        top = ranked[0]
+        if top.score < policy.floor or top.score - runner_up < policy.margin:
+            return None
+        return top.intent
 
     @staticmethod
     def _open_task_for(intent: str) -> None:

@@ -16,7 +16,9 @@ from agent_platform.context.failure.common import (
     body,
     contradicts,
     finding,
+    is_state_line,
     label,
+    origin,
     same_subject,
     sentences,
 )
@@ -27,6 +29,9 @@ from agent_platform.context.types import AssembledContext, Chunk, ContextFinding
 # Kinds that carry data from outside the instruction boundary — where an
 # injected instruction would be poisoning rather than a request.
 _DATA_KINDS = frozenset({"retrieved", "tool_result", "memory", "history"})
+# Kinds that hold many separate lines of a conversation or state: an injected line is cut out of
+# them, where a retrieved page or tool result that carries one is not trusted at all.
+_TRANSCRIPT_KINDS = frozenset({"history", "memory"})
 
 
 @runtime_checkable
@@ -56,22 +61,38 @@ class PoisoningCheck:
         found = []
         for index, chunk in enumerate(context.chunks):
             phrases = self._screen.find_phrases(chunk.content) if chunk.kind in _DATA_KINDS else []
-            if phrases:
+            if not phrases:
+                continue
+            lines = _offending_lines(chunk.content, phrases)
+            if chunk.kind in _TRANSCRIPT_KINDS and lines and _has_other_lines(chunk, lines):
+                # A transcript is mostly the conversation worth keeping: only the line goes.
                 found.append(
-                    finding("poisoning", "poisoning_injection", source=label(chunk),
-                            action="dropped", index=index, phrases=phrases,
-                            line=_lines_with(chunk.content, phrases))
+                    finding("poisoning", "poisoning_injection", source=origin(chunk),
+                            action="excised", index=index, phrases=phrases, excise=lines)
                 )  # fmt: skip
+                continue
+            found.append(
+                finding("poisoning", "poisoning_injection", source=label(chunk),
+                        action="dropped", index=index, phrases=phrases,
+                        line=_lines_with(chunk.content, phrases))
+            )  # fmt: skip
         return found
 
     async def _unverified(self, context: AssembledContext) -> list[ContextFinding]:
         """The model's own earlier claims that a verified chunk contradicts."""
         if self._nli is None or not get_settings().context.failure_detection.nli:
             return []
-        facts = [(c, s) for c in context.chunks if _verified(c) for s in sentences(body(c))]
+        facts = [
+            (c, s)
+            for c in context.chunks
+            if _verified(c)
+            for line in body(c).splitlines()
+            if not is_state_line(line)
+            for s in sentences(line)
+        ]
         found: list[ContextFinding] = []
         for index, chunk in enumerate(context.chunks):
-            claims = _model_lines(chunk)
+            claims = [c for c in _model_lines(chunk) if not _restates(c, facts)]
             if facts and claims:
                 found.extend(await self._against(index, chunk, claims, facts))
         return found
@@ -94,12 +115,36 @@ class PoisoningCheck:
                 result = await self._nli.entails(fact, claim)  # type: ignore[union-attr]
                 if contradicts(result):
                     found.append(
-                        finding("poisoning", "poisoning_claim", source=label(chunk),
+                        finding("poisoning", "poisoning_claim", source=origin(chunk),
                                 action="excised", index=index, excise=[claim],
-                                statements=[claim, fact], score=result.score, against=label(source))
+                                statements=[claim, fact],
+                                statement_sources=[origin(chunk), origin(source)],
+                                score=result.score, against=origin(source))
                     )  # fmt: skip
                     break
         return found
+
+
+def _restates(claim: str, facts: list[tuple[Chunk, str]]) -> bool:
+    """Whether a verified line already says this: a restatement is not an unverified claim."""
+    said = " ".join(claim.casefold().split())
+    return any(said in " ".join(fact.casefold().split()) for _, fact in facts)
+
+
+def _offending_lines(content: str, phrases: list[str]) -> list[str]:
+    """The lines of `content` that hold one of the matched phrases, each as written."""
+    wanted = [phrase.casefold() for phrase in phrases]
+    return [
+        line.strip()
+        for line in content.splitlines()
+        if line.strip() and any(phrase in line.casefold() for phrase in wanted)
+    ]
+
+
+def _has_other_lines(chunk: Chunk, offending: list[str]) -> bool:
+    """Whether the chunk holds anything besides the offending lines (and its provenance label)."""
+    lines = [line.strip() for line in body(chunk).splitlines() if line.strip()]
+    return any(line not in offending for line in lines)
 
 
 def _lines_with(content: str, phrases: list[str]) -> str:

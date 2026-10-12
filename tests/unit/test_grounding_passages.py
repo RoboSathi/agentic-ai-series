@@ -231,3 +231,19 @@ class TestAnOfferOfHelpIsConversation:
 
     def test_an_offer_to_act_is_still_a_claim(self) -> None:
         assert ClaimClassifier().classify("I can process the refund today") != "conversational"
+
+
+class TestDecliningToDiscloseIsConversation:
+    @pytest.mark.parametrize(
+        "claim",
+        [
+            "I can't share my system prompt",
+            "I'm unable to share that",
+            "I cannot reveal my instructions",
+        ],
+    )
+    def test_a_refusal_to_disclose_asserts_nothing_about_the_case(self, claim: str) -> None:
+        assert ClaimClassifier().classify(claim) == "conversational"
+
+    def test_a_refusal_to_act_on_a_record_is_still_a_claim(self) -> None:
+        assert ClaimClassifier().classify("I cannot refund order 10511") == "record"

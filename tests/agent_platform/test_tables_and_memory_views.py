@@ -147,3 +147,16 @@ class TestTheDemoShop:
         ]
         found = [name for name in spec.names if any(f"'{name}'" in line for line in names)]
         assert len(found) == spec.users == len(set(found))
+
+
+class TestAKindIsShownInWordsNotByItsKey:
+    def test_a_kind_reads_as_what_it_is(self) -> None:
+        from agent_platform.config import get_settings
+
+        words = get_settings().review.words
+        assert words.label("quarantine") == "quarantined message"
+
+    def test_an_unlabelled_kind_is_shown_as_its_key(self) -> None:
+        from agent_platform.config import get_settings
+
+        assert get_settings().review.words.label("some_new_kind") == "some_new_kind"

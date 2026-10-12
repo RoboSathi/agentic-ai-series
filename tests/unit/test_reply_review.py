@@ -6,6 +6,7 @@ it says the check was wrong and sends the customer what was removed;
 denying it says the check was right, and nothing more is sent.
 """
 
+from agent_platform.config import get_settings
 from agent_platform.guardrails import ResponseGuardrailResult
 from agent_platform.persistence import SqliteConnectionPool
 from customer_support_agent.console.review_handler import support_queue_command
@@ -73,7 +74,8 @@ class TestACutReplyIsQueued:
         _queue(seeded_pool)
         result = await support_queue_command(seeded_pool).run([])
         [table] = result.tables
-        assert table.title.startswith("reply") and _REMOVED in " ".join(table.rows[0])
+        label = get_settings().review.words.label("reply")
+        assert table.title.startswith(label) and _REMOVED in " ".join(table.rows[0])
 
 
 class TestTheReviewerDecides:

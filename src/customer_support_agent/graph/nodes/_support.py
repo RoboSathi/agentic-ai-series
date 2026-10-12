@@ -108,6 +108,10 @@ ORDER_SNAPSHOT = "order_snapshot"
 _GROUNDED_AS_STATED = frozenset({TOOL_COMPLETED, TOOL_REFERRED})
 
 
+# The route a turn takes when no intent was placed (`intent_execution_route`).
+_UNPLACED_ROUTE = "llm_fallback"
+
+
 class NodeSupport:
     """Collaborators and small helpers shared by every node group."""
 
@@ -141,7 +145,8 @@ class NodeSupport:
     _features: FeatureSet
     _intents: CustomerSupportIntentRouter
     _authenticator: CustomerAuthenticator | None
-    _orders: OrdersRepository | None
+    # Absent for an agent built without a database; a node group tests it before reading.
+    _orders: OrdersRepository | None = None
     _order_reference: OrderReferenceResolver
     _deterministic_checks: DeterministicChecker | None
     _deliberation_markers: list[str]
@@ -305,9 +310,20 @@ class NodeSupport:
 
     def _activation(self, state: AgentState) -> Activation:
         """This turn's skills — deterministic, so every stage that asks gets the same."""
-        return self._instructions.select(
+        activation = self._instructions.select(
             self._skill_signals(state), state.model_query or state.query
         )
+        if state.metadata.get("intent_execution_route") != _UNPLACED_ROUTE:
+            return activation
+        # An unplaced turn is never given a skill that writes: its words may resemble one
+        # ("refund"), but a write needs a request the router recognised as one.
+        reads = tuple(item for item in activation.skills if not self._writes(item.skill))
+        return activation.model_copy(update={"skills": reads})
+
+    def _writes(self, skill: Any) -> bool:
+        """Whether a skill uses any tool that changes something."""
+        tools = (self._registry.get(name) for name in skill.document.tools)
+        return any(tool is not None and tool.side_effecting for tool in tools)
 
     def _skill_tools(self, state: AgentState) -> set[str]:
         """The tools this turn's skills use, by internal name — on every path.
@@ -338,9 +354,8 @@ class NodeSupport:
         referral did — queued it, and left the refund pending — not as a
         refusal, which NLI reads as contradicting "your request is in".
         """
-        record = self._order_record(state)
         return [
-            *([record.content] if record is not None else []),
+            *(chunk.content for chunk in self._order_records(state)),
             *(text for text, _, _ in self._observations(state)),
         ]
 
@@ -453,9 +468,18 @@ class NodeSupport:
         The order record goes first: it was read for the turn, and anything
         this turn's tools wrote after it supersedes it in the guard's order.
         """
-        record = self._order_record(state)
         tools = tool_evidence([Observation(*observed) for observed in self._observations(state)])
-        return [*([record] if record is not None else []), *tools]
+        return [*self._order_records(state), *tools]
+
+    def _order_records(self, state: AgentState) -> list[Chunk]:
+        """The record of the order under discussion, then of each other order named."""
+        record = self._order_record(state)
+        others = (
+            order_record(self._orders, order.order_id, state.customer_id)
+            for order in self._other_orders(state)
+            if self._orders is not None
+        )
+        return [*([record] if record is not None else []), *(c for c in others if c is not None)]
 
     def _typed_facts(self, state: AgentState) -> list[Chunk]:
         """The order, the rules and the session as typed facts the guard reads first.
@@ -467,9 +491,41 @@ class NodeSupport:
         order = self._discussed_order(state)
         return [
             *(order_facts(order) if order is not None else []),
+            *(chunk for other in self._other_orders(state) for chunk in order_facts(other)),
             *policy_facts(self._refund_limit()),
             *session_facts(current_customer()),
         ]
+
+    def _other_orders(self, state: AgentState) -> list[Order]:
+        """Every other order of this customer's that the message or this turn's tools named.
+
+        A reply may speak of two orders ("10857 instead of 10546"), or of one a
+        tool read without the turn settling on it. Each is read fresh and only
+        if the customer owns it, so naming an order grounds nothing about
+        someone else's.
+        """
+        if state.customer_id is None or self._orders is None:
+            return []
+        discussed = self._order_under_discussion(state)
+        ids = self._order_reference.named(state.query, state.customer_id) | self._read_order_ids(
+            state
+        )
+        orders = (
+            self._orders.get_for_customer(i, state.customer_id) for i in sorted(ids - {discussed})
+        )
+        return [order for order in orders if order is not None]
+
+    def _read_order_ids(self, state: AgentState) -> set[int]:
+        """The orders this turn's tool calls were made about."""
+        found: set[int] = set()
+        for item in state.working_memory.current_turn:
+            if not (isinstance(item, dict) and item.get("kind") == "action"):
+                continue
+            arguments = item.get("arguments")
+            value = arguments.get("order_id") if isinstance(arguments, dict) else None
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                found.add(value)
+        return found
 
     def _discussed_order(self, state: AgentState) -> Order | None:
         """The order under discussion, if this customer owns it."""

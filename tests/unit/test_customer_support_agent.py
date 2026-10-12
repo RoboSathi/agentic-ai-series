@@ -473,3 +473,41 @@ class TestHarnessOffLeavesTheModelFree:
             _turn_state({"allowed_actions": ["support.get_order_status"]})
         )
         assert [tool.qualified_name for tool in offered] == ["support.get_order_status"]
+
+
+class TestAnUnplacedTurnIsNeverOfferedAWrite:
+    """No skill active means "no narrowing", which must not become "every tool"."""
+
+    async def test_an_unplaced_turn_is_offered_reads_only(
+        self, seeded_pool: SqliteConnectionPool, restore_settings: None
+    ) -> None:
+        agent = TestHarnessOffLeavesTheModelFree()._agent(True, seeded_pool)
+        state = _turn_state(
+            {"intent": "UNKNOWN", "intent_tools": [], "intent_execution_route": "llm_fallback"}
+        )
+        names = {tool.name for tool in await agent._offered_tools(state)}
+        assert names == {"get_order_status", "get_refund_status", "list_orders"}
+
+
+class TestAnUnplacedTurnMayBeHintedAReadSkill:
+    @staticmethod
+    def _intent(*scores: tuple[str, float]) -> Any:
+        from customer_support_agent.graph.nodes.intent import IntentNodes
+
+        candidates = [SimpleNamespace(intent=name, score=score) for name, score in scores]
+        intent = SimpleNamespace(name="UNKNOWN", candidates=candidates)
+        return IntentNodes._suggested_intent(intent)
+
+    def test_a_clear_read_candidate_below_the_threshold_is_the_hint(self) -> None:
+        assert self._intent(("UNKNOWN", 0.4), ("ORDER_STATUS", 0.5), ("LIST_ORDERS", 0.1)) == (
+            "ORDER_STATUS"
+        )
+
+    def test_a_write_candidate_is_never_the_hint(self) -> None:
+        assert self._intent(("UNKNOWN", 0.3), ("REQUEST_REFUND", 0.55)) is None
+
+    def test_two_close_candidates_give_no_hint(self) -> None:
+        assert self._intent(("ORDER_STATUS", 0.45), ("ORDER_DETAILS", 0.42)) is None
+
+    def test_a_weak_candidate_gives_no_hint(self) -> None:
+        assert self._intent(("UNKNOWN", 0.8), ("ORDER_STATUS", 0.1)) is None

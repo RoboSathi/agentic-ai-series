@@ -130,10 +130,12 @@ class FinalizeNodes(NodeSupport):
         # manufacture a plausible business outcome from the same unsupported
         # draft, which is exactly the 0/0 grounding failure this gate prevents.
         if not critique.acceptable and not authoritative_evidence:
-            evidence = []
+            # The policy, knowledge and typed facts still stand: a reply that restates a rule
+            # is supported by it even when no tool ran. What stays refused is an outcome
+            # claim, which only a tool result can show.
             guardrail_result = await self._response_guardrail.enforce(
                 last.content,
-                evidence,
+                self._grounding_evidence(state),
             )
             if guardrail_result.escalated:
                 self._report_grounding(state, guardrail_result)

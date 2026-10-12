@@ -145,6 +145,8 @@ class ContextFinding(BaseModel):
     excise: list[str] = Field(default_factory=list)
     # The statements that disagree (a clash, a contradicted claim), each on its own line.
     statements: list[str] = Field(default_factory=list)
+    # Where each statement came from, parallel to `statements` ("working_memory · conversation").
+    statement_sources: list[str] = Field(default_factory=list)
 
 
 Context.model_rebuild()

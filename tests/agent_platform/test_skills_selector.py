@@ -98,6 +98,12 @@ class TestTheLexicalFallback:
     def test_an_unrelated_query_selects_nothing(self, selector: SkillSelector) -> None:
         assert selector.select([_REFUND, _TRACK], frozenset(), "hello there") == ()
 
+    def test_a_politely_phrased_question_names_no_task(self, selector: SkillSelector) -> None:
+        """Articles and auxiliaries shared with a description are not a match."""
+        skill = _skill("refund-flow", description="Handle a request to refund an order")
+        query = "can you look into it for me, is it not right?"
+        assert selector.select([skill], frozenset(), query) == ()
+
     def test_it_is_not_consulted_once_a_trigger_matched(self, selector: SkillSelector) -> None:
         chosen = selector.select(
             [_REFUND, _TRACK], frozenset({"intent:REFUND"}), "where is my parcel delivery"
