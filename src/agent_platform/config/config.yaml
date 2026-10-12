@@ -775,6 +775,8 @@ analytics:
   query:
     dialect: duckdb
     timezone: UTC
+    # The column every agent-scoped view names its agent by (list_metrics lists its values).
+    agent_column: agent_id
     max_rows: 200
     timeout_seconds: 10
     max_result_bytes: 200000
@@ -797,13 +799,16 @@ analytics:
       # view's real columns, and the closest match to the name it quoted.
       not_runnable: "The query could not run: {error} Columns: {columns}.{hint} Fix the SQL and try again."
       did_you_mean: " Did you mean: {names}?"
+      unknown_agent: "There is no data for agent '{agent}'. Use one of these agent ids: {agents}."
     # Attached to a result the model should check before answering from it.
     notes:
-      empty: "0 rows. Check the filter values (agent ids, outcomes, dates) against describe_view's sample rows before saying there is no data."
+      empty: "0 rows. If the filters match the question, answer that there is no data for it."
       truncated: "Only the first {rows} rows were returned. Aggregate (GROUP BY) or filter instead of reading rows."
     timed_out: "The query ran longer than {seconds}s and was stopped. Aggregate more, or filter first."
   mcp_server:
     name: agentic-analytics
+    # The serverInfo.version a client reads in the handshake.
+    version: "1.0"
     instructions: >-
       Read-only analytics over the agent platform's analytics source. For a named metric
       (resolution rate, availability, latency percentiles, tool-call validity,
@@ -2456,32 +2461,76 @@ mcp:
     # The lowest server log level the client opts in to (`notifications/message`); every one
     # received is logged in full to mcp.log.
     log_level: info
+    # The `_meta` key that carries the opt-in on each request (protocol 2026-07-28+).
+    log_level_meta_key: io.modelcontextprotocol/logLevel
     # Server log levels also drawn on the live feed (MCP NOTIFICATION), and those drawn as failed.
     card_log_levels: [warning, error, critical, alert, emergency]
     failed_log_levels: [error, critical, alert, emergency]
   # The MCP SERVER card an agent draws when it connects (`mcp/presentation.py`).
   card:
-    heading: "{server} · MCP {protocol} · {tools} tools offered · {duration_ms} ms"
+    heading: "{server} · MCP {protocol} · {tools} tools offered"
+    # The card's sections, each line a `key: value` the reader looks up by the protocol's own
+    # names (protocolVersion, serverInfo, clientInfo, capabilities, inputSchema, outputSchema,
+    # annotations, isError, _meta). Drawn once per session, at the handshake; mcp.log holds
+    # the same profile once, in full.
     handshake_title: Handshake
-    handshake_line: "{method} · protocol {protocol} · {duration_ms} ms"
-    client_line: "client: {client}"
-    capabilities_line: "server capabilities: {capabilities}"
-    server_title: Server
+    handshake_lines:
+      - "method: {method}"
+      - "protocolVersion: {protocol}"
+      - "negotiation: {mode}"
+      - "took: {duration_ms} ms"
+    server_title: Server (serverInfo)
+    server_lines:
+      - "name: {name}"
+      - "version: {version}"
+      - "namespace: {namespace}"
+      - "transport: {transport} · {target}"
+    client_title: Client (clientInfo)
+    client_lines:
+      - "name: {name}"
+      - "version: {version}"
+      - "logLevel opt-in: {log_level}"
+    capabilities_title: Capabilities
+    server_capability_line: "server · {name}: {flags}"
+    client_capability_line: "client · {name}: {flags}"
+    # A capability declared with no sub-flags; a side that declared none.
+    no_flags: declared
+    no_capabilities: "{side} · none declared"
+    # A client declares only what it serves the server (sampling, roots, elicitation).
+    client_none: "client · none declared (it serves the server no sampling, roots or elicitation)"
+    server_side: server
+    client_side: client
     instructions_title: Server instructions
-    tools_title: Tools offered (as the server describes them; governed locally)
-    server_line: "{name} · namespace {namespace}"
-    transport_line: "{transport} · {target}"
+    no_instructions: "(the server gave none)"
+    tools_title: Tools (tools/list)
     tool_line: "{name} — {description}"
-    argument_line: "  {name}: {type} ({required})"
+    offered_line: "  offered as: {name}"
+    argument_line: "  in · {name}: {type} ({required})"
     required: required
     optional: optional
-    governance_line: "  governance: surface {surface} · side effects {side_effecting} · permission {permission}"
-    no_instructions: "(the server gave none)"
+    output_line: "  out · {name}: {type}"
+    no_output: "  out · text only (no outputSchema)"
+    # The server's annotations (claims), then this deployment's envelope (what is enforced).
+    hints_line: "  annotations (server's claim): {hints}"
+    hint: "{name}={value}"
+    no_hints: none
+    meta_line: "  _meta: {meta}"
+    governance_line: "  governance (enforced here): surface {surface} · side effects {side_effecting} · reversible {reversible} · rank {rank} · permission {permission}"
+    execution_title: Execution & errors
+    execution_lines:
+      - "tools/call timeout: {timeout}s per round trip"
+      - "result text: {limit}"
+      - "isError: a tool's own failure returns isError=true with its message, which the model reads and corrects"
+      - "protocol errors: a timeout or a lost session fails the call (MCP CALL · no answer)"
+      - "progress: a progressToken on each call; notifications/progress go to mcp.log"
+      - "_meta sent: {meta_key}={log_level}"
+    whole_result: every character (no limit)
+    result_limit: "first {limit} characters"
     # The MCP CALL card, drawn before each MCP tool's TOOL RESULT.
-    call_heading: "{server} · MCP {method} {tool} · {duration_ms} ms"
-    call_failed_heading: "{server} · MCP {method} {tool} · server reported an error · {duration_ms} ms"
+    call_heading: "{server} · MCP {method} {tool}"
+    call_failed_heading: "{server} · MCP {method} {tool} · server reported an error"
     # A call that got no answer at all (timeout, session gone): MCP CALL, failed.
-    call_raised_heading: "{server} · MCP {method} {tool} · no answer · {duration_ms} ms"
+    call_raised_heading: "{server} · MCP {method} {tool} · no answer"
     # The protocol's own cards (`mcp/client/events.py`).
     connect_failed_heading: "{server} · MCP connection failed · {error}"
     tools_changed_heading: "{server} · MCP {method} · tools re-listed next turn"

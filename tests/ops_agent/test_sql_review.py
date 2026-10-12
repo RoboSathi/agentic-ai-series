@@ -98,10 +98,12 @@ async def test_an_answer_out_of_form_accepts(ops_config: None) -> None:
     )
 
 
-def test_a_catalogue_metric_is_not_reviewed(ops_config: None) -> None:
+def test_every_query_an_answer_rests_on_is_reviewed(ops_config: None) -> None:
+    """The model's SQL, and a catalogue metric (its metric, agent and period are the model's)."""
     reviewer = SqlReviewer(ScriptedLLM(), get_agent_settings().sql_review)
     metric = QUERY.model_copy(update={"tool": "analytics.compute_metric"})
-    assert reviewer.reviewed([QUERY, metric]) == [QUERY]
+    listing = QUERY.model_copy(update={"tool": "analytics.describe_view"})
+    assert reviewer.reviewed([QUERY, metric, listing]) == [QUERY, metric]
 
 
 async def test_a_rejected_query_is_a_failed_tool_result(harness: Any) -> None:

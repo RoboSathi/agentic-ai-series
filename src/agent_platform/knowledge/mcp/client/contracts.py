@@ -50,8 +50,15 @@ class McpToolDescription(BaseModel):
 
     name: str
     qualified_name: str
+    # The name the model is offered it by (`tools.registry`).
+    offered_as: str = ""
+    title: str = ""
     description: str = ""
     input_schema: dict[str, Any] = Field(default_factory=dict)
+    output_schema: dict[str, Any] = Field(default_factory=dict)
+    # The server's own hints, and this deployment's envelope: claims beside what is enforced.
+    annotations: dict[str, Any] = Field(default_factory=dict)
+    meta: dict[str, Any] = Field(default_factory=dict)
     envelope: dict[str, Any] = Field(default_factory=dict)
 
 

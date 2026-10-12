@@ -26,7 +26,6 @@ from agent_platform.knowledge.mcp.client.events import LoggedMcpEvents, McpEvent
 from agent_platform.knowledge.mcp.client.presentation import call_exchange
 from agent_platform.knowledge.mcp.client.schema import arguments_model
 from agent_platform.knowledge.mcp.common.types import McpToolInfo
-from agent_platform.logging import get_logger
 from agent_platform.tools.types import ToolDefinition, ToolResult
 
 
@@ -60,20 +59,14 @@ class GovernedMcpToolSource:
         self._events = events or LoggedMcpEvents()
         self._session: McpSession | None = None
         self._listed: list[McpToolInfo] = []
-        self._logger = get_logger("mcp")
+        self._offered: dict[str, str] = {}
 
     async def tools(self) -> list[ToolDefinition]:
         session = await self._open()
         self._listed = await session.list_tools()
         definitions = [self._definition(tool) for tool in self._listed]
-        for definition in definitions:
-            self._logger.info(
-                "MCP tool registered",
-                server=self._server.name,
-                tool=definition.qualified_name,
-                offered_as=definition.model_name,
-                envelope=self._policy.envelope_for(self._server, self._tool(definition.name)),
-            )
+        # The name each tool is offered to the model by; the session profile logs it once.
+        self._offered = {definition.name: definition.model_name for definition in definitions}
         description = self.describe()
         if description is not None:
             self._events.tools_listed(description)
@@ -93,6 +86,11 @@ class GovernedMcpToolSource:
             tools=[
                 McpToolDescription(
                     name=tool.name,
+                    offered_as=self._offered.get(tool.name, ""),
+                    title=tool.title,
+                    output_schema=tool.output_schema,
+                    annotations=tool.annotations,
+                    meta=tool.meta,
                     qualified_name=f"{self._server.namespace}.{tool.name}"
                     if self._server.namespace
                     else tool.name,
@@ -103,9 +101,6 @@ class GovernedMcpToolSource:
                 for tool in self._listed
             ],
         )
-
-    def _tool(self, name: str) -> McpToolInfo:
-        return next(tool for tool in self._listed if tool.name == name)
 
     async def close(self) -> None:
         if self._session is not None:

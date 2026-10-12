@@ -140,6 +140,24 @@ class SourceDatabase:
                 sample_rows=_records(sample),
             )
 
+    def agents(self) -> list[str]:
+        """Every agent id the source holds data for, across the views that carry one."""
+        column = get_settings().analytics.query.agent_column
+        with self._lock:
+            connection = self._fresh()
+            views = [
+                v.name
+                for v in self._catalog.views
+                if v.name in self._loaded and column in v.columns
+            ]
+            found = {
+                str(row[0])
+                for view in views
+                for row in connection.execute(f"SELECT DISTINCT {column} FROM {view}").fetchall()
+                if row[0] is not None
+            }
+        return sorted(found)
+
     def metrics(self) -> list[MetricSummary]:
         """The metric catalogue, with each metric's SLO target."""
         targets = get_settings().observability.slo_targets
@@ -166,6 +184,7 @@ class SourceDatabase:
     ) -> QueryResult:
         """One catalogue metric, by its own formula, over runtime traffic in the period."""
         metric = self._metric(name, by)
+        self._known_agent(agent_id)
         with self._lock:
             connection = self._fresh()
             self._available(metric.view)
@@ -182,6 +201,19 @@ class SourceDatabase:
             # Bound as a parameter; shown with its value, so the SQL can be read and rerun.
             shown = sql.replace("?", literal(agent_id), 1) if agent_id is not None else sql
             return self._bounded(shown, self._run(connection, sql, params))
+
+    def _known_agent(self, agent_id: str | None) -> None:
+        """An agent id the source holds no data for is refused with the ones it does hold,
+        so the model corrects the id instead of reading an empty result as "no data"."""
+        if agent_id is None:
+            return
+        known = self.agents()
+        if known and agent_id not in known:
+            words = get_settings().analytics.query.rejections
+            self._logger.warning("Analytics metric refused", agent_id=agent_id, agents=known)
+            raise QueryRejectedError(
+                words.unknown_agent.format(agent=agent_id, agents=", ".join(known))
+            )
 
     def _metric(self, name: str, by: str | None) -> MetricDefinition:
         words = get_settings().analytics.query.rejections

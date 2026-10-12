@@ -18,12 +18,12 @@ agent:
 # stage that is never built.
 features:
   prompt_injection: true             # the person's message: phrase scan before the model reads it
+  content_moderation: true           # the person's message: term scan (and hosted safety model) after it
   hallucination_guard: true          # every figure in the answer must appear in a query result
   gatekeeper: true                   # each MCP call is authorized against this agent's policy
   # Platform features this agent does not compose. Declared false because an
   # overlay cannot delete keys the platform default declares.
   deterministic_checks: false
-  content_moderation: false
   pii: false
   intent_classification: false
   memory:
@@ -107,7 +107,10 @@ ops_agent:
   # still running when it passes.
   budget:
     max_tool_calls: 16
-    max_total_tokens: 60000
+    # Every step re-sends the conversation (~10k tokens once the catalogue and a few results
+    # are in it), so this is sized for `max_steps` steps plus the SQL review, letting the step
+    # cap, not the token cap, end a long investigation.
+    max_total_tokens: 120000
     max_seconds: 180
   # Earlier questions and answers in this conversation the model is shown.
   history_turns: 3
@@ -127,8 +130,9 @@ ops_agent:
   # reads the SQL it wrote against the question; "revise" sends it back to fix the query, at
   # most `max_reflections` times a turn. The figures check then grounds what it answers.
   sql_review:
-    # Only SQL the model wrote: compute_metric runs the catalogue's own formula.
-    reviewed_tools: [analytics.run_query]
+    # Every call an answer can rest on: run_query (the model's SQL) and compute_metric (the
+    # catalogue's formula, with the model's metric, agent and period — the arguments it can get wrong).
+    reviewed_tools: [analytics.run_query, analytics.compute_metric]
     max_reflections: 1
     sample_rows: 5
     temperature: 0.0

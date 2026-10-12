@@ -76,16 +76,42 @@ class LoggedMcpEvents:
         self._logger.info("MCP session opening", server=server, target=target)
 
     def connected(self, server: str, info: McpServerInfo) -> None:
-        self._logger.info("MCP server connected", server=server, **info.model_dump())
+        # The handshake's headline; the whole profile is logged once, when the tools are listed.
+        self._logger.info(
+            "MCP server connected",
+            server=server,
+            name=info.name,
+            version=info.version,
+            protocol_version=info.protocol_version,
+            handshake=info.handshake,
+            duration_ms=info.duration_ms,
+        )
 
     def connect_failed(self, server: str, error: str) -> None:
         self._logger.warning("MCP connection failed", server=server, error=error)
 
     def tools_listed(self, description: McpServerDescription) -> None:
+        """The session's protocol profile, once: protocolVersion, serverInfo / clientInfo, both
+        sides' capabilities, every tool's schemas, annotations and envelope, and how calls run
+        and fail. Each later call logs only its own arguments and result."""
+        settings = get_settings().mcp
         self._logger.info(
-            "MCP tools/list",
+            "MCP session profile",
             server=description.server.name,
+            protocol_version=description.info.protocol_version,
+            handshake=description.info.handshake,
+            server_info={"name": description.info.name, "version": description.info.version},
+            client_info={"name": settings.client.name, "version": settings.client.version},
+            server_capabilities=description.info.server_capabilities,
+            client_capabilities=description.info.client_capabilities,
+            instructions=description.info.instructions,
             tools=[tool.model_dump() for tool in description.tools],
+            execution={
+                "call_timeout_seconds": settings.call_timeout_seconds,
+                "result_text_limit": settings.result_text_limit,
+                "log_level": settings.client.log_level,
+                "meta": {settings.client.log_level_meta_key: settings.client.log_level},
+            },
         )
 
     def call_failed(

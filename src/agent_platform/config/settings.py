@@ -829,6 +829,8 @@ class QueryRejectionWords(BaseModel):
     # `{error}`, `{columns}`, `{hint}` (`did_you_mean` with `{names}`, or nothing).
     not_runnable: str
     did_you_mean: str
+    # `{agent}` the id asked for, `{agents}` the ones the source holds.
+    unknown_agent: str
 
 
 class QueryNoteWords(BaseModel):
@@ -844,6 +846,7 @@ class AnalyticsQuerySettings(BaseModel):
     dialect: str
     # The session time zone results are reported in (the source's timestamps are UTC).
     timezone: str
+    agent_column: str
     max_rows: int = Field(ge=1)
     timeout_seconds: float = Field(gt=0)
     max_result_bytes: int = Field(ge=1024)
@@ -859,6 +862,7 @@ class AnalyticsMcpServerSettings(BaseModel):
     """How the analytics MCP server introduces itself to a client."""
 
     name: str
+    version: str
     instructions: str
     manifest_uri: str
 
@@ -2746,29 +2750,48 @@ class McpClientSettings(BaseModel):
     log_level: Literal[
         "debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"
     ]
+    log_level_meta_key: str
     card_log_levels: list[str]
     failed_log_levels: list[str]
 
 
 class McpCardWords(BaseModel):
-    """How an MCP server is drawn on a card (`mcp/presentation.py`)."""
+    """How an MCP server is drawn on a card (`mcp/client/presentation.py`)."""
 
     heading: str
     handshake_title: str
-    handshake_line: str
-    client_line: str
-    capabilities_line: str
+    handshake_lines: list[str]
     server_title: str
+    server_lines: list[str]
+    client_title: str
+    client_lines: list[str]
+    capabilities_title: str
+    server_capability_line: str
+    client_capability_line: str
+    no_flags: str
+    no_capabilities: str
+    client_none: str
+    server_side: str
+    client_side: str
     instructions_title: str
+    no_instructions: str
     tools_title: str
-    server_line: str
-    transport_line: str
     tool_line: str
+    offered_line: str
     argument_line: str
     required: str
     optional: str
+    output_line: str
+    no_output: str
+    hints_line: str
+    hint: str
+    no_hints: str
+    meta_line: str
     governance_line: str
-    no_instructions: str
+    execution_title: str
+    execution_lines: list[str]
+    whole_result: str
+    result_limit: str
     # The MCP CALL card, one per call (`observability/step_events.py`): any field of
     # the exchange may be named (server, method, tool, duration_ms, is_error).
     call_heading: str

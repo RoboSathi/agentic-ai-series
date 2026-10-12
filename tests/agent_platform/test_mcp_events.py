@@ -87,8 +87,19 @@ async def test_the_handshake_is_one_server_card_with_how_it_was_negotiated(
     assert card.status == "completed"
     assert "5 tools offered" in (card.summary or "")
     handshake = card.fields["Handshake"]
-    assert handshake[0].split(" · ")[0] in {"initialize", "server/discover"}
-    assert handshake[1] == "client: agentic-harness 1.0"
+    assert handshake[0] in {"method: initialize", "method: server/discover"}
+    assert handshake[1].startswith("protocolVersion: ")
+    assert card.fields["Client (clientInfo)"][:2] == ["name: agentic-harness", "version: 1.0"]
+    assert "server · tools: listChanged=true" in card.fields["Capabilities"]
+    tools = card.fields["Tools (tools/list)"]
+    # Inputs, outputs (outputSchema), the server's annotations, and the local envelope.
+    assert "  in · sql: string (required)" in tools
+    assert "  out · row_count: integer" in tools
+    assert any("readOnlyHint=true" in line for line in tools)
+    assert any(line.startswith("  governance (enforced here): surface locked") for line in tools)
+    assert any(line.startswith("_meta sent: ") for line in card.fields["Execution & errors"])
+    # No timing in the heading: it is in the Handshake section.
+    assert " ms" not in (card.summary or "")
 
 
 async def test_a_refused_query_reaches_the_client_as_a_warning_notification(
@@ -161,3 +172,46 @@ def test_without_a_feed_every_event_is_still_logged() -> None:
     events = McpEvents(None)
     events.connect_failed("analytics", "refused")
     events.session_failed("analytics", "gone")
+
+
+async def test_the_profile_is_logged_once_and_calls_do_not_repeat_it(
+    parquet: Path, feed: InMemoryLiveStatusFeed
+) -> None:
+    events = McpEvents(StageReporter(feed, run_id="t"))
+    profiles: list[Any] = []
+    listed = events.tools_listed
+    events.tools_listed = lambda description: (profiles.append(description), listed(description))  # type: ignore[method-assign]
+    source = _source(parquet, events)
+    try:
+        tools = {tool.qualified_name: tool for tool in await source.tools()}
+        for _ in range(2):
+            await tools["analytics.list_views"].handler()
+    finally:
+        await source.close()
+    assert len(profiles) == 1
+    [description] = profiles
+    assert description.info.server_capabilities and description.info.protocol_version
+    assert all(tool.annotations and tool.output_schema for tool in description.tools)
+
+
+async def test_a_notification_is_logged_under_the_turn_that_made_the_call(
+    parquet: Path, feed: InMemoryLiveStatusFeed
+) -> None:
+    from agent_platform.logging.trace_context import get_current_trace_id, set_current_trace_id
+
+    seen: list[str | None] = []
+
+    class Traced(McpEvents):
+        def server_log(self, server: str, level: str, logger: str, data: Any) -> None:
+            seen.append(get_current_trace_id())
+
+    set_current_trace_id("turn-1")
+    source = _source(parquet, Traced(StageReporter(feed, run_id="t")))
+    try:
+        tools = {tool.qualified_name: tool for tool in await source.tools()}
+        set_current_trace_id("turn-2")
+        await tools["analytics.run_query"].handler(sql="SELECT * FROM model_calls WHERE 1=0")
+    finally:
+        await source.close()
+        set_current_trace_id(None)
+    assert seen == ["turn-2"]

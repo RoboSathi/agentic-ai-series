@@ -593,6 +593,17 @@ The analytics server logs each request and refusal, and tells the client a refus
 and a result to double-check (info) over `notifications/message`. An agent binds the sink in
 its composition root; it draws no MCP card of its own.
 
+The session's protocol profile is logged once, at the handshake (`MCP session profile`):
+protocolVersion and how it was negotiated, serverInfo / clientInfo, both sides' capabilities
+with their flags, every tool's inputSchema, outputSchema (the analytics tools return typed
+models, so the SDK declares one), annotations (the server's claims) beside the local envelope
+(what is enforced), and how calls run and fail (deadline, result limit, isError vs protocol
+errors, progress, the `_meta` log-level opt-in). The MCP SERVER card shows the same, in
+sections named by the protocol. It appears once per session, not per turn: the session stays
+open, so there is no handshake on a later turn. Each `tools/call` logs only its arguments and
+result. A notification the server sends while answering a call is logged under the trace of
+the turn that made the call.
+
 ### P-32 — No JSON on a card
 
 **Decision.** Tool arguments read as `key=value` (`text_tree.inline_arguments`), a tool's JSON
@@ -881,7 +892,8 @@ platform's analytics MCP server through the governed client: each call is valida
 by the Gatekeeper against `ops_agent.policy`, run by the Executor and audited. Its
 `hallucination_guard` is a figures check — every number in the answer must appear in a query
 result — after level-1 token confidence. The reply shows the SQL it ran and the rows it rests on.
-It declares `prompt_injection`, `gatekeeper`, `hallucination_guard` and procedural memory (one
+It declares `prompt_injection`, `content_moderation` (added with O-03), `gatekeeper`,
+`hallucination_guard` and procedural memory (one
 `always` skill, `analytics-investigation`); it keeps no episodic memory.
 
 **Supersedes.** ADR 0008 (ops agent).
@@ -906,7 +918,16 @@ rows or cut rows carries a note to check. Then a Reflection critic (`SqlReviewer
 model answers, one model call reads the question, the model-written SQL (`run_query` only — a
 catalogue metric runs the catalogue's formula), a few rows and the draft, and says accept or
 revise. Revise sends the finding back to the model, at most `sql_review.max_reflections` times a
-turn; the governor's budgets count the call. A critic that fails or answers out of form
+turn; the governor's budgets count the call. `compute_metric` answers are reviewed too: the
+formula is the catalogue's, but the metric, agent and period are the model's choice.
+
+**Not reviewed.** A turn the governor stopped (a budget or the step cap) goes straight to
+grounding, as does an answer that rests on no query.
+
+**Fewer wandering calls.** An `agent_id` the source holds no data for is refused with the ids
+it does hold (`list_metrics` also lists them), instead of returning 0 rows the model then
+explores; an empty result says only that, with the right filters, there is no data. The token
+budget is sized so the step cap, not the token cap, ends a long investigation. A critic that fails or answers out of form
 accepts, and its REFLECT step card says the answer went on unreviewed. Built with
 `hallucination_guard`; no new feature.
 

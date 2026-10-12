@@ -2,7 +2,8 @@
 
 Each declared feature builds a stage; a withheld one is never built:
 
-    prompt_injection     the message is screened before the model reads it
+    prompt_injection     the message is screened for injection before the model reads it
+    content_moderation   then for unsafe content (term scan, and the hosted safety model)
     gatekeeper           each MCP call is authorized against `ops_agent.policy`
     hallucination_guard  the SQL the model wrote is reviewed against the question (revise:
                          back to the model, bounded); every figure in the answer is checked
@@ -45,7 +46,12 @@ from agent_platform.observability.types import utc_now
 from agent_platform.observability.units import OutcomeCatalog, declare_screens
 from agent_platform.resilience.dead_letter_queue import DeadLetterQueue
 from agent_platform.runtime.executor import RegistryToolHandler, ToolExecutorImpl
-from agent_platform.security import MessageScreener, PromptInjectionGuard, SecuritySuite
+from agent_platform.security import (
+    MessageScreener,
+    PromptInjectionGuard,
+    SecuritySuite,
+    TermContentModerator,
+)
 from agent_platform.security.auth.auth import Authorizer
 from agent_platform.security.auth.policy import AgentPolicy
 from agent_platform.security.pii import PIIFilterImpl
@@ -109,7 +115,7 @@ def build_agent(
     # Procedural memory is the only memory this agent has: its skills,
     # versioned in the platform store. Withheld, it runs on its profile.
     procedural = SkillStore() if posture.is_on("memory.procedural") else None
-    screen = _screen(platform) if posture.is_on("prompt_injection") else None
+    screen = _screen(platform, posture)
     declare_screens(settings.agent.id, screen.declared_checks() if screen else [])
     model = bounded(llm or _llm(reporter), posture)
     guarded = posture.is_on("hallucination_guard")
@@ -196,13 +202,20 @@ def _gatekeeper(
     return GatekeeperImpl(authorizer=Authorizer(policy), policy=policy, ledger=ledger, audit=audit)
 
 
-def _screen(platform: SqlitePlatformStore) -> MessageScreener:
+def _screen(platform: SqlitePlatformStore, posture: FeatureSet) -> MessageScreener | None:
+    """The declared input screens — injection, then moderation — or None when neither is."""
+    suite = SecuritySuite(
+        injection=PromptInjectionGuard() if posture.is_on("prompt_injection") else None,
+        moderator=TermContentModerator() if posture.is_on("content_moderation") else None,
+    )
+    if suite.injection is None and suite.moderator is None:
+        return None
     quarantine = DeadLetterQueue(
         platform,
         agent_id=platform.agent_id,
         enabled=get_settings().resilience.dead_letter_queue.enabled,
     )
-    return MessageScreener(SecuritySuite(injection=PromptInjectionGuard()), quarantine)
+    return MessageScreener(suite, quarantine)
 
 
 __all__ = ["build_agent"]

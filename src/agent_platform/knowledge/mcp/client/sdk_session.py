@@ -32,8 +32,11 @@ from agent_platform.knowledge.mcp.client.events import (
 )
 from agent_platform.knowledge.mcp.common.types import McpCallResult, McpServerInfo, McpToolInfo
 from agent_platform.logging import get_logger
+from agent_platform.logging.trace_context import get_current_trace_id, set_current_trace_id
 
 Request = Callable[[Client], Awaitable[Any]]
+# One queued request: what to send, where its answer goes, and the trace of the turn that sent it.
+Queued = tuple[Request, "asyncio.Future[Any]", str | None]
 # Notifications the session reports through their own callbacks, not as raw messages.
 _OWN_CALLBACKS = frozenset({"notifications/message", "notifications/progress"})
 _MS = 1000
@@ -58,7 +61,10 @@ class SdkMcpSession:
         self._timeout = timeout_seconds
         self._server = server
         self._events = events or LoggedMcpEvents()
-        self._requests: asyncio.Queue[tuple[Request, asyncio.Future[Any]] | None] = asyncio.Queue()
+        self._requests: asyncio.Queue[Queued | None] = asyncio.Queue()
+        # The trace of the request on the wire: a notification the server sends while answering
+        # it is logged under the turn that asked, not the turn that opened the session.
+        self._active_trace: str | None = None
         self._ready: asyncio.Future[None] | None = None
         self._task: asyncio.Task[None] | None = None
         self._info = McpServerInfo()
@@ -86,8 +92,12 @@ class SdkMcpSession:
         return [
             McpToolInfo(
                 name=tool.name,
+                title=tool.title or "",
                 description=tool.description or "",
                 input_schema=dict(tool.input_schema or {}),
+                output_schema=dict(tool.output_schema or {}),
+                annotations=_wire(tool.annotations),
+                meta=_wire(tool.meta),
             )
             for tool in listing.tools
         ]
@@ -135,7 +145,7 @@ class SdkMcpSession:
         if self._task is None or self._task.done():
             raise McpSessionClosedError("the MCP session is not open")
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
-        await self._requests.put((request, future))
+        await self._requests.put((request, future, get_current_trace_id()))
         return await future
 
     async def _serve(self) -> None:
@@ -166,10 +176,12 @@ class SdkMcpSession:
         )
 
     async def _on_log(self, params: LoggingMessageNotificationParams) -> None:
+        set_current_trace_id(self._active_trace)
         self._events.server_log(self._server, str(params.level), params.logger or "", params.data)
 
     async def _on_message(self, message: Any) -> None:
         """A raw server notification (or a transport error) the other callbacks do not take."""
+        set_current_trace_id(self._active_trace)
         if isinstance(message, Exception):
             self._events.notification(
                 self._server, type(message).__name__, {"error": repr(message)}
@@ -185,17 +197,22 @@ class SdkMcpSession:
 
     def _progress(self, tool: str) -> ProgressFnT:
         async def report(progress: float, total: float | None, message: str | None) -> None:
+            set_current_trace_id(self._active_trace)
             self._events.progress(self._server, tool, progress, total, message or "")
 
         return report
 
     async def _loop(self, client: Client) -> None:
         while (item := await self._requests.get()) is not None:
-            request, future = item
+            request, future, trace = item
+            self._active_trace = trace
+            set_current_trace_id(trace)
             try:
                 future.set_result(await request(client))
             except Exception as exc:  # noqa: BLE001 - handed to the caller
                 future.set_exception(exc)
+            finally:
+                self._active_trace = None
 
     def _signal_ready(self, error: BaseException | None) -> None:
         if self._ready is None or self._ready.done():
@@ -215,14 +232,10 @@ class SdkMcpSession:
 def _server_info(client: Client, duration_ms: float) -> McpServerInfo:
     """The handshake's answer: the server's name and version, instructions, capabilities —
     and how it was negotiated (`server/discover` from `mcp.client.discover_from` on, else
-    `initialize`) and how long it took."""
+    `initialize`), what this client declared, and how long it took."""
     implementation = getattr(client, "server_info", None)
-    capabilities = getattr(client, "server_capabilities", None)
-    declared = (
-        [name for name, value in capabilities.model_dump().items() if value]
-        if capabilities is not None
-        else []
-    )
+    capabilities = _wire(getattr(client, "server_capabilities", None))
+    declared = list(capabilities)
     settings = get_settings().mcp.client
     protocol = str(getattr(client, "protocol_version", "") or "")
     discovered = bool(protocol) and protocol >= settings.discover_from
@@ -232,10 +245,32 @@ def _server_info(client: Client, duration_ms: float) -> McpServerInfo:
         protocol_version=protocol,
         instructions=str(getattr(client, "instructions", "") or ""),
         capabilities=declared,
+        server_capabilities=capabilities,
+        client_capabilities=_client_capabilities(client, protocol),
         handshake=settings.discover_method if discovered else settings.initialize_method,
         client=f"{settings.name} {settings.version}",
         duration_ms=duration_ms,
     )
+
+
+def _client_capabilities(client: Client, protocol: str) -> dict[str, Any]:
+    """What this client declared in the handshake, as it went on the wire.
+
+    The SDK builds the declaration from the callbacks it was given and keeps no copy; it is
+    rebuilt the same way for the version negotiated. Nothing is guessed when it cannot be.
+    """
+    build = getattr(client.session, "_build_capabilities", None)
+    if build is None or not protocol:
+        return {}
+    return _wire(build(protocol))
+
+
+def _wire(model: Any) -> dict[str, Any]:
+    """A protocol object as it reads on the wire (camelCase names, unset fields left out)."""
+    if not isinstance(model, BaseModel):
+        return dict(model) if isinstance(model, dict) else {}
+    dumped: dict[str, Any] = model.model_dump(by_alias=True, mode="json", exclude_none=True)
+    return dumped
 
 
 def _elapsed(started: float) -> float:
