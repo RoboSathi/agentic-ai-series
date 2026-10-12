@@ -40,6 +40,7 @@ from agent_platform.llm.client import LLMClient
 
 _TELEMETRY_ENV = "DEEPEVAL_TELEMETRY_OPT_OUT"
 _OPT_OUT = "YES"
+_METRIC_TIMEOUT_ENV = "DEEPEVAL_PER_TASK_TIMEOUT_SECONDS_OVERRIDE"
 _INSTALL_HINT = "DeepEval is not installed. Install the eval extra: pip install -e '.[evals]'"
 _VERSION_CHARS = 16
 # DeepEval's test-run manager is process-wide: one `evaluate()` at a time.
@@ -173,9 +174,15 @@ def _settle(future: "asyncio.Future[ResultT]", result: Any, error: BaseException
 
 
 def import_deepeval() -> Any:
-    """Import DeepEval lazily, with its telemetry off when configured."""
-    if get_settings().evals.deepeval.telemetry_opt_out:
+    """Import DeepEval lazily, with its telemetry off when configured and our metric budget.
+
+    DeepEval reads its settings from the environment when first imported, so both are set
+    before the import; an explicit environment variable still wins.
+    """
+    settings = get_settings().evals.deepeval
+    if settings.telemetry_opt_out:
         os.environ.setdefault(_TELEMETRY_ENV, _OPT_OUT)
+    os.environ.setdefault(_METRIC_TIMEOUT_ENV, str(settings.metric_timeout_seconds))
     try:
         import deepeval
         import deepeval.evaluate.configs
@@ -185,7 +192,7 @@ def import_deepeval() -> Any:
         import deepeval.test_case
     except ImportError as exc:
         raise DeepEvalUnavailableError(_INSTALL_HINT) from exc
-    if get_settings().evals.deepeval.quiet:
+    if settings.quiet:
         import deepeval.test_run.test_run as test_run
 
         # Its end-of-run banner is printed on this module's Rich console.

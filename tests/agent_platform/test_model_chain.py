@@ -104,6 +104,29 @@ async def test_a_failure_that_must_not_move_on_is_raised_at_once() -> None:
         await call.run([lambda: _value("a", fails=True), lambda: _value("b")])
 
 
+async def test_the_losing_option_has_unwound_when_the_winner_returns() -> None:
+    slow: list[asyncio.Task[Any]] = []
+
+    async def loser() -> str:
+        slow.append(asyncio.current_task())  # type: ignore[arg-type]
+        return await _value("a", 10.0)
+
+    await HedgedCall(0.01).run([loser, lambda: _value("b")])
+    assert slow[0].cancelled()
+
+
+async def test_a_cancelled_hedge_leaves_no_option_pending() -> None:
+    started: list[asyncio.Task[Any]] = []
+
+    async def hangs() -> str:
+        started.append(asyncio.current_task())  # type: ignore[arg-type]
+        return await _value("a", 10.0)
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(HedgedCall(None).run([hangs]), timeout=0.05)
+    assert started[0].done()
+
+
 # -- the cascade as backups ----------------------------------------------------------------
 
 

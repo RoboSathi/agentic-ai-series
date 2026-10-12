@@ -22,6 +22,10 @@ class UnknownMetricKindError(ValueError):
     """A metric spec names a kind this factory does not build."""
 
 
+class UnshowableParamError(ValueError):
+    """A G-Eval spec asks to show the judge a field `ConversationalGEval` cannot show."""
+
+
 def build_metrics(deepeval: Any, specs: list[QualityMetricSpec], model: Any) -> list[Any]:
     """One DeepEval metric per spec, every one graded by `model`."""
     builders: dict[str, Callable[[Any, QualityMetricSpec, Any], Any]] = {
@@ -41,8 +45,10 @@ def build_metrics(deepeval: Any, specs: list[QualityMetricSpec], model: Any) -> 
 
 
 def _geval(deepeval: Any, spec: QualityMetricSpec, model: Any) -> Any:
-    params = deepeval.test_case.MultiTurnParams
-    shown = spec.params or get_settings().evals.deepeval.geval_params
+    shown = [
+        _shown_param(deepeval, spec.name, value)
+        for value in spec.params or get_settings().evals.deepeval.geval_params
+    ]
     rubric = [
         deepeval.metrics.g_eval.utils.Rubric(
             score_range=band.score_range, expected_outcome=band.expected_outcome
@@ -53,13 +59,23 @@ def _geval(deepeval: Any, spec: QualityMetricSpec, model: Any) -> Any:
         name=spec.name,
         criteria=spec.criteria or None,
         evaluation_steps=spec.evaluation_steps or None,
-        evaluation_params=[params(value) for value in shown],
+        evaluation_params=shown,
         rubric=rubric or None,
         threshold=spec.threshold,
         model=model,
         async_mode=True,
         _include_g_eval_suffix=False,
     )
+
+
+def _shown_param(deepeval: Any, metric: str, value: str) -> Any:
+    """`value` as a `MultiTurnParams`, refused now rather than as an error on every case."""
+    showable = deepeval.metrics.g_eval.utils.CONVERSATIONAL_G_EVAL_PARAMS
+    param = deepeval.test_case.MultiTurnParams(value)
+    if param not in showable:
+        names = ", ".join(sorted(item.value for item in showable))
+        raise UnshowableParamError(f"'{value}' (metric {metric}); showable: {names}")
+    return param
 
 
 def _faithfulness(deepeval: Any, spec: QualityMetricSpec, model: Any) -> Any:

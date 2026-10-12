@@ -2269,6 +2269,10 @@ evals:
     geval_params: [role, content, scenario, expected_outcome]
     # DeepEval prints its own end-of-run banner; the report and the overview are the record.
     quiet: true
+    # DeepEval's budget for one metric on one case (its own default is 180 s). Turn
+    # faithfulness judges every reply of a multi-turn case, several judge calls each, queued
+    # behind the shared rate limiter with the rest of the batch — 180 s cut most of them off.
+    metric_timeout_seconds: 900
   promptfoo:
     # Pinned: a red-team suite whose runner changes underneath it is not a
     # regression signal.

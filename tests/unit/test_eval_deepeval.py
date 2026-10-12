@@ -14,7 +14,11 @@ from agent_platform.evals.core.contracts import (
     Transcript,
 )
 from agent_platform.evals.deepeval import DeepEvalGrader, import_deepeval
-from agent_platform.evals.deepeval.metrics import UnknownMetricKindError, build_metrics
+from agent_platform.evals.deepeval.metrics import (
+    UnknownMetricKindError,
+    UnshowableParamError,
+    build_metrics,
+)
 from agent_platform.evals.deepeval.model import judge_model
 from agent_platform.evals.deepeval.test_cases import capped, conversation
 from customer_support_agent.evals.plugin import CsaEvalPlugin
@@ -93,6 +97,14 @@ class TestMetrics:
         deepeval = import_deepeval()
         spec = QualityMetricSpec(name="x", kind="nonsense", threshold=0.5)
         with pytest.raises(UnknownMetricKindError):
+            build_metrics(deepeval, [spec], judge_model(deepeval, ScriptedLLM()))
+
+    def test_a_param_g_eval_cannot_show_is_refused(self) -> None:
+        deepeval = import_deepeval()
+        spec = QualityMetricSpec(
+            name="x", kind="conversational_geval", threshold=0.5, params=["chatbot_role"]
+        )
+        with pytest.raises(UnshowableParamError, match="chatbot_role"):
             build_metrics(deepeval, [spec], judge_model(deepeval, ScriptedLLM()))
 
     def test_the_agents_metrics_build(self) -> None:

@@ -105,8 +105,7 @@ class HedgedCall:
                 if not running and next_index < len(options):
                     start("failed")
         finally:
-            for task in running:
-                task.cancel()
+            await _cancel_all(running)
         assert last_error is not None
         raise last_error
 
@@ -129,6 +128,19 @@ async def _tracked(option: Option[T], ready: "asyncio.Future[Admission]") -> T:
     """Run one option with its own admission record, published to the hedge."""
     ready.set_result(admission.track())
     return await option()
+
+
+async def _cancel_all(running: "dict[asyncio.Task[T], int]") -> None:
+    """Cancel every option still running and wait until each has unwound.
+
+    Cancelling without waiting leaves the tasks pending: when the caller's loop then closes
+    (a judge call on its own `asyncio.run`, cut short by a timeout), they are destroyed
+    mid-flight and their coroutines are later resumed with no loop to run on.
+    """
+    for task in running:
+        task.cancel()
+    if running:
+        await asyncio.gather(*running, return_exceptions=True)
 
 
 def _placeholder() -> Admission:

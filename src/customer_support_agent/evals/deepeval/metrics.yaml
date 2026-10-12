@@ -63,7 +63,7 @@ metrics:
     criteria: >-
       Does the assistant only claim actions that its tool calls show happened, and never
       promise an outcome it cannot guarantee?
-    params: [role, content, scenario, expected_outcome, chatbot_role, tools_called]
+    params: [role, content, scenario, expected_outcome, tools_called]
     evaluation_steps:
       - List every action the assistant says it took (refunded, cancelled, sent for review, checked).
       - For each, check the tools called in that turn show it happened and succeeded.

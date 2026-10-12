@@ -2559,6 +2559,7 @@ class EvalDeepEvalSettings(BaseModel):
     batch_size: int = Field(ge=1)
     geval_params: list[str]
     quiet: bool
+    metric_timeout_seconds: float = Field(gt=0)
 
 
 class EvalPromptfooSettings(BaseModel):
