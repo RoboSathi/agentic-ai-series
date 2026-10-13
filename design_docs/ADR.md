@@ -565,6 +565,58 @@ injects a fake client.
 **Consequences.** The suite runs offline and deterministic. A test that only passes with live
 embeddings is pinning a ranking; assert the contract instead.
 
+### P-30 — One HALLUCINATION CHECK card format; each agent keeps its own check
+
+**Decision.** `hallucination_check/card.py` owns the card's *format* only: `GroundingCard`
+(result, tally, levels level 1 first, the token confidences, rule, `ClaimCheck` rows, removed
+and corrected sentences, agent extras), `claim_tally`, `outcome_line`, `grounding_status` (what
+was sent → completed / warning / blocked), `log_grounding` and `record_grounding_check`. No
+check logic moved: the support agent's `ResponseGuardrail` decides exactly as before and now
+calls the extracted tally, outcome and recording helpers (identical output). A contract test
+validates its result as a `GroundingCard`, so the formats cannot drift. The TUI draws level 1
+as the coloured confidence block and every later level as its row, for every agent.
+
+**Consequences.** The support agent's card gains its "level 2" row; nothing it decides changes.
+The stage key is defined once (`step_events.HALLUCINATION_CHECK`).
+
+### P-31 — Every MCP protocol event is reported; the important ones are cards
+
+**Decision.** `knowledge/mcp/client/events.py`: a session reports to an `McpEventSink` —
+opening, handshake (`initialize` or `server/discover`, client info, capabilities, duration),
+tools listed, a call that got no answer, every server notification (log messages at the
+client's opted-in level, `tools/list_changed`, progress), clean close, session error.
+`LoggedMcpEvents` writes each in full to `mcp.log`; `McpEvents` also draws MCP SERVER (the
+handshake, or the connection failing), MCP CALL failed (no answer), MCP NOTIFICATION (tool list
+changed; a server log at warning or above, `mcp.client.card_log_levels`) and MCP SESSION
+(ended on an error). A changed tool list marks the source stale and it is re-listed next turn.
+The analytics server logs each request and refusal, and tells the client a refusal (warning)
+and a result to double-check (info) over `notifications/message`. An agent binds the sink in
+its composition root; it draws no MCP card of its own.
+
+The session's protocol profile is logged once, at the handshake (`MCP session profile`):
+protocolVersion and how it was negotiated, serverInfo / clientInfo, both sides' capabilities
+with their flags, every tool's inputSchema, outputSchema (the analytics tools return typed
+models, so the SDK declares one), annotations (the server's claims) beside the local envelope
+(what is enforced), and how calls run and fail (deadline, result limit, isError vs protocol
+errors, progress, the `_meta` log-level opt-in). The MCP SERVER card shows the same, in
+sections named by the protocol. It appears once per session, not per turn: the session stays
+open, so there is no handshake on a later turn. Each `tools/call` logs only its arguments and
+result. A notification the server sends while answering a call is logged under the trace of
+the turn that made the call.
+
+### P-32 — No JSON on a card
+
+**Decision.** Tool arguments read as `key=value` (`text_tree.inline_arguments`), a tool's JSON
+answer as a tree (`readable_lines`, `message_lines`), in the LLM REQUEST transcript, the CONTEXT
+card (display lines in `PromptSection.shown`; `content` stays what is counted and sent) and
+narrative cards. The same helpers serve every agent.
+
+### P-33 — A tool call's TOOL RESULT is named by how far it got
+
+**Decision.** `StepEvents.tool_outcome`: refused by the Gatekeeper (blocked), not run and the
+stage that stopped it (warning), failed, or done — with an agent's own preview replacing the
+raw output on success. Wording under `observability.step_events`.
+
 ---
 
 ## 9. Research agent
@@ -840,10 +892,84 @@ platform's analytics MCP server through the governed client: each call is valida
 by the Gatekeeper against `ops_agent.policy`, run by the Executor and audited. Its
 `hallucination_guard` is a figures check — every number in the answer must appear in a query
 result — after level-1 token confidence. The reply shows the SQL it ran and the rows it rests on.
-It declares `prompt_injection`, `gatekeeper`, `hallucination_guard` and procedural memory (one
+It declares `prompt_injection`, `content_moderation` (added with O-03), `gatekeeper`,
+`hallucination_guard` and procedural memory (one
 `always` skill, `analytics-investigation`); it keeps no episodic memory.
 
 **Supersedes.** ADR 0008 (ops agent).
+
+### O-02 — The ops check is the support agent's, figures in place of NLI
+
+**Decision.** `OpsGrounding`: level 1 token confidence, level 2 every figure looked for in the
+query rows (`FigureCheck`, by sentence and row), then the platform's confidence `gate` exactly as
+the support agent applies it — a degenerate sentence, or one holding a figure written below
+`slot_min_prob` that no row holds, is cut (TRIMMED; nothing left: the configured withheld
+reply, BLOCKED). A figure a row holds is confirmed whatever its probability. A confidently
+written figure no row holds is kept and named as unverified in the reply (FLAGGED, a warning).
+The card is P-30's, each figure's step quoting the query and row that hold it.
+
+**Supersedes.** O-01's "level 1 is shown, not used".
+
+### O-03 — REFLECT: the data is checked after the query runs and before the model answers
+
+**Decision.** Deterministic first: the server's walls run before any SQL executes (QueryGuard;
+DuckDB binder, catalog, parser and conversion errors returned as a guided rejection naming the
+view's real columns and the closest match; an unknown agent id refused with the known ones),
+and a result with no rows or cut rows carries a note. Then REFLECT, a node between
+`execute` and the model's next step (`propose → execute → review → propose`), after every
+step that ran a data query:
+- **Model-written SQL (`run_query`):** a Reflection critic (`SqlReviewer`) reads the
+  question, the SQL and a few of the rows it returned, and says accept or revise. Revise
+  appends the finding, and the model fixes the query before it writes anything; accept lets
+  it answer from those rows. The answer is written once, from reviewed data. At most
+  `sql_review.max_reviews` reviews a turn; past the cap the model goes on, and the card says
+  the SQL was not reviewed. Several queries in one step share one review. The call counts
+  against the governor's budgets; a critic that fails or answers out of form accepts.
+- **Catalogue calls only (`compute_metric`):** no model call. The model wrote no SQL; the
+  server ran the catalogue's formula with arguments it checks deterministically. The REFLECT
+  card is decided in code (`StepCard.decided_in_code`) and says exactly that.
+
+**Why after execution, not before.** The store is a read-only sealed copy, so running a query
+harms nothing, and the rows are evidence: only after a query runs can a reviewer see an empty
+result or a wrong id. What must never run is stopped before execution by the server's walls,
+not by a model.
+
+**Why both.** The figures check proves a number came from a query, not that the query answered
+the question; only reading the SQL against the question catches the wrong filter or aggregate.
+
+**Fewer wandering calls.** `list_metrics` lists the agent ids; an empty result says only that,
+with the right filters, there is no data. The token budget is sized so the step cap, not the
+token cap, ends a long investigation.
+
+### O-04 — Free SQL is its own permission; tool results are data
+
+**Decision.** A tool may carry its own envelope (`mcp.servers[].tools.<name>`) over its
+server's. `run_query` requires `query_analytics`, which the catalogue tools do not, so a
+policy that grants only `read_analytics` has free SQL refused by the Gatekeeper. Every tool
+result reaches the model inside the platform's data delimiters (`InstructionDataSeparator`,
+with `prompt_injection`); an injection phrasing found in a result is logged. MCP in front of
+the store is where these controls live for any client: credentials and the connection stay
+server-side, only curated views are visible, SQL is parsed and allow-listed, results are
+bounded, and every call is governed and audited locally.
+
+---
+
+### O-05 — A spent budget and a cut-off answer are said as what they are
+
+**Decision.**
+- **The loop never charges a call it stopped.** `LoopGovernor.before_action` charges the
+  tool-call budget only for a call it lets run; a call stopped because the budget is spent is
+  neither run nor charged, so the counter never reads past its cap. This is a platform fix,
+  for every agent.
+- **Who stopped a call is named.** The TOOL RESULT card says the loop layer
+  (`not run · tool_budget · tool_calls: 16 spent of 16`) or the Gatekeeper
+  (`refused by the Gatekeeper · <its reason>`), with the reason in the heading. The model
+  reads "the tool-call budget is spent", never a Gatekeeper refusal.
+- **After the budget is spent, no tools are offered.** The model is told to answer from the
+  results it has, and to say which figures it could not fetch.
+- **A cut-off answer is never sent.** The model reasons before it answers, inside the same
+  cap. An answer cut off at `ops_agent.max_tokens` is retried once at `retry_max_tokens`; a
+  second cut-off ends the turn with "the answer was cut off", never with the fragment.
 
 ---
 

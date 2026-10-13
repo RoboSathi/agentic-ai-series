@@ -16,7 +16,6 @@ from agent_platform.config import get_settings
 from agent_platform.context import ContextWindow, Task
 from agent_platform.context.types import AssembledContext
 from agent_platform.knowledge.mcp import McpToolSource
-from agent_platform.knowledge.mcp.client.presentation import server_card
 from agent_platform.llm.prompt import TurnLayout
 from agent_platform.llm.types import Message
 from agent_platform.logging import get_current_trace_id, get_logger, instrument
@@ -136,7 +135,9 @@ class OpsAgent:
         if problem is not None:
             return TurnResult(response=words.no_tools.format(error=problem), outcome=UNAVAILABLE)
         messages, layout = await self._opening(query, session_id)
-        state: OpsState = await self._graph.ainvoke(initial_state(session_id, messages, layout))
+        state: OpsState = await self._graph.ainvoke(
+            initial_state(session_id, messages, layout, query)
+        )
         self._remember(session_id, query, state["answer"])
         verdict, failed = state.get("verdict"), bool(state.get("failure"))
         stopped = verdict is not None and verdict.stops
@@ -150,36 +151,25 @@ class OpsAgent:
         subject = ScreenSubject(session_id=session_id, trace_id=get_current_trace_id() or "")
         outcome = await self._screen.injection(query, self._reporter, subject=subject)
         if not outcome.blocked:
+            # Cheapest first: moderation only reads a message the injection screen let through.
+            outcome = await self._screen.moderation(query, self._reporter, subject=subject)
+        if not outcome.blocked:
             return None
         return outcome.refusal or self._settings.words.blocked.format(reason=outcome.reason)
 
     async def _connect(self) -> str | None:
-        """List every server's tools into the registry, once; the error if a server is down."""
-        if self._connected:
-            return None
+        """List every server's tools into the registry — once, and again for a server that
+        said its tools changed; the error if a server is down. The MCP SERVER card, and every
+        other protocol event, is the platform's (`mcp/client/events.py`)."""
         try:
             for source in self._sources:
-                self._registry.register_all(await source.tools())
-                self._show_server(source)
+                if not self._connected or source.stale():
+                    self._registry.register_all(await source.tools())
         except Exception as exc:  # noqa: BLE001 - said to the operator, retried next turn
             self._logger.warning("MCP tools unavailable", error=repr(exc))
             return str(exc) or repr(exc)
         self._connected = True
         return None
-
-    def _show_server(self, source: McpToolSource) -> None:
-        """The MCP SERVER card: the handshake, and every tool the server offered."""
-        description = source.describe()
-        if description is None or self._reporter is None:
-            return
-        heading, sections = server_card(description)
-        self._reporter.emit(
-            self._settings.stages.server,
-            "completed",
-            event_kind="narrative",
-            summary=heading,
-            fields=sections,
-        )
 
     async def _opening(self, query: str, session_id: str) -> tuple[list[Message], TurnLayout]:
         """The turn's first messages: profile and skill, history, the question, prefetches.

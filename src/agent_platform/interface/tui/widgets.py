@@ -32,8 +32,9 @@ from textual.widgets.option_list import Option
 
 from agent_platform.config import get_settings
 from agent_platform.core.primitives.money import money_or_none
+from agent_platform.hallucination_check.levels import CONFIDENCE_LEVEL as _FIRST_LEVEL
 from agent_platform.hallucination_check.resolver import CONFIRM_TIER
-from agent_platform.interface.presentation.text_tree import as_structure, value_lines
+from agent_platform.interface.presentation.text_tree import as_structure, message_lines, value_lines
 from agent_platform.interface.tui.labels import StageLabelRegistry
 from agent_platform.observability.step_events import subject_part
 from agent_platform.observability.types import StatusEvent
@@ -955,7 +956,8 @@ def _state_style(word: str) -> str:
 
 def _narrative_lines(value: Any) -> list[tuple[str, str]]:
     if isinstance(value, Mapping):
-        return [(f"{key}: {item}", "") for key, item in value.items()]
+        # A nested value is a tree under its key, never a Python or JSON literal.
+        return [(line, "") for line in value_lines(dict(value))]
     if isinstance(value, (list, tuple)):
         return [_narrative_line(item) for item in value]
     return [(line, "") for line in str(value).splitlines() or [""]]
@@ -976,19 +978,21 @@ def _append_grounding(body: Text, fields: Mapping[str, Any]) -> None:
     line per claim: its verdict, what decided it (the record, a rule, NLI, logprobs),
     and the line of evidence that did. The claim tally is the title; every passage
     retrieved, every score, the evidence counts and the draft check are in
-    `guardrails.log`. A payload with no token confidences (an agent drawing its own
-    levels) shows its level rows instead.
+    `guardrails.log`. Level 1 is the coloured confidence block when the payload carries
+    the token confidences, else its row; every later level (the agent's own grounding)
+    follows as its row, so every agent's card reads result → level 1 → level 2 → claims.
     """
     words = get_settings().tui.grounding_card
     _append_grounding_row(body, words.result, "")
     _append_outcome_value(body, str(fields.get("outcome") or ""))
     confidence = fields.get("confidence")
-    if isinstance(confidence, Mapping) and confidence:
+    coloured = isinstance(confidence, Mapping) and bool(confidence)
+    if isinstance(confidence, Mapping) and coloured:
         _append_confidence(body, confidence)
-    else:
-        for level in fields.get("levels") or []:
-            if isinstance(level, Mapping):
-                _append_level(body, level)
+    for level in fields.get("levels") or []:
+        # Level 1 is the confidence block when there is one; every other level is its row.
+        if isinstance(level, Mapping) and not (coloured and level.get("level") == _FIRST_LEVEL):
+            _append_level(body, level)
     rule = str(fields.get("rule") or "")
     if rule:
         _append_grounding_row(body, words.rule, rule)
@@ -1373,14 +1377,13 @@ def _is_transcript(value: Any) -> bool:
 
 
 def _message_line(message: Mapping[str, Any]) -> str:
-    """One chat message, as `role: content`, then any tool calls it made, one per line."""
+    """One chat message, as `role: content` (a tool's JSON result as a tree), then any tool
+    calls it made as `→ tool(key=value, …)` — never JSON."""
     role = message.get("role", "?")
     answering = message.get("tool")
     head = f"{role} ({answering})" if answering else str(role)
-    lines = [f"{head}: {message.get('content', '')}"]
-    for call in message.get("tool_calls") or []:
-        lines.append(f"  → {call.get('tool')}({call.get('arguments')})")
-    return "\n".join(lines)
+    calls = [(str(c.get("tool")), c.get("arguments")) for c in message.get("tool_calls") or []]
+    return "\n".join(message_lines(head, message.get("content", ""), calls))
 
 
 class FeedNote(Static):

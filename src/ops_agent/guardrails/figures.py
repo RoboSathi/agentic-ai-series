@@ -15,6 +15,7 @@ from collections.abc import Iterable
 
 from pydantic import BaseModel
 
+from agent_platform.hallucination_check.claims import sentence_pieces
 from ops_agent.config.settings import OpsAgentSettings
 from ops_agent.domain import QueryRecord
 
@@ -32,10 +33,16 @@ _PERCENT = 100.0
 
 
 class FigureFinding(BaseModel):
-    """One figure of an answer, and the query whose result holds it (None: no query does)."""
+    """One figure of an answer: the sentence it is in, and the query and row that hold it.
+
+    `query` is 1-based (None: no query's result holds it); `row` is the row of that result
+    holding it, as a value or inside a cell's text.
+    """
 
     figure: str
+    sentence: int = 0
     query: int | None = None
+    row: int | None = None
 
     @property
     def supported(self) -> bool:
@@ -54,21 +61,28 @@ class FigureCheck:
         return [f.figure for f in self.findings(answer, queries) if not f.supported]
 
     def findings(self, answer: str, queries: Iterable[QueryRecord]) -> list[FigureFinding]:
-        """Every figure the answer states, each with the (1-based) query that supports it."""
+        """Every figure the answer states, by sentence, each with the query that supports it."""
         evidence = [_evidence(query) for query in queries]
         return [
-            FigureFinding(figure=token, query=self._source(token, value, evidence))
-            for token, value in _figures(answer)
+            FigureFinding(figure=token, sentence=index, **self._source(token, value, evidence))
+            for index, (piece, _) in enumerate(sentence_pieces(answer))
+            for token, value in _figures(piece)
             if value not in self._free
         ]
 
-    def _source(self, token: str, value: float, evidence: list[list[float]]) -> int | None:
-        found = (n for n, values in enumerate(evidence, 1) if self._supported(token, value, values))
-        return next(found, None)
+    def _source(
+        self, token: str, value: float, evidence: list[list[tuple[int, float]]]
+    ) -> dict[str, int | None]:
+        """The first query (1-based) and row holding the figure; empty when none does."""
+        for number, values in enumerate(evidence, 1):
+            row = next((row for row, known in values if self._supported(token, value, known)), -1)
+            if row != -1:
+                return {"query": number, "row": row}
+        return {}
 
-    def _supported(self, token: str, value: float, evidence: list[float]) -> bool:
+    def _supported(self, token: str, value: float, known: float) -> bool:
         candidates = [value, value / _PERCENT] if token.endswith("%") else [value]
-        return any(self._close(candidate, known) for candidate in candidates for known in evidence)
+        return any(self._close(candidate, known) for candidate in candidates)
 
     def _close(self, figure: float, known: float) -> bool:
         return abs(figure - known) <= self._tolerance * max(1.0, abs(known))
@@ -82,10 +96,19 @@ def _figures(text: str) -> list[tuple[str, float]]:
     ]
 
 
-def _evidence(query: QueryRecord) -> list[float]:
-    """Every value one query returned, and the figures inside its text cells."""
-    values = [float(cell) for row in query.rows for cell in row if _is_number(cell)]
-    values.extend(value for _, value in _figures(json.dumps(query.rows, default=str)))
+def _evidence(query: QueryRecord) -> list[tuple[int, float]]:
+    """Every value one query returned, by row, and the figures inside its text cells."""
+    values: list[tuple[int, float]] = [
+        (index, float(cell))
+        for index, row in enumerate(query.rows)
+        for cell in row
+        if _is_number(cell)
+    ]
+    values.extend(
+        (index, value)
+        for index, row in enumerate(query.rows)
+        for _, value in _figures(json.dumps(row, default=str))
+    )
     return values
 
 

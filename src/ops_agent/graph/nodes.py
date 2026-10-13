@@ -9,44 +9,57 @@ propose  the model reads the conversation and either asks for tools or answers
 execute  each tool call runs the governed way (`GovernedCalls`): TOOL REQUEST,
          GATEKEEPER, EXECUTOR, MCP CALL, TOOL RESULT; results go back
 ground   the hallucination check — level 1, token confidence (the platform's);
-         level 2, every figure found in a query result (this agent's) — then the
-         reply: the answer, any unverified figures, the SQL and its rows
+         level 2, every figure found in a query result (this agent's); the gate cuts
+         a guessed sentence — then the reply: the answer, any unverified figures,
+         the SQL and its rows
 """
 
-import time
 from typing import Any
 
 from agent_platform.config import get_settings
 from agent_platform.gatekeeper.types import AuthorityDecision
-from agent_platform.hallucination_check.confidence import ConfidenceCheck, report_confidence
-from agent_platform.hallucination_check.levels import CheckLevel, grounding_level
+from agent_platform.hallucination_check.card import log_grounding
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.prompt import TurnLayout
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message, ModelToolCall
 from agent_platform.logging import describe_error, get_logger, instrument
-from agent_platform.loop_control import LoopDecision, LoopGovernor, LoopVerdict, route_on_verdict
-from agent_platform.observability import StageReporter, checks
+from agent_platform.loop_control import (
+    TOOL_CALLS,
+    LoopDecision,
+    LoopGovernor,
+    LoopVerdict,
+    route_on_verdict,
+)
+from agent_platform.observability import StageReporter
 from agent_platform.observability.step_events import StepEvents
-from agent_platform.observability.tool_fields import display_tool_name, tool_result_fields
-from agent_platform.observability.types import StatusKind
-from agent_platform.observability.units import report_grounding
+from agent_platform.observability.tool_fields import display_tool_name
+from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
 from agent_platform.tools import NamespacedToolRegistry
 from agent_platform.tools.types import ToolCall
 from ops_agent.config.settings import OpsAgentSettings
 from ops_agent.domain import QueryRecord
 from ops_agent.graph.state import OpsState
 from ops_agent.graph.tool_calls import CallOutcome, GovernedCalls
-from ops_agent.guardrails import FigureCheck, FigureFinding
+from ops_agent.guardrails import OpsGrounding, OpsGroundingResult, SqlReviewer
 from ops_agent.presentation import present
-from ops_agent.presentation.cards import result_card
+from ops_agent.presentation.cards import (
+    REFLECT_STAGE,
+    deterministic_card,
+    result_card,
+    review_card,
+)
 
-PROPOSE, EXECUTE, GROUND = "propose", "execute", "ground"
+PROPOSE, EXECUTE, REVIEW, GROUND = "propose", "execute", "review", "ground"
+
+
+class AnswerCutOffError(RuntimeError):
+    """The model's answer was cut off at the token cap, even after a retry with a larger one."""
+
+
 # Why the loop chose its next step (wording: `observability.step_events.loop_control`).
 _TOOL_REQUESTED, _NO_TOOL_CALL = "tool_requested", "no_tool_call"
 # A verdict that stops the loop sends the turn straight to the answer.
 _STOPPED: dict[LoopDecision, str] = {"finalize": GROUND, "abort": GROUND, "pause": GROUND}
-# A figure's verdict, in the claim words every agent's HALLUCINATION CHECK card reads.
-_SUPPORTED, _UNVERIFIED = "supported", "undetermined"
 # A prefetch read takes no arguments.
 _NO_ARGUMENTS = "{}"
 
@@ -62,8 +75,9 @@ class OpsNodes:
         calls: GovernedCalls,
         settings: OpsAgentSettings,
         reporter: StageReporter | None = None,
-        figures: FigureCheck | None = None,
-        confidence: ConfidenceCheck | None = None,
+        grounding: OpsGrounding | None = None,
+        reviewer: SqlReviewer | None = None,
+        separator: InstructionDataSeparator | None = None,
     ) -> None:
         self._llm = llm
         self._registry = registry
@@ -71,9 +85,13 @@ class OpsNodes:
         self._settings = settings
         self._reporter = reporter
         self._steps = StepEvents(reporter, max_steps=settings.max_steps, model=llm.model)
-        self._figures = figures
-        # Level 1 of the hallucination check (token confidence), before the figures (level 2).
-        self._confidence = confidence
+        # The hallucination check: token confidence (level 1), the figures (level 2), the gate.
+        self._grounding = grounding
+        # Reflection on the SQL the model wrote, before the answer is grounded (None: withheld).
+        self._reviewer = reviewer
+        # Tool results are data, never instructions: delimited before the model reads them
+        # (with `prompt_injection`; None when that feature is withheld).
+        self._separator = separator
         self._logger = get_logger("ops_agent")
         self._guard_log = get_logger("guardrails")
 
@@ -102,9 +120,29 @@ class OpsNodes:
     async def _ask(self, state: OpsState, governor: LoopGovernor) -> CompletionResult:
         """The step's model call, capped by what the token budget has left and cancelled at
         the deadline."""
-        tools = self._registry.to_openai_tools()
-        built = state.get("layout", TurnLayout()).build(state["messages"], tools)
-        limits = governor.call_limits(self._settings.max_tokens)
+        # A spent tool budget: no tools offered, and the model is told to answer from what it has
+        # (offering them again only gets every call stopped).
+        spent = governor.remaining(TOOL_CALLS) <= 0
+        tools = [] if spent else self._registry.to_openai_tools()
+        messages = [*state["messages"], *self._budget_note(spent)]
+        built = state.get("layout", TurnLayout()).build(messages, tools)
+        purpose = get_settings().observability.llm_purposes.next_action
+        result = await self._complete(built, tools, governor, self._settings.max_tokens, purpose)
+        if _cut_off(result, self._settings.cut_off_finish):
+            # The model's reasoning used the whole cap before the answer was written: once more,
+            # with the larger cap, rather than send a cut-off answer.
+            self._logger.warning("Answer cut off at the token cap", cap=self._settings.max_tokens)
+            retry = self._settings.retry_max_tokens
+            result = await self._complete(built, tools, governor, retry, purpose)
+            if _cut_off(result, self._settings.cut_off_finish):
+                raise AnswerCutOffError(self._settings.words.cut_off.format(tokens=retry))
+        return result
+
+    async def _complete(
+        self, built: Any, tools: list[Any], governor: LoopGovernor, cap: int, purpose: str
+    ) -> CompletionResult:
+        """One model call, capped by what the token budget has left and the deadline."""
+        limits = governor.call_limits(cap)
         request = CompletionRequest(
             messages=built.messages,
             tools=tools,
@@ -113,12 +151,14 @@ class OpsNodes:
             manifest=built.manifest,
         )
         # A step may ask for tools or answer; the response card names which it did.
-        purpose = get_settings().observability.llm_purposes.next_action
         self._steps.llm_request(request, purpose=purpose)
         async with governor.deadline(limits.timeout_seconds):
             result = await self._llm.complete(request)
         self._steps.llm_response(result, purpose=purpose)
         return result
+
+    def _budget_note(self, spent: bool) -> list[Message]:
+        return [Message(role="user", content=self._settings.words.tools_spent)] if spent else []
 
     def after_propose(self, state: OpsState) -> str:
         """The governor's verdict first; then tools while the model asks for them; then the answer."""
@@ -129,6 +169,48 @@ class OpsNodes:
             return stopped
         last = state["messages"][-1]
         return EXECUTE if last.role == "assistant" and last.tool_calls else GROUND
+
+    @property
+    def reviews(self) -> bool:
+        """Whether the data review was built (the graph has a `review` node)."""
+        return self._reviewer is not None
+
+    def after_execute(self, state: OpsState) -> str:
+        """REFLECT after a step that ran a data query, before the model answers from it."""
+        return REVIEW if self._step_data(state) else PROPOSE
+
+    def _step_data(self, state: OpsState) -> list[QueryRecord]:
+        """The data queries this step ran (none when the review is withheld)."""
+        if self._reviewer is None:
+            return []
+        return self._reviewer.data(state["queries"][state["reviewed"] :])
+
+    async def review(self, state: OpsState) -> dict[str, Any]:
+        """REFLECT on the step's data: the critic reads model-written SQL against the question
+        (revise: the model fixes it before answering); catalogue calls are decided in code."""
+        assert self._reviewer is not None
+        data = self._step_data(state)
+        written = self._reviewer.reviewed(data)
+        update: dict[str, Any] = {"reviewed": len(state["queries"])}
+        self._steps.begin(None)
+        if not written or state["reviews"] >= self._settings.sql_review.max_reviews:
+            status, heading, card = deterministic_card(
+                data, state["question"], capped=bool(written)
+            )
+            self._steps.step_card(REFLECT_STAGE, status, heading, card)
+            return update
+        found = await self._reviewer.review(state["question"], written)
+        if found.call is not None:
+            # The review is a model call of the turn: it counts against the turn's budgets.
+            self._calls.governor.after_model(found.call.tokens, found.cost_usd)
+        reviews = state["reviews"] + 1
+        again = found.revise and reviews < self._settings.sql_review.max_reviews
+        status, heading, card = review_card(found, data, state["question"], reviews, again)
+        self._steps.step_card(REFLECT_STAGE, status, heading, card)
+        if again:
+            # The finding goes with the result: the model fixes the query before it answers.
+            update["messages"] = [self._reviewer.revise_message(found)]
+        return {**update, "reviews": reviews}
 
     def _report_loop(self, verdict: LoopVerdict, *, wants_tools: bool) -> None:
         """LOOP CONTROL: the governor's verdict, whether the model asked for tools, what follows."""
@@ -179,7 +261,9 @@ class OpsNodes:
             self._report_call(call.name, outcome)
             messages += [
                 Message(role="assistant", content="", tool_calls=[call]),
-                Message(role="tool", content=outcome.text, tool_call_id=call.id),
+                Message(
+                    role="tool", content=self._as_data(name, outcome.text), tool_call_id=call.id
+                ),
             ]
             ran += [call.name] if outcome.succeeded else []
         return messages, ran
@@ -193,7 +277,8 @@ class OpsNodes:
             self._steps.tool_request(call.name, call.arguments)
             outcome = await self._calls.run(call, state["session_id"], on_decision=self._decided)
             self._report_call(call.name, outcome)
-            replies.append(Message(role="tool", content=outcome.text, tool_call_id=call.id))
+            content = self._as_data(call.name, outcome.text)
+            replies.append(Message(role="tool", content=content, tool_call_id=call.id))
             failures += 0 if outcome.succeeded else 1
             if outcome.query is not None:
                 queries.append(outcome.query)
@@ -214,61 +299,42 @@ class OpsNodes:
         else:
             answer, outcome = state["answer"], "answered"
         self._calls.governor.finish(outcome)  # type: ignore[arg-type]
-        unsupported = self._check(answer, state["queries"])
+        # Only the model's answer is checked: the agent's own words carry no claim of its.
+        checked = self._check(answer, state["queries"]) if outcome == "answered" else None
+        sent = checked.response if checked is not None else answer
+        unverified = checked.unverified if checked is not None else []
         return {
             "answer": answer,
-            "response": present(answer, state["queries"], unsupported, self._settings),
-            "unverified": None if self._figures is None else len(unsupported),
+            "response": present(sent, state["queries"], unverified, self._settings),
+            "unverified": None if checked is None else len(unverified),
         }
 
-    def _check(self, answer: str, queries: list[QueryRecord]) -> list[str]:
-        """The hallucination check: level 1 (token confidence), then level 2 (the figures)."""
-        if self._figures is None:
-            return []
-        first = self._first_level(answer)
-        started = time.perf_counter()
-        findings = self._figures.findings(answer, queries)
-        unsupported = [finding.figure for finding in findings if not finding.supported]
-        # The figures are this agent's claims: the turn's groundedness is read from them.
-        figures = len(findings)
-        report_grounding(figures, figures - len(unsupported), len(unsupported))
-        elapsed = (time.perf_counter() - started) * 1000
-        checks.record_grounding(checks.RULE, "", figures, len(unsupported), elapsed)
-        self._report_check(first, findings, len(queries))
-        return unsupported
-
-    def _first_level(self, answer: str) -> list[CheckLevel]:
-        """Level 1, with the note that it changes no verdict here (none when withheld)."""
-        if self._confidence is None or not self._confidence.enabled:
-            return []
-        level = report_confidence(self._confidence.assess(answer))
-        note = self._settings.cards.confidence_signal
-        return [level.model_copy(update={"lines": [*level.lines, note]})]
-
-    def _report_check(
-        self, first: list[CheckLevel], findings: list[FigureFinding], queries: int
-    ) -> None:
-        """One HALLUCINATION CHECK card and log line, the support agent's shape, levels first."""
-        cards = self._settings.cards
-        missing = sum(not finding.supported for finding in findings)
-        tally = (
-            cards.figure_tally.format(supported=len(findings) - missing, figures=len(findings))
-            if findings
-            else cards.no_figures
-        )
-        second = grounding_level(cards.figure_level, tally, flagged=bool(missing))
-        outcome = cards.ungrounded.format(count=missing) if missing else cards.grounded
-        fields: dict[str, Any] = {
-            "levels": [level.model_dump() for level in [*first, second]],
-            "outcome": outcome,
-            "tally": tally,
-            "claim_checks": [_claim_check(finding, cards.figure_found) for finding in findings],
-            "evidence_searched": cards.queries_searched.format(count=queries),
-        }
-        self._guard_log.info("Response grounding checked", **fields)
-        status: StatusKind = "warning" if missing else "completed"
+    def _check(self, answer: str, queries: list[QueryRecord]) -> OpsGroundingResult | None:
+        """The hallucination check (none when withheld), reported as every agent's card is."""
+        if self._grounding is None:
+            return None
+        checked = self._grounding.check(answer, queries)
+        log_grounding(self._guard_log, checked.card)
+        card = checked.card
         self._steps.begin(None)
-        self._steps.hallucination_check(status, outcome, fields)
+        self._steps.hallucination_check(
+            checked.status, card.outcome if checked.escalated else card.tally, card
+        )
+        return checked
+
+    def _as_data(self, tool: str, text: str) -> str:
+        """A tool's result as the model reads it: inside the data delimiters, never as an
+        instruction; an injection phrasing in it is logged (the result is not changed)."""
+        if self._separator is None:
+            return text
+        separated = self._separator.separate("", text)
+        if separated.suspicious_phrases:
+            self._logger.warning(
+                "Injection phrasing in a tool result",
+                tool=tool,
+                phrases=separated.suspicious_phrases,
+            )
+        return separated.delimited_data
 
     def _decided(self, call: ToolCall, decision: AuthorityDecision) -> None:
         """The Gatekeeper's ruling on one call, as it ruled (the audit entry is its own)."""
@@ -276,38 +342,22 @@ class OpsNodes:
 
     def _report_call(self, name: str, outcome: CallOutcome) -> None:
         """The call's result, named for what came back, with the tool's own preview."""
-        cards = self._settings.cards
-        tool = display_tool_name(name)
-        path = outcome.path
-        if path is None or path.call is None or path.execution is None:
-            stopped = path.stage if path is not None else ""
-            fields = {"tool": tool, "result": stopped, "reason": outcome.text}
-            # Only the Gatekeeper refuses; a repeat or a malformed call was not run, not refused.
-            if outcome.refused:
-                self._steps.tool_result("blocked", cards.refused.format(tool=tool), fields)
-            else:
-                summary = cards.not_run.format(tool=tool, stage=stopped)
-                self._steps.tool_result("warning", summary, fields)
-            return
-        result = path.execution.result
-        fields = tool_result_fields(path.call, result, outcome=path.execution)
-        fields.pop("output", None)  # the structured preview below says it more readably
-        if not outcome.succeeded:
-            self._steps.tool_result("failed", cards.failed.format(tool=tool), fields, result=result)
-            return
-        summary, preview = result_card(tool, outcome.data, self._settings)
-        self._steps.tool_result("completed", summary, {**fields, **preview}, result=result)
+        preview = (
+            result_card(display_tool_name(name), outcome.data, self._settings)
+            if outcome.succeeded
+            else None
+        )
+        self._steps.tool_outcome(
+            name, outcome.path, outcome.text, refused=outcome.refused, preview=preview
+        )
 
 
-def _claim_check(finding: FigureFinding, found: str) -> dict[str, Any]:
-    """A figure as the card's claim line: supported by a query's result, or unverified."""
-    if not finding.supported:
-        return {"claim": finding.figure, "verdict": _UNVERIFIED}
-    rationale = found.format(query=finding.query)
-    return {"claim": finding.figure, "verdict": _SUPPORTED, "rationale": rationale}
+def _cut_off(result: CompletionResult, finish: str) -> bool:
+    """An answer (no tool call) the token cap cut short."""
+    return result.finish_reason == finish and not result.tool_calls
 
 
-__all__ = ["EXECUTE", "GROUND", "PROPOSE", "OpsNodes"]
+__all__ = ["EXECUTE", "GROUND", "PROPOSE", "REVIEW", "AnswerCutOffError", "OpsNodes"]
 
 
 def _required(tool: Any) -> bool:

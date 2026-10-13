@@ -16,13 +16,21 @@ from typing import Any
 from agent_platform.config import get_settings
 from agent_platform.config.settings import ContextCardWords
 from agent_platform.context.failure.confusion import tool_overload
+from agent_platform.interface.presentation.text_tree import (
+    VALUE_BRANCH,
+    VALUE_GAP,
+    VALUE_LAST,
+    VALUE_PIPE,
+    readable_lines,
+)
 from agent_platform.llm.prompt import PromptManifest, PromptSection, manifest_from_messages
 
 CONTEXT_STAGE = "llm_context"
 # (model, prefix signature) pairs sent before, oldest first: a bounded memory of what a
 # provider's prefix cache could hold.
 _SEEN_PREFIXES: OrderedDict[tuple[str, str], None] = OrderedDict()
-_BRANCH, _LAST, _PIPE, _GAP = "├─ ", "└─ ", "│  ", "   "
+# The value tree's glyphs (`text_tree`), so the section tree reads like every other tree.
+_BRANCH, _LAST, _PIPE, _GAP = VALUE_BRANCH, VALUE_LAST, VALUE_PIPE, VALUE_GAP
 _THOUSAND, _MILLION = 1_000, 1_000_000
 
 
@@ -82,7 +90,7 @@ def context_fields(manifest: PromptManifest, model: str) -> dict[str, Any]:
         fields[words.findings_title] = [{"text": line, "tone": "warn"} for line in overload]
     for section in manifest.sections:
         title = f"{label(section.name)} · {section.tokens:,} tokens"
-        fields[title] = section.content.splitlines() or [""]
+        fields[title] = section.shown or readable_lines(section.content)
     return fields
 
 

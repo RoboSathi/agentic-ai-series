@@ -4,7 +4,7 @@ Level 1 is the platform's: how sure the model was of the tokens it wrote
 (`confidence.py`). Level 2 is whatever grounds this agent's claims — NLI
 entailment against the evidence for a reply, a figure found in a query result
 for an answer computed from one. Each level is reported as a `CheckLevel`,
-and the levels travel, level 1 first, inside the one `hallucination_check` event
+and the levels travel, level 1 first, inside the one `hallucination_check` event (`step_events.HALLUCINATION_CHECK`)
 an agent emits, so every agent's card and log line read the same way.
 """
 
@@ -12,8 +12,6 @@ from pydantic import BaseModel, Field
 
 from agent_platform.observability import checks
 
-# The one stage every agent's hallucination check is reported under.
-HALLUCINATION_STAGE = "hallucination_check"
 CONFIDENCE_LEVEL = 1
 GROUNDING_LEVEL = 2
 
@@ -45,6 +43,5 @@ __all__ = [
     "CONFIDENCE_LEVEL",
     "CheckLevel",
     "GROUNDING_LEVEL",
-    "HALLUCINATION_STAGE",
     "grounding_level",
 ]

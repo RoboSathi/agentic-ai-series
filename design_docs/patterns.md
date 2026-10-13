@@ -15,14 +15,14 @@ pattern to where it lives in code. Paths are relative to `src/`. Edit it when th
 | ReAct | — | ✓ worker, direct answer | ✓ |
 | Planning | ✓ plan lookup | ✓ plan DAG | — |
 | Fan-out / fan-in, map-reduce | — | ✓ | — |
-| Reflection (Producer–Critic) | ✓ deterministic critic | ✓ evidence and report | — |
-| Evaluator–optimizer | ✓ quality gate | ✓ audit → gap-fill / revise | — |
+| Reflection (Producer–Critic) | ✓ deterministic critic | ✓ evidence and report | ✓ SQL review (O-03) |
+| Evaluator–optimizer | ✓ quality gate | ✓ audit → gap-fill / revise | ✓ SQL review → revise |
 | Reflexion (learning across runs) | ✓ learned skills from refusals | ✓ learned skills from run findings | — |
 | Orchestrator–subagent | — | ✓ isolated audit sub-graph | — |
 | Human in the loop | ✓ review queue + interrupt | ✓ interview, `/approve` | — |
 | RAG | ✓ knowledge base | — | — |
 | Memory systems (CoALA) | ✓ all four | ✓ all four | ✓ procedural |
-| Guardrails / grounding | ✓ NLI + fact ledger | ✓ citation guard, NLI | ✓ figure check |
+| Guardrails / grounding | ✓ NLI + fact ledger | ✓ citation guard, NLI | ✓ figure check + confidence gate |
 | Fixed loop | — | — | — |
 
 `fixed_loop` has no implementation in any agent: the research agent's budgeted loops are
@@ -101,7 +101,9 @@ stopped by the model or a stop rule, and the budget only caps them (ADR P-06).
 | procedural memory | `prompts/AGENT.md` + `prompts/skills/analytics-investigation` | One `always` skill, versioned in `SkillStore` and audited per turn |
 | tool_use (MCP) | `graph/builder.py` · `_sources` → `GovernedMcpToolSource` | The only tools are a remote server's, arriving as governed `ToolDefinition`s |
 | guardrails | `graph/agent.py` · `_screened` | The person's message is screened for injection before the model reads it |
-| hallucination_check | `graph/nodes.py` · level 1 `ConfidenceCheck`, then `guardrails/figures.py` · `FigureCheck` | Every figure must appear in a query result |
+| reflection | `graph/graph.py` · propose → execute → review → propose; `guardrails/sql_review.py` · `SqlReviewer` | After a data query runs and before the model answers: a critic reads model-written SQL against the question (revise: fixed before answering, `sql_review.max_reviews` a turn); a catalogue call is decided in code (O-03) |
+| hallucination_check | `guardrails/grounding.py` · `OpsGrounding`: level 1 `ConfidenceCheck`, level 2 `FigureCheck`, the platform `gate` | Every figure must appear in a query row; a guessed one no row holds is cut; the card is the platform's (P-30, O-02) |
+| protocol observability | platform `knowledge/mcp/client/events.py` · `McpEvents`, bound in `graph/builder.py` | Handshake, notifications, failed calls and sessions on the feed; every event in `mcp.log` (P-31) |
 | human-verifiable output | `presentation/reply.py` | The reply carries the SQL it ran and the rows it rests on |
 
 ### Governance and LLD

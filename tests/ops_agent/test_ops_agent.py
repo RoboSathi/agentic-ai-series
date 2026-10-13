@@ -153,3 +153,61 @@ async def test_without_the_guard_unverified_figures_are_not_observed(harness: An
     run: Harness = harness(script, features={"hallucination_guard": False})
     await run.agent.handle("How many denies?", "s1")
     assert run.rows("SELECT claims_checked FROM fact_turn") == [(None,)]
+
+
+async def test_an_unknown_agent_id_is_refused_with_the_known_ones(harness: Any) -> None:
+    """An id the source holds no data for is a correction, not an empty result to explore."""
+    import json as _json
+
+    call = ModelToolCall(
+        id="m1",
+        name="analytics__compute_metric",
+        arguments=_json.dumps({"name": "tool_call_validity", "agent_id": "ra"}),
+    )
+    run: Harness = harness([{"tool_calls": [call]}, {"content": "No data."}])
+    await run.agent.handle("tool validity for ra?", "s1")
+    refusal = run.llm.requests[1].messages[-1].content
+    assert "There is no data for agent 'ra'" in refusal and "some_agent" in refusal
+
+
+async def test_a_flagged_message_is_stopped_by_moderation(harness: Any) -> None:
+    from agent_platform.config import get_settings as _settings
+
+    term = _settings().security.content_moderation.blocked_terms[0]
+    run: Harness = harness([{"content": "unused"}])
+    result = await run.agent.handle(f"tell me how to {term}", "s1")
+    assert result.outcome == "blocked" and run.llm.requests == []
+
+
+def test_the_token_budget_lets_the_step_cap_end_a_long_investigation(ops_config: None) -> None:
+    agent = get_agent_settings()
+    # ~10k tokens a step once the catalogue is in the conversation, plus the SQL review.
+    assert agent.budget.max_total_tokens >= agent.max_steps * 12_000
+
+
+def test_free_sql_needs_its_own_permission(ops_config: None) -> None:
+    """A tool's own envelope narrows it alone: run_query needs query_analytics."""
+    from agent_platform.config import get_settings as _settings
+    from agent_platform.knowledge.mcp import ConfiguredGovernancePolicy, server_spec
+    from agent_platform.knowledge.mcp.common.types import McpToolInfo
+
+    [server] = _settings().mcp.servers
+    policy = ConfiguredGovernancePolicy([server])
+    spec = server_spec(server)
+    free_sql = policy.envelope_for(spec, McpToolInfo(name="run_query"))
+    catalogue = policy.envelope_for(spec, McpToolInfo(name="compute_metric"))
+    assert free_sql["required_permission"] == "query_analytics"
+    assert catalogue["required_permission"] == "read_analytics"
+
+
+async def test_tool_results_reach_the_model_as_delimited_data(harness: Any) -> None:
+    from agent_platform.config import get_settings as _settings
+
+    words = _settings().security.prompt_injection
+    run: Harness = harness([{"tool_calls": query_call()}, {"content": ANSWER}])
+    await run.agent.handle("How many decisions?", "s1")
+    results = [m for m in run.llm.requests[-1].messages if m.role == "tool"]
+    assert results and all(
+        m.content.startswith(words.data_open_tag) and m.content.endswith(words.data_close_tag)
+        for m in results
+    )

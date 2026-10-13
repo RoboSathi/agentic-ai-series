@@ -21,7 +21,7 @@ from typing import Any, Protocol, TypeVar, runtime_checkable
 from pydantic import BaseModel
 
 from agent_platform.guardrails.guards import PydanticValidator
-from agent_platform.interface.presentation.text_tree import value_lines
+from agent_platform.interface.presentation.text_tree import inline_arguments, value_lines
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.prompt import PromptManifest
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
@@ -314,5 +314,7 @@ class StructuredCaller:
 
 def _shown(result: CompletionResult) -> str:
     """What a model call's card shows: its text, then each tool call it asked for."""
-    calls = [f"-> {call.name}({call.arguments})" for call in result.tool_calls or []]
+    calls = [
+        f"-> {call.name}({inline_arguments(call.arguments)})" for call in result.tool_calls or []
+    ]
     return "\n".join(part for part in (result.content, *calls) if part)

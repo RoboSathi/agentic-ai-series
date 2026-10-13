@@ -22,18 +22,16 @@ class Words(BaseModel):
     blocked: str
     no_tools: str
     refused_tool: str
+    budget_spent: str
+    tools_spent: str
+    cut_off: str
     invalid_call: str
     query_heading: str
     rows_heading: str
     more_rows: str
     ungrounded: str
+    withheld: str
     sources_heading: str
-
-
-class Stages(BaseModel):
-    """The feed's stage key for each node's cards."""
-
-    server: str
 
 
 class Cards(BaseModel):
@@ -44,17 +42,60 @@ class Cards(BaseModel):
     result_views: str
     result_columns: str
     result_done: str
-    not_run: str
-    failed: str
-    refused: str
-    grounded: str
-    ungrounded: str
+    unverified: str
+    rule: str
     figure_level: str
     figure_tally: str
     no_figures: str
-    figure_found: str
-    confidence_signal: str
+    query_check: str
+    query_where: str
+    not_found: str
     queries_searched: str
+
+
+class SqlReviewCard(BaseModel):
+    """The REFLECT step card's words (`ops_agent/guardrails/sql_review.py`)."""
+
+    heading: str
+    issues_suffix: str
+    failed_heading: str
+    asked: str
+    query_line: str
+    decision_revise: str
+    decision_capped: str
+    decision_accept: str
+    decision_failed: str
+    unparsed: str
+    deterministic_heading: str
+    deterministic_by: str
+    call_line: str
+    deterministic_reasoning: list[str]
+    deterministic_decision: str
+    formula_line: str
+    capped_heading: str
+    capped_by: str
+
+
+class SqlReviewSettings(BaseModel):
+    """Reflection on the SQL the model wrote, before the answer is grounded."""
+
+    data_tools: list[str]
+    reviewed_tools: list[str]
+    max_reviews: int = Field(ge=0)
+    sample_rows: int = Field(ge=0)
+    temperature: float
+    max_tokens: int = Field(ge=1)
+    timeout_seconds: float = Field(gt=0)
+    role: str
+    purpose: str
+    accept: str
+    revise: str
+    instructions: str
+    request: str
+    query_block: str
+    truncated_mark: str
+    revise_message: str
+    card: SqlReviewCard
 
 
 class OpsBudget(BaseModel):
@@ -79,14 +120,16 @@ class OpsAgentSettings(YamlBackedSettings):
     history_turns: int = Field(ge=0)
     temperature: float
     max_tokens: int = Field(ge=1)
+    retry_max_tokens: int = Field(ge=1)
+    cut_off_finish: str
     table_rows: int = Field(ge=1)
     cell_chars: int = Field(ge=4)
     number_tolerance: float = Field(ge=0)
     free_numbers: list[float]
     # The id a prefetch read's call is shown to the model with (`{tool}`).
     prefetch_call_id: str
+    sql_review: SqlReviewSettings
     words: Words
-    stages: Stages
     stage_labels: dict[str, str]
     cards: Cards
 

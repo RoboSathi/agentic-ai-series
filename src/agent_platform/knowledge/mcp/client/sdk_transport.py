@@ -18,6 +18,7 @@ from agent_platform.config import get_settings
 from agent_platform.config.paths import REPO_ROOT
 from agent_platform.config.settings import McpServerSettings
 from agent_platform.knowledge.mcp.client.contracts import McpServerSpec
+from agent_platform.knowledge.mcp.client.events import McpEventSink
 from agent_platform.knowledge.mcp.client.sdk_session import SdkMcpSession
 
 # A test (or an embedding) hands the SDK a target directly: an in-process server, say.
@@ -42,8 +43,15 @@ class SdkMcpTransport:
     def __init__(self, resolve: TargetResolver | None = None) -> None:
         self._resolve = resolve or _target
 
-    async def connect(self, server: McpServerSpec) -> SdkMcpSession:
-        session = SdkMcpSession(self._resolve(server), get_settings().mcp.call_timeout_seconds)
+    async def connect(
+        self, server: McpServerSpec, events: McpEventSink | None = None
+    ) -> SdkMcpSession:
+        session = SdkMcpSession(
+            self._resolve(server),
+            get_settings().mcp.call_timeout_seconds,
+            server=server.name,
+            events=events,
+        )
         await session.open()
         return session
 

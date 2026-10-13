@@ -49,10 +49,10 @@ def _walk(children: list[TreeNode], prefix: str, lines: list[str]) -> None:
 # -- any value as a tree: what logs and cards show instead of JSON ------------------------
 
 # Value-tree glyphs, narrower than the command trees' so deep payloads stay on screen.
-_V_BRANCH = "├─ "
-_V_LAST = "└─ "
-_V_PIPE = "│  "
-_V_GAP = "   "
+VALUE_BRANCH = "├─ "
+VALUE_LAST = "└─ "
+VALUE_PIPE = "│  "
+VALUE_GAP = "   "
 # Long values are folded, never cut: the full payload is the point of a log.
 WRAP_AT = 100
 # A model's JSON often arrives fenced: ```json ... ```.
@@ -107,9 +107,9 @@ def _branches(items: list[Any], prefix: str, labelled: bool) -> list[str]:
     lines: list[str] = []
     for index, (key, raw) in enumerate(items):
         last = index == len(items) - 1
-        connector = _V_LAST if last else _V_BRANCH
+        connector = VALUE_LAST if last else VALUE_BRANCH
         label = f"{key}" if labelled else f"[{key}]"
-        below = prefix + (_V_GAP if last else _V_PIPE)
+        below = prefix + (VALUE_GAP if last else VALUE_PIPE)
         value = as_structure(raw)
         if isinstance(value, (dict, list)) and value:
             lines.append(f"{prefix}{connector}{label}:")
@@ -119,3 +119,51 @@ def _branches(items: list[Any], prefix: str, labelled: bool) -> list[str]:
         lines.append(f"{prefix}{connector}{label}: {rendered[0]}")
         lines.extend(f"{below}{line}" for line in rendered[1:])
     return lines
+
+
+# -- messages and tool calls, as a person reads them ---------------------------------------
+
+# How a tool call reads inside a message: `→ tool(key=value, …)`.
+_CALL = "  → {tool}({arguments})"
+_INDENT = "  "
+
+
+def inline_arguments(arguments: Any) -> str:
+    """A tool call's arguments on one line, `key=value, key=value` — never JSON punctuation."""
+    structured = as_structure(arguments)
+    if isinstance(structured, dict):
+        return ", ".join(f"{key}={_inline(value)}" for key, value in structured.items())
+    return _inline(structured) if structured not in (None, "") else ""
+
+
+def readable_lines(text: Any) -> list[str]:
+    """Text as lines a person reads: JSON text of a mapping or list (a tool's result) as a
+    `key: value` tree, anything else as the lines it was written in."""
+    structured = as_structure(text)
+    if isinstance(structured, (dict, list)) and structured:
+        return value_lines(structured)
+    return str(text).splitlines() or [""]
+
+
+def message_lines(head: str, content: Any, calls: list[tuple[str, Any]]) -> list[str]:
+    """One chat message: `head: text` (structured content as a tree below `head:`), then each
+    tool call it made as `→ tool(key=value, …)`."""
+    body = readable_lines(content) if content else []
+    structured = isinstance(as_structure(content), (dict, list)) and bool(body)
+    if structured:
+        lines = [f"{head}:", *(f"{_INDENT}{line}" for line in body)]
+    else:
+        first, *rest = body or [""]
+        lines = [f"{head}: {first}" if first else f"{head}:", *rest]
+    lines.extend(_CALL.format(tool=tool, arguments=inline_arguments(args)) for tool, args in calls)
+    return lines
+
+
+def _inline(value: Any) -> str:
+    """A value on one line: a nested mapping or list in brackets, text with its breaks folded."""
+    structured = as_structure(value)
+    if isinstance(structured, dict):
+        return "{" + inline_arguments(structured) + "}"
+    if isinstance(structured, list):
+        return "[" + ", ".join(_inline(item) for item in structured) + "]"
+    return " ".join(scalar_lines(structured))

@@ -18,6 +18,11 @@ from pydantic import BaseModel, Field, computed_field
 from agent_platform.config import get_settings
 from agent_platform.context.types import Chunk
 from agent_platform.guardrails.guards import PydanticValidator
+from agent_platform.hallucination_check.card import (
+    claim_tally,
+    outcome_line,
+    record_grounding_check,
+)
 from agent_platform.hallucination_check.checker import (
     DetectionLadder,
     GroundingReasoningDiagnoser,
@@ -55,14 +60,13 @@ from agent_platform.hallucination_check.types import (
     GenerationAssessment,
 )
 from agent_platform.logging import get_logger
-from agent_platform.observability import checks
-from agent_platform.observability.units import report_grounding
 
 __all__ = [
     "NOT_EXECUTED_MARKER",
     "CustomerResponse",
     "ResponseGuardrail",
     "ResponseGuardrailResult",
+    "surviving_sentences",
 ]
 
 
@@ -131,31 +135,21 @@ class ResponseGuardrailResult(BaseModel):
         `grounded`, `escalated`, `repaired`, `reason_code` and
         `hallucination_scope` each say part of this; the card says it once.
         """
-        words = get_settings().guardrails.outcomes
-        if self.escalated:
-            # Why, in the words a card shows (`guardrails.block_reasons`, by finding code).
-            why = get_settings().guardrails.block_reasons.get(self.reason_code, self.reason_code)
-            if self.withheld:
-                return words.withheld.format(why=why)
-            return words.trimmed.format(
-                removed=len(self.removed_sentences), total=self.total_sentences, why=why
-            )
-        if self.repaired:
-            return words.repaired.format(attempts=self.repair_attempts)
-        return words.passed
+        return outcome_line(
+            escalated=self.escalated,
+            withheld=self.withheld,
+            removed=len(self.removed_sentences),
+            total=self.total_sentences,
+            reason_code=self.reason_code,
+            repaired=self.repaired,
+            attempts=self.repair_attempts,
+        )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def tally(self) -> str:
         """`2 supported · 1 unverified of 3 claims`, flagging a lexical fallback."""
-        names = [_VERDICT_NAMES.get(c["verdict"], c["verdict"]) for c in self.claim_checks]
-        if not names:
-            return "no checkable claims"
-        counts = " · ".join(f"{names.count(name)} {name}" for name in dict.fromkeys(names))
-        plural = "" if len(names) == 1 else "s"
-        lexical = any(str(c.get("detector") or "").startswith(_LEXICAL) for c in self.claim_checks)
-        note = " · lexical fallback (NLI model unavailable)" if lexical else ""
-        return f"{counts} of {len(names)} claim{plural}{note}"
+        return claim_tally(self.claim_checks)
 
 
 class ResponseGuardrail:
@@ -297,8 +291,9 @@ class ResponseGuardrail:
     ) -> None:
         """The grounding check, kept: one check row, and the claims on the turn."""
         backend, model = grounding.identity
-        checks.record_grounding(backend, model, result.claims, result.unsupported, latency_ms)
-        report_grounding(result.claims, result.supported, result.unsupported)
+        record_grounding_check(
+            backend, model, result.claims, result.supported, result.unsupported, latency_ms
+        )
 
     async def _enforce(
         self,
@@ -576,18 +571,6 @@ def _decided_by(verdict: DetectionVerdict) -> str:
     return "deterministic_provenance" if verdict.tier == DIRECT_TIER else verdict.tier
 
 
-# A claim's verdict in the words a card shows. "undetermined" reads as
-# "unverified": no evidence spoke to it either way, and it never blocks.
-_VERDICT_NAMES = {
-    "supported": "supported",
-    "undetermined": "unverified",
-    "unsupported": "unsupported",
-    "low_confidence": "low confidence",
-    "refuted": "contradicted",
-}
-# The detector name prefix of the word-overlap fallback, which is not NLI.
-_LEXICAL = "lexical"
-
 # Evidence tiers, in the words a card shows.
 _TIER_NAMES = {
     "tool_result": "tool result",
@@ -776,3 +759,7 @@ def _ended(sentence: str, separator: str) -> tuple[str, str]:
     if sentence and sentence[-1] not in ".!?;:":
         sentence += "."
     return sentence, separator or " "
+
+
+# The reply less its refuted sentences, for an agent that grounds its own claims (ops figures).
+surviving_sentences = _surviving_sentences

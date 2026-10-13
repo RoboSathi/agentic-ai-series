@@ -16,6 +16,8 @@ from ops_agent.domain.query import QueryRecord
 
 class OpsState(TypedDict):
     session_id: str
+    # The question as asked (the SQL review reads the SQL against it).
+    question: str
     messages: Annotated[list[Message], operator.add]
     queries: Annotated[list[QueryRecord], operator.add]
     steps: int
@@ -31,13 +33,19 @@ class OpsState(TypedDict):
     # The loop governor's last verdict (the router reads it) and why the model failed, if it did.
     verdict: LoopVerdict | None
     failure: str
+    # The SQL review: how many ran, and how many queries it has already read.
+    reviews: int
+    reviewed: int
 
 
 def initial_state(
-    session_id: str, messages: list[Message], layout: TurnLayout | None = None
+    session_id: str, messages: list[Message], layout: TurnLayout | None = None, question: str = ""
 ) -> OpsState:
     return OpsState(
         session_id=session_id,
+        question=question,
+        reviews=0,
+        reviewed=0,
         messages=messages,
         layout=layout or TurnLayout(),
         verdict=None,

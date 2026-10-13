@@ -10,7 +10,9 @@ Every query goes through the `QueryGuard` first and runs under a deadline;
 results are bounded by rows and by bytes, and say when they were cut.
 """
 
+import difflib
 import json
+import re
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +29,16 @@ from agent_platform.config import get_settings
 from agent_platform.logging import get_logger
 
 _SEAL = ("SET enable_external_access = false", "SET lock_configuration = true")
+# What DuckDB says when a query names something wrong or compares the wrong types: the model
+# gets it back with the columns it could have meant, as a rejection it can correct.
+_CORRECTABLE = (
+    duckdb.BinderException,
+    duckdb.CatalogException,
+    duckdb.ParserException,
+    duckdb.ConversionException,
+)
+# A name DuckDB quotes in its error ("Referenced column \"agnet_id\" not found").
+_QUOTED = re.compile(r'"([^"]+)"')
 
 
 class ViewSummary(BaseModel):
@@ -80,6 +92,8 @@ class QueryResult(BaseModel):
     rows: list[list[Any]]
     row_count: int
     truncated: bool
+    # What to check when the answer may not be what was asked: no rows, or rows cut.
+    notes: list[str] = []
 
 
 class SourceDatabase:
@@ -126,6 +140,24 @@ class SourceDatabase:
                 sample_rows=_records(sample),
             )
 
+    def agents(self) -> list[str]:
+        """Every agent id the source holds data for, across the views that carry one."""
+        column = get_settings().analytics.query.agent_column
+        with self._lock:
+            connection = self._fresh()
+            views = [
+                v.name
+                for v in self._catalog.views
+                if v.name in self._loaded and column in v.columns
+            ]
+            found = {
+                str(row[0])
+                for view in views
+                for row in connection.execute(f"SELECT DISTINCT {column} FROM {view}").fetchall()
+                if row[0] is not None
+            }
+        return sorted(found)
+
     def metrics(self) -> list[MetricSummary]:
         """The metric catalogue, with each metric's SLO target."""
         targets = get_settings().observability.slo_targets
@@ -152,6 +184,7 @@ class SourceDatabase:
     ) -> QueryResult:
         """One catalogue metric, by its own formula, over runtime traffic in the period."""
         metric = self._metric(name, by)
+        self._known_agent(agent_id)
         with self._lock:
             connection = self._fresh()
             self._available(metric.view)
@@ -169,6 +202,19 @@ class SourceDatabase:
             shown = sql.replace("?", literal(agent_id), 1) if agent_id is not None else sql
             return self._bounded(shown, self._run(connection, sql, params))
 
+    def _known_agent(self, agent_id: str | None) -> None:
+        """An agent id the source holds no data for is refused with the ones it does hold,
+        so the model corrects the id instead of reading an empty result as "no data"."""
+        if agent_id is None:
+            return
+        known = self.agents()
+        if known and agent_id not in known:
+            words = get_settings().analytics.query.rejections
+            self._logger.warning("Analytics metric refused", agent_id=agent_id, agents=known)
+            raise QueryRejectedError(
+                words.unknown_agent.format(agent=agent_id, agents=", ".join(known))
+            )
+
     def _metric(self, name: str, by: str | None) -> MetricDefinition:
         words = get_settings().analytics.query.rejections
         metric = self._catalog.metric(name)
@@ -185,10 +231,41 @@ class SourceDatabase:
         """Run one guarded query under the configured deadline and size limits."""
         with self._lock:
             connection = self._fresh()
-            bounded = QueryGuard(self._loaded).check(sql)
-            self._logger.info("Analytics query", sql=sql)
-            cursor = self._run(connection, bounded)
+            guard = QueryGuard(self._loaded)
+            try:
+                bounded = guard.check(sql)
+                self._logger.info("Analytics query", sql=sql)
+                cursor = self._ran(connection, bounded, sql, guard)
+            except QueryRejectedError as exc:
+                self._logger.warning("Analytics query rejected", sql=sql, reason=str(exc))
+                raise
             return self._bounded(sql, cursor)
+
+    def _ran(
+        self, connection: duckdb.DuckDBPyConnection, bounded: str, sql: str, guard: QueryGuard
+    ) -> list[Any]:
+        """The guarded query's rows; a wrong name or type, refused with what it could be."""
+        try:
+            return self._run(connection, bounded)
+        except _CORRECTABLE as exc:
+            raise QueryRejectedError(self._guidance(str(exc), guard.views_in(sql))) from None
+
+    def _guidance(self, error: str, views: list[str]) -> str:
+        """DuckDB's error, each view's real columns, and the closest to any name it quoted."""
+        words = get_settings().analytics.query.rejections
+        columns = {
+            view: list(found.columns) for view in views if (found := self._catalog.get(view))
+        }
+        known = [name for names in columns.values() for name in names]
+        listed = "; ".join(f"{view}({', '.join(names)})" for view, names in columns.items())
+        close = [
+            match
+            for name in _QUOTED.findall(error)
+            for match in difflib.get_close_matches(name, known, n=1)
+            if match != name
+        ]
+        hint = words.did_you_mean.format(names=", ".join(dict.fromkeys(close))) if close else ""
+        return words.not_runnable.format(error=error.strip(), columns=listed or "-", hint=hint)
 
     def _run(
         self, connection: duckdb.DuckDBPyConnection, sql: str, params: list[Any] | None = None
@@ -216,7 +293,7 @@ class SourceDatabase:
             rows, truncated = rows[: len(rows) // 2], True
         return QueryResult(
             sql=sql, columns=columns, rows=json.loads(_json(rows)), row_count=len(rows),
-            truncated=truncated,
+            truncated=truncated, notes=_notes(len(rows), truncated),
         )  # fmt: skip
 
     def _summary(self, view: CuratedView) -> ViewSummary:
@@ -267,6 +344,14 @@ class SourceDatabase:
             self._connection.close()
         self._connection, self._manifest, self._loaded = connection, manifest, loaded
         self._logger.info("Analytics source loaded", views=sorted(loaded))
+
+
+def _notes(rows: int, truncated: bool) -> list[str]:
+    """What the reader should check before trusting the answer: nothing came back, or not all."""
+    words = get_settings().analytics.query.notes
+    if not rows:
+        return [words.empty]
+    return [words.truncated.format(rows=rows)] if truncated else []
 
 
 def _records(cursor: duckdb.DuckDBPyConnection) -> list[dict[str, Any]]:

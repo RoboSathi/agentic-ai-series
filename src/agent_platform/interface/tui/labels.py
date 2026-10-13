@@ -64,6 +64,8 @@ _DISPLAY_NAMES = {
     "executor": "EXECUTOR",
     "mcp_server": "MCP SERVER",
     "mcp_call": "MCP CALL",
+    "mcp_notification": "MCP NOTIFICATION",
+    "mcp_session": "MCP SESSION",
     "tool_suppressed": "TOOL SUPPRESSED",
     "tool_refused": "TOOL REFUSED",
     "gatekeeper_evaluation": "GATEKEEPER",

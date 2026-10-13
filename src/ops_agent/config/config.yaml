@@ -18,12 +18,12 @@ agent:
 # stage that is never built.
 features:
   prompt_injection: true             # the person's message: phrase scan before the model reads it
+  content_moderation: true           # the person's message: term scan (and hosted safety model) after it
   hallucination_guard: true          # every figure in the answer must appear in a query result
   gatekeeper: true                   # each MCP call is authorized against this agent's policy
   # Platform features this agent does not compose. Declared false because an
   # overlay cannot delete keys the platform default declares.
   deterministic_checks: false
-  content_moderation: false
   pii: false
   intent_classification: false
   memory:
@@ -90,6 +90,15 @@ mcp:
         side_effecting: false
         requires_authority_rank: 5
         required_permission: read_analytics
+      # Free SQL is the riskiest surface the server offers: it needs its own permission, so a
+      # policy that grants only the catalogue tools gets it refused by the Gatekeeper.
+      tools:
+        run_query:
+          surface: locked
+          reversible: true
+          side_effecting: false
+          requires_authority_rank: 5
+          required_permission: query_analytics
 
 ops_agent:
   title: Ops Analyst
@@ -100,19 +109,28 @@ ops_agent:
   policy:
     role: analyst
     authority_rank: 4
-    permissions: [read_analytics]
+    permissions: [read_analytics, query_analytics]
   max_steps: 8
   # The turn's budgets beside its step cap (the platform loop governor enforces them): tool
   # calls, tokens across every model call, and a wall-clock deadline that cancels a call
   # still running when it passes.
   budget:
     max_tool_calls: 16
-    max_total_tokens: 60000
+    # Every step re-sends the conversation (~10k tokens once the catalogue and a few results
+    # are in it), so this is sized for `max_steps` steps plus the SQL review, letting the step
+    # cap, not the token cap, end a long investigation.
+    max_total_tokens: 120000
     max_seconds: 180
   # Earlier questions and answers in this conversation the model is shown.
   history_turns: 3
   temperature: 0.0
-  max_tokens: 1200
+  # The model reasons before it answers, and the reasoning counts against this cap: a cap the
+  # reasoning fills leaves a cut-off answer ("Guard"). One retry at `retry_max_tokens`; a
+  # second cut-off is said to the person, never sent as the answer.
+  max_tokens: 4096
+  retry_max_tokens: 8192
+  # The finish reason a provider gives for an answer the cap cut short.
+  cut_off_finish: length
   # The answer shows the last query's rows as a table, at most this many.
   table_rows: 12
   cell_chars: 40
@@ -123,6 +141,68 @@ ops_agent:
   free_numbers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 100]
   # A skill's prefetch read is shown to the model as a call with this id (ADR 0010).
   prefetch_call_id: "prefetch-{tool}"
+  # Reflection on the data an answer rests on (with `hallucination_guard`), after the query
+  # runs and before the model writes its answer, so the answer is written once, from reviewed
+  # rows. SQL the model wrote (run_query) is read by a critic model against the question;
+  # "revise" sends the finding back with the result, at most `max_reviews` times a turn. A
+  # catalogue call (compute_metric) has no model-written SQL: the server's deterministic checks
+  # decide it, and the card says so without a model call.
+  sql_review:
+    # Calls whose result an answer can rest on (a REFLECT card follows the step that ran one).
+    data_tools: [analytics.run_query, analytics.compute_metric]
+    # Of those, the ones whose SQL the model wrote (only these get the critic model).
+    reviewed_tools: [analytics.run_query]
+    max_reviews: 2
+    sample_rows: 5
+    temperature: 0.0
+    max_tokens: 600
+    timeout_seconds: 45
+    # How the step card names the call, and the purpose its log line carries.
+    role: sql_reviewer
+    purpose: sql_review
+    accept: accept
+    revise: revise
+    instructions: >-
+      You review SQL an analyst agent wrote while answering a question about AI agents'
+      runtime analytics (DuckDB, read-only curated views). A query may be one step toward
+      the answer (finding the right ids or columns) rather than the answer itself. Say
+      revise only when the query would give a wrong figure for the question: the wrong
+      view or columns; filters that do not match the question (agent, period, outcome,
+      channel); the wrong aggregation (count or distinct count, mean or percentile, a
+      rate's numerator and denominator); grouping; joins that multiply rows; units; or an
+      empty or truncated result where the question expects data. Do not judge style or
+      performance. Reply with JSON only, no prose and no code fence:
+      {"verdict": "accept" or "revise", "rationale": "one sentence on why",
+      "issues": ["each problem, short"], "hint": "one sentence on what to change"}.
+    request: "Question: {question}\n\nQueries run:\n{queries}"
+    query_block: "Query {number} ({rows} rows{truncated}):\n{sql}\nColumns: {columns}\nFirst rows: {sample}"
+    truncated_mark: ", truncated"
+    # The reviewer's finding, as the model reads it on its next step (before it answers).
+    revise_message: "A reviewer checked the SQL you just ran against the question and found: {issues}. {hint} Fix the query (describe_view first if a column is in doubt) and run it again before answering."
+    card:
+      heading: "SQL review · {verdict}{issues}"
+      issues_suffix: " — {count} issue(s)"
+      failed_heading: "SQL review · could not judge · the model goes on"
+      asked: "Do these queries answer: {question}"
+      query_line: "Query {number}: {sql}"
+      decision_revise: "REVISE · the model fixes the query before answering (review {used} of {max})"
+      decision_capped: "REVISE wanted, but the reviews are spent ({max}): the model goes on unreviewed"
+      decision_accept: "ACCEPT · the model answers from these rows"
+      decision_failed: "ACCEPT · the review failed ({error}), so the model goes on unreviewed"
+      unparsed: "the reviewer did not answer in the agreed form"
+      # A step whose data came from catalogue calls only: decided in code, no model call.
+      deterministic_heading: "Data check · catalogue formula · no SQL written by the model"
+      deterministic_by: "the analytics server's checks"
+      call_line: "{tool}({arguments})"
+      deterministic_reasoning:
+        - "The model wrote no SQL: the server ran the catalogue's own formula for each metric."
+        - "Its arguments were checked deterministically by the server: the metric exists, the agent id has data in the source, a breakdown is one of the metric's, the period is a whole number of days."
+        - "A model review would add a call and nothing a check does not already prove."
+      deterministic_decision: "ACCEPT · no SQL to verify — the catalogue formula answered"
+      formula_line: "Query {number} (catalogue): {sql}"
+      # The model wrote SQL, but this turn's reviews are spent.
+      capped_heading: "SQL review · reviews spent · not reviewed"
+      capped_by: the review cap (sql_review.max_reviews)
   words:
     stopped: "I stopped after {steps} steps without an answer. Try a narrower question."
     # The model could not be reached (after its own retries and backups), or ran past the deadline.
@@ -130,16 +210,23 @@ ops_agent:
     blocked: "That message was stopped by the input screen ({reason})."
     no_tools: "The analytics MCP server is unavailable ({error}). Start it, or run `make analytics-export` and try again."
     refused_tool: "The Gatekeeper refused {action}: {reason}"
+    # A call the loop stopped (not the Gatekeeper): the turn's tool-call budget is spent.
+    budget_spent: "{action} was not run: this turn's tool-call budget is spent ({reason}). Answer from the results you already have."
+    # Said to the model when the budget is spent and no tools are offered any more.
+    tools_spent: "The tool-call budget for this question is spent; no more tools can run. Answer now from the results above, and say which figures you could not fetch."
+    # Said to the person when the answer was cut off even at the larger cap.
+    cut_off: "the answer was cut off at {tokens} tokens"
     invalid_call: "The call to {tool} was malformed or names an unknown tool; check the arguments against the tool's schema."
     query_heading: "SQL"
     rows_heading: "Result ({shown} of {total} rows{more})"
     more_rows: ", more not shown"
     ungrounded: "Note: these figures are not in any query result, so treat them as unverified: {numbers}"
+    # Every sentence of the answer was cut by the hallucination check.
+    withheld: "I could not back the figures in that answer with any query result, so I have not sent it. Please ask again, or narrow the question."
     sources_heading: "Queries run: {count}"
-  # The loop's own cards (LLM, tool, Gatekeeper, MCP CALL, LOOP CONTROL, HALLUCINATION CHECK)
-  # are the platform's (`observability/step_events.py`); only the server card is this agent's.
-  stages:
-    server: mcp_server
+  # Every card is the platform's: the loop's (LLM, tool, Gatekeeper, MCP CALL, LOOP CONTROL,
+  # HALLUCINATION CHECK — `observability/step_events.py`) and the protocol's (MCP SERVER,
+  # NOTIFICATION, SESSION — `knowledge/mcp/client/events.py`).
   # Only what the platform's labels do not already name (agent_platform/interface/tui/labels.py).
   stage_labels: {}
   cards:
@@ -148,16 +235,16 @@ ops_agent:
     result_views: "{tool} → {count} views"
     result_columns: "{tool} → {count} columns of {view}"
     result_done: "{tool} → done"
-    not_run: "{tool} not run · {stage}"
-    failed: "{tool} failed"
-    refused: "{tool} refused by the Gatekeeper"
-    grounded: "PASSED · every figure appears in a query result"
-    ungrounded: "FLAGGED · {count} figure(s) found in no query result, shown as unverified"
-    # Level 2 of the hallucination check, for this agent: figures against query results.
+    # The HALLUCINATION CHECK card is the platform's (`hallucination_check/card.py`); these are
+    # only the words for this agent's level 2 (figures against query rows).
+    # Kept, confidently written, but in no row: sent and named in the reply.
+    unverified: "FLAGGED · {count} figure(s) found in no query result, shown as unverified"
+    rule: "each figure looked for in the query rows · a figure written at low confidence that no row holds is cut"
     figure_level: figures in query results
     figure_tally: "{supported} of {figures} figure(s) found in a query result"
     no_figures: no figures to check
-    figure_found: "query {query}'s result"
-    # Level 1 can change no ops verdict (a figure is found or it is not): it is shown, not used.
-    confidence_signal: "shown as a signal: a figure is found in a query result or it is not, so token confidence changes no verdict here"
+    # A figure's step: what read it, and where it was found.
+    query_check: query results
+    query_where: "Query {query} · row {row}"
+    not_found: in no query result
     queries_searched: "{count} query result(s)"

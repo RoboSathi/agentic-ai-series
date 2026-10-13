@@ -762,6 +762,11 @@ class StepEventWords(BaseModel):
     # What `{subject}` in the Gatekeeper heading reads as when the call is about something
     # ("order 10532"); empty when it is about nothing.
     gatekeeper_subject: str
+    # TOOL RESULT headings by how far the call got: `{tool}`, and `{stage}` for one not run.
+    tool_done: str
+    tool_failed: str
+    tool_refused: str
+    tool_not_run: str
     loop_control: LoopControlWords
 
 
@@ -821,6 +826,18 @@ class QueryRejectionWords(BaseModel):
     denied_function: str
     unknown_metric: str
     unknown_dimension: str
+    # `{error}`, `{columns}`, `{hint}` (`did_you_mean` with `{names}`, or nothing).
+    not_runnable: str
+    did_you_mean: str
+    # `{agent}` the id asked for, `{agents}` the ones the source holds.
+    unknown_agent: str
+
+
+class QueryNoteWords(BaseModel):
+    """What a result says when it may not answer the question: empty, or cut (`{rows}`)."""
+
+    empty: str
+    truncated: str
 
 
 class AnalyticsQuerySettings(BaseModel):
@@ -829,6 +846,7 @@ class AnalyticsQuerySettings(BaseModel):
     dialect: str
     # The session time zone results are reported in (the source's timestamps are UTC).
     timezone: str
+    agent_column: str
     max_rows: int = Field(ge=1)
     timeout_seconds: float = Field(gt=0)
     max_result_bytes: int = Field(ge=1024)
@@ -836,6 +854,7 @@ class AnalyticsQuerySettings(BaseModel):
     # Functions no query may call, even over the curated views (lower case).
     denied_functions: list[str]
     rejections: QueryRejectionWords
+    notes: QueryNoteWords
     timed_out: str
 
 
@@ -843,6 +862,7 @@ class AnalyticsMcpServerSettings(BaseModel):
     """How the analytics MCP server introduces itself to a client."""
 
     name: str
+    version: str
     instructions: str
     manifest_uri: str
 
@@ -1863,6 +1883,17 @@ class ReadingWords(BaseModel):
     leads: dict[str, str]
 
 
+class HallucinationCardWords(BaseModel):
+    """The HALLUCINATION CHECK card's shared wording (`hallucination_check/card.py`)."""
+
+    verdict_names: dict[str, str]
+    tally: str
+    plural: str
+    no_claims: str
+    lexical: str
+    lexical_note: str
+
+
 class HallucinationLevelWords(BaseModel):
     """How the hallucination check's levels are named (`hallucination_check/levels.py`)."""
 
@@ -1997,6 +2028,7 @@ class HallucinationCheckSettings(YamlBackedSettings):
     enforce_grounding: bool
     confidence: ConfidenceSettings
     levels: HallucinationLevelWords
+    card: HallucinationCardWords
     methods: HallucinationMethodWords
     facts: FactSettings
     # Whether a verifiable claim no evidence grounds is a hallucination (cut and queued),
@@ -2704,27 +2736,75 @@ class McpServerSettings(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     namespace: str
     envelope: McpToolEnvelope | None = None
+    # A tool's own envelope, by the server's tool name, over the server's.
+    tools: dict[str, McpToolEnvelope] = Field(default_factory=dict)
+
+
+class McpClientSettings(BaseModel):
+    """The client side of an MCP session (`mcp/client/sdk_session.py`)."""
+
+    name: str
+    version: str
+    mode: str
+    discover_from: str
+    discover_method: str
+    initialize_method: str
+    log_level: Literal[
+        "debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"
+    ]
+    log_level_meta_key: str
+    card_log_levels: list[str]
+    failed_log_levels: list[str]
 
 
 class McpCardWords(BaseModel):
-    """How an MCP server is drawn on a card (`mcp/presentation.py`)."""
+    """How an MCP server is drawn on a card (`mcp/client/presentation.py`)."""
 
     heading: str
+    handshake_title: str
+    handshake_lines: list[str]
     server_title: str
+    server_lines: list[str]
+    client_title: str
+    client_lines: list[str]
+    capabilities_title: str
+    server_capability_line: str
+    client_capability_line: str
+    no_flags: str
+    no_capabilities: str
+    client_none: str
+    server_side: str
+    client_side: str
     instructions_title: str
+    no_instructions: str
     tools_title: str
-    server_line: str
-    transport_line: str
     tool_line: str
+    offered_line: str
     argument_line: str
     required: str
     optional: str
+    output_line: str
+    no_output: str
+    hints_line: str
+    hint: str
+    no_hints: str
+    meta_line: str
     governance_line: str
-    no_instructions: str
+    execution_title: str
+    execution_lines: list[str]
+    whole_result: str
+    result_limit: str
     # The MCP CALL card, one per call (`observability/step_events.py`): any field of
     # the exchange may be named (server, method, tool, duration_ms, is_error).
     call_heading: str
     call_failed_heading: str
+    call_raised_heading: str
+    connect_failed_heading: str
+    tools_changed_heading: str
+    server_log_heading: str
+    session_failed_heading: str
+    error_title: str
+    message_title: str
 
 
 class McpSettings(YamlBackedSettings):
@@ -2740,6 +2820,7 @@ class McpSettings(YamlBackedSettings):
     python_placeholder: str
     # Characters of a tool's text result handed on; 0 keeps all of it.
     result_text_limit: int = Field(ge=0)
+    client: McpClientSettings
     card: McpCardWords
 
     model_config = SettingsConfigDict(env_prefix="MCP__")
