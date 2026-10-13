@@ -12,9 +12,6 @@ from datetime import datetime
 from research_agent.domain.rubric import Contract, Rubric
 from research_agent.domain.scope import ScopeBrief
 
-BRIEF_ARTIFACT = "brief"
-RUBRIC_ARTIFACT = "rubric"
-
 
 def freeze_contract(
     brief: ScopeBrief, rubric: Rubric, prefix: str, frozen_at: datetime

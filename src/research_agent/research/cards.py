@@ -14,6 +14,7 @@ from typing import Any, NamedTuple
 from pydantic import BaseModel, Field
 
 from agent_platform.hallucination_check.evidence.types import EvidenceEntry
+from agent_platform.hallucination_check.readings import check_rule
 from agent_platform.interface.presentation.text_tree import TreeNode, tree_lines
 from agent_platform.observability.step_card import Line as StepLine
 from agent_platform.observability.step_card import ModelCall, StepCard
@@ -35,9 +36,7 @@ from research_agent.presentation.narration import (
     toned,
 )
 from research_agent.research.reflector import FollowUpProposal
-from research_agent.synthesis.citation_guard import (
-    GuardedReport,
-)
+from research_agent.synthesis.citation_guard import GuardedReport, SentenceCheck
 
 Card = tuple[str, dict[str, Any]]
 
@@ -566,6 +565,48 @@ def guard_heading(guarded: GuardedReport) -> str:
     )
 
 
+def guard_fields(guarded: GuardedReport, confidence: Mapping[str, Any]) -> dict[str, Any]:
+    """The report's HALLUCINATION CHECK, as every agent's is drawn: logprobs first, the order
+    the claims were checked in, then each cited sentence and its steps."""
+    clean = not guarded.dropped
+    return {
+        "outcome": say(
+            "guard.outcome" if clean else "guard.outcome_dropped", heading=guard_heading(guarded)
+        ),
+        "confidence": dict(confidence),
+        "rule": check_rule(),
+        "claim_checks": [_sentence_check(check) for check in guarded.checks],
+        **({"rewrite_call": guarded.call.model_dump()} if guarded.call is not None else {}),
+    }
+
+
+# What became of a cited sentence, as the shared card names a claim's verdict.
+_GUARD_VERDICTS = {"supported": "supported", "rewritten": "rewritten", "dropped": "removed"}
+
+
+def _sentence_check(check: SentenceCheck) -> dict[str, Any]:
+    """One cited sentence as a claim of the shared card: its verdict and the steps behind it."""
+    return {
+        "claim": check.sentence,
+        "verdict": _GUARD_VERDICTS[check.outcome],
+        "cited": check.cited,
+        **({"rewrite": check.rewrite} if check.rewrite else {}),
+        "readings": [reading.model_dump() for reading in check.readings],
+    }
+
+
+def rescue_card(nodes: Sequence[SubQuestion], grant: Mapping[str, float]) -> Card:
+    """One more round for a run that admitted nothing: why, the grant, and what is searched."""
+    sections = {
+        say("rescue.section.why"): [say("rescue.why")],
+        say("rescue.section.grant"): [
+            say("rescue.grant", counter=counter, amount=amount) for counter, amount in grant.items()
+        ],
+        say("rescue.section.questions"): [f"{n.node_id} · {n.question}" for n in nodes],
+    }
+    return say("rescue.heading", nodes=len(nodes)), sections
+
+
 # -- the independent QA check --------------------------------------------------------------
 
 
@@ -754,7 +795,6 @@ def final_card(
     blocked_outbound: int,
     budget: Mapping[str, tuple[float, float]],
     usage: Mapping[str, str],
-    saved_as: str,
     problems: Sequence[str] = (),
 ) -> Card:
     """How the run ended, in words: the outcome, what was found, what it cost."""
@@ -791,7 +831,6 @@ def final_card(
             say("final.section.cost"): [
                 f"{role_title(role)}: {text}" for role, text in usage.items()
             ],
-            say("final.section.saved"): [say("final.saved", run=saved_as)] if saved_as else [],
         }
     )
 

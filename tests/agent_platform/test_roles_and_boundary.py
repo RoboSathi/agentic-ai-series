@@ -28,7 +28,6 @@ BANNED_IN_NEW = ("rubric",)
 # Modules added for the research agent: no research vocabulary at all.
 NEW_MODULES = (
     "runtime/scheduling",
-    "knowledge/artifacts",
     "hallucination_check/evidence",
     "knowledge/web",
     "core/primitives/hashing.py",

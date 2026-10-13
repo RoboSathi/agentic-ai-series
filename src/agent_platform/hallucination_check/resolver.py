@@ -88,8 +88,6 @@ CLAIM_UNSUPPORTED = "CLAIM_UNSUPPORTED"
 
 ENTAILMENT_LABEL: Literal["entailment"] = "entailment"
 _DECIDING_LABELS = frozenset({ENTAILMENT_LABEL, "contradiction"})
-# The NLI model's third label, as a reader should meet it: not a failure.
-_LABEL_NAMES = {"unknown": "neutral"}
 
 
 class _TierOutcome:
@@ -614,8 +612,10 @@ class GroundingResolver:
         refutation = result.label == "contradiction" and not tier.may_refute
         if refutation:
             return f"contradiction ignored, this tier cannot refute ({result.score:.2f})"
-        label = _LABEL_NAMES.get(result.label, result.label)
-        gloss = " (it neither states nor contradicts this)" if label == "neutral" else ""
+        names = get_settings().hallucination_check.card.label_names
+        label = names.get(result.label, result.label)
+        decisive = result.label in _DECIDING_LABELS
+        gloss = "" if decisive else " (it neither states nor contradicts this)"
         return f"{label} {result.score:.2f}{gloss}"
 
     def _deciding(

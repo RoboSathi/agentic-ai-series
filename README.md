@@ -154,7 +154,6 @@ exits.
 |---|---|
 | `make agent <agent>` | Opens the operator console on that agent. `PROFILE=<name>` adds `src/<pkg>/config/profiles/<name>.yaml`, e.g. `make agent csa PROFILE=bert_intent`. |
 | `make agent ops [SOURCE=dummy]` | The Ops Analyst. `SOURCE=dummy` reads the generated demo world; its own turns are always recorded to the live source. |
-| `make runs ra` | Lists archived research runs and re-verifies every artifact's hash |
 | `make model-check` | Probes every model the system uses (hosted chat, judge, embeddings, guards, and each local model) and says what each is used for. `BENCH=1` also times each chat model (p50/p95 and throughput). Alias: `make llm-check`. |
 
 <!-- SCREENSHOT: `make model-check` — the tree of every model, its role and its probe result. -->
@@ -357,7 +356,6 @@ While a run is going you can watch the side panel or stop it (`ctrl+x`); then `/
 | `/research compare home battery options for a small office` | Kind = decision support, then the interview checklist in the side panel |
 | `/done`, edit with `/rubric drop <id>`, then `/approve` | The frozen contract and its hash |
 | *(during the run)* | Batches, budget meters, rejected sources, audit verdicts |
-| `make runs ra` | The archived brief, rubric and report, with hashes re-verified |
 
 <!-- SCREENSHOT: ra — a direct answer with its numbered step cards and the grounding result. -->
 ![Research: a direct answer](design_docs/images/ra-direct-answer.png)
@@ -647,7 +645,6 @@ The packages are listed in roughly the order you need them to read an agent. Eac
 - **`knowledge/web`** is a web gateway with live, record and replay modes. Its search router
   tries DuckDuckGo, then Tavily. It also has a cache and a fetcher with a reader fallback.
 - **`knowledge/mcp`** is a governed MCP client plus the analytics MCP server.
-- **`knowledge/artifacts`** stores frozen, hashed artifacts.
 
 ### Operator surface and offline
 
@@ -712,7 +709,7 @@ Every value comes from configuration; nothing is hard-coded.
 │                                 ops_agent/ · integration/  (offline; conftest.py scripts the model)
 ├── local_models/                 downloaded models               (gitignored)
 ├── db/<package>/                 SQLite and DuckDB databases     (gitignored)
-├── data/<package>/               memory · research runs · Parquet · caches (gitignored)
+├── data/<package>/               memory · Parquet · caches (gitignored)
 ├── reports/<package>/evals/      eval reports                    (gitignored)
 └── logs/<agent>/                 per-subsystem logs              (gitignored)
 ```

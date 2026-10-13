@@ -18,6 +18,7 @@ from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from customer_support_agent.graph.agent import CustomerSupportAgent
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
+from customer_support_agent.memory.turn_memory import FinishedTurn, TurnMemory
 
 
 class _Support(NodeSupport):
@@ -73,17 +74,19 @@ class TestTheDreamInboxIsNamed:
         feed = InMemoryLiveStatusFeed()
         reporter = StageReporter(feed, "run")
         reporter.begin_turn()
-        agent = object.__new__(CustomerSupportAgent)
         queued: list[Any] = []
-        agent.__dict__.update(
-            _long_term=None,
-            _working_memory=WorkingMemoryStore(),
-            _dream_recorder=TurnRecorder(SimpleNamespace(emit=queued.append), "csa"),
-            _security=SimpleNamespace(redact=lambda text: text),
-            _actor="customer_support_agent",
-            _reporter=reporter,
+        memory = TurnMemory(
+            WorkingMemoryStore(),
+            None,
+            TurnRecorder(SimpleNamespace(emit=queued.append), "csa"),
+            lambda text: text,
+            reporter,
         )
-        agent._complete_turn(AgentState(query="show orders", session_id="s", customer_id=89))
+        memory.complete(
+            FinishedTurn(
+                session_id="s", customer_id=89, spoken="show orders", response="", remembered=""
+            )
+        )
         reporter.end_turn()
         summary = next(e for e in feed.events if e.stage == "turn_summary")
         assert len(queued) == 1

@@ -30,7 +30,7 @@ def build_run_graph(nodes: RunNodes, checkpointer: Any, with_audit: bool) -> Any
         ("synthesize", nodes.synthesize),
         ("gap_fill", nodes.gap_fill),
         ("finalize", nodes.finalize),
-        ("archive", nodes.archive),
+        ("close", nodes.close),
     ):
         builder.add_node(name, node)
     builder.add_edge(START, "init_run")
@@ -46,8 +46,8 @@ def build_run_graph(nodes: RunNodes, checkpointer: Any, with_audit: bool) -> Any
     )
     _audit_edges(builder, nodes, with_audit)
     builder.add_conditional_edges("gap_fill", nodes.after_gap_fill, ["batch_start", "finalize"])
-    builder.add_edge("finalize", "archive")
-    builder.add_edge("archive", END)
+    builder.add_edge("finalize", "close")
+    builder.add_edge("close", END)
     return builder.compile(checkpointer=checkpointer)
 
 

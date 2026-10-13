@@ -50,7 +50,6 @@ from agent_platform.hallucination_check.evidence import (
     VerbatimSpanValidator,
 )
 from agent_platform.intent.exemplar import ExemplarIntentClassifier
-from agent_platform.knowledge.artifacts import DirectoryArtifactStore
 from agent_platform.knowledge.web import WebGateway, create_web_gateway
 from agent_platform.llm.embeddings import EmbeddingClient, create_embedding_client
 from agent_platform.llm.http import create_http_client
@@ -98,12 +97,10 @@ from agent_platform.security.pii.boundary import bounded_roles
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
 from agent_platform.security.prompt_injection.hosted import HostedJailbreakGuard
 from agent_platform.tools.path import ToolPath
-from research_agent.archive.store import ResearchArchive
 from research_agent.audit.checks import build_registry
 from research_agent.audit.context import CheckContext
 from research_agent.audit.independent import IndependentAuditor, LlmJudge
 from research_agent.config import ResearchAgentSettings, get_agent_settings
-from research_agent.context.earlier_runs import EarlierRunsSource
 from research_agent.context.session import AnswerContext
 from research_agent.domain.matching import TermMatcher
 from research_agent.domain.report import COVERAGE_AND_LIMITS
@@ -159,7 +156,6 @@ def build_agent(
     checkpointer: SqliteCheckpointer | None = None,
     audit: AuditLedger | None = None,
     pool: SqliteConnectionPool | None = None,
-    artifacts: DirectoryArtifactStore | None = None,
     episodic: EpisodicStore | None = None,
     agent_settings: ResearchAgentSettings | None = None,
 ) -> ResearchAgent:
@@ -201,20 +197,14 @@ def build_agent(
     )
     memory = _memory(agent, posture, platform, ledger, reporter, episodic, procedural)
     backend = kind_backend(agent, posture)
-    archive = ResearchArchive(
-        artifacts or DirectoryArtifactStore(settings.artifacts.resolved_root),
-        memory,
-        agent.archive.run_id_prefix,
-        semantic_pointer=agent.archive.semantic_pointer,
-    )
-    answerer = _direct_answerer(agent, posture, caller, telemetry, ledger, gateway, memory, archive)
+    answerer = _direct_answerer(agent, posture, caller, telemetry, ledger, gateway, memory)
     saver = checkpointer or create_checkpointer(state_types=model_types(StateTypes))
     registry = RunRegistry(platform)
     # Dream events (ADR 0012): every turn, and every finished run, for `make dream ra`.
     inbox = FileDreamInbox() if posture.is_on("memory") else None
     run_events = RunEventWriter(inbox, settings.agent.id, agent.memory) if inbox else None
     run_nodes = RunNodes(
-        _run_parts(agent, posture, caller, roles, archive, entailment, observer.flush, run_events)
+        _run_parts(agent, posture, caller, roles, entailment, observer.flush, run_events)
     )
     return ResearchAgent(
         scoping=DurableGraphRunner(
@@ -231,7 +221,6 @@ def build_agent(
         ),
         run_nodes=run_nodes,
         resources=_resources_factory(agent, posture, caller, telemetry, gateway),
-        archive=archive,
         telemetry=telemetry,
         settings=agent,
         memory=memory,
@@ -382,7 +371,6 @@ def _direct_answerer(
     ledger: AuditLedger,
     gateway: GatewayFactory | None,
     memory: MemoryFacade | None,
-    archive: ResearchArchive,
 ) -> DirectAnswerer | None:
     """What answers a plain question — or None, so every question starts a research scope.
 
@@ -396,7 +384,6 @@ def _direct_answerer(
         agent.answer, web, create_http_client(agent.answer.weather.timeout_seconds), screen
     )
     grounding = _answer_grounding(agent, posture, FetchUrl(web, agent.answer, screen))
-    earlier = EarlierRunsSource(archive, agent.answer.context, agent.answer.messages)
     management = build_context_management(
         posture, memory.working if memory is not None else None, InstructionDataSeparator()
     )
@@ -404,10 +391,9 @@ def _direct_answerer(
         registry.register(management.fetch_tool)
     context = AnswerContext(
         memory,
-        earlier,
         agent.answer.context,
         agent.answer.messages,
-        window=_context_window(posture, memory, earlier, management),
+        window=_context_window(posture, memory, management),
         reporter=lambda: telemetry.reporter,
     )
     # The answer tools read; they still take the platform's one tool path, so their
@@ -452,20 +438,20 @@ def recency_guard(agent: ResearchAgentSettings) -> RecencyGuard:
 def _context_window(
     posture: FeatureSet,
     memory: MemoryFacade | None,
-    earlier: EarlierRunsSource,
     management: ContextManagement,
 ) -> ContextWindow | None:
     """The platform's context window over this agent's sources — or None with `context` off.
 
     The same assembly the support agent runs (five-stage pipeline, strategies, health check,
-    card); only the sources are this agent's: working memory, and earlier research.
+    card); only the source is this agent's: the session's working memory. Nothing from an
+    earlier run is offered: every question is researched fresh.
     """
     if not posture.is_on("context"):
         return None
     scoring = create_scoring_cascade()
-    sources: list[CandidateSource] = [earlier]
+    sources: list[CandidateSource] = []
     if memory is not None and memory.working is not None:
-        sources.insert(0, WorkingMemoryContextSource(memory.working))
+        sources.append(WorkingMemoryContextSource(memory.working))
     reranker = create_reranker(fallback=scoring) if posture.is_on("context.rerank") else None
     pipeline = FiveStagePipeline(
         sources=sources,
@@ -515,7 +501,7 @@ def _scoping_parts(
         settings=agent.scoping,
         messages=agent.messages,
         commands=agent.command_names,
-        contract_prefix=agent.archive.run_id_prefix,
+        contract_prefix=agent.scoping.contract_id_prefix,
         challenge=ChallengeGuard(agent.scoping.challenge_every_k_turns)
         if posture.is_on("scoping_challenge_check")
         else None,
@@ -532,7 +518,6 @@ def _run_parts(
     posture: FeatureSet,
     caller: StructuredCaller,
     roles: RoleClients,
-    archive: ResearchArchive,
     entailment: EntailmentModel | None,
     flush_context: Callable[[], None] | None = None,
     run_events: RunEventWriter | None = None,
@@ -565,7 +550,6 @@ def _run_parts(
             agent.depths,
             agent.synthesis.working_note_patterns,
         ),
-        archive=archive,
         registry=registry,
         context=context,
         features=posture,

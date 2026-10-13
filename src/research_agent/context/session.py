@@ -1,16 +1,16 @@
-"""What the model knows about the session besides the question: working memory, and earlier research.
+"""What the model knows about the session besides the question: its working memory.
 
 *Working memory* is the session's recent turns and its state (`scope_phase`, `run`,
-`run_status`, noted by the agent). *Earlier research* is the archive's run index: a few runs
-whose topic shares enough words with the question, offered as pointers ("open it with
-/show"), never as facts.
+`run_status`, noted by the agent). Nothing from an earlier run is offered: runs are not
+kept, and every question is researched fresh from the web.
 
-With the `context` feature, both reach the model through the platform's context window —
-the same five-stage pipeline, strategies, health check and card the support agent uses — so
-the window is ranked, fitted to its budget and checked before the model sees it. Withheld,
-the turns go to the model as the conversation they were and the rest as plain blocks.
+With the `context` feature, working memory reaches the model through the platform's context
+window — the same five-stage pipeline, strategies, health check and card the support agent
+uses — so the window is ranked, fitted to its budget and checked before the model sees it.
+Withheld, the turns go to the model as the conversation they were and the state as a plain
+block.
 
-Both are assembled for each question and written back after each answer, so a follow-up
+It is assembled for each question and written back after each answer, so a follow-up
 ("and tomorrow?") has something to refer to.
 """
 
@@ -26,7 +26,6 @@ from agent_platform.logging import instrument
 from agent_platform.memory import MemoryFacade
 from agent_platform.observability import StageReporter
 from research_agent.config.settings import AnswerContextSettings, AnswerMessages
-from research_agent.context.earlier_runs import EarlierRunsSource
 
 # What the context window is assembled for, as the pipeline's `Task.kind`.
 ANSWER_TASK = "direct_answer"
@@ -36,14 +35,13 @@ Reporter = Callable[[], StageReporter | None]
 class SessionContext(BaseModel):
     """The session as one question sees it."""
 
-    # Appended to the system prompt: the session state, then earlier research.
+    # Appended to the system prompt: the session state.
     blocks: list[str] = Field(default_factory=list)
-    # With the `context` feature: the assembled window those reach the model through instead.
+    # With the `context` feature: the assembled window it reaches the model through instead.
     window: AssembledContext | None = None
     # Recent turns, oldest first, between the system prompt and the question.
     history: list[Message] = Field(default_factory=list)
     state: dict[str, str] = Field(default_factory=dict)
-    runs: list[str] = Field(default_factory=list)
 
     @property
     def turns(self) -> int:
@@ -51,7 +49,7 @@ class SessionContext(BaseModel):
 
     @property
     def empty(self) -> bool:
-        return not (self.history or self.state or self.runs)
+        return not (self.history or self.state)
 
     def tokens(self) -> int:
         """How big the context is, by the shared tokenizer."""
@@ -67,14 +65,12 @@ class AnswerContext:
     def __init__(
         self,
         memory: MemoryFacade | None,
-        earlier: EarlierRunsSource,
         settings: AnswerContextSettings,
         messages: AnswerMessages,
         window: ContextWindow | None = None,
         reporter: Reporter | None = None,
     ) -> None:
         self._memory = memory
-        self._earlier = earlier
         self._settings = settings
         self._messages = messages
         self._window = window
@@ -82,16 +78,12 @@ class AnswerContext:
 
     async def assemble(self, session_id: str, question: str) -> SessionContext:
         history, state = self._working(session_id)
-        earlier = self._earlier.matching(question)
-        runs = [run.run_id for run in earlier]
         if self._window is not None:
             task = Task(query=question, session_id=session_id, kind=ANSWER_TASK)
             result = await self._window.build(task, self._reporter())
             window = result.window if result.text else None
-            return SessionContext(window=window, state=state, runs=runs)
-        pointers = self._earlier.block(earlier)
-        blocks = [*self._state_block(state), *([pointers] if pointers else [])]
-        return SessionContext(blocks=blocks, history=history, state=state, runs=runs)
+            return SessionContext(window=window, state=state)
+        return SessionContext(blocks=self._state_block(state), history=history, state=state)
 
     def observe_quality(self, session_id: str, score: float) -> None:
         """How well an answer held up, for the window's rot check (nothing without a window)."""

@@ -1,7 +1,8 @@
 """The synthesizer: a report drafted from the ledger, checked, and completed in code.
 
-The model writes the archetype's sections from ledger claims (never
-pages). Code then removes any sentence citing an id the ledger did not
+The model writes the report from ledger claims (never pages), choosing its
+own sections in the shape its kind asks for; code holds that outline to its
+limits (`outline.py`). Code then removes any sentence citing an id the ledger did not
 issue, attaches the citations (URL, span, page hash, retrieved-at — so the
 report stays auditable after the ledger is discarded), and appends the
 sections a model must not write: Known unknowns and Sources. Coverage &
@@ -41,6 +42,7 @@ from research_agent.synthesis.citation_check import (
     strip_working_notes,
 )
 from research_agent.synthesis.limits import render_limits
+from research_agent.synthesis.outline import fit_outline
 
 
 @instrument("research_agent")
@@ -75,14 +77,12 @@ class Synthesizer:
     ) -> CitationCheck:
         """The report from the ledger; after a gap-fill, a revision of `previous` that keeps
         what the audit accepted and fixes what its `findings` flagged, with the new evidence."""
-        headings = list(self._templates[contract.brief.archetype]["sections"])
         if not ledger.entries:
             # Nothing was established: a model asked to write from no evidence can only
             # produce filler. The Coverage & Limits section says why, in code.
             empty = Report(
                 title=contract.brief.topic,
                 status="PARTIAL",
-                sections=[ReportSection(heading=heading, body="") for heading in headings],
                 known_unknowns=[unknown.question for unknown in contract.brief.known_unknowns],
             )
             return CitationCheck(report=empty, removed=[], unknown_ids=[])
@@ -90,7 +90,7 @@ class Synthesizer:
         shown = _spread(ledger, size.report_entries)
         sections = self.written_sections(previous) if previous is not None else None
         answer, call = await self._caller.call_traced(
-            prompt.build(contract, shown, headings, gaps, sections, findings),
+            prompt.build(contract, shown, self.outline(contract), gaps, sections, findings),
             prompt.SynthesisAnswer,
             max_tokens=size.report_max_tokens,
         )
@@ -105,13 +105,12 @@ class Synthesizer:
         learned_skills: Sequence[str] = (),
     ) -> CitationCheck:
         """The report revised against the audit's findings: only what they flag changes."""
-        headings = list(self._templates[contract.brief.archetype]["sections"])
         size = self._depths[contract.brief.depth]
         answer, call = await self._caller.call_traced(
             prompt.build_revision(
                 contract,
                 _spread(ledger, size.report_entries),
-                headings,
+                self.outline(contract),
                 self.written_sections(previous),
                 findings,
                 learned_skills,
@@ -120,6 +119,14 @@ class Synthesizer:
             max_tokens=size.report_max_tokens,
         )
         return self._checked(answer, call, contract, ledger)
+
+    def outline(self, contract: Contract) -> dict[str, Any]:
+        """What the writer is told of the outline: its kind's shape, its size, what is reserved."""
+        return {
+            "shape": self._templates[contract.brief.archetype]["shape"],
+            "max_sections": self._depths[contract.brief.depth].report_max_sections,
+            "reserved": sorted(_appended_headings(self._templates["appended"])),
+        }
 
     def written_sections(self, report: Report) -> list[dict[str, str]]:
         """The sections the model wrote, without those code appends (limits, unknowns)."""
@@ -140,15 +147,25 @@ class Synthesizer:
         report = Report(
             title=answer.title,
             status="PARTIAL",
-            sections=[
-                ReportSection(heading=s.heading, body=normalize_citations(s.body, self._pattern))
-                for s in answer.sections
-            ],
+            sections=self._outlined(answer, contract),
             known_unknowns=[unknown.question for unknown in contract.brief.known_unknowns],
         )
         checked = enforce_citations(report, ledger, self._pattern)
         cleaned = strip_working_notes(checked, self._notes, self._pattern)
         return cleaned.model_copy(update={"call": call})
+
+    def _outlined(self, answer: prompt.SynthesisAnswer, contract: Contract) -> list[ReportSection]:
+        """The writer's sections, citations normalised, held to the outline's limits."""
+        drafted = [
+            ReportSection(heading=s.heading, body=normalize_citations(s.body, self._pattern))
+            for s in answer.sections
+        ]
+        return fit_outline(
+            drafted,
+            _appended_headings(self._templates["appended"]),
+            self._depths[contract.brief.depth].report_max_sections,
+            self._templates["folded_heading"],
+        )
 
     def with_limits(
         self,

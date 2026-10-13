@@ -14,10 +14,14 @@ import pytest
 from agent_platform.config import get_settings
 from agent_platform.guardrails.response import ResponseGuardrail
 from agent_platform.hallucination_check import NOT_EXECUTED_MARKER, DetectionLadder
+from agent_platform.hallucination_check.claim_view import claim_check
+from agent_platform.hallucination_check.resolver import DIRECT_TIER, NO_TIER
+from agent_platform.hallucination_check.types import DetectionVerdict, EvidenceCheck
 from agent_platform.scoring import create_scoring_cascade
 from agent_platform.scoring.entailment import EntailmentResult
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
+from customer_support_agent.grounding.evidence import GroundingEvidence
 
 _ORDER = 10864
 
@@ -28,6 +32,7 @@ class _Support(NodeSupport):
         self._registry: Any = SimpleNamespace(
             get=lambda name: SimpleNamespace(side_effecting=name.endswith("process_refund"))
         )
+        self._evidence = GroundingEvidence(self._registry, self._agent_policy)
 
 
 def _state(*actions: tuple[str, ...], **metadata: Any) -> AgentState:
@@ -188,65 +193,47 @@ def _card(check: dict[str, Any]) -> str:
     return body.plain.strip()
 
 
-def _line(
-    tier: str, label: str, score: float, excerpt: str, *, decisive: bool = False
-) -> dict[str, Any]:
-    return {
-        "tier": tier,
-        "nli_label": label,
-        "nli_score": score,
-        "excerpt": excerpt,
-        "decisive": decisive,
-    }
+def _check(label: str, score: float, excerpt: str, *, model: str = "nli-test") -> EvidenceCheck:
+    """One evidence line; a model-read one is the line the verdict was chosen from."""
+    return EvidenceCheck(
+        rank=1, similarity=0.9, tier="tool_result", excerpt=excerpt, nli_label=label,
+        nli_score=score, decisive=bool(model) or label == "record", model=model,
+        chosen=bool(model), source="get_order_status",
+    )  # fmt: skip
+
+
+def _verdict_card(
+    supported: bool,
+    tier: str,
+    checks: list[EvidenceCheck],
+    *,
+    undetermined: bool = False,
+    rationale: str = "",
+) -> str:
+    """The card a verdict draws, through `claim_view` — the path every agent's claims take."""
+    verdict = DetectionVerdict(
+        claim="the claim", supported=supported, undetermined=undetermined, confidence=0.9,
+        tier=tier, detector_model="nli-test", evidence_checks=checks, rationale=rationale,
+    )  # fmt: skip
+    return _card(claim_check(verdict))
 
 
 class TestTheCardShowsOnlyWhatDecidedIt:
-    def test_a_model_verdict_keeps_its_probability(self) -> None:
-        card = _card(
-            {
-                "claim": "You will hear back soon",
-                "verdict": "supported",
-                "basis": "Entailment 0.99",
-                "evidence": [_line("policy", "entailment", 0.99, "hear back soon", decisive=True)],
-            }
-        )
-        assert 'supported by [Policy] (Entailment 0.99): "hear back soon"' in card
+    """Through the real projection: a verdict, as `claim_view` sends it, as the card draws it."""
 
-    def test_a_verdict_the_record_decided_has_no_parenthetical_and_no_tail(self) -> None:
-        card = _card(
-            {
-                "claim": "has been submitted",
-                "verdict": "supported",
-                "basis": "",
-                "rationale": "refund status is pending_review, so a claim of pending_review holds",
-                "evidence": [
-                    _line(
-                        "tool result",
-                        "record",
-                        1.0,
-                        "Order 10665 refund status: pending_review.",
-                        decisive=True,
-                    )
-                ],
-            }
-        )
-        assert 'supported by [Tool Result]: "Order 10665 refund status: pending_review."' in card
-        assert "Record" not in card and "so a claim" not in card
+    def test_a_model_verdict_keeps_its_probability(self) -> None:
+        card = _verdict_card(True, "tool_result", [_check("entailment", 0.99, "hear back soon")])
+        assert "entailment 0.990" in card and '"hear back soon"' in card
+
+    def test_a_verdict_the_record_decided_names_the_line_not_the_rule(self) -> None:
+        line = _check("record", 1.0, "Order 10665 refund status: pending_review.", model="")
+        rationale = "refund status is pending_review, so a claim of pending_review holds"
+        card = _verdict_card(True, DIRECT_TIER, [line], rationale=rationale)
+        assert "Order 10665 refund status: pending_review." in card and "so a claim" not in card
 
     def test_a_contradiction_by_a_model_says_how_sure(self) -> None:
-        card = _card(
-            {
-                "claim": "x",
-                "verdict": "refuted",
-                "basis": "Contradiction 0.98",
-                "evidence": [
-                    _line(
-                        "tool result", "contradiction", 0.98, "refund status: none", decisive=True
-                    )
-                ],
-            }
-        )
-        assert 'contradicted by [Tool Result] (Contradiction 0.98): "refund status: none"' in card
+        card = _verdict_card(False, "tool_result", [_check("contradiction", 0.98, "refund: none")])
+        assert "contradiction 0.980" in card and "[CONTRADICTED]" in card
 
     def test_a_rule_that_found_no_line_says_what_it_found(self) -> None:
         card = _card(
@@ -262,32 +249,15 @@ class TestTheCardShowsOnlyWhatDecidedIt:
 
 class TestAnUnverifiedClaimIsOneLine:
     def test_evidence_too_far_to_be_scored_is_not_printed(self) -> None:
-        card = _card(
-            {
-                "claim": "No further action is required",
-                "verdict": "undetermined",
-                "rationale": "no tier decided: policy: nothing related (best 0.16 < 0.3)",
-                "evidence": [
-                    _line("policy", "not checked (below 0.3)", 0.0, "You do not decide which"),
-                    _line("policy", "not checked (below 0.3)", 0.0, "Some requests are sent"),
-                ],
-            }
-        )
-        assert card.splitlines()[-1].strip() == "unverified: no evidence states or contradicts this"
-        assert "Also Read" not in card and "0.00" not in card and "not checked" not in card.lower()
+        far = [_check("not checked (below 0.3)", 0.0, "You do not decide which", model="")]
+        card = _verdict_card(False, NO_TIER, far, undetermined=True)
+        assert "no related evidence" in card
+        assert "0.00" not in card and "not checked" not in card.lower()
 
     def test_a_line_the_model_did_score_is_named(self) -> None:
-        card = _card(
-            {
-                "claim": "Your refund was sent to your card",
-                "verdict": "undetermined",
-                "evidence": [
-                    _line("tool result", "unknown", 0.98, "Refunded $21.35 for order 10001")
-                ],
-            }
-        )
-        # The model that read it is named; a line logged without one reads as NLI's.
-        assert 'NLI [Tool Result] neutral 0.98: "Refunded $21.35 for order 10001"' in card
+        line = _check("unknown", 0.98, "Refunded $21.35 for order 10001")
+        card = _verdict_card(False, NO_TIER, [line], undetermined=True)
+        assert "neutral 0.980" in card and "Refunded $21.35 for order 10001" in card
 
 
 class TestTheRefusalFromTheLiveRun:
@@ -510,46 +480,19 @@ class TestTheCardIsDrawnLikeTheOthers:
         assert styles[" · removed 1 of 2 sentence(s) · a reason"] != tones["fail"]
 
     def test_a_claim_is_a_check_line_with_its_verdict(self) -> None:
-        card = _card(
-            {
-                "claim": "The $66.56 refund has been processed",
-                "verdict": "refuted",
-                "evidence": [
-                    _line(
-                        "tool result",
-                        "record",
-                        1.0,
-                        "Order 10193 refund status: pending_review.",
-                        decisive=True,
-                    )
-                ],
-            }
-        )
-        assert card.startswith("✗ The $66.56 refund has been processed [CONTRADICTED]")
+        line = _check("record", 1.0, "Order 10193 refund status: pending_review.", model="")
+        card = _verdict_card(False, DIRECT_TIER, [line])
+        assert card.startswith("✗ the claim [CONTRADICTED]")
 
 
 class TestTheCardNamesTheSource:
     """RA's evidence is a page; the card said `[Tool Result]` and never which one."""
 
-    def test_a_url_is_named_by_its_host(self) -> None:
-        line = _line("tool result", "entailment", 0.97, "Hiring rose 4% in 2025", decisive=True)
-        line["source"] = "https://www.wef.org/reports/future-of-jobs-2025"
-        card = _card({"claim": "Hiring rose in 2025", "verdict": "supported", "evidence": [line]})
-        assert "supported by [Tool Result · www.wef.org]" in card
-
-    def test_a_tool_name_is_named_as_it_is(self) -> None:
-        line = _line(
-            "tool result",
-            "record",
-            1.0,
-            "Order 10193 refund status: pending_review.",
-            decisive=True,
-        )
-        line["source"] = "get_order_status"
-        card = _card(
-            {"claim": "Your refund is pending", "verdict": "supported", "evidence": [line]}
-        )
-        assert "[Tool Result · get_order_status]" in card
+    def test_a_web_page_is_named_by_its_url(self) -> None:
+        line = _check("entailment", 0.97, "Hiring rose 4% in 2025")
+        line = line.model_copy(update={"source": "https://www.wef.org/reports/future-of-jobs-2025"})
+        card = _verdict_card(True, "tool_result", [line])
+        assert "www.wef.org/reports/future-of-jobs-2025" in card
 
     async def test_the_resolver_carries_the_source_through(self) -> None:
         from agent_platform.context.types import Chunk
@@ -577,6 +520,7 @@ class _LimitedSupport(_Support):
         from agent_platform.core.primitives.money import Money
 
         self._agent_policy = SimpleNamespace(per_action_limit=lambda _action: Money.parse("50.00"))
+        self._evidence = GroundingEvidence(self._registry, self._agent_policy)
 
 
 @pytest.mark.usefixtures("abstaining_guard")
@@ -670,13 +614,17 @@ class TestTheKnowledgeArticlesAreOneSentencePerPremise:
     order": it also says an order in flight has nothing to refund. One rule per premise."""
 
     def test_no_premise_is_a_paragraph(self) -> None:
-        from customer_support_agent.graph.nodes._support import _knowledge_evidence
+        from customer_support_agent.grounding.evidence import (
+            knowledge_evidence as _knowledge_evidence,
+        )
 
         chunks = _knowledge_evidence()
         assert chunks and all("\n" not in chunk.content for chunk in chunks)
 
     def test_what_may_be_refunded_and_what_may_not_are_separate_premises(self) -> None:
-        from customer_support_agent.graph.nodes._support import _knowledge_evidence
+        from customer_support_agent.grounding.evidence import (
+            knowledge_evidence as _knowledge_evidence,
+        )
 
         contents = [chunk.content for chunk in _knowledge_evidence()]
         delivered = next(c for c in contents if "delivered order can be refunded" in c)

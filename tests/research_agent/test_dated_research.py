@@ -86,7 +86,7 @@ def test_every_research_prompt_carries_today_and_the_rule() -> None:
     contract, ledger = _contract(), LedgerSnapshot(entries=())
     prompts = [
         planner.build(contract, 4, 2),
-        synthesizer.build(contract, ledger, ["Findings"], []),
+        synthesizer.build(contract, ledger, {"shape": "s", "max_sections": 4}, []),
         judge.build("c", "check", Report(title="t", status="PARTIAL"), ledger, TODAY),
         extractor.build("q", "https://p.example", "page", 3, TODAY),
         researcher.build("q", "https://p.example", "page", 3, {}, TODAY),

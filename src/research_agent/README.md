@@ -7,7 +7,6 @@ a COMPLETE or PARTIAL report.
 
 ```
 make agent ra           # the console (needs nvidia_api_key; tavily_api_key optional)
-make runs ra            # archived runs, every artifact's hash re-verified
 make dream ra           # consolidate what runs learned
 ```
 

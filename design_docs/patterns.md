@@ -74,7 +74,7 @@ stopped by the model or a stop rule, and the budget only caps them (ADR P-06).
 | reflexion | `memory/run_events.py` → `make dream ra` → `/review` → plan | Findings recurring across runs of one kind become a learned skill a curator approves |
 | evaluator_optimizer | `graph/run_nodes.py` · synthesize → independent_audit → gap_fill / revise | |
 | orchestrator_subagent | `audit/independent.py` on `agent_platform` `IsolatedGraphRunner` | The audit sub-graph receives only `(contract, report, ledger_snapshot)` |
-| memory_systems | `archive/store.py`, `memory/` | Episodic run index, semantic facts (source reliability), learned skills |
+| memory_systems | `context/session.py`, `memory/` | Working memory for the session, semantic facts (source reliability), learned skills; no run is kept (R-18) |
 
 ### LLD and resilience
 
@@ -87,7 +87,7 @@ stopped by the model or a stop rule, and the budget only caps them (ADR P-06).
 | builder | `scoping/brief.py` · `BriefBuilder` |
 | observer | `StageReporter` + `AuditLedger` telemetry; the `WebGateway` observer |
 | template method | `audit/independent.py` · the audit judge on `agent_platform.judge.LlmJudge` |
-| facade | `agent_platform` `MemoryFacade`, used by `archive/store.py` |
+| facade | `agent_platform` `MemoryFacade`, used by `context/session.py` |
 | retry + idempotency + circuit breaker | `agent_platform/knowledge/web/gateway.py` · live search and fetch through `ResilientCaller` |
 | bulkhead | `agent_platform/runtime/scheduling/scheduler.py` · per-batch concurrency cap |
 

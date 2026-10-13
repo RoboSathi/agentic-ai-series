@@ -1,7 +1,7 @@
 # Labelled `/research` questions for the research-kind classifier (scoping/kind_encoder.py).
 #
 # One label per message: the research kind it asks for. Hand-written and deliberately varied in
-# phrasing; the golden cases and real questions from the archive (`make runs ra`) are the next
+# phrasing; the golden cases and real questions people ask are the next
 # source. `kind_examples.py` holds out a stratified 20% and prints accuracy and a confusion
 # matrix — read it before trusting the classifier.
 decision_support:

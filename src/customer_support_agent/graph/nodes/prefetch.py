@@ -25,12 +25,11 @@ from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.graph.nodes._support import (
     ORDER_SNAPSHOT,
     PREFETCHED,
-    TOOL_BLOCKED,
-    TOOL_COMPLETED,
     TURN_OFFERED_TOOLS,
     NodeSupport,
 )
 from customer_support_agent.graph.state import AgentState
+from customer_support_agent.grounding.evidence import TOOL_BLOCKED, TOOL_COMPLETED
 from customer_support_agent.tools.definitions import SNAPSHOT_READS
 
 

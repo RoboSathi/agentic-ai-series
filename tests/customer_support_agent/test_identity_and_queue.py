@@ -30,6 +30,7 @@ from customer_support_agent.domain.models import HitlRequest
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.nodes.review_wait import _reply
 from customer_support_agent.graph.state import AgentState
+from customer_support_agent.grounding.evidence import GroundingEvidence
 from customer_support_agent.persistence.repositories import HitlQueueRepository
 from customer_support_agent.persistence.schema import ensure_schema
 from customer_support_agent.review.queue import ReviewOutcome
@@ -61,6 +62,7 @@ class _Support(NodeSupport):
     def __init__(self) -> None:
         self._agent_policy: Any = SimpleNamespace(per_action_limit=lambda _action: None)
         self._registry: Any = SimpleNamespace(get=lambda _name: None)
+        self._evidence = GroundingEvidence(self._registry, self._agent_policy)
 
 
 def _state() -> AgentState:

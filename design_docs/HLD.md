@@ -87,7 +87,7 @@ flowchart TB
         llm & judge & scoring
     end
     subgraph Knowledge["knowledge/"]
-        web & mcp & artifacts
+        web & mcp
     end
     subgraph Plumbing["Always on"]
         resilience & observability & audit & review & logging
@@ -134,7 +134,7 @@ flowchart TB
 | `core/` | `persistence`, `primitives` | SQLite pool and platform tables; money, hashing, keys, PII tokens, clock |
 | `interface/` | `tui`, `commands`, `presentation`, `host` | The console, slash commands, plain-text renderers, the `AgentHost` contract |
 | `runtime/` | `executor`, `scheduling`, `verification` | Running approved calls; DAG scheduling; effect read-back and acceptance checks |
-| `knowledge/` | `web`, `mcp`, `artifacts` | Web gateway (live/record/replay), MCP client and servers, frozen hashed artifacts |
+| `knowledge/` | `web`, `mcp` | Web gateway (live/record/replay), MCP client and servers |
 
 ## 4. How an agent is composed
 
@@ -255,7 +255,7 @@ flowchart TD
         reflect_gap_analysis --> synthesize --> independent_audit
         independent_audit -->|writing fault| revise --> independent_audit
         independent_audit -->|evidence gap| gap_fill -->|targeted nodes| batch_start
-        independent_audit --> finalize --> archive
+        independent_audit --> finalize --> close
     end
 ```
 
@@ -355,7 +355,6 @@ sequenceDiagram
     participant WEB as web gateway
     participant L as evidence ledger
     participant AU as independent audit
-    participant AR as archive
 
     U->>RA: /research <question>
     RA->>SC: research kind (cues → example classifier → LLM)
@@ -382,7 +381,7 @@ sequenceDiagram
     else evidence gap
         RG->>W: one gap-fill round
     end
-    RG->>AR: brief · rubric · report (hashed) · run dream event
+    RG->>RG: close: run dream event; ledger discarded, nothing kept (R-18)
     RG-->>U: COMPLETE or PARTIAL + Coverage & Limits
 ```
 

@@ -28,9 +28,14 @@ from agent_platform.hallucination_check.checker import (
     GroundingReasoningDiagnoser,
     Resampler,
 )
+from agent_platform.hallucination_check.claim_view import (
+    claim_check,
+    decided_by,
+    provenance_report,
+    tiers_searched,
+)
 from agent_platform.hallucination_check.claims import sentence_pieces
 from agent_platform.hallucination_check.confidence import (
-    LOGPROB_TIER,
     LOW_CONFIDENCE_DEGENERATE,
     LOW_CONFIDENCE_SPECIFIC,
     ConfidenceCheck,
@@ -40,23 +45,16 @@ from agent_platform.hallucination_check.confidence import (
 from agent_platform.hallucination_check.direct import (
     NOT_EXECUTED_MARKER,
     RECORD_STATE_MISMATCH,
-    amounts,
-    numbers,
     record_ids,
 )
-from agent_platform.hallucination_check.evidence import TOOL_RESULT_KIND
-from agent_platform.hallucination_check.ledger import FACT_MISMATCH, FACT_TIER, facts_in
+from agent_platform.hallucination_check.ledger import FACT_MISMATCH, facts_in
 from agent_platform.hallucination_check.levels import CheckLevel, grounding_level
-from agent_platform.hallucination_check.readings import check_rule, model_label, readings
+from agent_platform.hallucination_check.readings import check_rule
 from agent_platform.hallucination_check.resolver import (
     CLAIM_UNSUPPORTED,
-    CONFIRM_TIER,
-    DIRECT_TIER,
-    RESTATEMENT_MODEL,
 )
 from agent_platform.hallucination_check.types import (
     DetectionVerdict,
-    EvidenceCheck,
     GenerationAssessment,
 )
 from agent_platform.logging import get_logger
@@ -260,8 +258,8 @@ class ResponseGuardrail:
         self._record(result, self._grounding, (time.perf_counter() - started) * 1000)
         checked = result.model_copy(
             update={
-                "provenance_checks": _provenance_report(response, evidence),
-                "evidence_searched": _tiers_searched(evidence),
+                "provenance_checks": provenance_report(response, evidence),
+                "evidence_searched": tiers_searched(evidence),
             }
         )
         self._logger.info(
@@ -357,7 +355,7 @@ class ResponseGuardrail:
             nollm_resolved_ratio=last.nollm_resolved_ratio,
             tier_counts=_tier_counts(last),
             reason_code="GUARDRAIL_PASS_REPAIRED" if repaired else "GUARDRAIL_PASS",
-            claim_checks=[_claim_check(verdict) for verdict in last.verdicts],
+            claim_checks=[claim_check(verdict) for verdict in last.verdicts],
         )
 
     def _blocked(
@@ -422,7 +420,7 @@ class ResponseGuardrail:
             tier_counts=_tier_counts(last),
             reason_code=reason_code,
             hallucination_scope=scope,
-            claim_checks=[_claim_check(verdict) for verdict in last.verdicts],
+            claim_checks=[claim_check(verdict) for verdict in last.verdicts],
         )
 
     def _diagnostic(self, verdict: DetectionVerdict) -> dict[str, Any]:
@@ -437,7 +435,7 @@ class ResponseGuardrail:
             "claim": verdict.claim,
             "failure_kind": verdict.reason_code
             or self._diagnoser.diagnose(verdict.claim, retrieved),
-            "tier": _decided_by(verdict),
+            "tier": decided_by(verdict),
             "confidence": round(verdict.confidence, 3),
             "best_evidence_overlap": round(best_overlap, 3),
             "best_evidence": best_evidence[:240],
@@ -517,164 +515,6 @@ def _correction(verdict: DetectionVerdict, evidence: list[Chunk]) -> str | None:
     subjects = {fact.subject for fact, _ in states}
     wanted = named or (subjects if len(subjects) == 1 else set())
     return next((chunk.content for fact, chunk in states if fact.subject in wanted), None)
-
-
-def _basis(verdict: DetectionVerdict) -> str:
-    """The one number a card shows: a model's probability. Nothing else is a score."""
-    if (
-        verdict.undetermined
-        or verdict.reason_code == CLAIM_UNSUPPORTED
-        or verdict.tier in (DIRECT_TIER, FACT_TIER, LOGPROB_TIER, CONFIRM_TIER)
-        or verdict.detector_model == RESTATEMENT_MODEL
-    ):
-        return ""
-    reading = "Entailment" if verdict.supported else "Contradiction"
-    return f"{model_label(verdict.detector_model)} {reading} {verdict.confidence:.2f}"
-
-
-def _method(verdict: DetectionVerdict) -> str:
-    """What decided the claim, in a word or two: the record, a rule, NLI, or logprobs."""
-    words = get_settings().hallucination_check.methods
-    if verdict.tier in (DIRECT_TIER, FACT_TIER):
-        return words.record
-    if verdict.tier == LOGPROB_TIER:
-        return words.logprobs.format(prob=verdict.confidence)
-    if verdict.tier == CONFIRM_TIER:
-        return words.confirmed.format(
-            model=model_label(verdict.detector_model), prob=verdict.confidence
-        )
-    if verdict.detector_model == RESTATEMENT_MODEL:
-        # A tool result restating the claim is the source saying it, not a rule.
-        from_tool = any(c.decisive and c.tier == TOOL_RESULT_KIND for c in verdict.evidence_checks)
-        return words.restated_source if from_tool else words.restated
-    if verdict.undetermined or verdict.reason_code == CLAIM_UNSUPPORTED:
-        # When a model read evidence, its readings say why; "no evidence" would be untrue.
-        read = any(check.model for check in verdict.evidence_checks)
-        return "" if read else words.nothing
-    return words.nli.format(model=model_label(verdict.detector_model), score=verdict.confidence)
-
-
-def _status(verdict: DetectionVerdict) -> str:
-    """The claim's verdict as one word: supported, undetermined, or why it was cut."""
-    if verdict.supported:
-        return "supported"
-    if verdict.undetermined:
-        return "undetermined"
-    if verdict.reason_code == CLAIM_UNSUPPORTED:
-        return "unsupported"
-    if verdict.reason_code in (LOW_CONFIDENCE_DEGENERATE, LOW_CONFIDENCE_SPECIFIC):
-        return "low_confidence"
-    return "refuted"
-
-
-def _decided_by(verdict: DetectionVerdict) -> str:
-    return "deterministic_provenance" if verdict.tier == DIRECT_TIER else verdict.tier
-
-
-# Evidence tiers, in the words a card shows.
-_TIER_NAMES = {
-    "tool_result": "tool result",
-    "policy": "policy",
-    "system": "system prompt",
-    "history": "customer message",
-    "retrieved": "knowledge",
-    "memory": "memory",
-}
-
-
-def _claim_check(verdict: DetectionVerdict) -> dict[str, Any]:
-    """One claim's verdict and the evidence trail behind it, for the card and the log."""
-    return {
-        "claim": verdict.claim,
-        "claim_class": verdict.claim_class,
-        "verdict": _status(verdict),
-        "decided_by": _decided_by(verdict),
-        "method": _method(verdict),
-        "sentence": verdict.sentence,
-        "basis": _basis(verdict),
-        "detector": verdict.detector_model,
-        "threshold": verdict.threshold,
-        "confidence": round(verdict.confidence, 3),
-        "rationale": verdict.rationale,
-        **({"reason_code": verdict.reason_code} if verdict.reason_code else {}),
-        "retrieval": f"top-{verdict.retrieval_top_k} by {verdict.retrieval_method or 'similarity'}",
-        "evidence": [
-            {
-                "rank": check.rank,
-                "similarity": check.similarity,
-                "tier": _TIER_NAMES.get(check.tier, check.tier),
-                "excerpt": check.excerpt,
-                "nli_label": check.nli_label,
-                "nli_score": check.nli_score,
-                "decisive": check.decisive,
-                "chosen": check.chosen,
-                "source": check.source,
-                "model": model_label(check.model) if check.model else "",
-            }
-            for check in verdict.evidence_checks
-        ],
-        "scores": _scores(verdict),
-        # What decided it, step by step: NLI, then (only if NLI did not support it) the
-        # second opinion — each with its answer, what that decided, and the line it read.
-        "readings": [reading.model_dump() for reading in readings(verdict)],
-    }
-
-
-def _scores(verdict: DetectionVerdict) -> dict[str, str]:
-    """Each model's reading of the claim, in one line: its deciding answer, else its surest.
-
-    `{"NLI DeBERTa": "neutral 1.00", "Laya": "supported 0.46"}` — which model said what, so
-    a claim confirmed by the second opinion still shows what NLI made of it.
-    """
-    best: dict[str, Any] = {}
-    for check in verdict.evidence_checks:
-        if not check.model:
-            continue
-        held = best.get(check.model)
-        if held is None or _rank(check) > _rank(held):
-            best[check.model] = check
-    return {
-        model_label(model): f"{_NLI_WORDS.get(c.nli_label, c.nli_label)} {c.nli_score:.2f}"
-        for model, c in best.items()
-    }
-
-
-def _rank(check: EvidenceCheck) -> tuple[bool, bool, float]:
-    """The line the verdict rests on first, then a decisive one, then the surest."""
-    return check.chosen, check.decisive, check.nli_score
-
-
-# The NLI model's third label, as a reader should meet it.
-_NLI_WORDS = {"unknown": "neutral"}
-
-
-def _provenance_report(response: str, evidence: list[Chunk]) -> list[str]:
-    """Each record id and amount the reply states, and which tier (if any) has it."""
-    label = get_settings().hallucination_check.record_identifier_label
-    orders = [
-        _found(f"{label} {record_id}", [c for c in evidence if record_id in numbers(c.content)])
-        for record_id in sorted(record_ids(response))
-    ]
-    stated = [
-        _found(str(amount), [c for c in evidence if amount in amounts(c.content)])
-        for amount in sorted(amounts(response))
-    ]
-    return orders + stated
-
-
-def _found(label: str, holders: list[Chunk]) -> str:
-    """`✓ $12.00 — tool result`, or `✗ $75.00 — not in any evidence`."""
-    tiers = list(dict.fromkeys(_TIER_NAMES.get(chunk.kind, chunk.kind) for chunk in holders))
-    return f"✓ {label} — {', '.join(tiers)}" if tiers else f"✗ {label} — not in any evidence"
-
-
-def _tiers_searched(evidence: list[Chunk]) -> str:
-    """What was looked in, e.g. `3 tool result · 1 policy · 4 knowledge`."""
-    counts: dict[str, int] = {}
-    for chunk in evidence:
-        name = _TIER_NAMES.get(chunk.kind, chunk.kind)
-        counts[name] = counts.get(name, 0) + 1
-    return " · ".join(f"{count} {name}" for name, count in counts.items()) or "no evidence"
 
 
 def _tier_counts(assessment: GenerationAssessment) -> dict[str, int]:

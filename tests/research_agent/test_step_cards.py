@@ -217,7 +217,7 @@ class TestTheReportCheckIsTheSharedCard:
 
         from agent_platform.hallucination_check.readings import EvidenceRef, Reading
         from agent_platform.interface.tui.widgets import _append_grounding
-        from research_agent.graph.run_nodes import _sentence_check
+        from research_agent.research.cards import _sentence_check
         from research_agent.synthesis.citation_guard import SentenceCheck
 
         cited = EvidenceRef(where="www.wef.org/r [E3]", excerpt="Hiring rose 4%.")

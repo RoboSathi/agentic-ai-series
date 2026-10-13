@@ -262,11 +262,9 @@ class AnswerNodes:
     def _context_fields(self, turn: Turn) -> dict[str, Any]:
         """What the session added to the question, on the first step only, and only if anything."""
         context, notes = turn.context, self._notes
-        lines = [
-            *([notes.context_turns.format(turns=context.turns)] if context.turns else []),
-            *([notes.context_runs.format(runs=", ".join(context.runs))] if context.runs else []),
-        ]
-        return {"session_context": lines} if lines else {}
+        if not context.turns:
+            return {}
+        return {"session_context": [notes.context_turns.format(turns=context.turns)]}
 
     @staticmethod
     def _usage(result: CompletionResult) -> dict[str, Any]:

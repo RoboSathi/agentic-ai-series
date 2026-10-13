@@ -11,7 +11,7 @@ client). What a resumed run needs back — the ledger, the spend, the trace
 """
 
 import operator
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Literal, TypedDict
 
 from pydantic import BaseModel, Field
 
@@ -88,7 +88,6 @@ class RunState(TypedDict, total=False):
     status: RunStatus | None
     stop_reason: str
     toggles: dict[str, bool]
-    index: dict[str, Any]
 
 
 class StateTypes(BaseModel):

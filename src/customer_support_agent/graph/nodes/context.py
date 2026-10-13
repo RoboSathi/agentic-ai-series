@@ -26,8 +26,9 @@ from agent_platform.memory.context_source import SOURCE_PREFIX as MEMORY_SOURCE_
 from agent_platform.memory.context_source import SUBJECT_ID
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION, WRITE_INTENT
-from customer_support_agent.graph.nodes._support import GROUNDING_EVIDENCE, NodeSupport
+from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
+from customer_support_agent.grounding.evidence import GROUNDING_EVIDENCE
 
 # Recalled semantic facts, by the source prefix `MemoryRecallContextSource` gives them.
 _SEMANTIC_SOURCE = f"{MEMORY_SOURCE_PREFIX}semantic:"

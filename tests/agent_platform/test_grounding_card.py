@@ -10,9 +10,27 @@ from typing import Any
 from rich.text import Text
 
 from agent_platform.config import get_settings
+from agent_platform.hallucination_check.claim_view import claim_check
+from agent_platform.hallucination_check.resolver import CLAIM_UNSUPPORTED, DIRECT_TIER, NO_TIER
+from agent_platform.hallucination_check.types import DetectionVerdict, EvidenceCheck
 from agent_platform.interface.tui.widgets import _append_grounding
 
 _SENTENCE = "Order 10986 totals $67.27."
+# The two claims as the check decides them; the card draws them through `claim_view`.
+_RECORD_CLAIM = DetectionVerdict(
+    claim="Order 10986 totals $67.27", supported=True, confidence=1.0, tier=DIRECT_TIER,
+    rationale="order_total is $67.27",
+    evidence_checks=[
+        EvidenceCheck(
+            rank=1, similarity=1.0, tier="tool_result", excerpt=_SENTENCE, nli_label="record",
+            nli_score=1.0, decisive=True, source="order_record:10986",
+        )
+    ],
+)  # fmt: skip
+_GROUNDLESS_CLAIM = DetectionVerdict(
+    claim="A reviewer will call you tonight", supported=False, confidence=0.0, tier=NO_TIER,
+    reason_code=CLAIM_UNSUPPORTED,
+)  # fmt: skip
 
 
 def _fields(**extra: Any) -> dict[str, Any]:
@@ -36,29 +54,7 @@ def _fields(**extra: Any) -> dict[str, Any]:
                 }
             ],
         },
-        "claim_checks": [
-            {
-                "claim": "Order 10986 totals $67.27",
-                "verdict": "supported",
-                "method": "record",
-                "rationale": "order_total is $67.27",
-                "evidence": [
-                    {
-                        "tier": "tool result",
-                        "source": "order_record:10986",
-                        "excerpt": "Order 10986 totals $67.27.",
-                        "nli_label": "record",
-                        "decisive": True,
-                    }
-                ],
-            },
-            {
-                "claim": "A reviewer will call you tonight",
-                "verdict": "unsupported",
-                "method": "no evidence",
-                "evidence": [],
-            },
-        ],
+        "claim_checks": [claim_check(_RECORD_CLAIM), claim_check(_GROUNDLESS_CLAIM)],
         **extra,
     }
 
@@ -76,12 +72,10 @@ class TestWhatTheCardSays:
         # Logprobs first, in one line: the mean, and the least sure sentence.
         assert "logprobs · test-model = 42% mean · lowest 42% (sentence 1)" in card
         assert f"42% {_SENTENCE}" in card
-        assert "✓ Order 10986 totals $67.27 [SUPPORTED] · record" in card
-        assert (
-            'supported by [Tool Result · order_record:10986]: "Order 10986 totals $67.27."' in card
-        )
-        assert "✗ A reviewer will call you tonight [UNSUPPORTED] · no evidence" in card
-        assert "unsupported: no evidence states this" in card
+        assert "✓ Order 10986 totals $67.27 [SUPPORTED]" in card
+        assert f'"{_SENTENCE}"' in card  # the record line that decided it
+        assert "✗ A reviewer will call you tonight [UNSUPPORTED]" in card
+        assert "no related evidence" in card
 
     def test_what_the_title_and_the_log_already_say_is_not_repeated(self) -> None:
         card = _card(_fields()).plain

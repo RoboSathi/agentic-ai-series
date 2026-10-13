@@ -11,7 +11,7 @@
                     synthesize → independent_audit ── must-pass gaps ──► gap_fill → batch_start
                                         │ (or audit withheld)
                                         ▼
-                                    finalize → archive → END
+                                    finalize → close → END
 
 A run never ends with nothing to show: a page that could not be read leaves its search
 snippet as labelled evidence (`research/snippets.py`); a ledger still empty at reflection gets
@@ -26,13 +26,13 @@ from the checkpointed snapshots, when a crashed run resumes).
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Any
 
 from langgraph.types import Send
 
 from agent_platform.config import FeatureSet
 from agent_platform.hallucination_check.confidence import ConfidenceCheck
-from agent_platform.hallucination_check.readings import check_rule
 from agent_platform.logging import describe_error
 from agent_platform.loop_control import SECONDS, BudgetGuard
 from agent_platform.memory.procedural.skills import AgentInstructions
@@ -41,7 +41,6 @@ from agent_platform.observability.step_events import HALLUCINATION_CHECK
 from agent_platform.observability.types import StatusKind
 from agent_platform.runtime.scheduling import AsyncDagScheduler, TaskGraph
 from agent_platform.runtime.verification.acceptance import AcceptanceCheckRegistry, CheckVerdict
-from research_agent.archive.store import ResearchArchive
 from research_agent.audit.context import CheckContext
 from research_agent.audit.independent import AuditResult, IndependentAuditor
 from research_agent.audit.verdict import AuditVerdict, decide
@@ -56,34 +55,33 @@ from research_agent.planning.ids import renumber
 from research_agent.planning.planner import Planner, PlanRejectedError
 from research_agent.presentation.narration import clip, say
 from research_agent.research import cards
+from research_agent.research.loop_policy import (
+    CANCELLED,
+    FINALIZE,
+    LoopSnapshot,
+    RunLoopPolicy,
+    truncated_by_budget,
+)
 from research_agent.research.reflector import FollowUpProposal, GapAnalyzer, Reflector
 from research_agent.research.resources import RunResources
 from research_agent.research.snippets import SnippetAdmission
 from research_agent.research.worker import UNREADABLE, ResearcherWorker
-from research_agent.synthesis.citation_guard import CitationGuard, GuardedReport, SentenceCheck
+from research_agent.synthesis.citation_guard import CitationGuard, GuardedReport
 from research_agent.synthesis.limits import build_limits, unmet_must_pass
 from research_agent.synthesis.synthesizer import Synthesizer
 
 Update = dict[str, Any]
 
 
-# The run graph's nodes, as LOOP CONTROL names the next step (`research_agent.run_loop.next`).
-_BATCH_START, _SYNTHESIZE, _GAP_FILL, _FINALIZE = (
-    "batch_start",
-    "synthesize",
-    "gap_fill",
-    "finalize",
-)
-_NEXT_BATCH, _REFLECT, _REVISE = "next_batch", "reflect", "revise"
+# The run graph's nodes, as LOOP CONTROL names the next step (`research_agent.run_loop.next`);
+# those the audit routes to are the loop policy's.
+_BATCH_START, _SYNTHESIZE = "batch_start", "synthesize"
+_NEXT_BATCH, _REFLECT = "next_batch", "reflect"
 # Why (`research_agent.run_loop.because`).
-_ANOTHER_ROUND, _CANCELLED, _NO_GAPS = "another_round", "cancelled", "no_gaps"
-_GAP_FILL_EXHAUSTED, _BUDGET_SPENT = "gap_fill_exhausted", "budget_spent"
-_REFLECTION_OFF, _GAPS_TO_FILL = "reflection_off", "gaps_to_fill"
+_ANOTHER_ROUND = "another_round"
 _GAP_FILL_PLANNED, _NO_FOLLOW_UP = "gap_fill_planned", "no_follow_up"
 _RESCUE = "rescue"
 _BATCH_DONE, _ROUND_DONE = "batch_done", "round_done"
-_WRITING_FAULTS, _REVISIONS_SPENT = "writing_faults", "revisions_spent"
-_REVISION_PLATEAU = "revision_plateau"
 
 
 @dataclass
@@ -94,7 +92,6 @@ class RunParts:
     analyzer: GapAnalyzer
     reflector: Reflector
     synthesizer: Synthesizer
-    archive: ResearchArchive
     registry: AcceptanceCheckRegistry[CheckContext]
     context: Any  # CheckContextFactory: (contract, ledger, report) -> CheckContext
     features: FeatureSet
@@ -141,18 +138,6 @@ class RunParts:
 # round of searching cannot help, so the run stops and says so.
 FAIL_FAST_CODES = frozenset({"undated", UNREADABLE})
 
-# Counters whose exhaustion cuts work short by itself: model calls and the clock stop mid-way,
-# so whatever was being written is unfinished. A refused search or page read (recorded in
-# `trace.budget_stops`) is not: the report says what was not read, and whether the contract was
-# still met is the audit's to judge. A run whose every must-pass criterion holds is COMPLETE
-# even if it could have read more.
-TRUNCATING_COUNTERS = frozenset({"tokens", "seconds"})
-
-
-def truncated_by_budget(exhausted: list[str]) -> bool:
-    """Whether a budget limit cut the run's work short, as opposed to merely bounding it."""
-    return bool(TRUNCATING_COUNTERS & set(exhausted))
-
 
 def fit_to_budget(follow_ups: list[SubQuestion], searches_left: float) -> list[SubQuestion]:
     """Follow-ups trimmed so their queries fit the searches that remain (one search per query)."""
@@ -188,6 +173,16 @@ class RunNodes:
     def revises(self) -> bool:
         """Whether the report is revised against the audit (the `revise` node exists)."""
         return self._p.reflection_enabled and self._p.max_revisions > 0
+
+    @cached_property
+    def _policy(self) -> RunLoopPolicy:
+        """When the run stops, where it goes after the audit, how it ends — from its parts."""
+        return RunLoopPolicy(
+            reflection_enabled=self._p.reflection_enabled,
+            writing_checks=self._p.writing_checks,
+            max_revisions=self._p.max_revisions,
+            min_score_gain=self._p.min_score_gain,
+        )
 
     @property
     def resources(self) -> RunResources:
@@ -274,14 +269,14 @@ class RunNodes:
 
     @staticmethod
     def after_plan(state: RunState) -> str:
-        return _FINALIZE if state.get("status") == "FAILED" else _BATCH_START
+        return FINALIZE if state.get("status") == "FAILED" else _BATCH_START
 
     # -- batches -------------------------------------------------------------------------
 
     async def batch_start(self, state: RunState) -> Update:
         if self.resources.cancelled:
             # `fan_out` will route to finalize; edges cannot draw, so this node says so.
-            self._report_loop(state, _FINALIZE, _CANCELLED)
+            self._report_loop(state, FINALIZE, CANCELLED)
         ready, blocked = self._ready(state)
         batch = state.get("batch", 0) + (1 if ready else 0)
         if ready:
@@ -300,7 +295,7 @@ class RunNodes:
 
     def fan_out(self, state: RunState) -> list[Send] | str:
         if self.resources.cancelled:
-            return _FINALIZE
+            return FINALIZE
         ready, _ = self._ready(state)
         if not ready:
             return "reflect_gap_analysis"
@@ -369,15 +364,17 @@ class RunNodes:
         failing = [v for v in verdicts if not v.passed]
         gaps = [v.item_id for v in failing]
         entities = GapAnalyzer.entities(ctx, ctx.entity_pattern)
-        stop, reason, judgeable, cause = self._should_stop(state, verdicts, entities)
+        archetype = contract.brief.archetype
+        rule = self._p.reflector.decide(archetype, verdicts, state.get("entities", 0), entities)
+        call = self._policy.after_reflect(self._snapshot(), rule)
+        reason, cause = call.reason, call.cause
         proposal = FollowUpProposal()
-        if not stop:
+        if not call.stop:
             update, proposal = await self._next_round(state, ctx, verdicts, gaps)
-        elif judgeable:
+        elif call.judge:
             update, proposal = await self._critiqued(state, ctx, verdicts, gaps, reason)
         else:
             update = {"gaps": gaps, "stop_reason": reason, "round_nodes": []}
-        archetype = contract.brief.archetype
         step = cards.FollowUpStep(
             gaps=failing,
             proposal=proposal,
@@ -406,41 +403,6 @@ class RunNodes:
             cause=None if another else cause,
         )
         return {**update, "entities": entities}
-
-    def _should_stop(
-        self, state: RunState, verdicts: list[CheckVerdict], entities: int
-    ) -> tuple[bool, str, bool, str | None]:
-        """Stop?, why, whether the model should judge the evidence before the run stops, and
-        the budget counter that stopped it (None when the run stopped on its own terms).
-
-        It judges whenever reflection is on and the run ends on its own terms — the stop rule
-        says answered, or the rounds or budget ran out — not when the operator stopped it, no
-        page could be read, or reflection is withheld.
-        """
-        r = self.resources
-        if r.cancelled:
-            return True, say("stop.cancelled"), False, None
-        blocked = self._unreadable_only()
-        if blocked:
-            return True, blocked, False, None
-        archetype = state["contract"].brief.archetype
-        decision = self._p.reflector.decide(archetype, verdicts, state.get("entities", 0), entities)
-        if not self._p.reflection_enabled:
-            if decision.stop:
-                return True, decision.reason, False, None
-            return True, say("stop.reflection_withheld"), False, None
-        if decision.stop:
-            # Answered is answered, even if a cap was reached getting there.
-            return True, decision.reason, True, None
-        # Rounds used up is the plan running its course, not a limit hit mid-way.
-        exhausted = [c for c in r.budget.exhausted_counters() if c != ROUNDS]
-        if exhausted or r.trace.budget_stops:
-            spent = exhausted or list(r.trace.budget_stops)
-            return True, say("stop.budget", counters=", ".join(spent)), True, spent[0]
-        if r.budget.remaining(ROUNDS) <= 0:
-            # The rounds ran out before the stop rule was met: that is the cap deciding.
-            return True, say("stop.max_rounds"), True, ROUNDS
-        return False, decision.reason, False, None
 
     def _rescue(self, state: RunState) -> Update | None:
         """One more round for a run that admitted nothing, instead of a report of nothing.
@@ -482,15 +444,7 @@ class RunNodes:
 
     def _rescue_card(self, nodes: list[SubQuestion], grant: Mapping[str, float]) -> None:
         r = self.resources
-        sections = {
-            say("rescue.section.why"): [say("rescue.why")],
-            say("rescue.section.grant"): [
-                say("rescue.grant", counter=counter, amount=amount)
-                for counter, amount in grant.items()
-            ],
-            say("rescue.section.questions"): [f"{n.node_id} · {n.question}" for n in nodes],
-        }
-        heading = say("rescue.heading", nodes=len(nodes))
+        heading, sections = cards.rescue_card(nodes, grant)
         r.telemetry.card("reflect_gap_analysis", heading, sections, status="warning")
         r.telemetry.audit(
             "scope.recency_relaxed",
@@ -707,20 +661,15 @@ class RunNodes:
         return rescue.best_effort_note
 
     def _guard_card(self, guarded: GuardedReport, ledger: Any) -> None:
-        """The report's HALLUCINATION CHECK, drawn as every agent's is: logprobs first, the
-        order the claims were checked in, then each cited sentence and its steps."""
+        """The report's HALLUCINATION CHECK card, and its audit entry."""
         clean = not guarded.dropped
         heading = cards.guard_heading(guarded)
-        fields = {
-            "outcome": say("guard.outcome" if clean else "guard.outcome_dropped", heading=heading),
-            "confidence": self._confidence(guarded),
-            "rule": check_rule(),
-            "claim_checks": [_sentence_check(check) for check in guarded.checks],
-            **({"rewrite_call": guarded.call.model_dump()} if guarded.call is not None else {}),
-        }
         r = self.resources
         r.telemetry.stage(
-            HALLUCINATION_CHECK, heading, fields, status="completed" if clean else "warning"
+            HALLUCINATION_CHECK,
+            heading,
+            cards.guard_fields(guarded, self._confidence(guarded)),
+            status="completed" if clean else "warning",
         )
         r.telemetry.audit(
             "report.citation_guard",
@@ -768,18 +717,18 @@ class RunNodes:
         audit = self._independence(audit, state.get("writer_model", ""))
         score = self._report_audit(audit, state["contract"].rubric)
         scores = [*state.get("audit_scores", []), score]
-        next_step, because = self._gap_fill_decision(audit, {**state, "audit_scores": scores})
+        route = self._policy.after_audit(self._snapshot(), audit, {**state, "audit_scores": scores})
         self._report_loop(
             state,
-            next_step,
-            because,
+            route.next_step,
+            route.because,
             {
                 "must_pass_gaps": len(audit.must_pass_gaps),
                 "writing_faults": len(self._findings(audit, state["contract"], writing_only=True)),
                 "revision": f"{state.get('revision', 0)} of {self._p.max_revisions}",
                 "audit_score": f"{score:.2f}",
             },
-            cause=self._budget_cause(because),
+            cause=route.cause,
         )
         return {"audit": audit, "audit_scores": scores}
 
@@ -843,63 +792,21 @@ class RunNodes:
     def _gap_fill_decision(
         self, audit: AuditResult | None, state: Mapping[str, Any] | None = None
     ) -> tuple[str, str]:
-        """Gap-fill, revise or finish, and why — one rule for the edge and its LOOP CONTROL card.
+        """Gap-fill, revise or finish, and why: the loop policy's rule, for the edge."""
+        route = self._policy.after_audit(self._snapshot(), audit, state or {})
+        return route.next_step, route.because
 
-        Missing evidence goes to gap-fill (more research); a fault in how the report is written
-        goes to a revision (the critic's findings back to the writer). Evidence first: a report
-        revised before its evidence is in would be revised again.
-        """
+    def _snapshot(self) -> LoopSnapshot:
+        """What the run has spent and seen, as the loop policy reads it."""
         r = self.resources
-        if audit is None:
-            return _FINALIZE, _NO_GAPS
-        if r.cancelled:
-            return _FINALIZE, _CANCELLED
-        evidence = [g for g in audit.must_pass_gaps if not self._writing(self._check_of(audit, g))]
-        blocked = self._gap_fill_blocked() if evidence else _NO_GAPS
-        if evidence and not blocked:
-            return _GAP_FILL, _GAPS_TO_FILL
-        if self._findings(audit, self.resources.contract, writing_only=True):
-            revise = self._revise_decision(state or {})
-            if revise[0] == _REVISE or not evidence:
-                return revise
-        return _FINALIZE, blocked
-
-    def _gap_fill_blocked(self) -> str:
-        """Why a gap-fill cannot run, or "" when it can."""
-        r = self.resources
-        if not self._p.reflection_enabled:
-            return _REFLECTION_OFF
-        if r.budget.remaining(GAP_FILL_ROUNDS) <= 0:
-            return _GAP_FILL_EXHAUSTED
-        if r.budget.exhausted_counters():
-            return _BUDGET_SPENT
-        return ""
-
-    def _revise_decision(self, state: Mapping[str, Any]) -> tuple[str, str]:
-        """Revise, while revisions are left and the last one raised the audit's score."""
-        if not self._p.reflection_enabled:
-            return _FINALIZE, _REFLECTION_OFF
-        if state.get("revision", 0) >= self._p.max_revisions:
-            return _FINALIZE, _REVISIONS_SPENT
-        scores = state.get("audit_scores", [])
-        if state.get("revision", 0) and len(scores) > 1:
-            if scores[-1] - scores[-2] < self._p.min_score_gain:
-                return _FINALIZE, _REVISION_PLATEAU
-        if truncated_by_budget(self.resources.budget.exhausted_counters()):
-            return _FINALIZE, _BUDGET_SPENT
-        return _REVISE, _WRITING_FAULTS
-
-    @staticmethod
-    def _check_of(audit: AuditResult, item_id: str) -> str:
-        return next((v.name for v in audit.verdicts if v.item_id == item_id), "")
-
-    def _budget_cause(self, because: str) -> str | None:
-        """The counter behind a budget-decided finish after the audit; None for any other."""
-        if because == _GAP_FILL_EXHAUSTED:
-            return GAP_FILL_ROUNDS
-        if because == _BUDGET_SPENT:
-            return next(iter(self.resources.budget.exhausted_counters()), None)
-        return None
+        return LoopSnapshot(
+            cancelled=r.cancelled,
+            exhausted=tuple(r.budget.exhausted_counters()),
+            budget_stops=tuple(r.trace.budget_stops),
+            rounds_left=r.budget.remaining(ROUNDS),
+            gap_fill_rounds_left=r.budget.remaining(GAP_FILL_ROUNDS),
+            unreadable_only=self._unreadable_only(),
+        )
 
     async def gap_fill(self, state: RunState) -> Update:
         r, audit = self.resources, state.get("audit")
@@ -928,7 +835,7 @@ class RunNodes:
         planned = bool(follow_ups)
         self._report_loop(
             state,
-            _BATCH_START if planned else _FINALIZE,
+            _BATCH_START if planned else FINALIZE,
             _GAP_FILL_PLANNED if planned else _NO_FOLLOW_UP,
             {"gap_fill_round": f"{state['gap_fill_round'] + 1}", "gaps": len(gaps)},
         )
@@ -941,9 +848,9 @@ class RunNodes:
 
     @staticmethod
     def after_gap_fill(state: RunState) -> str:
-        return _BATCH_START if state.get("round_nodes") else _FINALIZE
+        return _BATCH_START if state.get("round_nodes") else FINALIZE
 
-    # -- finalize and archive ------------------------------------------------------------------
+    # -- finalize and close ---------------------------------------------------------------------
 
     async def finalize(self, state: RunState) -> Update:
         r, contract = self.resources, state["contract"]
@@ -974,22 +881,14 @@ class RunNodes:
         }
 
     def _final_status(self, state: RunState) -> RunStatus:
-        r = self.resources
-        if r.cancelled:
-            return "CANCELLED"
-        if state.get("status") == "FAILED":
-            return "FAILED"
-        if state.get("audit_error"):
-            return "PARTIAL"  # nothing verified the report: never call it COMPLETE
-        truncated = truncated_by_budget(r.budget.exhausted_counters())
         verdict = self._verdict(self._final_verdicts(state), state["contract"].rubric)
-        # PARTIAL means the weighted score fell short, a must-pass criterion is unmet, or the
-        # model or the clock was cut off mid-way. A search or page the budget refused is in the
-        # report's limits; with every must-pass criterion met and the score high enough, the
-        # run is COMPLETE. Evidence admitted under a caveat (a snippet, outside the window) is
-        # what the run could find, not what it was asked for: PARTIAL.
-        weaker = self._rests_on_weaker_evidence()
-        return "PARTIAL" if truncated or weaker or verdict.outcome != "PASS" else "COMPLETE"
+        return self._policy.final_status(
+            self._snapshot(),
+            failed=state.get("status") == "FAILED",
+            audit_error=bool(state.get("audit_error")),
+            passed=verdict.outcome == "PASS",
+            weaker=self._rests_on_weaker_evidence(),
+        )
 
     def _final_verdicts(self, state: RunState) -> list[CheckVerdict]:
         audit = state.get("audit")
@@ -1041,7 +940,6 @@ class RunNodes:
         verdicts = self._final_verdicts(state)
         scored = bool(verdicts)
         urls = [e.source_url for e in state["ledger"].entries] if state.get("ledger") else []
-        saved = report is not None and status in ("COMPLETE", "PARTIAL")
         heading, sections = cards.final_card(
             status,
             state.get("stop_reason", ""),
@@ -1060,24 +958,18 @@ class RunNodes:
             len(r.trace.blocked_outbound),
             {name: (c.spent, c.cap) for name, c in r.budget.snapshot().items()},
             self._usage_fields()["model_usage"],
-            contract.contract_id if saved else "",
             r.trace.errors,
         )
         r.telemetry.card(
             "finalize", heading, sections, status="completed" if status == "COMPLETE" else "warning"
         )
 
-    async def archive(self, state: RunState) -> Update:
-        r = self.resources
-        report = state.get("report")
-        index: dict[str, Any] = {}
-        if report is not None and state.get("status") in ("COMPLETE", "PARTIAL"):
-            index = self._p.archive.archive(
-                state["contract"], report, _spent(r.budget)
-            ).model_dump()
+    async def close(self, state: RunState) -> Update:
+        """Nothing of the run is kept for a later one: every run researches fresh. Only the
+        critics' findings go to the dream inbox (they teach skills; they hold no evidence)."""
         self._remember(state)
-        r.ledger.discard()
-        return {"index": index}
+        self.resources.ledger.discard()
+        return {}
 
     def _remember(self, state: RunState) -> None:
         """What this run's critics found, left in the dream inbox for `make dream ra`."""
@@ -1165,21 +1057,6 @@ class RunNodes:
             criteria=criteria,
             cause=cause,
         )
-
-
-# What became of a cited sentence, as the shared card names a claim's verdict.
-_GUARD_VERDICTS = {"supported": "supported", "rewritten": "rewritten", "dropped": "removed"}
-
-
-def _sentence_check(check: SentenceCheck) -> dict[str, Any]:
-    """One cited sentence as a claim of the shared card: its verdict and the steps behind it."""
-    return {
-        "claim": check.sentence,
-        "verdict": _GUARD_VERDICTS[check.outcome],
-        "cited": check.cited,
-        **({"rewrite": check.rewrite} if check.rewrite else {}),
-        "readings": [reading.model_dump() for reading in check.readings],
-    }
 
 
 def _spent(budget: BudgetGuard) -> dict[str, float]:

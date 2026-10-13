@@ -82,7 +82,7 @@ def render_limits(
 def _rejection_lines(rejected: dict[str, str], codes: Mapping[str, str]) -> list[str]:
     """One line per rejection reason (count, reason, a few examples), not one per URL.
 
-    The complete list stays on `Report.rejected_sources` and in the archived report.
+    The complete list stays on `Report.rejected_sources`.
     """
     if not rejected:
         return []
@@ -96,9 +96,7 @@ def _rejection_lines(rejected: dict[str, str], codes: Mapping[str, str]) -> list
         reason = _generic(rejected[urls[0]])
         examples = ", ".join(urls[:EXAMPLES_PER_REASON])
         more = (
-            f" (+{len(urls) - EXAMPLES_PER_REASON} more in the archived report)"
-            if len(urls) > EXAMPLES_PER_REASON
-            else ""
+            f" (+{len(urls) - EXAMPLES_PER_REASON} more)" if len(urls) > EXAMPLES_PER_REASON else ""
         )
         lines.append(f"- {len(urls)} source(s) rejected — {reason}. e.g. {examples}{more}")
     return lines

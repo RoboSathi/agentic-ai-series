@@ -1,5 +1,5 @@
-"""The direct answer's context: working memory and earlier research, through the platform's
-context window when `context` is declared, and as plain blocks when it is withheld."""
+"""The direct answer's context: working memory, through the platform's context window when
+`context` is declared, and as plain blocks when it is withheld. Nothing from an earlier run."""
 
 from types import SimpleNamespace
 from typing import Any
@@ -14,39 +14,31 @@ from agent_platform.context import (
 )
 from agent_platform.memory.working import WorkingMemoryStore
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
-from research_agent.archive.store import RunIndexRow
 from research_agent.config import get_agent_settings
-from research_agent.context.earlier_runs import EarlierRunsSource
 from research_agent.context.session import AnswerContext
 from tests.research_agent.conftest import BuildHarness
 
 pytestmark = pytest.mark.usefixtures("ra_config")
 
-RUN = RunIndexRow(
-    run_id="run-7", archetype="explainer", topic="iron-air battery cycle life", status="COMPLETE",
-    contract_hash="h",
-)  # fmt: skip
 
-
-def _parts() -> tuple[WorkingMemoryStore, EarlierRunsSource]:
+def _working() -> WorkingMemoryStore:
     settings = get_agent_settings().answer
     working = WorkingMemoryStore(settings.context.history_turns)
     working.get("s").add_history("weather in Pune?", "Light drizzle, 26 °C.")
     working.get("s").set("run_status", "COMPLETE")
-    archive: Any = SimpleNamespace(history=lambda limit: [RUN])
-    return working, EarlierRunsSource(archive, settings.context, settings.messages)
+    return working
 
 
 def _context(window: bool) -> tuple[AnswerContext, list[Any]]:
     settings = get_agent_settings().answer
-    working, earlier = _parts()
+    working = _working()
     memory: Any = SimpleNamespace(working=working)
     feed = InMemoryLiveStatusFeed(max_events=0)
     shown: list[Any] = []
     feed.subscribe(shown.append)
     built = (
         ContextWindow(
-            FiveStagePipeline(sources=[WorkingMemoryContextSource(working), earlier]),
+            FiveStagePipeline(sources=[WorkingMemoryContextSource(working)]),
             StrategySelector(),
         )
         if window
@@ -55,7 +47,6 @@ def _context(window: bool) -> tuple[AnswerContext, list[Any]]:
     reporter = StageReporter(feed, "t")
     context = AnswerContext(
         memory,
-        earlier,
         settings.context,
         settings.messages,
         window=built,
@@ -64,14 +55,13 @@ def _context(window: bool) -> tuple[AnswerContext, list[Any]]:
     return context, shown
 
 
-async def test_the_window_carries_the_turns_the_state_and_earlier_research() -> None:
+async def test_the_window_carries_the_turns_and_the_state() -> None:
     context, shown = _context(window=True)
     session = await context.assemble("s", "what limits iron-air battery cycle life?")
     assert session.window is not None and session.blocks == []
     text = session.window.text
-    assert "Light drizzle" in text and "run_status" in text and "run-7" in text
+    assert "Light drizzle" in text and "run_status" in text
     assert session.history == []  # the turns are inside the window, not separate messages
-    assert session.runs == ["run-7"]
     assert any(e.stage == "context_assembly" for e in shown)
 
 
@@ -79,13 +69,8 @@ async def test_withheld_the_turns_go_as_the_conversation_they_were() -> None:
     context, shown = _context(window=False)
     session = await context.assemble("s", "what limits iron-air battery cycle life?")
     assert [m.role for m in session.history] == ["user", "assistant"]
-    assert any("run-7" in block for block in session.blocks)
+    assert any("run_status" in block for block in session.blocks)
     assert not shown
-
-
-async def test_a_question_sharing_no_words_finds_no_earlier_run() -> None:
-    _, earlier = _parts()
-    assert earlier.matching("weather tomorrow?") == []
 
 
 async def test_the_interview_is_remembered_in_working_memory(harness: BuildHarness) -> None:

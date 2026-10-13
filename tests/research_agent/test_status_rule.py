@@ -2,7 +2,7 @@
 
 import pytest
 
-from research_agent.graph.run_nodes import truncated_by_budget
+from research_agent.research.loop_policy import truncated_by_budget
 
 
 @pytest.mark.parametrize(

@@ -30,7 +30,7 @@ from research_agent.observability.telemetry import RunTelemetry
 from research_agent.prompts import answer as prompt
 from research_agent.research.recency import RecencyGuard
 
-# The session's own notes (its state, earlier runs) when no context window carries them.
+# The session's own notes (its state) when no context window carries them.
 SESSION = "session"
 TODAY = "today"
 

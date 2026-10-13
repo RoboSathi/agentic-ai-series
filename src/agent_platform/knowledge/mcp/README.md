@@ -4,4 +4,4 @@
 
 - **Entry points:** `SdkMcpTransport`, `SdkMcpSession`, `GovernedMcpToolSource`, `ConfiguredGovernancePolicy`, `server/analytics`
 - **Configuration:** an agent's `mcp.servers[]`, `mcp.default_envelope`
-- **Design:** [LLD §A23](../../../../design_docs/LLD.md#a23-knowledge-web-mcp-artifacts) · [ADR P-25](../../../../design_docs/ADR.md#p-25--the-analytics-mcp-server-and-the-governed-mcp-client)
+- **Design:** [LLD §A23](../../../../design_docs/LLD.md#a23-knowledge-web-mcp) · [ADR P-25](../../../../design_docs/ADR.md#p-25--the-analytics-mcp-server-and-the-governed-mcp-client)

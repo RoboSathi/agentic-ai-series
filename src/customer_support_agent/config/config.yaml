@@ -208,6 +208,10 @@ hallucination_check:
   # This agent's ids are five-digit order numbers (the same shape the
   # evals use). A record about another order cannot refute a claim.
   refute_identifier_pattern: '\b\d{5}\b'
+  # The conversation is the customer's message, on this agent's cards and log.
+  card:
+    tier_names:
+      history: customer message
   # A claim nothing grounds was made up: cut, and queued for a person like a wrong one.
   unsupported_is_hallucination: true
   # What the customer reads when nothing of a reply survived, by why. Every cut reply is

@@ -34,8 +34,6 @@ _PASS: Tone = "pass"
 _FAIL: Tone = "fail"
 _WARN: Tone = "warn"
 _DIM: Tone = "dim"
-# The NLI model's third label, as a reader should meet it.
-_NEUTRAL = {"unknown": "neutral"}
 
 
 class EvidenceRef(BaseModel):
@@ -132,7 +130,7 @@ def nli_step(
     return Reading(
         step=1,
         check=model_label(model),
-        result=f"{_NEUTRAL.get(label, label)} {score:.3f}",
+        result=f"{label_name(label)} {score:.3f}",
         decision=decision,
         tone=tone,
         lead=words.leads[outcome],
@@ -198,7 +196,7 @@ def _rule_reading(verdict: DetectionVerdict) -> Reading | None:
 def _nli_reading(verdict: DetectionVerdict) -> Reading:
     """Step 1: what NLI made of the claim, and whether that decided it."""
     lines = [c for c in verdict.evidence_checks if c.model and c.model != confirmer_id()]
-    line = _deciding(lines)
+    line = deciding(lines)
     nli_decided = verdict.tier not in (NO_TIER, CONFIRM_TIER) and not verdict.undetermined
     if line is None:
         words = get_settings().hallucination_check.readings
@@ -212,14 +210,19 @@ def _confirmer_reading(verdict: DetectionVerdict) -> Reading | None:
     """Step 2: the second opinion's answer — only when it was asked."""
     model = confirmer_id()
     lines = [c for c in verdict.evidence_checks if model and c.model == model]
-    line = _deciding(lines)
+    line = deciding(lines)
     # A claim NLI decided never reached the second opinion, so the card does not name it.
     if line is None:
         return None
     return confirmer_step(2, model, line.nli_label, line.nli_score, _refs([line]))
 
 
-def _deciding(lines: list[EvidenceCheck]) -> EvidenceCheck | None:
+def label_name(label: str) -> str:
+    """An NLI label as a reader meets it (`hallucination_check.card.label_names`)."""
+    return get_settings().hallucination_check.card.label_names.get(label, label)
+
+
+def deciding(lines: list[EvidenceCheck]) -> EvidenceCheck | None:
     """The line the verdict rests on, else a decisive one, else the one the model was surest of."""
     return max(lines, key=lambda c: (c.chosen, c.decisive, c.nli_score), default=None)
 
@@ -240,6 +243,8 @@ def _from_tool(verdict: DetectionVerdict) -> bool:
 
 __all__ = [
     "EvidenceRef",
+    "deciding",
+    "label_name",
     "Reading",
     "evidence_ref",
     "check_rule",

@@ -1,18 +1,31 @@
-# Report section templates per archetype. The synthesizer writes these
-# sections from the ledger; the sections after them are appended in code,
-# deterministically, for every archetype.
+# How each kind of report is shaped. The synthesizer chooses its own headings — specific to
+# this question and this evidence, as many as it needs up to the depth's
+# `report_max_sections` — following its kind's shape. Code then holds the outline to its
+# limits (`synthesis/outline.py`) and appends the sections after it, deterministically, for
+# every kind.
 decision_support:
-  sections: [Recommendation, Options compared, Trade-offs, Evidence by criterion]
+  shape: >-
+    Open with the recommendation and why it wins for the stated decision. Then compare the
+    options on the brief's criteria, and state the trade-offs a reader accepts with the choice.
 landscape_brief:
-  sections: [Overview, Players, Approaches and trends]
+  shape: >-
+    Open with what the landscape looks like now, within the stated scope. Then the players or
+    approaches that matter, grouped the way the evidence groups them, and the direction of travel.
 fact_verification:
-  sections: [Verdicts, Evidence]
+  shape: >-
+    Open with a verdict on each claim (true, false, mixed or unsettled) and the strongest
+    evidence for it. Then what the sources disagree on, and where each claim came from.
 explainer:
-  sections: [Summary, Concepts, Examples]
+  shape: >-
+    Open with a plain answer for the stated audience. Then build up from the core idea to the
+    parts the brief names, and use examples only where the evidence gives them.
 general:
-  sections: [Findings, Details]
+  shape: >-
+    Open with the direct answer to the question. Then the findings that support or qualify it,
+    grouped by what they are about.
 
-# Appended by code (synthesis/synthesizer.py), never by the model.
+# Appended by code (synthesis/synthesizer.py), never by the model. Their headings, with
+# Coverage & Limits, are reserved: a section the model gives one of them is dropped.
 appended:
   known_unknowns: Known unknowns
   rejected_sources: Rejected sources
@@ -20,3 +33,6 @@ appended:
 # A Coverage & Limits line for cited findings that rest on weaker evidence (a search snippet,
 # a source outside the approved window): `{count}`, `{caveat}`.
 weaker_evidence: "- {count} cited finding(s) rest on weaker evidence: {caveat}."
+# A section past the depth's limit is folded into the last one kept, under its own heading as
+# a bold line: `{heading}`.
+folded_heading: "**{heading}**"

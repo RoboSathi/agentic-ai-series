@@ -15,11 +15,10 @@ from customer_support_agent.config.settings import get_agent_settings
 from customer_support_agent.domain.models import Order, OrderStatus
 from customer_support_agent.graph.nodes._support import (
     ORDER_SNAPSHOT,
-    TOOL_BLOCKED,
-    TOOL_COMPLETED,
     NodeSupport,
 )
 from customer_support_agent.graph.state import AgentState
+from customer_support_agent.grounding.evidence import TOOL_BLOCKED, TOOL_COMPLETED
 from customer_support_agent.intent.router import Intent
 
 # The tool parameters a deterministic read knows how to fill.

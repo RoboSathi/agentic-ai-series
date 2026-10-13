@@ -172,7 +172,7 @@ class TestNoRawPageTextOutsideTheExtractor:
             reflector.build(
                 contract, [{"item_id": "R1"}], ["q"], [e.claim for e in ledger.entries], 2
             ),
-            synthesizer.build(contract, ledger, ["Recommendation"], []),
+            synthesizer.build(contract, ledger, {"shape": "s", "max_sections": 4}, []),
         ]
         for prompt in prompts:
             body = json.dumps(prompt.payload)

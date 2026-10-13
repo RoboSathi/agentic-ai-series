@@ -21,7 +21,13 @@ ROLE = "synthesizer"
 INSTRUCTIONS = """
 Write the research report from the evidence ledger only.
 
-- Use exactly the section headings given, in order.
+- Choose the report's own sections, following `outline.shape`: headings that name what this
+  question and this evidence are about ("Cycle life under daily cycling"), never generic ones
+  ("Summary", "Details", "Findings"). At most `outline.max_sections` sections; fewer is better
+  when the evidence is thin.
+- The first section answers the question directly, in its first sentence.
+- When the brief states a `deliverable_format`, shape the sections to it.
+- Never use a heading in `outline.reserved`: the run writes those sections itself.
 - Every factual sentence cites at least one ledger entry as [E<n>]; cite
   only ids that appear in the ledger. Write no fact the ledger lacks.
 - Put the citation inside the sentence, before its final full stop:
@@ -39,8 +45,6 @@ Write the research report from the evidence ledger only.
   site a source is, or what the evidence does or does not cover. A part of the question
   the ledger does not cover is left out: the run adds a Coverage & Limits section for it.
 - For a decision, recommend an option and state the trade-offs.
-- Do not write a Coverage & Limits, Known unknowns or Sources section;
-  those are added from the run's records.
 """
 
 
@@ -71,7 +75,7 @@ def ledger_view(ledger: LedgerSnapshot) -> list[dict[str, Any]]:
 def build(
     contract: Contract,
     ledger: LedgerSnapshot,
-    headings: list[str],
+    outline: dict[str, Any],
     gaps: list[str],
     previous: list[dict[str, str]] | None = None,
     findings: list[dict[str, Any]] | None = None,
@@ -82,7 +86,7 @@ def build(
         "brief": brief_view(contract),
         "rubric": rubric_view(contract),
         "ledger": ledger_view(ledger),
-        "sections": headings,
+        "outline": outline,
         "unmet_items": gaps,
     }
     if previous:
@@ -105,8 +109,8 @@ ledger only.
   does not cover, leave it out (Coverage & Limits, added by the run, says what was not found).
 - The findings are notes for you, not for the reader: never repeat their wording, the ids they
   name, or anything about entries, snippets, caveats or what the evidence covers.
-- Use exactly the section headings given, in order.
-- Do not write a Coverage & Limits, Known unknowns or Sources section.
+- Keep the previous report's headings, in order, unless a finding asks for a change to them;
+  stay within `outline.max_sections` and never use a heading in `outline.reserved`.
 - `skills_learned_from_past_runs` (when present) are skills a curator approved from what
   earlier runs' audits kept finding; follow them to avoid repeating a fault, never as evidence.
 """
@@ -121,7 +125,7 @@ REDRAFT_INSTRUCTION = (
 def build_revision(
     contract: Contract,
     ledger: LedgerSnapshot,
-    headings: list[str],
+    outline: dict[str, Any],
     previous: list[dict[str, str]],
     findings: list[dict[str, Any]],
     learned_skills: Sequence[str] = (),
@@ -135,7 +139,7 @@ def build_revision(
                 "task": "revise",
                 "brief": brief_view(contract),
                 "ledger": ledger_view(ledger),
-                "sections": headings,
+                "outline": outline,
                 "previous_report": previous,
                 "findings": findings,
                 **(

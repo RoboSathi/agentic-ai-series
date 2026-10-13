@@ -739,6 +739,7 @@ class ContextCardWords(BaseModel):
     part_line: str
     source_line: str
     tools_line: str
+    tools_title: str
     prefix_line: str
     prefix_none: str
     tokenizer_line: str
@@ -1155,6 +1156,8 @@ class ContextFailureDetectionSettings(BaseModel):
     min_relevance: float = Field(ge=0, le=1)
     max_tools: int = Field(ge=1)
     max_tool_schema_share: float = Field(gt=0, le=1)
+    # Requests smaller than this are never flagged for their schemas' share.
+    min_request_tokens_for_share: int = Field(ge=0)
     nli: bool
     max_pairs: int = Field(ge=0)
     max_sentences: int = Field(ge=1)
@@ -1892,6 +1895,13 @@ class HallucinationCardWords(BaseModel):
     no_claims: str
     lexical: str
     lexical_note: str
+    label_names: dict[str, str]
+    tier_names: dict[str, str]
+    provenance_found: str
+    provenance_missing: str
+    nothing_searched: str
+    retrieval: str
+    retrieval_default_method: str
 
 
 class HallucinationLevelWords(BaseModel):
@@ -3210,19 +3220,6 @@ class WebSettings(YamlBackedSettings):
         return resolve_path(self.fixtures_dir)
 
 
-class ArtifactSettings(YamlBackedSettings):
-    """Where frozen artifacts are archived, one directory per run."""
-
-    _yaml_section = "artifacts"
-    root: str
-
-    model_config = SettingsConfigDict(env_prefix="ARTIFACTS__")
-
-    @property
-    def resolved_root(self) -> Path:
-        return resolve_path(self.root)
-
-
 class AppConfig(BaseSettings):
     """Root config — one settings model per bounded context (LLD §1).
 
@@ -3273,7 +3270,6 @@ class AppConfig(BaseSettings):
         default_factory=lambda: PresentationSettings()  # type: ignore[call-arg]
     )
     web: WebSettings = Field(default_factory=lambda: WebSettings())  # type: ignore[call-arg]
-    artifacts: ArtifactSettings = Field(default_factory=lambda: ArtifactSettings())  # type: ignore[call-arg]
     analytics: AnalyticsSettings = Field(default_factory=lambda: AnalyticsSettings())  # type: ignore[call-arg]
     mcp: McpSettings = Field(default_factory=lambda: McpSettings())  # type: ignore[call-arg]
     # Which capabilities this deployment was given. Declared by the agent

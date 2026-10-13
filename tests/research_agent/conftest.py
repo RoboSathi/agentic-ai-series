@@ -30,7 +30,6 @@ from agent_platform.config import (
 )
 from agent_platform.core.persistence import IN_MEMORY, SqliteConnectionPool
 from agent_platform.durability import create_checkpointer, model_types
-from agent_platform.knowledge.artifacts import DirectoryArtifactStore
 from agent_platform.knowledge.web import FixtureStore, WebGateway
 from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import Message
@@ -135,7 +134,6 @@ def harness(ra_config: None, tmp_path: Path) -> BuildHarness:
                 state_types=model_types(StateTypes), path=tmp_path / "ckpt.db"
             ),
             audit=audit,
-            artifacts=DirectoryArtifactStore(tmp_path / "artifacts"),
             episodic=EpisodicStore(tmp_path / "episodic"),
         )
         return Harness(agent=agent, feed=feed, audit=audit, roles=roles)

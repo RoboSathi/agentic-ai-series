@@ -17,7 +17,6 @@ import time
 from collections.abc import Mapping, Sequence
 from functools import cache
 from typing import Any, cast
-from urllib.parse import urlparse
 
 from rich.text import Text
 from textual import events
@@ -33,7 +32,6 @@ from textual.widgets.option_list import Option
 from agent_platform.config import get_settings
 from agent_platform.core.primitives.money import money_or_none
 from agent_platform.hallucination_check.levels import CONFIDENCE_LEVEL as _FIRST_LEVEL
-from agent_platform.hallucination_check.resolver import CONFIRM_TIER
 from agent_platform.interface.presentation.text_tree import as_structure, message_lines, value_lines
 from agent_platform.interface.tui.labels import StageLabelRegistry
 from agent_platform.observability.step_events import subject_part
@@ -217,16 +215,8 @@ _CLAIM_MARKS = {
     "rewritten": ("↻", "warn", "rewritten"),
     "removed": ("✗", "fail", "removed"),
 }
-# The NLI result each verdict is decided by, and its display name.
-_DECIDING_LABEL = {"supported": "entailment", "refuted": "contradiction"}
-_REFUTED = "refuted"
 _UNDETERMINED = "undetermined"
 _UNSUPPORTED = "unsupported"
-_LOW_CONFIDENCE = "low_confidence"
-_NLI_NAMES = {"unknown": "neutral"}
-# A line of the record read directly, not scored by a model.
-_RECORD_LABEL = "record"
-_NOT_CHECKED = "not checked"
 # Policy passages are markdown; emphasis markers are noise in a one-line excerpt.
 _MARKDOWN_BOLD = "**"
 
@@ -1102,17 +1092,11 @@ def _append_grounding_row(body: Text, key: str, value: str) -> None:
 
 
 def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
-    """`✗ claim [CONTRADICTED] · record`, as a check line, then the one line that decided it.
+    """`✗ claim [CONTRADICTED]`, as a check line, then the steps that decided it.
 
-        supported by [Tool Result · cancel_order]: "Cancelled and refunded order 10245."
-        supported by [Policy] (Entailment 0.99): "…"
-        contradicted: Amount(s) ['$99.00'] appear in the reply but in no tool result.
-        unsupported: no evidence states this
-        low confidence: '67' written at 4% and no record confirms it
-
-    A probability appears only where a model gave one; the claim line names what
-    decided it otherwise (`record`, `logprobs 4%`). Everything else about how the
-    claim was checked is in `guardrails.log`.
+    The steps are the check's own (`hallucination_check/readings.py`), drawn as they come;
+    a claim no step read says why instead. Everything else about how the claim was checked
+    is in `guardrails.log`.
     """
     styles = get_settings().tui.body_styles
     verdict = str(check.get("verdict") or _UNDETERMINED)
@@ -1126,34 +1110,11 @@ def _append_claim(body: Text, check: Mapping[str, Any]) -> None:
         # Every step that ran, in order: what read the claim, what it said, what it decided.
         _append_steps(body, steps, str(check.get("claim") or ""))
         return
-    basis = str(check.get("basis") or "")
-    method = str(check.get("method") or "")
-    if method and not basis:
-        body.append(f" · {method}", style=styles["muted"])
-    evidence = [item for item in check.get("evidence") or [] if isinstance(item, Mapping)]
-    claim = str(check.get("claim") or "")
-    if verdict in (_UNDETERMINED, _UNSUPPORTED):
-        _append_unverified(body, evidence, name, claim)
-        return
-    if check.get("decided_by") == CONFIRM_TIER:
-        # NLI could not decide it and the second opinion confirmed it: each model's reading.
-        _append_readings(body, evidence, claim)
-        return
-    item = _deciding_evidence(verdict, evidence)
-    lead = "supported by" if verdict == "supported" else "contradicted by"
-    read = [i for i in evidence if i.get("decisive") and i.get("nli_label") == _RECORD_LABEL]
-    if verdict == _LOW_CONFIDENCE or item is None or not _decided(verdict, evidence):
-        # Decided by a rule or by logprobs, with no line to quote: say why instead.
-        head = name if verdict == _LOW_CONFIDENCE else lead.split()[0]
-        _append_proof(body, head, str(check.get("rationale") or ""), styles["value"])
-        return
-    key = f"{lead} [{_where(item)}]{f' ({basis})' if basis else ''}"
-    if len(read) > 1:
-        # Several facts decided it together ("$67.27 (order_total) is > $50.00 (refund_limit)"):
-        # the relation they were read in says more than any one of them.
-        _append_proof(body, key, str(check.get("rationale") or ""), styles["muted"])
-        return
-    _append_proof(body, key, f'"{_excerpt(item)}"', styles["muted"])
+    # No step read it (a figure no query row held): the check's own reason, else that
+    # nothing spoke to it. Which line decided a claim is the check's to say, never the card's.
+    words = get_settings().tui.grounding_card
+    nothing = words.no_evidence if verdict == _UNSUPPORTED else words.no_evidence_either_way
+    _append_proof(body, name, str(check.get("rationale") or "") or nothing, styles["value"])
 
 
 def _append_steps(body: Text, steps: list[Mapping[str, Any]], claim: str) -> None:
@@ -1238,94 +1199,11 @@ def _append_proof(body: Text, key: str, value: str, style: str) -> None:
     _append_pair(body, key, ": ", value, style)
 
 
-def _append_unverified(
-    body: Text, evidence: list[Mapping[str, Any]], name: str, claim: str
-) -> None:
-    """Why nothing decided the claim: what each model read and answered, or nothing near it."""
-    if not [item for item in evidence if _was_scored(item)]:
-        words = get_settings().tui.grounding_card
-        nothing = words.no_evidence if name == _UNSUPPORTED else words.no_evidence_either_way
-        _append_proof(body, name, nothing, get_settings().tui.body_styles["value"])
-        return
-    _append_readings(body, evidence, claim)
-
-
-def _append_readings(body: Text, evidence: list[Mapping[str, Any]], claim: str) -> None:
-    """One line per model that read the claim — its deciding line, else its surest:
-
-    NLI DeBERTa [Tool Result · robosathi.com] neutral 1.00: "Kumar Karan"
-    Laya [Tool Result · robosathi.com] supported 0.46 · read 21 lines: "Engineering Manager …"
-
-    A model that read many lines at once is quoted by the one closest to the claim; the log
-    keeps everything it read.
-    """
-    styles = get_settings().tui.body_styles
-    best: dict[str, Mapping[str, Any]] = {}
-    for item in (i for i in evidence if _was_scored(i)):
-        model = str(item.get("model") or "")
-        held = best.get(model)
-        if held is None or _strength(item) > _strength(held):
-            best[model] = item
-    for model, item in best.items():
-        label = str(item.get("nli_label"))
-        score = float(item.get("nli_score") or 0)
-        lines = [line for line in str(item.get("excerpt") or "").splitlines() if line.strip()]
-        read = f" · {get_settings().tui.grounding_card.lines_read.format(count=len(lines))}"
-        key = (
-            f"{model or 'NLI'} [{_where(item)}] {_NLI_NAMES.get(label, label)} {score:.2f}"
-            f"{read if len(lines) > 1 else ''}"
-        )
-        quoted = _closest_line(lines, claim) if len(lines) > 1 else _excerpt(item)
-        _append_proof(body, key, f'"{quoted}"', styles["muted"])
-
-
 def _closest_line(lines: list[str], claim: str) -> str:
     """The line sharing most words with the claim, clipped like any excerpt."""
     words = set(re.findall(r"\w+", claim.casefold()))
     best = max(lines, key=lambda line: len(words & set(re.findall(r"\w+", line.casefold()))))
     return _excerpt({"excerpt": best})
-
-
-def _strength(item: Mapping[str, Any]) -> tuple[bool, bool, float]:
-    """The line the verdict rests on first, then a decisive one, then the surest."""
-    return bool(item.get("chosen")), bool(item.get("decisive")), float(item.get("nli_score") or 0)
-
-
-def _was_scored(item: Mapping[str, Any]) -> bool:
-    """Whether a model read this line, as opposed to it being too far from the claim to be sent."""
-    label = str(item.get("nli_label") or "")
-    return bool(label) and not label.startswith(_NOT_CHECKED) and label != _RECORD_LABEL
-
-
-def _title(value: Any) -> str:
-    """`tool result` as `Tool Result`."""
-    return str(value or "").title()
-
-
-def _where(item: Mapping[str, Any]) -> str:
-    """`Tool Result · wef.org`: the tier, and where the line came from (a URL as its host)."""
-    source = str(item.get("source") or "")
-    host = urlparse(source).netloc if "://" in source else source
-    return f"{_title(item.get('tier'))} · {host}" if host else _title(item.get("tier"))
-
-
-def _decided(verdict: str, evidence: list[Any]) -> bool:
-    """Whether some line decisively carried the claim's verdict."""
-    wanted = {_DECIDING_LABEL.get(verdict), _RECORD_LABEL}
-    return any(
-        isinstance(item, Mapping) and item.get("decisive") and item.get("nli_label") in wanted
-        for item in evidence
-    )
-
-
-def _deciding_evidence(verdict: str, evidence: list[Any]) -> Mapping[str, Any] | None:
-    """The line that settled the claim, or the nearest one when none did."""
-    items = [item for item in evidence if isinstance(item, Mapping)]
-    wanted = {_DECIDING_LABEL.get(verdict), _RECORD_LABEL}
-    chosen = [i for i in items if i.get("chosen") and i.get("nli_label") in wanted]
-    decisive = [i for i in items if i.get("decisive") and i.get("nli_label") in wanted]
-    ranked = chosen or decisive or items
-    return ranked[0] if ranked else None
 
 
 def _excerpt(item: Mapping[str, Any]) -> str:

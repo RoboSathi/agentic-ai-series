@@ -1,6 +1,6 @@
 """The reader's view of a report: numbered sources, one finding per line, no bookkeeping.
 
-The archived report keeps what an auditor needs — evidence ids (`[E3]`), the quoted span,
+The report keeps what an auditor needs — evidence ids (`[E3]`), the quoted span,
 the page hash. A person reading the answer needs something else: `[E1][E2][E3]` are three
 claims from one page, and nothing in the answer says what they point to. This module turns
 a finished `Report` into text built for reading:
@@ -46,7 +46,7 @@ def render_reader_view(
     wording: ReaderViewWording,
     source_labels: Mapping[str, Sequence[str]] | None = None,
 ) -> str:
-    """The report as text for a person; the archived report is unchanged."""
+    """The report as text for a person; the report itself is unchanged."""
     pattern = re.compile(citation_pattern)
     cited: dict[str, Citation] = {c.entry_id: c for c in report.citations}
     numbers: dict[str, int] = {}  # source URL -> its number, by first citation

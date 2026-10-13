@@ -1,5 +1,5 @@
 .PHONY: gen-key help install clean lint type-check format test verify agent llm-check model-check models data refund-limit \
-	clean-memory show-memory dream memory-reindex review queue audit runs dummy-data analytics-export analytics-drop-legacy dashboard dashboard-install dashboard-refresh \
+	clean-memory show-memory dream memory-reindex review queue audit dummy-data analytics-export analytics-drop-legacy dashboard dashboard-install dashboard-refresh \
 	eval intent-eval _agent
 
 # -- agent registry -------------------------------------------------------------
@@ -13,7 +13,6 @@ csa_NAME := Customer Support Agent
 csa_PKG := customer_support_agent
 csa_OVERLAY := src/customer_support_agent/config/config.yaml
 csa_DATA := $(csa_PKG).dummy_data.generate_dummy_data $(if $(KEEP_MEMORY),--keep-memory)
-csa_RUNS :=
 csa_OFFLINE_PROFILE :=
 csa_EVALS := yes
 
@@ -21,7 +20,6 @@ ra_NAME := Research Agent
 ra_PKG := research_agent
 ra_OVERLAY := src/research_agent/config/config.yaml
 ra_DATA :=
-ra_RUNS := $(ra_PKG).archive.cli
 ra_OFFLINE_PROFILE :=
 # No eval suite yet: the fixture-world suite was removed (ADR ra-0019).
 ra_EVALS :=
@@ -30,12 +28,11 @@ ops_NAME := Ops Analyst (MCP demo: answers analytics questions through the platf
 ops_PKG := ops_agent
 ops_OVERLAY := src/ops_agent/config/config.yaml
 ops_DATA :=
-ops_RUNS :=
 ops_OFFLINE_PROFILE :=
 ops_EVALS :=
 
 # Targets whose second goal names the agent they act on.
-AGENT_SCOPED := agent data runs review queue audit pii-reveal dream show-memory clean-memory memory-reindex models eval intent-eval
+AGENT_SCOPED := agent data review queue audit pii-reveal dream show-memory clean-memory memory-reindex models eval intent-eval
 
 # `make eval <agent> [section] [full]`: one section (default: all three), over the agent's
 # core cases, attacks and metrics unless `full` is typed.
@@ -128,7 +125,6 @@ help:
 	@echo "  make agent ops            The Ops Analyst: the MCP demo agent. It answers questions about how the"
 	@echo "                            agents are running, using only the platform's analytics MCP server's tools;"
 	@echo "                            SOURCE=dummy reads the demo world from make dummy-data (its own turns still go to live)"
-	@echo "  make runs ra              List archived research runs"
 	@echo "  make audit <agent> [DECISION=…|STANDING=…|KIND=…|SINCE=24h|N=…|TRACE=<id>]   The audit trail, coloured"
 	@echo "  make review <agent> [KIND=…|ID=…] [ACTION=approve|deny ID=… COMMENT=…]   Human review queue (same as /review)"
 	@echo "  make pii-reveal <agent> T=<token> WHY=<reason>   What a PII token stood for (audited; needs PII_VAULT_KEY)"
@@ -229,10 +225,6 @@ llm-check model-check:
 data: _agent
 	@echo "$(YELLOW)make data $(AGENT) is now make dummy-data $(AGENT)$(NC)"
 	@$(MAKE) --no-print-directory dummy-data $(AGENT)
-
-runs: _agent
-	@test -n "$($(AGENT)_RUNS)" || (echo "$(YELLOW)'$(AGENT)' keeps no archived runs$(NC)" && exit 2)
-	@$(PYTHON) -m $($(AGENT)_RUNS) list
 
 # The one human review queue (ADR 0012): refunds, cut replies, quarantines, memory a curator
 # must confirm. `make review csa`, `make review ra KIND=skill`, `make review csa ID=7`,

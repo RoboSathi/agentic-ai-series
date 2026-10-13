@@ -44,7 +44,6 @@ from agent_platform.observability.units import (
     mark_cancelled,
     open_task,
 )
-from research_agent.archive.store import ResearchArchive
 from research_agent.config.settings import ResearchAgentSettings
 from research_agent.domain.report import COVERAGE_AND_LIMITS, Report, SessionPhase
 from research_agent.domain.rubric import Contract
@@ -99,7 +98,6 @@ class ResearchAgent:
         runs: DurableGraphRunner,
         run_nodes: RunNodes,
         resources: ResourcesFactory,
-        archive: ResearchArchive,
         telemetry: RunTelemetry,
         settings: ResearchAgentSettings,
         memory: MemoryFacade | None = None,
@@ -115,7 +113,6 @@ class ResearchAgent:
         self._runs = runs
         self._nodes = run_nodes
         self._resources = resources
-        self._archive = archive
         self._telemetry = telemetry
         self._logger = get_logger("research_agent")
         self._settings = settings
@@ -561,7 +558,7 @@ class ResearchAgent:
         )
 
     def _hidden_headings(self) -> frozenset[str]:
-        """Sections written in code for the archive; the reader view shows them its own way."""
+        """Sections written in code, not by the model; the reader view shows them its own way."""
         templates = yaml.safe_load(self._settings.synthesis.resolved_templates_path.read_text())
         return frozenset({*templates["appended"].values(), COVERAGE_AND_LIMITS})
 

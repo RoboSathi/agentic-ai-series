@@ -1,1 +1,1 @@
-"""Outside knowledge an agent reads: the web gateway, MCP servers and clients, frozen artifacts."""
+"""Outside knowledge an agent reads: the web gateway, and MCP servers and clients."""

@@ -32,13 +32,11 @@ from agent_platform.tools.types import ToolCall, ToolResult
 from customer_support_agent.config.settings import get_agent_settings
 from customer_support_agent.graph.loop_decision import after_execute_step
 from customer_support_agent.graph.nodes._support import (
-    TOOL_BLOCKED,
-    TOOL_COMPLETED,
-    TOOL_REFERRED,
     NodeSupport,
 )
 from customer_support_agent.graph.nodes.review_wait import AWAITING_REVIEW
 from customer_support_agent.graph.state import AgentState
+from customer_support_agent.grounding.evidence import TOOL_BLOCKED, TOOL_COMPLETED, TOOL_REFERRED
 from customer_support_agent.presentation.reporting import (
     gatekeeper_fields,
     loop_control_fields,

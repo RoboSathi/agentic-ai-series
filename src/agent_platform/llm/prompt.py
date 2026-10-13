@@ -83,6 +83,8 @@ class PromptManifest(BaseModel):
 
     sections: list[PromptSection] = Field(default_factory=list)
     tools: list[str] = Field(default_factory=list)
+    # The schemas themselves, as sent: the card shows what the tokens were spent on.
+    tool_specs: list[dict[str, Any]] = Field(default_factory=list)
     tool_schema_tokens: int = 0
     tokenizer: str = ""
     exact: bool = False
@@ -290,6 +292,7 @@ class PromptBuilder:
         manifest = PromptManifest(
             sections=[*self._system, *(section for section, _ in self._conversation)],
             tools=tool_names(self._tools),
+            tool_specs=list(self._tools),
             tool_schema_tokens=self._count(json.dumps(self._tools)) if self._tools else 0,
             tokenizer=self._tokenizer.name,
             exact=self._tokenizer.exact,

@@ -5,6 +5,9 @@ is under test is the harness: which pairs it asks about, which side of a clash i
 trust, what it cuts out of a transcript, and what reaches the model afterwards.
 """
 
+from typing import Any
+
+from agent_platform.config import get_settings
 from agent_platform.context import AssembledContext, Chunk, Task
 from agent_platform.context.failure import ContextFailureDetector, RotMonitor
 from agent_platform.context.offload import (
@@ -328,8 +331,36 @@ class TestTheRequest:
             for i in range(30)
         ]
         manifest = PromptBuilder(CharEstimateTokenizer(4)).system("p", "hi").tools(tools).build()
-        assert request_findings(manifest.manifest)
+        found = request_findings(manifest.manifest)
+        assert len(found) == 1 and "too many tool choices" in found[0]
         assert any("Request checks" == title for title in context_fields(manifest.manifest, "m"))
+
+    def test_a_lean_request_is_not_crowded_by_its_schemas(self) -> None:
+        # Five tools are most of a tiny prompt, yet crowd nothing out: not flagged.
+        manifest = (
+            PromptBuilder(CharEstimateTokenizer(4)).system("p", "hi").tools(_tools(5)).build()
+        )
+        assert manifest.manifest.tool_schema_tokens > manifest.manifest.total_tokens / 2
+        assert request_findings(manifest.manifest) == []
+
+    def test_schemas_crowding_a_large_request_are_named_as_such(self) -> None:
+        floor = get_settings().context.failure_detection.min_request_tokens_for_share
+        built = (
+            PromptBuilder(CharEstimateTokenizer(4)).system("p", "hi").tools(_tools(5, floor * 4))
+        )
+        found = request_findings(built.build().manifest)
+        assert len(found) == 1 and "tool schemas crowd the request" in found[0]
+
+    def test_the_card_shows_every_schema_and_its_share(self) -> None:
+        manifest = (
+            PromptBuilder(CharEstimateTokenizer(4)).system("p", "hi").tools(_tools(2)).build()
+        )
+        fields = context_fields(manifest.manifest, "m")
+        tools_line = fields["Sections"][-1]
+        assert "%" in tools_line and "2 tool(s)" in tools_line
+        body = next(lines for title, lines in fields.items() if title.startswith("Tool schemas"))
+        assert any("tool_0" in line for line in body) and any("tool_1" in line for line in body)
+        assert any("look something up" in line for line in body)
 
     def test_stable_window_chunks_extend_the_cacheable_prefix(self) -> None:
         stable = Chunk(
@@ -354,3 +385,19 @@ class TestTheRequest:
         note_prefix(first.manifest, "model-x")
         note_prefix(second.manifest, "model-x")
         assert first.manifest.prefix_seen is False and second.manifest.prefix_seen is True
+
+
+def _tools(count: int, description_chars: int = 0) -> list[dict[str, Any]]:
+    """`count` function tools; a long description makes their schemas weigh more."""
+    description = "look something up" + " x" * (description_chars // 2)
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": f"tool_{i}",
+                "description": description,
+                "parameters": {"type": "object", "properties": {"q": {"type": "string"}}},
+            },
+        }
+        for i in range(count)
+    ]

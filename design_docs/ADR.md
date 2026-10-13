@@ -23,9 +23,9 @@ old commits, logs or episode notes can still find the decision.
 | [Grounding and hallucination](#5-grounding-and-hallucination) | P-16 – P-18 |
 | [Models, resilience and metering](#6-models-resilience-and-metering) | P-19 – P-23 |
 | [Analytics, MCP and dashboards](#7-analytics-mcp-and-dashboards) | P-24 – P-27 |
-| [Evals and tests](#8-evals-and-tests) | P-28 – P-29 |
-| [Research agent](#9-research-agent) | R-01 – R-18 |
-| [Customer-support agent](#10-customer-support-agent) | C-01 – C-07 |
+| [Evals and tests](#8-evals-and-tests) | P-28 – P-35 |
+| [Research agent](#9-research-agent) | R-01 – R-20 |
+| [Customer-support agent](#10-customer-support-agent) | C-01 – C-08 |
 | [Ops agent](#11-ops-agent) | O-01 |
 
 ---
@@ -66,7 +66,7 @@ then behind a Protocol.
 
 **Consequences.** A new agent gets mechanisms, not a framework. Mechanisms added for the
 research agent (each unit-tested with neutral data): `runtime/scheduling` (`TaskGraph`,
-`AsyncDagScheduler`), `loop_control/budget.py` (`BudgetGuard`), `knowledge/artifacts`,
+`AsyncDagScheduler`), `loop_control/budget.py` (`BudgetGuard`),
 `hallucination_check/evidence` (`EvidenceLedger`, `VerbatimSpanValidator`), `knowledge/web`,
 the monthly quota in `resilience/rate_limiter`, `llm/roles.py`, `durability/isolated.py`,
 `durability/hitl.py`, `runtime/verification/acceptance.py`, `core/primitives/hashing.py`.
@@ -87,11 +87,11 @@ leaves, and databases, memory files and reports lived inside the source tree.
   it is (`tests/agent_platform/test_package_layout.py`).
 - The platform keeps its well-known subsystems at the top level and groups the small leaves:
   `core/` (primitives, persistence), `interface/` (tui, commands, presentation, host),
-  `runtime/` (executor, scheduling, verification), `knowledge/` (artifacts, web, mcp).
+  `runtime/` (executor, scheduling, verification), `knowledge/` (web, mcp).
   The evidence ledger lives with grounding (`hallucination_check/evidence/`); the Rill
   dashboards live with analytics (`analytics/dashboards/`).
 - Runtime state is outside `src/`, one folder per package: `db/<package>/` for every
-  database, `data/<package>/` for every other runtime file (memory, research runs, web cache,
+  database, `data/<package>/` for every other runtime file (memory, web cache,
   analytics Parquet, eval workspaces), `reports/<package>/` for eval reports. Every path is a
   config value; none is versioned.
 - An agent's `domain/` never imports its `persistence/` (a Protocol port in `domain/ports.py`);
@@ -617,6 +617,49 @@ narrative cards. The same helpers serve every agent.
 stage that stopped it (warning), failed, or done — with an agent's own preview replacing the
 raw output on success. Wording under `observability.step_events`.
 
+### P-34 — The CONTEXT card shows the tool schemas; crowding is judged on large requests only
+
+**Context.** The card's tree said `Tool schemas · 566 tokens · 5 tool(s)`, but the schemas
+were not on the card: every other section had a full-text body, and the tools had none. The
+confusion check then flagged a 1.2k-token research answer as "too many tool choices: 5 tools;
+their schemas are 47% of the request". The limit is 12 tools. It was the share rule that fired,
+and the share is meaningless on a lean prompt: 566 tokens crowd nothing out of a 131k window.
+
+**Decision.**
+- `PromptManifest.tool_specs` carries the schemas as sent. The card's tree gives the tools line a
+  share like every section, and a `Tool schemas` body shows every tool in full as a tree (name,
+  description, parameters).
+- The confusion check is two named rules:
+  - `confusion_tools` fires on the count only (`max_tools`).
+  - `confusion_schema_share` fires on the share (`max_tool_schema_share`), and only for a
+    request of at least `min_request_tokens_for_share` tokens.
+  Each finding names the rule that tripped and its limit.
+
+**Consequences.** A lean agent prompt is never flagged for its own leanness. Crowding is still
+caught where it can hurt: many tools, or schemas dominating a large request.
+
+### P-35 — A claim is projected once; a card renders the check's steps, never re-decides
+
+**Context.** Three layers each decided again what settled a claim. The guardrail built the
+card's dict (`_claim_check`, with its own `_rank`). The TUI then ranked that dict's evidence once
+more (`_strength`, `_deciding_evidence`, `_decided`), matching string labels, and imported
+`CONFIRM_TIER` from the resolver. `readings.py` had a third ranking (`_deciding`). The NLI label
+mapping `{unknown: neutral}` existed four times, and the platform guardrail hard-coded the CSA's
+"customer message" tier name.
+
+**Decision.**
+- `hallucination_check/claim_view.py` is the one projection from a verdict to a claim on the
+  card and in the log (verdict word, method, basis, per-model scores, evidence, steps).
+- `readings.deciding` is the one ranking of a claim's evidence; `readings.label_name` is the
+  one label mapping.
+- Tier names, label names and provenance wording live in `hallucination_check.card`; an agent
+  names its own tiers in its overlay.
+- The TUI renders a claim's `readings` steps. A claim no step read shows the check's own
+  reason. The widget no longer ranks evidence.
+
+**Consequences.** `guardrails/response.py` holds only enforcement (validate, check, repair,
+trim). Card tests now go through the real projection rather than hand-built dicts.
+
 ---
 
 ## 9. Research agent
@@ -799,17 +842,69 @@ for a Gatekeeper to authorize. `prompt_injection`, `content_moderation`, `pii`, 
 
 **Supersedes.** ra-0016.
 
-### R-18 — Three frozen artifacts per run
+### R-18 — Runs are not kept; every question is researched fresh
 
-**Decision.** Brief, Rubric and Report — each with a Markdown rendering — are frozen, hashed
-artifacts in `DirectoryArtifactStore` (`data/research_agent/runs/`). One index row per run goes to
-episodic memory. The evidence ledger is discarded: the report's citations carry URL, span, page
-hash and retrieval time. `make runs ra` lists runs and re-verifies every hash.
+**Context.** Each finished run used to be archived: Brief, Rubric and Report as frozen, hashed
+files, an episodic index row, and optionally a semantic pointer. A later question then had up to
+three of those runs offered back as "Earlier research" pointers in its context. Web research goes
+stale, and a pointer to last week's report invites the model to lean on it instead of searching.
 
-**Consequences.** Runs archived before a schema change may fail to load (`make runs ra` raises on
-an old `archetype: qa`); they are kept as history.
+**Decision.** Nothing of a run outlives it.
+- The run graph ends `finalize → close → END`. `close` leaves the critics' findings in the dream
+  inbox (they teach skills, R-15; they hold no evidence) and discards the evidence ledger.
+- No artifacts, no index row, no semantic pointer, and no earlier-run context source.
+- The direct answer's context window has working memory as its only source.
+- `make runs ra` is gone, and so is the platform's `knowledge/artifacts` store, which had no
+  other user.
+- The contract is still frozen and hashed at approval and re-checked at the end of the run
+  (R-05). The audit trail records the run.
 
-**Supersedes.** ra-0008.
+**Consequences.**
+- Every question pays for its own searches.
+- A delivered report lives in the conversation and the audit trail only.
+- LangGraph checkpoints remain, because Stop/Resume of a run in flight needs them (R-13).
+
+**Supersedes.** The earlier R-18 (three frozen artifacts per run), ra-0008.
+
+### R-19 — The report chooses its own outline
+
+**Context.** The synthesizer was given fixed headings per research kind (explainer: Summary,
+Concepts, Examples) and told to use exactly those. Most questions do not fit a fixed form, and
+a section with nothing true to say invites filler.
+
+**Decision.**
+- `report_templates.yaml` gives each kind a `shape`, a one-paragraph hint (decision support:
+  open with the recommendation and why).
+- The writer chooses headings specific to the question and evidence. It answers the question
+  in the first section, honours the brief's `deliverable_format`, and writes at most the depth's
+  `report_max_sections`.
+- Code holds the outline to its limits after the draft (`synthesis/outline.py`):
+  - empty sections and reserved headings (the sections the run appends) are dropped;
+  - a heading used twice becomes one section;
+  - sections past the cap fold into the last kept section under their own heading, so no cited
+    sentence is lost.
+- A revision keeps the previous headings unless a finding asks otherwise.
+
+**Consequences.**
+- Reports differ in shape from run to run. Readers, the citation guard and the audit already
+  read whatever sections exist.
+- An empty ledger yields no written sections at all; Coverage & Limits says why.
+
+### R-20 — The run's loop policy is one pure unit
+
+**Context.** `run_nodes.py` decided when a run stops, where it goes after the audit and how it
+ends inside its node methods, against live resources. The card and the edge each re-ran those
+private methods, and the only way to test a branch was to build a graph.
+
+**Decision.** `research/loop_policy.py`: `RunLoopPolicy.after_reflect`, `.after_audit` and
+`.final_status` take a `LoopSnapshot` (counters spent, budget stops, rounds left, cancelled,
+unreadable-only) and return a decision with its reason and cause. Nodes build the snapshot;
+edges and LOOP CONTROL cards ask the same policy. The rescue and report-check card builders
+moved to `research/cards.py`.
+
+**Consequences.** Every branch is unit-tested without a graph (`test_loop_policy.py`). The
+platform `LoopGovernor` still does not govern the research run loop; that remains the known
+follow-up.
 
 ---
 
@@ -882,6 +977,31 @@ description. Open: review the 50 labels; refit Laya's temperature on real traffi
 (`require_seeded`) rather than answer every user code as unknown.
 
 ---
+
+### C-08 — Grounding evidence and turn memory are services, not mixin methods
+
+**Context.** `NodeSupport` (the base of every node mixin) carried ~230 lines that assembled a
+reply's grounding evidence. The agent class carried the writes a finished turn makes to memory.
+Each changes for its own reason, and as mixin methods every node could reach them and every
+collaborator they used.
+
+**Decision.**
+- `grounding/evidence.py`: `GroundingEvidence.for_turn(TurnRecord)` covers the order record,
+  tool results and refusals, the policy and prompt rules, the articles, the typed facts and the
+  customer's words.
+- `memory/turn_memory.py`: `TurnMemory.complete(FinishedTurn)` covers working memory, the dream
+  inbox, and the claim offered to semantic memory.
+- Both read plain records, never `AgentState`, so neither imports the graph. The agent builds
+  both; `NodeSupport` keeps one-line delegates.
+
+**Consequences.** The mixin structure and the agent's constructor are unchanged; changing them
+would cost more than it buys.
+
+**Known constraint, not changed.** `security/pii/active.py` reads the process-wide published
+posture (`active_features()`) on every call, because review surfaces built outside a composition
+root must follow `/harness` hot. That is correct while a host runs one agent. Two agents with
+different `pii` postures in one process would need the host to own a posture per agent and hand
+it to those surfaces.
 
 ## 11. Ops agent
 
@@ -991,6 +1111,8 @@ bounded, and every call is governed and audited locally.
 | ra-0015 | `model_backend: fixture | routed` | Deleted (R-10) |
 | ra-0017 | Two modes, Q&A and Research, chosen by a gate | Superseded by R-01 |
 | ra-0022 §4 | Lessons written straight to episodic memory; LESSONS card | Superseded by R-15 |
+| R-18 (first), ra-0008 | Three frozen artifacts per run, `make runs ra`, earlier runs offered as context | Superseded by R-18; `knowledge/artifacts` deleted |
+| Fixed report headings per kind | `sections: [Summary, Concepts, Examples]` | Superseded by R-19 |
 | PRD G1 | Every action passes an always-invoked Gatekeeper | Retired by P-10 |
 | `control_loop` package (parked) | FSM + `LoopController` | Built as `loop_control` (`LoopGovernor`) |
 | `episodes/`, `make episode` | Per-episode scripts | Retired by P-06 |

@@ -22,6 +22,7 @@ from agent_platform.interface.presentation.text_tree import (
     VALUE_LAST,
     VALUE_PIPE,
     readable_lines,
+    value_lines,
 )
 from agent_platform.llm.prompt import PromptManifest, PromptSection, manifest_from_messages
 
@@ -91,7 +92,20 @@ def context_fields(manifest: PromptManifest, model: str) -> dict[str, Any]:
     for section in manifest.sections:
         title = f"{label(section.name)} · {section.tokens:,} tokens"
         fields[title] = section.shown or readable_lines(section.content)
+    if manifest.tool_specs:
+        title = words.tools_title.format(tokens=f"{manifest.tool_schema_tokens:,}")
+        fields[title] = tool_lines(manifest.tool_specs)
     return fields
+
+
+def tool_lines(specs: list[dict[str, Any]]) -> list[str]:
+    """Every offered tool as a tree under its name: description and parameters, in full."""
+    tree: dict[str, Any] = {}
+    for spec in specs:
+        function = spec.get("function", spec)
+        body = {key: value for key, value in function.items() if key != "name"}
+        tree[str(function.get("name", ""))] = body
+    return value_lines(tree)
 
 
 def announced_manifest(request: Any, purpose: str) -> PromptManifest | None:
@@ -122,11 +136,10 @@ def note_prefix(manifest: PromptManifest, model: str) -> None:
 
 
 def request_findings(manifest: PromptManifest) -> list[str]:
-    """What is wrong with the request as a whole (too many tools to choose among)."""
+    """What is wrong with the request as a whole: too many tools, or schemas crowding it."""
     found = tool_overload(len(manifest.tools), manifest.tool_schema_tokens, manifest.total_tokens)
-    if found is None:
-        return []
-    return [get_settings().context.window.finding_line.format(**found.model_dump())]
+    line = get_settings().context.window.finding_line
+    return [line.format(**item.model_dump()) for item in found]
 
 
 def window_tokens(model: str) -> int:
@@ -148,7 +161,9 @@ def _tree(manifest: PromptManifest, words: ContextCardWords) -> list[str]:
         lines.extend(_part_lines(section, words, _GAP if last else _PIPE))
     if manifest.tool_schema_tokens:
         tools = words.tools_line.format(
-            tokens=f"{manifest.tool_schema_tokens:,}", count=len(manifest.tools)
+            tokens=f"{manifest.tool_schema_tokens:,}",
+            count=len(manifest.tools),
+            share=_share(manifest.tool_schema_tokens, total),
         )
         lines.append(f"{_LAST}{tools}")
     return lines

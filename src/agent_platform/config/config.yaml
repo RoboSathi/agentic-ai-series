@@ -126,7 +126,6 @@ logging:
     budget: salmon1
     web: deep_sky_blue1
     ledger: aquamarine1
-    artifacts: wheat1
     verification: light_steel_blue
   file_enabled: true
   # The file log is the authoritative record, so it captures more than the
@@ -605,7 +604,9 @@ observability:
     section_line: "{label} · {tokens} tokens · {share}"
     part_line: "{label} · {tokens} tokens"
     source_line: "from {source}"
-    tools_line: "Tool schemas · {tokens} tokens · {count} tool(s)"
+    tools_line: "Tool schemas · {tokens} tokens · {share} · {count} tool(s)"
+    # The schemas' own body below the tree, every tool in full: `{tokens}`.
+    tools_title: "Tool schemas · {tokens} tokens"
     prefix_line: "stable prefix · {tokens} tokens · signature {signature}"
     prefix_none: "stable prefix · none"
     tokenizer_line: "counted with {tokenizer}"
@@ -1142,7 +1143,8 @@ context:
       distraction_chunk: {rule: unrelated to the task, detail: "similarity {score:.2f} below {floor:.2f}"}
       distraction_window: {rule: unrelated to the task, detail: "over {ratio:.0%} of chunks are off the task"}
       confusion_window: {rule: near-duplicate chunks, detail: "over {ratio:.0%} of chunks are near-copies"}
-      confusion_tools: {rule: too many tool choices, detail: "{tools} tools; their schemas are {share:.0%} of the request"}
+      confusion_tools: {rule: too many tool choices, detail: "{tools} tools, over the limit of {limit}"}
+      confusion_schema_share: {rule: tool schemas crowd the request, detail: "schemas are {share:.0%} of a {tokens:,}-token request, over {limit:.0%}"}
       rot: {rule: answer quality fell as the window grew, detail: "score {observed:.2f} against a baseline of {baseline:.2f}, past {checkpoint} tokens"}
   failure_detection:
     # Rot: a session's answers are scored as its window grows (logprob confidence and the
@@ -1157,9 +1159,12 @@ context:
     mode_ratio: 0.5
     # Distraction: a retrieved chunk this unlike the task is off it.
     min_relevance: 0.1
-    # Confusion: more tools than this, or tool schemas over this share of the request.
+    # Confusion: more tools than this; or tool schemas over this share of a request of at
+    # least `min_request_tokens_for_share` tokens. Below that size the share only says the
+    # prompt is lean (566 schema tokens are 47% of a 1.2k request and crowd out nothing).
     max_tools: 12
     max_tool_schema_share: 0.4
+    min_request_tokens_for_share: 8000
     # Clash and poisoning in prose, by the local NLI model: only sentence pairs that name the
     # same record (an order number) are compared — the most similar first, at most
     # `max_pairs` of them — and a contradiction scored at `contradiction_score` or more counts.
@@ -1617,6 +1622,24 @@ hallucination_check:
     # The detector name prefix of the word-overlap fallback, which is not NLI.
     lexical: lexical
     lexical_note: " · lexical fallback (NLI model unavailable)"
+    # The NLI model's labels as a reader meets them: its third label reads as "neutral".
+    label_names: {unknown: neutral}
+    # Each evidence tier as a card and the log name it. An agent's overlay names its own
+    # (the support agent's conversation is the customer's message).
+    tier_names:
+      tool_result: tool result
+      policy: policy
+      system: system prompt
+      history: conversation
+      retrieved: knowledge
+      memory: memory
+    # A record id or amount the reply states, found in these tiers, or in none: `{label}`, `{tiers}`.
+    provenance_found: "✓ {label} — {tiers}"
+    provenance_missing: "✗ {label} — not in any evidence"
+    nothing_searched: no evidence
+    # How a claim's evidence was retrieved, for the log: `{top_k}`, `{method}`.
+    retrieval: "top-{top_k} by {method}"
+    retrieval_default_method: similarity
   # What decided a claim, as its card line names it.
   methods:
     record: record
@@ -2888,7 +2911,3 @@ web:
     timeout_seconds: 20
     time_limits: {1: d, 7: w, 31: m, 366: y}
     rate_bucket: duckduckgo
-
-# Frozen artifacts (agent_platform/knowledge/artifacts), one directory per run.
-artifacts:
-  root: data/agent_platform/artifacts

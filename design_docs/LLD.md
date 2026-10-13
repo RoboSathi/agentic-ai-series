@@ -18,7 +18,7 @@ Every package's own `README.md` is a short pointer to its section here.
   [context](#a15-context) · [memory](#a16-memory) · [hallucination_check](#a17-hallucination_check) ·
   [guardrails](#a18-guardrails) · [resilience](#a19-resilience) ·
   [observability](#a20-observability) · [audit](#a21-audit) · [review](#a22-review) ·
-  [knowledge](#a23-knowledge-web-mcp-artifacts) · [interface](#a24-interface-tui-commands-presentation-host) ·
+  [knowledge](#a23-knowledge-web-mcp) · [interface](#a24-interface-tui-commands-presentation-host) ·
   [evals](#a25-evals) · [analytics](#a26-analytics)
 - Part B — Agents
   [Customer Support](#b1-customer-support-agent) · [Research](#b2-research-agent) ·
@@ -457,7 +457,7 @@ policy version, the verdict and its standing. It decides nothing; it remembers.
 - **Config.** `review:` — table, `min_comment_chars`, kinds, audit action and trace templates,
   console reviewer, every word shown.
 
-## A23. knowledge (web, mcp, artifacts)
+## A23. knowledge (web, mcp)
 
 **`knowledge/web`** — one gateway for agents' web access, live / record / replay.
 `create_web_gateway()`; `WebGateway` (observer-notified `search`, `fetch`); `SearchRouter`
@@ -473,9 +473,6 @@ schema-built argument models, the MCP SERVER card), `server/analytics/` (`build_
 `python -m agent_platform.knowledge.mcp.server.analytics`). Config: an agent's
 `mcp.servers[]` (name, transport, command — `{python}` is this interpreter — namespace,
 envelope) and `mcp.default_envelope`.
-
-**`knowledge/artifacts`** — frozen, hashed artifacts. `FrozenArtifact` (canonical hash,
-`verify`), `ArtifactStore` (Protocol), `DirectoryArtifactStore`, `ArtifactTamperedError`.
 
 ## A24. interface (tui, commands, presentation, host)
 
@@ -587,9 +584,10 @@ into (`gatekeeper/`, `memory/`, `review/`, …): that is where the agent's side 
 | `review/` | `ReviewQueueService` (approve resumes the waiting durable run); referral of escalated refunds |
 | `console/` | `CustomerSupportHost` (prepare: warm the classifier and NLI, sync the knowledge base, recover orphaned runs; settlement sweep as `HousekeepingHost`); `/void`, `/cancel`, `/kb`, `/skills`, the support review handler (`refund`, `cancel_and_refund`, `reply`) |
 | `loop_control/` | `OutputQualityGate`: `PlanLookup` (configured tool order per intent), `GroundedCritic` (one deterministic critique), at most one repair, `IndependentScorer` |
+| `grounding/` | `GroundingEvidence` — every tier a reply is checked against, for one `TurnRecord` (order record, tool results and refusals, policy and prompt rules, articles, typed facts, the customer's words) |
 | `presentation/` | Order menu and details rendered from the record; grounding facts (`facts.py`); stage-card fields |
 | `prompts/` | `AGENT.md` (profile), `skills/*/SKILL.md` (order-status, order-details, list-orders, refund-workflow, refund-status, cancel-order), reply prompts, `customer_policy.md` |
-| `memory/` | `support_memory_profile()` — session summaries by BART, checked by NLI |
+| `memory/` | `support_memory_profile()` — session summaries by BART, checked by NLI; `TurnMemory` — what a finished turn leaves in working memory, the dream inbox and (as a claim) semantic memory |
 | `persistence/` | `schema.sql`, `OrdersRepository`, `UsersRepository`, `RefundLedgerRepository`, `require_seeded` |
 | `security/` | `CustomerAuthenticator` — seven-character user codes from an unambiguous alphabet |
 | `observability/`, `analytics/` | `TurnAccountant` (SLO outcomes); Tier-2 facts, semantic layer and dummy profile |
@@ -617,10 +615,9 @@ refund is voidable until it settles.
 | `scoping/` | Research kind (`kind.py`: cues → example classifier → LLM), checklists per kind, hybrid termination (`termination.py`), the anti-sycophancy guard, time windows, `BriefBuilder` |
 | `rubric/` | Templates per kind, the deterministic generator, the editor, freeze and hash |
 | `planning/` | The planner and the plan validation gate (acyclic, bounded, traced) |
-| `research/` | The worker (bounded act–observe per sub-question), the three content defences, extraction (verbatim spans), reflection (`GapAnalyzer`), stop rules (one per kind), recency |
-| `synthesis/` | The report writer, the citation guard, Coverage & Limits (built in code) |
+| `research/` | The worker (bounded act–observe per sub-question), the three content defences, extraction (verbatim spans), reflection (`GapAnalyzer`), stop rules (one per kind), recency; `RunLoopPolicy` (`loop_policy.py`) — stop after reflection, route after the audit, final status, from a `LoopSnapshot` |
+| `synthesis/` | The report writer (its own outline, held to limits in `outline.py`), the citation guard, Coverage & Limits (built in code) |
 | `audit/` | Named acceptance checks and `IndependentAuditor` (`audit_report(contract, report, ledger_snapshot)`) |
-| `archive/` | The three-artifact archive and run index; `make runs ra` |
 | `tools/` | Direct-answer tools: web search, page fetch, weather, clock — all through the platform tool path |
 | `guardrails/` | The person's message screen (`input_screen.py`), page evidence for the direct answer |
 | `memory/` | `research_memory_profile()`; `RunEventWriter` (run dream events) |

@@ -63,7 +63,6 @@ class MessageSettings(BaseModel):
     cancel_requested: str
     delivered: str
     new_scope: str
-    unknown_run: str
     # `{error}`: why a scoping step failed (the session is left ready for a new question).
     scope_failed: str
     # What working memory keeps of a delivered run: `{run_id}`, `{status}`, `{topic}`.
@@ -112,6 +111,8 @@ class ScopingSettings(BaseModel):
     checklists_path: str
     refuse_patterns: list[str]
     archetype_keywords: dict[str, list[str]]
+    # A run's contract id starts with this.
+    contract_id_prefix: str
     # The cue rules name a research kind only when at least this many of that kind's cues
     # appear (and no other kind ties it); otherwise the encoder, then the LLM.
     kind_rule_min_cue_hits: int = Field(ge=1)
@@ -271,6 +272,8 @@ class DepthProfile(BaseModel):
     report_entries: int = Field(ge=1)
     # Output-token cap for the synthesizer call.
     report_max_tokens: int = Field(ge=1)
+    # The most sections the writer's own outline may have; more are folded into the last.
+    report_max_sections: int = Field(ge=1)
 
 
 class ReflectionSettings(BaseModel):
@@ -457,12 +460,8 @@ class AnswerMessages(BaseModel):
     # The context handed to the model, as system-prompt blocks.
     session_state_heading: str
     state_line: str
-    earlier_heading: str
-    # `{run_id}`, `{status}`, `{topic}`.
-    earlier_line: str
-    # The THOUGHT card's context lines: `{turns}`; `{runs}`.
+    # The THOUGHT card's context line: `{turns}`.
     context_turns: str
-    context_runs: str
     # Tool messages: `{timezone}`; `{location}`; `{status}`; `{why}`.
     unknown_timezone: str
     no_place: str
@@ -487,13 +486,6 @@ class AnswerContextSettings(BaseModel):
 
     # Recent turns of this session handed to the model (also the working memory's bound).
     history_turns: int = Field(ge=0)
-    # Earlier archived runs scanned for ones that bear on the question, and how many are shown.
-    recall_scan: int = Field(ge=0)
-    recall_limit: int = Field(ge=0)
-    # Words shorter than this do not count when matching a question to an earlier run.
-    min_word_chars: int = Field(ge=1)
-    # Words a question must share with an earlier run's topic for the run to be offered.
-    min_overlap: int = Field(ge=1)
 
 
 class WeatherSettings(BaseModel):
@@ -595,16 +587,6 @@ class AnswerSettings(BaseModel):
     grounding: AnswerGroundingSettings
     weather: WeatherSettings
     messages: AnswerMessages
-
-
-class ArchiveSettings(BaseModel):
-    # Remember each run as a semantic fact too. The episodic index row is the run pointer;
-    # a "fact" about a report is not something the agent believes true.
-    semantic_pointer: bool = False
-    run_id_prefix: str
-    # `make runs ra`: the archive read straight from the artifact store.
-    list_headers: list[str]
-    list_empty: str
 
 
 class CancelSettings(BaseModel):
@@ -726,11 +708,10 @@ class ResearchAgentSettings(YamlBackedSettings):
     kind_encoder: KindEncoderSettings
     answer: AnswerSettings
     recency: RecencySettings
-    # The reply shows numbered sources and one finding per line; the archived report keeps
+    # The reply shows numbered sources and one finding per line; the report itself keeps
     # the evidence ids. Off: the raw report text.
     reader_view: bool = True
     reader_view_wording: ReaderViewWording
-    archive: ArchiveSettings
     cancel: CancelSettings
     tui: PanelSettings
 

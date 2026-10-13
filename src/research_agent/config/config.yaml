@@ -47,7 +47,7 @@ features:
     # curator approves it, is selected at plan for the next run of that kind. No role has an
     # authored skill (ra-0021): each role's own instructions already are its procedure.
     procedural: true
-  # The platform's context window for the direct answer: working memory and earlier research,
+  # The platform's context window for the direct answer: the session's working memory,
   # ranked, fitted and health-checked. The reranker is a hosted cross-encoder: off by default.
   context:
     enabled: true
@@ -222,9 +222,6 @@ web:
     timeout_seconds: 10
     max_attempts: 2
 
-artifacts:
-  root: data/research_agent/runs
-
 persistence:
   db_path: db/research_agent/agent.db
 
@@ -363,8 +360,7 @@ research_agent:
     cancel_requested: Cancelling the run; it stops at the next safe point and keeps its checkpoint.
     delivered: "Run {run_id} finished: {status}. {summary}"
     new_scope: Ask a new question to start another scope.
-    unknown_run: "No archived run '{run_id}'."
-    run_note: "Research run {run_id} finished {status}, on: {topic}. It can be opened with /show {run_id}."
+    run_note: "Research run {run_id} finished {status}, on: {topic}."
     scope_failed: "Could not continue: {error}. Nothing was lost; ask again, or start over with /research <question>."
     brief_ready: "The Scope Brief is ready (no acceptance criteria: the rubric is withheld). /approve starts the run."
 
@@ -376,6 +372,8 @@ research_agent:
     affirmations:
       - '(?:yes|yeah|yep|ok|okay|sure|done|approve[d]?|go ahead|go|proceed|looks good|lgtm|sounds good|confirm(?:ed)?|perfect|great)[.!]*'
     max_turns: 12
+    # A run's contract id starts with this (`run-01ff185590`).
+    contract_id_prefix: run
     # The anti-sycophancy guard: at least one challenge or follow-up every K turns.
     challenge_every_k_turns: 3
     checklists_path: src/research_agent/scoping/checklists.yaml
@@ -456,20 +454,24 @@ research_agent:
 
   # How big a run is, chosen in the interview ("small", "medium", "large" or "N pages"); small
   # when unanswered. Each budget is lowered to the ceiling above if it asks for more. The report
-  # shows `report_entries` ledger entries, written within `report_max_tokens`.
+  # shows `report_entries` ledger entries, written within `report_max_tokens` as at most
+  # `report_max_sections` sections the writer chooses (synthesis/report_templates.yaml).
   depths:
     small:
       budget: {max_searches: 3, max_fetches: 6, max_tokens: 60000, max_seconds: 300, max_rounds: 1, max_dag_nodes: 2, max_gap_fill_rounds: 0, concurrency: 2}
       report_entries: 12
       report_max_tokens: 3072
+      report_max_sections: 4
     medium:
       budget: {max_searches: 5, max_fetches: 12, max_tokens: 120000, max_seconds: 600, max_rounds: 2, max_dag_nodes: 4, max_gap_fill_rounds: 1, concurrency: 2}
       report_entries: 28
       report_max_tokens: 5120
+      report_max_sections: 6
     large:
       budget: {max_searches: 8, max_fetches: 24, max_tokens: 200000, max_seconds: 900, max_rounds: 3, max_dag_nodes: 8, max_gap_fill_rounds: 1, concurrency: 2}
       report_entries: 60
       report_max_tokens: 8192
+      report_max_sections: 8
 
   planning:
     max_queries_per_node: 2
@@ -695,11 +697,6 @@ research_agent:
     clock_format: "%A, %d %B %Y, %H:%M:%S %Z (UTC%z)"
     context:
       history_turns: 6
-      recall_scan: 50
-      recall_limit: 3
-      min_word_chars: 4
-      # An earlier run is offered only when the question shares this many words with its topic.
-      min_overlap: 2
     grounding:
       entity_pattern: "\\b(?:[A-Z][\\w'-]+\\s+)+[A-Z][\\w'-]+\\b"
       name_unknown_share: 0.5
@@ -797,10 +794,7 @@ research_agent:
       withheld: "I could not verify an answer from the sources I found. Try again, or use /research for a fuller run."
       session_state_heading: "# Session state"
       state_line: "- {key}: {value}"
-      earlier_heading: "# Earlier research in this workspace (pointers, not facts)"
-      earlier_line: "- {run_id} · {status} · {topic} (open it with /show {run_id})"
       context_turns: "{turns} earlier turn(s) of this conversation"
-      context_runs: "earlier research offered as pointers: {runs}"
       unknown_timezone: "unknown timezone '{timezone}'"
       no_place: "no place found for '{location}'"
       page_unreadable: "could not read the page (HTTP {status})"
@@ -826,7 +820,7 @@ research_agent:
         names no date asks for the latest: if the answer can have changed since, search for
         newer coverage before answering.
       outside_period: "This query names {years}, before the approved period {start} → {end}."
-  # The reply shows numbered sources and one finding per line; the archive keeps evidence ids.
+  # The reply shows numbered sources and one finding per line; the report keeps evidence ids.
   reader_view: true
   reader_view_wording:
     status_line: "**Status:** {status} · {count} {noun}"
@@ -868,13 +862,6 @@ research_agent:
     # A failed must-pass criterion is a veto: never a PASS, whatever the score.
     pass_threshold: 0.8
     partial_threshold: 0.5
-
-  archive:
-    # Off: the episodic index row is the run pointer. On: also file it as a semantic fact.
-    semantic_pointer: false
-    run_id_prefix: run
-    list_headers: [run, status, archetype, topic, unmet, intact]
-    list_empty: No archived research runs yet — finish a run in `make agent ra`.
 
   cancel:
     key: ctrl+x
@@ -1145,7 +1132,6 @@ research_agent:
       final.rejected: "{n} source(s) rejected"
       final.blocked: "{n} outbound request(s) blocked"
       final.meter: "{name}: {spent} of {cap}"
-      final.saved: "Saved as {run} · /show {run} to read it again"
       final.no_reason: Finished normally.
       final.section.why: Why it ended
       final.section.found: What was found
@@ -1154,7 +1140,6 @@ research_agent:
       final.section.problems: Problems during the run
       final.section.budget: Budget used
       final.section.cost: Model cost by role
-      final.section.saved: Saved
       revise.heading: "Revision {n} of {max} · {findings} finding(s) · {changed} sentence(s) rewritten or added"
       revise.finding: "{id} · {criterion} — {reason}"
       revise.diff: "{kept} sentence(s) kept · {added} rewritten or added · {removed} removed"

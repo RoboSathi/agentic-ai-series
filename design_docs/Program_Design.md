@@ -26,7 +26,7 @@ How this repository is organised and how work in it is done. Requirements are in
 │   │   ├── core/        primitives/ persistence/
 │   │   ├── interface/   tui/ commands/ presentation/ host/
 │   │   ├── runtime/     executor/ scheduling/ verification/
-│   │   └── knowledge/   web/ mcp/ artifacts/
+│   │   └── knowledge/   web/ mcp/
 │   ├── customer_support_agent/   agent: config, graph, domain, tools, gatekeeper rules, evals, …
 │   ├── research_agent/           agent: config, graph, scoping, rubric, planning, research, audit, …
 │   └── ops_agent/                agent: config, graph, guardrails (figure check), prompts
@@ -39,7 +39,7 @@ How this repository is organised and how work in it is done. Requirements are in
 │   └── integration/              cross-subsystem invariants, call flows, attacks, eval pipeline
 ├── local_models/                 downloaded models (gitignored; make models)
 ├── db/<package>/                 every database (gitignored)
-├── data/<package>/               memory, research runs, web cache, analytics Parquet (gitignored)
+├── data/<package>/               memory, web cache, analytics Parquet (gitignored)
 ├── reports/<package>/evals/      eval reports (gitignored; folders kept)
 └── logs/<agent>/                 per-subsystem log files (gitignored)
 ```
