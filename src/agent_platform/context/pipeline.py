@@ -57,6 +57,17 @@ class CandidateSource(Protocol):
 
 
 @runtime_checkable
+class RetractableSource(Protocol):
+    """A source that can strike lines from what it serves, so a later turn never sees them.
+
+    Cutting a false line from one window leaves it where it came from: the next turn
+    gathers it again. A source that holds its own text (the conversation) takes it out.
+    """
+
+    def retract(self, task: Task, chunk: Chunk, lines: list[str]) -> list[str]: ...
+
+
+@runtime_checkable
 class WindowFitter(Protocol):
     """The strategies, as the fit stage runs them (`StrategySelector`)."""
 
@@ -72,6 +83,10 @@ class ContextAssembler(Protocol):
     async def assemble(
         self, task: Task, budget_tokens: int | None = None, strategies: WindowFitter | None = None
     ) -> AssembledContext: ...
+
+    def retract(self, task: Task, chunk: Chunk, lines: list[str]) -> list[str]:
+        """Strike `lines` of `chunk` from whichever source served it; the lines struck."""
+        ...
 
 
 @runtime_checkable
@@ -132,6 +147,15 @@ class FiveStagePipeline:
             used_tokens=sum(chunk.token_estimate for chunk in chunks),
         )
         return await strategies.fit(window, task) if strategies is not None else window
+
+    def retract(self, task: Task, chunk: Chunk, lines: list[str]) -> list[str]:
+        """Ask every source that can strike lines to strike these; the lines that went."""
+        return [
+            line
+            for source in self._sources
+            if isinstance(source, RetractableSource)
+            for line in source.retract(task, chunk, lines)
+        ]
 
     async def gather_candidates(self, task: Task) -> list[Chunk]:
         """Stage 1 — collect from every registered source, cost-annotated."""

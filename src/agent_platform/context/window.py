@@ -88,8 +88,23 @@ class ContextWindow:
                 "Context window shows failure modes", findings=finding_tree(findings)
             )
         window, findings = self._health.mitigate(fitted, findings)
+        findings = [self._retracted(fitted, finding, task) for finding in findings]
         self._health.rot.window_used(task.session_id, window.used_tokens)
         return WindowResult(window=window, findings=findings)
+
+    def _retracted(
+        self, fitted: AssembledContext, finding: ContextFinding, task: Task
+    ) -> ContextFinding:
+        """The finding, its cut lines struck from their source too when its mode says so."""
+        modes = get_settings().context.failure_detection.retract_modes
+        if finding.mode not in modes or not finding.excise or finding.index is None:
+            return finding
+        struck = self._pipeline.retract(task, fitted.chunks[finding.index], finding.excise)
+        if not struck:
+            return finding
+        self._logger.warning("Struck from its source for later turns", source=finding.source,
+                             lines=struck)  # fmt: skip
+        return finding.model_copy(update={"struck": True})
 
     def _report(self, result: WindowResult, reporter: StageReporter | None) -> None:
         """A warning card when the window needed attention; a quiet record otherwise."""
@@ -210,7 +225,8 @@ def _outcome(finding: ContextFinding, words: ContextWindowWording) -> list[str]:
         return [words.removed_chunk.format(source=finding.source)]
     if finding.excise:
         shown = finding.excise[: words.max_removed_lines]
-        lines = [words.removed_line.format(line=line, source=finding.source) for line in shown]
+        said = words.struck_line if finding.struck else words.removed_line
+        lines = [said.format(line=line, source=finding.source) for line in shown]
         hidden = len(finding.excise) - len(shown)
         return [*lines, words.more_removed.format(count=hidden)] if hidden else lines
     return [words.kept_source.format(source=finding.source, action=finding.action)]

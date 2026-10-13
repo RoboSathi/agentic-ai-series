@@ -987,6 +987,8 @@ context:
     kind_words: {history: conversation, memory: pinned state, tool_result: tool result, retrieved: retrieved, policy: policy, system: system prompt}
     removed_chunk: "REMOVED: all of {source}"
     removed_line: 'REMOVED: line "{line}" from {source}'
+    # A cut line that was also struck from its source, so later turns will not see it again.
+    struck_line: 'REMOVED: line "{line}" from {source} (and from memory, for later turns)'
     kept_source: "kept: {source} ({action})"
     marks: {fail: "✗", warn: "!", pass: "✓"}
     detail_title: Detail
@@ -1176,6 +1178,10 @@ context:
     # A `key: value` line the harness pins (a pointer such as `order_under_discussion: order 1`)
     # says where it is, not what is true; it is never the evidence a sentence is checked against.
     state_line_pattern: '^\s*[a-z][a-z0-9_]*\s*:'
+    # Modes whose cut lines are also struck from the source that serves them next turn. A
+    # false claim cut from this window only was found, cut and reported again every turn;
+    # a rot reduction or a clash keep is a choice about this window, never written back.
+    retract_modes: [poisoning]
 
 # Agent profile (AGENT.md) and skills (SKILL.md) — procedural memory in the prompt (ADR 0010).
 # Each agent overlays the two paths; the platform never knows whose files they are.
@@ -1832,8 +1838,9 @@ hallucination_check:
     - {name: memory, kinds: [memory], claims: [rule], may_refute: false}
   # An offer of help asserts nothing, so it is conversation even when it names an outcome word
   # ("If you'd like a refund for this delivered order, I can assist you with that"). Only a
-  # bare offer of help or assistance: "I can process it" commits to an action and stays a claim.
-  offer_pattern: '(?:if\s+you(?:[''’]d|\s+would)\s+like\b[^,]*,\s*)?(?:i|we)\s+(?:can|could|would\s+be\s+(?:happy|glad)\s+to|am\s+(?:happy|glad)\s+to)\s+(?:help|assist)\b'
+  # bare offer to help, assist, or check or look into something: "I can process it" commits to an
+  # action and stays a claim; "I can check its status for you" only offers to look.
+  offer_pattern: '(?:if\s+you(?:[''’]d|\s+would)\s+like\b[^,]*,\s*)?(?:i|we)\s+(?:can|could|would\s+be\s+(?:happy|glad)\s+to|am\s+(?:happy|glad)\s+to)\s+(?:help|assist|check|look\s+(?:into|up))\b'
   # A claim opening like this, and stating no outcome, is conversation.
   conversational_openers:
     - '(?:thanks?|thank\s+you|sorry|apolog\w+|please|hello|hi|hey|welcome)\b'
@@ -1842,6 +1849,8 @@ hallucination_check:
     - '(?:let\s+me\s+know|feel\s+free|is\s+there\s+anything|anything\s+else|no\s+problem|of\s+course|certainly|sure)\b'
     # Declining to disclose something about itself says nothing about the case.
     - '(?:i|we)(?:\s+am|[''’]m)?\s+(?:can[''’]?t|cannot|won[''’]t|unable\s+to|not\s+able\s+to)\s+(?:share|reveal|disclose|show|repeat|provide)\b'
+    # Stating its own scope ("I can only help with your orders") says nothing about the case.
+    - '(?:i|we)\s+(?:can\s+only|only|am\s+only\s+able\s+to|are\s+only\s+able\s+to)\s+(?:help|assist)\b'
   # A claim naming one of these is about this case and needs a record; an outcome stated as done
   # (with a promise marker, a promise). Business vocabulary: the agent's overlay names its ids and
   # outcomes. `(?!)` never matches, so a platform default classifies nothing as a record claim.

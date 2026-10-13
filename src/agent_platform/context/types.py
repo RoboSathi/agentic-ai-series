@@ -143,6 +143,8 @@ class ContextFinding(BaseModel):
     # Lines to cut out of the chunk rather than dropping it whole (an unverified claim the
     # model made inside a transcript that is otherwise worth keeping).
     excise: list[str] = Field(default_factory=list)
+    # Whether the cut lines were also struck from the source that serves them next turn.
+    struck: bool = False
     # The statements that disagree (a clash, a contradicted claim), each on its own line.
     statements: list[str] = Field(default_factory=list)
     # Where each statement came from, parallel to `statements` ("working_memory · conversation").

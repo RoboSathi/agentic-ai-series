@@ -660,6 +660,32 @@ mapping `{unknown: neutral}` existed four times, and the platform guardrail hard
 **Consequences.** `guardrails/response.py` holds only enforcement (validate, check, repair,
 trim). Card tests now go through the real projection rather than hand-built dicts.
 
+### P-36 — A poisoned line is struck at its source; a question, a scope or an offer asserts nothing
+
+**Context.** The context health check cut the model's own false claim ("Order 10633 has been
+cancelled and refunded.") from one turn's window only. Working memory still held it, so the
+next turn gathered it again, and the check found it, cut it and reported "REMOVED" on every
+turn. Separately, the hallucination check withheld correct out-of-scope replies. "How can I
+help you with order 10633?" names an order, so it was classed as a record claim and refuted
+by the order's state. "I can only help with your orders" and "I can check its status for you"
+were classed as rules and NLI-scored against unrelated prompt or KB lines.
+
+**Decision.**
+- A source that holds its own text implements `RetractableSource.retract`, and
+  `FiveStagePipeline.retract` fans the call out to such sources. After mitigation,
+  `ContextWindow` strikes the cut lines of findings in
+  `context.failure_detection.retract_modes` (`[poisoning]`) from their source.
+  `WorkingMemory.strike` removes the sentence from the conversation and drops any entry it
+  empties. The finding is marked `struck`, and the card says so (`struck_line`).
+- A rot reduction or a clash keep is a choice about one window and is never written back.
+- A claim cut from a question that states no outcome is conversational, and this is checked
+  before the record check. The agent stating its own scope is a conversational opener, and
+  the offer verbs include "check" and "look into/up". All three are configuration
+  (`hallucination_check`).
+
+**Consequences.** A poisoning finding appears on the turn it is caught and not again. "Did
+you know order 10633 was refunded?" still states an outcome and stays a record claim.
+
 ---
 
 ## 9. Research agent

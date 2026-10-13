@@ -56,3 +56,9 @@ class WorkingMemoryContextSource:
                 )
             )
         return candidates
+
+    def retract(self, task: Task, chunk: Chunk, lines: list[str]) -> list[str]:
+        """Strike lines of the conversation this source served; nothing of anyone else's."""
+        if chunk.source != WORKING_MEMORY or chunk.kind != "history":
+            return []
+        return self._working_memory.get(task.session_id).strike(lines)

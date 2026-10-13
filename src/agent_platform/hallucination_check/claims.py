@@ -39,6 +39,8 @@ _MARKDOWN_LEAD = re.compile(r"^\s*(?:#{1,6}\s+|[-*•+]\s+|\d+[.)]\s+|>\s*)")
 _MARKDOWN_MARKS = re.compile(r"\*\*|__|`")
 # How a line that introduces a list ends.
 _LEAD_IN = ":"
+# How a question ends: it asks, so it asserts nothing.
+_QUESTION = "?"
 
 
 # Causal connectives split too. "Queued for review because the amount
@@ -243,9 +245,14 @@ class ClaimClassifier:
         ]
         self._offer = re.compile(settings.offer_pattern, re.IGNORECASE)
 
-    def classify(self, claim: str) -> ClaimClass:
-        """The class that decides which tiers may ground this claim."""
-        if self._offer.match(claim.strip()):
+    def classify(self, claim: str, asked: bool = False) -> ClaimClass:
+        """The class that decides which tiers may ground this claim.
+
+        A question asserts nothing, even one that names a record: "How can I help with
+        order 10633?" was read as a record claim and refuted by the order's state. `asked`
+        says the claim was cut from a question, whose clauses lose the question mark.
+        """
+        if self._offer.match(claim.strip()) or self._asks(claim, asked):
             return "conversational"
         if self._is_record(claim):
             return "record"
@@ -262,10 +269,16 @@ class ClaimClassifier:
         """Whether the claim promises ("will", "once", "'ll") rather than reports."""
         return bool(self._promise.search(claim))
 
+    def _asks(self, claim: str, asked: bool) -> bool:
+        """Whether the claim is a question that states no outcome ("Did you know it was refunded?" does)."""
+        text = claim.strip()
+        return (asked or text.endswith(_QUESTION)) and not self._outcome.search(text)
+
     def _is_conversation(self, claim: str) -> bool:
         text = claim.strip().casefold()
-        opens = any(opener.match(text) for opener in self._openers)
-        return (opens or text.endswith("?")) and not self._outcome.search(text)
+        return any(opener.match(text) for opener in self._openers) and not self._outcome.search(
+            text
+        )
 
 
 class ClaimDecomposer:
@@ -284,21 +297,22 @@ class ClaimDecomposer:
     def decompose(self, generation: str) -> list[AtomicClaim]:
         """Split on sentence boundaries, then on joining conjunctions, then by class."""
         pieces = [
-            (index, text, forced)
+            (index, text, forced, plain.endswith(_QUESTION))
             for index, sentence in enumerate(split_sentences(generation))
-            for part in _with_subjects(_clauses(plain_text(sentence), self._conjunction))
+            for plain in [plain_text(sentence)]
+            for part in _with_subjects(_clauses(plain, self._conjunction))
             for text, forced in self._carve(part.strip().rstrip(".;"))
             if text and not _is_lead_in(text)
         ]
         return [
-            self._claim(text, position, forced, index)
-            for position, (index, text, forced) in enumerate(pieces)
+            self._claim(text, position, forced, index, asked)
+            for position, (index, text, forced, asked) in enumerate(pieces)
         ]
 
     def _claim(
-        self, text: str, position: int, forced: ClaimClass | None, sentence: int
+        self, text: str, position: int, forced: ClaimClass | None, sentence: int, asked: bool
     ) -> AtomicClaim:
-        claim_class = forced or self._classifier.classify(text)
+        claim_class = forced or self._classifier.classify(text, asked)
         return AtomicClaim(
             text=text,
             position=position,

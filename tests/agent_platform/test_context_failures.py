@@ -5,7 +5,9 @@ is under test is the harness: which pairs it asks about, which side of a clash i
 trust, what it cuts out of a transcript, and what reaches the model afterwards.
 """
 
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 from agent_platform.config import get_settings
 from agent_platform.context import AssembledContext, Chunk, Task
@@ -15,9 +17,12 @@ from agent_platform.context.offload import (
     offload_fetch_tool,
     offload_tool_name,
 )
+from agent_platform.context.pipeline import FiveStagePipeline
 from agent_platform.context.similarity import LexicalSimilarity
 from agent_platform.context.strategies import OffloadStrategy
-from agent_platform.context.types import TRUST
+from agent_platform.context.types import TRUST, ContextFinding
+from agent_platform.context.window import ContextWindow
+from agent_platform.context.working_memory import WorkingMemoryContextSource
 from agent_platform.llm.prompt import CONTEXT_WINDOW, WINDOW_STABLE, PromptBuilder
 from agent_platform.llm.tokenizer import CharEstimateTokenizer
 from agent_platform.logging.trace_context import bound_log_context
@@ -98,6 +103,75 @@ class TestPoisoningByAnUnverifiedClaim:
         )
         findings = await _detector(_Nli()).diagnose(_window(history), TASK)
         assert not [f for f in findings if f.mode == "poisoning"]
+
+
+class _Records:
+    """A verified source: the order as the database reads it this turn."""
+
+    async def candidates(self, task: Task) -> list[Chunk]:
+        return [
+            Chunk(
+                content="Order 10001 has not been refunded and is still open.",
+                kind="retrieved",
+                source="10001",
+                metadata={TRUST: "verified"},
+            )
+        ]
+
+
+def _conversation() -> WorkingMemoryStore:
+    store = WorkingMemoryStore()
+    store.get("s").add_history(
+        "was order 10001 refunded?", "Order 10001 was refunded in full yesterday."
+    )
+    return store
+
+
+class TestAPoisonedLineIsStruckFromMemory:
+    """Cut from one window only, the claim was found, cut and reported again every turn."""
+
+    async def test_the_claim_is_found_once_and_never_served_again(self) -> None:
+        store = _conversation()
+        pipeline = FiveStagePipeline(sources=[WorkingMemoryContextSource(store), _Records()])
+        detector = ContextFailureDetector(
+            nli=_Nli(("not been refunded", "refunded in full")), similarity=_Alike()
+        )
+        window = ContextWindow(pipeline, health=detector)
+        first = await window.build(TASK)
+        assert [f.struck for f in first.findings if f.mode == "poisoning"] == [True]
+        assert store.get("s").history == [{"role": "user", "content": "was order 10001 refunded?"}]
+        second = await window.build(TASK)
+        assert not [f for f in second.findings if f.mode == "poisoning"]
+
+    async def test_a_rot_reduction_is_never_written_back(self) -> None:
+        store = _conversation()
+        pipeline = FiveStagePipeline(sources=[WorkingMemoryContextSource(store)])
+        cut = ContextFinding(
+            mode="rot", source="working_memory", rule="r", detail="d", index=0,
+            excise=["Order 10001 was refunded in full yesterday."],
+        )  # fmt: skip
+        health: Any = SimpleNamespace(
+            diagnose=AsyncMock(return_value=[cut]),
+            mitigate=lambda window, found: (window, found),
+            rot=SimpleNamespace(window_used=lambda session, tokens: None),
+        )
+        result = await ContextWindow(pipeline, health=health).build(TASK)
+        assert not result.findings[0].struck
+        assert len(store.get("s").history) == 2
+
+
+class TestWorkingMemoryStrike:
+    def test_a_sentence_leaves_its_entry_and_the_rest_stays(self) -> None:
+        memory = WorkingMemoryStore().get("s")
+        memory.add_history("hi", "Order 1 is open. It was refunded.")
+        assert memory.strike(["It was refunded.", "never said"]) == ["It was refunded."]
+        assert memory.history[-1]["content"] == "Order 1 is open."
+
+    def test_an_entry_left_empty_goes(self) -> None:
+        memory = WorkingMemoryStore().get("s")
+        memory.add_history("hi", "It was refunded.")
+        memory.strike(["It was refunded."])
+        assert memory.history == [{"role": "user", "content": "hi"}]
 
 
 class TestOnlyTheOffendingLineIsNamedAndCut:

@@ -33,6 +33,24 @@ class WorkingMemory(BaseModel):
         )
         self.history = self.history[-(self.max_history * 2) :]
 
+    def strike(self, lines: list[str]) -> list[str]:
+        """Cut each line out of the conversation; return the lines that were found and cut.
+
+        An entry left with nothing to say goes, so no empty turn is replayed to the model.
+        """
+        struck: list[str] = []
+        for line in lines:
+            for item in self.history:
+                content = item.get("content", "") if isinstance(item, dict) else ""
+                if line and line in content:
+                    item["content"] = content.replace(line, "", 1).strip()
+                    struck.append(line)
+                    break
+        self.history = [
+            item for item in self.history if not isinstance(item, dict) or item.get("content")
+        ]
+        return struck
+
     def add_current_turn(self, item: Any) -> None:
         """Append one item produced while processing the current turn."""
         self.current_turn.append(item)

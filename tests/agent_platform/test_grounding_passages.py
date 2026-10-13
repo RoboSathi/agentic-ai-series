@@ -19,6 +19,7 @@ from agent_platform.hallucination_check import (
     NOT_EXECUTED_MARKER,
     PASSAGE,
     ClaimClassifier,
+    ClaimDecomposer,
     DetectionLadder,
     GroundingResolver,
     Observation,
@@ -247,3 +248,31 @@ class TestDecliningToDiscloseIsConversation:
 
     def test_a_refusal_to_act_on_a_record_is_still_a_claim(self) -> None:
         assert ClaimClassifier().classify("I cannot refund order 10511") == "record"
+
+
+class TestAQuestionAScopeAndAnOfferToLookAreConversation:
+    """The out-of-scope replies the guard withheld: each asserts nothing about the case."""
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            "How can I help you with order 10633 or any other order today?",
+            "I can only assist with questions about your orders, such as tracking, "
+            "cancellations, or refunds.",
+            "I can only help with information about your orders.",
+            "Please provide your order ID so I can check its status for you.",
+        ],
+    )
+    def test_the_reply_holds_no_verifiable_claim(self, reply: str) -> None:
+        claims = ClaimDecomposer().decompose(reply)
+        assert claims and not [claim.text for claim in claims if claim.is_verifiable]
+
+    @pytest.mark.parametrize(
+        "reply", ["Order 10633 has been refunded.", "Did you know order 10633 was refunded?"]
+    )
+    def test_a_stated_outcome_is_still_a_record_claim(self, reply: str) -> None:
+        assert [claim.claim_class for claim in ClaimDecomposer().decompose(reply)] == ["record"]
+
+    def test_a_clause_cut_from_a_question_is_still_asked(self) -> None:
+        claims = ClaimDecomposer().decompose("Shall I look at order 10633, so I can check it?")
+        assert {claim.claim_class for claim in claims} == {"conversational"}

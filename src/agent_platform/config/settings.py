@@ -1166,6 +1166,8 @@ class ContextFailureDetectionSettings(BaseModel):
     # A line that states where the harness is, not something about the world
     # (`order_under_discussion: order 10538`): it is never a fact a sentence is checked against.
     state_line_pattern: str
+    # Modes whose cut lines are also struck from the source that serves them next turn.
+    retract_modes: list[str]
 
 
 class FindingTemplate(BaseModel):
@@ -1264,6 +1266,7 @@ class ContextWindowWording(BaseModel):
     kind_words: dict[str, str]
     removed_chunk: str
     removed_line: str
+    struck_line: str
     kept_source: str
     detail_title: str
     detail_note: str
