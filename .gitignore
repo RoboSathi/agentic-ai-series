@@ -33,6 +33,7 @@ data/*
 
 # Reports: one per eval framework per run (`make eval <agent>`), rebuilt from the eval store.
 # The folders are kept, their contents are not.
+reports/*
 reports/**
 !reports/**/
 !reports/**/.gitkeep'
