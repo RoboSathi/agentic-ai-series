@@ -22,6 +22,9 @@ class Words(BaseModel):
     blocked: str
     no_tools: str
     refused_tool: str
+    budget_spent: str
+    tools_spent: str
+    cut_off: str
     invalid_call: str
     query_heading: str
     rows_heading: str
@@ -117,6 +120,8 @@ class OpsAgentSettings(YamlBackedSettings):
     history_turns: int = Field(ge=0)
     temperature: float
     max_tokens: int = Field(ge=1)
+    retry_max_tokens: int = Field(ge=1)
+    cut_off_finish: str
     table_rows: int = Field(ge=1)
     cell_chars: int = Field(ge=4)
     number_tolerance: float = Field(ge=0)

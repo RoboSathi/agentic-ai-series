@@ -95,8 +95,12 @@ class GovernedCalls:
         if outcome.stage == DUPLICATE and outcome.control is not None:
             text = self._governor.suppression_message(outcome.control)
             return CallOutcome(text=text, succeeded=False)
+        action = display_tool_name(outcome.call.action)
+        if outcome.execution is None and outcome.decision is None:
+            # Stopped by the loop (a spent tool budget), not refused by the Gatekeeper.
+            text = words.budget_spent.format(action=action, reason=outcome.reason)
+            return CallOutcome(text=text, succeeded=False)
         if outcome.execution is None:
-            action = display_tool_name(outcome.call.action)
             text = words.refused_tool.format(action=action, reason=outcome.reason)
             return CallOutcome(text=text, succeeded=False, refused=True)
         return _outcome(outcome.execution.result, outcome.call)

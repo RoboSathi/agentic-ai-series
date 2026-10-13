@@ -653,8 +653,8 @@ observability:
     # refuses; a repeat or malformed call was not run, named by the stage that stopped it.
     tool_done: "{tool} → done"
     tool_failed: "{tool} failed"
-    tool_refused: "{tool} refused by the Gatekeeper"
-    tool_not_run: "{tool} not run · {stage}"
+    tool_refused: "{tool} refused by the Gatekeeper · {reason}"
+    tool_not_run: "{tool} not run · {stage} · {reason}"
     # Shown at each point the loop decides whether to go round again.
     loop_control:
       summary: "Round {round} of {max_rounds} · next: {next_step}"

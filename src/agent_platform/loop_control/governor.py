@@ -57,6 +57,7 @@ from agent_platform.tools.types import ToolCall
 
 # The counters every governed loop has (a cap of 0 means "not budgeted").
 STEPS, TOOL_CALLS, TOKENS, COST = "steps", "tool_calls", "tokens", "cost_usd"
+_CONTINUE_DECISION = "continue"
 _COUNTER_LAYERS: dict[str, WatchdogLayer] = {
     STEPS: "step_count",
     TOOL_CALLS: "tool_budget",
@@ -224,11 +225,13 @@ class LoopGovernor:
                 update={"suppressed": True, "outcome": verdict.previous_result}
             )
             self._state.actions.append(record)
-        else:
+        elif verdict.decision == _CONTINUE_DECISION:
             self._move("WAITING_TOOL")
             if self._budget.max_tool_calls:
                 self._guard.charge(TOOL_CALLS, 1)
             self._state.actions.append(record)
+        # Anything else (a spent tool budget) stopped the call: it neither ran nor is charged,
+        # so the counter never reads past its cap.
         return self._decided(verdict, quiet=verdict.decision == "continue")
 
     async def after_action(self, call: ToolCall, outcome: str, succeeded: bool) -> None:

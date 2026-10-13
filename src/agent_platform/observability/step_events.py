@@ -244,12 +244,14 @@ class StepEvents:
         words = self._words()
         tool = display_tool_name(name)
         if path is None or path.call is None or path.execution is None:
-            stage = path.stage if path is not None else ""
+            stage = _stopped_by(path)
             fields = {"tool": tool, "result": stage, "reason": reason}
+            why = _first_line(path.reason if path is not None and path.reason else reason)
             if refused:
-                self.tool_result("blocked", words.tool_refused.format(tool=tool), fields)
+                summary = words.tool_refused.format(tool=tool, reason=why)
+                self.tool_result("blocked", summary, fields)
             else:
-                summary = words.tool_not_run.format(tool=tool, stage=stage)
+                summary = words.tool_not_run.format(tool=tool, stage=stage, reason=why)
                 self.tool_result("warning", summary, fields)
             return
         result = path.execution.result
@@ -350,6 +352,21 @@ class StepEvents:
     @staticmethod
     def _words() -> Any:
         return get_settings().observability.step_events
+
+
+def _stopped_by(path: "ToolOutcome | None") -> str:
+    """What stopped a call that did not run: the loop control layer (a spent budget, a
+    repeat) when it was the loop, else the tool path's stage (invalid, unknown, refused)."""
+    if path is None:
+        return ""
+    control = path.control
+    if control is not None and control.decision != "continue" and control.layer:
+        return str(control.layer)
+    return str(path.stage)
+
+
+def _first_line(text: str) -> str:
+    return text.strip().splitlines()[0] if text.strip() else ""
 
 
 def loop_heading(verdict: "LoopVerdict", next_step: str = "") -> str:

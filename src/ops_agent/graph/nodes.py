@@ -23,7 +23,13 @@ from agent_platform.llm.client import LLMClient
 from agent_platform.llm.prompt import TurnLayout
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message, ModelToolCall
 from agent_platform.logging import describe_error, get_logger, instrument
-from agent_platform.loop_control import LoopDecision, LoopGovernor, LoopVerdict, route_on_verdict
+from agent_platform.loop_control import (
+    TOOL_CALLS,
+    LoopDecision,
+    LoopGovernor,
+    LoopVerdict,
+    route_on_verdict,
+)
 from agent_platform.observability import StageReporter
 from agent_platform.observability.step_events import StepEvents
 from agent_platform.observability.tool_fields import display_tool_name
@@ -44,6 +50,12 @@ from ops_agent.presentation.cards import (
 )
 
 PROPOSE, EXECUTE, REVIEW, GROUND = "propose", "execute", "review", "ground"
+
+
+class AnswerCutOffError(RuntimeError):
+    """The model's answer was cut off at the token cap, even after a retry with a larger one."""
+
+
 # Why the loop chose its next step (wording: `observability.step_events.loop_control`).
 _TOOL_REQUESTED, _NO_TOOL_CALL = "tool_requested", "no_tool_call"
 # A verdict that stops the loop sends the turn straight to the answer.
@@ -108,9 +120,29 @@ class OpsNodes:
     async def _ask(self, state: OpsState, governor: LoopGovernor) -> CompletionResult:
         """The step's model call, capped by what the token budget has left and cancelled at
         the deadline."""
-        tools = self._registry.to_openai_tools()
-        built = state.get("layout", TurnLayout()).build(state["messages"], tools)
-        limits = governor.call_limits(self._settings.max_tokens)
+        # A spent tool budget: no tools offered, and the model is told to answer from what it has
+        # (offering them again only gets every call stopped).
+        spent = governor.remaining(TOOL_CALLS) <= 0
+        tools = [] if spent else self._registry.to_openai_tools()
+        messages = [*state["messages"], *self._budget_note(spent)]
+        built = state.get("layout", TurnLayout()).build(messages, tools)
+        purpose = get_settings().observability.llm_purposes.next_action
+        result = await self._complete(built, tools, governor, self._settings.max_tokens, purpose)
+        if _cut_off(result, self._settings.cut_off_finish):
+            # The model's reasoning used the whole cap before the answer was written: once more,
+            # with the larger cap, rather than send a cut-off answer.
+            self._logger.warning("Answer cut off at the token cap", cap=self._settings.max_tokens)
+            retry = self._settings.retry_max_tokens
+            result = await self._complete(built, tools, governor, retry, purpose)
+            if _cut_off(result, self._settings.cut_off_finish):
+                raise AnswerCutOffError(self._settings.words.cut_off.format(tokens=retry))
+        return result
+
+    async def _complete(
+        self, built: Any, tools: list[Any], governor: LoopGovernor, cap: int, purpose: str
+    ) -> CompletionResult:
+        """One model call, capped by what the token budget has left and the deadline."""
+        limits = governor.call_limits(cap)
         request = CompletionRequest(
             messages=built.messages,
             tools=tools,
@@ -119,12 +151,14 @@ class OpsNodes:
             manifest=built.manifest,
         )
         # A step may ask for tools or answer; the response card names which it did.
-        purpose = get_settings().observability.llm_purposes.next_action
         self._steps.llm_request(request, purpose=purpose)
         async with governor.deadline(limits.timeout_seconds):
             result = await self._llm.complete(request)
         self._steps.llm_response(result, purpose=purpose)
         return result
+
+    def _budget_note(self, spent: bool) -> list[Message]:
+        return [Message(role="user", content=self._settings.words.tools_spent)] if spent else []
 
     def after_propose(self, state: OpsState) -> str:
         """The governor's verdict first; then tools while the model asks for them; then the answer."""
@@ -318,7 +352,12 @@ class OpsNodes:
         )
 
 
-__all__ = ["EXECUTE", "GROUND", "PROPOSE", "REVIEW", "OpsNodes"]
+def _cut_off(result: CompletionResult, finish: str) -> bool:
+    """An answer (no tool call) the token cap cut short."""
+    return result.finish_reason == finish and not result.tool_calls
+
+
+__all__ = ["EXECUTE", "GROUND", "PROPOSE", "REVIEW", "AnswerCutOffError", "OpsNodes"]
 
 
 def _required(tool: Any) -> bool:

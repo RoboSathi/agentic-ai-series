@@ -954,6 +954,25 @@ bounded, and every call is governed and audited locally.
 
 ---
 
+### O-05 — A spent budget and a cut-off answer are said as what they are
+
+**Decision.**
+- **The loop never charges a call it stopped.** `LoopGovernor.before_action` charges the
+  tool-call budget only for a call it lets run; a call stopped because the budget is spent is
+  neither run nor charged, so the counter never reads past its cap. This is a platform fix,
+  for every agent.
+- **Who stopped a call is named.** The TOOL RESULT card says the loop layer
+  (`not run · tool_budget · tool_calls: 16 spent of 16`) or the Gatekeeper
+  (`refused by the Gatekeeper · <its reason>`), with the reason in the heading. The model
+  reads "the tool-call budget is spent", never a Gatekeeper refusal.
+- **After the budget is spent, no tools are offered.** The model is told to answer from the
+  results it has, and to say which figures it could not fetch.
+- **A cut-off answer is never sent.** The model reasons before it answers, inside the same
+  cap. An answer cut off at `ops_agent.max_tokens` is retried once at `retry_max_tokens`; a
+  second cut-off ends the turn with "the answer was cut off", never with the fragment.
+
+---
+
 ## Appendix A — superseded and retired decisions
 
 | Original | What it said | Now |

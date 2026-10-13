@@ -124,7 +124,13 @@ ops_agent:
   # Earlier questions and answers in this conversation the model is shown.
   history_turns: 3
   temperature: 0.0
-  max_tokens: 1200
+  # The model reasons before it answers, and the reasoning counts against this cap: a cap the
+  # reasoning fills leaves a cut-off answer ("Guard"). One retry at `retry_max_tokens`; a
+  # second cut-off is said to the person, never sent as the answer.
+  max_tokens: 4096
+  retry_max_tokens: 8192
+  # The finish reason a provider gives for an answer the cap cut short.
+  cut_off_finish: length
   # The answer shows the last query's rows as a table, at most this many.
   table_rows: 12
   cell_chars: 40
@@ -204,6 +210,12 @@ ops_agent:
     blocked: "That message was stopped by the input screen ({reason})."
     no_tools: "The analytics MCP server is unavailable ({error}). Start it, or run `make analytics-export` and try again."
     refused_tool: "The Gatekeeper refused {action}: {reason}"
+    # A call the loop stopped (not the Gatekeeper): the turn's tool-call budget is spent.
+    budget_spent: "{action} was not run: this turn's tool-call budget is spent ({reason}). Answer from the results you already have."
+    # Said to the model when the budget is spent and no tools are offered any more.
+    tools_spent: "The tool-call budget for this question is spent; no more tools can run. Answer now from the results above, and say which figures you could not fetch."
+    # Said to the person when the answer was cut off even at the larger cap.
+    cut_off: "the answer was cut off at {tokens} tokens"
     invalid_call: "The call to {tool} was malformed or names an unknown tool; check the arguments against the tool's schema."
     query_heading: "SQL"
     rows_heading: "Result ({shown} of {total} rows{more})"
