@@ -60,7 +60,7 @@ eval that holds the control to account; an item marked *owed* has no dedicated t
 | R7 | **Self-grading** | the writer approves its own report | the audit judge's chain excludes the writer's model (checked at start-up); an audit judged by the actual writer is recorded as not independent |
 | R8 | **Silent incompleteness** | an unmet criterion passed off as covered | Coverage & Limits built in code from verdicts; a report with no findings cannot be COMPLETE |
 | R9 | **Scope drift** | the run researches something other than what was approved | the contract is frozen and hashed at `/approve` and re-verified at the end; no steering after approval |
-| R10 | **Runaway spend on a metered API** | a loop of paid searches | monthly quota in the shared rate-limit store (fail fast, never retried); free provider first; 24 h cache; small per-run budgets |
+| R10 | **Runaway spend on a metered API** | a loop of paid searches | monthly quota in the shared rate-limit store (fail fast, never retried); free provider first; per-run search memo; small per-run budgets |
 | R11 | **Stale sources** | a five-year-old page answering "the latest" | hits outside `recency_days` are never read (recorded as rejected); latest-by-default notes on past-year searches |
 
 Verified by: `tests/research_agent/` (citation guard, front door, direct answer, dated research,

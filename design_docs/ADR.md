@@ -777,7 +777,7 @@ as `provider_summary` for display and never turned into a page, so it cannot be 
 **Decision.** `knowledge/web`: `SearchProvider` adapters (DuckDuckGo, free and keyless; Tavily,
 metered) behind a `SearchRouter` — DuckDuckGo first for general questions, Tavily first for
 time-bounded ones and as the fallback. Tavily is capped by the shared monthly quota (P-22);
-searches are cached on disk for 24 h and memoised within a run; a run spends a small search
+searches are memoised within a run (no disk cache since R-21); a run spends a small search
 budget. A spent quota falls back, and if nothing can search the run ends PARTIAL with the reason.
 
 **Supersedes.** ra-0006; ra-0018.
@@ -931,6 +931,24 @@ moved to `research/cards.py`.
 **Consequences.** Every branch is unit-tested without a graph (`test_loop_policy.py`). The
 platform `LoopGovernor` still does not govern the research run loop; that remains the known
 follow-up.
+
+### R-21 — No on-disk search cache
+
+**Context.** `SearchCache` wrote one file per live search to `data/agent_platform/web_cache/` and
+honoured its 24 h TTL only on read; nothing deleted an expired entry, so the folder grew with
+every run. R-18 already researches every question fresh, so answers reused across runs worked
+against that rule.
+
+**Decision.** `knowledge/web/cache.py` and `web.search.cache_ttl_hours` / `cache_dir` are
+deleted. The gateway memoises searches (and fetches) for its own lifetime only, so a repeat
+within a run still costs no provider call and still reads "cached" on the card.
+
+**Consequences.** A question asked again in a later run spends a search again; the shared
+monthly quota (P-22) and the per-run search budget remain the spend controls. Runtime leftovers
+from retired features were removed with it: the Kelvari fixture set (`web_fixtures/`, R-10) and
+archived runs (`data/research_agent/runs/`, R-18). Record / replay stays as a generic mechanism.
+
+**Supersedes.** The disk-cache clause of R-09.
 
 ---
 

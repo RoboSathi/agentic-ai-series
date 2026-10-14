@@ -4,10 +4,10 @@
     record  the same, and write every exchange to the fixture set
     replay  answer only from the fixture set; a miss raises, never falls through
 
-Searches are memoised by request for the gateway's lifetime, and in live
-mode an optional on-disk `SearchCache` reuses answers across runs, so a
-repeated query spends no metered provider call. Only calls that actually
-leave the machine are logged at INFO; replayed and cached ones at DEBUG.
+Searches are memoised by request for the gateway's lifetime, so a query
+repeated within a run spends no metered provider call. Nothing is kept on
+disk across runs. Only calls that actually leave the machine are logged at
+INFO; replayed and memoised ones at DEBUG.
 
 Fetches are cached by URL for the gateway's lifetime, so fetching the
 same page twice is free and returns identical text — which is what lets
@@ -23,7 +23,6 @@ from typing import Literal, TypeVar
 from pydantic import BaseModel
 
 from agent_platform.config.settings import WebMode
-from agent_platform.knowledge.web.cache import SearchCache
 from agent_platform.knowledge.web.fetcher import Fetcher
 from agent_platform.knowledge.web.fixtures import FixtureStore
 from agent_platform.knowledge.web.providers import SearchProvider
@@ -76,7 +75,6 @@ class WebGateway:
         search_caller: ResilientCaller | None = None,
         fetch_caller: ResilientCaller | None = None,
         observer: WebCallObserver | None = None,
-        cache: SearchCache | None = None,
     ) -> None:
         if mode != "live" and fixtures is None:
             raise ValueError(f"web mode '{mode}' needs a fixture store")
@@ -89,7 +87,6 @@ class WebGateway:
         self._search_caller = search_caller
         self._fetch_caller = fetch_caller
         self._observer = observer
-        self._cache = cache
         self._searches: dict[str, SearchResponse] = {}
         self._pages: dict[str, FetchedPage] = {}
         self._logger = get_logger("web")
@@ -130,15 +127,10 @@ class WebGateway:
         return response.model_copy(update={"route": route})
 
     def _remembered(self, request: SearchRequest) -> SearchResponse | None:
-        memo = self._searches.get(request.key)
-        if memo is None and self._mode == "live" and self._cache is not None:
-            memo = self._cache.get(request)
-        return memo
+        return self._searches.get(request.key)
 
     def _remember_search(self, response: SearchResponse) -> None:
         self._searches[response.request.key] = response
-        if self._mode == "live" and self._cache is not None:
-            self._cache.put(response)
 
     def _search_call(
         self, request: SearchRequest, response: SearchResponse, cached: bool

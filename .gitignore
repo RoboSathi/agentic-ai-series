@@ -25,9 +25,8 @@ project.zip
 # Runtime state lives outside src/, one folder per package (agent_platform or an agent):
 #   db/<package>/    every database: built from its seed (`make dummy-data csa`), by the
 #                    knowledge ingest at start-up, by the eval fixture builder, or at run time.
-#   data/<package>/  every other runtime file: memory, research runs, web cache, analytics
-#                    Parquet, eval workspaces.
-# Neither is versioned. (A few research-run samples predate this rule and stay tracked.)
+#   data/<package>/  every other runtime file: memory, analytics Parquet, eval workspaces.
+# Neither is versioned.
 db/*
 data/*
 

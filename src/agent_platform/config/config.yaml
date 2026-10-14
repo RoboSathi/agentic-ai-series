@@ -2886,10 +2886,6 @@ web:
       top_k: 3
       min_term_chars: 3
       share: 0.5
-    # Live answers are reused from disk for this long: repeating a question
-    # costs no provider call.
-    cache_ttl_hours: 24
-    cache_dir: data/agent_platform/web_cache
   fetch:
     timeout_seconds: 20
     max_attempts: 3

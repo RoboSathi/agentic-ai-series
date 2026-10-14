@@ -3,7 +3,7 @@
 The one place concrete network classes are chosen: the rate-limited HTTP
 client (`llm.http`, which draws on the `tavily` bucket by host), the search
 router over the configured providers (each with its own resilience stack),
-the on-disk search cache, and the fixture set named in config.
+and the fixture set named in config.
 """
 
 import httpx
@@ -11,7 +11,6 @@ import httpx
 from agent_platform.config import get_settings
 from agent_platform.config.settings import WebMode, WebSettings
 from agent_platform.knowledge.web.augment import SearchAugmentPolicy
-from agent_platform.knowledge.web.cache import SearchCache
 from agent_platform.knowledge.web.fetcher import FallbackFetcher, HttpFetcher, ReaderFetcher
 from agent_platform.knowledge.web.fixtures import FixtureStore
 from agent_platform.knowledge.web.gateway import WebCallObserver, WebGateway
@@ -54,7 +53,6 @@ def create_web_gateway(
             retry=ExponentialBackoffRetry(max_attempts=resolved.fetch.max_attempts),
         ),
         observer=observer,
-        cache=SearchCache(resolved.search.resolved_cache_dir, resolved.search.cache_ttl_hours),
     )
 
 

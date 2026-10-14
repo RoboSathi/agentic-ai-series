@@ -3160,7 +3160,7 @@ class SearchAugmentSettings(BaseModel):
 
 
 class WebSearchSettings(BaseModel):
-    """Which providers answer a search, in order, and how long answers are reused."""
+    """Which providers answer a search, in order."""
 
     # General searches: the first provider that answers with hits wins.
     providers: list[SearchProviderName]
@@ -3168,13 +3168,6 @@ class WebSearchSettings(BaseModel):
     time_bounded_providers: list[SearchProviderName]
     max_results: int = Field(ge=1)
     augment: SearchAugmentSettings
-    # Live answers are kept on disk and reused for this long (0: no cache).
-    cache_ttl_hours: float = Field(ge=0)
-    cache_dir: str
-
-    @property
-    def resolved_cache_dir(self) -> Path:
-        return resolve_path(self.cache_dir)
 
 
 class WebFetchSettings(BaseModel):

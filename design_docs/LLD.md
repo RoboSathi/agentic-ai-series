@@ -461,10 +461,10 @@ policy version, the verdict and its standing. It decides nothing; it remembers.
 
 **`knowledge/web`** — one gateway for agents' web access, live / record / replay.
 `create_web_gateway()`; `WebGateway` (observer-notified `search`, `fetch`); `SearchRouter`
-over `SearchProvider` adapters (`DuckDuckGoProvider`, `TavilyProvider`); `SearchCache` (on
-disk, 24 h); `HttpFetcher` with a reader fallback for JS-only pages; `FixtureStore`;
+over `SearchProvider` adapters (`DuckDuckGoProvider`, `TavilyProvider`); searches memoised per
+gateway; `HttpFetcher` with a reader fallback for JS-only pages; `FixtureStore`;
 `SearchResponse.provider_summary` (display only). Live calls go through `ResilientCaller` and
-the rate limiter. Config: `web:` (mode, providers, routing, cache dir, fixtures dir).
+the rate limiter. Config: `web:` (mode, providers, routing, fixtures dir).
 
 **`knowledge/mcp`** — Model Context Protocol, by side of the wire (ADR P-25).
 `common/` (types, stdio), `client/` (`SdkMcpTransport`, `SdkMcpSession` — an Active Object

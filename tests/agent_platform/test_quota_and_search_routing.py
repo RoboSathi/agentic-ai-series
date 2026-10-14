@@ -24,7 +24,6 @@ from agent_platform.knowledge.web import (
     WebGateway,
     WebUnavailableError,
 )
-from agent_platform.knowledge.web.cache import SearchCache
 from agent_platform.knowledge.web.providers import DuckDuckGoProvider, SearchHit, window_name
 from agent_platform.knowledge.web.router import RoutedProvider, SearchRouter
 from agent_platform.resilience import QuotaExhaustedError, ResilientCaller
@@ -248,42 +247,31 @@ class TestRouter:
         assert tavily.calls == 1
 
 
-class TestSearchCache:
-    def _gateway(self, provider: Scripted, cache: SearchCache, calls: list[WebCall]) -> WebGateway:
+class TestSearchMemo:
+    def _gateway(self, provider: Scripted, calls: list[WebCall]) -> WebGateway:
         fetch = get_settings().web.fetch
         client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(404)))
         return WebGateway(
             "live",
             provider=provider,
             fetcher=FallbackFetcher(HttpFetcher(fetch, client), None, fetch),
-            cache=cache,
             observer=calls.append,
         )
 
-    async def test_a_cached_search_costs_no_provider_call(self, tmp_path: Path) -> None:
+    async def test_a_repeat_within_one_run_is_memoised(self) -> None:
         provider, calls = Scripted("tavily"), []
-        cache = SearchCache(tmp_path, ttl_hours=24)
+        gateway = self._gateway(provider, calls)
         request = SearchRequest(query="q", max_results=1)
-        await self._gateway(provider, cache, calls).search(request)
-        await self._gateway(provider, cache, calls).search(request)  # a later run
+        await gateway.search(request)
+        await gateway.search(request)
         assert provider.calls == 1 and [c.cached for c in calls] == [False, True]
 
-    async def test_a_repeat_within_one_run_is_memoised(self, tmp_path: Path) -> None:
+    async def test_nothing_is_kept_across_runs(self) -> None:
         provider, calls = Scripted("tavily"), []
-        gateway = self._gateway(provider, SearchCache(tmp_path, ttl_hours=0), calls)
         request = SearchRequest(query="q", max_results=1)
-        await gateway.search(request)
-        await gateway.search(request)
-        assert provider.calls == 1
-
-    def test_entries_expire(self, tmp_path: Path) -> None:
-        clock = Clock(SEPTEMBER)
-        cache = SearchCache(tmp_path, ttl_hours=1, clock=clock)
-        request = SearchRequest(query="q", max_results=1)
-        cache.put(SearchResponse(request=request, provider="tavily"))
-        assert cache.get(request) is not None
-        clock.now += 2 * 3600
-        assert cache.get(request) is None
+        await self._gateway(provider, calls).search(request)
+        await self._gateway(provider, calls).search(request)  # a later run
+        assert provider.calls == 2
 
     def test_a_replayed_call_did_not_leave_the_machine(self) -> None:
         assert not WebCall(kind="search", target="q", mode="replay").left_the_machine
