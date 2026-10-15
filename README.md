@@ -146,7 +146,24 @@ exits.
 | `make install` | Creates `venv/` and installs the package with the dev and eval extras, then runs `make models` |
 | `make models [agent]` | Downloads any missing local models, then loads and runs each agent's models once (all agents, or one) |
 | `make gen-key` | Prints fresh `LANGGRAPH_AES_KEY` (checkpoint encryption) and `PII_VAULT_KEY` lines; append them to `.env` |
-| `make clean` | Removes `venv/`, caches, build output and log files. Databases and data are kept. |
+| `make matrix` | Matrix-style digital rain in the terminal. Ctrl+C spells `AGENT` in digits; any key (or Ctrl+C again) exits and clears the screen. |
+
+### Clean
+
+`make clean` on its own removes nothing: name one kind of file, and for agent kinds the agent (or
+`all`). Each command lists what it removed.
+
+| Command | What it removes |
+|---|---|
+| `make clean venv` | `venv/`; `make install` recreates it |
+| `make clean pycache` | Every `__pycache__` in the repo (not the venv, git or `local_models/`) |
+| `make clean cache` | pytest, mypy and ruff caches, `.coverage`, root `dist/`, `build/` and `*.egg-info` |
+| `make clean logs <agent>\|all` | `logs/<package>/`, every subsystem log and its rotations |
+| `make clean memory <agent>\|all` | Long-term memory files, through the platform's own reset. Checkpoints, business records, reviews and audit are kept. Same as `make clean-memory <agent>`. |
+| `make clean checkpoints <agent>\|all` | Conversation checkpoints and durable-run state (`db/<package>/checkpoints.db`); a paused run cannot resume afterwards |
+| `make clean db <agent>\|all` | The agent's business database and knowledge index. A seeded agent is rebuilt by `make dummy-data <agent>`. |
+| `make clean evals <agent>\|all` | Eval reports, raw framework output, workspaces and the fixture DB. `all` also clears the shared transcript store. |
+| `make clean analytics live\|dummy\|all` | The shared analytics source (facts, audit decisions) and its Parquet export |
 
 ### Run an agent
 

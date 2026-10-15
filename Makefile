@@ -1,6 +1,8 @@
 .PHONY: gen-key help install clean lint type-check format test verify agent llm-check model-check models data refund-limit \
 	clean-memory show-memory dream memory-reindex review queue audit dummy-data analytics-export analytics-drop-legacy dashboard dashboard-install dashboard-refresh \
-	eval intent-eval _agent
+	eval intent-eval _agent matrix \
+	_clean_check _clean_venv _clean_pycache _clean_cache _clean_logs _clean_memory \
+	_clean_checkpoints _clean_db _clean_evals _clean_analytics
 
 # -- agent registry -------------------------------------------------------------
 # The platform names no agent (`agent_platform/config.yaml` ships
@@ -71,6 +73,28 @@ endif
 PYTHON := ./venv/bin/python
 EVALS := $(PYTHON) -m agent_platform.evals
 
+# `make clean <kind> [<agent>|all]`: one kind of generated file at a time, never the lot.
+# The kind and its target are goals only so they can be typed; they are not targets.
+# Agent kinds take an agent (or `all`); `analytics` takes a source; the rest take nothing.
+CLEAN_KINDS := venv pycache cache logs memory checkpoints db evals analytics
+CLEAN_AGENT_KINDS := logs memory checkpoints db evals
+CLEAN_SOURCES := live dummy all
+ifeq (clean,$(firstword $(MAKECMDGOALS)))
+CLEAN_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+CLEAN_KIND := $(word 1,$(CLEAN_ARGS))
+CLEAN_TARGET := $(word 2,$(CLEAN_ARGS))
+ifneq ($(CLEAN_ARGS),)
+$(eval $(CLEAN_ARGS):;@:)
+endif
+endif
+CLEAN_ALL := $(filter all,$(CLEAN_TARGET))
+CLEAN_AGENTS = $(if $(CLEAN_ALL),$(AGENTS),$(CLEAN_TARGET))
+CLEAN_PKGS = $(foreach a,$(CLEAN_AGENTS),$($(a)_PKG))
+# Removes each path (globs allowed) that exists, says which, and counts them.
+remove = n=0; for p in $(1); do if [ -e "$$p" ]; then rm -rf "$$p" && echo "  removed $$p" && n=$$((n+1)); fi; done; echo "  $$n removed"
+# Every __pycache__ in the repo, leaving the venv, git and downloaded models alone.
+PYCACHE_SCOPE := find . \( -name venv -o -name .venv -o -name .git -o -name local_models -o -name .rill \) -prune -o -type d -name __pycache__ -prune
+
 # Generated data, one command: `make dummy-data csa` (each agent with a <agent>_DATA generator
 # rebuilds its own database), `make dummy-data analytics` (the platform's demo analytics world),
 # bare `make dummy-data` (every kind: agents first, then analytics).
@@ -110,7 +134,18 @@ help:
 	@echo ""
 	@echo "$(GREEN)Setup:$(NC)"
 	@echo "  make install              Create the venv and install the package with dev + eval extras"
-	@echo "  make clean                Remove venv, caches and logs"
+	@echo "  make matrix               Matrix digital rain in the terminal; Ctrl+C spells AGENT in digits"
+	@echo ""
+	@echo "$(GREEN)Clean$(NC) (one kind at a time; bare 'make clean' removes nothing):"
+	@echo "  make clean venv                    The virtualenv (make install recreates it)"
+	@echo "  make clean pycache                 Every __pycache__ in the repo (not the venv)"
+	@echo "  make clean cache                   pytest, mypy and ruff caches, .coverage, build output"
+	@echo "  make clean logs <agent>|all        logs/<package>/"
+	@echo "  make clean memory <agent>|all      Long-term memory files (checkpoints, records and audit kept)"
+	@echo "  make clean checkpoints <agent>|all Conversation checkpoints and durable-run state"
+	@echo "  make clean db <agent>|all          Business database and knowledge index (make dummy-data rebuilds)"
+	@echo "  make clean evals <agent>|all       Eval reports, raw output, workspaces, fixture DB (all: transcript store too)"
+	@echo "  make clean analytics live|dummy|all  The shared analytics source and its Parquet export"
 	@echo ""
 	@echo "$(GREEN)Quality$(NC) (repo-wide, no agent name):"
 	@echo "  make lint                 ruff check"
@@ -185,11 +220,79 @@ install:
 	@$(MAKE) --no-print-directory models
 	@echo "$(GREEN)✓ Installed, with every agent's local models. Activate with: source venv/bin/activate$(NC)"
 
-clean:
-	rm -rf venv .pytest_cache .coverage .mypy_cache dist build *.egg-info
-	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-	find . -type f -name "*.pyc" -delete
-	rm -rf logs/*.log logs/*/
+# Digital rain in the terminal; Ctrl+C ends it by spelling AGENT in digits.
+matrix:
+	@$(PYTHON) matrix_rain.py; status=$$?; clear; exit $$status
+
+# -- clean: `make clean <kind> [<agent>|all]` ---------------------------------------
+# Nothing is removed unless a kind is named; the agent's other state is never touched.
+clean: _clean_check $(if $(filter $(CLEAN_KINDS),$(CLEAN_KIND)),_clean_$(CLEAN_KIND))
+	@:
+
+_clean_check:
+	@test -n "$(filter $(CLEAN_KINDS),$(CLEAN_KIND))" || \
+	  (echo "$(YELLOW)Usage: make clean <kind> [<agent>|all]   (kinds: $(CLEAN_KINDS); make help → Clean)$(NC)" && exit 2)
+	@if [ -n "$(filter $(CLEAN_AGENT_KINDS),$(CLEAN_KIND))" ]; then \
+	  test "$(words $(CLEAN_ARGS))" = 2 -a -n "$(filter $(AGENTS) all,$(CLEAN_TARGET))" || \
+	  (echo "$(YELLOW)Usage: make clean $(CLEAN_KIND) <agent>|all   (agents: $(AGENTS))$(NC)" && exit 2); \
+	elif [ "$(CLEAN_KIND)" = analytics ]; then \
+	  test "$(words $(CLEAN_ARGS))" = 2 -a -n "$(filter $(CLEAN_SOURCES),$(CLEAN_TARGET))" || \
+	  (echo "$(YELLOW)Usage: make clean analytics live|dummy|all$(NC)" && exit 2); \
+	else \
+	  test "$(words $(CLEAN_ARGS))" = 1 || \
+	  (echo "$(YELLOW)Usage: make clean $(CLEAN_KIND)   (it takes no agent)$(NC)" && exit 2); \
+	fi
+
+_clean_venv:
+	@echo "$(BLUE)clean venv$(NC)"
+	@$(call remove,venv)
+	@echo "$(GREEN)✓ Recreate it with: make install$(NC)"
+
+_clean_pycache:
+	@echo "$(BLUE)clean pycache$(NC)"
+	@n=$$($(PYCACHE_SCOPE) -print | wc -l | tr -d ' '); \
+	  $(PYCACHE_SCOPE) -exec rm -rf {} + ; echo "  $$n __pycache__ folders removed"
+
+# Tool caches and build output; the venv, logs, databases and data are untouched.
+_clean_cache:
+	@echo "$(BLUE)clean cache$(NC)"
+	@$(call remove,.pytest_cache .mypy_cache .ruff_cache .coverage dist build *.egg-info)
+
+# logs/<package>/: every subsystem log and its rotations.
+_clean_logs:
+	@echo "$(BLUE)clean logs · $(CLEAN_TARGET)$(NC)"
+	@$(call remove,$(if $(CLEAN_ALL),logs/*,$(addprefix logs/,$(CLEAN_PKGS))))
+
+# Long-term memory files only, through the platform's own reset (the same as /memory clean);
+# conversation checkpoints, business records, reviews and audit are kept.
+_clean_memory:
+	@$(foreach a,$(CLEAN_AGENTS),echo "$(BLUE)clean memory · $(a)$(NC)" && \
+		AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(MEMORY_CLI) clean && ) true
+
+# Conversation checkpoints and durable-run state; a paused or interrupted run cannot resume after this.
+_clean_checkpoints:
+	@echo "$(BLUE)clean checkpoints · $(CLEAN_TARGET)$(NC)"
+	@$(call remove,$(addsuffix /checkpoints.db*,$(addprefix db/,$(CLEAN_PKGS))))
+
+# The agent's business database and knowledge index. A seeded agent is rebuilt by
+# `make dummy-data <agent>`; the knowledge index is rebuilt at start-up.
+_clean_db:
+	@echo "$(BLUE)clean db · $(CLEAN_TARGET)$(NC)"
+	@$(call remove,$(foreach p,$(CLEAN_PKGS),db/$(p)/agent.db* db/$(p)/knowledge.db*))
+	@echo "$(GREEN)✓ Rebuild a seeded agent with: make dummy-data <agent>$(NC)"
+
+# Eval reports, raw framework output, workspaces and the fixture database. The transcript
+# store (db/agent_platform/evals.duckdb) is shared by every agent, so only `all` clears it.
+_clean_evals:
+	@echo "$(BLUE)clean evals · $(CLEAN_TARGET)$(NC)"
+	@$(call remove,$(foreach p,$(CLEAN_PKGS) $(if $(CLEAN_ALL),agent_platform),data/$(p)/evals/* reports/$(p)/evals/* db/$(p)/eval_fixture.db*) $(if $(CLEAN_ALL),db/agent_platform/evals.duckdb*))
+
+# The shared analytics source (facts, audit decisions) and its Parquet export, live and/or demo.
+_clean_analytics:
+	@echo "$(BLUE)clean analytics · $(CLEAN_TARGET)$(NC)"
+	@$(call remove,$(if $(filter live all,$(CLEAN_TARGET)),db/agent_platform/observability.duckdb* data/agent_platform/analytics/*) \
+		$(if $(filter dummy all,$(CLEAN_TARGET)),db/agent_platform/dummy_observability.duckdb* data/agent_platform/analytics_dummy/*))
+	@echo "$(GREEN)✓ Rebuilt by running an agent; the demo source by: make dummy-data analytics$(NC)"
 
 lint:
 	./venv/bin/ruff check src/ tests/
