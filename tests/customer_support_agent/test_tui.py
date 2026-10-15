@@ -14,6 +14,7 @@ from agent_platform.interface.tui import (
 )
 from agent_platform.interface.tui.app import AgenticTuiApp
 from agent_platform.interface.tui.widgets import _compact, _elapsed
+from agent_platform.llm.types import TokenUsage
 from customer_support_agent.domain.identity import Customer
 from customer_support_agent.graph import build_agent
 from tests.conftest import ScriptedLLM
@@ -50,9 +51,9 @@ class TestTokenCounter:
     def test_tracks_turn_and_session_separately(self) -> None:
         """They answer different questions."""
         counter = TokenCounterWidget()
-        counter.add(100)
+        counter.add(TokenUsage(total_tokens=100))
         counter.start_turn()
-        counter.add(50)
+        counter.add(TokenUsage(total_tokens=50))
         assert counter.turn_tokens == 50 and counter.session_tokens == 150
 
     def test_the_counter_draws_nothing_itself(self) -> None:
@@ -62,14 +63,14 @@ class TestTokenCounter:
         reader already looks, and showing them twice is noise.
         """
         counter = TokenCounterWidget()
-        counter.add(1200)
+        counter.add(TokenUsage(total_tokens=1200))
         assert counter.render().plain == ""
 
     def test_a_new_turn_resets_the_turn_counters_only(self) -> None:
         counter = TokenCounterWidget()
-        counter.add(1000)
+        counter.add(TokenUsage(total_tokens=1000))
         counter.start_turn()
-        counter.add(500)
+        counter.add(TokenUsage(total_tokens=500))
         assert counter.turn_tokens == 500 and counter.session_tokens == 1500
 
 
@@ -119,7 +120,7 @@ class TestFormatting:
         line.bind_tokens(counter)
         line.begin("Working…")
         line._started_at -= 207
-        counter.add(9_700)
+        counter.add(TokenUsage(total_tokens=9_700))
         line.finish()
         assert line.metrics() == "3m 27s · 9.7k tokens"
         assert "(3m 27s · 9.7k tokens)" in line.render().plain

@@ -1,8 +1,10 @@
 """How every role is prompted: fixed instructions, then one JSON payload.
 
 Each role's prompt is its system instructions (a module in this package)
-plus a user message that carries the role's inputs as one JSON object and
-the schema its answer must satisfy. Keeping inputs structured, rather than
+and the schema its answer must satisfy, plus a user message that carries
+the role's inputs as one JSON object. The schema is the same on every call
+of a role and the payload never is, so the schema sits in the system
+message, ahead of the payload, where a provider's prefix cache can serve it. Keeping inputs structured, rather than
 interpolated into prose, is what lets a test inspect *exactly* what a
 role was shown — the check that the planner, reflector and synthesizer
 are never handed raw page text reads these payloads.
@@ -22,7 +24,9 @@ from agent_platform.llm.types import Message
 ROLE_HEADER = "ROLE: {role}"
 PAYLOAD_OPEN = "INPUT (JSON):\n```json\n"
 PAYLOAD_CLOSE = "\n```"
-SCHEMA_INTRO = "\nAnswer with one JSON object and nothing else, matching this schema:\n"
+SCHEMA_INTRO = "\n\nAnswer with one JSON object and nothing else, matching this schema:\n"
+# What closes the payload: the schema itself is in the system message.
+SCHEMA_REMINDER = "\nAnswer with one JSON object and nothing else, matching the schema above."
 # Every research-side role is told the run's date. Without it a model counts "the last 20 years"
 # back from its training-era "now" (run-4f316d864e planned 2003-2023 on 2026-10-04).
 TODAY_KEY = "today"
@@ -54,10 +58,13 @@ class RolePrompt(BaseModel):
         """
         rule = f"\n\n{TODAY_RULE}" if TODAY_KEY in self.payload else ""
         lead = f"{preamble.strip()}\n\n" if preamble.strip() else ""
-        system = f"{ROLE_HEADER.format(role=self.role)}\n{lead}{self.instructions.strip()}{rule}"
-        body = json.dumps(self.payload, indent=2, sort_keys=True, default=str)
         schema_text = json.dumps(schema.model_json_schema(), sort_keys=True)
-        user = f"{PAYLOAD_OPEN}{body}{PAYLOAD_CLOSE}{SCHEMA_INTRO}{schema_text}"
+        system = (
+            f"{ROLE_HEADER.format(role=self.role)}\n{lead}{self.instructions.strip()}{rule}"
+            f"{SCHEMA_INTRO}{schema_text}"
+        )
+        body = json.dumps(self.payload, indent=2, sort_keys=True, default=str)
+        user = f"{PAYLOAD_OPEN}{body}{PAYLOAD_CLOSE}{SCHEMA_REMINDER}"
         return [Message(role="system", content=system), Message(role="user", content=user)]
 
     def manifest(self, schema: type[BaseModel], preamble: str = "") -> PromptManifest:

@@ -7,6 +7,7 @@ or result in, a dict of display fields out. The agent decides when to show them.
 
 from typing import Any
 
+from agent_platform.config import get_settings
 from agent_platform.llm.prompt import tool_names
 from agent_platform.llm.tokenizer import count_tokens
 
@@ -90,9 +91,6 @@ def llm_response_fields(result: Any) -> dict[str, Any]:
         "total_tokens": result.usage.total_tokens,
         "latency_ms": round(float(result.latency_ms), 2),
     }
-    cached = getattr(result.usage, "cached_prompt_tokens", 0)
-    if cached:
-        fields["cached_input_tokens"] = cached
     if result.finish_reason:
         fields["finish_reason"] = result.finish_reason
     if result.tool_calls:
@@ -102,3 +100,16 @@ def llm_response_fields(result: Any) -> dict[str, Any]:
     elif result.content:
         fields["response"] = result.content
     return fields
+
+
+def cache_fields(usage: Any) -> dict[str, Any]:
+    """Whether the provider served the prompt's prefix from its cache.
+
+    A response card puts these last, after everything else it shows about the call.
+
+    A provider that never said how many tokens it cached shows that, not a 0 it did not send.
+    """
+    reported = getattr(usage, "cache_reported", False)
+    cached = getattr(usage, "cached_prompt_tokens", 0)
+    shown = cached if reported else get_settings().observability.cache_not_reported
+    return {"cached_input_tokens": shown, "cache_hit": bool(cached)}

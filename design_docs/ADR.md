@@ -714,6 +714,38 @@ super-120b with no fallback, so an agent never runs on the judge's model.
 call's model is logged, so such grades can be told apart. When super-120b is unavailable a CSA
 or Ops call fails after its retries. Amends P-19 ("every hosted model has a fallback") and P-20.
 
+### P-39 — The platform lays every request out for the provider's prefix cache; every call says whether it hit
+
+**Context.** A provider's prefix cache serves the longest byte-identical opening it has
+already seen, and cached input costs less and returns sooner. The `Cache` strategy and the
+manifest's stable prefix existed, but each agent decided its own order, so the variable part
+got into the prefix: CSA put its per-intent skills ahead of the policy and limit; tool schemas
+went out in the selector's ranking order; a history-carrying layout put the per-turn window
+ahead of the history; and a research role's static schema came after its payload. In the logs
+on 2026-10-15, ~313 requests shared ~40 prefix signatures, but only 3 of ~840 responses
+reported `cached_tokens > 0`. Hosted NIM is load-balanced with no prefix affinity.
+
+**Decision.**
+- `llm/prompt.py` `Volatility` (`FIXED` < `SESSION` < `TURN`) is on every section and
+  `PromptPart`. `PromptBuilder.build` orders the system sections by it, so an agent cannot add
+  them in a cache-losing order. With history, the `TURN` sections move to their own message
+  between the history and the question (`context.prompt.turn_context`: role `user`, since not
+  every chat template accepts a later system message). Without history they close the system
+  message. Placement is overridden through `_order_system`.
+- Skills are `TURN` (chosen per turn). The window's `CacheStrategy` part is `SESSION`.
+- `ToolRegistry.to_openai_tools` returns schemas in registration order, whatever order it is
+  asked in. The tool schemas are part of `prefix_signature` and `prefix_tokens`.
+- A research role's answer schema is in its system message; the user message is the payload.
+- Every LLM call reports `cached_input_tokens` and `cache_hit` as the last fields of its
+  response card, and in the adapter's log with the provider's raw `usage`.
+  `TokenUsage.cache_reported` tells "the provider did not say" apart from a miss. The central
+  meter passes the whole `TokenUsage`, and the turn summary's `prompt_cache` line sums it.
+
+**Consequences.** The layout gain shows on a provider that caches (llama.cpp locally); on
+hosted NIM, `cache_hit` mostly reads false, and the reason is now visible instead of guessed.
+A research role's request text changed (schema moved), so its prompt cache and any recorded
+fixtures that match on it start over.
+
 ---
 
 ## 9. Research agent

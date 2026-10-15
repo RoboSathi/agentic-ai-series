@@ -179,13 +179,13 @@ class TestTokenMetering:
     """The adapter meters every call; no agent counts tokens itself."""
 
     async def test_each_call_reaches_the_runs_sink(self) -> None:
-        counted: list[int] = []
+        counted: list[TokenUsage] = []
         client = _metered_client(40)
         request = CompletionRequest(messages=[Message(role="user", content="hi")])
         with metered(counted.append):
             await client.complete(request)
             await client.complete(request)
-        assert counted == [40, 40]
+        assert [usage.total_tokens for usage in counted] == [40, 40]
 
     async def test_a_call_outside_a_run_is_counted_by_no_one(self) -> None:
         counted: list[int] = []

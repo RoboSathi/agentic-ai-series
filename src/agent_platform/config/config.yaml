@@ -629,8 +629,14 @@ observability:
       reply_instruction: Reply instruction
       today: Today's date
       session: Session notes
+      turn_context: Context for this turn
   llm_response_heading: "LLM response · {purpose}"
   llm_tool_requested_heading: "LLM response · tool requested: {tool}"
+  # A response card's last fields are `cached_input_tokens` and `cache_hit` (true/false); this
+  # is what `cached_input_tokens` shows when the provider sent no prompt_tokens_details.
+  cache_not_reported: not reported
+  # The turn summary's `prompt_cache` field: how much input the providers served cached.
+  prompt_cache_line: "{hits}/{calls} calls hit · {cached:,} of {prompt:,} input tokens cached"
   # Why a model call was made. A loop step's call (`next_action`) may ask for a tool or answer;
   # its response card names what it produced: `tool_selection` or `reply`.
   llm_purposes:
@@ -1005,6 +1011,15 @@ context:
     # Characters of the stable-prefix digest shown on the card.
     signature_chars: 12
     prefix_memory: 256
+    # A request is laid out by volatility (`llm/prompt.py` `Volatility`): what never changes
+    # first, then the conversation so far, then what changes each turn, then the question —
+    # so a provider's prefix cache can serve everything up to this turn's own context. With
+    # no history messages the per-turn sections close the one system message instead.
+    turn_context:
+      # The message that carries the per-turn sections after history. `user` because not
+      # every chat template accepts a system message after the first.
+      role: user
+      heading: "# Context for this turn"
     # How the window's chunks are broken down: a source prefix first, then the chunk kind.
     window_parts:
       by_source:

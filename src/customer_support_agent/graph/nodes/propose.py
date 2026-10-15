@@ -15,7 +15,7 @@ from typing import Any
 from agent_platform.config import get_settings
 from agent_platform.context.offload import offload_tool_name
 from agent_platform.context.types import OFFLOADED
-from agent_platform.llm.prompt import TOOL_LOOP, USER_QUERY, PromptBuilder
+from agent_platform.llm.prompt import TOOL_LOOP, USER_QUERY, PromptBuilder, Volatility
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
 from agent_platform.observability import Span
 from agent_platform.observability.model_observer import MODEL_STAGE as LLM_CALL_SPAN
@@ -316,7 +316,7 @@ class ProposalNodes(NodeSupport):
             ).notes(window.applied_strategies if window is not None else [])
         if state.metadata.get("intent_execution_route") == "llm_fallback":
             fallback = get_agent_settings().intent_fallback_instruction
-            builder.system(INTENT_FALLBACK, fallback, stable=False)
+            builder.system(INTENT_FALLBACK, fallback, volatility=Volatility.TURN)
         built = (
             builder.message(USER_QUERY, "user", state.model_query or state.query)
             .messages(TOOL_LOOP, self._current_messages(state))

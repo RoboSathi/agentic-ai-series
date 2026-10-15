@@ -86,7 +86,8 @@ def system_prompt_parts(
     """The working prompt as named parts: the turn's instructions, the policy, the limit.
 
     The same text `build_system_prompt` joins, attributable part by part, for a request
-    built with `PromptBuilder`.
+    built with `PromptBuilder`. The policy and limit are fixed and the skills are chosen per
+    turn, so the builder sends the skills after them (`Volatility`).
     """
     policy = PromptPart(POLICY, policy_text().strip(), get_agent_settings().policy_path)
     limit = PromptPart(REFUND_LIMIT, refund_limit_notice(refund_limit, governed=governed).strip())

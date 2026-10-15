@@ -142,13 +142,18 @@ class NamespacedToolRegistry:
         return sorted({tool.namespace for tool in self._tools.values()})
 
     def to_openai_tools(self, names: list[str] | None = None) -> list[dict[str, Any]]:
-        """Schemas for the named tools, or for all of them when unfiltered."""
-        selected = (
-            [tool for name in names if (tool := self.get(name)) is not None]
-            if names is not None
-            else self.all_tools()
-        )
-        return [tool.to_openai_schema() for tool in selected]
+        """Schemas for the named tools, or for all of them when unfiltered.
+
+        Always in registration order, whatever order `names` comes in: a provider renders
+        the schemas into the head of the prompt, so the same set in a different order (a
+        selector's ranking, say) would be a different prefix and miss its cache.
+        """
+        if names is None:
+            return [tool.to_openai_schema() for tool in self.all_tools()]
+        wanted = {tool.qualified_name for name in names if (tool := self.get(name)) is not None}
+        return [
+            tool.to_openai_schema() for tool in self.all_tools() if tool.qualified_name in wanted
+        ]
 
     def resolve(self, name: str, raw_arguments: str | dict[str, Any]) -> ToolResolution:
         """Turn a wire-level request into a validated, governed `ToolCall`, or say why not.

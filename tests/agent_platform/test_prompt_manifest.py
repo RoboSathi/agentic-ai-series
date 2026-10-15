@@ -21,22 +21,41 @@ from agent_platform.llm.prompt import (
     PROFILE,
     SKILLS,
     TOOL_LOOP,
+    TURN_CONTEXT,
     USER_QUERY,
     PromptBuilder,
     PromptPart,
     TurnLayout,
+    Volatility,
     manifest_from_messages,
 )
 from agent_platform.llm.tokenizer import CharEstimateTokenizer, LocalTokenizer
-from agent_platform.llm.types import CompletionRequest, Message, ModelToolCall, TokenUsage
+from agent_platform.llm.types import (
+    CompletionRequest,
+    CompletionResult,
+    Message,
+    ModelToolCall,
+    TokenUsage,
+)
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.context_card import CONTEXT_STAGE, context_fields
+from agent_platform.observability.llm_fields import cache_fields
 from agent_platform.observability.model_observer import StageReporterModelObserver
 from agent_platform.observability.step_events import LLM_REQUEST, StepEvents
+from agent_platform.observability.turn_tally import TurnTally
 from agent_platform.observability.types import StatusEvent
 from tests.conftest import ScriptedLLM
 
 FOUR = CharEstimateTokenizer(4)
+
+
+def _raw_usage(details: object) -> SimpleNamespace:
+    """A provider's usage block, with or without its prompt_tokens_details."""
+    return SimpleNamespace(
+        prompt_tokens=100, completion_tokens=10, total_tokens=110, prompt_tokens_details=details
+    )
+
+
 INSTRUCTIONS = [
     PromptPart(PROFILE, "You are a support agent.", "AGENT.md"),
     PromptPart(SKILLS, "# Skill: refund\nsteps", "refund@1"),
@@ -109,7 +128,8 @@ class TestTheStablePrefix:
     def test_it_stops_at_the_first_section_that_changes_per_turn(self) -> None:
         manifest = _built().manifest
         prefix = [s.tokens for s in manifest.sections[:3]]
-        assert manifest.prefix_tokens == sum(prefix)
+        # The tool schemas count too: a chat template renders them at the head of the prompt.
+        assert manifest.prefix_tokens == sum(prefix) + manifest.tool_schema_tokens
 
     def test_equal_prefixes_sign_equally_and_a_changed_one_does_not(self) -> None:
         first = _built().manifest.prefix_signature
@@ -122,6 +142,74 @@ class TestTheStablePrefix:
     def test_no_stable_section_means_no_signature(self) -> None:
         manifest = PromptBuilder(FOUR).message(USER_QUERY, "user", "hi").build().manifest
         assert manifest.prefix_signature == ""
+
+
+class TestTheLayoutIsOrderedForThePrefixCache:
+    """Least volatile first, whatever order an agent adds its sections in."""
+
+    def test_a_fixed_section_goes_ahead_of_a_per_turn_one_added_before_it(self) -> None:
+        parts = [
+            PromptPart(PROFILE, "Profile.", "AGENT.md"),
+            PromptPart(SKILLS, "# Skill: refund", "refund@1", Volatility.TURN),
+            PromptPart(POLICY, "Refund within 30 days."),
+        ]
+        built = PromptBuilder(FOUR).instructions(parts).build()
+        names = [section.name for section in built.manifest.sections]
+        assert names == [PROFILE, POLICY, SKILLS]
+        assert built.manifest.sections[1].stable and not built.manifest.sections[2].stable
+
+    def test_two_skill_choices_share_one_prefix(self) -> None:
+        def signed(skill: str) -> str:
+            parts = [
+                PromptPart(PROFILE, "Profile."),
+                PromptPart(SKILLS, skill, volatility=Volatility.TURN),
+                PromptPart(POLICY, "Policy."),
+            ]
+            return (
+                PromptBuilder(FOUR)
+                .instructions(parts)
+                .tools(TOOLS)
+                .build()
+                .manifest.prefix_signature
+            )
+
+        assert signed("# Skill: refund") == signed("# Skill: lookup")
+
+    def test_the_tools_offered_are_part_of_the_prefix(self) -> None:
+        other = [{"type": "function", "function": {"name": "get_order", "parameters": {}}}]
+        builder = PromptBuilder(FOUR).system(POLICY, "Policy.")
+        assert builder.tools(TOOLS).build().manifest.prefix_signature != (
+            builder.tools(other).build().manifest.prefix_signature
+        )
+
+    def test_with_history_the_turns_context_follows_it(self) -> None:
+        history = [Message(role="user", content="before"), Message(role="assistant", content="ok")]
+        built = (
+            PromptBuilder(FOUR)
+            .system(PROFILE, "Profile.")
+            .system("today", "Today is Thursday.", volatility=Volatility.TURN)
+            .messages(HISTORY, history)
+            .message(USER_QUERY, "user", "now")
+            .build()
+        )
+        settings = get_settings().context.prompt.turn_context
+        assert [m.content for m in built.messages[:3]] == ["Profile.", "before", "ok"]
+        assert built.messages[3].role == settings.role
+        assert built.messages[3].content == f"{settings.heading}\n\nToday is Thursday."
+        assert built.messages[4].content == "now"
+        names = [section.name for section in built.manifest.sections]
+        assert names == [PROFILE, HISTORY, TURN_CONTEXT, "today", USER_QUERY]
+
+    def test_without_history_the_turns_context_closes_the_system_message(self) -> None:
+        built = (
+            PromptBuilder(FOUR)
+            .system("today", "Today is Thursday.", volatility=Volatility.TURN)
+            .system(PROFILE, "Profile.")
+            .message(USER_QUERY, "user", "now")
+            .build()
+        )
+        assert built.messages[0].content == "Profile.\n\nToday is Thursday."
+        assert len(built.messages) == 2
 
 
 class TestATurnLayoutSectionsEveryStep:
@@ -226,13 +314,32 @@ class TestTheTokenizer:
 
 class TestCachedPromptTokens:
     def test_are_read_from_the_providers_usage(self) -> None:
-        raw = SimpleNamespace(
-            prompt_tokens=100,
-            completion_tokens=10,
-            total_tokens=110,
-            prompt_tokens_details=SimpleNamespace(cached_tokens=60),
+        usage = OpenAICompatibleClient._usage_from(_raw_usage(SimpleNamespace(cached_tokens=60)))
+        assert usage.cached_prompt_tokens == 60
+        assert usage.cache_reported and usage.cache_hit
+
+    def test_a_reported_zero_is_a_miss(self) -> None:
+        usage = OpenAICompatibleClient._usage_from(_raw_usage(SimpleNamespace(cached_tokens=0)))
+        assert usage.cache_reported and not usage.cache_hit
+
+    def test_a_provider_that_does_not_say_is_not_reported(self) -> None:
+        usage = OpenAICompatibleClient._usage_from(_raw_usage(None))
+        assert not usage.cache_reported and not usage.cache_hit
+
+    def test_cache_hit_is_the_last_thing_a_response_card_says(self) -> None:
+        result = CompletionResult(
+            content="hi",
+            usage=TokenUsage(prompt_tokens=10, cached_prompt_tokens=8, cache_reported=True),
         )
-        assert OpenAICompatibleClient._usage_from(raw).cached_prompt_tokens == 60
+        feed, shown = _feed()
+        StepEvents(feed, max_steps=1).llm_response(result, purpose="reply")
+        fields = list(shown[-1].fields.items())
+        assert fields[-2:] == [("cached_input_tokens", 8), ("cache_hit", True)]
+
+    def test_an_unreported_count_says_so(self) -> None:
+        fields = cache_fields(TokenUsage(prompt_tokens=10))
+        not_reported = get_settings().observability.cache_not_reported
+        assert fields == {"cached_input_tokens": not_reported, "cache_hit": False}
 
     def test_are_priced_at_their_own_rate(self) -> None:
         provider = SimpleNamespace(
@@ -245,3 +352,19 @@ class TestCachedPromptTokens:
             prompt_tokens=1000, completion_tokens=1000, total_tokens=2000, cached_prompt_tokens=500
         )
         assert OpenAICompatibleClient.cost_for(client, usage) == 0.5 + 0.25 + 2.0
+
+
+class TestTheTurnSummarySaysHowMuchWasCached:
+    def test_it_adds_up_every_call_of_the_turn(self) -> None:
+        tally = TurnTally()
+        tally.model_call(TokenUsage(prompt_tokens=1000, total_tokens=1010))
+        tally.model_call(
+            TokenUsage(
+                prompt_tokens=1200, total_tokens=1210, cached_prompt_tokens=900, cache_reported=True
+            )
+        )
+        line = tally.fields("completed", 1.0)["prompt_cache"]
+        expected = get_settings().observability.prompt_cache_line.format(
+            hits=1, calls=2, cached=900, prompt=2200
+        )
+        assert line == expected

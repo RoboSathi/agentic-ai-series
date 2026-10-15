@@ -17,7 +17,8 @@ from contextvars import ContextVar, Token
 
 from agent_platform.llm.types import TokenUsage
 
-TokenSink = Callable[[int], None]
+# A sink hears each call's whole usage: its tokens, and how many its provider served cached.
+TokenSink = Callable[[TokenUsage], None]
 
 # Every sink watching the current run: the surface that started it (the TUI's
 # status bar) and the turn being summarised both hear each call.
@@ -48,7 +49,7 @@ def record_usage(usage: TokenUsage) -> None:
     """Report one call's usage to the run watching it, if any is."""
     if usage.total_tokens > 0:
         for sink in _current_sinks.get():
-            sink(usage.total_tokens)
+            sink(usage)
 
 
 __all__ = ["TokenSink", "attach", "detach", "metered", "record_usage"]

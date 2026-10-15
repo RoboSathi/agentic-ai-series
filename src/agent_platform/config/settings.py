@@ -795,6 +795,10 @@ class ObservabilitySettings(YamlBackedSettings):
     dream_inbox: DreamInboxWords
     llm_response_heading: str
     llm_tool_requested_heading: str
+    # What a response card shows for cached input tokens when the provider did not say.
+    cache_not_reported: str
+    # The turn summary's prompt-cache line: `{hits}`/`{calls}` calls, `{cached}`/`{prompt}` tokens.
+    prompt_cache_line: str
     llm_purposes: LlmPurposeWords
     step_events: StepEventWords
     # What a tool card shows when the model's arguments are not JSON.
@@ -1288,6 +1292,13 @@ class PromptWindowParts(BaseModel):
     by_kind: dict[str, str]
 
 
+class TurnContextSettings(BaseModel):
+    """The message that carries a request's per-turn sections when it has history."""
+
+    role: Literal["system", "user"]
+    heading: str
+
+
 class PromptSettings(BaseModel):
     """How a request is built from named sections (`llm/prompt.py`)."""
 
@@ -1296,6 +1307,7 @@ class PromptSettings(BaseModel):
     signature_chars: int = Field(gt=0)
     # How many (model, prefix) pairs are remembered, to say whether a prefix is reused.
     prefix_memory: int = Field(gt=0)
+    turn_context: TurnContextSettings
     window_parts: PromptWindowParts
     # A message role → the section a request no builder made puts it in.
     role_sections: dict[str, str]

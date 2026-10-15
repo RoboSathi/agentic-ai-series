@@ -25,6 +25,7 @@ from agent_platform.observability.context_card import (
     note_prefix,
 )
 from agent_platform.observability.llm_fields import (
+    cache_fields,
     estimate_fields,
     llm_request_fields,
     llm_response_fields,
@@ -138,6 +139,7 @@ class StepEvents:
             **llm_response_fields(result),
             **estimate_fields(self._estimated_input, result.usage.prompt_tokens),
             "purpose": purpose,
+            **cache_fields(result.usage),
         }
         self._loop.emit(LLM_RESPONSE, summary=heading, fields=fields, event_kind="model")
 

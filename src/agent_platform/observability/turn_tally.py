@@ -13,6 +13,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from agent_platform.config import get_settings
+from agent_platform.llm.types import TokenUsage
 from agent_platform.observability.types import StatusEvent
 
 # Model calls are counted where every one is made (the central meter, see
@@ -57,6 +58,9 @@ class TurnTally:
         self._refused = 0
         self._llm_calls = 0
         self._tokens = 0
+        self._prompt_tokens = 0
+        self._cached_tokens = 0
+        self._cache_hits = 0
         self._interventions: list[str] = []
 
     def observe(self, event: StatusEvent) -> None:
@@ -102,10 +106,24 @@ class TurnTally:
             return ""
         return f"{len(self._interventions)} · {', '.join(self._interventions)}"
 
-    def model_call(self, tokens: int) -> None:
+    def model_call(self, usage: TokenUsage) -> None:
         """One provider call of this turn, as the central meter reports it."""
         self._llm_calls += 1
-        self._tokens += tokens
+        self._tokens += usage.total_tokens
+        self._prompt_tokens += usage.prompt_tokens
+        self._cached_tokens += usage.cached_prompt_tokens
+        self._cache_hits += usage.cache_hit
+
+    def _cache_line(self) -> str:
+        """How much of the turn's input the providers served from their prefix caches."""
+        if not self._llm_calls:
+            return ""
+        return get_settings().observability.prompt_cache_line.format(
+            hits=self._cache_hits,
+            calls=self._llm_calls,
+            cached=self._cached_tokens,
+            prompt=self._prompt_tokens,
+        )
 
     def fields(
         self,
@@ -130,6 +148,7 @@ class TurnTally:
             "dream_inbox": self._inbox_line(),
             "memory": " · ".join(f"{n} {what}" for what, n in self._memory.items()),
             "tokens": self._tokens,
+            "prompt_cache": self._cache_line(),
             "duration": f"{seconds:.1f} s",
         }
 

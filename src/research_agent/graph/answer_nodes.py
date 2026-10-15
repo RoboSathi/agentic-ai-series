@@ -31,7 +31,11 @@ from agent_platform.llm.prompt import PromptManifest, manifest_from_messages
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message, ModelToolCall
 from agent_platform.logging import describe_error, get_logger, instrument
 from agent_platform.loop_control import LoopVerdict
-from agent_platform.observability.llm_fields import llm_request_fields, llm_response_fields
+from agent_platform.observability.llm_fields import (
+    cache_fields,
+    llm_request_fields,
+    llm_response_fields,
+)
 from agent_platform.observability.step_events import HALLUCINATION_CHECK
 from agent_platform.observability.tool_fields import display_tool_name, tool_request_fields
 from agent_platform.tools.path import DUPLICATE, INVALID, UNKNOWN, ToolPath, ToolTurn
@@ -198,11 +202,12 @@ class AnswerNodes:
         `opening` is False for a request that does not start from the turn's own opening (the
         answer from observations alone), which is then broken down by message role.
         """
-        manifest = (
-            turn.layout.build(messages, tools).manifest
-            if opening
-            else manifest_from_messages(messages, tools)
-        )
+        if opening:
+            # The layout lays the request out for the provider's prefix cache (`Volatility`).
+            built = turn.layout.build(messages, tools)
+            messages, manifest = built.messages, built.manifest
+        else:
+            manifest = manifest_from_messages(messages, tools)
         request = CompletionRequest(messages=messages, tools=tools, manifest=manifest)
         turn.steps.context(request, purpose=ANSWER_PURPOSE)
         self._emit(turn, THOUGHT, self._waiting(), {}, event_kind="model", status="started")
@@ -257,6 +262,7 @@ class AnswerNodes:
             **llm_response_fields(result),
             "purpose": purpose,
             **({"reasoning": result.reasoning} if result.reasoning else {}),
+            **cache_fields(result.usage),
         }
 
     def _context_fields(self, turn: Turn) -> dict[str, Any]:

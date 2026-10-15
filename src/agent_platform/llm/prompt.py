@@ -8,6 +8,14 @@ sections and returns, beside them, a `PromptManifest`: every section, where it c
 how many tokens it costs, and which leading sections form the stable prefix a provider can
 cache. The CONTEXT card and the LLM log draw from the manifest; the provider never sees it.
 
+The builder also owns the layout. Each section says how often it changes (`Volatility`) and
+`build` lays the request out least-volatile first: the fixed system prompt, then the
+conversation so far, then this turn's context, then the question and its tool loop. A
+provider's prefix cache serves the longest opening it has seen byte for byte, so an agent
+cannot lose the cache by adding its sections in the wrong order — the order is not its to get
+wrong. An agent that needs another placement subclasses the builder and overrides
+`_order_system`.
+
 Section names are code identifiers (the vocabulary below); what a person reads for each is
 configuration (`observability.context_card.labels`).
 """
@@ -16,6 +24,7 @@ import hashlib
 import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from enum import IntEnum
 from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
@@ -38,6 +47,22 @@ USER_QUERY = "user_query"
 HISTORY = "history"
 TOOL_LOOP = "tool_loop"
 PAYLOAD = "payload"
+# The heading of the per-turn sections when they follow the history as their own message.
+TURN_CONTEXT = "turn_context"
+
+
+class Volatility(IntEnum):
+    """How often a section's text changes, which is where a request puts it.
+
+    Lower sorts first. Everything below `TURN` is the stable prefix a provider can cache.
+    """
+
+    # The process's lifetime: a profile, a policy, a limit, a role's instructions.
+    FIXED = 0
+    # One session: the window's stable part (`CacheStrategy`'s chunks).
+    SESSION = 1
+    # Each turn: the skills chosen, the retrieved window, today's date, the payload.
+    TURN = 2
 
 
 class ChunkLike(Protocol):
@@ -60,6 +85,7 @@ class PromptPart:
     name: str
     text: str
     source: str = ""
+    volatility: Volatility = Volatility.FIXED
 
 
 class PromptSection(BaseModel):
@@ -70,12 +96,17 @@ class PromptSection(BaseModel):
     content: str
     tokens: int
     source: str = ""
-    # Byte-identical from call to call within a session: part of the cacheable prefix.
-    stable: bool = False
+    # How often the text changes: below `TURN`, part of the cacheable prefix.
+    volatility: Volatility = Volatility.TURN
     parts: list["PromptSection"] = Field(default_factory=list)
     # The section as a card shows it (a tool's JSON as a tree, calls as `key=value`); empty:
     # `content` as written. Display only — `content` is what is counted and sent.
     shown: list[str] = Field(default_factory=list)
+
+    @property
+    def stable(self) -> bool:
+        """Byte-identical from call to call within a session: part of the cacheable prefix."""
+        return self.volatility < Volatility.TURN
 
 
 class PromptManifest(BaseModel):
@@ -104,14 +135,23 @@ class PromptManifest(BaseModel):
 
     @property
     def prefix_tokens(self) -> int:
-        return sum(section.tokens for section in self._prefix())
+        """The stable sections and the tool schemas, which a chat template renders up front."""
+        prefix = sum(section.tokens for section in self._prefix())
+        return prefix + self.tool_schema_tokens if prefix else 0
 
     @property
     def prefix_signature(self) -> str:
-        """A short digest of the stable prefix: equal digests mean a provider cache can hit."""
+        """A short digest of the stable prefix: equal digests mean a provider cache can hit.
+
+        The tool schemas are in it: offered in another order or another set, the same
+        sections are a different prefix to the provider.
+        """
         joined = "\x1f".join(section.content for section in self._prefix())
-        digest = hashlib.sha256(joined.encode("utf-8")).hexdigest()
-        return digest[: get_settings().context.prompt.signature_chars] if joined else ""
+        if not joined:
+            return ""
+        tools = json.dumps(self.tool_specs, sort_keys=True)
+        digest = hashlib.sha256(f"{joined}\x1f{tools}".encode()).hexdigest()
+        return digest[: get_settings().context.prompt.signature_chars]
 
     def _prefix(self) -> list[PromptSection]:
         prefix: list[PromptSection] = []
@@ -155,7 +195,7 @@ class TurnLayout:
         builder.window(self.window_heading, self.window_text, self.window_chunks)
         builder.notes(self.window_notes)
         for part in self.tail:
-            builder.system(part.name, part.text, source=part.source, stable=False)
+            builder.system(part.name, part.text, source=part.source, volatility=Volatility.TURN)
         asked = self.history + 1
         return (
             builder.messages(HISTORY, rest[: self.history])
@@ -177,8 +217,10 @@ class BuiltPrompt:
 class PromptBuilder:
     """Builds a request's messages from named sections, counting each as it goes.
 
-    System sections are joined, in the order added, into the one system message every
-    provider expects first; every other message keeps the order it was added in.
+    System sections are ordered by volatility (in the order added within one) and joined
+    into the one system message every provider expects first. With history, the per-turn
+    sections leave it for a message of their own between the history and the question, so
+    the history is part of the prefix too. Every other message keeps the order it was added.
     """
 
     def __init__(self, tokenizer: Tokenizer | None = None) -> None:
@@ -190,34 +232,42 @@ class PromptBuilder:
         self._notes: list[str] = []
 
     def system(
-        self, name: str, text: str, *, source: str = "", stable: bool = True
+        self,
+        name: str,
+        text: str,
+        *,
+        source: str = "",
+        volatility: Volatility = Volatility.FIXED,
     ) -> "PromptBuilder":
         """A named block of the system message; empty text adds nothing."""
         if text.strip():
-            self._system.append(self._section(name, "system", text, source, stable))
+            self._system.append(self._section(name, "system", text, source, volatility))
         return self
 
-    def system_parts(
-        self, name: str, parts: Sequence[PromptPart], *, stable: bool = True
-    ) -> "PromptBuilder":
-        """One system section built of attributable parts (each skill, say)."""
+    def system_parts(self, name: str, parts: Sequence[PromptPart]) -> "PromptBuilder":
+        """One system section built of attributable parts (each skill, say).
+
+        The section is as volatile as its most volatile part.
+        """
         kept = [part for part in parts if part.text.strip()]
         if not kept:
             return self
         text = self._settings.separator.join(part.text for part in kept)
+        volatility = max(part.volatility for part in kept)
         if len(kept) == 1:
-            return self.system(name, text, source=kept[0].source, stable=stable)
-        section = self._section(name, "system", text, "", stable)
+            return self.system(name, text, source=kept[0].source, volatility=volatility)
+        section = self._section(name, "system", text, "", volatility)
         section.parts = [
-            self._section(p.source or p.name, "system", p.text, p.source, stable) for p in kept
+            self._section(p.source or p.name, "system", p.text, p.source, p.volatility)
+            for p in kept
         ]
         self._system.append(section)
         return self
 
-    def instructions(self, parts: Sequence[PromptPart], *, stable: bool = True) -> "PromptBuilder":
+    def instructions(self, parts: Sequence[PromptPart]) -> "PromptBuilder":
         """The agent's instructions — its profile, then each skill — one section per kind."""
         for name in dict.fromkeys(part.name for part in parts):
-            self.system_parts(name, [part for part in parts if part.name == name], stable=stable)
+            self.system_parts(name, [part for part in parts if part.name == name])
         return self
 
     def window(self, heading: str, text: str, chunks: Iterable[ChunkLike] = ()) -> "PromptBuilder":
@@ -231,22 +281,22 @@ class PromptBuilder:
         if stable and joined == text:
             # The Cache strategy's chunks lead the window and never change: they extend the
             # cacheable prefix rather than starting the part of the request that varies.
-            self._window_block(WINDOW_STABLE, heading, stable, stable=True)
-            return self._window_block(CONTEXT_WINDOW, "", rest, stable=False)
+            self._window_block(WINDOW_STABLE, heading, stable, Volatility.SESSION)
+            return self._window_block(CONTEXT_WINDOW, "", rest, Volatility.TURN)
         block = f"{heading}\n{text}" if heading else text
-        section = self._section(CONTEXT_WINDOW, "system", block, "", stable=False)
+        section = self._section(CONTEXT_WINDOW, "system", block, "", Volatility.TURN)
         section.parts = self._window_parts(chunks)
         self._system.append(section)
         return self
 
     def _window_block(
-        self, name: str, heading: str, chunks: list[ChunkLike], *, stable: bool
+        self, name: str, heading: str, chunks: list[ChunkLike], volatility: Volatility
     ) -> "PromptBuilder":
         if not chunks:
             return self
         text = self._settings.separator.join(chunk.content for chunk in chunks)
         block = f"{heading}\n{text}" if heading else text
-        section = self._section(name, "system", block, "", stable=stable)
+        section = self._section(name, "system", block, "", volatility)
         section.parts = self._window_parts(chunks)
         self._system.append(section)
         return self
@@ -272,7 +322,7 @@ class PromptBuilder:
             else self._settings.separator.join(render_message(item) for item in messages)
         )
         role = messages[0].role
-        section = self._section(name, role, rendered, source, False)
+        section = self._section(name, role, rendered, source, Volatility.TURN)
         section.shown = [line for item in messages for line in shown_message(item)]
         self._conversation.append((section, list(messages)))
         return self
@@ -283,14 +333,22 @@ class PromptBuilder:
         return self
 
     def build(self) -> BuiltPrompt:
-        messages: list[Message] = []
-        if self._system:
-            joined = self._settings.separator.join(section.content for section in self._system)
-            messages.append(Message(role="system", content=joined))
-        for _, group in self._conversation:
+        ordered = self._order_system()
+        turn = [section for section in ordered if not section.stable]
+        split = bool(turn) and any(section.name == HISTORY for section, _ in self._conversation)
+        head = [section for section in ordered if section.stable] if split else ordered
+        sections, messages = self._lead(head)
+        pending = self._turn_context(turn) if split else None
+        for section, group in self._conversation:
+            if pending is not None and section.name != HISTORY:
+                sections, messages = [*sections, *pending[0]], [*messages, pending[1]]
+                pending = None
+            sections.append(section)
             messages.extend(group)
+        if pending is not None:
+            sections, messages = [*sections, *pending[0]], [*messages, pending[1]]
         manifest = PromptManifest(
-            sections=[*self._system, *(section for section, _ in self._conversation)],
+            sections=sections,
             tools=tool_names(self._tools),
             tool_specs=list(self._tools),
             tool_schema_tokens=self._count(json.dumps(self._tools)) if self._tools else 0,
@@ -299,6 +357,29 @@ class PromptBuilder:
             window_notes=list(self._notes),
         )
         return BuiltPrompt(messages=messages, manifest=manifest)
+
+    def _order_system(self) -> list[PromptSection]:
+        """The system sections least volatile first, in the order added within one tier.
+
+        The extension point for an agent that needs another placement.
+        """
+        return sorted(self._system, key=lambda section: section.volatility)
+
+    def _lead(self, head: list[PromptSection]) -> tuple[list[PromptSection], list[Message]]:
+        """The one leading system message, and the sections it is made of."""
+        if not head:
+            return [], []
+        joined = self._settings.separator.join(section.content for section in head)
+        return list(head), [Message(role="system", content=joined)]
+
+    def _turn_context(self, turn: list[PromptSection]) -> tuple[list[PromptSection], Message]:
+        """The per-turn sections as their own message, under a heading, after the history."""
+        settings = self._settings.turn_context
+        role: Role = settings.role
+        heading = self._section(TURN_CONTEXT, role, settings.heading, "", Volatility.TURN)
+        moved = [heading, *(section.model_copy(update={"role": role}) for section in turn)]
+        text = self._settings.separator.join(section.content for section in moved)
+        return moved, Message(role=role, content=text)
 
     def _window_parts(self, chunks: Iterable[ChunkLike]) -> list[PromptSection]:
         """Chunks grouped by what they are — retrieved, working memory, long-term memory…"""
@@ -311,7 +392,7 @@ class PromptBuilder:
                 "system",
                 self._settings.separator.join(chunk.content for chunk in members),
                 ", ".join(dict.fromkeys(chunk.source for chunk in members if chunk.source)),
-                False,
+                Volatility.TURN,
             )
             for name, members in groups.items()
         ]
@@ -324,7 +405,7 @@ class PromptBuilder:
         return parts.by_kind.get(chunk.kind, chunk.kind)
 
     def _section(
-        self, name: str, role: Role, text: str, source: str, stable: bool
+        self, name: str, role: Role, text: str, source: str, volatility: Volatility
     ) -> PromptSection:
         return PromptSection(
             name=name,
@@ -332,7 +413,7 @@ class PromptBuilder:
             content=text,
             tokens=self._count(text),
             source=source,
-            stable=stable,
+            volatility=volatility,
         )
 
     def _count(self, text: str) -> int:
@@ -387,7 +468,7 @@ def manifest_from_messages(
     names = get_settings().context.prompt.role_sections
     for message in messages:
         if message.role == "system":
-            builder.system(INSTRUCTIONS, message.content, stable=True)
+            builder.system(INSTRUCTIONS, message.content)
         else:
             builder.messages(names.get(message.role, message.role), [message])
     return builder.tools(tools).build().manifest
@@ -402,6 +483,7 @@ __all__ = [
     "SKILLS",
     "PROFILE",
     "TOOL_LOOP",
+    "TURN_CONTEXT",
     "USER_QUERY",
     "BuiltPrompt",
     "ChunkLike",
@@ -410,6 +492,7 @@ __all__ = [
     "PromptPart",
     "PromptSection",
     "TurnLayout",
+    "Volatility",
     "manifest_from_messages",
     "render_message",
     "tool_names",

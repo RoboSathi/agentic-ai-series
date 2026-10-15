@@ -112,6 +112,12 @@ def _tool_calls_from(raw: Any) -> list[ModelToolCall] | None:
     ]
 
 
+def _plain(raw: Any) -> Any:
+    """A provider object as plain data for the log (pydantic models dump; others pass)."""
+    dump = getattr(raw, "model_dump", None)
+    return dump(mode="json") if callable(dump) else raw
+
+
 def _manifest_summary(manifest: PromptManifest | None) -> dict[str, Any]:
     """A request's sections and their sizes, beside the messages the log already holds whole."""
     if manifest is None:
@@ -193,7 +199,7 @@ class OpenAICompatibleClient(LLMClient):
             latency_ms=(time.perf_counter() - started) * 1000,
             logprobs=self._logprobs_of(choice),
         )
-        self._log_response(result, normalised)
+        self._log_response(result, normalised, completion.usage)
         record_usage(usage)
         return result
 
@@ -309,11 +315,15 @@ class OpenAICompatibleClient(LLMClient):
             **_manifest_summary(request.manifest),
         )
 
-    def _log_response(self, result: CompletionResult, normalised: int = 0) -> None:
+    def _log_response(
+        self, result: CompletionResult, normalised: int = 0, raw_usage: Any = None
+    ) -> None:
         """Record what came back, including tool calls and their arguments.
 
         `normalised` is how many of the model's characters were rewritten to
         plain text; the logged text is the rewritten text everything reads.
+        `raw_usage` is the provider's usage block as sent, so what it reports about
+        its prefix cache can be read back whole.
         """
         if not self._settings.log_payloads:
             return
@@ -326,6 +336,9 @@ class OpenAICompatibleClient(LLMClient):
             completion_tokens=result.usage.completion_tokens,
             total_tokens=result.usage.total_tokens,
             cached_prompt_tokens=result.usage.cached_prompt_tokens,
+            cache_reported=result.usage.cache_reported,
+            cache_hit=result.usage.cache_hit,
+            provider_usage=_plain(raw_usage),
             latency_ms=round(result.latency_ms, 2),
             cost_usd=result.cost_usd,
             normalised_chars=normalised,
@@ -354,12 +367,13 @@ class OpenAICompatibleClient(LLMClient):
     def _usage_from(raw: Any) -> TokenUsage:
         if raw is None:
             return TokenUsage()
-        details = getattr(raw, "prompt_tokens_details", None)
+        cached = getattr(getattr(raw, "prompt_tokens_details", None), "cached_tokens", None)
         return TokenUsage(
             prompt_tokens=raw.prompt_tokens or 0,
             completion_tokens=raw.completion_tokens or 0,
             total_tokens=raw.total_tokens or 0,
-            cached_prompt_tokens=getattr(details, "cached_tokens", None) or 0,
+            cached_prompt_tokens=cached or 0,
+            cache_reported=cached is not None,
         )
 
     def cost_for(self, usage: TokenUsage) -> float:

@@ -34,6 +34,7 @@ from agent_platform.core.primitives.money import money_or_none
 from agent_platform.hallucination_check.levels import CONFIDENCE_LEVEL as _FIRST_LEVEL
 from agent_platform.interface.presentation.text_tree import as_structure, message_lines, value_lines
 from agent_platform.interface.tui.labels import StageLabelRegistry
+from agent_platform.llm.types import TokenUsage
 from agent_platform.observability.step_events import subject_part
 from agent_platform.observability.types import StatusEvent
 
@@ -276,7 +277,8 @@ class TokenCounterWidget(Static):
     def __init__(self) -> None:
         super().__init__(id="tokens")
 
-    def add(self, tokens: int) -> None:
+    def add(self, usage: TokenUsage) -> None:
+        tokens = usage.total_tokens
         if tokens <= 0:
             return
         self.turn_tokens += tokens

@@ -98,6 +98,13 @@ class TestRegistry:
         schemas = registry.to_openai_tools(["orders.get_order_status"])
         assert len(schemas) == 1
 
+    def test_renders_in_registration_order_whatever_order_is_asked(
+        self, registry: NamespacedToolRegistry
+    ) -> None:
+        """A ranking that reorders the same tools must not change the prompt's prefix."""
+        names = ["orders.get_order_status", "billing.process_refund"]
+        assert registry.to_openai_tools(names) == registry.to_openai_tools(names[::-1])
+
 
 class TestRetrievalSelection:
     async def test_an_exactly_named_tool_short_circuits_ranking(

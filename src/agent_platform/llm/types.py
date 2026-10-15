@@ -34,9 +34,15 @@ class TokenUsage(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
-    # Of `prompt_tokens`, how many the provider served from its prefix cache (0: none, or
-    # a provider that does not say).
+    # Of `prompt_tokens`, how many the provider served from its prefix cache.
     cached_prompt_tokens: int = 0
+    # Whether the provider said how many were cached: a 0 it never sent is not a miss.
+    cache_reported: bool = False
+
+    @property
+    def cache_hit(self) -> bool:
+        """The provider served part of the prompt from its prefix cache."""
+        return self.cached_prompt_tokens > 0
 
 
 class CompletionRequest(BaseModel):

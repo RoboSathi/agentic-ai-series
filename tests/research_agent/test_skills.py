@@ -19,7 +19,7 @@ from research_agent.config import get_agent_settings
 from research_agent.graph.run_nodes import RunNodes
 from research_agent.llm.structured import StructuredCaller
 from research_agent.prompts import planner as planner_prompt
-from research_agent.prompts.base import RolePrompt, role_of
+from research_agent.prompts.base import SCHEMA_INTRO, RolePrompt, role_of
 from research_agent.prompts.planner import PlanAnswer
 from tests.research_agent.conftest import BuildHarness, ScriptedRoles, payload_of
 from tests.research_agent.test_reflection_and_cards import _contract
@@ -72,7 +72,8 @@ async def test_a_run_role_carries_its_own_instructions_only(
     role: str, pool: SqliteConnectionPool
 ) -> None:
     system = await _sent(role, pool)
-    assert system == f"ROLE: {role}\nDo it."
+    # The role's instructions, then its answer schema: no profile, no skills.
+    assert system.startswith(f"ROLE: {role}\nDo it.{SCHEMA_INTRO}")
 
 
 @pytest.mark.usefixtures("ra_config")

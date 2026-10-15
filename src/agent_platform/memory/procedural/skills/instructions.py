@@ -17,7 +17,7 @@ from typing import Any, Protocol, runtime_checkable
 from agent_platform.audit.ledger import AuditLedger
 from agent_platform.audit.types import AuditEntry
 from agent_platform.config.settings import SkillSettings
-from agent_platform.llm.prompt import PROFILE, SKILLS, PromptPart
+from agent_platform.llm.prompt import PROFILE, SKILLS, PromptPart, Volatility
 from agent_platform.logging import get_logger
 from agent_platform.logging.trace_context import get_current_trace_id
 from agent_platform.memory.procedural.skills.catalog import SkillCatalog
@@ -107,7 +107,8 @@ class InstructionBuilder:
         for item in activation.skills:
             heading = render.skill_heading.format(name=item.skill.name)
             text = render.separator.join([heading, item.skill.document.prompt])
-            parts.append(PromptPart(SKILLS, text, item.skill.ref(render.ref)))
+            # Chosen per turn, so after everything the turn does not change (`Volatility`).
+            parts.append(PromptPart(SKILLS, text, item.skill.ref(render.ref), Volatility.TURN))
         return parts
 
     def compose(self, signals: frozenset[str], query: str) -> Instructions:
