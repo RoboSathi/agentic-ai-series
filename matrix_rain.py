@@ -6,7 +6,7 @@ import curses
 import random
 from dataclasses import dataclass
 
-FRAME_DELAY_MS = 50
+FRAME_DELAY_MS = 200
 MIN_TRAIL = 8
 MAX_TRAIL = 30
 MIN_SPEED = 1
