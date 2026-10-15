@@ -18,7 +18,7 @@ STABLE = STABLE_MARK
 # Set on an offloaded chunk's placeholder: the handle its text is kept under.
 OFFLOADED = "offloaded"
 
-# E17's five context failure modes.
+# The five context failure modes.
 ContextFailureMode = Literal["rot", "distraction", "confusion", "clash", "poisoning"]
 
 
@@ -100,7 +100,7 @@ class AssembledContext(BaseModel):
 
 
 class ContextHealth(BaseModel):
-    """A failure-mode assessment at one token checkpoint (E17)."""
+    """A failure-mode assessment at one token checkpoint."""
 
     checkpoint_tokens: int
     observed_score: float

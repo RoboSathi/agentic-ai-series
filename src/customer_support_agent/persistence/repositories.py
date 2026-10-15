@@ -398,7 +398,7 @@ class HitlQueueRepository:
     """This agent's escalations, as items in the agent's one review queue (ADR 0012).
 
     A refund, a cancellation's refund and a reply the hallucination check
-    cut are review items of those kinds; `/queue` and the Review tab decide
+    cut are review items of those kinds; `/review` and the Review tab decide
     them beside quarantines and memory. Append-only in spirit and in
     surface class: entries are added and their status is decided by a
     human. The agent may enqueue; it may never approve.

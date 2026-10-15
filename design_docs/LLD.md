@@ -346,8 +346,9 @@ governed writes, dreams, skills, a deterministic recall tier and document RAG.
   learned-skill wording), `semantic.rag`, `write_pipeline`, provenance and retrieval weights,
   `recency_half_life_days`, `governance`, `deterministic`. `skills:` — `profile_path`,
   `skills_dir`, `selection`, `render.sections_sent`, `max_prompt_chars`.
-- **Commands.** `make dream | show-memory | clean-memory | memory-reindex <agent>`; `/memory`,
-  `/dream`.
+- **Commands.** `make dream | show-memory [dream] | clean-memory | memory-reindex <agent>`;
+  `/memory [dream]`, `/dream`. The default memory view is what dreams consolidated; the dream
+  events are the `dream` view (ADR P-37).
 
 ## A17. hallucination_check
 
@@ -661,7 +662,7 @@ Tested at the integration level; owned by no single module.
 | No agent subpackage imports another in a cycle; domain never imports persistence | `tests/agent_platform/test_agent_layering.py` |
 | Every model-proposed call takes the one tool path; the Executor runs only approved (or audited UNGOVERNED) calls | `tests/integration/test_cross_subsystem_invariants.py`, `tests/customer_support_agent/test_gatekeeper.py` |
 | No write executes outside the established target's scope | `test_gatekeeper.py::TestWritesAreScopedToTheEstablishedOrder` |
-| Attacks against the harness are defended | `tests/integration/test_e12_attacks.py`, the Promptfoo suite |
+| Attacks against the harness are defended | `tests/integration/test_live_attacks.py`, the Promptfoo suite |
 | No side-effecting result is authoritative without read-back | refund flow tests; verification owed dedicated unit tests |
 | Every retry of a side effect is idempotent | `tests/agent_platform/test_resilience.py` |
 | A Protocol has a real implementation | `mypy --strict` |

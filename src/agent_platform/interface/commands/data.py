@@ -3,7 +3,7 @@
 Memory is a platform subsystem — every agent built on this harness has
 the same four CoALA stores — so `/memory` belongs here.
 
-Commands that read a *product's* tables do not. `/queue` used to live
+Commands that read a *product's* tables do not. `/review` used to live
 in this module, and required one particular product's database to exist
 before the console could open at all. It now belongs to the agent that
 has a review queue, and reaches the console through its `AgentHost`.
@@ -35,9 +35,10 @@ class MemoryCommand(PoolBackedCommand):
     group = "Inspect"
     name = "memory"
     summary = "What memory holds, as tables (a verified customer: working + their episodes)"
-    usage = "/memory [working|customer <id>|<search term>]"
+    usage = "/memory [working|dream|customer <id>|<search term>]"
 
     _WORKING = "working"
+    _DREAM = "dream"
     _CUSTOMER = "customer"
 
     def __init__(
@@ -60,6 +61,8 @@ class MemoryCommand(PoolBackedCommand):
         settings = get_settings()
         if args and args[0].casefold() == self._WORKING:
             return self._working_window(settings.commands.value_preview_chars)
+        if args and args[0].casefold() == self._DREAM:
+            return self._dream_events(" ".join(args[1:]) or None)
         subject, term = self._narrowing(args)
         if self._scope is not None and self._scope.scoped:
             return self._scoped(subject, term)
@@ -99,6 +102,19 @@ class MemoryCommand(PoolBackedCommand):
         for table in snapshot_tables(snapshot, commands.memory_tree_events_per_session):
             result.table(table)
         return result.line(commands.memory_tables.queue_note)
+
+    def _dream_events(self, term: str | None) -> CommandResult:
+        """The dream events alone; a verified console sees only its own subject's."""
+        from agent_platform.memory.inspect import inbox_table, take_snapshot
+
+        commands = get_settings().commands
+        subject: str | None = None
+        if self._scope is not None and self._scope.scoped:
+            subject = self._scope.subject()
+            if subject is None:
+                return CommandResult(title="Memory", ok=False).line(commands.verify_first)
+        table = inbox_table(take_snapshot(subject, term))
+        return self._titled().table(table).line(commands.memory_tables.dream_note)
 
     def _titled(self) -> CommandResult:
         words = get_settings().commands.memory_tables

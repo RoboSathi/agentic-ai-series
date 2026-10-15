@@ -1,7 +1,7 @@
 """Publish/subscribe (LLD §13).
 
 In-memory for now, but the interface is shaped for a broker-backed swap
-later (E42): publish is fire-and-forget, subscribers are anonymous to the
+later: publish is fire-and-forget, subscribers are anonymous to the
 publisher, and a handler that raises must not take the publisher down.
 Those three properties are what make the eventual swap a change of
 implementation rather than a change of every call site.

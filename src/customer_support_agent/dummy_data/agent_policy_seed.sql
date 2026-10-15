@@ -36,7 +36,7 @@ INSERT INTO platform_agent_permissions (agent_id, permission) VALUES
 --              `gatekeeper.ledger.enabled` is false in its config. A refund is
 --              always an order's full total, so it cannot be split, and an
 --              agent-wide rolling window was never reached in use. The
---              structuring defence itself (E02) is the platform's, unchanged.
+--              structuring defence itself is the platform's, unchanged.
 DELETE FROM platform_agent_budgets WHERE agent_id = '__AGENT_ID__';
 
 INSERT INTO platform_agent_budgets (

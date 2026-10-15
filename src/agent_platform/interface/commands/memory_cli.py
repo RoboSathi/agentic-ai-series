@@ -1,5 +1,8 @@
 """`make dream|show-memory|clean-memory|memory-reindex <agent>` — memory, from the terminal.
 
+`make show-memory <agent>` prints what dreams consolidated (episodic, semantic,
+procedural); `make show-memory dream <agent>` prints the dream events alone.
+
 One entry point for every agent: the agent is chosen by its config layer
 (`AGENTIC_OVERLAYS`, which the Makefile sets from the agent named), so
 nothing here names one. The trees are the same lines `/dream` and
@@ -19,7 +22,7 @@ from agent_platform.interface.presentation.terminal import print_result
 from agent_platform.interface.presentation.text_tree import TreeNode, tree_lines
 from agent_platform.memory import SemanticStore
 from agent_platform.memory.dream import change_tree_lines
-from agent_platform.memory.inspect import snapshot_tables, take_snapshot
+from agent_platform.memory.inspect import inbox_table, snapshot_tables, take_snapshot
 from agent_platform.memory.reset import clear_long_term_memory
 
 # What a reset deliberately leaves alone, said out loud so nobody wonders.
@@ -27,10 +30,19 @@ _KEPT = "Kept: conversation checkpoints, business records, reviews, audit, polic
 _RESTART = "Restart a running console: its working memory lives in the process."
 
 
-def memory_result(subject: str | None = None, events: int | None = None) -> CommandResult:
-    """Everything this agent's long-term memory holds, one table per store, the inbox last."""
+def memory_result(
+    subject: str | None = None, events: int | None = None, dream: bool = False
+) -> CommandResult:
+    """What this agent's long-term memory holds, one table per store; `dream`: the events alone."""
     commands = get_settings().commands
     snapshot = take_snapshot(subject)
+    if dream:
+        title = commands.memory_tables.title.format(agent=snapshot.agent_id)
+        return (
+            CommandResult(title=title)
+            .table(inbox_table(snapshot))
+            .line(commands.memory_tables.dream_note)
+        )
     per_session = events or commands.memory_tree_events_per_session
     result = CommandResult(title=commands.memory_tables.title.format(agent=snapshot.agent_id))
     result.line(snapshot.root)
@@ -77,6 +89,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     show = actions.add_parser("show", help="print everything long-term memory holds")
     show.add_argument("--subject", help="only this subject's memory")
     show.add_argument("--events", type=int, help="events listed per session")
+    show.add_argument("--dream", action="store_true", help="the dream events alone")
     actions.add_parser("clean", help="empty long-term memory")
     actions.add_parser("reindex", help="rebuild the derived search index")
     args = parser.parse_args(argv)
@@ -85,7 +98,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         if args.show_memory:
             print_result(memory_result())
     elif args.action == "show":
-        print_result(memory_result(args.subject, args.events))
+        print_result(memory_result(args.subject, args.events, args.dream))
     elif args.action == "clean":
         print_lines(clean_lines())
     else:

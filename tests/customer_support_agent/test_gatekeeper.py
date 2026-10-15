@@ -2,7 +2,7 @@
 
 The truth table below is the heart of the suite: every combination of
 surface, authority rank and cumulative state, asserted rather than
-assumed. The four E12 live attacks live in the integration tests, where
+assumed. The four live attacks live in the integration tests, where
 they run against the whole assembled harness.
 """
 

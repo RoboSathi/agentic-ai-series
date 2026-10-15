@@ -2,7 +2,7 @@
 
 The Markdown report is the record; this is the glance. Both are built from
 the same store views, and the tables go through the console's own
-`CommandView`, so they look — and are coloured — exactly as `/queue` and
+`CommandView`, so they look — and are coloured — exactly as `/review` and
 `make show-memory` are: outcome words in their state colours
 (`tui.command_output.state_styles`), everything else plain.
 """

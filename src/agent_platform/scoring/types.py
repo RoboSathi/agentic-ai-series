@@ -34,7 +34,7 @@ class Verdict(BaseModel):
     """How a claim was resolved, and by which tier.
 
     `tier` is the point of the whole exercise: it is what makes
-    `nollm_scorer_ratio` measurable rather than aspirational (E10).
+    `nollm_scorer_ratio` measurable rather than aspirational.
     """
 
     label: VerdictLabel

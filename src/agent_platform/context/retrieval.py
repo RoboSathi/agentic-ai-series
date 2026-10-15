@@ -1,6 +1,6 @@
-"""Production retrieval — lexical, dense, hybrid, graph (E19, LLD §7).
+"""Production retrieval — lexical, dense, hybrid, graph (LLD §7).
 
-E19's decision rule, implemented rather than described:
+The decision rule, implemented rather than described:
 
   identifier-shaped query  → lexical wins  (BM25 finds "ORD-10042"; an
                              embedding of an order number means nothing)
@@ -243,7 +243,7 @@ class CrossEncoderReranker:
 
 
 def is_identifier_query(query: str) -> bool:
-    """Whether a query is shaped like an identifier lookup (E19's rule)."""
+    """Whether a query is shaped like an identifier lookup."""
     return bool(_IDENTIFIER.search(query))
 
 

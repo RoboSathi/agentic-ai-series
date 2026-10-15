@@ -1,4 +1,4 @@
-"""The NOLLM scoring cascade: claims resolved cheapest tier first (E10, LLD §18).
+"""The NOLLM scoring cascade: claims resolved cheapest tier first (LLD §18).
 
 Runtime infrastructure, not an eval: retrieval relevance, tool fitness,
 grounding and memory consolidation all resolve claims here. A leaf package

@@ -362,7 +362,7 @@ class TestAWithheldFeatureLeavesNoStage:
     async def test_every_stage_withheld_at_once_still_answers(
         self, seeded_pool: SqliteConnectionPool, restore_settings: None
     ) -> None:
-        """`/harness off` — the E01 gesture — must not produce a broken agent."""
+        """`/harness off` must not produce a broken agent."""
         settings = get_settings()
         agent = build_agent(
             llm=ScriptedLLM([{"content": "Order 10001 was delivered."}]),

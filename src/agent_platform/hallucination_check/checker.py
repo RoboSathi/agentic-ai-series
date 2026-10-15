@@ -1,4 +1,4 @@
-"""Hallucination detection, diagnosis and trust calibration (E25-E27, LLD §10).
+"""Hallucination detection, diagnosis and trust calibration (LLD §10).
 
 The detection ladder is not a new cascade — it *is* `evals`'s NOLLM
 cascade, injected. Confidence, then entropy, then entailment, then a
@@ -177,7 +177,7 @@ class DetectionLadder:
 
 
 class GroundingReasoningDiagnoser:
-    """Was the evidence missing, or present and ignored? (E26).
+    """Was the evidence missing, or present and ignored?
 
     One symptom, two causes, opposite fixes. Routing every hallucination
     to "improve retrieval" is why some of them never get fixed.

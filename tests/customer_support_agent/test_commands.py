@@ -41,11 +41,11 @@ class TestDispatch:
 
     @pytest.mark.asyncio
     async def test_an_unknown_command_suggests_near_matches(self) -> None:
-        # `/queue` is the platform's one review queue (ADR 0012).
+        # `/review` is the platform's one review queue (ADR P-14).
         registry = CommandRegistry()
-        result = await registry.dispatch("/que")
+        result = await registry.dispatch("/rev")
         assert not result.ok
-        assert "/queue" in result.lines[0]
+        assert "/review" in result.lines[0]
 
     @pytest.mark.asyncio
     async def test_a_bare_slash_shows_help(self) -> None:
@@ -93,9 +93,9 @@ class TestSystemCommands:
     async def test_help_explains_one_command(self) -> None:
         registry = CommandRegistry()
         registry.register(QueueCommand())
-        result = await registry.dispatch("/help queue")
-        assert result.title == "/queue"
-        assert result.lines[-1].startswith("/queue")
+        result = await registry.dispatch("/help review")
+        assert result.title == "/review"
+        assert result.lines[-1].startswith("/review")
 
     @pytest.mark.asyncio
     async def test_clear_asks_the_console_rather_than_touching_a_widget(self) -> None:
@@ -144,7 +144,7 @@ STORES = ("working", "episodic", "semantic", "procedural")
 
 
 class TestHarnessCommand:
-    """E01's switch: the same model, with and without what surrounds it.
+    """The harness switch: the same model, with and without what surrounds it.
 
     The harness *is* the feature tree, so these assert against it rather
     than a separate list that could drift from what the builder reads.
@@ -249,7 +249,7 @@ class TestHarnessCommand:
 
         Switching RBAC off does not make the agent reckless, it makes it
         unable to authenticate anybody — so it can do nothing at all,
-        which is the opposite of the demonstration E01 is making.
+        which is the opposite of what switching the harness off demonstrates.
         """
         assert "security.auth" not in get_settings().features.paths()
         assert "auth" not in get_settings().features.paths()
@@ -258,7 +258,7 @@ class TestHarnessCommand:
 class TestConsoleSurface:
     """The console offers exactly these commands — a removed one cannot creep back."""
 
-    REMOVED = {"config", "dlq", "review", "settle"}
+    REMOVED = {"config", "dlq", "queue", "settle"}
 
     def test_removed_commands_stay_removed(self) -> None:
         names = {command.name for command in CommandRegistry().all_commands()}

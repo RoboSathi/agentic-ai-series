@@ -1,4 +1,4 @@
-"""The memory write path (E15/E16, LLD §8).
+"""The memory write path (LLD §8).
 
 Every operation on memory — create, update, delete, erase, approve — is a
 `MemoryCommand` from a `MemoryPrincipal`, and every one goes through here.
@@ -61,7 +61,7 @@ from agent_platform.memory.types import (
 )
 from agent_platform.observability.types import StatusKind, utc_now
 
-# Which store a category belongs in is a semantic decision (E13); these
+# Which store a category belongs in is a semantic decision; these
 # are the two the pipeline can infer structurally, and everything else
 # falls through to semantic memory.
 _EVENT_CATEGORIES = frozenset({"event", "interaction", "observation", "session_summary"})

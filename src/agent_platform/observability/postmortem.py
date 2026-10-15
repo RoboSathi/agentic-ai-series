@@ -1,4 +1,4 @@
-"""Incident postmortems, in a fixed shape (E37, FR-46).
+"""Incident postmortems, in a fixed shape (FR-46).
 
 The template is not a formality. Every field here is one an incident
 review skips when it is written freehand, and each omission has a

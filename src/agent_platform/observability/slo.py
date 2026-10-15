@@ -1,6 +1,6 @@
-"""Agent SLOs and error budgets (E37, LLD §6).
+"""Agent SLOs and error budgets (LLD §6).
 
-The E37 metric list is configuration, not code: adding an SLO is a config
+The SLO metric list is configuration, not code: adding an SLO is a config
 change, and each metric's target is what the error budget is measured
 against.
 """

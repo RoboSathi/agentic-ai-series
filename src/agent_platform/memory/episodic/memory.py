@@ -1,4 +1,4 @@
-"""Episodic memory — what happened (E14, LLD §8).
+"""Episodic memory — what happened (LLD §8).
 
 An append-only JSONL file per session on the filesystem. That is not a
 placeholder for a "real" database: it is grep-able by construction,

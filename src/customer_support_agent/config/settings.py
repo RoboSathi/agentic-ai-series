@@ -108,7 +108,7 @@ class IntentRouterSettings(BaseModel):
 
 
 class PlanStepSettings(BaseModel):
-    """One configured step of an intent's plan (E06)."""
+    """One configured step of an intent's plan."""
 
     description: str
     tool: str = ""
@@ -294,7 +294,7 @@ class ReviewReasonSettings(BaseModel):
 class ReviewOutputSettings(BaseModel):
     """How a review request reads: queued on a card, decided at the console, sent to a customer.
 
-    `/queue approve|deny` prints one tree — the request, the decision, its
+    `/review approve|deny` prints one tree — the request, the decision, its
     effect, and what the customer was told — under `labels`. `request` and
     `effects` are keyed by action and by `<action>_<decision>`.
     """
@@ -443,6 +443,7 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     evals: CsaEvalSettings
     # What `make dummy-data` generates (counts, seed, catalogue, weights).
     dummy_data_generator_path: str
+    seed_data_path: str
 
     model_config = SettingsConfigDict(env_prefix="CUSTOMER_SUPPORT_AGENT__")
 
@@ -453,6 +454,10 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     @property
     def resolved_dummy_data_generator_path(self) -> Path:
         return resolve_path(self.dummy_data_generator_path)
+
+    @property
+    def resolved_seed_data_path(self) -> Path:
+        return resolve_path(self.seed_data_path)
 
     @property
     def resolved_db_path(self) -> Path:

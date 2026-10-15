@@ -1,6 +1,6 @@
 """The console's Review screen: the one human-review queue, decided by pointing (ADR 0012).
 
-The same items, scope and service `/queue` uses — this screen is a second
+The same items, scope and service `/review` uses — this screen is a second
 way in, never a second source of truth. Items are grouped by kind; the
 selected one is shown in full; Approve and Deny stay disabled until the
 comment box holds a reason, because every decision needs one.

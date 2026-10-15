@@ -159,7 +159,7 @@ class TestTimeout:
 
 class TestBulkhead:
     async def test_exhausting_one_pool_does_not_starve_another(self) -> None:
-        """E35's exit invariant."""
+        """The exit invariant."""
         bulkhead = ResourcePoolBulkhead(pool_size=1)
 
         async def hold() -> None:

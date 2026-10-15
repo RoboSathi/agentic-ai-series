@@ -114,7 +114,7 @@ class TestRetrievalSelection:
     async def test_namespace_scoping_narrows_the_candidates(
         self, registry: NamespacedToolRegistry
     ) -> None:
-        """Half of E22's recovery; retrieval is the other half."""
+        """Half of the recovery; retrieval is the other half."""
         selector = ToolRetrievalSelector(registry, create_scoring_cascade())
         selected = await selector.select("anything", namespace="billing")
         assert all(tool.namespace == "billing" for tool in selected)
@@ -128,7 +128,7 @@ class TestRetrievalSelection:
         assert metrics is not None and metrics.tools_available == 2
 
     async def test_selection_shrinks_the_exposed_token_budget(self) -> None:
-        """E22's headline: fifty tools exposed is not a neutral choice."""
+        """The headline: fifty tools exposed is not a neutral choice."""
         registry = NamespacedToolRegistry()
         for index in range(50):
             registry.register(_definition(f"tool_{index}", description=f"does thing {index}"))

@@ -1,4 +1,4 @@
-"""Retrieval-based tool selection at scale (E22, LLD §19).
+"""Retrieval-based tool selection at scale (LLD §19).
 
 Exposing every tool to the model does not scale: past a few dozen, the
 model's selection accuracy falls even though nothing about any single
@@ -36,7 +36,7 @@ class RelevanceRanker(Protocol):
 
 
 class SelectionMetrics(BaseModel):
-    """E22's four exit metrics for one selection."""
+    """The four selection metrics for one selection."""
 
     tools_available: int
     tools_exposed: int
@@ -87,7 +87,7 @@ class ToolRetrievalSelector:
 
     @property
     def last_metrics(self) -> SelectionMetrics | None:
-        """Metrics for the most recent selection — E22's regression evidence."""
+        """Metrics for the most recent selection — the regression evidence."""
         return self._last_metrics
 
     def _exact_match(self, task: str, candidates: list[ToolDefinition]) -> list[ToolSelection]:

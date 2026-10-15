@@ -306,7 +306,7 @@ class CustomerSupportAgent(
         # The one authority over the tool loop: step cap, deadline, budgets, repeats (exact,
         # canonical, semantic), cycles and convergence. Its state rides in the graph state.
         self._governor = governor or build_loop_governor(LoopBudget(max_steps=self._max_rounds))
-        # Plan, reflect, evaluate (E06). Injected as one composition so a
+        # Plan, reflect, evaluate. Injected as one composition so a
         # deployment can swap any of the three; deterministic by default,
         # so deliberating about a reply costs no completions.
         self._deliberation = deliberation or OutputQualityGate(

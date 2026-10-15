@@ -1,4 +1,4 @@
-"""The Authority Hierarchy (E12/E13, LLD §11).
+"""The Authority Hierarchy (LLD §11).
 
 Ordered strongest to weakest:
 

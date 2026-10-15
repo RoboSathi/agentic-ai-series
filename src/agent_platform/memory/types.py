@@ -14,10 +14,10 @@ from pydantic import BaseModel, Field
 from agent_platform.observability.types import utc_now
 
 # The CoALA four. Which one a fact belongs in is a semantic decision about
-# the fact's nature, never a storage convenience (E13).
+# the fact's nature, never a storage convenience.
 MemoryType = Literal["working", "episodic", "semantic", "procedural"]
 
-# How a fact came to be known. Weighted differently at retrieval (E16).
+# How a fact came to be known. Weighted differently at retrieval.
 ProvenanceKind = Literal["verified_system_of_record", "agent_inference", "self_reported"]
 
 # Where the write pipeline sent a candidate.

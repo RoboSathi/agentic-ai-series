@@ -1,4 +1,4 @@
-"""Tier-2 semantic advisory (E12, LLD §11).
+"""Tier-2 semantic advisory (LLD §11).
 
 Tier 1 is deterministic and blocking. Tier 2 is semantic and advisory,
 and the separation is absolute: a model-based check may add context to a

@@ -1,4 +1,4 @@
-"""Human-review queue capacity via Little's Law (E38, LLD §6).
+"""Human-review queue capacity via Little's Law (LLD §6).
 
 L = λW. Escalating more work to humans is a staffing decision with a
 number attached, not a hand-wave — this is how that number is computed.
@@ -36,7 +36,7 @@ class LittlesLawQueueModel:
     def required_capacity(self, arrival_rate_per_hr: float, service_time_min: float) -> float:
         """Reviewer-hours of work arriving per hour.
 
-        E38's worked example: 100 cases/hr × 2 min ⇒ 3.33 reviewer-hours per
+        A worked example: 100 cases/hr × 2 min ⇒ 3.33 reviewer-hours per
         hour, i.e. more than three full-time reviewers just to break even.
         """
         return arrival_rate_per_hr * (service_time_min / self._minutes_per_hour)

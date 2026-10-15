@@ -74,7 +74,7 @@ class StatusEvent(BaseModel):
 
 
 class Span(BaseModel):
-    """One traced hop (E36).
+    """One traced hop.
 
     Carries everything needed to reconstruct *why* a decision happened, not
     merely that a call occurred — a trace that can't answer "why" is
@@ -101,7 +101,7 @@ class Span(BaseModel):
 
 
 class CostStack(BaseModel):
-    """Per-request cost broken down by component (E44)."""
+    """Per-request cost broken down by component."""
 
     input_tokens: float = 0.0
     output_tokens: float = 0.0

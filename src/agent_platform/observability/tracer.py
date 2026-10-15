@@ -1,4 +1,4 @@
-"""Distributed tracing for agent decisions (E36, LLD §6).
+"""Distributed tracing for agent decisions (LLD §6).
 
 Every hop is traced, and every trace passes through a redactor before it is
 persisted (FR-44) — there is no path that writes an unfiltered span to disk.

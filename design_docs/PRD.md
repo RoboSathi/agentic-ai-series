@@ -10,7 +10,7 @@ them are in [ADR.md](ADR.md).
 `agentic-harness-core` is a production-grade reference implementation of governed agentic AI
 systems. It is at once:
 
-1. **The running example** for *The Agentic AI Systems Masterclass*, a 48+ episode series for
+1. **The running example** for *The Agentic AI Systems Masterclass*, a multi-episode series for
    CTO/CXO and Principal/Staff/Architect audiences. An episode runs one of the agents under the
    configuration it teaches; what is on screen is the code that runs.
 2. **A shared platform** (`agent_platform`) that any agent composes: model access, the harness
@@ -69,17 +69,17 @@ hallucination measurement, human review and full audit lineage.
 
 Recorded so nothing is rebuilt by accident or claimed as built.
 
-| Item | Episodes | State |
-|---|---|---|
-| Docker execution sandbox (`sandbox`) | E34 | Parked; the empty package was deleted. Tools execute in-process. |
-| Multi-agent topologies, A2A, reliability compounding (`multi_agent`) | E40–E43 | Parked; the empty package was deleted. MCP (agent-to-tool) is built. |
-| DSPy prompt compilation (`prompt_compilation`) | E21 | Parked; the empty package was deleted. Skills are the versioned procedural artifact. |
-| A genuine fixed loop | — | No implementation; pass^k trials are the leading candidate (ADR P-06). |
-| Research agent eval suite | — | Removed with the fixture world (ADR R-10); to be rebuilt over live or recorded data. |
-| Eval facts in the analytics source (`eval_score`) | — | Owed (ADR P-24). |
-| NL-to-SQL golden set for the ops agent; MCP HTTP transport auth | — | Owed (ADR P-25). |
-| Memory decay-if-unconfirmed | E16 | Not built; its unread config field was removed. |
-| Gatekeeper kill switch, `/policy` commands, evidence-gated maturity levels | E04, E37 | Deferred (ADR P-09). |
+| Item | State |
+|---|---|
+| Docker execution sandbox (`sandbox`) | Parked; the empty package was deleted. Tools execute in-process. |
+| Multi-agent topologies, A2A, reliability compounding (`multi_agent`) | Parked; the empty package was deleted. MCP (agent-to-tool) is built. |
+| DSPy prompt compilation (`prompt_compilation`) | Parked; the empty package was deleted. Skills are the versioned procedural artifact. |
+| A genuine fixed loop | No implementation; pass^k trials are the leading candidate (ADR P-06). |
+| Research agent eval suite | Removed with the fixture world (ADR R-10); to be rebuilt over live or recorded data. |
+| Eval facts in the analytics source (`eval_score`) | Owed (ADR P-24). |
+| NL-to-SQL golden set for the ops agent; MCP HTTP transport auth | Owed (ADR P-25). |
+| Memory decay-if-unconfirmed | Not built; its unread config field was removed. |
+| Gatekeeper kill switch, `/policy` commands, evidence-gated maturity levels | Deferred (ADR P-09). |
 
 ## 7. Functional requirements
 

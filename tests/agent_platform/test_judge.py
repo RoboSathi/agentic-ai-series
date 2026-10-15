@@ -60,7 +60,6 @@ class TestClient:
             (judge.provider, judge.model),
             *((backup.provider, backup.model) for backup in judge.fallbacks),
         ]
-        assert judge.fallbacks, "a stalled judge call has somewhere to go"
 
     def test_the_judge_never_runs_on_the_agents_model(self) -> None:
         """A judge that shares the agent's model inherits its blind spots."""

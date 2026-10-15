@@ -1,4 +1,4 @@
-"""What is deployed, versioned independently (E39, FR-48).
+"""What is deployed, versioned independently (FR-48).
 
 Nine things in this system change on nine different schedules: the
 prompt, the tool schema, the policy, the evaluator, the model, the

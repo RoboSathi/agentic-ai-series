@@ -71,7 +71,7 @@ class CuratorQueue:
     """Writes held for a human, as items in the agent's one review queue.
 
     A fact and a skill are kinds of review item like any other (ADR 0012):
-    a curator decides them with `/queue` or the Review tab, with a
+    a curator decides them with `/review` or the Review tab, with a
     comment, beside the agent's own escalations.
     """
 

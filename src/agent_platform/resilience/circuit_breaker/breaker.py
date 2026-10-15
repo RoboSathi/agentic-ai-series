@@ -148,7 +148,7 @@ class CircuitBreakerImpl:
 
 
 class TimeoutOnlyCircuitBreaker(CircuitBreakerImpl):
-    """A breaker that trips on timeouts alone (the narrow E18 variant).
+    """A breaker that trips on timeouts alone (the narrow variant).
 
     Kept as a documented subclass rather than a second implementation.
     The distinction it draws is real: a dependency returning prompt errors

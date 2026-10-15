@@ -1,4 +1,4 @@
-"""The six context management strategies (E18, LLD §7, Strategy pattern).
+"""The six context management strategies (LLD §7, Strategy pattern).
 
 Offload, Reduce, Retrieve, Isolate, Cache, Consolidate. They are not
 interchangeable: each trades something different away, and choosing one

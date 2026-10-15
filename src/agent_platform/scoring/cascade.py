@@ -1,4 +1,4 @@
-"""The NOLLM Scoring Cascade itself: six tiers, cheapest first (E10, LLD §18).
+"""The NOLLM Scoring Cascade itself: six tiers, cheapest first (LLD §18).
 
 One implementation, six tiers, four consumers. `context` retrieval
 tiering, `tools` selection, `llm` model cascading and
@@ -245,7 +245,7 @@ class NollmScoringCascadeImpl:
     """Chain of Responsibility over the six tiers.
 
     Tiers are assembled from config, so an episode can switch one off and
-    watch the ratio, the cost and the latency move together (E10).
+    watch the ratio, the cost and the latency move together.
     """
 
     def __init__(
@@ -293,7 +293,7 @@ class NollmScoringCascadeImpl:
 
     @property
     def nollm_scorer_ratio(self) -> float:
-        """Share of resolutions settled without an LLM (E10's headline metric)."""
+        """Share of resolutions settled without an LLM (the cascade's headline metric)."""
         total = sum(self._resolutions.values())
         if not total:
             return 1.0

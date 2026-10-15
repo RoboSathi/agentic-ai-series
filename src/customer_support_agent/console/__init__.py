@@ -124,7 +124,7 @@ class CustomerSupportHost:
 
     @property
     def agent(self) -> Any:
-        """The agent this host last built — what `/queue` resumes through."""
+        """The agent this host last built — what `/review` resumes through."""
         return getattr(self, "_agent", None)
 
     @property

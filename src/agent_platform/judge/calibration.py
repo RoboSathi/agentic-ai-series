@@ -1,4 +1,4 @@
-"""How far a judge can be trusted: its agreement with a second rater (E11).
+"""How far a judge can be trusted: its agreement with a second rater.
 
 A judge that has never been measured against another rater is an opinion
 with a temperature setting. `JudgeCalibrator` is what turns it into an

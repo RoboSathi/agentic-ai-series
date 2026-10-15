@@ -27,7 +27,7 @@ class SeparatedContext(BaseModel):
 class InjectionAssessment(BaseModel):
     """What was found in untrusted content, and what it cost the caller.
 
-    Detection is advisory by design (E35): it narrows what the agent may
+    Detection is advisory by design: it narrows what the agent may
     do next, it never decides that the content is safe.
     """
 

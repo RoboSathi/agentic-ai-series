@@ -44,7 +44,7 @@ class RelevanceScorer(Protocol):
 
 
 class CompositeRetrievalScorer:
-    """Five weighted signals, combined into one ranking (E13, extended).
+    """Five weighted signals, combined into one ranking.
 
     The weights are configuration because they are a product decision:
     how much a recent-but-unverified claim should outrank an older
@@ -131,7 +131,7 @@ class CompositeRetrievalScorer:
         """Zero once superseded or expired — this is what stops false recall.
 
         A superseded fact that still matches the query best is exactly the
-        false-positive case E16 asks for: confidently recalling the wrong
+        false-positive case that matters: confidently recalling the wrong
         stored fact, which is a different failure from forgetting.
         """
         if fact.superseded_by is not None:

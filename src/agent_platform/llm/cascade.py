@@ -1,4 +1,4 @@
-"""Model cascading — cheapest sufficient tier first (E44, LLD §3), and backup models.
+"""Model cascading — cheapest sufficient tier first (LLD §3), and backup models.
 
 One ordered list of models serves two needs. *Quality*: run the cheap tier and escalate only
 when its answer doesn't resolve the case — the escalation rule is a Strategy so "when is cheap
@@ -87,7 +87,7 @@ class CascadingLLMClient(LLMClient):
         """Return the first tier's result that the policy accepts.
 
         The returned result carries the tier that actually resolved it, so
-        cost is attributed to the tier that did the work (E44).
+        cost is attributed to the tier that did the work.
         """
         options = [self._option(index, request) for index in range(len(self._tiers))]
         try:

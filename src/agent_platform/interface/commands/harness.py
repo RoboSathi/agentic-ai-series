@@ -6,7 +6,7 @@ from agent_platform.interface.commands.types import CommandError, CommandResult,
 
 
 class HarnessCommand:
-    """The harness, and every switch on it (E01).
+    """The harness, and every switch on it.
 
     The series' first claim is that an agent is a model plus a harness,
     and that nearly everything worth having in production is a property
@@ -58,7 +58,7 @@ class HarnessCommand:
         return self._one(SEPARATOR.join(args[:-1]), args[-1])
 
     def _bulk(self, word: str) -> CommandResult:
-        """Move every feature at once — the E01 gesture."""
+        """Move every feature at once."""
         value = _state(word)
         set_active_features(active_features().with_all(value))
         return self._applied(f"Harness {word.lower()}")

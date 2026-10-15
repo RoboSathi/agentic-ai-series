@@ -26,5 +26,5 @@ class GuardrailViolationError(Exception):
 
     Loud by design. Silently coercing a malformed tool call into
     something plausible is how an agent acts on a value no model ever
-    produced (E29).
+    produced.
     """

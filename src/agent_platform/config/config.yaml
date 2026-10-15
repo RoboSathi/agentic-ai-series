@@ -217,15 +217,13 @@ llm:
   chain:
     timeout_seconds: 60
     hedge_after_seconds: 30
-    # NVIDIA models only (Karan, 2026-10-12). Lightning first (above), then super-120b, the
-    # primary until 2026-10-03 and answering again (probed 2026-10-12). Ultra is deliberately
-    # absent: it is the judge's model (`judge:`), and an agent that could fall back onto it
-    # would be graded by its own model.
-    fallbacks:
-      - {provider: nim, model: nvidia/nemotron-3-super-120b-a12b}
+    # NVIDIA models only (Karan, 2026-10-12). Super-120b is the primary (`providers.nim`) and
+    # has no backup (2026-10-15): the only other strong model is ultra, the judge's model
+    # (`judge:`), and an agent that could fall back onto it would be graded by its own model.
+    fallbacks: []
   cascade:
     enabled: false
-    tiers: [local, nim]    # cheapest sufficient tier first (E44)
+    tiers: [local, nim]    # cheapest sufficient tier first
     escalate_on_finish_reasons: [length]
     escalate_on_empty_content: true
     escalate_on_error: true
@@ -497,7 +495,7 @@ durability:
   # Neutral default; each agent overlays its own checkpoint file.
   db_path: db/agent_platform/checkpoints.db
   mode: sync
-  # Resuming is an operator's decision (a reviewer's `/queue approve`): a node
+  # Resuming is an operator's decision (a reviewer's `/review approve`): a node
   # that moves money is re-entered by a person's choice, not at start-up.
   retention_days: 30
   preview_chars: 80
@@ -519,7 +517,7 @@ durability:
 
 audit:
   enabled: true
-  # Nine things version independently (E39). One release number cannot
+  # Nine things version independently. One release number cannot
   # answer "which of them moved?", which is the only question worth
   # asking after a regression.
   # The agent names its own versioned artifacts. A platform default of
@@ -1029,7 +1027,7 @@ context:
   retrieval_mode: hybrid   # lexical | dense | hybrid | graph
   top_k: 5
   hybrid_lexical_weight: 0.5
-  # Two-pass scoring (E19). The cheap ranker scores every candidate; a
+  # Two-pass scoring. The cheap ranker scores every candidate; a
   # cross-encoder then rescores the best few, reading query and passage
   # together. Bounded to a shortlist because that cost is what stops a
   # cross-encoder being usable over a corpus.
@@ -1345,7 +1343,7 @@ memory:
     auto_commit_threshold: 0.8
     discard_threshold: 0.3
     # Fact categories that may never be written from conversational
-    # assertion, whatever confidence the speaker expresses (E15/E16). No
+    # assertion, whatever confidence the speaker expresses. No
     # role's permission set includes granting itself authority.
     authority_changing_categories:
       - policy_limit
@@ -1360,7 +1358,7 @@ memory:
       role_assignment: ["i am an admin", "i am a supervisor", "my role is"]
       authority_delegation: ["on behalf of", "acting for", "delegated to me"]
       preference: ["i prefer", "i like", "please always", "don't ever"]
-  # Retrieval weighting by how a fact came to be known (E16).
+  # Retrieval weighting by how a fact came to be known.
   provenance_weights:
     verified_system_of_record: 1.0
     agent_inference: 0.6
@@ -1491,7 +1489,7 @@ memory:
 
 # Human review (ADR 0012): one queue for every agent and every kind of decision a person makes —
 # a refund above the agent's authority, a reply the hallucination check cut, a quarantined
-# message, a fact or skill memory would not take on its own word. `/queue` and the console's
+# message, a fact or skill memory would not take on its own word. `/review` and the console's
 # Review tab decide through the same service, and every decision needs a comment.
 review:
   table: platform_review_queue
@@ -1518,7 +1516,7 @@ review:
       console: "Decide: /review approve|deny <id> <comment> · or on screen: ctrl+r. The comment is kept and audited."
       terminal: "Decide: make review {agent} ACTION=approve|deny ID=<id> COMMENT=\"<why>\" · or on screen: make agent {agent}, then ctrl+r."
     kind_title: "{kind} — {n} pending"
-    # What each kind is called on screen. The key is still what `/queue <kind>` takes.
+    # What each kind is called on screen. The key is still what `/review <kind>` takes.
     kind_labels:
       quarantine: quarantined message
       memory_fact: memory fact
@@ -1531,7 +1529,7 @@ review:
       memory_fact: [ID, Subject, Fact, Proposed by, Why held, Raised]
       skill: [ID, Skill, What it says, Why held, Raised]
     show_headers: [Field, Value]
-    needs_id: "/queue {action} needs an item id. {usage}"
+    needs_id: "/review {action} needs an item id. {usage}"
     needs_comment: "A decision needs a comment saying why (it is kept with the item and audited)."
     unknown_item: "No pending review item #{id} here."
     already_decided: "Item #{id} is already {status}."
@@ -2068,7 +2066,7 @@ security:
       required: false
       retention_days: 30
     # Fields a tool call may carry; everything else is dropped before the
-    # call leaves the harness (data minimization, E32).
+    # call leaves the harness (data minimization).
     # Which tool-call fields may survive redaction. Empty here: the fields
     # are named by whichever agent has them.
     tool_call_allowed_fields: []
@@ -2258,10 +2256,9 @@ resilience:
 # The LLM judge (`agent_platform.judge`): every model-graded verdict asks this model — the eval
 # graders (DeepEval metrics, Promptfoo's llm-rubric) and any agent's own judge built on
 # `LlmJudge`. Ultra, the strongest model on the account, and one no agent runs on (2026-10-12):
-# a judge that shares the agent's model inherits its blind spots. Lightning is deliberately not a
-# backup for the same reason. NVIDIA models only (Karan, 2026-10-12): when ultra does not answer
-# (or has not after `hedge_after_seconds` — on 2026-10-12 it took 21 s on one call and answered
-# 503 on another), super-120b starts beside it, so a grade always comes back.
+# a judge that shares the agent's model inherits its blind spots. So it has no backup
+# (2026-10-15): super-120b is the agents' model, and a grade from it would be the agent grading
+# itself. When ultra does not answer, the grade fails rather than coming from the wrong judge.
 judge:
   provider: nim
   model: nvidia/nemotron-3-ultra-550b-a55b
@@ -2271,10 +2268,7 @@ judge:
   extra_body: {chat_template_kwargs: {enable_thinking: false}}
   timeout_seconds: 60
   hedge_after_seconds: 20
-  fallbacks:
-    - provider: nim
-      model: nvidia/nemotron-3-super-120b-a12b
-      extra_body: {chat_template_kwargs: {enable_thinking: false}}
+  fallbacks: []
   temperature: 0.0
   # Room for a verdict and its reason.
   max_tokens: 2048
@@ -2571,7 +2565,7 @@ mcp:
     error_title: Error
     message_title: Message
 
-# Console slash commands (/help, /audit, /queue …). These are operator
+# Console slash commands (/help, /audit, /review …). These are operator
 # views of the harness, so the limits here are about what fits on a
 # terminal, not about what the agent may do.
 commands:
@@ -2581,7 +2575,8 @@ commands:
   default_limit: 15        # rows a listing shows when no limit is given
   value_preview_chars: 40  # where a long stored value is elided in a table
   memory_tree_events_per_session: 5  # events listed per session before "… N more"
-  # `/memory` and `make show-memory`: one table per store. In a console scoped to a verified
+  # `/memory` and `make show-memory`: one table per store; `dream` is the dream events alone.
+  # In a console scoped to a verified
   # subject, only working memory and that subject's episodic memory are shown — semantic and
   # procedural memory are the agent's, common to every subject.
   memory_tables:
@@ -2606,9 +2601,10 @@ commands:
     episodic_empty: "Episodic · nothing yet — `make dream <agent>` turns dream events into episodes."
     time_format: "%Y-%m-%d %H:%M"
     queue_note: "Facts and skills waiting for a curator are in /review (make review <agent>)."
+    dream_note: "Events waiting are consolidated into memory by `make dream <agent>`."
     inbox_events: 50  # dream events listed, newest first
   recent_window: 20        # how many recent records the summaries look back over
-  # A scoped command (`/memory`, an agent's `/queue`) shows only the session's verified subject.
+  # A scoped command (`/memory`, an agent's `/review`) shows only the session's verified subject.
   verify_first: Nobody is verified in this session yet. Verify first, then ask again.
   not_your_records: This console shows only the verified account's own records.
   # `/dlq` (and `make dlq <agent>`): the messages a security screen quarantined, for review.
@@ -2649,7 +2645,7 @@ commands:
     rationale_chars: 60
 
   # `/skills`: an agent's procedural memory — authored skills and learned ones a curator approved.
-  # Candidates a dream proposed are decided in `/queue` (ADR 0012), with a comment.
+  # Candidates a dream proposed are decided in `/review` (ADR 0012), with a comment.
   skills:
     summary: "Procedural memory: list, show, history (decide learned-skill candidates in /review)"
     usage: "/skills [list | show <name> | history <name>]"

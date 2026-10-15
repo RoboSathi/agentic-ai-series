@@ -1,4 +1,4 @@
-"""The refund saga (E35, LLD §13/§21).
+"""The refund saga (LLD §13/§21).
 
 Issuing a refund touches two things that cannot share a transaction: the
 order's refund state and the refund ledger. A crash between them leaves

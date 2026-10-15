@@ -59,7 +59,7 @@ class ReviewWaitNodes(NodeSupport):
                 "order": pending.get("order_id"),
                 "amount": pending.get("amount"),
                 "request": request_id,
-                "resumes_when": f"/queue approve {request_id}  or  /queue deny {request_id}",
+                "resumes_when": f"/review approve {request_id}  or  /review deny {request_id}",
             }
         )
         verdict = dict(decision) if isinstance(decision, dict) else {"decision": str(decision)}

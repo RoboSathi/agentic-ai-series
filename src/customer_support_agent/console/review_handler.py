@@ -5,7 +5,7 @@ are this agent's own kinds of review item. What deciding one *does* is
 unchanged — the review service re-checks eligibility and pays through the
 same saga, or sends the customer the sentences the check removed — and
 the turn that was waiting on the decision resumes and says what was
-decided. What is new is the way in: `/queue` and the Review tab, with a
+decided. What is new is the way in: `/review` and the Review tab, with a
 comment the platform requires and audits.
 """
 
@@ -197,7 +197,7 @@ def request_line(request: HitlRequest) -> str:
 def support_queue_command(
     pool: SqliteConnectionPool | None = None, agent: Callable[[], Any] | None = None
 ) -> QueueCommand:
-    """The platform's `/queue`, with this agent's refunds and cut replies among its kinds."""
+    """The platform's `/review`, with this agent's refunds and cut replies among its kinds."""
 
     def handlers(connection: SqliteConnectionPool) -> list[SupportReviewHandler]:
         return [SupportReviewHandler(connection, _review_service, agent)]

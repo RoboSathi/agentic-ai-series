@@ -3,7 +3,7 @@
 Platform-owned and agent-agnostic: the host hands it the agent's skill
 catalog and, when the agent has one, its curator queue. Listing shows the
 active skills and the candidates a dream proposed; a candidate becomes a
-skill only when a curator approves it in `/queue` (ADR 0012), with a
+skill only when a curator approves it in `/review` (ADR 0012), with a
 comment, through the same governed approval every curated memory takes.
 """
 

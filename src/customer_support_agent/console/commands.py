@@ -3,7 +3,7 @@
 An issued refund settles on its own when its void window closes (the
 console's housekeeping sweep); until then a reviewer can void it.
 
-Review decisions are the platform's `/queue` (ADR 0012), with this agent's
+Review decisions are the platform's `/review` (ADR 0012), with this agent's
 refund and reply kinds added by `console/review_handler.py`.
 
 Scoped like the agent's tools: in a console session these show and act on
@@ -25,7 +25,7 @@ from customer_support_agent.config import get_agent_settings
 class _SettlementCommand(PoolBackedCommand):
     """The settlement service and the console's scope, for `/void`.
 
-    Scoped like `/queue`: in a console session only the verified customer's
+    Scoped like `/review`: in a console session only the verified customer's
     refunds are listed or voided, and someone else's order gets the
     answer an order with nothing issued gets.
     """

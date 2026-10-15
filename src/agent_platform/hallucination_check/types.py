@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-# E26's differential diagnosis. The distinction is the whole point: a
+# The differential diagnosis. The distinction is the whole point: a
 # grounding failure is fixed by retrieval, a reasoning failure is not.
 FailureKind = Literal["grounding", "reasoning", "none"]
 
@@ -110,7 +110,7 @@ class GenerationAssessment(BaseModel):
 
 
 class TrustMeasurement(BaseModel):
-    """One observation of how a human treated an agent's output (E27)."""
+    """One observation of how a human treated an agent's output."""
 
     agent_correct: bool
     human_accepted: bool

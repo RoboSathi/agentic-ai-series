@@ -10,7 +10,7 @@ dominate. The cross-encoder then reads query and passage *together* —
 too slow for a corpus, exactly right for a shortlist of ten.
 
 BM25 and the reranker are the platform's own (`context.retrieval`), not
-second copies: E19 teaches them once, and RAG composes them.
+second copies: they are built once, and RAG composes them.
 """
 
 from agent_platform.config.settings import RagRetrievalSettings

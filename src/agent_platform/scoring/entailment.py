@@ -1,4 +1,4 @@
-"""Natural-language inference for the cascade's tier 4 (E10).
+"""Natural-language inference for the cascade's tier 4.
 
 Entailment is the tier that separates *sounds alike* from *means the
 same*. The lexical model here is deliberately modest — it is the fallback that

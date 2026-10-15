@@ -94,7 +94,6 @@ from customer_support_agent.domain.order_reference import (
     WRITE_INTENT,
 )
 from customer_support_agent.domain.refund_policy import RefundPolicy
-from customer_support_agent.dummy_data import DUMMY_DATA_DIR, SEED_DATA_FILE
 from customer_support_agent.gatekeeper.business_rules import (
     REFUND_ACTION_CLASS,
     CustomerSupportBusinessRules,
@@ -126,14 +125,13 @@ DEFAULT_WINDOW_HOURS = 24
 
 
 class OrderCorpusContextSource:
-    """Contributes the customer's own orders, retrieved (E19, FR-7).
+    """Contributes the customer's own orders, retrieved (FR-7).
 
     Hybrid retrieval — BM25 for the identifier-shaped queries a support
     conversation is full of ("10001"), embeddings for the ones that
     describe rather than name ("the parcel that never turned up"). Both
     are needed: lexical search cannot match a paraphrase and dense search
-    is unreliable on an exact id, which is the pairing E19 exists to
-    show.
+    is unreliable on an exact id, which is why the two are paired.
 
     **Scoped to the authenticated customer, every time.** The corpus is
     rebuilt per request from that customer's orders rather than filtered
@@ -409,7 +407,7 @@ def build_agent(
     # reranker is None when no hosted encoder is reachable, and the
     # pipeline then keeps the cheaper ordering rather than pretending.
     # The second pass is its own capability: with `context.rerank` off the
-    # pipeline keeps the cheap ordering, which is the E19 contrast.
+    # pipeline keeps the cheap ordering, so the difference is visible.
     reranker = create_reranker(fallback=scoring) if features.is_on("context.rerank") else None
     sources: list[object] = [OrderCorpusContextSource(orders, scoring)]
     if live_working_memory is not None:
@@ -517,8 +515,8 @@ def build_agent(
         ),
         # Retrieval-based tool selection narrows within what the intent
         # already permits. Without it the agent is offered every tool the
-        # intent allows, which is the pre-E22 behaviour and exactly what
-        # that episode exists to contrast against.
+        # intent allows, which is the unscoped behaviour retrieval
+        # selection exists to improve on.
         selector=ToolRetrievalSelector(registry, scoring) if settings.tools.enabled else None,
         cascade=scoring,
         reporter=reporter,
@@ -622,7 +620,7 @@ def build_settlement_service(
 
 def _shipped_seed() -> str | None:
     """The seed `make dummy-data csa` builds from, when this checkout has one."""
-    path = DUMMY_DATA_DIR / SEED_DATA_FILE
+    path = get_agent_settings().resolved_seed_data_path
     return path.read_text(encoding="utf-8") if path.is_file() else None
 
 

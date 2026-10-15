@@ -1,4 +1,4 @@
-"""Document RAG for semantic memory (E19, LLD §7/§8).
+"""Document RAG for semantic memory (LLD §7/§8).
 
 An agent points this at its own index path and corpus directory
 (`memory.semantic.rag` in its config) and gets hybrid retrieval — BM25 and

@@ -161,4 +161,4 @@ real models.
 | Customer Support | Built, production grade; full eval suite |
 | Research | Built: direct answer and `/research`; no eval suite |
 | Ops | Built: MCP demonstration agent; no eval suite |
-| Episodes | Demonstrated by configuration; the episode plan is in [Episodes.md](Episodes.md) (not finalised) |
+| Episodes | Demonstrated by configuration: an agent run under its features and profiles (ADR P-06) |

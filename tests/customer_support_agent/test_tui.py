@@ -207,8 +207,8 @@ class TestTheAppRebuildsItsAgent:
         assert app._agent is None
 
     def test_an_episode_names_the_window_and_its_claim(self) -> None:
-        app = AgenticTuiApp(title="E01 — Agent = Model + Harness", subtitle="The model proposes.")
-        assert app.title == "E01 — Agent = Model + Harness"
+        app = AgenticTuiApp(title="Agent = Model + Harness", subtitle="The model proposes.")
+        assert app.title == "Agent = Model + Harness"
         assert app.sub_title == "The model proposes."
 
     def test_an_episode_can_add_its_own_commands(self) -> None:
@@ -257,7 +257,17 @@ class TestARebuildKeepsTheConversation:
 class TestEveryKeptCommandIsWired:
     """Boot the console and run every command it offers, end to end."""
 
-    KEPT = ("/help", "/audit", "/memory", "/eval", "/kb", "/queue", "/harness", "/clear")
+    KEPT = (
+        "/help",
+        "/audit",
+        "/memory",
+        "/memory dream",
+        "/eval",
+        "/kb",
+        "/review",
+        "/harness",
+        "/clear",
+    )
 
     def _app(self, pool: object) -> AgenticTuiApp:
         from agent_platform.interface.commands.knowledge import KnowledgeBaseCommand
@@ -287,7 +297,7 @@ class TestEveryKeptCommandIsWired:
             app.query_one("#query", ChatPrompt).text = "/help"
             await pilot.press("enter")
             await pilot.pause()
-            assert "/queue" in app._panel.as_text()
+            assert "/review" in app._panel.as_text()
 
     async def test_memory_is_rebound_after_a_rebuild(self, seeded_pool: object) -> None:
         app = self._app(seeded_pool)

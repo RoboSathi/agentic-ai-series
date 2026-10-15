@@ -1,6 +1,6 @@
 """Whose data a console command may show: the session's verified subject, and no one else's.
 
-A command like `/memory` or `/queue` reads stored records about people. Run
+A command like `/memory` or `/review` reads stored records about people. Run
 from a console where someone has proved who they are, it shows *their*
 records — not everyone's. The console owns one `ConsoleScope`: the session
 it is on, and (when the agent can say) who is verified in it. The platform

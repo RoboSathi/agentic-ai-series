@@ -1,4 +1,4 @@
-"""Prompt-injection defense, layers 1-3 (E30/E35, LLD §12.3).
+"""Prompt-injection defense, layers 1-3 (LLD §12.3).
 
 Three layers live here: instruction/data separation, suspicious-phrase
 detection, and tool scoping. Layers 4-6 — the Gatekeeper, anomaly

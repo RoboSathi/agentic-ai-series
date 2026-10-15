@@ -128,7 +128,7 @@ class TestSLOs:
 
 class TestCost:
     def test_the_denominator_is_successes_only(self) -> None:
-        """A cheaper but wrong answer is not a saving (E44)."""
+        """A cheaper but wrong answer is not a saving."""
         aggregator = CostAggregatorImpl()
         aggregator.record("r1", "output_tokens", 1.0)
         aggregator.record("r2", "output_tokens", 1.0)
@@ -145,7 +145,7 @@ class TestCost:
 
 class TestQueueCapacity:
     def test_littles_law_worked_example(self) -> None:
-        """E38: 100 cases/hr x 2 min => 3.33 reviewer-hours per hour."""
+        """Little's Law: 100 cases/hr x 2 min => 3.33 reviewer-hours per hour."""
         model = LittlesLawQueueModel()
         assert model.required_capacity(100, 2) == pytest.approx(3.333, abs=0.01)
 

@@ -1,4 +1,4 @@
-"""Context failure detection — and mitigation (E17, LLD §7).
+"""Context failure detection — and mitigation (LLD §7).
 
 Five distinct failure modes, which matter because they have different fixes:
 

@@ -25,7 +25,7 @@ STANDING_FIELD = "standing"
 
 
 class AuditEntry(BaseModel):
-    """One consequential decision, attributable to a versioned tuple (E33)."""
+    """One consequential decision, attributable to a versioned tuple."""
 
     agent_id: str = ""
     trace_id: str

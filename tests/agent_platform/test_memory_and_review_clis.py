@@ -73,3 +73,16 @@ def test_the_queue_lists_and_refuses_a_decision_without_a_comment(
     assert "comment" in capsys.readouterr().out
     assert review_cli.main(["approve", "1", "false positive"]) == 0
     assert "approved" in capsys.readouterr().out
+
+
+def test_show_dream_prints_the_dream_events_alone(capsys: pytest.CaptureFixture[str]) -> None:
+    FileDreamInbox().emit(_event())
+    memory_cli.main(["show", "--dream"])
+    out = capsys.readouterr().out
+    assert "Dream events" in out and "Semantic" not in out and "Procedural" not in out
+
+
+def test_show_without_dream_leaves_the_events_out(capsys: pytest.CaptureFixture[str]) -> None:
+    FileDreamInbox().emit(_event())
+    memory_cli.main(["show"])
+    assert "Dream events" not in capsys.readouterr().out

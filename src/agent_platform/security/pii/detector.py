@@ -1,4 +1,4 @@
-"""PII detection, redaction and minimization (E32, LLD §12.2).
+"""PII detection, redaction and minimization (LLD §12.2).
 
 Detection is Presidio (spaCy NER and recognizers, `presidio.py`) plus the configured
 patterns, or the patterns alone. Redaction tokenizes into the audit vault (`vault.py`).

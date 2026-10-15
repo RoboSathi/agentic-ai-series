@@ -18,7 +18,6 @@ to the section here that describes it.
 | [evals.md](evals.md) | How each agent is evaluated: three graders, the shared judge, each suite |
 | [analytics_schema.md](analytics_schema.md) | The analytics contract column by column: facts, the metric catalogue, agent-owned tables |
 | [Program_Design.md](Program_Design.md) | Repository layout, the design process, coding standards, verification |
-| [Episodes.md](Episodes.md) | The episode plan (not finalised) |
 
 ## Conventions
 

@@ -688,6 +688,33 @@ you know order 10633 was refunded?" still states an outcome and stays a record c
 
 ---
 
+### P-37 — The memory view shows what dreams consolidated; dream events are a view of their own
+
+**Context.** `make show-memory`, `/memory` and `make dream SHOW=1` ended with the dream inbox,
+so raw events waiting to be consolidated were read alongside what memory actually holds.
+
+**Decision.** `snapshot_tables` returns episodic, semantic and procedural tables only. The dream
+events are `inbox_table`, reached by `make show-memory dream <agent>` and `/memory dream`. `dream`
+is a view keyword of `show-memory` in the Makefile, never the `dream` target, so naming it there
+cannot consolidate anything.
+
+**Consequences.** One shared builder keeps the terminal and the console in agreement.
+
+### P-38 — The judge shares no model with an agent, not even as a backup
+
+**Context.** The agents moved to super-120b, which was also the judge's backup, so a stalled
+ultra call was graded by the agent's own model.
+
+**Decision.** The judge (`judge:`, and the research agent's `judge` role) is ultra-550b with no
+fallback. The agents' chain (`llm.chain`) is super-120b with no fallback, since ultra is the
+only other strong NVIDIA model and is reserved for judging.
+
+**Consequences.** When ultra is unavailable a grade fails rather than coming from the wrong
+judge; when super-120b is unavailable a CSA or Ops call fails after its retries. Amends P-19
+("every hosted model has a fallback") and P-20.
+
+---
+
 ## 9. Research agent
 
 ### R-01 — Two paths: a plain question is answered, `/research` researches

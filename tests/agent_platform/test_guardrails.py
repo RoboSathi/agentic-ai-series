@@ -125,7 +125,7 @@ class TestASwitchedOffGuardrail:
         assert result.value == {"order_id": 1, "amount": 5.0}
 
     def test_it_passes_values_the_schema_would_have_rejected(self, restore_settings: None) -> None:
-        """Which is the whole of E28's contrast: with the guardrail gone, a
+        """Which is the whole contrast: with the guardrail gone, a
         wrongly-typed argument reaches the tool."""
         set_enabled("guardrails", None, False)
         result = PydanticValidator().validate('{"order_id": "not a number"}', RefundCommand)

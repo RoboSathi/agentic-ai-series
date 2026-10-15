@@ -105,6 +105,9 @@ class ResearchHost:
             ForwardedCommand(
                 names.waive, help_text["waive"], f"/{names.waive} <id|all>", needs_args=True
             ),
+            ForwardedCommand(
+                names.rubric, help_text["rubric"], f"/{names.rubric} [add|drop|set …]"
+            ),
             ForwardedCommand(names.approve, help_text["approve"], f"/{names.approve}"),
         ]
         return [

@@ -90,10 +90,11 @@ audit:
   prompt_source: research_agent/prompts
   policy_source: research contract (audit)
 
-# The research roles' default model and its protection: nemotron-super, thinking off (with
-# it on it narrates its reasoning into the answer), backed up by super-120b (NVIDIA models only,
-# 2026-10-12), so a call always gets some answer. Super is deliberately absent from every writing role (2026-10-12): it is the
-# judge's model, and a writer that could fall back onto it would be audited by its own model.
+# The research roles' default model and its protection: super-120b, thinking off (with it on
+# it narrates its reasoning into the answer), backed up by lightning (NVIDIA models only,
+# 2026-10-12), so a call always gets some answer. Ultra is deliberately absent from every writing
+# role: it is the judge's model, and a writer that could fall back onto it would be audited by
+# its own model.
 x-default-chain: &default_chain
   provider: nim
   model: nvidia/nemotron-3-super-120b-a12b
@@ -139,10 +140,9 @@ llm:
       model: nvidia/nemotron-3-ultra-550b-a55b
       timeout_seconds: 120
       hedge_after_seconds: 45
-      fallbacks:
-        - provider: nim
-          model: nvidia/nemotron-3-super-120b-a12b
-          extra_body: {chat_template_kwargs: {enable_thinking: false}}
+      # No backup (2026-10-15): super-120b is every writing role's model, and an audit by it
+      # would be the writer checking itself.
+      fallbacks: []
     # Multi-step tool calling: the model the platform recommends for it.
     answerer: *default_chain
 
@@ -161,7 +161,7 @@ tui:
     - { pattern: '\[must\]', style: "bold #B8945A" }
     - { pattern: '\[soft\]', style: "#A89F8F" }
     - { pattern: '^R\d+\b', style: "bold #E2C792" }
-    - { pattern: '(?<![\w/])/(?:research|done|approve|waive|cancel|help)\b', style: "bold #B8945A" }
+    - { pattern: '(?<![\w/])/(?:research|done|approve|rubric|waive|cancel|help)\b', style: "bold #B8945A" }
     - { pattern: '^\(I removed details[^)]*\)$', style: "italic #8A8A8A" }
     - { pattern: '^\*\*Status:\*\* COMPLETE.*$', style: "bold #59F06A" }
     - { pattern: '^\*\*Status:\*\* PARTIAL.*$', style: "bold #F4D35E" }
@@ -344,7 +344,7 @@ research_agent:
     propose_done: "I have enough to plan. Draft plan:\n{plan}"
     plan_step: "Research {part}"
     next_step_proposed: "→ Next: /done (or reply yes) builds the acceptance criteria · reply with anything else to change the plan"
-    next_step_rubric: "→ Next: /approve (or reply yes) starts the research"
+    next_step_rubric: "→ Next: /approve (or reply yes) starts the research · /rubric add <text> | drop <id> | set <id> threshold=<x> must_pass=<bool> edits it"
     rubric_heading: "## Acceptance criteria"
     rubric_line: "{id:<4} {gate} {text}  ({kind}:{check} ≥ {threshold}, weight {weight}, {origin})"
     rubric_must: "[must]"
@@ -352,7 +352,7 @@ research_agent:
     turn_cap: "We have reached the interview limit. Still open: {open}. Use /waive <id|all> or /done."
     waived: "Waived: {items}. They will be listed as known unknowns."
     finish_scoping_first: "We are still scoping: answer the question, /waive <id>, or /done."
-    rubric_hint: "/approve to start."
+    rubric_hint: "Edit with /rubric add <text> | drop <id> | set <id> threshold=<x> must_pass=<bool>, or /approve to start."
     rubric_error: "Rubric not changed: {error}"
     approved: "Contract {contract_id} frozen (hash {hash}). Research is starting; /cancel stops it."
     run_busy: A research run is in progress; you can watch it or cancel it (/cancel).
@@ -899,6 +899,7 @@ research_agent:
       research: "Full research run on a question — interview, criteria, audit (/research [question]; bare = the last question)"
       done: "End the interview now; open required items become known unknowns"
       waive: "Waive an open checklist item (/waive <id> or /waive all)"
+      rubric: "Edit acceptance criteria: add <text> | drop <id> | set <id> threshold=<x> must_pass=<bool>"
       approve: "Freeze the Research Contract and start the autonomous run"
       cancel: "Cancel the research run in progress (checkpoint kept)"
     clip_chars: 110

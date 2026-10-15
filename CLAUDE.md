@@ -1,7 +1,7 @@
 # CLAUDE.md — agentic-harness-core
 
 Project instructions for Claude Code working in this repo. This is the production
-codebase behind **The Agentic AI Systems Masterclass**, a 48+ episode YouTube
+codebase behind **The Agentic AI Systems Masterclass**, a multi-episode YouTube
 series aimed at CTO/CXO and Principal/Staff/Architect audiences. The codebase
 itself is a core differentiator of the series — it must read as code written to
 the standard of Anthropic, OpenAI, or Google, not tutorial-grade scaffolding.

@@ -2,8 +2,8 @@
 
 Named after a ship's compartments: a hull breach floods one compartment,
 not the vessel. Here, one dependency saturating its pool must not starve
-calls to an unrelated dependency — which is exactly the property E35
-asserts as an exit invariant.
+calls to an unrelated dependency — which is exactly the property the
+resilience tests assert as an invariant.
 """
 
 import asyncio

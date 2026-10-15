@@ -1,9 +1,9 @@
-"""The four E12 live attacks, as permanent regression tests.
+"""The four live attacks, as permanent regression tests.
 
 These run against the fully assembled harness, not against the Gatekeeper
 in isolation — an attack that the Gatekeeper refuses but the graph
-executes anyway is not defended. Each of these was demonstrated live in
-E12; here they are the tests that keep the defence in place.
+executes anyway is not defended. Each of these was demonstrated live;
+here they are the tests that keep the defence in place.
 """
 
 from typing import Any

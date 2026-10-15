@@ -4,7 +4,7 @@ Any durable agent's run that was cancelled or failed part-way keeps its
 checkpoints. Resuming re-runs only the node that did not finish; a side
 effect that node had already committed replays from its idempotency record
 rather than happening twice. A run waiting on a person resumes with their
-decision instead (an agent's own command, such as `/queue approve`).
+decision instead (an agent's own command, such as `/review approve`).
 """
 
 from collections.abc import Callable

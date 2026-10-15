@@ -1,4 +1,4 @@
-"""Append-only audit ledgers (E33, LLD §5).
+"""Append-only audit ledgers (LLD §5).
 
 Live agents use DuckDB for shared cross-agent observability. A legacy SQLite
 implementation remains for episode demos, but even that path uses the same

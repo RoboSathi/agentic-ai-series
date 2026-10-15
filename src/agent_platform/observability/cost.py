@@ -1,4 +1,4 @@
-"""Cost-stack aggregation (E44, LLD §6).
+"""Cost-stack aggregation (LLD §6).
 
 This is the single place cost is tracked — there is deliberately no
 `economics` package. The aggregator subscribes to completed spans rather
@@ -20,7 +20,7 @@ class CostAggregator(Protocol):
 
 
 class CostAggregatorImpl:
-    """Per-request cost stacks plus the E44 cost-per-success denominator."""
+    """Per-request cost stacks plus the cost-per-success denominator."""
 
     def __init__(self) -> None:
         self._stacks: dict[str, CostStack] = {}
@@ -45,7 +45,7 @@ class CostAggregatorImpl:
         """Total spend divided by *successful* outcomes only.
 
         The denominator is successes, never raw call count: a cheaper but
-        wrong answer is not a saving (E44).
+        wrong answer is not a saving.
         """
         if not self._successes:
             return 0.0

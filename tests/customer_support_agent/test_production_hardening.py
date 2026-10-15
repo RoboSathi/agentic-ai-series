@@ -3,7 +3,7 @@
 Four gaps closed here:
 
   1. No customer identity. Any caller could read *and refund* any
-     customer's order — an IDOR, and the exact risk E31 maps.
+     customer's order — an IDOR.
   2. The escalation path dead-ended. Refunds queued for human approval
      and nothing could approve them.
   3. Goodwill credits had no rules at all, while refunds had several.
@@ -143,12 +143,17 @@ class TestTheEscalationPathDrains:
 class TestSubsystemsAreActuallyWired:
     async def test_the_model_call_runs_through_the_resilience_stack(self) -> None:
         """The model is a remote dependency like any other: the default client is the
-        platform's protected chain — each model behind its own resilience stack, with a backup."""
+        platform's protected chain — each model behind its own resilience stack, and the
+        configured backups (none, per ADR P-38) after it."""
+        from agent_platform.config import get_settings
         from agent_platform.llm.cascade import CascadingLLMClient
         from agent_platform.llm.client import create_llm_client
         from agent_platform.llm.resilient import ResilientLLMClient
 
         client = unwrapped(create_llm_client())
+        if not get_settings().llm.chain.fallbacks:
+            assert isinstance(client, ResilientLLMClient)
+            return
         assert isinstance(client, CascadingLLMClient)
         assert all(isinstance(tier, ResilientLLMClient) for tier in client._tiers)
 

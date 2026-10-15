@@ -49,8 +49,8 @@ class ToolResolution(BaseModel):
 class NamespacedToolRegistry:
     """Tools keyed by `namespace.name`, with namespace-scoped exposure.
 
-    Namespacing is not cosmetic. E22 measures the accuracy collapse that
-    comes from exposing fifty flat tool names at once; scoping exposure
+    Namespacing is not cosmetic. Tool-selection accuracy collapses
+    when fifty flat tool names are exposed at once; scoping exposure
     to a namespace is half of the recovery, retrieval is the other half.
     """
 

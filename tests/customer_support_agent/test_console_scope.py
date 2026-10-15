@@ -101,6 +101,19 @@ class TestMemoryIsTheVerifiedCustomersOwn:
         result = await command.run([])
         assert not result.ok and "Verify first" in " ".join(result.lines)
 
+    async def test_dream_events_need_a_verified_customer_in_a_scoped_console(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        command = MemoryCommand(seeded_pool)
+        command.bind_scope(_scope({}, ["s"]))
+        result = await command.run(["dream"])
+        assert not result.ok and "Verify first" in " ".join(result.lines)
+
+    async def test_dream_events_are_their_own_view(self, seeded_pool: SqliteConnectionPool) -> None:
+        command = MemoryCommand(seeded_pool)
+        result = await command.run(["dream"])
+        assert result.ok and [t.title for t in result.tables][0].startswith("Dream events")
+
     async def test_working_memory_follows_the_console_session(self) -> None:
         store = WorkingMemoryStore()
         store.get("second").set("verified_customer", "Ada (account #1)")

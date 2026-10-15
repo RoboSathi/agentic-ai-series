@@ -1,4 +1,4 @@
-"""The Output Quality Gate: plan, critique, score (E06, FR-16).
+"""The Output Quality Gate: plan, critique, score (FR-16).
 
 Not a loop, and no longer named as one. What happens here is one pass: a
 plan is looked up, a draft is critiqued once, at most one repair is

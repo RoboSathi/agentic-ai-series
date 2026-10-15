@@ -142,7 +142,7 @@ class LLMProviderSettings(BaseModel):
 
 
 class LLMCascadeSettings(BaseModel):
-    """Model-cascading policy (E44) — cheapest sufficient tier first."""
+    """Model-cascading policy — cheapest sufficient tier first."""
 
     enabled: bool
     tiers: list[ProviderName]
@@ -566,7 +566,7 @@ class LoopControlSettings(YamlBackedSettings):
 
 
 class DurabilitySettings(YamlBackedSettings):
-    """Durable execution: checkpoints, resumable runs (LLD §13, E35)."""
+    """Durable execution: checkpoints, resumable runs (LLD §13)."""
 
     _yaml_section = "durability"
     db_path: str
@@ -635,7 +635,7 @@ class AuditSettings(YamlBackedSettings):
 
 
 class ReviewQueueSettings(BaseModel):
-    """Little's Law queue model inputs (E38)."""
+    """Little's Law queue model inputs."""
 
     minutes_per_hour: float
     minutes_per_review: float
@@ -1135,7 +1135,7 @@ class RerankSettings(BaseModel):
 
 
 class ContextStrategySettings(BaseModel):
-    """Per-strategy toggles for the six context-management strategies (E18)."""
+    """Per-strategy toggles for the six context-management strategies."""
 
     offload: bool
     reduce: bool
@@ -1146,7 +1146,7 @@ class ContextStrategySettings(BaseModel):
 
 
 class ContextFailureDetectionSettings(BaseModel):
-    """Context-failure detection thresholds (E17)."""
+    """Context-failure detection thresholds."""
 
     checkpoint_fractions: list[float]
     degradation_threshold: float = Field(gt=0, lt=1)
@@ -1441,7 +1441,7 @@ class SemanticMemorySettings(BaseModel):
 
 
 class MemoryWritePipelineSettings(BaseModel):
-    """Write-path routing thresholds (E15)."""
+    """Write-path routing thresholds."""
 
     enabled: bool
     interrogative_markers: list[str]
@@ -1452,7 +1452,7 @@ class MemoryWritePipelineSettings(BaseModel):
 
 
 class MemoryRetrievalWeights(BaseModel):
-    """Composite retrieval scoring weights (Park et al. extended, E13)."""
+    """Composite retrieval scoring weights (Park et al. extended)."""
 
     relevance: float
     recency: float
@@ -1700,7 +1700,7 @@ class ReviewKinds(BaseModel):
 
 
 class ReviewWords(BaseModel):
-    """How `/queue` and the Review tab word the queue."""
+    """How `/review` and the Review tab word the queue."""
 
     summary: str
     usage: str
@@ -2006,7 +2006,7 @@ class JoinedPremiseSettings(BaseModel):
 
 
 class CascadeTierToggles(BaseModel):
-    """Per-tier toggles for the NOLLM scoring cascade (E10)."""
+    """Per-tier toggles for the NOLLM scoring cascade."""
 
     exact_assertion: bool
     deterministic_rule: bool
@@ -2136,7 +2136,7 @@ class HallucinationCheckSettings(YamlBackedSettings):
 
 
 class LedgerSettings(BaseModel):
-    """Cumulative-spend ledger that defeats structuring attacks (E02)."""
+    """Cumulative-spend ledger that defeats structuring attacks."""
 
     enabled: bool
     window_hours: int
@@ -2154,7 +2154,7 @@ class MandateSettings(BaseModel):
 
 
 class Tier2Settings(BaseModel):
-    """Semantic advisor — advisory only, structurally unable to block (E12).
+    """Semantic advisor — advisory only, structurally unable to block.
 
     The prompt is configuration because it has to name the kind of agent
     being reviewed — "unusual for a *what*?" is the whole question — and
@@ -2166,7 +2166,7 @@ class Tier2Settings(BaseModel):
 
 
 class SurfacePolicySettings(BaseModel):
-    """Surface classification per action (E12)."""
+    """Surface classification per action."""
 
     enabled: bool
     surfaces: dict[str, SurfaceClassName]
@@ -2192,7 +2192,7 @@ class GatekeeperSettings(YamlBackedSettings):
 
 
 class AuthSettings(BaseModel):
-    """RBAC + just-in-time privilege elevation (E10)."""
+    """RBAC + just-in-time privilege elevation."""
 
     enabled: bool
 
@@ -2236,7 +2236,7 @@ class PiiVaultSettings(BaseModel):
 
 
 class PiiSettings(BaseModel):
-    """PII detection/redaction/minimization (E32)."""
+    """PII detection/redaction/minimization."""
 
     # `presidio`: Presidio's NER and recognizers plus the configured patterns; `pattern`: the
     # configured patterns alone (also the fallback when Presidio cannot load).
@@ -2354,7 +2354,7 @@ class SecurityGuardSettings(BaseModel):
 
 
 class PromptInjectionSettings(BaseModel):
-    """Instruction/data separation and tool scoping (E30)."""
+    """Instruction/data separation and tool scoping."""
 
     data_open_tag: str
     data_close_tag: str
@@ -2948,6 +2948,7 @@ class MemoryTablesWords(BaseModel):
     episodic_empty: str
     time_format: str
     queue_note: str
+    dream_note: str
     inbox_events: int = Field(gt=0)
 
 

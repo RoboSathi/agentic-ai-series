@@ -128,7 +128,8 @@ class TestGreeting:
         from research_agent.console import ResearchHost
 
         text = ResearchHost().greeting()
-        assert text.splitlines()[0] == get_agent_settings().greeting.line
+        assert text.startswith(get_agent_settings().greeting.line)
+        assert len(get_agent_settings().greeting.line.strip().splitlines()) == 1
 
     def test_notes_follow_the_line_and_no_provider_is_named(self, ra_config: None) -> None:
         from research_agent.console.greeting import build_greeting

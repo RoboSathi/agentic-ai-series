@@ -1,4 +1,4 @@
-"""The five-stage context assembly pipeline (E08, LLD §7).
+"""The five-stage context assembly pipeline (LLD §7).
 
     gather_candidates → score_relevance → fit_to_budget → format → order
 

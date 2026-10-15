@@ -4,10 +4,12 @@ Two steps, kept apart: `take_snapshot` reads every long-term store through
 its own read API (nothing here writes), and the table builders turn the
 picture into one table per store, in the order a reader wants them:
 episodic memory one table per subject, then the semantic facts and the
-skills dreams consolidated, then the dream events still waiting (and those
-already read) at the end. A console scoped to one verified subject shows
-only `working_table` and that subject's episodic tables: facts and skills
-are the agent's, common to every subject.
+skills dreams consolidated. The dream events themselves (still waiting, and
+those already read) are a view of their own, `inbox_table`: what memory
+holds is shown apart from the raw input dreams consolidate. A console
+scoped to one verified subject shows only `working_table` and that
+subject's episodic tables: facts and skills are the agent's, common to
+every subject.
 
 Generated ids never appear: an episode is shown as when it happened and
 what happened, not as `event_<session>_<uuid>`.
@@ -63,12 +65,11 @@ def take_snapshot(subject: str | None = None, term: str | None = None) -> Memory
 
 
 def snapshot_tables(snapshot: MemorySnapshot, per_session: int) -> list[CommandTable]:
-    """Episodic per subject, then semantic, then procedural, then the dream inbox last."""
+    """What dreams consolidated: episodic per subject, then semantic, then procedural."""
     return [
         *episodic_tables(snapshot, per_session),
         semantic_table(snapshot),
         skills_table(snapshot),
-        inbox_table(snapshot),
     ]
 
 

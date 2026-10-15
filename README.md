@@ -194,7 +194,8 @@ exits.
 
 | Command | What it does |
 |---|---|
-| `make show-memory <agent>` | Everything long-term memory holds, as tables and trees: episodic, semantic, procedural, and pending dream events. `SUBJECT=<id>` shows one customer; `EVENTS=<n>` sets how many events are listed. |
+| `make show-memory <agent>` | What dreams consolidated, as tables: episodic, semantic and procedural. `SUBJECT=<id>` shows one customer; `EVENTS=<n>` sets how many events are listed. |
+| `make show-memory dream <agent>` | The dream events alone, pending and consolidated. Same as `/memory dream` in the console. |
 | `make dream <agent>` | Consolidates pending dream events into session summaries, facts and learned-skill proposals. `SHOW=1` also prints the memory tables. |
 | `make clean-memory <agent>` | Empties long-term memory. Checkpoints, business records and the audit trail are kept. |
 | `make memory-reindex <agent>` | Rebuilds the derived search index from the memory files |

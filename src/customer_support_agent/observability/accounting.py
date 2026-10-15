@@ -1,4 +1,4 @@
-"""How one turn went (E37, LLD §6).
+"""How one turn went (LLD §6).
 
 Eight SLOs are configured. Until this existed the agent recorded two of
 them, so six error budgets could never be breached: a target nothing

@@ -41,18 +41,26 @@ AGENT_SCOPED := agent data review queue audit pii-reveal dream show-memory clean
 EVAL_SECTIONS := oracle deepeval promptfoo
 EVAL_TIERS := full
 
+# `make show-memory [dream] <agent>`: `dream` shows the dream events alone. It is a view, not
+# the `dream` target, so it is never made a no-op goal here and the `dream` recipe below stands
+# down when it follows show-memory.
+MEMORY_VIEWS := dream
+
 ifneq ($(filter $(firstword $(MAKECMDGOALS)),$(AGENT_SCOPED)),)
 GOAL_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 # The agent name (and an eval's section and tier) are goals only so they can be typed;
 # they are not targets.
-ifneq ($(GOAL_ARGS),)
-$(eval $(GOAL_ARGS):;@:)
+ifeq (show-memory,$(firstword $(MAKECMDGOALS)))
+MEMORY_VIEW := $(filter $(MEMORY_VIEWS),$(GOAL_ARGS))
+endif
+ifneq ($(filter-out $(MEMORY_VIEW),$(GOAL_ARGS)),)
+$(eval $(filter-out $(MEMORY_VIEW),$(GOAL_ARGS)):;@:)
 endif
 ifeq (eval,$(firstword $(MAKECMDGOALS)))
 EVAL_SECTION := $(filter $(EVAL_SECTIONS),$(GOAL_ARGS))
 EVAL_FULL := $(filter $(EVAL_TIERS),$(GOAL_ARGS))
 endif
-AGENT_ARGS := $(filter-out $(EVAL_SECTION) $(EVAL_FULL),$(GOAL_ARGS))
+AGENT_ARGS := $(filter-out $(EVAL_SECTION) $(EVAL_FULL) $(MEMORY_VIEW),$(GOAL_ARGS))
 AGENT := $(filter $(AGENTS),$(AGENT_ARGS))
 # Only a named, known, single agent chooses the config layer. Whichever
 # agent is named sets it, so the overlay cannot silently default to one.
@@ -183,7 +191,8 @@ help:
 	@echo ""
 	@echo "$(GREEN)Customer support admin$(NC) (csa only):"
 	@echo "  make refund-limit 100     Set the per-refund limit the Gatekeeper enforces (agent DB)"
-	@echo "  make show-memory <agent>  Everything long-term memory holds, as a tree (SUBJECT=<id> EVENTS=<n>)"
+	@echo "  make show-memory <agent>  What dreams consolidated: episodic, semantic, procedural (SUBJECT=<id> EVENTS=<n>)"
+	@echo "  make show-memory dream <agent>  The dream events alone, pending and consolidated"
 	@echo "  make dream <agent>        Consolidate pending dream events into memory (SHOW=1 for the full tree)"
 	@echo "  make clean-memory <agent> Empty long-term memory (keeps checkpoints, business records, audit)"
 	@echo "  make memory-reindex <agent>  Rebuild the derived search index from the memory files"
@@ -363,11 +372,12 @@ CSA_ENV := AGENTIC_OVERLAYS=$(csa_OVERLAY)
 # CLI, the agent chosen by its config layer. Files live in data/<pkg>/memory/.
 MEMORY_CLI := $(PYTHON) -m agent_platform.interface.commands.memory_cli
 
+# `make show-memory dream <agent>` names this target as a view; it must not consolidate anything.
 dream: _agent
-	@$(MEMORY_CLI) dream $(if $(SHOW),--show-memory)
+	@$(if $(filter show-memory,$(firstword $(MAKECMDGOALS))),:,$(MEMORY_CLI) dream $(if $(SHOW),--show-memory))
 
 show-memory: _agent
-	@$(MEMORY_CLI) show $(if $(SUBJECT),--subject $(SUBJECT)) $(if $(EVENTS),--events $(EVENTS))
+	@$(MEMORY_CLI) show $(if $(SUBJECT),--subject $(SUBJECT)) $(if $(EVENTS),--events $(EVENTS)) $(if $(MEMORY_VIEW),--$(MEMORY_VIEW))
 
 clean-memory: _agent
 	@$(MEMORY_CLI) clean

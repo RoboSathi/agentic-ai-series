@@ -72,7 +72,7 @@ logging:
   subsystem_colors:
     customer_support_agent: bright_green
 
-# Nine things version independently (E39). These name *this* agent's
+# Nine things version independently. These name *this* agent's
 # artifacts; the platform ships neutral placeholders.
 audit:
   policy_version: refund-policy-v1
@@ -849,8 +849,11 @@ customer_support_agent:
       failed: "failed · {reason}"
     customer_told: 'told: "{reply}"'
     customer_not_told: not notified · no open conversation
-    not_pending: "Request {id} is not pending (already decided, or not found). /queue lists what is waiting."
+    not_pending: "Request {id} is not pending (already decided, or not found). /review lists what is waiting."
   dummy_data_generator_path: src/customer_support_agent/dummy_data/generator.yaml
+  # The generated seed `make dummy-data csa` writes and builds the database from; start-up
+  # compares the database against it.
+  seed_data_path: src/customer_support_agent/dummy_data/seed_data.sql
   # This agent's evals: the golden set, the fixture it runs against, and what its graders
   # read. Run with `make eval csa` (see agent_platform/evals).
   evals:

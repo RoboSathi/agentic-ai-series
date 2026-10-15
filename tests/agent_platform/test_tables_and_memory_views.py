@@ -21,7 +21,7 @@ from agent_platform.interface.commands.scope import ConsoleScope
 from agent_platform.interface.presentation.command_view import CommandView
 from agent_platform.memory import EpisodicStore, MemoryFact, Provenance, WorkingMemoryStore
 from agent_platform.memory.dream import DreamEvent, FileDreamInbox
-from agent_platform.memory.inspect import snapshot_tables, take_snapshot
+from agent_platform.memory.inspect import inbox_table, snapshot_tables, take_snapshot
 from agent_platform.resilience import DeadLetterQueue
 
 
@@ -91,7 +91,7 @@ class TestMemoryInAConsole:
 
 
 class TestShowMemory:
-    def test_episodic_per_subject_then_facts_then_skills_then_the_inbox(self) -> None:
+    def test_episodic_per_subject_then_facts_then_skills_and_no_inbox(self) -> None:
         _episode("7", "one")
         _episode("8", "two")
         FileDreamInbox().emit(DreamEvent(agent_id="a", session_id="s", subject_id="7",
@@ -99,11 +99,11 @@ class TestShowMemory:
         titles = [t.title for t in snapshot_tables(take_snapshot(), per_session=5)]
         assert titles[0].startswith("Episodic") and titles[1].startswith("Episodic")
         assert titles[2].startswith("Semantic") and titles[3].startswith("Procedural")
-        assert titles[4].startswith("Dream events · 1 pending")
+        assert len(titles) == 4  # the dream events are their own view
 
     def test_the_inbox_lists_each_event(self) -> None:
         FileDreamInbox().emit(DreamEvent(agent_id="a", session_id="s1", user_input="hello"))
-        inbox = snapshot_tables(take_snapshot(), per_session=5)[-1]
+        inbox = inbox_table(take_snapshot())
         words = get_settings().commands.memory_tables
         assert inbox.rows[0][0] == words.pending and inbox.rows[0][5] == "hello"
 

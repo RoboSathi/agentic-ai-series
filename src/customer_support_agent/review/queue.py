@@ -1,4 +1,4 @@
-"""The human side of the escalation path (LLD §21, E38).
+"""The human side of the escalation path (LLD §21).
 
 An escalation that nothing can drain is not a control — it is a way of
 losing requests politely. The agent could enqueue refunds for human
@@ -61,8 +61,8 @@ class ReviewQueueService:
     ) -> None:
         self._queue = queue
         self._orders = orders
-        # Whether reviewers trust the agent about as much as they should
-        # (E27). A queue where every escalation is waved through is a
+        # Whether reviewers trust the agent about as much as they should.
+        # A queue where every escalation is waved through is a
         # rubber stamp, and one where every escalation is overturned is a
         # control nobody believes — both are visible only if the
         # agreement rate is counted.

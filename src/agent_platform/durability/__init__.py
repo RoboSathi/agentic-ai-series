@@ -1,4 +1,4 @@
-"""Durable execution: checkpointed runs that survive failure (LLD §13, E35).
+"""Durable execution: checkpointed runs that survive failure (LLD §13).
 
     checkpointer = create_checkpointer(state_types=model_types(MyState))
     graph = builder.compile(checkpointer=checkpointer)

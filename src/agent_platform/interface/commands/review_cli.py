@@ -1,4 +1,4 @@
-"""`make queue <agent> [KIND=…] [ID=…] [ACTION=approve|deny ID=… COMMENT=…]`: `/queue`, from a terminal.
+"""`make queue <agent> [KIND=…] [ID=…] [ACTION=approve|deny ID=… COMMENT=…]`: `/review`, from a terminal.
 
 The same command and the same tables as the console, printed in the same
 colours; an operator at a terminal sees every subject's items (there is no
@@ -20,7 +20,7 @@ from agent_platform.interface.presentation.terminal import print_result
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
     parser.add_argument("--agent", default="", help="the agent's name as make knows it")
-    parser.add_argument("words", nargs="*", help="what /queue would be given")
+    parser.add_argument("words", nargs="*", help="what /review would be given")
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     command = _command()
     command.surface, command.make_agent = TERMINAL, args.agent
@@ -34,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _command() -> QueueCommand:
-    """The agent's own `/queue` (with its kinds) when its host registers one, else the platform's."""
+    """The agent's own `/review` (with its kinds) when its host registers one, else the platform's."""
     spec = get_settings().agent.host
     host = load_spec(spec) if spec else None
     for command in host.commands() if host is not None else ():

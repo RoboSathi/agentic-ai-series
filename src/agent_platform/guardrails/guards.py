@@ -1,4 +1,4 @@
-"""Structured-output guarantees (E28/E29, LLD §9).
+"""Structured-output guarantees (LLD §9).
 
 Two arms, and they are not the same guarantee:
 
@@ -99,7 +99,7 @@ class PydanticValidator:
         with an empty list of what was wrong.
 
         The fields are parsed but not checked against the schema, which
-        is the behaviour E28 contrasts against: a wrongly-typed or
+        is the behaviour the guardrail exists to prevent: a wrongly-typed or
         entirely unexpected argument now reaches the tool, which is
         exactly the point of having had a guardrail.
         """

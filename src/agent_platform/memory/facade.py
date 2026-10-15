@@ -2,7 +2,7 @@
 
 `customer_support_agent` asks memory questions; it does not choose
 storage engines. Which store answers a given question is a decision this
-facade owns, which is what keeps E08's information-hiding discipline
+facade owns, which is what keeps the information-hiding discipline
 intact as stores change underneath.
 
 Writes go through the governed pipeline (`submit`). Reads are a cascade,
