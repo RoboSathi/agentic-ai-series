@@ -700,18 +700,19 @@ cannot consolidate anything.
 
 **Consequences.** One shared builder keeps the terminal and the console in agreement.
 
-### P-38 — The judge shares no model with an agent, not even as a backup
+### P-38 — The judge's own model is never an agent's; its backup may be
 
 **Context.** The agents moved to super-120b, which was also the judge's backup, so a stalled
 ultra call was graded by the agent's own model.
 
-**Decision.** The judge (`judge:`, and the research agent's `judge` role) is ultra-550b with no
-fallback. The agents' chain (`llm.chain`) is super-120b with no fallback, since ultra is the
-only other strong NVIDIA model and is reserved for judging.
+**Decision.** The judge (`judge:`, and the research agent's `judge` role) is ultra-550b. When
+ultra does not answer, super-120b grades instead: for a demo, a grade always coming back
+matters more than an independent one (Karan, 2026-10-15). The agents' chain (`llm.chain`) is
+super-120b with no fallback, so an agent never runs on the judge's model.
 
-**Consequences.** When ultra is unavailable a grade fails rather than coming from the wrong
-judge; when super-120b is unavailable a CSA or Ops call fails after its retries. Amends P-19
-("every hosted model has a fallback") and P-20.
+**Consequences.** A grade made while ultra is down is the agent's model grading itself; the
+call's model is logged, so such grades can be told apart. When super-120b is unavailable a CSA
+or Ops call fails after its retries. Amends P-19 ("every hosted model has a fallback") and P-20.
 
 ---
 

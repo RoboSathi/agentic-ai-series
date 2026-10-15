@@ -140,9 +140,12 @@ llm:
       model: nvidia/nemotron-3-ultra-550b-a55b
       timeout_seconds: 120
       hedge_after_seconds: 45
-      # No backup (2026-10-15): super-120b is every writing role's model, and an audit by it
-      # would be the writer checking itself.
-      fallbacks: []
+      # When ultra does not answer, super-120b (the writers' model) audits instead (2026-10-15):
+      # an answer always comes back, at the cost of independence on that call.
+      fallbacks:
+        - provider: nim
+          model: nvidia/nemotron-3-super-120b-a12b
+          extra_body: {chat_template_kwargs: {enable_thinking: false}}
     # Multi-step tool calling: the model the platform recommends for it.
     answerer: *default_chain
 

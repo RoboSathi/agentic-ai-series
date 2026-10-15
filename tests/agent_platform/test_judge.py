@@ -62,14 +62,17 @@ class TestClient:
         ]
 
     def test_the_judge_never_runs_on_the_agents_model(self) -> None:
-        """A judge that shares the agent's model inherits its blind spots."""
+        """A judge that shares the agent's model inherits its blind spots.
+
+        Only the judge's own model is held to this: its backup may be the agent's model,
+        so a grade still comes back when the judge is down (ADR P-38). And an agent never
+        falls back onto the judge's model.
+        """
         settings = get_settings()
         agent_models = {settings.llm.provider_settings().model} | {
             backup.model for backup in settings.llm.chain.fallbacks
         }
-        judge_models = {settings.judge.model} | {b.model for b in settings.judge.fallbacks}
         assert settings.judge.model not in agent_models
-        assert settings.llm.provider_settings().model not in judge_models
 
 
 class NamedLLM(ScriptedLLM):

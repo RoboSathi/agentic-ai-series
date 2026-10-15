@@ -2256,9 +2256,9 @@ resilience:
 # The LLM judge (`agent_platform.judge`): every model-graded verdict asks this model — the eval
 # graders (DeepEval metrics, Promptfoo's llm-rubric) and any agent's own judge built on
 # `LlmJudge`. Ultra, the strongest model on the account, and one no agent runs on (2026-10-12):
-# a judge that shares the agent's model inherits its blind spots. So it has no backup
-# (2026-10-15): super-120b is the agents' model, and a grade from it would be the agent grading
-# itself. When ultra does not answer, the grade fails rather than coming from the wrong judge.
+# a judge that shares the agent's model inherits its blind spots. When ultra does not answer
+# (or has not after `hedge_after_seconds`), super-120b — the agents' own model — grades instead
+# (2026-10-15): for a demo a grade always coming back matters more than an independent one.
 judge:
   provider: nim
   model: nvidia/nemotron-3-ultra-550b-a55b
@@ -2268,7 +2268,10 @@ judge:
   extra_body: {chat_template_kwargs: {enable_thinking: false}}
   timeout_seconds: 60
   hedge_after_seconds: 20
-  fallbacks: []
+  fallbacks:
+    - provider: nim
+      model: nvidia/nemotron-3-super-120b-a12b
+      extra_body: {chat_template_kwargs: {enable_thinking: false}}
   temperature: 0.0
   # Room for a verdict and its reason.
   max_tokens: 2048
