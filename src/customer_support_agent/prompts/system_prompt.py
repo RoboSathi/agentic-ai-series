@@ -81,7 +81,7 @@ def build_reply_instruction() -> str:
 
 
 def system_prompt_parts(
-    instructions: Sequence[PromptPart], refund_limit: Money | None
+    instructions: Sequence[PromptPart], refund_limit: Money | None, *, governed: bool
 ) -> list[PromptPart]:
     """The working prompt as named parts: the turn's instructions, the policy, the limit.
 
@@ -89,11 +89,13 @@ def system_prompt_parts(
     built with `PromptBuilder`.
     """
     policy = PromptPart(POLICY, policy_text().strip(), get_agent_settings().policy_path)
-    limit = PromptPart(REFUND_LIMIT, refund_limit_notice(refund_limit).strip())
+    limit = PromptPart(REFUND_LIMIT, refund_limit_notice(refund_limit, governed=governed).strip())
     return [*instructions, policy, limit]
 
 
-def build_system_prompt(instructions: str | None = None, refund_limit: Money | None = None) -> str:
+def build_system_prompt(
+    instructions: str | None = None, refund_limit: Money | None = None, *, governed: bool = True
+) -> str:
     """The working system prompt: the turn's instructions, the refund policy, the limit.
 
     `instructions` is what `AgentInstructions.compose` rendered for this
@@ -109,23 +111,26 @@ def build_system_prompt(instructions: str | None = None, refund_limit: Money | N
     the model nothing and costs a third of the window.
 
     `refund_limit` is the DB's per-refund limit, read once when the agent
-    is built. Stated here, the model holds to it on a plain request —
-    and can be talked past it, which is the point: a rule in the prompt
-    is a request, and the Gatekeeper, which enforces the same limit, is
-    the control. With the Gatekeeper off, this sentence is all that is left.
+    is built. `governed` says whether the Gatekeeper was built. With it,
+    the model calls `process_refund` whatever the total, and the
+    Gatekeeper escalates a refund above the limit. Without it, the
+    prompt forbids that call: the model holds to the rule on a plain
+    request and can be talked past it, which is the point. A rule in the
+    prompt is a request, and the Gatekeeper is the control.
     """
     given = instructions if instructions is not None else render_profile(get_settings().skills)
-    return f"{given}\n\n{policy_text().strip()}\n{refund_limit_notice(refund_limit)}"
+    notice = refund_limit_notice(refund_limit, governed=governed)
+    return f"{given}\n\n{policy_text().strip()}\n{notice}"
 
 
-def refund_limit_notice(refund_limit: Money | None) -> str:
-    """The prompt's limit sentence, or nothing when no limit is declared."""
+def refund_limit_notice(refund_limit: Money | None, *, governed: bool) -> str:
+    """The prompt's limit sentence for this Gatekeeper posture, or nothing without a limit."""
     if refund_limit is None:
         return ""
     settings = get_agent_settings()
-    notice = settings.refund_limit_notice.format(
-        limit=refund_limit, contact=settings.support_contact
-    )
+    notices = settings.refund_limit_notice
+    template = notices.governed if governed else notices.ungoverned
+    notice = template.format(limit=refund_limit, contact=settings.support_contact)
     return f"\n{notice}\n"
 
 

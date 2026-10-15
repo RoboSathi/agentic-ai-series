@@ -18,8 +18,9 @@ tools: [get_order_status, get_refund_status, process_refund, list_orders]
 3. An order already refunded (`refund_status` issued or completed) cannot be refunded
    again — say so and call nothing. A refund a reviewer declined (`denied`) is final —
    say so, give the escalation email the record states, and call nothing.
-4. Otherwise call `process_refund` with the order's full total, whatever it is. The
-   result says whether it was issued or sent to a person for review.
+4. Otherwise, if the refund-limit rule allows it, call `process_refund` with the
+   order's full total. The result says whether it was issued or sent to a person for
+   review.
 
 ## Boundaries
 - When the result says it was queued for review, say so, say they will hear back soon,

@@ -16,8 +16,13 @@ from agent_platform.core.primitives.money import Money
 from agent_platform.hallucination_check.direct import amounts
 from agent_platform.memory import SkillStore
 from agent_platform.memory.procedural.skills import build_agent_instructions
+from customer_support_agent.config import get_agent_settings
 from customer_support_agent.graph.nodes.execute import ExecutionNodes
-from customer_support_agent.prompts.system_prompt import build_system_prompt, instruction_corpus
+from customer_support_agent.prompts.system_prompt import (
+    build_system_prompt,
+    instruction_corpus,
+    refund_limit_notice,
+)
 
 _REASON = (
     "Order value $103.39 exceeds the automatic refund limit of $50.00; "
@@ -36,13 +41,28 @@ def test_a_refund_turn_states_the_db_limit_and_only_it(pool: SqliteConnectionPoo
     )
     composed = instructions.compose(frozenset({"intent:REQUEST_REFUND"}), "refund order 10533")
     limit = Money.from_cents(5000)
-    prompt = build_system_prompt(composed.text, refund_limit=limit)
-    assert str(limit) in prompt
-    assert amounts(prompt) == amounts(str(limit))
+    for governed in (True, False):
+        prompt = build_system_prompt(composed.text, refund_limit=limit, governed=governed)
+        assert str(limit) in prompt
+        assert amounts(prompt) == amounts(str(limit))
 
 
 def test_no_declared_limit_states_no_limit() -> None:
     assert build_system_prompt(refund_limit=None) == build_system_prompt()
+    assert refund_limit_notice(None, governed=False) == ""
+
+
+def test_the_governed_notice_sends_a_larger_refund_to_the_gatekeeper() -> None:
+    """Gatekeeper on: the model calls, and the Gatekeeper escalates."""
+    notice = refund_limit_notice(Money.from_cents(5000), governed=True)
+    assert "still goes through" in notice and "Never call" not in notice
+
+
+def test_the_ungoverned_notice_forbids_the_call_and_names_the_contact() -> None:
+    """Gatekeeper off: the sentence is the only guard, so it forbids the call."""
+    notice = refund_limit_notice(Money.from_cents(5000), governed=False)
+    assert "do not call process_refund" in notice
+    assert get_agent_settings().support_contact in notice
 
 
 async def test_an_escalation_with_no_queue_tells_the_model_no_limit() -> None:

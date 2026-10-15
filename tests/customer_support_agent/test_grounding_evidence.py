@@ -32,7 +32,7 @@ class _Support(NodeSupport):
         self._registry: Any = SimpleNamespace(
             get=lambda name: SimpleNamespace(side_effecting=name.endswith("process_refund"))
         )
-        self._evidence = GroundingEvidence(self._registry, self._agent_policy)
+        self._evidence = GroundingEvidence(self._registry, self._agent_policy, governed=True)
 
 
 def _state(*actions: tuple[str, ...], **metadata: Any) -> AgentState:
@@ -520,7 +520,7 @@ class _LimitedSupport(_Support):
         from agent_platform.core.primitives.money import Money
 
         self._agent_policy = SimpleNamespace(per_action_limit=lambda _action: Money.parse("50.00"))
-        self._evidence = GroundingEvidence(self._registry, self._agent_policy)
+        self._evidence = GroundingEvidence(self._registry, self._agent_policy, governed=True)
 
 
 @pytest.mark.usefixtures("abstaining_guard")

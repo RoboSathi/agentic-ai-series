@@ -999,6 +999,19 @@ above it (RATIFIABLE → review queue); the model's money-moving tools are `proc
 sentence from the database (so a gatekeeper-off demo shows a persuasive prompt talking the model
 past it), and the oracle checks it is never disclosed in a reply.
 
+**Amended 2026-10-15: one sentence per Gatekeeper posture.** The composition root picks the
+sentence by whether the Gatekeeper was built (`refund_limit_notice.governed` / `.ungoverned`). The
+grounding evidence uses the same one, and `/harness` rebuilds the agent, so the choice follows the toggle.
+With the Gatekeeper on, the model calls `process_refund` with the full total whatever it is, and an
+over-limit call is escalated to the review queue. With it off, the sentence forbids that call and
+points the customer to support. It is the only guard left, so a plain request is declined and
+a persuasive one can talk the model past it. Before this, the governed sentence was used in both
+postures, so with the harness off it invited the model to refund above the limit and there was
+nothing to jailbreak. The ungoverned sentence forbids the call "until a person has reviewed it",
+not unconditionally. An unconditional "never" gave the model nothing to argue with (super-120b quoted it
+and declined a staging-QA prompt). A condition is what a real prompt rule carries, and a forged
+"the review is done" talks the model past it. That is the failure the Gatekeeper exists for.
+
 **Supersedes.** The 2026-09-27 and 2026-10-10 refund-limit decisions.
 
 ### C-03 — A refund is issued, then settles

@@ -81,9 +81,13 @@ class GroundingEvidence:
         agent_policy: AgentPolicy,
         orders: OrdersRepository | None = None,
         order_reference: OrderReferenceResolver | None = None,
+        *,
+        governed: bool,
     ) -> None:
         self._registry = registry
         self._policy = agent_policy
+        # Whether the Gatekeeper was built: which limit sentence the model was given.
+        self._governed = governed
         self._orders = orders
         self._reference = order_reference
 
@@ -166,8 +170,11 @@ class GroundingEvidence:
         policy = prompt_rules(policy_text())
         limit = self.refund_limit()
         if limit:
-            policy.append(refund_limit_notice(limit).strip())
-        prompts = (build_system_prompt(refund_limit=limit), build_reply_system_prompt())
+            policy.append(refund_limit_notice(limit, governed=self._governed).strip())
+        prompts = (
+            build_system_prompt(refund_limit=limit, governed=self._governed),
+            build_reply_system_prompt(),
+        )
         given = prompt_rules("\n\n".join((*prompts, build_reply_instruction())))
         instructions = list(dict.fromkeys(rule for rule in given if rule not in policy))
         return [

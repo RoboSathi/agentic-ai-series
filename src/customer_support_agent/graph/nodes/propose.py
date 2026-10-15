@@ -290,7 +290,9 @@ class ProposalNodes(NodeSupport):
     def _system_prompt(self) -> str:
         """The profile and policy, without per-turn skills — what a screen sees."""
         return build_system_prompt(
-            self._instructions.profile_section(), refund_limit=self._refund_limit()
+            self._instructions.profile_section(),
+            refund_limit=self._refund_limit(),
+            governed=self._governed,
         )
 
     def _prompt_request(
@@ -299,7 +301,9 @@ class ProposalNodes(NodeSupport):
         """The working request, built from named sections: instructions, policy, limit, the
         context window, then the question and this turn's tool loop."""
         parts = system_prompt_parts(
-            self._instructions.parts(self._activation(state)), self._refund_limit()
+            self._instructions.parts(self._activation(state)),
+            self._refund_limit(),
+            governed=self._governed,
         )
         builder = PromptBuilder().instructions(parts)
         context = state.context

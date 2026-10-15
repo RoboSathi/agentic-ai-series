@@ -62,7 +62,7 @@ class _Support(NodeSupport):
     def __init__(self) -> None:
         self._agent_policy: Any = SimpleNamespace(per_action_limit=lambda _action: None)
         self._registry: Any = SimpleNamespace(get=lambda _name: None)
-        self._evidence = GroundingEvidence(self._registry, self._agent_policy)
+        self._evidence = GroundingEvidence(self._registry, self._agent_policy, governed=True)
 
 
 def _state() -> AgentState:

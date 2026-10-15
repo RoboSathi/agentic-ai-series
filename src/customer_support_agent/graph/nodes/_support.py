@@ -122,6 +122,8 @@ class NodeSupport:
     _referral: ReviewReferral | None
     _reply_referral: ReplyReferral | None
     _agent_policy: AgentPolicy
+    # Whether the Gatekeeper was built: it picks the prompt's refund-limit sentence.
+    _governed: bool
     _features: FeatureSet
     _intents: CustomerSupportIntentRouter
     _authenticator: CustomerAuthenticator | None

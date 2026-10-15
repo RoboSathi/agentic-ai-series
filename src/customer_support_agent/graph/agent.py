@@ -207,6 +207,8 @@ class CustomerSupportAgent(
         self._features = features if features is not None else get_settings().features
         self._llm = llm
         self._gatekeeper = gatekeeper
+        # Which refund-limit sentence the prompt carries (`refund_limit_notice`).
+        self._governed = gatekeeper is not None
         # Written by the Gatekeeper when there is one, and by the agent
         # itself when there is not — an ungoverned execution is exactly
         # the one the trail must not be missing.
@@ -292,7 +294,11 @@ class CustomerSupportAgent(
         )
         # What a reply is grounded on: the order record, tools, rules, facts — one assembler.
         self._evidence = GroundingEvidence(
-            self._registry, self._agent_policy, orders, self._order_reference
+            self._registry,
+            self._agent_policy,
+            orders,
+            self._order_reference,
+            governed=self._governed,
         )
         self._deterministic_checks = deterministic_checks
         # Who each session has proved itself to be. Authentication is per

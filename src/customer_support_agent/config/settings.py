@@ -272,6 +272,17 @@ class OrderSentenceSettings(BaseModel):
     details: OrderDetailPhrases
 
 
+class RefundLimitNoticeSettings(BaseModel):
+    """The prompt's refund-limit sentence, one per Gatekeeper posture.
+
+    `governed` sends every refund through `process_refund` for the Gatekeeper to decide;
+    `ungoverned` forbids the call above the limit, because nothing else will.
+    """
+
+    governed: str
+    ungoverned: str
+
+
 class ReviewReasonSettings(BaseModel):
     """Why a request is in the review queue, as the queue records it (`hitl_queue.reason`).
 
@@ -418,7 +429,7 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
     demo_user_code: str
     policy_path: str
     # The prompt's refund-limit sentence: `{limit}` from the DB row, `{contact}` below.
-    refund_limit_notice: str
+    refund_limit_notice: RefundLimitNoticeSettings
     # Added to the working prompt when the intent classifier could not place the turn.
     intent_fallback_instruction: str
     # What the dream inbox records instead of a turn's words when memory refused its claim
