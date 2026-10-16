@@ -19,8 +19,8 @@ from agent_platform.security.pii.types import RedactionMode
 from agent_platform.security.prompt_injection import (
     ChatJailbreakGuard,
     HostedJailbreakGuard,
+    InjectionGuard,
     JailbreakGuard,
-    PromptInjectionGuard,
 )
 from agent_platform.security.prompt_injection.types import InjectionAssessment
 from agent_platform.tools.types import ToolDefinition
@@ -59,7 +59,7 @@ class SecuritySuite:
         self,
         authorizer: Authorizer | None = None,
         pii: PIIFilterImpl | None = None,
-        injection: PromptInjectionGuard | None = None,
+        injection: InjectionGuard | None = None,
         moderator: ContentModerator | None = None,
         jailbreak_guard: JailbreakGuard | None = None,
         content_safety_guard: ContentSafetyGuard | None = None,

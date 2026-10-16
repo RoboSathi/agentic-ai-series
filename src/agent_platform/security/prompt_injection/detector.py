@@ -27,13 +27,21 @@ _UNTRUSTED_FORBIDDEN_SURFACES: frozenset[SurfaceClass] = frozenset({"locked", "h
 
 @runtime_checkable
 class InjectionGuard(Protocol):
-    """Separates trusted instruction from untrusted data, and scopes tools."""
+    """Separates trusted instruction from untrusted data, and scopes tools.
+
+    `assess` is the one call the security suite makes; `separate` and `scope_tools` are
+    its two layers, exposed for a caller that needs only one of them.
+    """
 
     def separate(self, instructions: str, data: str) -> SeparatedContext: ...
 
     def scope_tools(
         self, context: SeparatedContext, tools: list[ToolDefinition]
     ) -> list[ToolDefinition]: ...
+
+    def assess(
+        self, instructions: str, data: str, tools: list[ToolDefinition]
+    ) -> InjectionAssessment: ...
 
 
 class InstructionDataSeparator:

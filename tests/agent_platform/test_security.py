@@ -9,6 +9,7 @@ from agent_platform.config import get_settings
 from agent_platform.memory import EpisodicStore, MemoryFacade
 from agent_platform.memory.types import MemoryQuery
 from agent_platform.security import (
+    InjectionGuard,
     PIIFilterImpl,
     PromptInjectionGuard,
     SecuritySuite,
@@ -156,3 +157,10 @@ class TestPIIReachesMemory:
         facade.note("contact", "mail ada@example.com", "s1", source="customer")
         assert facade.working is not None
         assert "ada@example.com" in str(facade.working.get("s1").state["contact"])
+
+
+class TestInjectionGuardProtocol:
+    def test_the_guard_the_suite_calls_satisfies_the_protocol(self) -> None:
+        """`assess` is what `SecuritySuite` calls, so it is what the protocol must declare."""
+        assert isinstance(PromptInjectionGuard(), InjectionGuard)
+        assert "assess" in InjectionGuard.__dict__

@@ -922,6 +922,22 @@ against the code before it was acted on.
 **Consequences.** Ranking a turn's tools, passages and evidence embeds only text it has not
 seen before. Every agent's turn makes one hosted guard round trip instead of two.
 
+### P-46 — Unused code: deleted, typed to, or kept on purpose
+
+**Decision.** (2026-10-16.)
+- **`config/versions.py` (`VersionManifest`) is deleted.** Nothing imported it, and there is
+  no `/versions` command. Three fields existed only for it, and are removed from the schema
+  and every YAML layer: `audit.prompt_source`, `audit.policy_source` and `evals.version`.
+  Components stay versioned through `audit.*_version` on every audit entry (FR-48).
+- **The scheduler is its semaphore** (`AsyncDagScheduler.slot()`). Its `run` / `run_batch`
+  path, `TaskOutcome` and `BatchSummary` had no production caller, because the research run
+  fans out with LangGraph `Send` (P-45). `TaskGraph` keeps `ready`, `blocked` and `batches`.
+- **`InjectionGuard` declares `assess`**, the one method `SecuritySuite` calls, and the suite
+  is typed to the protocol rather than to `PromptInjectionGuard`.
+- **`InMemoryPubSub` is kept, unused.** It is the platform's tested pub-sub primitive (a
+  resilience pattern CLAUDE.md requires a real implementation of). No production subscriber
+  exists yet; the first one decides whether publishing must fan out concurrently (P-45).
+
 ---
 
 ## 9. Research agent

@@ -533,8 +533,6 @@ audit:
   data_version: unversioned
   prompt_version: unversioned
   tool_schema_version: unversioned
-  prompt_source: unnamed
-  policy_source: unnamed
   # How the trail reads (`audit/view.py`): one renderer for `make audit <agent>`, `/audit`
   # and the console. It holds tokens only — never a revealed value (`make pii-reveal`).
   view:
@@ -2357,8 +2355,6 @@ evals:
   enabled: true
   # Eval traffic's channel on every fact (ADR 0009 D5); runtime metrics exclude it.
   channel: eval
-  # The evaluator's version on every audit entry (`config.versions`): bump it when the graders change.
-  version: evals-v2
   # The running agent's EvalPlugin (`module.path:attribute`). The platform
   # names no agent; the agent's config names its own plugin.
   plugin: ""

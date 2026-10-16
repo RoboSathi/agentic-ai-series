@@ -79,8 +79,6 @@ audit:
   data_version: dummy-data-v1
   prompt_version: support-prompt-v2
   tool_schema_version: support-tools-v1
-  prompt_source: customer_support_agent/prompts (AGENT.md + skills/)
-  policy_source: gatekeeper + customer_policy.md
 
 llm:
   intent_classifier:

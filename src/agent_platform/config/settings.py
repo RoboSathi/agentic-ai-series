@@ -633,10 +633,6 @@ class AuditSettings(YamlBackedSettings):
     data_version: str
     prompt_version: str
     tool_schema_version: str
-    # Where the versioned prompt and policy live, as `/versions` reports them.
-    # The agent names its own; the platform default names none.
-    prompt_source: str
-    policy_source: str
     view: AuditViewSettings
 
     model_config = SettingsConfigDict(env_prefix="AUDIT__")
@@ -2755,8 +2751,6 @@ class EvalsSettings(YamlBackedSettings):
     enabled: bool
     # The channel eval traffic is stamped with, so runtime metrics can exclude it.
     channel: str
-    # The evaluator's version, recorded with every audit entry.
-    version: str
     # `module.path:attribute` of the running agent's EvalPlugin. Empty
     # here: the platform names no agent.
     plugin: str
