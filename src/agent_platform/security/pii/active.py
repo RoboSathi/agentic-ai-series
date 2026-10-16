@@ -18,15 +18,27 @@ from agent_platform.security.pii.detector import PIIFilterImpl
 from agent_platform.security.pii.known_values import register_rows
 from agent_platform.security.pii.source import Admitted, PiiSource
 
+# PII configurations whose filters are kept at once (one per agent overlay a process loads).
+_CONFIGURATIONS = 8
 
-@functools.cache
+
 def _filter() -> PIIFilterImpl:
+    """The filter for the PII configuration in force: this agent's own entities."""
+    pii = get_settings().security.pii
+    return _filter_for(pii.engine, tuple(pii.presidio.entities))
+
+
+@functools.lru_cache(maxsize=_CONFIGURATIONS)
+def _filter_for(engine: str, entities: tuple[str, ...]) -> PIIFilterImpl:
+    """Keyed by what it detects, so a process that loads another agent's configuration (a
+    test suite composing each agent in turn) never detects with the first one's entities."""
     return PIIFilterImpl()
 
 
 @functools.cache
 def _source() -> PiiSource:
-    return PiiSource(_filter())
+    """One source per process: one token map, whichever configuration's filter is in force."""
+    return PiiSource(_filter)
 
 
 def pii_on() -> bool:

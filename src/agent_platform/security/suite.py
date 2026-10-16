@@ -15,7 +15,7 @@ from agent_platform.security.content_moderation import (
 from agent_platform.security.content_moderation.types import ModerationVerdict
 from agent_platform.security.guard_chain import GuardChain
 from agent_platform.security.pii.detector import PIIFilterImpl, RedactedSpan
-from agent_platform.security.pii.types import PIISpan, RedactionMode
+from agent_platform.security.pii.types import RedactionMode
 from agent_platform.security.prompt_injection import (
     ChatJailbreakGuard,
     HostedJailbreakGuard,
@@ -103,10 +103,6 @@ class SecuritySuite:
                 suspicious=False, allowed_actions=[tool.name for tool in tools]
             )
         return self.injection.assess(instructions, data, tools)
-
-    def detect_pii(self, text: str) -> list[PIISpan]:
-        """What personal data this text contains, or nothing when the filter is withheld."""
-        return self.pii.detect(text) if self.pii else []
 
     def pii_model(self) -> tuple[str, str]:
         """The PII model's name, and why it is unavailable ("" for either when not applicable)."""

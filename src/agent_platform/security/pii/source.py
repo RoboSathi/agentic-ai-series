@@ -20,6 +20,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -69,17 +70,20 @@ class PiiSource:
 
     def __init__(
         self,
-        pii: PIIFilterImpl,
+        pii: PIIFilterImpl | Callable[[], PIIFilterImpl],
         rules: PIIFilterImpl | None = None,
         *,
         max_tokens: int | None = None,
         cache_entries: int | None = None,
     ) -> None:
         settings = get_settings().security.pii.source
-        self._pii = pii
+        # The full filter, or how to get the one in force: the token map outlives a change of
+        # configuration, the entities detected do not.
+        self._pii = pii if isinstance(pii, PIIFilterImpl) else None
+        self._pii_of = pii if not isinstance(pii, PIIFilterImpl) else None
         self._rules = rules or PIIFilterImpl(detectors=rule_detectors())
         self._values: OrderedDict[str, str] = OrderedDict()
-        self._cache: OrderedDict[tuple[int, str], tuple[str, dict[str, str]]] = OrderedDict()
+        self._cache: OrderedDict[tuple[int, int, str], tuple[str, dict[str, str]]] = OrderedDict()
         self._max_tokens = max_tokens or settings.max_tokens
         self._cache_entries = cache_entries or settings.cache_entries
         self._lock = threading.Lock()
@@ -89,14 +93,20 @@ class PiiSource:
         if not text:
             return Admitted(text=text)
         started = time.perf_counter()
-        tokenised, found, shown = self._pii.tokenize_shown(text)
+        tokenised, found, shown = self._full().tokenize_shown(text)
         self._remember(found)
         latency_ms = round((time.perf_counter() - started) * 1000, 2)
         return Admitted(text=tokenised, spans=shown, latency_ms=latency_ms)
 
     def tokenise(self, text: str) -> str:
         """`text` with every value the full filter finds replaced by its token."""
-        return self._through(self._pii, text)
+        return self._through(self._full(), text)
+
+    def _full(self) -> PIIFilterImpl:
+        if self._pii is not None:
+            return self._pii
+        assert self._pii_of is not None
+        return self._pii_of()
 
     def tokenise_tree(self, value: Any) -> Any:
         """Every string in a payload tokenised; the shape is kept."""
@@ -123,7 +133,7 @@ class PiiSource:
             return text
         # Keyed by the known values' version too: a text read before a name was registered
         # must not keep tokenising to itself once it is.
-        key = (known_values().version, text)
+        key = (known_values().version, id(pii), text)
         with self._lock:
             cached = self._cache.get(key)
         if cached is None:

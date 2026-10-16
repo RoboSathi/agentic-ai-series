@@ -368,3 +368,22 @@ class TestTheTurnSummarySaysHowMuchWasCached:
             hits=1, calls=2, cached=900, prompt=2200
         )
         assert line == expected
+
+
+class TestTheLayoutsEdges:
+    def test_a_window_of_only_stable_chunks_is_all_prefix(self) -> None:
+        stable = [Chunk(content="policy", kind="policy", source="p", metadata={"stable": True})]
+        manifest = PromptBuilder(FOUR).window("# Context", "policy", stable).build().manifest
+        assert [s.name for s in manifest.sections] == ["window_stable"]
+        assert manifest.sections[0].stable
+
+    def test_history_with_nothing_after_it_still_gets_the_turn_context(self) -> None:
+        built = (
+            PromptBuilder(FOUR)
+            .system(PROFILE, "Profile.")
+            .system("today", "Thursday.", volatility=Volatility.TURN)
+            .messages(HISTORY, [Message(role="user", content="before")])
+            .build()
+        )
+        assert [s.name for s in built.manifest.sections][-2:] == [TURN_CONTEXT, "today"]
+        assert built.messages[-1].content.endswith("Thursday.")

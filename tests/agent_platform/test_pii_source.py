@@ -8,6 +8,7 @@ turning all of it into the identity. No model is loaded: the detectors here are 
 """
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -15,10 +16,17 @@ import pytest
 from agent_platform.config import FeatureSet, active_features, get_settings, set_active_features
 from agent_platform.core.primitives.pii_tokens import framed_token
 from agent_platform.core.primitives.scrubbing import install_scrubber, scrub
+from agent_platform.core.primitives.string_tree import map_strings
+from agent_platform.deterministic_checks import (
+    AdmittedChecker,
+    DeterministicCheckRequest,
+    DeterministicCheckResult,
+)
 from agent_platform.gatekeeper.types import AuthorityContext
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.types import StatusEvent
 from agent_platform.runtime.executor import ApprovedToolCall, ToolExecutorImpl
+from agent_platform.security.pii import active, detector
 from agent_platform.security.pii.active import (
     install_pii_scrubbing,
     restore_if_on,
@@ -172,3 +180,99 @@ class TestHarnessOff:
         assert tokenise_if_on(text) == text
         assert scrub_if_on(text) == text
         assert restore_if_on(text) == text
+
+
+class TestLimits:
+    def test_the_oldest_known_value_goes_first(self) -> None:
+        values = KnownValues(min_chars=3, max_entries=1)
+        values.register("PERSON", "Alpha")
+        values.register("PERSON", "Bravo")
+        assert [s.text for s in values.find("Alpha Bravo")] == ["Bravo"]
+
+    def test_re_registering_a_value_changes_nothing(self) -> None:
+        values = KnownValues(min_chars=3, max_entries=5)
+        values.register("PERSON", NAME)
+        version = values.version
+        values.register("PERSON", NAME)
+        assert values.version == version
+
+    def test_the_oldest_token_is_forgotten_and_stays_a_token(self) -> None:
+        values = KnownValues(min_chars=3, max_entries=10)
+        values.register("PERSON", NAME)
+        values.register("PERSON", "Quillaby")
+        rules = PIIFilterImpl(detectors=[KnownValueDetector(values)], vault=None)
+        source = PiiSource(rules, rules, max_tokens=1, cache_entries=1)
+        first = source.tokenise(NAME)
+        second = source.tokenise("Quillaby")
+        assert source.restore(first) == first
+        assert source.restore(second) == "Quillaby"
+
+    def test_an_empty_message_is_admitted_as_it_is(self) -> None:
+        assert _source().admit("").text == ""
+
+    def test_the_source_follows_a_filter_it_is_given_as_a_function(self) -> None:
+        rules = _source()._rules
+        source = PiiSource(lambda: rules, rules)
+        assert NAME not in source.tokenise(f"hi {NAME}")
+
+
+class TestThePatternEngine:
+    def test_known_values_still_lead(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        settings = get_settings()
+        pii = settings.security.pii.model_copy(update={"engine": "pattern"})
+        patched = settings.model_copy(
+            update={"security": settings.security.model_copy(update={"pii": pii})}
+        )
+        monkeypatch.setattr(detector, "get_settings", lambda: patched)
+        kinds = [type(d) for d in detector._default_detectors()]
+        assert kinds == [KnownValueDetector, PatternPIIDetector]
+
+
+class _Rules:
+    """Another agent's checker: its facts carry a customer's name."""
+
+    marker = "mine"
+
+    def check(self, request: DeterministicCheckRequest) -> DeterministicCheckResult:
+        return DeterministicCheckResult(passed=True, facts={"customer": NAME, "total": 32})
+
+
+@pytest.mark.usefixtures("pii_on")
+class TestAdmittedChecker:
+    def test_facts_enter_as_tokens(self) -> None:
+        result = AdmittedChecker(_Rules()).check(
+            DeterministicCheckRequest(subject_id="1", query="refund")
+        )
+        assert NAME not in str(result.facts) and result.facts["total"] == 32
+
+    def test_the_wrapped_checker_is_still_reachable(self) -> None:
+        checker = AdmittedChecker(_Rules())
+        assert checker.marker == "mine" and isinstance(checker.inner, _Rules)
+
+
+class TestPayloadsOfAnyShape:
+    def test_dataclasses_and_sets_are_walked(self) -> None:
+        @dataclass
+        class Note:
+            who: str
+
+        walked = map_strings({"note": Note(NAME), "tags": {NAME}}, str.upper)
+        assert walked == {"note": {"who": NAME.upper()}, "tags": [NAME.upper()]}
+
+
+class TestTheFilterFollowsTheConfiguration:
+    """A process that loads another agent's configuration detects with that agent's entities,
+    while the one token map carries on (a value tokenised before is still restored)."""
+
+    def test_new_entities_new_filter_same_map(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        settings = get_settings()
+        before = active._filter()
+        source = active._source()
+        presidio = settings.security.pii.presidio.model_copy(update={"entities": ["US_SSN"]})
+        pii = settings.security.pii.model_copy(update={"presidio": presidio})
+        patched = settings.model_copy(
+            update={"security": settings.security.model_copy(update={"pii": pii})}
+        )
+        monkeypatch.setattr(active, "get_settings", lambda: patched)
+        assert active._filter() is not before
+        assert active._source() is source
