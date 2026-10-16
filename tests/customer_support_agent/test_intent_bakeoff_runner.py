@@ -78,7 +78,7 @@ async def test_rules_score_in_the_router_row_but_not_the_model_row(scripted: Pat
 def test_loads_the_shipped_cases() -> None:
     cases = bakeoff.load_cases(get_agent_settings().evals.intent_bakeoff.resolved_cases_path)
 
-    assert len(cases) == 50
+    assert len(cases) == 54
     assert {case.intent for case in cases} == {i.name for i in get_agent_settings().intents}
 
 

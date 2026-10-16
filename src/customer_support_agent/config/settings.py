@@ -400,6 +400,8 @@ class CustomerSupportAgentSettings(YamlBackedSettings):
 
     _yaml_section = "customer_support_agent"
     max_tool_iterations: int
+    # Neighbouring sentences of a policy section joined into one support-only premise.
+    knowledge_passage_window: int = Field(ge=1)
     loop_control_status: LoopControlStatusSettings
     # The most orders one `list_orders` call returns, newest first.
     list_orders_max_rows: int

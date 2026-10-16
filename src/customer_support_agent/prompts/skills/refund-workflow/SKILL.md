@@ -2,13 +2,13 @@
 name: refund-workflow
 description: Handle a customer request to refund an existing order — check it is delivered or cancelled and not already refunded, confirm its full total, request the refund, and report what the result says.
 triggers: [intent:REQUEST_REFUND]
-keywords: [refund, money back, reimburse, chargeback, refund this order]
+keywords: [refund this order, refund my order, money back, reimburse, chargeback]
 prefetch: [get_order_status, get_refund_status]
 tools: [get_order_status, get_refund_status, process_refund, list_orders]
 ---
 
 ## Preconditions
-- Any request mentioning a refund is a refund request.
+- The customer asks for their money back for an order.
 
 ## Procedure
 1. The order's record and refund status are already above when the order is known;

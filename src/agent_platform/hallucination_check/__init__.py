@@ -26,6 +26,7 @@ from agent_platform.hallucination_check.evidence import (
     TOOL_RESULT_KIND,
     Observation,
     observation_facts,
+    passages,
     tool_evidence,
 )
 from agent_platform.hallucination_check.resolver import (
@@ -74,6 +75,7 @@ __all__ = [
     "TOOL_RESULT_KIND",
     "Observation",
     "observation_facts",
+    "passages",
     "plain_text",
     "sentence_pieces",
     "split_sentences",

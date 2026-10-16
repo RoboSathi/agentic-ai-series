@@ -213,7 +213,7 @@ hallucination_check:
   # A claim the sources neither confirm nor contradict stays, marked for the reader.
   undetermined_marker: " (unverified)"
   tiers:
-    - {name: tool_result, kinds: [tool_result], claims: [record, rule], may_refute: true}
+    - {name: tool_result, kinds: [tool_result], claims: [record, rule], may_refute: true, passages: include}
 
 web:
   mode: live

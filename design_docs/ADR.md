@@ -993,6 +993,43 @@ in the meantime.
 
 ---
 
+### P-49 — A condition clause is one claim
+
+**Context.** A CSA reply said "once approved and issued, it typically takes 5-10 business days
+to appear on your card statement". The claim splitter cut it at `and`. "once approved" was too
+short to check. "issued, it typically takes…" had lost its "once", so it read as an outcome:
+it was classed a record claim, checked against the tool results only, and cut. The refund
+article states exactly that rule, but the policy tier grounds only rule claims.
+
+**Decision.** (2026-10-16.) A clause that opens on a condition word
+(`hallucination_check.condition_openers`) runs to its comma, and a conjunction inside it does
+not split. The sentence stays one claim, keeps its promise and is classed a rule.
+
+**Consequences.**
+- "Order 10988 has been cancelled and refunded in full" still splits: it has no condition.
+- A condition in mid-clause ("it takes 5-10 days once approved and issued") still splits.
+
+### P-50 — A range is its two ends; a tier chooses whether it reads passages
+
+**Context.** "5-10 business days" was refuted by the figure check, because the policy writes
+"5 to 10": `specifics()` read "5-10" as one token. Separately, an agent whose evidence also
+holds passages (several sentences as one support-only premise) could only mix them into a
+tier's retrieval. Each passage repeats its sentences, so with `embedding_top_k: 3` the passages
+crowded a sentence or a rule out of the tier's top three, and a claim that used to be supported
+lost its premise.
+
+**Decision.** (2026-10-16.)
+- **Ranges.** A range of small figures (`hallucination_check.range_pattern`) is its two ends,
+  so "5 to 10" sources "5-10". "2-3" against "5 to 10" is still unsourced. An ISO date is read
+  first and stays a date.
+- **Tiers and passages.** Every tier names `passages: include | exclude | only`. `include` is
+  what every tier did before; the platform and RA keep it. A tier of `only` passages runs its
+  own top-k after the sentences' tier, so it can add support and can never take a slot.
+- `observations.passages()` is public, so one windowing serves tool results and articles.
+
+**Consequences.**
+- No behaviour change for the platform defaults or RA: all of their tiers are `include`.
+
 ## 9. Research agent
 
 ### R-01 — Two paths: a plain question is answered, `/research` researches
@@ -1422,6 +1459,67 @@ The research and ops agents already build their graphs from separate node object
   was compared event by event against the mixin version: identical.
 - Tests that reached into the agent now name the owner (`agent._kit.audit`,
   `agent._nodes.proposal.offered_tools(...)`).
+
+### C-10 — "Refund" alone is not a refund request
+
+**Context.** REQUEST_REFUND carried the bare phrases `refund`, `money back` and `reimburse`.
+Phrase rules run before the classifier, so any message mentioning a refund became a request,
+and Laya never placed one as REFUND_STATUS. "how long will the refund take to show on my
+card?" went to the refund workflow, whose skill said "any request mentioning a refund is a
+refund request".
+
+**Decision.** (2026-10-16.)
+- **Phrases.** REQUEST_REFUND keeps only phrases that ask for one ("refund order", "refund
+  me", "get a refund", "want my money back"); the `refund 10846` order reference is unchanged.
+- **Classifier.** A message that only mentions a refund goes to the classifier.
+- **REFUND_STATUS covers policy questions.** It answers how refunds work (timing, full amount,
+  where the money goes) as well as where one stands, with no new intent. Its phrases and skill
+  say so, and the answer comes from the refund article.
+- **Its description stays as it was** ("asking where a refund stands or when it will arrive").
+  Widened to name policy questions, it cost Laya 3 of the original 50 bake-off cases (refund
+  status questions such as "still waiting on the credit for 10372" went to ORDER_STATUS) and
+  the router 2.
+  - Restored: no regression on the original 50 (Laya 36/50, router 28/50, as on 2026-10-12).
+  - Still missed: of the 4 new cases, Laya misses "do you do partial refunds?" and "where does
+    the refund money go?". Through the router these become UNKNOWN, which gets read-only tools.
+
+**Consequences.**
+- `OrderValidator._operation` reads the same phrases. A bare mention is now `unknown` before
+  intent, not `REQUEST_REFUND`. `process_refund` still checks the record and the Gatekeeper
+  still decides authority, so no write loses a check.
+
+### C-11 — Refund-policy rules read across neighbouring sentences; no Laya for CSA
+
+**Context.** After C-10 and P-49, "once approved and issued, it typically takes 5-10 business
+days to appear on your card statement" was still cut. Beyond the range (P-50), NLI scored it
+neutral (0.93) against "Card refunds usually show… 5 to 10 business days…", because the
+condition is in the sentence before. The two sentences of "When the money arrives" together
+scored entailment 0.99.
+
+Laya, the second opinion RA uses, was measured again for CSA (offline, 10 policy claims, its
+three options supported / contradicted / not stated):
+- Its scores are compressed to 0.41–0.84.
+- At RA's 0.45 bar there was no margin: a false claim scored 0.445.
+- At 0.7 it confirmed 2 of 5 true claims and none of the false ones.
+- It costs ~200–375 ms per call on CPU.
+
+**Decision.** (2026-10-16.)
+- **Passages.** `knowledge_evidence(window)` adds every run of
+  `customer_support_agent.knowledge_passage_window: 2` neighbouring sentences of a section as a
+  passage (`PASSAGE`, the section as its source). The window is passed in by the composition
+  root (`NodeKit`).
+- **Tiers.** CSA's tiers put those passages in a tier of their own (`policy_passage`,
+  `passages: only`, may not refute) after `policy` (`passages: exclude`).
+- **Window size.** A window of 3 was tried and failed: "When the money arrives" has two
+  sentences, so no 3-sentence passage exists.
+- **Laya stays off for CSA.** A model trained for grounding checks, or a labelled measurement
+  of the logged unverified claims, comes first.
+
+**Consequences.**
+- Offline, against the real articles with local NLI: 5 of 5 true policy claims supported,
+  and 0 of 6 false ones. Those six are a wrong range, a wrong destination, "within 24 hours",
+  a partial refund, "48 hours", and voiding after settlement.
+- A passage can only support, so a sentence that contradicts a claim still refutes it.
 
 ## 11. Ops agent
 

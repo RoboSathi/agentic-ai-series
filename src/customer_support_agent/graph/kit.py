@@ -156,7 +156,7 @@ class NodeKit:
         # What a reply is grounded on: the order record, tools, rules, facts — one assembler.
         self.evidence = GroundingEvidence(
             self.registry, self.agent_policy, self.orders, self.order_reference,
-            governed=self.governed,
+            governed=self.governed, knowledge_window=settings.knowledge_passage_window,
         )  # fmt: skip
         # The one authority over the tool loop: step cap, deadline, budgets, repeats (exact,
         # canonical, semantic), cycles and convergence. Its state rides in the graph state.

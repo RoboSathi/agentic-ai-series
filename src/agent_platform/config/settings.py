@@ -1821,6 +1821,10 @@ class GroundingTierSettings(BaseModel):
     kinds: list[str]
     claims: list[str]
     may_refute: bool
+    # Whether the tier reads passages (premises wider than one sentence, marked `PASSAGE`):
+    # with its sentences (`include`), never (`exclude`), or only them (`only`). A tier of only
+    # passages has its own top-k, so a passage never takes a sentence's retrieval slot.
+    passages: Literal["include", "exclude", "only"]
 
 
 class RefutingPremiseSettings(BaseModel):
@@ -2094,8 +2098,12 @@ class HallucinationCheckSettings(YamlBackedSettings):
     repair_direct_refutations: bool
     # Words after a figure that make it a size, not an exact amount ("$1.2 M", "4 lakh").
     money_scales: list[str]
+    # A range of small figures, read as its two ends (two groups).
+    range_pattern: str
     # Connectives that split one sentence into separately checked claims.
     claim_conjunctions: list[str]
+    # Words that open a condition clause, inside which no conjunction splits a claim.
+    condition_openers: list[str]
     claim_min_content_tokens: int = Field(ge=1)
     # Grounding-specific NLI threshold. Keep the generic confidence threshold
     # for compatibility with the rest of the evaluation configuration.

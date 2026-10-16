@@ -123,3 +123,19 @@ class TestTheFeature:
     ) -> None:
         state = await self._agent(False, seeded_pool).handle("what is order 10001?")
         assert state.response
+
+
+class TestTheOperationIsReadFromAssertedPhrases:
+    """ADR C-10: a bare mention of a refund is not a refund request."""
+
+    def _operation(self, query: str) -> str:
+        return OrderChecks(orders=None)._operation(query)  # type: ignore[arg-type]
+
+    def test_asking_for_a_refund_is_a_request(self) -> None:
+        assert self._operation("please refund my order 10846") == "REQUEST_REFUND"
+
+    def test_asking_how_long_a_refund_takes_is_a_status_read(self) -> None:
+        assert self._operation("how long will the refund take for 10846") == "REFUND_STATUS"
+
+    def test_a_bare_mention_is_left_unplaced(self) -> None:
+        assert self._operation("will the refund for 10846 appear on my card") == "unknown"

@@ -13,6 +13,7 @@ from agent_platform.hallucination_check.evidence.observations import (
     TOOL_RESULT_KIND,
     Observation,
     observation_facts,
+    passages,
     tool_evidence,
 )
 from agent_platform.hallucination_check.evidence.types import (
@@ -44,5 +45,6 @@ __all__ = [
     "SpanRejection",
     "VerbatimSpanValidator",
     "observation_facts",
+    "passages",
     "tool_evidence",
 ]

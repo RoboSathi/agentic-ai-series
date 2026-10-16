@@ -201,7 +201,7 @@ class GroundingResolver:
             return self._read(claim, kind, settled[1], supported=True, rationale=settled[0],
                               also=also)  # fmt: skip
         outcomes = [
-            await self._judge(claim, tier, [c for c in evidence if c.kind in tier.kinds])
+            await self._judge(claim, tier, _tier_evidence(tier, evidence))
             for tier in self._tiers
             if kind in tier.claims
         ]
@@ -842,3 +842,15 @@ class GroundingResolver:
     def _detector_model(self) -> str:
         """Expose the concrete NLI model, including its deterministic fallback."""
         return str(getattr(self._entailment, "model_name", "")) or "lexical-entailment-fallback"
+
+
+def _tier_evidence(tier: GroundingTierSettings, evidence: list[Chunk]) -> list[Chunk]:
+    """The evidence a tier reads: its kinds, with its passages, without them, or only them."""
+    if tier.passages == "include":
+        return [chunk for chunk in evidence if chunk.kind in tier.kinds]
+    wanted = tier.passages == "only"
+    return [
+        chunk
+        for chunk in evidence
+        if chunk.kind in tier.kinds and bool(chunk.metadata.get(PASSAGE)) == wanted
+    ]
