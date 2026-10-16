@@ -65,6 +65,8 @@ class CircuitBreakerImpl:
         self._state: CircuitState = "closed"
         self._failures = 0
         self._opened_at = 0.0
+        # Held by the one call let through while half-open; every other caller fails fast.
+        self._trial_in_flight = False
         self._lock = asyncio.Lock()
         self._logger = get_logger("resilience")
 
@@ -88,18 +90,38 @@ class CircuitBreakerImpl:
         """Run the operation, or fail fast if the circuit is open."""
         if not self._enabled:
             return await fn()
-        if self.state == "open":
-            raise CircuitBreakerOpenError(
-                f"Circuit '{self._name}' is open; {self._failures} consecutive failures"
-            )
+        trial = await self._admit()
         try:
             result = await fn()
         except Exception as exc:
             if self.counts_as_failure(exc):
                 await self._record_failure()
             raise
-        await self._record_success()
-        return result
+        else:
+            await self._record_success()
+            return result
+        finally:
+            if trial:
+                # Released only once the outcome is recorded, however the trial ended: a
+                # cancelled one reports nothing and leaves the circuit half-open to retry.
+                self._trial_in_flight = False
+
+    async def _admit(self) -> bool:
+        """Let the call through, or fail fast; True when it is the half-open trial.
+
+        Decided under the lock, so of the callers that find the circuit half-open
+        exactly one becomes the trial and the rest are refused as if it were open.
+        """
+        async with self._lock:
+            state = self.state
+            if state == "closed":
+                return False
+            if state == "half_open" and not self._trial_in_flight:
+                self._trial_in_flight = True
+                return True
+        raise CircuitBreakerOpenError(
+            f"Circuit '{self._name}' is {state}; {self._failures} consecutive failures"
+        )
 
     def counts_as_failure(self, error: Exception) -> bool:
         """Whether this error says the dependency is unhealthy (hook).
@@ -145,6 +167,7 @@ class CircuitBreakerImpl:
         """Force the circuit closed — an operator action, not an automatic one."""
         self._state = "closed"
         self._failures = 0
+        self._trial_in_flight = False
 
 
 class TimeoutOnlyCircuitBreaker(CircuitBreakerImpl):

@@ -434,3 +434,23 @@ class TestEachCoalaClassIsIndependent:
         """`memory: false` reaches the graph as a facade, not as a crash."""
         facade = self._facade(tmp_path, pool)
         facade.end_session("s1")
+
+
+class TestOffloadedPassages:
+    def _offload(self, keep: int, count: int) -> WorkingMemory:
+        memory = WorkingMemory()
+        for index in range(count):
+            memory.offload(f"h{index}", f"passage {index}", keep)
+        return memory
+
+    def test_only_the_newest_are_kept(self) -> None:
+        assert list(self._offload(keep=2, count=4).offloaded) == ["h2", "h3"]
+
+    def test_keeping_none_keeps_nothing(self) -> None:
+        """`[:-0]` is an empty slice: keep=0 used to keep every passage."""
+        assert self._offload(keep=0, count=3).offloaded == {}
+
+    def test_offloading_a_handle_again_makes_it_the_newest(self) -> None:
+        memory = self._offload(keep=2, count=2)
+        memory.offload("h0", "passage 0", 2)
+        assert list(memory.offloaded) == ["h1", "h0"]

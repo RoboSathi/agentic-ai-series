@@ -2249,6 +2249,19 @@ resilience:
     max_attempts: 3
     base_delay_seconds: 0.2
     max_delay_seconds: 2.0
+    # Programming errors: the same call fails the same way every time, so a retry only
+    # delays the traceback. ValueError is not here on purpose — malformed model JSON
+    # (JSONDecodeError, pydantic ValidationError) subclasses it and does recover.
+    non_retryable_errors:
+      - TypeError
+      - AttributeError
+      - NameError
+      - KeyError
+      - IndexError
+      - AssertionError
+      - NotImplementedError
+      - ImportError
+      - NonIdempotentRetryError
   timeout:
     enabled: true
     default_seconds: 30

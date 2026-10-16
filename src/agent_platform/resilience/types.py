@@ -1,7 +1,7 @@
 """Shared resilience value types (LLD §13)."""
 
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Literal, TypeVar
+from typing import Any, Awaitable, Callable, Iterable, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -162,6 +162,12 @@ def _transport_error_code(exc: Exception) -> str:
 
 def _any_marker(names: list[str], markers: tuple[str, ...]) -> bool:
     return any(marker in name for name in names for marker in markers)
+
+
+def error_matches(exc: BaseException, class_names: Iterable[str]) -> bool:
+    """Whether any class in the error's MRO has one of these exact names."""
+    wanted = set(class_names)
+    return any(cls.__name__ in wanted for cls in type(exc).__mro__)
 
 
 class Event(BaseModel):

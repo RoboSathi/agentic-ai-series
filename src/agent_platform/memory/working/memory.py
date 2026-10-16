@@ -67,7 +67,9 @@ class WorkingMemory(BaseModel):
         """Keep an offloaded passage under its handle; only the `keep` most recent stay."""
         self.offloaded.pop(handle, None)
         self.offloaded[handle] = text
-        for stale in list(self.offloaded)[:-keep]:
+        # Counted, not sliced: `[:-0]` is empty, so keep=0 used to keep everything.
+        excess = len(self.offloaded) - max(keep, 0)
+        for stale in list(self.offloaded)[:excess]:
             del self.offloaded[stale]
 
     def clear_current_turn(self) -> None:

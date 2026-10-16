@@ -2495,6 +2495,8 @@ class RetrySettings(BaseModel):
     max_attempts: int
     base_delay_seconds: float
     max_delay_seconds: float
+    # Exception class names (anywhere in an error's MRO) that are bugs, not outages.
+    non_retryable_errors: list[str] = Field(default_factory=list)
 
 
 class TimeoutSettings(BaseModel):

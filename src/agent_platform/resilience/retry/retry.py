@@ -16,6 +16,7 @@ from agent_platform.resilience.types import (
     CircuitBreakerOpenError,
     NonIdempotentRetryError,
     QuotaExhaustedError,
+    error_matches,
     external_api_error_fields,
 )
 
@@ -63,6 +64,7 @@ class ExponentialBackoffRetry:
         # recovered", which is the whole recovery SLO.
         self.attempts = 0
         self._enabled = settings.enabled
+        self._non_retryable = tuple(settings.non_retryable_errors)
         self._logger = get_logger("resilience")
 
     async def execute(self, fn: Callable[[], Awaitable[T]], idempotency_key: str) -> T:
@@ -106,9 +108,13 @@ class ExponentialBackoffRetry:
 
         An open circuit is never retried: the breaker already decided the
         dependency is down, and retrying behind it only burns the budget.
-        A subclass narrows this further — say, to never retry a 4xx.
+        Nor is a programming error (`resilience.retry.non_retryable_errors`):
+        the same call fails the same way every time. A subclass narrows this
+        further — say, to never retry a 4xx.
         """
-        return not isinstance(error, (CircuitBreakerOpenError, QuotaExhaustedError))
+        if isinstance(error, (CircuitBreakerOpenError, QuotaExhaustedError)):
+            return False
+        return not error_matches(error, self._non_retryable)
 
     def _delay_for(self, attempt: int) -> float:
         """Full-jitter backoff: a random point in [0, capped exponential]."""

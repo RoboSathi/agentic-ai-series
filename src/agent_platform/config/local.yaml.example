@@ -9,8 +9,11 @@
 #     enabled: true
 
 # Example: point the LLM client at a local llama.cpp-style server instead
-# of NVIDIA NIM.
+# of NVIDIA NIM. A provider's endpoint and model live under its own entry in
+# `llm.providers`; `llm.provider` picks which one the default client uses.
 llm:
   provider: local
-  base_url: http://localhost:8080/v1
-  model: mistral-nemo-12b
+  providers:
+    local:
+      base_url: http://localhost:8080/v1
+      model: mistral-nemo-12b
