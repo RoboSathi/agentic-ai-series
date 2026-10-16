@@ -346,6 +346,26 @@ class TestTheMultiLinePromptCompletes:
             await pilot.pause()
             assert not app._menu.offered
 
+    async def test_a_turn_that_offers_model_choices_shows_them(self) -> None:
+        """The research interview offers `Choice` models; restoring PII from each one as if it
+        were text failed the turn ("expected string or bytes-like object, got 'Choice'")."""
+        from types import SimpleNamespace
+
+        from agent_platform.interface.tui.app import AgenticTuiApp
+        from research_agent.domain.scope import Choice
+
+        choices = [Choice(label="Small", value="small"), Choice(label="Large", value="large")]
+        state = SimpleNamespace(response="How big a run?", choices=choices)
+
+        async def call() -> SimpleNamespace:
+            return state
+
+        app = AgenticTuiApp()
+        async with app.run_test(size=(100, 30)):
+            app._agent = SimpleNamespace()  # only its presence is read before `call`
+            await app._turn_of("size?", call)
+            assert app._menu.offered and app._menu.chosen() == "small"
+
     async def test_shift_enter_breaks_the_line_and_enter_does_not(self) -> None:
         from agent_platform.interface.tui.app import AgenticTuiApp, ChatPrompt
 

@@ -14,7 +14,7 @@ import json
 import re
 import textwrap
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from functools import cache
 from typing import Any, cast
 
@@ -1390,11 +1390,14 @@ class ChoiceMenu(OptionList):
     def offered(self) -> bool:
         return bool(self._values) and self.display
 
-    def offer(self, choices: Sequence[Any]) -> None:
-        """Show these choices (anything with a `label` and a `value`); none hides the menu."""
+    def offer(self, choices: Sequence[Any], shown: Callable[[str], str] = str) -> None:
+        """Show these choices (anything with a `label` and a `value`); none hides the menu.
+
+        `shown` is applied to each label as it is displayed; the value is recorded as given.
+        """
         self.clear_options()
         self._values = [str(_choice_part(choice, "value")) for choice in choices]
-        self.add_options([Option(str(_choice_part(choice, "label"))) for choice in choices])
+        self.add_options([Option(shown(str(_choice_part(choice, "label")))) for choice in choices])
         self.border_title = get_settings().tui.choice_menu_hint
         self.display = bool(self._values)
         if self._values:

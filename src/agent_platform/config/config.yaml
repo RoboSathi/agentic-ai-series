@@ -590,8 +590,8 @@ observability:
   context_card:
     # The share is the request's input (prompt sections and tool schemas, not the answer) over
     # the model's window from `llm.context_windows`, which the heading names.
-    heading: "{purpose} · prompt {tokens} tokens · {window_share} of {window} window"
-    heading_estimated: "{purpose} · prompt ~{tokens} tokens (estimated) · {window_share} of {window} window"
+    heading: "{purpose} · prompt {tokens} tokens · {window_share} of the {window}-token window"
+    heading_estimated: "{purpose} · prompt ~{tokens} tokens (estimated) · {window_share} of the {window}-token window"
     sections_title: Sections
     request_title: Request
     window_title: Window strategies and checks
@@ -608,9 +608,10 @@ observability:
     prefix_line: "stable prefix · {tokens} tokens · signature {signature}"
     prefix_none: "stable prefix · none"
     tokenizer_line: "counted with {tokenizer}"
-    aggregate_heading: "{purpose} · {count} requests · {low}–{high} tokens · peak {peak_share} of {window} window"
+    # Read as: each prompt was this many tokens, and the largest filled this much of the window.
+    aggregate_heading: "{purpose} · {count} requests · prompts of {low} to {high} tokens · largest uses {peak_share} of the {window}-token window"
     aggregate_title: Requests
-    aggregate_line: "{tokens} tokens · {share} of window · {model}"
+    aggregate_line: "prompt {tokens} tokens · {share} of the window · {model}"
     labels:
       profile: AGENT.md profile
       skills: SKILL.md skills

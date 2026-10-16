@@ -67,7 +67,7 @@ def test_page_reads_are_one_context_card_per_batch() -> None:
     observer.flush()
     assert len(reporter.cards) == 2
     assert "3 requests" in reporter.cards[1]["summary"]
-    assert "of 131k window" in reporter.cards[0]["summary"]
+    assert "of the 131k-token window" in reporter.cards[0]["summary"]
     observer.flush()
     assert len(reporter.cards) == 2  # nothing pending, nothing drawn
 

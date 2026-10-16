@@ -678,7 +678,7 @@ class AgenticTuiApp(App[None]):
             # tokens become values again (`security.pii.source`); everything else keeps tokens.
             self._panel.response(restore_if_on(state.response or ""))
             self._panel.note(" ", classes="response-gap")
-            self._menu.offer([restore_if_on(c) for c in getattr(state, "choices", None) or []])
+            self._menu.offer(getattr(state, "choices", None) or [], shown=restore_if_on)
             # self._panel.note(
             #     f"──────── TURN {self._turn:02d} COMPLETE · {self._status.metrics()} ────────",
             #     style=palette("metrics"),
