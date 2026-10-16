@@ -1,8 +1,12 @@
 """Small, session-scoped working memory for live conversations."""
 
+from collections import OrderedDict
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+from agent_platform.config import get_settings
+from agent_platform.logging import get_logger
 
 
 class WorkingMemory(BaseModel):
@@ -80,9 +84,14 @@ class WorkingMemory(BaseModel):
 class WorkingMemoryStore:
     """Keep one small working-memory object per live session."""
 
-    def __init__(self, max_history: int = 6) -> None:
+    def __init__(self, max_history: int = 6, max_sessions: int | None = None) -> None:
         self._max_history = max_history
-        self._sessions: dict[str, WorkingMemory] = {}
+        self._max_sessions = (
+            max_sessions if max_sessions is not None else get_settings().memory.working.max_sessions
+        )
+        # Least recently used first: a long-running process does not keep every session.
+        self._sessions: OrderedDict[str, WorkingMemory] = OrderedDict()
+        self._logger = get_logger("memory")
 
     def get(self, session_id: str) -> WorkingMemory:
         """Return the existing session memory or create it."""
@@ -90,8 +99,16 @@ class WorkingMemoryStore:
         memory = self._sessions.get(key)
         if memory is None:
             memory = WorkingMemory(max_history=self._max_history)
-            self._sessions[key] = memory
+        self._keep(key, memory)
         return memory
+
+    def _keep(self, key: str, memory: WorkingMemory) -> None:
+        """Hold this session as the most recent; drop the least recent past the bound."""
+        self._sessions[key] = memory
+        self._sessions.move_to_end(key)
+        while len(self._sessions) > self._max_sessions:
+            dropped, _ = self._sessions.popitem(last=False)
+            self._logger.info("Working memory dropped an idle session", session_id=dropped)
 
     def restore(self, session_id: str, memory: WorkingMemory) -> None:
         """Put back a session's memory recovered from a checkpoint.
@@ -101,7 +118,7 @@ class WorkingMemoryStore:
         would show the model actions it did not take this time.
         """
         restored = memory.model_copy(update={"current_turn": [], "max_history": self._max_history})
-        self._sessions[session_id or "default"] = restored
+        self._keep(session_id or "default", restored)
 
     def clear(self, session_id: str | None = None) -> None:
         """Clear one session or every session."""

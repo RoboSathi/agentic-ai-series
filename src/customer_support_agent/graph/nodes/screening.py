@@ -19,6 +19,11 @@ from customer_support_agent.presentation.reporting import (
     deterministic_check_fields,
 )
 
+# The moderation stage's feature; when it is built, injection screens for it too.
+_MODERATION_FEATURE = "content_moderation"
+# Set by the injection stage when it already asked the moderation model this turn.
+_MODERATED = "moderated_with_injection"
+
 
 def _outbound(state: AgentState) -> str:
     """The text a remote detector may be shown.
@@ -193,25 +198,41 @@ class ScreeningNodes(NodeSupport):
         the trace shows the gap instead of showing a check that passed
         without looking at anything.
         """
-        outcome = await self._screener().injection(
-            _outbound(state),
-            self._reporter,
-            instructions=self._system_prompt(),
-            tools=self._registry.all_tools(),
-            subject=self._subject(state),
-        )
-        if outcome.blocked:
-            return self._screened_out(state, outcome)
+        if self._features.is_on(_MODERATION_FEATURE):
+            # The moderation stage follows: both hosted models are asked now, in one round
+            # trip, and that stage passes on what moderation already decided.
+            pair = await self._screener().screen_both(
+                _outbound(state),
+                self._reporter,
+                instructions=self._system_prompt(),
+                tools=self._registry.all_tools(),
+                subject=self._subject(state),
+            )
+            outcome, stopping = pair.injection, pair.stopping
+        else:
+            outcome = await self._screener().injection(
+                _outbound(state),
+                self._reporter,
+                instructions=self._system_prompt(),
+                tools=self._registry.all_tools(),
+                subject=self._subject(state),
+            )
+            stopping = outcome if outcome.blocked else None
+        if stopping is not None:
+            return self._screened_out(state, stopping)
         return {
             "decisions": [*state.decisions, f"injection: {outcome.reason}"],
             "metadata": {
                 **state.metadata,
                 "allowed_actions": outcome.allowed_actions,
+                _MODERATED: self._features.is_on(_MODERATION_FEATURE),
             },
         }
 
     async def content_moderation(self, state: AgentState) -> dict[str, Any]:
-        """Screen the message against the content policy."""
+        """Screen the message against the content policy (already done beside injection)."""
+        if state.metadata.get(_MODERATED):
+            return {"decisions": [*state.decisions], "metadata": {**state.metadata}}
         outcome = await self._screener().moderation(
             _outbound(state), self._reporter, subject=self._subject(state)
         )

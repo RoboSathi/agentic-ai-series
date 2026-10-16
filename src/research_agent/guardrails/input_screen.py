@@ -52,10 +52,9 @@ class InputScreen:
             if admitted is not None
             else self._screener.redact(message, reporter).text
         )
-        outcome = await self._screener.injection(text, reporter, subject=subject)
-        if not outcome.blocked:
-            outcome = await self._screener.moderation(text, reporter, subject=subject)
-        if outcome.blocked:
+        # Both hosted screens at once; injection still decides first (`screen_both`).
+        outcome = (await self._screener.screen_both(text, reporter, subject=subject)).stopping
+        if outcome is not None:
             self._logger.warning("Input blocked", reason=outcome.reason)
             self._telemetry.audit("input.blocked", "deny", outcome.reason)
             return ScreenResult(

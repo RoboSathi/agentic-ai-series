@@ -188,8 +188,7 @@ class LoopGovernor:
         loop state starts IDLE, and measuring progress must not move it.
         """
         texts = [text for text in results if text.strip()]
-        gains = [await self._convergence.gain(text, self._state.evidence) for text in texts]
-        gain = max(gains, default=0.0)
+        gain = max(await self._convergence.gains(texts, self._state.evidence), default=0.0)
         self._state.gains.append(gain)
         self._state.evidence = [*self._state.evidence, *texts][-self._window :]
         return gain
@@ -295,8 +294,9 @@ class LoopGovernor:
 
     def record_refusal(self, call: ToolCall, reason: str) -> None:
         """An action the Gatekeeper refused: as repeatable, and as pointless to repeat."""
+        fingerprint = action_fingerprint(call)
         for record in reversed(self._state.actions):
-            if record.fingerprint == action_fingerprint(call) and not record.suppressed:
+            if record.fingerprint == fingerprint and not record.suppressed:
                 record.outcome, record.succeeded = reason, False
                 return
 

@@ -15,6 +15,7 @@ from openai import AsyncOpenAI
 
 from agent_platform.config import get_settings
 from agent_platform.config.settings import LLMSettings
+from agent_platform.llm.embedding_cache import CachingEmbeddingClient, cached
 from agent_platform.llm.http import create_sdk_http_client
 from agent_platform.logging import get_logger
 from agent_platform.observability import checks
@@ -173,7 +174,8 @@ class HostedEmbeddingClient:
 
 def _embedding_backend(client: object) -> str:
     """A hosted embedding model, or the local hashing embedder."""
-    return checks.HOSTED_MODEL if isinstance(client, HostedEmbeddingClient) else checks.RULE
+    inner = client.inner if isinstance(client, CachingEmbeddingClient) else client
+    return checks.HOSTED_MODEL if isinstance(inner, HostedEmbeddingClient) else checks.RULE
 
 
 @checks.recorded_dependency(checks.EMBEDDING, "embed", _embedding_backend)
@@ -181,7 +183,8 @@ def create_embedding_client(settings: LLMSettings | None = None) -> EmbeddingCli
     """Build the configured embedding client (Factory)."""
     resolved = settings or get_settings().llm
     if resolved.embedding.backend == HOSTED and _has_credentials(resolved):
-        return HostedEmbeddingClient(resolved)
+        # Hashing costs less than a cache lookup; a hosted call is what is worth remembering.
+        return cached(HostedEmbeddingClient(resolved), resolved.embedding.cache)
     return HashingEmbeddingClient(resolved.embedding.local_dimensions)
 
 

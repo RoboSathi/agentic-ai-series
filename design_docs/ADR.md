@@ -873,6 +873,55 @@ not enough:
 - Models stay off the default path. A test that reached one by accident is given a fake or a
   known value instead, as in `test_memory_cards`.
 
+### P-45 — Retrieval and screening: index once, embed once, ask both guards together
+
+**Context.** An external review found three retrieval costs (BM25, re-embedding, embedding
+purpose) and nine further data-structure and algorithm (DSA) suggestions. Each was checked
+against the code before it was acted on.
+
+**Decision.** (2026-10-16.)
+
+*Changed:*
+- **BM25** (`context/retrieval.py`). The index is an inverted index (term → document →
+  frequency) plus per-document length norms, built in one pass. A query scores only documents
+  that share one of its terms, computes IDF for its own terms only, and copies only its
+  k winners (`heapq.nlargest`). Results are identical, ties included. On 5,000 documents a
+  query fell from 29.9 ms to 0.12 ms.
+- **Embedding cache** (`llm/embedding_cache.py`). `CachingEmbeddingClient` is a bounded LRU
+  keyed by purpose and text digest (`llm.embedding.cache`). It holds one model's vectors at
+  a time: a change of model empties it, and a batch is never answered from two spaces. It
+  wraps the hosted client in `create_embedding_client` and the local encoder behind
+  `shared_similarity()`.
+- **Embedding purpose.** `EmbeddingSimilarityScorer.similarities` embeds the text as a
+  `query` and the candidates as `passage`s. The exemplar classifier stays symmetric: its
+  examples are messages, not passages.
+- **Both hosted guards at once.** `MessageScreener.screen_both` asks the injection and
+  moderation models concurrently, then takes the verdicts in the old order: injection decides
+  first. When injection blocks, moderation's verdict cannot change the outcome, so it is not
+  carded or quarantined. Ops and RA call it inline. In CSA the injection stage calls it when
+  the moderation stage is built, and that stage then passes the message on. Cost: a message
+  injection blocks still spends one moderation call.
+- **Smaller changes:**
+  - The RAG dense leg starts first, so its embedding call is in flight while BM25 runs.
+  - Convergence gains for one step are a single similarity call (`ConvergenceMonitor.gains`),
+    not one call per result, each re-embedding the evidence window.
+  - The cycle finder is iterative over one shared path.
+  - `WorkingMemoryStore` keeps at most `memory.working.max_sessions` sessions, least
+    recently used first.
+
+*Not changed, and why:*
+- **Incremental BM25:** `refresh()` runs only on a knowledge-base sync.
+- **A Kahn's-algorithm scheduler:** RA fans out with LangGraph `Send`, so the batch barrier is
+  LangGraph's superstep. The scheduler's own `run` has no production caller.
+- **Dictionaries for the governor's repeat checks:** a turn is capped at about 10 steps.
+- **Concurrent pub-sub fan-out:** there is no production subscriber.
+- **A cached skill index:** a handful of skills, and a candidate set that changes per turn.
+- **Retrying a failed local similarity encoder:** a local failure is a missing artifact, and
+  the permanent fallback is deliberate.
+
+**Consequences.** Ranking a turn's tools, passages and evidence embeds only text it has not
+seen before. Every agent's turn makes one hosted guard round trip instead of two.
+
 ---
 
 ## 9. Research agent

@@ -6,7 +6,7 @@ declared) is refused before any work starts rather than discovered half
 way through it.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 
 from agent_platform.runtime.scheduling.types import InvalidTaskGraphError, OutcomeStatus, TaskNode
 
@@ -74,15 +74,17 @@ class TaskGraph:
 def find_cycle(nodes: Sequence[TaskNode]) -> list[str] | None:
     """One dependency cycle, as a closed path of ids, or None if acyclic.
 
-    Depth-first with three colours. Returned rather than raised so a
-    validator can report *which* cycle a planner produced.
+    Depth-first with three colours, iterative over one shared path, so no
+    path is copied per step and no plan is deep enough to hit the recursion
+    limit. Returned rather than raised so a validator can report *which*
+    cycle a planner produced.
     """
     edges = {node.node_id: node.depends_on for node in nodes}
     colour: dict[str, int] = {}
     for start in edges:
-        path = _visit(start, edges, colour, [])
-        if path:
-            return path
+        cycle = _visit(start, edges, colour)
+        if cycle:
+            return cycle
     return None
 
 
@@ -90,16 +92,23 @@ _GREY, _BLACK = 1, 2
 
 
 def _visit(
-    node_id: str, edges: Mapping[str, Sequence[str]], colour: dict[str, int], stack: list[str]
+    start: str, edges: Mapping[str, Sequence[str]], colour: dict[str, int]
 ) -> list[str] | None:
-    if colour.get(node_id) == _BLACK:
+    """Walk from `start`; the path back to a grey node, closed, is the cycle."""
+    if colour.get(start) == _BLACK:
         return None
-    if colour.get(node_id) == _GREY:
-        return [*stack[stack.index(node_id) :], node_id]
-    colour[node_id] = _GREY
-    for dep in edges.get(node_id, ()):
-        cycle = _visit(dep, edges, colour, [*stack, node_id])
-        if cycle:
-            return cycle
-    colour[node_id] = _BLACK
+    path: list[str] = [start]
+    pending: list[Iterator[str]] = [iter(edges.get(start, ()))]
+    colour[start] = _GREY
+    while pending:
+        dep = next(pending[-1], None)
+        if dep is None:
+            colour[path.pop()] = _BLACK
+            pending.pop()
+        elif colour.get(dep) == _GREY:
+            return [*path[path.index(dep) :], dep]
+        elif colour.get(dep) != _BLACK:
+            colour[dep] = _GREY
+            path.append(dep)
+            pending.append(iter(edges.get(dep, ())))
     return None

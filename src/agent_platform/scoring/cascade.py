@@ -152,12 +152,18 @@ class EmbeddingSimilarityScorer:
         return None
 
     async def similarities(self, text: str, candidates: list[str]) -> list[float]:
-        """Cosine similarity of `text` against each candidate, one batch call."""
+        """Cosine similarity of `text` against each candidate.
+
+        An asymmetric retrieval model embeds a question and the passages it is matched
+        against differently (`llm.embedding.input_types`), so `text` is the query and the
+        candidates are passages — the same candidates every turn, which the embedding cache
+        then answers without a call.
+        """
         if not candidates:
             return []
-        vectors = await self._embeddings.embed([text, *candidates])
-        query, rest = vectors[0], vectors[1:]
-        return [cosine_similarity(query, vector) for vector in rest]
+        query = (await self._embeddings.embed([text], "query"))[0]
+        passages = await self._embeddings.embed(candidates, "passage")
+        return [cosine_similarity(query, vector) for vector in passages]
 
     def _verdict(self, label: str, score: float) -> Verdict:
         return Verdict(

@@ -17,6 +17,7 @@ from agent_platform.memory import (
     SemanticStore,
     SkillStore,
     WorkingMemory,
+    WorkingMemoryStore,
 )
 from agent_platform.memory.write_pipeline import MemoryWritePipelineImpl
 from agent_platform.observability.types import utc_now
@@ -454,3 +455,21 @@ class TestOffloadedPassages:
         memory = self._offload(keep=2, count=2)
         memory.offload("h0", "passage 0", 2)
         assert list(memory.offloaded) == ["h1", "h0"]
+
+
+class TestWorkingMemorySessions:
+    def test_past_the_bound_the_least_recent_session_is_dropped(self) -> None:
+        store = WorkingMemoryStore(max_sessions=2)
+        store.get("a").set("k", 1)
+        store.get("b")
+        store.get("a")
+        store.get("c")
+        assert store.sessions() == ["a", "c"]
+        assert store.get("a").get("k") == 1
+
+    def test_a_restored_session_counts_as_recent(self) -> None:
+        store = WorkingMemoryStore(max_sessions=2)
+        store.get("a")
+        store.get("b")
+        store.restore("old", WorkingMemory())
+        assert store.sessions() == ["b", "old"]

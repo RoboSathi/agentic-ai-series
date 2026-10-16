@@ -238,6 +238,12 @@ llm:
       query: query
       passage: passage
     truncate: END
+    # Every vector computed is kept, per (purpose, text), for the life of the process: the
+    # tool descriptions, passages and evidence ranked each turn are embedded once, not per
+    # turn. One model's vectors at a time; least recently used go first past the bound.
+    cache:
+      enabled: true
+      max_entries: 20000
   # BERT-family cross-encoders, run in-process. These answer questions a
   # generative model answers worse and dearer: does this evidence *entail*
   # this claim, and which of these ten passages actually answers the query.
@@ -1271,6 +1277,11 @@ skills:
 
 memory:
   schema_version: memory-schema-v1
+  # Working memory keeps one object per session; past this many, the least recently used
+  # session is dropped (and restored from its checkpoint if it comes back). A turn touches
+  # its session first, so a live conversation is never the one dropped.
+  working:
+    max_sessions: 10000
   # Long-term memory is files, one directory per agent (ADR 0012). The records under each
   # store's history directory are the truth; the readable files beside them (one per fact,
   # one SKILL.md per skill, a MEMORY.md index per store) are regenerated views, and the

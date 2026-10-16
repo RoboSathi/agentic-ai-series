@@ -151,11 +151,9 @@ class OpsAgent:
         if self._screen is None:
             return None
         subject = ScreenSubject(session_id=session_id, trace_id=get_current_trace_id() or "")
-        outcome = await self._screen.injection(query, self._reporter, subject=subject)
-        if not outcome.blocked:
-            # Cheapest first: moderation only reads a message the injection screen let through.
-            outcome = await self._screen.moderation(query, self._reporter, subject=subject)
-        if not outcome.blocked:
+        # Both hosted screens at once; injection still decides first (`screen_both`).
+        outcome = (await self._screen.screen_both(query, self._reporter, subject=subject)).stopping
+        if outcome is None:
             return None
         return outcome.refusal or self._settings.words.blocked.format(reason=outcome.reason)
 

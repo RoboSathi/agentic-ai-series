@@ -13,6 +13,8 @@ BM25 and the reranker are the platform's own (`context.retrieval`), not
 second copies: they are built once, and RAG composes them.
 """
 
+import asyncio
+
 from agent_platform.config.settings import RagRetrievalSettings
 from agent_platform.context.retrieval import CrossEncoderReranker, LexicalRetriever
 from agent_platform.context.types import Chunk
@@ -56,8 +58,15 @@ class HybridPassageRetriever:
 
     async def retrieve(self, query: str, k: int) -> list[Hit]:
         """The k best passages for a query, with every stage's evidence."""
-        sparse = await self._sparse(query)
-        dense = await self._dense(query)
+        # The dense leg waits on an embedding call; BM25 is all CPU. Started first, the call
+        # is in flight while BM25 runs, and the query costs the slower leg, not their sum.
+        dense_leg = asyncio.create_task(self._dense(query))
+        try:
+            sparse = await self._sparse(query)
+        except BaseException:
+            dense_leg.cancel()
+            raise
+        dense = await dense_leg
         fused = reciprocal_rank_fusion([sparse, dense], self._settings.rrf_k)
         shortlist = sorted(fused, key=lambda pid: fused[pid], reverse=True)
         shortlist = shortlist[: self._settings.rerank_shortlist]

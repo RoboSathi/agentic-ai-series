@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from agent_platform.security.screening import ScreenOutcome
+from agent_platform.security.screening import ScreenOutcome, ScreenPair
 from research_agent.config import get_agent_settings
 from research_agent.guardrails.input_screen import InputScreen
 from tests.research_agent.conftest import BuildHarness
@@ -72,6 +72,13 @@ class _Screener:
     async def moderation(self, text: str, reporter: Any, **_: Any) -> ScreenOutcome:
         self.moderated = True
         return ScreenOutcome(blocked=self._moderation, reason="moderation", refusal="refused")
+
+    async def screen_both(self, text: str, reporter: Any, **_: Any) -> ScreenPair:
+        """The platform's contract: injection decides first; moderation only if it passed."""
+        first = await self.injection(text, reporter)
+        if first.blocked:
+            return ScreenPair(injection=first)
+        return ScreenPair(injection=first, moderation=await self.moderation(text, reporter))
 
 
 class _Telemetry:

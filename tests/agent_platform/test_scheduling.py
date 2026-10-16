@@ -1,6 +1,7 @@
 """The async DAG scheduler: batches, bounded concurrency, failure isolation."""
 
 import asyncio
+import sys
 
 import pytest
 
@@ -110,3 +111,31 @@ class TestAsyncDagScheduler:
     def test_concurrency_must_be_positive(self) -> None:
         with pytest.raises(ValueError):
             AsyncDagScheduler(0)
+
+
+class TestFindCycle:
+    def test_a_self_loop_is_a_cycle(self) -> None:
+        assert find_cycle([TaskNode(node_id="a", depends_on=("a",))]) == ["a", "a"]
+
+    def test_the_cycle_is_the_closed_path(self) -> None:
+        nodes = [
+            TaskNode(node_id="root", depends_on=("a",)),
+            TaskNode(node_id="a", depends_on=("b",)),
+            TaskNode(node_id="b", depends_on=("c",)),
+            TaskNode(node_id="c", depends_on=("a",)),
+        ]
+        assert find_cycle(nodes) == ["a", "b", "c", "a"]
+
+    def test_a_shared_dependency_is_not_a_cycle(self) -> None:
+        nodes = [
+            TaskNode(node_id="a"),
+            TaskNode(node_id="b", depends_on=("a",)),
+            TaskNode(node_id="c", depends_on=("a", "b")),
+        ]
+        assert find_cycle(nodes) is None
+
+    def test_a_long_chain_does_not_reach_the_recursion_limit(self) -> None:
+        length = sys.getrecursionlimit() * 2
+        nodes = [TaskNode(node_id=f"n{i}", depends_on=(f"n{i + 1}",)) for i in range(length)]
+        nodes.append(TaskNode(node_id=f"n{length}"))
+        assert find_cycle(nodes) is None

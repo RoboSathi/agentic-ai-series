@@ -162,6 +162,13 @@ class EmbeddingInputTypes(BaseModel):
     passage: str
 
 
+class EmbeddingCacheSettings(BaseModel):
+    """Vectors already computed, kept per (purpose, text) for the process (`embedding_cache`)."""
+
+    enabled: bool
+    max_entries: int = Field(ge=1)
+
+
 class EmbeddingSettings(BaseModel):
     """Embedding backend used by the NOLLM cascade, RAG and memory scoring."""
 
@@ -173,6 +180,7 @@ class EmbeddingSettings(BaseModel):
     local_dimensions: int
     input_types: EmbeddingInputTypes
     truncate: str
+    cache: EmbeddingCacheSettings
 
 
 class EncoderSettings(BaseModel):
@@ -1693,11 +1701,18 @@ class MemoryDecaySettings(BaseModel):
     confirmed_kinds: list[str]
 
 
+class WorkingMemorySettings(BaseModel):
+    """The live sessions working memory holds at once (`memory/working/memory.py`)."""
+
+    max_sessions: int = Field(ge=1)
+
+
 class MemorySettings(YamlBackedSettings):
     """All four CoALA stores plus the write pipeline (LLD §8)."""
 
     _yaml_section = "memory"
     schema_version: str
+    working: WorkingMemorySettings
     files: MemoryFilesSettings
     semantic: SemanticMemorySettings
     write_pipeline: MemoryWritePipelineSettings

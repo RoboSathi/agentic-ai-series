@@ -1,5 +1,6 @@
 """The NOLLM scoring cascade: claims resolved cheapest tier first (LLD §18)."""
 
+from agent_platform.llm.embeddings import EmbeddingPurpose, HashingEmbeddingClient
 from agent_platform.scoring import (
     Claim,
     DeterministicRuleScorer,
@@ -10,6 +11,7 @@ from agent_platform.scoring import (
     NollmScoringCascadeImpl,
     Verdict,
 )
+from agent_platform.scoring.cascade import EmbeddingSimilarityScorer
 
 
 class TestExactAssertion:
@@ -121,3 +123,26 @@ class TestCascade:
         cascade = NollmScoringCascadeImpl()
         verdict = await cascade.resolve(Claim(text="42", expected="42"))
         assert verdict.tier != "exact_assertion"
+
+
+class TestSimilarityPurposes:
+    """An asymmetric model needs the question as a query and the candidates as passages."""
+
+    async def test_the_text_is_a_query_and_the_candidates_are_passages(self) -> None:
+        asked: list[tuple[str, list[str]]] = []
+
+        class _Recording(HashingEmbeddingClient):
+            async def embed(
+                self, texts: list[str], purpose: EmbeddingPurpose = "query"
+            ) -> list[list[float]]:
+                asked.append((purpose, texts))
+                return await super().embed(texts, purpose)
+
+        scores = await EmbeddingSimilarityScorer(_Recording()).similarities(
+            "refund status", ["refund issued", "shipping times"]
+        )
+        assert len(scores) == 2 and scores[0] > scores[1]
+        assert asked == [
+            ("query", ["refund status"]),
+            ("passage", ["refund issued", "shipping times"]),
+        ]

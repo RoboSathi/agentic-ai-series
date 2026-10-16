@@ -10,6 +10,7 @@ from agent_platform.config import get_settings
 from agent_platform.core.persistence import IN_MEMORY, ExecutionResult, SqliteConnectionPool
 from agent_platform.llm.cascade import CascadingLLMClient, ConfiguredEscalationPolicy
 from agent_platform.llm.client import HostedClient, create_llm_client, create_pinned_llm_client
+from agent_platform.llm.embedding_cache import CachingEmbeddingClient
 from agent_platform.llm.embeddings import (
     HashingEmbeddingClient,
     HostedEmbeddingClient,
@@ -150,7 +151,9 @@ class TestEmbeddings:
         )
         key_env = llm.provider_settings(hosted.embedding.provider).key_env_vars[0]
         monkeypatch.setenv(key_env, "test-key")
-        assert isinstance(create_embedding_client(hosted), HostedEmbeddingClient)
+        client = create_embedding_client(hosted)
+        assert isinstance(client, CachingEmbeddingClient)
+        assert isinstance(client.inner, HostedEmbeddingClient)
 
 
 class TestLLMClient:
