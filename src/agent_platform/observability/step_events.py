@@ -434,6 +434,13 @@ def gatekeeper_fields(call: "ToolCall", decision: "AuthorityDecision") -> dict[s
         "question": decision.question,
         "checks": [check.model_dump(mode="json") for check in decision.checks],
     }
+    if decision.advisory is not None:
+        fields.update(
+            {
+                "advisory_flagged": decision.advisory.flagged,
+                "advisory_reason": decision.advisory.reason,
+            }
+        )
     actor = next((check for check in decision.checks if check.check_id == _ACTOR_CHECK), None)
     if actor is not None:
         fields.update(

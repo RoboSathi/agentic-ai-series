@@ -78,7 +78,6 @@ Recorded so nothing is rebuilt by accident or claimed as built.
 | Research agent eval suite | Removed with the fixture world (ADR R-10); to be rebuilt over live or recorded data. |
 | Eval facts in the analytics source (`eval_score`) | Owed (ADR P-24). |
 | NL-to-SQL golden set for the ops agent; MCP HTTP transport auth | Owed (ADR P-25). |
-| Memory decay-if-unconfirmed | Not built; its unread config field was removed. |
 | Gatekeeper kill switch, `/policy` commands, evidence-gated maturity levels | Deferred (ADR P-09). |
 
 ## 7. Functional requirements
@@ -93,7 +92,7 @@ Status: **Built**, **Partial** (the mechanism exists; part of the requirement is
 | FR-1 | Five-stage context pipeline: gather → score → fit → format → order | `context` | Built |
 | FR-2 | Four CoALA stores, each independently testable | `memory` | Built (files, ADR P-13) |
 | FR-3 | Governed write pipeline: extract → classify → provenance → conflict → confidence → authorize → route | `memory` | Built |
-| FR-4 | Memory-poisoning defences: provenance, decay-if-unconfirmed, revocation | `memory`, `security` | Partial (no decay) |
+| FR-4 | Memory-poisoning defences: provenance, decay-if-unconfirmed, revocation | `memory`, `security` | Built (decay: ADR P-42) |
 | FR-5 | Context-failure detection (rot, distraction, confusion, clash, poisoning) | `context` | Partial (detection built; long-context synthesis eval not built) |
 | FR-6 | Six context strategies: offload, reduce, retrieve, isolate, cache, consolidate | `context` | Built |
 | FR-7 | RAG: chunking, hybrid lexical + dense search, cross-encoder rerank, graph retrieval | `context`, `memory` | Built |
@@ -164,7 +163,7 @@ Status: **Built**, **Partial** (the mechanism exists; part of the requirement is
 | Req | Description | Module | Status |
 |---|---|---|---|
 | FR-35 | Layered evals | `evals` | Amended (three graders: oracle, DeepEval, Promptfoo; ADR P-28) |
-| FR-36 | NOLLM scoring cascade with `nollm_scorer_ratio` | `scoring` | Built (tier 5 declines until a calibrated judge is wired) |
+| FR-36 | NOLLM scoring cascade with `nollm_scorer_ratio` | `scoring` | Built (tier 5: `judge.ClaimJudge`, ADR P-41) |
 | FR-37 | Judge calibration (Cohen's κ) | `judge` | Built |
 | FR-38 | Hallucination detection ladder, claim level | `hallucination_check` | Built (levels, fact ledger, NLI) |
 | FR-39 | Grounding vs reasoning failure diagnosis | `hallucination_check` | Built |

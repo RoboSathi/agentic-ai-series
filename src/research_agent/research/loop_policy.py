@@ -8,12 +8,18 @@ makes every branch a plain function of its inputs, testable without a graph.
     after reflection   stop?  why  ·  should the model judge the evidence first  ·  the cap
     after the audit    gap_fill (missing evidence) · revise (a writing fault) · finalize
     at the end         COMPLETE · PARTIAL · CANCELLED · FAILED
+
+The platform `LoopGovernor` governs the run over the same budget (a round is its step). Its
+verdict rides in the snapshot: after the budgets have had their say, a governor that says
+finalize (the rounds stopped adding new evidence) stops the run, and the run ends in the
+governor's one terminal outcome (`TERMINAL_OUTCOME`).
 """
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from agent_platform.loop_control import LoopVerdict, TerminalOutcome
 from research_agent.audit.independent import AuditResult
 from research_agent.domain.budget import GAP_FILL_ROUNDS, ROUNDS
 from research_agent.domain.report import RunStatus
@@ -42,6 +48,14 @@ WRITING_FAULTS, REVISIONS_SPENT, REVISION_PLATEAU = (
 # even if it could have read more.
 TRUNCATING_COUNTERS = frozenset({"tokens", "seconds"})
 
+# How each run status ends the governed loop.
+TERMINAL_OUTCOME: dict[RunStatus, TerminalOutcome] = {
+    "COMPLETE": "answered",
+    "PARTIAL": "finalized_on_cap",
+    "CANCELLED": "cancelled",
+    "FAILED": "failed",
+}
+
 
 def truncated_by_budget(exhausted: Collection[str]) -> bool:
     """Whether a budget limit cut the run's work short, as opposed to merely bounding it."""
@@ -60,6 +74,8 @@ class LoopSnapshot:
     gap_fill_rounds_left: float
     # A stop reason when every rejection was unreadable and nothing was admitted; "" otherwise.
     unreadable_only: str = ""
+    # The loop governor's verdict on taking another round (None: not asked).
+    governed: LoopVerdict | None = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +86,8 @@ class StopCall:
     reason: str
     judge: bool = False
     cause: str | None = None
+    # The governor's verdict, when the governor is what stopped the run.
+    verdict: LoopVerdict | None = None
 
 
 @dataclass(frozen=True)
@@ -110,7 +128,7 @@ class RunLoopPolicy:
         if rule.stop:
             # Answered is answered, even if a cap was reached getting there.
             return StopCall(True, rule.reason, judge=True)
-        return self._capped(snap) or StopCall(False, rule.reason)
+        return self._capped(snap) or self._governed(snap) or StopCall(False, rule.reason)
 
     def after_audit(
         self, snap: LoopSnapshot, audit: AuditResult | None, state: Mapping[str, Any]
@@ -163,6 +181,15 @@ class RunLoopPolicy:
             return StopCall(True, say("stop.max_rounds"), True, ROUNDS)
         return None
 
+    @staticmethod
+    def _governed(snap: LoopSnapshot) -> StopCall | None:
+        """The governor's finalize, as a stop no critique can overrule: the rounds have stopped
+        adding new evidence, so another one would not either."""
+        verdict = snap.governed
+        if verdict is None or verdict.decision != "finalize":
+            return None
+        return StopCall(True, verdict.reason, verdict=verdict)
+
     def _gap_fill_blocked(self, snap: LoopSnapshot) -> str:
         """Why a gap-fill cannot run, or "" when it can."""
         if not self._reflection:
@@ -203,6 +230,7 @@ __all__ = [
     "Route",
     "RunLoopPolicy",
     "StopCall",
+    "TERMINAL_OUTCOME",
     "TRUNCATING_COUNTERS",
     "truncated_by_budget",
 ]

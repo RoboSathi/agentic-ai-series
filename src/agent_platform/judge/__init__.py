@@ -5,6 +5,7 @@
 - `ModelJudge` — the same on the platform judge model, with the shared grading rules.
 - `ask_validated` / `ask_text` — one judge call, for a framework with its own loop.
 - `JudgeCalibrator` — agreement with a second rater (Cohen's κ).
+- `ClaimJudge` / `create_claim_judge` — the scoring cascade's tier 5 (`scoring.CalibratedJudge`).
 """
 
 from agent_platform.judge.base import (
@@ -18,10 +19,13 @@ from agent_platform.judge.base import (
     with_rules,
 )
 from agent_platform.judge.calibration import AgreementReport, JudgeCalibrator
+from agent_platform.judge.claim import ClaimAnswer, ClaimJudge, create_claim_judge
 from agent_platform.judge.client import create_judge_client
 
 __all__ = [
     "AgreementReport",
+    "ClaimAnswer",
+    "ClaimJudge",
     "JudgeAnswerError",
     "JudgeCalibrator",
     "JudgeCall",
@@ -29,6 +33,7 @@ __all__ = [
     "ModelJudge",
     "ask_text",
     "ask_validated",
+    "create_claim_judge",
     "create_judge_client",
     "judge_rules",
     "with_rules",

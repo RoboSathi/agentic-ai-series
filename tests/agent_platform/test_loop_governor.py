@@ -12,11 +12,13 @@ import pytest
 
 from agent_platform.context.similarity import LexicalSimilarity
 from agent_platform.loop_control import (
+    BudgetGuard,
     IllegalTransitionError,
     LoopBudget,
     LoopGovernor,
     LoopState,
     LoopStateMachine,
+    build_shared_loop_governor,
     canonical_fingerprint,
     route_on_verdict,
 )
@@ -156,6 +158,68 @@ class TestConvergence:
             await governor.after_action(call, "order delivered on monday", True)
         verdict = governor.begin_step()
         assert verdict.layer == "convergence" and verdict.reason_code == "NO_PROGRESS"
+
+
+class TestASharedBudget:
+    """A governor over a budget its loop's workers share: one of its counters is the step."""
+
+    def _shared(self, clock: _Clock | None = None) -> tuple[LoopGovernor, BudgetGuard]:
+        guard = BudgetGuard({"rounds": 2, "searches": 5}, max_seconds=10, clock=clock or _Clock())
+        governor = build_shared_loop_governor(guard, "rounds")
+        governor.begin_turn()
+        return governor, guard
+
+    def test_a_step_is_charged_to_the_shared_step_counter(self) -> None:
+        governor, guard = self._shared()
+        governor.begin_step()
+        assert guard.snapshot()["rounds"].spent == 1 and governor.max_steps == 2
+
+    def test_a_grant_on_the_step_counter_raises_the_cap(self) -> None:
+        governor, guard = self._shared()
+        guard.extend("rounds", 1)
+        assert governor.max_steps == 3
+
+    def test_the_step_past_the_shared_cap_finalizes(self) -> None:
+        governor, _ = self._shared()
+        for _ in range(2):
+            assert governor.begin_step().decision == "continue"
+        verdict = governor.begin_step()
+        assert verdict.layer == "step_count" and verdict.budgets["rounds"].cap == 2
+
+    def test_the_shared_clock_is_the_deadline(self) -> None:
+        clock = _Clock()
+        governor, _ = self._shared(clock)
+        clock.now = 11
+        assert governor.check().layer == "wall_clock"
+
+    def test_check_does_not_take_a_step(self) -> None:
+        governor, guard = self._shared()
+        governor.check()
+        assert guard.snapshot()["rounds"].spent == 0
+
+    async def test_rounds_that_add_nothing_new_plateau(self) -> None:
+        governor, guard = self._shared()
+        guard.extend("rounds", 5)
+        assert await governor.record_progress(["the order shipped on monday"]) == 1.0
+        for _ in range(3):
+            governor.begin_step()
+            await governor.record_progress([])
+        verdict = governor.check()
+        assert verdict.decision == "finalize" and verdict.layer == "convergence"
+
+    async def test_a_round_with_something_new_is_progress(self) -> None:
+        governor, _ = self._shared()
+        await governor.record_progress(["the order shipped on monday"])
+        gain = await governor.record_progress(["a refund was issued to the card"])
+        assert gain > 0.5
+
+    def test_restoring_leaves_the_shared_budget_to_its_owner(self) -> None:
+        governor, guard = self._shared()
+        governor.begin_step()
+        saved = governor.state
+        guard.charge("searches", 3)
+        governor.restore(saved)
+        assert guard.snapshot()["searches"].spent == 3 and governor.state.step == 1
 
 
 class TestTheHistoricalBaseline:

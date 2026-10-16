@@ -153,6 +153,8 @@ class ScoredFact(BaseModel):
     authority: float = 0.0
     temporal_validity: float = 0.0
     frequency: float = 0.0
+    # Its confidence as recall reads it: decayed by age when nobody confirmed it.
+    confidence: float = 0.0
     tier: RecallTier | None = None
 
 

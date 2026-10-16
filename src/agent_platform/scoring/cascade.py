@@ -45,8 +45,9 @@ DeterministicRule = Callable[[Claim], Verdict | None]
 class CalibratedJudge(Protocol):
     """Tier 5: adjudicates a claim, reporting calibrated confidence as the score.
 
-    The cascade's own seam, owned here by its consumer: any judge built on
-    `agent_platform.judge` that answers this shape can be wired in.
+    The cascade's own seam, owned here by its consumer: `agent_platform.judge.ClaimJudge`
+    answers it on the platform judge model, and a composition root passes it in
+    (`create_scoring_cascade(judge=create_claim_judge())`) — the cascade never imports it.
     """
 
     async def judge(self, claim: Claim) -> Verdict: ...

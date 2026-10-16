@@ -1386,6 +1386,18 @@ memory:
     temporal_validity: 0.1
     frequency: 0.1
   recency_half_life_days: 14
+  # Decay-if-unconfirmed (PRD FR-4, a memory-poisoning defence): a fact nobody confirmed loses
+  # confidence with age, halving every `half_life_days` since it was learned (use does not
+  # refresh it: recall is not confirmation). Below `recall_floor` it leaves recall, its records
+  # kept. A curator's approval confirms a fact; a provenance kind in `confirmed_kinds` is
+  # confirmed by where it came from. Only the stores in `memory_types` decay: an episodic event
+  # is a record of what happened, not a belief.
+  decay_if_unconfirmed:
+    enabled: true
+    half_life_days: 30
+    recall_floor: 0.3
+    memory_types: [semantic]
+    confirmed_kinds: [verified_system_of_record]
   # Semantic memory is a source of truth, so every operation on it — create,
   # update, delete, erase, approve — is authorized against the principal
   # doing it. What a principal says is believed according to who they are.

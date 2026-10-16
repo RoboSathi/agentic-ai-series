@@ -21,7 +21,12 @@ from agent_platform.config import FeatureSet, active_features, get_settings
 from agent_platform.context import ContextWindow, FiveStagePipeline, WorkingMemoryContextSource
 from agent_platform.context.factory import build_context_management
 from agent_platform.core.persistence import SqliteConnectionPool, SqlitePlatformStore
-from agent_platform.gatekeeper import CumulativeLedger, Gatekeeper, GatekeeperImpl
+from agent_platform.gatekeeper import (
+    CumulativeLedger,
+    Gatekeeper,
+    GatekeeperImpl,
+    create_tier2_advisor,
+)
 from agent_platform.hallucination_check.confidence import ConfidenceCheck
 from agent_platform.knowledge.mcp import (
     ConfiguredGovernancePolicy,
@@ -202,7 +207,13 @@ def _gatekeeper(
         updated_at=utc_now().isoformat(),
     )
     ledger = CumulativeLedger(platform, agent_id=platform.agent_id, enabled=False)
-    return GatekeeperImpl(authorizer=Authorizer(policy), policy=policy, ledger=ledger, audit=audit)
+    return GatekeeperImpl(
+        authorizer=Authorizer(policy),
+        policy=policy,
+        ledger=ledger,
+        audit=audit,
+        advisor=create_tier2_advisor(),
+    )
 
 
 def _screen(platform: SqlitePlatformStore, posture: FeatureSet) -> MessageScreener | None:

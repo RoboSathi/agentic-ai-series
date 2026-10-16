@@ -86,3 +86,15 @@ class NullTier2Advisor:
     async def flag(self, call: ToolCall) -> AdvisoryFlag:
         """Never flags. Tier 1 decides alone."""
         return AdvisoryFlag(reason="no tier-2 advisor configured")
+
+
+def create_tier2_advisor(client: LLMClient | None = None) -> Tier2Advisor | None:
+    """The Gatekeeper's Tier-2 advisor when `gatekeeper.tier2.enabled`; None otherwise, so a
+    decision carries no advisory at all rather than one saying the advisor was off."""
+    if not get_settings().gatekeeper.tier2.enabled:
+        return None
+    if client is None:
+        from agent_platform.llm.client import create_llm_client
+
+        client = create_llm_client()
+    return SemanticTier2Advisor(client)

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_platform.config import get_settings
 from agent_platform.core.persistence import SqliteConnectionPool
 from agent_platform.memory import (
     CompositeRetrievalScorer,
@@ -296,6 +297,67 @@ class TestWritePipeline:
             session_id="s1",
         )
         assert pipeline.classify("the order was delivered") == "order_fact"
+
+
+def _aged(fact: MemoryFact, half_lives: float) -> MemoryFact:
+    """The fact as if learned `half_lives` decay half-lives ago."""
+    days = half_lives * get_settings().memory.decay_if_unconfirmed.half_life_days
+    fact.provenance.ingestion_time = utc_now() - timedelta(days=days)
+    return fact
+
+
+class TestDecayIfUnconfirmed:
+    """FR-4: a fact nobody confirmed loses confidence with age, and then leaves recall."""
+
+    def test_an_unconfirmed_fact_halves_every_half_life(self) -> None:
+        fact = _aged(_fact("k", "v", confidence=0.8), half_lives=1)
+        assert CompositeRetrievalScorer().confidence(fact) == pytest.approx(0.4, abs=0.01)
+
+    def test_a_confirmed_fact_keeps_its_confidence(self) -> None:
+        fact = _aged(_fact("k", "v", confidence=0.8), half_lives=4)
+        fact.provenance.confirmed = True
+        assert CompositeRetrievalScorer().confidence(fact) == 0.8
+
+    def test_a_system_of_record_is_confirmed_by_where_it_came_from(self) -> None:
+        fact = _aged(_fact("k", "v", kind="verified_system_of_record", confidence=0.8), 4)
+        assert CompositeRetrievalScorer().recallable(fact)
+
+    def test_use_is_not_confirmation(self) -> None:
+        fact = _aged(_fact("k", "v", confidence=0.8), half_lives=4)
+        fact.last_accessed_at = utc_now()
+        assert not CompositeRetrievalScorer().recallable(fact)
+
+    def test_an_event_does_not_decay(self) -> None:
+        event = _aged(_fact("k", "v", memory_type="episodic", confidence=0.8), 4)
+        assert CompositeRetrievalScorer().recallable(event)
+
+    def test_a_fact_below_the_floor_leaves_the_ranking(self) -> None:
+        scorer = CompositeRetrievalScorer()
+        stale = _aged(_fact("stale", "v", confidence=0.8), half_lives=4)
+        fresh = _fact("fresh", "v", confidence=0.8)
+        ranked = scorer.rank([stale, fresh], [1.0, 1.0], limit=5)
+        assert [item.fact.key for item in ranked] == ["fresh"]
+
+    def test_the_decayed_confidence_is_on_the_score(self) -> None:
+        scored = CompositeRetrievalScorer().score(_aged(_fact("k", "v", confidence=0.8), 1), 1.0)
+        assert scored.confidence == pytest.approx(0.4, abs=0.01)
+
+    def test_switched_off_nothing_decays(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(get_settings().memory.decay_if_unconfirmed, "enabled", False)
+        fact = _aged(_fact("k", "v", confidence=0.8), half_lives=4)
+        assert CompositeRetrievalScorer().confidence(fact) == 0.8
+
+    async def test_recall_no_longer_returns_a_stale_unconfirmed_fact(
+        self, pool: SqliteConnectionPool, tmp_path: Path
+    ) -> None:
+        facade = MemoryFacade.complete(semantic=SemanticStore(), episodic=EpisodicStore(tmp_path))
+        days = 4 * get_settings().memory.decay_if_unconfirmed.half_life_days
+        learned = utc_now() - timedelta(days=days)
+        facade.semantic.write(
+            _fact("policy", "refunds within 30 days", confidence=0.8),
+            Provenance(source="p", ingestion_time=learned),
+        )
+        assert await facade.recall(MemoryQuery(text="refunds")) == []
 
 
 class TestMemoryFacade:

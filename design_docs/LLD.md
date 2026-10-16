@@ -134,7 +134,8 @@ and repositories live in the agent.
 **Owns.** The NOLLM scoring cascade — runtime infrastructure, not an eval. Retrieval relevance,
 tool fitness, grounding and memory consolidation resolve claims here, cheapest tier first:
 exact assertion → deterministic rule → embedding similarity → NLI entailment → calibrated LLM
-judge → human adjudication. A tier that cannot decide declines so the next may try.
+judge → human adjudication. A tier that cannot decide declines so the next may try. Tier 5 is
+`judge.ClaimJudge` (`create_claim_judge()`), passed in by the composition root (ADR P-41).
 
 - `create_scoring_cascade()`, `NollmScoringCascadeImpl` (`nollm_scorer_ratio`, `tier_counts`);
   one scorer class per tier; `EntailmentModel`, `LexicalEntailmentModel` (offline),
@@ -171,6 +172,10 @@ single tool path.
 - **Lifecycle.** `begin_turn` → per step `begin_step` → `call_limits` / `deadline` →
   `after_model` → per action `before_action` → `after_action` → `finish(outcome)`;
   `restore(state)` continues a checkpointed run.
+- **Shared budget** (`build_shared_loop_governor`): a governor over a `BudgetGuard` the loop's
+  workers share, one counter its step; `check()` (a verdict without a step) and
+  `record_progress(results)` (one step, many results). The research run is governed this way
+  (ADR R-22).
 - `TerminalOutcome`: `answered | finalized_on_cap | aborted | cancelled | escalated | failed`.
 - `LoopState` (the governor's whole memory, kept in the agent's checkpointed state),
   `LoopStateMachine` (legal phase transitions).
@@ -226,7 +231,9 @@ refund limit) → where a deployment has one, the cumulative budget.
   `Tier2Advisor` (a semantic advisor that can flag, never allow); `CheckReport`,
   `AuthorityContext`, `AuthorityDecision`, `Verdict`, `Standing`.
 - **Config.** `gatekeeper:` — `authority_grant_max_rank`, `authority_hierarchy`, `ledger`,
-  `mandate`, `tier2`, `surface_policy`. Built only when `features.gatekeeper`.
+  `mandate`, `tier2`, `surface_policy`. Built only when `features.gatekeeper`. The Tier-2
+  advisor (`create_tier2_advisor`, only when `gatekeeper.tier2.enabled`) adds a note to a
+  decision, never its verdict (ADR P-43).
 - **Seam.** An agent supplies its business rules and mandate policy.
 
 ## A11. durability
@@ -334,6 +341,9 @@ governed writes, dreams, skills, a deterministic recall tier and document RAG.
   extract → classify → provenance → conflict → confidence → authorize → route (auto-commit,
   curator queue, discard); `MemoryCommand`, `MemoryPrincipal`, `MemoryAuthorizer`. Categories
   that may never be written from conversational assertion are configured.
+- **Recall scoring.** `CompositeRetrievalScorer`: relevance, recency, importance, authority,
+  temporal validity, frequency; decay-if-unconfirmed takes an unconfirmed fact's confidence
+  down by half-life and out of recall below its floor (ADR P-42).
 - **Dreams** (`dream/`): `DreamEvent`, `FileDreamInbox` (`pending/` → `consolidated/`),
   `TurnRecorder`, `Dream`, `MemoryProfile` (three consolidators; `MemoryProfile.default()`),
   `RecurringSignalSkills`. Composition for any agent is in `interface/host/memory.py`.
@@ -344,7 +354,7 @@ governed writes, dreams, skills, a deterministic recall tier and document RAG.
   retriever, knowledge-base context source.
 - **Config.** `memory:` — `files`, `dream` (retention, `skill_threshold`, refusal markers,
   learned-skill wording), `semantic.rag`, `write_pipeline`, provenance and retrieval weights,
-  `recency_half_life_days`, `governance`, `deterministic`. `skills:` — `profile_path`,
+  `recency_half_life_days`, `decay_if_unconfirmed`, `governance`, `deterministic`. `skills:` — `profile_path`,
   `skills_dir`, `selection`, `render.sections_sent`, `max_prompt_chars`.
 - **Commands.** `make dream | show-memory [dream] | clean-memory | memory-reindex <agent>`;
   `/memory [dream]`, `/dream`. The default memory view is what dreams consolidated; the dream

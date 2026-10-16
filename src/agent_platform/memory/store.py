@@ -6,6 +6,12 @@ importance. Two more signals matter once memory is a security boundary:
 and *temporal validity* (a fact with an expiry should stop winning after
 it expires). Single-signal retrieval feels subtly wrong for a reason —
 pure similarity recalls a superseded fact that happens to match best.
+
+A third defence is *decay-if-unconfirmed*: a fact nobody confirmed loses
+confidence as it ages, and once it falls below the recall floor it is no
+longer recalled at all. A poisoned fact that slipped past the write
+pipeline therefore cannot sit in memory forever waiting to be believed;
+confirming it (a curator's approval) is what keeps it.
 """
 
 import math
@@ -21,6 +27,9 @@ from agent_platform.memory.types import (
     WriteResult,
 )
 from agent_platform.observability.types import utc_now
+
+# A unit conversion, not a setting: ages are configured in days.
+_SECONDS_PER_DAY = 86400
 
 
 @runtime_checkable
@@ -57,6 +66,7 @@ class CompositeRetrievalScorer:
         self._weights = settings.retrieval_weights
         self._provenance_weights = settings.provenance_weights
         self._half_life_days = settings.recency_half_life_days
+        self._decay = settings.decay_if_unconfirmed
 
     def score(
         self, fact: MemoryFact, relevance: float, tier: RecallTier | None = None
@@ -84,6 +94,7 @@ class CompositeRetrievalScorer:
             authority=authority,
             temporal_validity=validity,
             frequency=frequency,
+            confidence=self.confidence(fact),
             tier=tier,
         )
 
@@ -94,11 +105,12 @@ class CompositeRetrievalScorer:
         limit: int,
         tiers: list[RecallTier | None] | None = None,
     ) -> list[ScoredFact]:
-        """Score and order a candidate set, best first."""
+        """Score and order a candidate set, best first; a fact decayed below the floor is out."""
         labels = tiers or [None] * len(facts)
         scored = [
             self.score(fact, relevance, tier)
             for fact, relevance, tier in zip(facts, relevances, labels)
+            if self.recallable(fact)
         ]
         return sorted(scored, key=lambda item: item.score, reverse=True)[:limit]
 
@@ -119,8 +131,28 @@ class CompositeRetrievalScorer:
         touched = max(
             fact.provenance.ingestion_time, fact.last_accessed_at or fact.provenance.ingestion_time
         )
-        age_days = (utc_now() - touched).total_seconds() / 86400
+        age_days = (utc_now() - touched).total_seconds() / _SECONDS_PER_DAY
         return math.pow(0.5, max(0.0, age_days) / self._half_life_days)
+
+    def confirmed(self, fact: MemoryFact) -> bool:
+        """Confirmed by a person, or by the kind of source it came from."""
+        return fact.provenance.confirmed or fact.provenance.kind in self._decay.confirmed_kinds
+
+    def decays(self, fact: MemoryFact) -> bool:
+        """Whether this fact's confidence decays: unconfirmed, in a store that decays."""
+        decay = self._decay
+        return decay.enabled and fact.memory_type in decay.memory_types and not self.confirmed(fact)
+
+    def confidence(self, fact: MemoryFact) -> float:
+        """Its confidence, halved every half-life since it was learned when it decays."""
+        if not self.decays(fact):
+            return fact.confidence
+        age_days = (utc_now() - fact.provenance.ingestion_time).total_seconds() / _SECONDS_PER_DAY
+        return fact.confidence * math.pow(0.5, max(0.0, age_days) / self._decay.half_life_days)
+
+    def recallable(self, fact: MemoryFact) -> bool:
+        """Whether recall may return it: not decayed below the floor."""
+        return not self.decays(fact) or self.confidence(fact) >= self._decay.recall_floor
 
     def authority(self, fact: MemoryFact) -> float:
         """How much weight the fact's provenance earns it."""

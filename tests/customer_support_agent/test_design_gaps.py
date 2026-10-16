@@ -43,6 +43,23 @@ class TestTracesAreRedacted:
         assert isinstance(agent._tracer._redactor, PIIFilterImpl)  # type: ignore[union-attr]
 
 
+class TestTheCascadeHasAJudge:
+    """Tier 5 of the scoring cascade declined every claim: no judge was ever passed in."""
+
+    def test_the_independent_score_consults_the_platform_judge(
+        self, seeded_pool: SqliteConnectionPool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from agent_platform.judge import ClaimJudge
+        from agent_platform.scoring import CalibratedJudgeScorer
+        from customer_support_agent.graph.builder import build_agent
+
+        tiers = get_settings().hallucination_check.scoring.tiers
+        monkeypatch.setattr(tiers, "calibrated_llm_judge", True)
+        agent = build_agent(llm=ScriptedLLM(), pool=seeded_pool, with_memory=False)
+        [tier5] = [t for t in agent._cascade._tiers if isinstance(t, CalibratedJudgeScorer)]  # type: ignore[union-attr]
+        assert isinstance(tier5._judge, ClaimJudge)
+
+
 class TestTurnAccounting:
     """FR-45: eight SLOs were configured and two were observed."""
 

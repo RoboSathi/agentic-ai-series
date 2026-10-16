@@ -57,6 +57,8 @@ _HOSTED_GUARDS_VAR = "SECURITY__GUARDS__ENABLED"
 # Request sizes are counted by characters in tests: the model-family tokenizer is a
 # download, and a count that depends on whether it is on disk is not a fixed expectation.
 _TOKENIZER_VAR = "LLM__TOKENIZER__ENABLED"
+# The scoring cascade's tier 5 is the hosted judge model: off, so no agent turn reaches it.
+_JUDGE_TIER_VAR = "HALLUCINATION_CHECK__SCORING__TIERS__CALIBRATED_LLM_JUDGE"
 
 
 class ScriptedLLM(LLMClient):
@@ -298,6 +300,7 @@ def no_provider_calls() -> Iterator[None]:
             patch.delenv(name, raising=False)
         patch.setenv(_HOSTED_GUARDS_VAR, "false")
         patch.setenv(_TOKENIZER_VAR, "false")
+        patch.setenv(_JUDGE_TIER_VAR, "false")
         reload_settings()
         reload_agent_settings()
         shared_tokenizer.cache_clear()

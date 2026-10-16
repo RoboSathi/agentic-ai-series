@@ -1681,6 +1681,18 @@ class MemoryCardWording(BaseModel):
     gate_tiers: list[str]
 
 
+class MemoryDecaySettings(BaseModel):
+    """Decay-if-unconfirmed: an unconfirmed fact's confidence halves every half-life."""
+
+    enabled: bool
+    half_life_days: float = Field(gt=0)
+    # Decayed below this, a fact leaves recall (its records are kept).
+    recall_floor: float = Field(ge=0.0, le=1.0)
+    memory_types: list[str]
+    # Provenance kinds confirmed by where they came from.
+    confirmed_kinds: list[str]
+
+
 class MemorySettings(YamlBackedSettings):
     """All four CoALA stores plus the write pipeline (LLD §8)."""
 
@@ -1692,6 +1704,7 @@ class MemorySettings(YamlBackedSettings):
     retrieval_weights: MemoryRetrievalWeights
     provenance_weights: dict[str, float]
     recency_half_life_days: float
+    decay_if_unconfirmed: MemoryDecaySettings
     governance: MemoryGovernanceSettings
     deterministic: MemoryDeterministicSettings
     importance: MemoryImportanceSettings

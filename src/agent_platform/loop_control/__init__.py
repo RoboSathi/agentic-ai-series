@@ -19,7 +19,7 @@ from agent_platform.loop_control.budget import (
     Reservation,
 )
 from agent_platform.loop_control.convergence import ConvergenceMonitor, ConvergenceSignal
-from agent_platform.loop_control.factory import build_loop_governor
+from agent_platform.loop_control.factory import build_loop_governor, build_shared_loop_governor
 from agent_platform.loop_control.governor import (
     COST,
     STEPS,
@@ -94,6 +94,7 @@ __all__ = [
     "WatchdogLayer",
     "action_fingerprint",
     "build_loop_governor",
+    "build_shared_loop_governor",
     "canonical_fingerprint",
     "route_on_verdict",
 ]

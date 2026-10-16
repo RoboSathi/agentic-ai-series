@@ -26,6 +26,7 @@ from customer_support_agent.evals.fixture import policy_seed_sql
 from customer_support_agent.gatekeeper import REFUND_ACTION_CLASS, CustomerSupportBusinessRules
 from customer_support_agent.persistence import OrdersRepository, RefundLedgerRepository
 from customer_support_agent.resilience import RefundSaga, RefundSettlement
+from tests.conftest import ScriptedLLM
 
 _ACTOR = "operator"
 
@@ -222,3 +223,80 @@ class TestSettlementCommands:
         assert orders.get(10001).refund_status == "completed"  # type: ignore[union-attr]
         refused: Any = await VoidCommand(seeded_pool).run(["10001"])
         assert refused.ok is False
+
+
+class _Advisor:
+    """A Tier-2 advisor that always has a note, and counts what it was asked about."""
+
+    def __init__(self) -> None:
+        self.asked: list[str] = []
+
+    async def flag(self, call: ToolCall) -> Any:
+        from agent_platform.gatekeeper import AdvisoryFlag
+
+        self.asked.append(call.action)
+        return AdvisoryFlag(flagged=True, reason="unusual amount for this customer")
+
+
+class TestTier2Advisory:
+    """Tier 2 was built and never wired: no decision ever carried its note."""
+
+    def _gatekeeper(self, pool: SqliteConnectionPool, advisor: Any) -> GatekeeperImpl:
+        pool.execute_script(policy_seed_sql())
+        policy = _seeded(pool)
+        return GatekeeperImpl(
+            authorizer=Authorizer(policy=policy),
+            policy=policy,
+            ledger=CumulativeLedger(pool, enabled=False),
+            business_rules=CustomerSupportBusinessRules(policy),
+            advisor=advisor,
+        )
+
+    async def test_the_note_rides_on_the_decision_and_changes_nothing(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        gatekeeper = self._gatekeeper(seeded_pool, _Advisor())
+        policy = _seeded(seeded_pool)
+        decision = await gatekeeper.evaluate(_refund(32.0), AuthorityContext(actor=policy.agent_id))
+        assert decision.verdict == "allow" and decision.advisory is not None
+        assert decision.advisory.flagged and decision.advisory.advisory_only
+
+    async def test_without_an_advisor_there_is_no_note(
+        self, seeded_pool: SqliteConnectionPool
+    ) -> None:
+        gatekeeper = self._gatekeeper(seeded_pool, None)
+        policy = _seeded(seeded_pool)
+        decision = await gatekeeper.evaluate(_refund(32.0), AuthorityContext(actor=policy.agent_id))
+        assert decision.advisory is None
+
+    async def test_a_denied_call_is_not_advised_on(self, seeded_pool: SqliteConnectionPool) -> None:
+        advisor = _Advisor()
+        gatekeeper = self._gatekeeper(seeded_pool, advisor)
+        denied = AuthorityDecision(verdict="deny", action="process_refund", actor="a", reason="")
+        assert (await gatekeeper._advised(_refund(32.0), denied)).advisory is None
+        assert advisor.asked == []
+
+    def test_the_card_shows_the_note(self) -> None:
+        from agent_platform.gatekeeper import AdvisoryFlag
+        from agent_platform.observability.step_events import gatekeeper_fields
+
+        decision = AuthorityDecision(
+            verdict="allow",
+            action="process_refund",
+            actor="a",
+            reason="",
+            advisory=AdvisoryFlag(flagged=True, reason="unusual"),
+        )
+        fields = gatekeeper_fields(_refund(32.0), decision)
+        assert fields["advisory_flagged"] and fields["advisory_reason"] == "unusual"
+
+    def test_the_advisor_is_built_only_when_tier2_is_on(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from agent_platform.gatekeeper import SemanticTier2Advisor, create_tier2_advisor
+
+        tier2 = get_settings().gatekeeper.tier2
+        monkeypatch.setattr(tier2, "enabled", False)
+        assert create_tier2_advisor() is None
+        monkeypatch.setattr(tier2, "enabled", True)
+        assert isinstance(create_tier2_advisor(ScriptedLLM()), SemanticTier2Advisor)

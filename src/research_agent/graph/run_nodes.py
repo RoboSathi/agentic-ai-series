@@ -25,7 +25,7 @@ from the checkpointed snapshots, when a crashed run resumes).
 """
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cached_property
 from typing import Any
 
@@ -34,7 +34,7 @@ from langgraph.types import Send
 from agent_platform.config import FeatureSet
 from agent_platform.hallucination_check.confidence import ConfidenceCheck
 from agent_platform.logging import describe_error
-from agent_platform.loop_control import SECONDS, BudgetGuard
+from agent_platform.loop_control import SECONDS, BudgetGuard, LoopVerdict
 from agent_platform.memory.procedural.skills import AgentInstructions
 from agent_platform.memory.procedural.skills.types import LEARNED
 from agent_platform.observability.step_events import HALLUCINATION_CHECK
@@ -58,6 +58,7 @@ from research_agent.research import cards
 from research_agent.research.loop_policy import (
     CANCELLED,
     FINALIZE,
+    TERMINAL_OUTCOME,
     LoopSnapshot,
     RunLoopPolicy,
     truncated_by_budget,
@@ -202,6 +203,7 @@ class RunNodes:
             contract_hash=contract.contract_hash,
             toggles=toggles,
         )
+        r.governor.begin_turn()
         return {
             "toggles": toggles,
             "round": 1,
@@ -213,7 +215,7 @@ class RunNodes:
 
     async def plan(self, state: RunState) -> Update:
         r, contract = self.resources, state["contract"]
-        r.budget.charge(ROUNDS, 1)
+        r.governor.begin_step()
         learned = self._learned_skills(contract)
         try:
             outcome = await self._p.planner.plan(contract, learned)
@@ -366,7 +368,9 @@ class RunNodes:
         entities = GapAnalyzer.entities(ctx, ctx.entity_pattern)
         archetype = contract.brief.archetype
         rule = self._p.reflector.decide(archetype, verdicts, state.get("entities", 0), entities)
-        call = self._policy.after_reflect(self._snapshot(), rule)
+        measured = await self._measure_progress(state)
+        snapshot = replace(self._snapshot(), governed=r.governor.check())
+        call = self._policy.after_reflect(snapshot, rule)
         reason, cause = call.reason, call.cause
         proposal = FollowUpProposal()
         if not call.stop:
@@ -401,8 +405,22 @@ class RunNodes:
             _ANOTHER_ROUND if another else (update.get("stop_reason") or reason),
             {"failing_checks": len(failing), "budget_stops": list(r.trace.budget_stops)},
             cause=None if another else cause,
+            governed=None if another else call.verdict,
         )
-        return {**update, "entities": entities}
+        return {
+            **update,
+            "entities": entities,
+            "measured": measured,
+            "loop_state": r.governor.state,
+        }
+
+    async def _measure_progress(self, state: RunState) -> int:
+        """The round's progress for the governor: the claims admitted since the last
+        reflection, measured against what the run already holds. Returns how many are in."""
+        entries = self.resources.ledger.snapshot().entries
+        fresh = [entry.claim for entry in entries[state.get("measured", 0) :]]
+        await self.resources.governor.record_progress(fresh)
+        return len(entries)
 
     def _rescue(self, state: RunState) -> Update | None:
         """One more round for a run that admitted nothing, instead of a report of nothing.
@@ -430,7 +448,7 @@ class RunNodes:
             r.budget.extend(counter, amount)
         nodes = self._numbered(fit_to_budget(planned, r.budget.remaining(SEARCHES)), state)
         r.trace.rescued, r.trace.rescue_grant = True, grant
-        r.budget.charge(ROUNDS, 1)
+        r.governor.begin_step()
         self._rescue_card(nodes, grant)
         self._report_loop(state, _BATCH_START, _RESCUE, {"admitted": 0, "rescue_nodes": len(nodes)})
         plans = [*state.get("plans", []), PlanDag(nodes=tuple(nodes), rationale=_RESCUE)]
@@ -512,7 +530,7 @@ class RunNodes:
         )
         if not follow_ups:
             return {"gaps": gaps, "stop_reason": none_left, "round_nodes": []}
-        r.budget.charge(ROUNDS, 1)
+        r.governor.begin_step()
         plans = [
             *state.get("plans", []),
             PlanDag(nodes=tuple(follow_ups), rationale="reflection follow-ups"),
@@ -878,6 +896,7 @@ class RunNodes:
             "report": report,
             "spent": _spent(r.budget),
             "trace": r.trace.model_copy(deep=True),
+            "loop_state": r.governor.finish(TERMINAL_OUTCOME[status]),
         }
 
     def _final_status(self, state: RunState) -> RunStatus:
@@ -1045,9 +1064,10 @@ class RunNodes:
         because: str,
         criteria: dict[str, Any] | None = None,
         cause: str | None = None,
+        governed: LoopVerdict | None = None,
     ) -> None:
         """LOOP CONTROL: the round, every budget meter, the step the run takes next, and the
-        counter that forced it when one did."""
+        counter (or the governor's verdict) that forced it when one did."""
         r = self.resources
         RunLoopReport(r.telemetry.reporter, get_agent_settings().run_loop).report(
             r.budget,
@@ -1056,6 +1076,7 @@ class RunNodes:
             because=because,
             criteria=criteria,
             cause=cause,
+            governed=governed,
         )
 
 

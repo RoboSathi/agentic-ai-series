@@ -16,6 +16,7 @@ from typing import Annotated, Literal, TypedDict
 from pydantic import BaseModel, Field
 
 from agent_platform.hallucination_check.evidence import LedgerSnapshot
+from agent_platform.loop_control import LoopState
 from research_agent.audit.independent import AuditResult
 from research_agent.domain.plan import PlanDag, SubQuestion
 from research_agent.domain.report import Report, RunStatus
@@ -88,6 +89,9 @@ class RunState(TypedDict, total=False):
     status: RunStatus | None
     stop_reason: str
     toggles: dict[str, bool]
+    # The loop governor's state, and how many ledger entries its progress has measured.
+    loop_state: LoopState
+    measured: int
 
 
 class StateTypes(BaseModel):
@@ -102,3 +106,4 @@ class StateTypes(BaseModel):
     trace: RunTrace
     report: Report
     audit: AuditResult
+    loop_state: LoopState

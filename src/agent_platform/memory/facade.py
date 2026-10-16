@@ -399,7 +399,7 @@ def _recall_fields(
             f"{_named(item.fact)} [{item.tier}] score={item.score:.2f} "
             f"rel={item.relevance:.2f} rec={item.recency:.2f} imp={item.importance:.2f} "
             f"auth={item.authority:.2f} freq={item.frequency:.2f} "
-            f"valid={item.temporal_validity:.0f}"
+            f"conf={item.confidence:.2f} valid={item.temporal_validity:.0f}"
             for item in ranked
         ],
     }

@@ -20,11 +20,17 @@ router runs off the event loop and must not draw.
 
 State is a `LoopState`, kept by the agent in its checkpointed graph state; `restore` puts a
 resumed governor back exactly where it was, seconds included.
+
+A loop whose workers draw on one budget together (parallel workers in one run) hands
+the governor that `BudgetGuard` instead of caps: the governor then reads and charges the
+shared counters, one of them is its step (`step_counter`), and the owner keeps restoring the
+budget it shares. A step whose work is many results at once reports its progress with
+`record_progress`, and `check` asks, without taking a step, whether the loop should go on.
 """
 
 import asyncio
 import time
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -99,10 +105,15 @@ class LoopGovernor:
         baseline: HistoricalBaseline | None = None,
         clock: Callable[[], float] = time.monotonic,
         on_exhausted: Callable[[LoopVerdict], None] | None = None,
+        guard: BudgetGuard | None = None,
+        step_counter: str = STEPS,
     ) -> None:
         settings = get_settings().loop_control
         self._settings = settings
         self._budget = budget
+        # A budget the loop's workers share: the governor charges it, never replaces it.
+        self._shared = guard
+        self._step_counter = step_counter
         self._clock = clock
         self._on_exhausted = on_exhausted
         self._similarity = similarity or shared_similarity()
@@ -133,11 +144,19 @@ class LoopGovernor:
 
     @property
     def max_steps(self) -> int:
+        """The step cap: the shared step counter's cap as it stands (a grant raises it)."""
+        if self._shared is not None:
+            return int(self._shared.snapshot()[self._step_counter].cap)
         return self._budget.max_steps
 
     def restore(self, state: LoopState) -> None:
-        """Continue a loop from its checkpointed state: counters, seconds, actions, phase."""
+        """Continue a loop from its checkpointed state: counters, seconds, actions, phase.
+
+        A shared budget is its owner's to restore; the governor takes back only its own state.
+        """
         self._state = state.model_copy(deep=True)
+        if self._shared is not None:
+            return
         self._guard = self._new_guard()
         self._guard.restore(self._state.spent, elapsed=self._state.seconds)
 
@@ -146,16 +165,34 @@ class LoopGovernor:
         self._state = LoopState()
         self._guard = self._new_guard()
         self._move("PLANNING")
-        report_loop(self._budget.max_steps, False)
+        report_loop(self.max_steps, False)
 
     def begin_step(self) -> LoopVerdict:
         """Charge a step and say whether the loop may take it."""
         self._state.step += 1
-        self._guard.charge(STEPS, 1)
+        self._guard.charge(self._step_counter, 1)
         self._move("PLANNING")
         verdict = self._step_verdict()
-        report_loop(self._budget.max_steps, verdict.layer == "step_count")
+        report_loop(self.max_steps, verdict.layer == "step_count")
         return self._decided(verdict)
+
+    def check(self) -> LoopVerdict:
+        """Whether the loop should take another step, without taking one."""
+        return self._decided(self._step_verdict())
+
+    async def record_progress(self, results: Sequence[str]) -> float:
+        """A step whose work was many results at once: its gain is the most any one added.
+
+        No result at all is no progress. Every result joins the evidence the next is measured
+        against. The phase is left as it is: a run resumed from a checkpoint older than its
+        loop state starts IDLE, and measuring progress must not move it.
+        """
+        texts = [text for text in results if text.strip()]
+        gains = [await self._convergence.gain(text, self._state.evidence) for text in texts]
+        gain = max(gains, default=0.0)
+        self._state.gains.append(gain)
+        self._state.evidence = [*self._state.evidence, *texts][-self._window :]
+        return gain
 
     def call_limits(self, configured_max_tokens: int | None = None) -> CallLimits:
         """The next call's output cap (never past the token budget) and timeout (never past
@@ -176,7 +213,7 @@ class LoopGovernor:
     def remaining(self, counter: str) -> float:
         """What `counter` has left (unbounded counters: infinite)."""
         if counter == STEPS:
-            return float(max(self._budget.max_steps - self._state.step, 0))
+            return float(max(self.max_steps - self._state.step, 0))
         snapshot = self._guard.snapshot()
         return self._guard.remaining(counter) if counter in snapshot else float("inf")
 
@@ -345,7 +382,7 @@ class LoopGovernor:
         ).model_copy(update={"fingerprint": exact})
 
     def _budget_verdict(self, counter: str, decision: LoopDecision = "finalize") -> LoopVerdict:
-        line = self._budgets()[counter]
+        line = self._budgets()[self._step_counter if counter == STEPS else counter]
         code = "DEADLINE_REACHED" if counter == SECONDS else "BUDGET_EXHAUSTED"
         if counter == STEPS:
             code = "MAX_TOOL_ITERATIONS"
@@ -387,7 +424,7 @@ class LoopGovernor:
             reason=checks[0].reason,
             checks=checks,
             round_number=self._state.step,
-            max_rounds=self._budget.max_steps,
+            max_rounds=self.max_steps,
             fingerprint=fingerprint,
             previous_result=previous,
             budgets=self._budgets(),
@@ -395,7 +432,7 @@ class LoopGovernor:
 
     def _check(self, layer: str, code: str, status: str, **values: Any) -> ControlCheck:
         template = self._settings.reasons[code]
-        values = {"step": self._state.step, "max": self._budget.max_steps, **values}
+        values = {"step": self._state.step, "max": self.max_steps, **values}
         return ControlCheck(
             check_id=f"loop_control.{layer}",
             name=layer,
@@ -429,6 +466,8 @@ class LoopGovernor:
     # -- counters -----------------------------------------------------------------------
 
     def _new_guard(self) -> BudgetGuard:
+        if self._shared is not None:
+            return self._shared
         caps: dict[str, float] = {STEPS: self._budget.max_steps}
         for counter, cap in (
             (TOOL_CALLS, self._budget.max_tool_calls),
@@ -443,9 +482,9 @@ class LoopGovernor:
 
     def _exhausted(self, counter: str) -> bool:
         if counter == SECONDS:
-            return self._budget.max_seconds is not None and self._guard.expired()
+            return self._guard.expired()
         if counter == STEPS:
-            return self._state.step > self._budget.max_steps
+            return self._state.step > self.max_steps
         snapshot = self._guard.snapshot()
         return counter in snapshot and snapshot[counter].exhausted
 

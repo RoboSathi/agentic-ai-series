@@ -423,6 +423,8 @@ class ResearchAgent:
         if values.get("ledger") is not None:
             resources.ledger.restore(values["ledger"])
         resources.budget.restore(values.get("spent") or {})
+        if values.get("loop_state") is not None:
+            resources.governor.restore(values["loop_state"])
         if values.get("trace") is not None:
             resources.trace = values["trace"]
             # The rescue round's grant is on top of the size's caps, which a resume rebuilds.

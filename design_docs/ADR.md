@@ -24,7 +24,7 @@ old commits, logs or episode notes can still find the decision.
 | [Models, resilience and metering](#6-models-resilience-and-metering) | P-19 – P-23 |
 | [Analytics, MCP and dashboards](#7-analytics-mcp-and-dashboards) | P-24 – P-27 |
 | [Evals and tests](#8-evals-and-tests) | P-28 – P-35 |
-| [Research agent](#9-research-agent) | R-01 – R-20 |
+| [Research agent](#9-research-agent) | R-01 – R-22 |
 | [Customer-support agent](#10-customer-support-agent) | C-01 – C-08 |
 | [Ops agent](#11-ops-agent) | O-01 |
 
@@ -785,6 +785,57 @@ on tokens. HMAC tokens are deterministic, so evidence and reply still agree.
 **Consequences.** Logs, checkpoints, memory, audit and cards hold tokens; a value is
 recovered only through `make pii-reveal`. A PERSON false positive in a product name becomes a
 token and is restored for the customer. Each written string costs a regex pass.
+
+### P-41 — The scoring cascade's tier 5 is the platform judge
+
+**Context.** `CalibratedJudgeScorer` declined every claim: no composition root passed it a
+judge, so a claim the cheap tiers could not settle always fell to `human_adjudication` and the
+`calibrated_llm_judge` toggle (on) changed nothing (P-28 recorded the seam as open).
+
+**Decision.** (2026-10-16.) `judge/claim.py`: `ClaimJudge`, a `ModelJudge` on the platform
+judge model, answers `scoring.CalibratedJudge`. Asked the claim and its evidence
+(`judge/prompts/claim_judge.md`, evidence capped at `judge.max_evidence_chars`), it answers
+supported, contradicted or unsure with a confidence. Unsure, and a judge that could not answer,
+are `unresolved` at confidence 0, so they always pass the claim on; the cascade trusts a verdict
+only at `judge_confidence_threshold` or above. `create_claim_judge()` builds it only when the
+tier is on; the support agent's composition root passes it into the cascade behind its
+independent reply score. The cascade imports no judge: the root wires it.
+
+**Consequences.** A support turn whose reply the cheaper tiers cannot score makes one judge
+call at finalize, metered with the turn (`hallucination_check.scoring.tiers.calibrated_llm_judge:
+false` removes it). Tests run with the tier off (`conftest.no_provider_calls`, as P-29).
+
+### P-42 — Decay-if-unconfirmed: an unconfirmed fact leaves recall as it ages
+
+**Context.** PRD FR-4 named three memory-poisoning defences; provenance and revocation were
+built, decay was not (its unread config field had been removed).
+
+**Decision.** (2026-10-16.) `CompositeRetrievalScorer` reads a fact's confidence through
+`memory.decay_if_unconfirmed`: a fact in a decaying store (`memory_types`: semantic) that nobody
+confirmed loses half its confidence every `half_life_days` since it was learned. Recall does
+not refresh it: use is not confirmation. Below `recall_floor` the fact is out of the ranking, its
+records kept. A curator's approval confirms a fact; a provenance kind in `confirmed_kinds`
+(`verified_system_of_record`) is confirmed by its source. The decayed confidence is on every
+`ScoredFact` and on the recall log line (`conf=`).
+
+**Consequences.** A self-reported or inferred fact committed at 0.8 leaves recall after about
+six weeks unless a curator confirms it. Nothing is written or deleted: switching the block off
+brings every fact back.
+
+### P-43 — The Gatekeeper's Tier-2 advisor is wired, off by default
+
+**Context.** `SemanticTier2Advisor` was built and never constructed; `AuthorityDecision.advisory`
+was never set, so the console's `advisory_flagged` / `advisory_reason` fields never appeared.
+
+**Decision.** (2026-10-16.) `GatekeeperImpl` takes an optional `advisor`. When there is one, a
+decision that is not a denial carries its `AdvisoryFlag`, logged, audited (in the authority
+context) and on the GATEKEEPER card; the verdict never changes. `create_tier2_advisor()` builds
+it only when `gatekeeper.tier2.enabled`, so with Tier 2 off a decision has no advisory at all
+rather than one saying it is off. Both Gatekeeper-holding agents (support, ops) pass it.
+
+**Consequences.** Off by default, as configured: no change until a deployment turns it on, and
+then one model call per allowed or escalated action.
+
 ---
 
 ## 9. Research agent
@@ -1048,6 +1099,31 @@ from retired features were removed with it: the Kelvari fixture set (`web_fixtur
 archived runs (`data/research_agent/runs/`, R-18). Record / replay stays as a generic mechanism.
 
 **Supersedes.** The disk-cache clause of R-09.
+
+### R-22 — The platform governor governs the research run loop
+
+**Context.** R-20 left the research run loop outside the platform `LoopGovernor`: the run had
+the platform budget (`BudgetGuard`) and its own policy, but no phase machine, no terminal
+outcome and no convergence check over its rounds.
+
+**Decision.** (2026-10-16.) `LoopGovernor` gains a shared-budget mode
+(`build_shared_loop_governor(guard, step_counter)`): it charges and reads a `BudgetGuard` the
+loop's workers share, one counter of which is its step, and leaves restoring that budget to its
+owner. `check()` asks for a verdict without taking a step; `record_progress(results)` measures
+a step whose work is many results at once (its gain is the most any one added). Every run's
+`RunResources` holds a governor over the run's budget with `rounds` as its step: each round
+(plan, follow-up, rescue) is `begin_step()`; each reflection measures the claims admitted since
+the last; `RunLoopPolicy.after_reflect` honours a governor finalize after the budgets have had
+their say, as a stop no critique reopens; `finalize` ends the loop in one `TerminalOutcome`
+(`TERMINAL_OUTCOME`), and the loop state is checkpointed (`loop_state`) and restored on resume.
+The LOOP CONTROL card shows the governor's verdict when the governor stopped the run.
+
+**Consequences.** Every existing cap decides exactly as before (the policy reads them first).
+New: a run whose last `loop_control.convergence.window` rounds added no new evidence stops and
+writes its report. The historical baseline is not applied to runs (turn facts are no baseline
+for a run).
+
+**Amends.** R-20's open follow-up.
 
 ---
 

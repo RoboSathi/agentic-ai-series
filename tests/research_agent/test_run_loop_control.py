@@ -79,3 +79,36 @@ def test_the_card_names_the_step_the_round_and_every_meter(
     # Every meter is on the card's budget tree, in the one schema every agent's card uses.
     budgets = " ".join(card.fields["budgets"])
     assert "searches:" in budgets and "rounds:" in budgets
+
+
+def test_the_run_is_governed_over_its_own_budget(bound: tuple[Any, list[StatusEvent]]) -> None:
+    nodes, _ = bound
+    governor, budget = nodes.resources.governor, nodes.resources.budget
+    governor.begin_step()
+    assert budget.snapshot()["rounds"].spent == 1
+    assert governor.max_steps == int(budget.snapshot()["rounds"].cap)
+
+
+async def test_progress_is_measured_on_what_was_admitted_since_the_last_round(
+    bound: tuple[Any, list[StatusEvent]],
+) -> None:
+    nodes, _ = bound
+    assert await nodes._measure_progress({"measured": 0}) == 0
+    assert nodes.resources.governor.state.gains == [0.0]
+
+
+def test_a_governed_stop_is_the_verdict_on_the_card(
+    bound: tuple[Any, list[StatusEvent]],
+) -> None:
+    from agent_platform.loop_control import LoopVerdict
+
+    nodes, events = bound
+    verdict = LoopVerdict(
+        decision="finalize",
+        layer="convergence",
+        reason_code="NO_PROGRESS",
+        reason="the last 3 steps added no new evidence",
+    )
+    nodes._report_loop({"round": 3}, "synthesize", verdict.reason, governed=verdict)
+    [card] = [e for e in events if e.stage == _LOOP]
+    assert "convergence" in str(card.fields)

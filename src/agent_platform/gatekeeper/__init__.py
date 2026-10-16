@@ -8,7 +8,12 @@ from agent_platform.gatekeeper.contracts import (
 from agent_platform.gatekeeper.gatekeeper import Gatekeeper, GatekeeperImpl, RoleAuthorizer
 from agent_platform.gatekeeper.hierarchy import AuthorityHierarchyResolver
 from agent_platform.gatekeeper.ledger import CumulativeLedger
-from agent_platform.gatekeeper.tier2 import NullTier2Advisor, SemanticTier2Advisor, Tier2Advisor
+from agent_platform.gatekeeper.tier2 import (
+    NullTier2Advisor,
+    SemanticTier2Advisor,
+    Tier2Advisor,
+    create_tier2_advisor,
+)
 from agent_platform.gatekeeper.types import (
     AdvisoryFlag,
     AuthorityContext,
@@ -41,5 +46,6 @@ __all__ = [
     "SemanticTier2Advisor",
     "Standing",
     "Tier2Advisor",
+    "create_tier2_advisor",
     "Verdict",
 ]

@@ -12,9 +12,10 @@ from typing import Protocol
 
 from agent_platform.hallucination_check.evidence import EvidenceLedger
 from agent_platform.knowledge.web import FetchedPage, WebGateway
-from agent_platform.loop_control import BudgetGuard
+from agent_platform.loop_control import BudgetGuard, LoopGovernor, build_shared_loop_governor
 from agent_platform.resilience import Bulkhead, ResourcePoolBulkhead
 from research_agent.config.settings import ResearchSettings
+from research_agent.domain.budget import ROUNDS
 from research_agent.domain.rubric import Contract
 from research_agent.domain.trace import RunTrace
 from research_agent.guardrails.injection import InjectionScreen
@@ -52,6 +53,11 @@ class RunResources:
     page_reads: Bulkhead = field(default_factory=ResourcePoolBulkhead)
     cancel: asyncio.Event = field(default_factory=asyncio.Event)
     trace: RunTrace = field(default_factory=RunTrace)
+    # The platform's loop governor, over this run's budget: a research round is its step.
+    governor: LoopGovernor = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.governor = build_shared_loop_governor(self.budget, ROUNDS)
 
     @property
     def cancelled(self) -> bool:

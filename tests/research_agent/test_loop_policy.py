@@ -8,9 +8,14 @@ from typing import Any
 
 import pytest
 
+from agent_platform.loop_control import LoopVerdict
 from agent_platform.runtime.verification.acceptance import CheckVerdict
 from research_agent.audit.independent import AuditResult
-from research_agent.research.loop_policy import LoopSnapshot, RunLoopPolicy
+from research_agent.research.loop_policy import (
+    TERMINAL_OUTCOME,
+    LoopSnapshot,
+    RunLoopPolicy,
+)
 from research_agent.research.stop_rules.base import StopDecision
 
 pytestmark = pytest.mark.usefixtures("ra_config")
@@ -44,6 +49,40 @@ def _verdict(item_id: str, name: str, passed: bool) -> CheckVerdict:
 
 ANSWERED = StopDecision(stop=True, reason="answered")
 OPEN = StopDecision(stop=False, reason="gaps remain")
+
+
+def _governed(decision: str, layer: str | None = "convergence") -> LoopVerdict:
+    return LoopVerdict(
+        decision=decision, layer=layer, reason_code="NO_PROGRESS",  # type: ignore[arg-type]
+        reason="the last 3 steps added no new evidence",
+    )  # fmt: skip
+
+
+class TestTheGovernorsVerdict:
+    def test_a_plateau_stops_the_run_with_the_governors_reason(self) -> None:
+        verdict = _governed("finalize")
+        call = _policy().after_reflect(_snap(governed=verdict), OPEN)
+        assert call.stop and call.reason == verdict.reason and call.verdict == verdict
+
+    def test_a_governed_stop_is_not_reopened_by_a_critique(self) -> None:
+        call = _policy().after_reflect(_snap(governed=_governed("finalize")), OPEN)
+        assert not call.judge and call.cause is None
+
+    def test_a_continue_verdict_changes_nothing(self) -> None:
+        call = _policy().after_reflect(_snap(governed=_governed("continue", None)), OPEN)
+        assert not call.stop
+
+    def test_the_budgets_speak_before_the_governor(self) -> None:
+        snap = _snap(exhausted=("searches",), governed=_governed("finalize"))
+        call = _policy().after_reflect(snap, OPEN)
+        assert call.cause == "searches" and call.verdict is None
+
+    def test_an_answered_run_is_answered_whatever_the_governor_says(self) -> None:
+        call = _policy().after_reflect(_snap(governed=_governed("finalize")), ANSWERED)
+        assert call.reason == "answered" and call.judge
+
+    def test_every_run_status_ends_in_one_terminal_outcome(self) -> None:
+        assert set(TERMINAL_OUTCOME) == {"COMPLETE", "PARTIAL", "CANCELLED", "FAILED"}
 
 
 class TestAfterReflection:

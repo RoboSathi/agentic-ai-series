@@ -39,10 +39,11 @@ from agent_platform.durability import (
     create_checkpointer,
     model_types,
 )
-from agent_platform.gatekeeper import Gatekeeper, GatekeeperImpl
+from agent_platform.gatekeeper import Gatekeeper, GatekeeperImpl, create_tier2_advisor
 from agent_platform.gatekeeper.ledger import CumulativeLedger
 from agent_platform.hallucination_check import DetectionLadder
 from agent_platform.interface.host.memory import long_term_memory
+from agent_platform.judge import create_claim_judge
 from agent_platform.llm.client import LLMClient, create_llm_client
 from agent_platform.llm.local_reranker import create_reranker
 from agent_platform.loop_control import LoopBudget, build_loop_governor
@@ -295,7 +296,8 @@ def build_agent(
     platform_store = SqlitePlatformStore(connection, agent_id=agent_id)
     policy_repo = AgentPolicyRepository(platform_store)
     agent_policy = policy_repo.get()
-    scoring = cascade or create_scoring_cascade()
+    # The independent score's cascade, its tier 5 the platform judge (when that tier is on).
+    scoring = cascade or create_scoring_cascade(judge=create_claim_judge())
     memory_enabled = features.is_on("memory") if with_memory is None else with_memory
     observing = settings.observability.enabled if observe is None else observe
 
@@ -461,6 +463,7 @@ def build_agent(
             ),
             audit=ledger,
             business_rules=CustomerSupportBusinessRules(agent_policy),
+            advisor=create_tier2_advisor(),
         )
         if features.is_on("gatekeeper")
         else None

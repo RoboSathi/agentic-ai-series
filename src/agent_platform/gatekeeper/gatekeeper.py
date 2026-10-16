@@ -17,6 +17,7 @@ from agent_platform.core.primitives.money import Money, money_or_none
 from agent_platform.gatekeeper.contracts import AllowAllBusinessRules, DeterministicBusinessRules
 from agent_platform.gatekeeper.hierarchy import AuthorityHierarchyResolver
 from agent_platform.gatekeeper.ledger import CumulativeLedger
+from agent_platform.gatekeeper.tier2 import Tier2Advisor
 from agent_platform.gatekeeper.types import (
     AuthorityContext,
     AuthorityDecision,
@@ -86,8 +87,11 @@ class GatekeeperImpl:
         business_rules: DeterministicBusinessRules | None = None,
         audit: AuditLedger | None = None,
         hierarchy: AuthorityHierarchyResolver | None = None,
+        advisor: Tier2Advisor | None = None,
     ) -> None:
         self._authorizer = authorizer
+        # Tier 2: a note on a decision, never its reason (`tier2.py`). None: no note at all.
+        self._advisor = advisor
         self._policy = policy
         self._ledger = ledger
         self._business_rules = business_rules or AllowAllBusinessRules()
@@ -155,6 +159,7 @@ class GatekeeperImpl:
                 checks=checks,
             )
 
+        decision = await self._advised(call, decision)
         self._record(call, context, decision)
         self._logger.info(
             "Gatekeeper decision",
@@ -169,8 +174,16 @@ class GatekeeperImpl:
             question=decision.question,
             reason=decision.reason,
             checks=[_compact_check(c) for c in decision.checks],
+            advisory=decision.advisory.model_dump() if decision.advisory else None,
         )
         return decision
+
+    async def _advised(self, call: ToolCall, decision: AuthorityDecision) -> AuthorityDecision:
+        """The decision with Tier 2's note on it, its verdict unchanged. A denied call gets
+        none: nothing will run for a note to be about."""
+        if self._advisor is None or decision.verdict == "deny":
+            return decision
+        return decision.model_copy(update={"advisory": await self._advisor.flag(call)})
 
     def commit(
         self, call: ToolCall, authority: AuthorityContext, amount: Money | None = None
@@ -495,6 +508,11 @@ class GatekeeperImpl:
                     "policy_authority_rank": self._policy.authority_rank,
                     "policy_updated_at": self._policy.updated_at,
                     "standing": decision.standing,
+                    **(
+                        {"advisory": decision.advisory.model_dump(mode="json")}
+                        if decision.advisory
+                        else {}
+                    ),
                 },
                 model_version=model,
                 decision=decision.verdict,

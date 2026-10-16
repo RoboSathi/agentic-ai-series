@@ -10,7 +10,7 @@ sentence the reflector already composed).
 
 from typing import Any
 
-from agent_platform.loop_control import BudgetGuard
+from agent_platform.loop_control import BudgetGuard, LoopVerdict
 from agent_platform.observability import StageReporter
 from agent_platform.observability.step_events import StepEvents
 from research_agent.config.settings import RunLoopWords
@@ -34,17 +34,23 @@ class RunLoopReport:
         because: str,
         criteria: dict[str, Any] | None = None,
         cause: str | None = None,
+        governed: LoopVerdict | None = None,
     ) -> dict[str, Any]:
         """One LOOP CONTROL card; the fields it showed, for the log.
 
-        `cause` is the budget counter that ended the loop, when one did; a stop without one is
-        the run finishing its work, and the card says nothing intervened.
+        `cause` is the budget counter that ended the loop, when one did; `governed` the loop
+        governor's verdict, when the governor did. A stop with neither is the run finishing its
+        work, and the card says nothing intervened.
         """
         snapshot = budget.snapshot()
         max_rounds = int(snapshot[ROUNDS].cap)
         steps = StepEvents(self._reporter, max_steps=max_rounds)
         stopping = next_step in self._words.stops
-        verdict = budget.verdict(round_number, max_rounds, stopping=stopping, cause=cause)
+        verdict = (
+            governed.model_copy(update={"round_number": round_number, "max_rounds": max_rounds})
+            if governed is not None
+            else budget.verdict(round_number, max_rounds, stopping=stopping, cause=cause)
+        )
         return steps.loop_verdict(
             verdict,
             criteria=criteria,
