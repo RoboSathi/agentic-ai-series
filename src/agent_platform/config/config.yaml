@@ -2076,6 +2076,23 @@ security:
     # Presidio recognizers that are a model (spaCy NER); the rest (patterns, checksums,
     # phone-number rules) are deterministic, and the PII card reports the two separately.
     model_recognizers: [SpacyRecognizer]
+    # Values the harness read from its own records (a verified customer's name and email),
+    # registered by the agent and found by exact match wherever they appear: a model guesses
+    # from context and misses a lone unusual name; a value the harness already holds is certain.
+    known_values:
+      min_chars: 3
+      max_entries: 10000
+    # Table → column → entity: which columns of an agent's own records hold personal data.
+    # Every value a query reads from one is registered as known before the read is logged.
+    # The platform knows no tables; an agent declares its own.
+    known_columns: {}
+    # Tokenised at the source (security/pii/source.py): a person's message, a tool's result and
+    # a check's facts become tokens as they enter, so nothing is written or shown with a value.
+    # Values come back only for a tool's arguments and the reply a person reads, from this map,
+    # held in memory and never written.
+    source:
+      max_tokens: 50000
+      cache_entries: 1024
     vault:
       key_env: PII_VAULT_KEY
       required: false

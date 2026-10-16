@@ -97,6 +97,8 @@ from agent_platform.runtime.verification import EffectVerifier
 from agent_platform.scoring import NollmScoringCascadeImpl
 from agent_platform.security import MessageScreener, SecuritySuite
 from agent_platform.security.auth.policy import AgentPolicy
+from agent_platform.security.pii.active import admit_if_on, tokenise_if_on
+from agent_platform.security.pii.source import ADMITTED_KEY, Admitted
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from agent_platform.tools.path import ToolPath
 from customer_support_agent.config import get_agent_settings
@@ -402,28 +404,32 @@ class CustomerSupportAgent(
         # invisible to `execute`, and every lookup would silently scope to
         # nobody.
         customer = customer or self._sessions.get(session_id) or current_customer()
+        # The customer's words become tokens before anything holds them — the trace, the
+        # checkpoint, the run registry, a log line (`security.pii.source`).
+        admitted = admit_if_on(query)
         # One turn, one trace: every line any subsystem logs for this turn
         # carries it, with the agent, the session and the caller's channel.
         # And one read of each order: every stage of the turn shares it.
         with (
             bound_customer(customer),
-            self._turn_trace(session_id, {"query": query}) as trace,
+            self._turn_trace(session_id, {"query": admitted.text}) as trace,
             order_turn_scope(),
         ):
-            state = await self._handle_bound(query, session_id, customer)
+            state = await self._handle_bound(admitted, session_id, customer)
             trace.annotate(_turn_facts(state))
             trace.finish({"response": state.response})
             return state
 
     async def _handle_bound(
-        self, query: str, session_id: str, customer: Customer | None
+        self, admitted: Admitted, session_id: str, customer: Customer | None
     ) -> AgentState:
         """One turn, with the customer already bound for exactly its duration."""
         self._governor.begin_turn()
         self._steps.begin(None)
         await self._recover_conversation(session_id)
         initial = AgentState(
-            query=query,
+            query=admitted.text,
+            metadata={ADMITTED_KEY: admitted.record()},
             session_id=session_id,
             actor=self._actor,
             customer_id=customer.customer_id if customer else None,
@@ -462,7 +468,7 @@ class CustomerSupportAgent(
         A customer code is a credential, not PII, so redaction alone left it in
         `platform_runs` in plain text.
         """
-        redacted = self._security.redact(query)
+        redacted = tokenise_if_on(query)
         if self._authenticator is None:
             return redacted
         return self._authenticator.mask_code(redacted)
@@ -564,7 +570,7 @@ class CustomerSupportAgent(
         if self._working_memory is None or not session_id:
             return {}
         memory = self._working_memory.get(session_id)
-        held = {str(key): self._security.redact(str(value)) for key, value in memory.state.items()}
+        held = {str(key): tokenise_if_on(str(value)) for key, value in memory.state.items()}
         turns = len(memory.history) // 2
         return {
             **held,

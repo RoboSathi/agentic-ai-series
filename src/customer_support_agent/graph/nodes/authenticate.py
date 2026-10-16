@@ -7,6 +7,7 @@ database — never from something the model concluded.
 
 from typing import Any
 
+from agent_platform.security.pii.active import tokenise_if_on
 from customer_support_agent.domain.identity import (
     current_customer,
     set_current_customer,
@@ -137,9 +138,11 @@ class AuthenticationNodes(NodeSupport):
             f"{result.customer.name} (account #{result.customer.customer_id})",
             category="identity",
         )
+        # The read-back names the customer: it enters the state as tokens like anything else
+        # read from a record, and the customer reads their name once it is restored on the way out.
         return {
             **masked,
-            "response": describe_customer(result.user, orders),
+            "response": tokenise_if_on(describe_customer(result.user, orders)),
             "customer_id": result.customer.customer_id,
             "decisions": [*state.decisions, f"auth: verified #{result.customer.customer_id}"],
             # The verified read-back *is* the answer to "here is my code".
@@ -151,7 +154,9 @@ class AuthenticationNodes(NodeSupport):
                 # On screen that saves them a round trip; replayed into
                 # every later prompt it is the single largest thing the
                 # model reads, and about none of what it is asked.
-                "memory_response": summarise_verification(result.customer.name, menu.size),
+                "memory_response": tokenise_if_on(
+                    summarise_verification(result.customer.name, menu.size)
+                ),
             },
         }
 

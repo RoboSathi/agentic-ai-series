@@ -343,6 +343,8 @@ the conversation: an item is queued and the person keeps chatting.
 
 **Supersedes.** The 2026-10-04 Presidio + vault decision; ADR 0012 (provider boundary).
 
+**Amended by** P-40: values are tokenised at the source; the harness itself works on tokens.
+
 ---
 
 ## 5. Grounding and hallucination
@@ -746,6 +748,43 @@ hosted NIM, `cache_hit` mostly reads false, and the reason is now visible instea
 A research role's request text changed (schema moved), so its prompt cache and any recorded
 fixtures that match on it start over.
 
+
+### P-40 — PII is tokenised at the source; a value comes back only for a tool or a person
+
+**Context.** A turn summary showed `verified_customer: Pythagoras (account #19)` with `pii`
+on. The redactor had run, but spaCy NER finds no PERSON in that fragment (tested: none even at
+threshold 0); it does find "Ada Lovelace (account #3)". Redaction was also applied one call
+site at a time (memory notes, tool cards, the summary, the dream inbox, LangSmith, the review
+queue), so file logs, checkpoints and any new card were one forgotten call from a raw value.
+
+**Decision.** (Karan, 2026-10-15/16.)
+- **Known values.** A value the harness read from its own records is registered
+  (`security/pii/known_values.py`) and found by exact, word-bounded match ahead of the model.
+  An agent declares which columns of its records hold personal data
+  (`security.pii.known_columns`; CSA: `users.name/email/phone`), and the database pool reports
+  every row it reads, so those values are registered before the read is even logged. A value the model finds at the source is
+  registered too. The registry is in process memory only. NER stays Presidio with spaCy lg.
+- **At the source** (`security/pii/source.py`, read hot through `security/pii/active.py`):
+  - Each agent's message is admitted (tokenised) at the start of `handle`, before the trace,
+    the checkpoint or the run registry holds it. The screening stage draws the PII card from
+    that admission.
+  - The Executor tokenises a tool's result and restores its arguments.
+  - `AdmittedChecker` tokenises a deterministic check's facts.
+  - The verification read-back is built from tokens.
+- **Values come back** in only four places: a tool's arguments, the reply shown to the person
+  (the TUI; an eval grades the same), a reviewer-approved reply, and the audited
+  `make pii-reveal`. Restoring reads an in-memory token → value map, so it needs no vault key.
+- **Every writer scrubs.** Log records and status events (every card and the turn summary)
+  pass the installed scrub (`core/primitives/scrubbing.py`): known values plus patterns, no
+  model. `PiiBoundary` stays at the provider.
+- `/harness pii off` makes every hook the identity.
+
+**Supersedes.** P-15's "grounding, guardrails and tools work on real values" — they now work
+on tokens. HMAC tokens are deterministic, so evidence and reply still agree.
+
+**Consequences.** Logs, checkpoints, memory, audit and cards hold tokens; a value is
+recovered only through `make pii-reveal`. A PERSON false positive in a product name becomes a
+token and is restored for the customer. Each written string costs a regex pass.
 ---
 
 ## 9. Research agent

@@ -48,6 +48,7 @@ from agent_platform.runtime.verification import EffectVerifier
 from agent_platform.scoring import NollmScoringCascadeImpl
 from agent_platform.security import MessageScreener, SecuritySuite
 from agent_platform.security.auth.policy import AgentPolicy
+from agent_platform.security.pii.active import tokenise_if_on
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
 from agent_platform.tools.path import ToolPath
 from customer_support_agent.config.settings import get_agent_settings
@@ -410,9 +411,9 @@ class NodeSupport:
         """
         if self._working_memory is None or not state.session_id:
             return
-        safe_value = self._security.redact(str(value))
+        safe_value = tokenise_if_on(str(value))
         self._working_memory.get(state.session_id).set(
-            key, self._security.redact(value) if isinstance(value, str) else value
+            key, tokenise_if_on(value) if isinstance(value, str) else value
         )
         self._done(
             "working_memory_write",

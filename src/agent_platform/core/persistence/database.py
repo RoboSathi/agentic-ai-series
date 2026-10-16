@@ -7,6 +7,7 @@ from typing import Any, Iterator, Protocol, TypeVar, runtime_checkable
 
 from agent_platform.config import get_settings
 from agent_platform.core.persistence.types import ExecutionResult
+from agent_platform.core.primitives.scrubbing import observe_rows
 from agent_platform.logging import logged
 
 T = TypeVar("T")
@@ -76,7 +77,9 @@ class SqliteConnectionPool:
                 [dict(row) for row in cursor.fetchall()] if cursor.description is not None else []
             )
             connection.commit()
-            return ExecutionResult(rows=rows, affected=cursor.rowcount)
+        # Before this read's own log line: a personal value a row carries is known from here on.
+        observe_rows(query, rows)
+        return ExecutionResult(rows=rows, affected=cursor.rowcount)
 
     @logged("persistence")
     def execute_many(self, query: str, seq_of_params: list[tuple[Any, ...]]) -> ExecutionResult:

@@ -93,6 +93,7 @@ from agent_platform.security import (
     TermContentModerator,
 )
 from agent_platform.security.pii import PIIFilterImpl
+from agent_platform.security.pii.active import install_pii_scrubbing
 from agent_platform.security.pii.boundary import bounded_roles
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
 from agent_platform.security.prompt_injection.hosted import HostedJailbreakGuard
@@ -163,6 +164,7 @@ def build_agent(
     settings, agent = get_settings(), agent_settings or get_agent_settings()
     posture = features if features is not None else active_features(settings.features)
     set_active_features(posture)
+    install_pii_scrubbing()
     platform = SqlitePlatformStore(
         pool or SqliteConnectionPool(settings.persistence.resolved_db_path),
         agent_id=settings.agent.id,

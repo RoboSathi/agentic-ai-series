@@ -55,6 +55,7 @@ from agent_platform.security import (
 from agent_platform.security.auth.auth import Authorizer
 from agent_platform.security.auth.policy import AgentPolicy
 from agent_platform.security.pii import PIIFilterImpl
+from agent_platform.security.pii.active import install_pii_scrubbing
 from agent_platform.security.pii.boundary import bounded
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
 from agent_platform.tools import NamespacedToolRegistry
@@ -80,6 +81,7 @@ def build_agent(
     """Wire the ops agent from config, honouring anything injected."""
     settings, agent = get_settings(), get_agent_settings()
     posture = features if features is not None else active_features(settings.features)
+    install_pii_scrubbing()
     observability = store or DuckDbObservabilityStore()
     audit = create_audit_ledger(store=observability, agent_id=settings.agent.id)
     install_fact_store(

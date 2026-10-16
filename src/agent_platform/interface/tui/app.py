@@ -65,6 +65,7 @@ from agent_platform.logging import bound_channel, get_logger, log_directory, new
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.types import StatusEvent
 from agent_platform.observability.units import end_session
+from agent_platform.security.pii.active import restore_if_on
 
 AgentFactory = Callable[[StageReporter], Any]
 # Used only when the console is opened with no host at all — a test, or a
@@ -673,9 +674,11 @@ class AgenticTuiApp(App[None]):
                 style=palette("assistant"),
                 classes="agent-label",
             )
-            self._panel.response(state.response or "")
+            # The one place the reply is shown to the person it is for, so the one place its
+            # tokens become values again (`security.pii.source`); everything else keeps tokens.
+            self._panel.response(restore_if_on(state.response or ""))
             self._panel.note(" ", classes="response-gap")
-            self._menu.offer(getattr(state, "choices", None) or [])
+            self._menu.offer([restore_if_on(c) for c in getattr(state, "choices", None) or []])
             # self._panel.note(
             #     f"──────── TURN {self._turn:02d} COMPLETE · {self._status.metrics()} ────────",
             #     style=palette("metrics"),

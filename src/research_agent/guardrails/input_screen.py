@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from agent_platform.logging import get_logger, instrument
 from agent_platform.security import MessageScreener, ScreenSubject
+from agent_platform.security.pii.source import Admitted
 from research_agent.observability.telemetry import RunTelemetry
 
 
@@ -39,10 +40,18 @@ class InputScreen:
         self._telemetry = telemetry
         self._logger = get_logger("research_agent")
 
-    async def screen(self, message: str, session_id: str = "") -> ScreenResult:
+    async def screen(
+        self, message: str, session_id: str = "", admitted: Admitted | None = None
+    ) -> ScreenResult:
+        """`admitted` is the message's admission at the turn's start, when it was tokenised
+        there: its PII card is drawn from it rather than from a second detection."""
         reporter = self._telemetry.reporter
         subject = ScreenSubject(session_id=session_id, trace_id=self._telemetry.trace_id)
-        text = self._screener.redact(message, reporter).text
+        text = (
+            self._screener.report(admitted, reporter).text
+            if admitted is not None
+            else self._screener.redact(message, reporter).text
+        )
         outcome = await self._screener.injection(text, reporter, subject=subject)
         if not outcome.blocked:
             outcome = await self._screener.moderation(text, reporter, subject=subject)

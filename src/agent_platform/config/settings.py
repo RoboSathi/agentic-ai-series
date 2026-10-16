@@ -2247,6 +2247,24 @@ class PiiVaultSettings(BaseModel):
     retention_days: int = Field(ge=1)
 
 
+class PiiKnownValueSettings(BaseModel):
+    """Values the harness read from its own records, found by exact match (`known_values.py`)."""
+
+    # Shorter values are not registered: they could not be told from ordinary words.
+    min_chars: int = Field(gt=0)
+    # How many values the process remembers; the oldest go first.
+    max_entries: int = Field(gt=0)
+
+
+class PiiSourceSettings(BaseModel):
+    """Tokenising at the source (`source.py`): what is remembered, in memory only."""
+
+    # Token → value pairs held so a tool call and a reply can be restored; oldest go first.
+    max_tokens: int = Field(gt=0)
+    # Texts already tokenised (a prompt part is admitted on every turn): text → result.
+    cache_entries: int = Field(gt=0)
+
+
 class PiiSettings(BaseModel):
     """PII detection/redaction/minimization."""
 
@@ -2267,6 +2285,11 @@ class PiiSettings(BaseModel):
     vault: PiiVaultSettings
     # Recognizers that are a model (NER); every other recognizer is a deterministic rule.
     model_recognizers: list[str]
+    known_values: PiiKnownValueSettings
+    # Table → column → entity: the columns of an agent's records that hold personal data,
+    # registered as known values the moment a query reads them.
+    known_columns: dict[str, dict[str, str]] = Field(default_factory=dict)
+    source: PiiSourceSettings
 
 
 class GuardFallbackSettings(BaseModel):

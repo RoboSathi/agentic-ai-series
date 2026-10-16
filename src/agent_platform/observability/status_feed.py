@@ -9,6 +9,7 @@ import time
 from typing import Any, Callable, Iterator, Mapping, Protocol, runtime_checkable
 
 from agent_platform.config import get_settings
+from agent_platform.core.primitives.scrubbing import scrub
 from agent_platform.llm.metering import attach, detach
 from agent_platform.logging import get_logger
 from agent_platform.observability.langsmith import current_trace_url
@@ -171,16 +172,18 @@ class StageReporter:
         turn's summary but draws no card of its own, so a per-write or
         per-lookup record cannot crowd out what a person acts on.
         """
+        # Every card, the turn summary included, as it may be shown and written: with `pii` on,
+        # a known value or a pattern match leaves as its token, whichever stage put it here.
         event = StatusEvent(
             run_id=self._run_id,
             stage=stage,
             status=status,
             event_kind=event_kind,
             tokens_delta=tokens_delta,
-            detail=detail,
-            summary=summary,
+            detail=_scrubbed(detail),
+            summary=_scrubbed(summary),
             group=group,
-            fields=self._stamped(stage, status, fields),
+            fields=_scrubbed(self._stamped(stage, status, fields)),
         )
         if self._tally is not None:
             self._tally.observe(event)
@@ -333,3 +336,18 @@ def _trace_link() -> dict[str, str]:
     """The turn's LangSmith link as a summary field, or nothing when there is none."""
     url = current_trace_url()
     return {get_settings().observability.langsmith.url_field: url} if url else {}
+
+
+def _scrubbed(value: Any) -> Any:
+    """`value` with every string in it through the installed scrub; every other value kept.
+
+    Walked by hand rather than through JSON so a card's numbers, money and lists keep their
+    types for the panel that draws them.
+    """
+    if isinstance(value, str):
+        return scrub(value)
+    if isinstance(value, Mapping):
+        return {key: _scrubbed(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(_scrubbed(item) for item in value)
+    return value

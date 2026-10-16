@@ -32,7 +32,7 @@ from agent_platform.context import (
 from agent_platform.context.factory import build_context_management
 from agent_platform.context.types import TRUST
 from agent_platform.core.persistence import SqliteConnectionPool, SqlitePlatformStore
-from agent_platform.deterministic_checks import DeterministicChecker
+from agent_platform.deterministic_checks import AdmittedChecker, DeterministicChecker
 from agent_platform.durability import (
     RunRegistry,
     SqliteCheckpointer,
@@ -82,6 +82,7 @@ from agent_platform.security import (
     TermContentModerator,
 )
 from agent_platform.security.auth.policy import AgentPolicy, AgentPolicyRepository
+from agent_platform.security.pii.active import install_pii_scrubbing
 from agent_platform.security.pii.boundary import bounded
 from agent_platform.security.prompt_injection.detector import InstructionDataSeparator
 from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
@@ -283,6 +284,8 @@ def build_agent(
     # read another.
     features = features if features is not None else active_features(settings.features)
     set_active_features(features)
+    # Every log line and card passes the PII scrub before it is written (`security.pii`).
+    install_pii_scrubbing()
     agent_id = settings.agent.id
     connection = pool or SqliteConnectionPool(agent_settings.resolved_db_path)
     # Idempotent; upgrades a database built before reply reviews shared the queue.
@@ -348,8 +351,9 @@ def build_agent(
     # `deterministic_checks` in its own config and injects its own checker here,
     # with nothing in the platform to change.
     tool_handler = CustomerSupportToolHandler(tools)
+    # Its facts are read from the agent's records, so they come out as tokens.
     deterministic_checker = (
-        deterministic_checks or OrderChecks(orders, refund_policy=refund_policy)
+        AdmittedChecker(deterministic_checks or OrderChecks(orders, refund_policy=refund_policy))
         if features.is_on("deterministic_checks")
         else None
     )

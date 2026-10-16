@@ -20,6 +20,7 @@ from typing import Any, NamedTuple, Protocol, runtime_checkable
 from agent_platform.config import get_settings
 from agent_platform.core.primitives.pii_tokens import framed_token
 from agent_platform.logging import get_logger
+from agent_platform.security.pii.known_values import KnownValueDetector
 from agent_platform.security.pii.types import PIISpan, RedactionMode
 from agent_platform.security.pii.vault import PIIVault, create_pii_vault
 
@@ -125,14 +126,18 @@ class PIIFilterImpl:
         """Union of every detector's findings, de-overlapped, less the allow-listed values.
 
         Filtered here, once, so every engine honours the list: a support
-        address the agent gives out on purpose is not a customer's data.
+        address the agent gives out on purpose is not a customer's data. A
+        span inside a token already written is not personal data either, so
+        tokenising text twice changes nothing the second time.
         """
+        written = [(m.start(), m.end()) for m in framed_token().finditer(text)]
         return _resolve_overlaps(
             [
                 span
                 for detector in self._detectors
                 for span in detector.detect(text)
                 if span.text.casefold() not in self._allow_list
+                and not any(span.start < end and start < span.end for start, end in written)
             ]
         )
 
@@ -204,42 +209,38 @@ class PIIFilterImpl:
         return framed_token().sub(value, text)
 
     def tokens(self, text: str) -> list[RedactedSpan]:
-        """What redacting `text` replaces: each span's category, recognizer, score and token.
+        """What tokenising `text` replaces: each span's category, recognizer, score and token.
 
-        For a card and a log line — never the value itself. Empty without a vault (masking).
+        For a card and a log line — never the value itself.
         """
-        if self._vault is None:
-            return []
-        return [
-            RedactedSpan(
-                category=span.category,
-                detector=span.detector,
-                score=span.score,
-                start=span.start,
-                end=span.end,
-                token=self._vault.token(span.category, span.text),
-            )
-            for span in self.detect(text)
-        ]
+        return self.tokenize_shown(text)[2]
 
     def tokenize(self, text: str) -> tuple[str, dict[str, str]]:
         """Text with every span replaced by its token, and token → value for what was replaced.
 
-        Always tokens, never a mask, because the caller (the provider boundary) must be able
-        to put the values back into what comes back. With a vault the token is the vault's
-        (and the value is kept for an audited reveal); without one it is keyed by a secret
-        this process alone holds, so it is consistent within the process and opaque outside.
+        Always tokens, never a mask, because the caller (the provider boundary, the source)
+        must be able to put the values back. With a vault the token is the vault's (and the
+        value is kept for an audited reveal); without one it is keyed by a secret this process
+        alone holds, so it is consistent within the process and opaque outside.
         """
+        tokenized, found, _ = self.tokenize_shown(text)
+        return tokenized, found
+
+    def tokenize_shown(self, text: str) -> tuple[str, dict[str, str], list[RedactedSpan]]:
+        """`tokenize`, and each replacement as a card may show it — detected once for both."""
         spans = self.detect(text)
-        if not spans:
-            return text, {}
         found: dict[str, str] = {}
+        shown: list[RedactedSpan] = []
         tokenized = text
         for span in sorted(spans, key=lambda item: item.start, reverse=True):
-            token = self._token_format.format(category=span.category, token=self._token(span))
+            key = self._token(span)
+            token = self._token_format.format(category=span.category, token=key)
             found[token] = span.text
+            shown.append(
+                RedactedSpan(span.category, span.detector, span.score, span.start, span.end, key)
+            )
             tokenized = tokenized[: span.start] + token + tokenized[span.end :]
-        return tokenized, found
+        return tokenized, found, shown[::-1]
 
     def _token(self, span: PIISpan) -> str:
         if self._vault is not None:
@@ -267,17 +268,28 @@ def _process_key() -> bytes:
 
 
 def _default_detectors() -> list[PIIDetector]:
-    """Presidio (the patterns as its fallback) when configured; the patterns alone otherwise.
+    """The known values first, then Presidio (the patterns as its fallback) when configured;
+    the patterns alone otherwise.
 
     Building one never loads anything: the analyzer is shared, loaded once — in the background
     by a console that starts it early, or on the first message otherwise.
     """
+    known: PIIDetector = KnownValueDetector()
     patterns = PatternPIIDetector()
     if get_settings().security.pii.engine != "presidio":
-        return [patterns]
+        return [known, patterns]
     from agent_platform.security.pii.presidio import PresidioPIIDetector
 
-    return [PresidioPIIDetector(fallback=patterns)]
+    return [known, PresidioPIIDetector(fallback=patterns)]
+
+
+def rule_detectors() -> list[PIIDetector]:
+    """The deterministic detectors alone — the known values and the patterns, no model.
+
+    What a pass over everything written uses (each log line, each card): certain and cheap,
+    where a model on every string would cost a turn seconds.
+    """
+    return [KnownValueDetector(), PatternPIIDetector()]
 
 
 def _resolve_overlaps(spans: list[PIISpan]) -> list[PIISpan]:

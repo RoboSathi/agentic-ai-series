@@ -44,6 +44,8 @@ from agent_platform.observability.units import (
     mark_cancelled,
     open_task,
 )
+from agent_platform.security.pii.active import admit_if_on
+from agent_platform.security.pii.source import Admitted
 from research_agent.config.settings import ResearchAgentSettings
 from research_agent.domain.report import COVERAGE_AND_LIMITS, Report, SessionPhase
 from research_agent.domain.rubric import Contract
@@ -145,28 +147,33 @@ class ResearchAgent:
         return self._sessions.setdefault(session_id, SessionRecord())
 
     async def handle(self, query: str, session_id: str) -> TurnResult:
-        """One turn, under a trace of its own that every log line it causes carries."""
+        """One turn, under a trace of its own that every log line it causes carries.
+
+        The message becomes tokens before anything holds it (`security.pii.source`).
+        """
+        admitted = admit_if_on(query)
+        query = admitted.text
         with turn_trace(
             self._trace_exporter,
             agent=get_settings().agent.id,
             session=session_id,
             inputs={"query": query},
         ) as trace:
-            result = await self._summarised(query, session_id)
+            result = await self._summarised(admitted, session_id)
             self._record_turn(query, session_id, result)
             trace.annotate({"phase": result.phase, "run_id": result.run_id})
             trace.finish({"response": result.response, "phase": result.phase})
             return result
 
-    async def _summarised(self, query: str, session_id: str) -> TurnResult:
+    async def _summarised(self, admitted: Admitted, session_id: str) -> TurnResult:
         """The turn, ended by the same TURN SUMMARY card csa's turns end with."""
         reporter = self._telemetry.reporter
         if reporter is None:
-            return await self._handle(query, session_id)
+            return await self._handle(admitted.text, session_id, admitted)
         words = self._settings.turn_summary
         reporter.begin_turn(session=session_id)
         try:
-            result = await self._handle(query, session_id)
+            result = await self._handle(admitted.text, session_id, admitted)
         except Exception:
             reporter.end_turn("failed", words.crashed)
             raise
@@ -180,7 +187,9 @@ class ResearchAgent:
         reporter.end_turn(status, words.outcomes.get(result.phase, result.phase))
         return result
 
-    async def _handle(self, query: str, session_id: str) -> TurnResult:
+    async def _handle(
+        self, query: str, session_id: str, admitted: Admitted | None = None
+    ) -> TurnResult:
         record = self.session(session_id)
         verb = _verb(query)
         names = self._settings.command_names
@@ -190,7 +199,7 @@ class ResearchAgent:
             return TurnResult(response=self._settings.messages.run_busy, phase="RUNNING")
         research = verb == names.research
         if self._screen is not None and (verb is None or research):
-            screened = await self._screen.screen(query, session_id)
+            screened = await self._screen.screen(query, session_id, admitted)
             if screened.blocked:
                 return TurnResult(response=screened.refusal, phase=record.phase)
             query = screened.text

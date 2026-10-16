@@ -18,20 +18,17 @@ Two rules hold on every path:
 """
 
 import atexit
-import json
 import random
 import threading
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from contextvars import ContextVar
-from dataclasses import asdict, is_dataclass
 from typing import Any, Protocol, TypeVar
-
-from pydantic import BaseModel
 
 from agent_platform.config import get_settings
 from agent_platform.config.settings import LangSmithSettings
+from agent_platform.core.primitives.string_tree import map_strings
 from agent_platform.logging import bound_log_context, get_logger, new_trace_id
 from agent_platform.observability.units import turn_bracket
 
@@ -203,35 +200,8 @@ class LangSmithExporter:
 
 
 def redact_tree(value: Any, redact: TextRedactor) -> Any:
-    """Every string in a payload passed through the redactor; the shape is kept.
-
-    The payload is made plain JSON first. A graph node's input is the agent's
-    state *model*, not a dict, and a walk that only knew dicts and lists
-    passed it — and every customer string inside it — through untouched.
-    Whatever type arrives, nothing reaches the walk that it cannot see into.
-    """
-    return _redact_plain(json.loads(json.dumps(value, default=_plain)), redact)
-
-
-def _plain(value: Any) -> Any:
-    """A JSON-encodable stand-in for an object `json` cannot encode."""
-    if isinstance(value, BaseModel):
-        return value.model_dump(mode="json")
-    if is_dataclass(value) and not isinstance(value, type):
-        return asdict(value)
-    if isinstance(value, (set, frozenset)):
-        return list(value)
-    return str(value)
-
-
-def _redact_plain(value: Any, redact: TextRedactor) -> Any:
-    if isinstance(value, str):
-        return redact(value)
-    if isinstance(value, dict):
-        return {key: _redact_plain(item, redact) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_redact_plain(item, redact) for item in value]
-    return value
+    """Every string in a payload passed through the redactor; the shape is kept."""
+    return map_strings(value, redact)
 
 
 def is_routing_run(name: str, run_type: str, extra: Mapping[str, Any] | None) -> bool:

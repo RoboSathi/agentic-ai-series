@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from agent_platform.config import get_settings
+from agent_platform.core.primitives.pii_tokens import framed_token
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.types import StatusEvent
 from agent_platform.security.content_moderation.types import ModerationVerdict
@@ -87,7 +88,10 @@ def _words() -> Any:
 def test_personal_data_is_redacted_and_reported_never_blocked() -> None:
     screener, reporter, events = _screener(_Suite())
     outcome = screener.redact(f"mail me at {EMAIL}", reporter)
-    assert outcome.text == "mail me at [REDACTED]" and outcome.categories == ["email"]
+    # Tokenised at the source (ADR P-40), never masked: the value can be restored for a tool.
+    # Admitted through the platform's source, so the category is its entity name.
+    assert EMAIL not in outcome.text and outcome.categories == ["EMAIL_ADDRESS"]
+    assert framed_token().search(outcome.text) is not None
     card = _finished(events, PII_STAGE)
     assert card.status == "completed" and card.fields["matches"] == 1
     assert card.event_kind == "security"

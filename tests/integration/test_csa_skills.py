@@ -139,7 +139,7 @@ class TestARefundTurn:
         system = (await _refund_turn(seeded_pool, audit, procedural=True)).system()
         assert system.startswith("# Customer Support Agent")
         assert "# Skill: refund-workflow" in system
-        assert "full total, whatever it is" in system
+        assert "with the order's full total" in system
         assert "## Preconditions" not in system  # the people's sections are not sent
 
     async def test_one_skill_card_says_what_ran_and_why(

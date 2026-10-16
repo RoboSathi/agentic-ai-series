@@ -10,6 +10,7 @@ from typing import Any
 
 from agent_platform.deterministic_checks import DeterministicCheckRequest
 from agent_platform.security import MessageScreener, ScreenOutcome, ScreenSubject
+from agent_platform.security.pii.source import ADMITTED_KEY, Admitted
 from customer_support_agent.deterministic_checks import checked_order, owned_order_id
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
 from customer_support_agent.graph.nodes._support import ORDER_SNAPSHOT, NodeSupport
@@ -51,7 +52,12 @@ class ScreeningNodes(NodeSupport):
         ordinary, not an attack — the stage that refuses things is
         `prompt_injection`, which runs alongside this one.
         """
-        outcome = self._screener().redact(state.query, self._reporter)
+        admitted = state.metadata.get(ADMITTED_KEY)
+        outcome = (
+            self._screener().report(Admitted.from_record(state.query, admitted), self._reporter)
+            if admitted is not None
+            else self._screener().redact(state.query, self._reporter)
+        )
         return {
             "model_query": outcome.text,
             "decisions": [

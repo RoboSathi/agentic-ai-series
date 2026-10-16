@@ -32,6 +32,25 @@ def framed_token() -> re.Pattern[str]:
     return _shapes(pii.token_format, pii.token_chars)[0]
 
 
+@cache
+def _named(token_format: str, chars: int) -> re.Pattern[str]:
+    parts = {"category": rf"(?P<category>{_CATEGORY})", "token": rf"[0-9a-f]{{{chars}}}"}
+    return re.compile(
+        "".join(
+            re.escape(literal) + parts.get(name or "", "")
+            for literal, name, _, _ in Formatter().parse(token_format)
+        ),
+        re.IGNORECASE,
+    )
+
+
+def token_category(token: str) -> str:
+    """The category a framed token names (`[PERSON:3f9a1c2b7e10]` → `PERSON`), else ""."""
+    pii = get_settings().security.pii
+    match = _named(pii.token_format, pii.token_chars).fullmatch(token)
+    return match.group("category") if match else ""
+
+
 def bare_token() -> re.Pattern[str]:
     """A token with its frame lost ("3f9a1c2b7e10")."""
     pii = get_settings().security.pii

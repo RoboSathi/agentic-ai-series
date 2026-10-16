@@ -3,6 +3,11 @@
 The file log is the authoritative record and is written independently of the
 TUI: the TUI's live feed is a human-readable summary only, so full structured
 detail for the same event always lands here (PRD FR-56).
+
+Every record passes the installed scrub (`core.primitives.scrubbing`) as it is
+made: with `pii` on, a known value or a pattern match is written as its token,
+whatever wrote it. Nothing is truncated; a token is reversible through the
+audited `make pii-reveal`.
 """
 
 import json
@@ -19,6 +24,7 @@ from rich.text import Text
 from rich.theme import Theme
 
 from agent_platform.config import get_settings
+from agent_platform.core.primitives.scrubbing import scrub
 from agent_platform.interface.presentation.text_tree import value_lines
 from agent_platform.logging.trace_context import log_context_fields
 
@@ -147,8 +153,8 @@ class RichLogger:
 
         self._logger.log(
             _LEVEL_TO_INT[level],
-            message,
-            extra={_STRUCTURED_FIELDS: fields},
+            scrub(message),
+            extra={_STRUCTURED_FIELDS: scrub(fields)},
         )
 
     def info(
@@ -205,9 +211,9 @@ class RichLogger:
         fields = {**log_context_fields(), **fields}
 
         self._logger.exception(
-            msg,
+            scrub(msg),
             extra={
-                _STRUCTURED_FIELDS: fields,
+                _STRUCTURED_FIELDS: scrub(fields),
             },
         )
 
@@ -279,7 +285,7 @@ class RichLogger:
         """One call-trace record with machine-readable file details."""
 
         fields = {**log_context_fields(), **(structured_fields or {})}
-        self._logger.debug(message, extra={_STRUCTURED_FIELDS: fields})
+        self._logger.debug(scrub(message), extra={_STRUCTURED_FIELDS: scrub(fields)})
 
 
 _SHARED_CONSOLE: Console | None = None

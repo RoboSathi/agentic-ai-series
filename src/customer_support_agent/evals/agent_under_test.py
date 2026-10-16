@@ -31,6 +31,7 @@ from agent_platform.logging.trace_context import bound_channel
 from agent_platform.memory import EpisodicStore
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
 from agent_platform.observability.types import StatusEvent
+from agent_platform.security.pii.active import restore_if_on
 from customer_support_agent.config.settings import CsaEvalSettings, get_agent_settings
 from customer_support_agent.domain.identity import Customer, set_current_customer
 from customer_support_agent.evals.dataset.schema import CsaCasePayload
@@ -117,7 +118,8 @@ class CsaAgentUnderTest:
                         turn, session_id=self._session(case), customer=customer
                     )
                 states.append(state)
-                replies.append(state.response)
+                # Graded as the customer reads it: the reply's tokens restored, as on screen.
+                replies.append(restore_if_on(state.response))
             return self._transcript(
                 case, replies, states, feed.events, turn_starts, llm, pool, started
             )

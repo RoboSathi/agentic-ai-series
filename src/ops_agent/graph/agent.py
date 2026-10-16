@@ -30,6 +30,7 @@ from agent_platform.observability import StageReporter
 from agent_platform.observability.langsmith import NullTraceExporter, TraceExporter, turn_trace
 from agent_platform.observability.units import close_task
 from agent_platform.security import MessageScreener, ScreenSubject
+from agent_platform.security.pii.active import admit_if_on
 from agent_platform.tools import NamespacedToolRegistry
 from ops_agent.config.settings import OpsAgentSettings
 from ops_agent.graph.nodes import OpsNodes
@@ -93,7 +94,8 @@ class OpsAgent:
         return self._instructions.catalog
 
     async def handle(self, query: str, session_id: str) -> TurnResult:
-        """One turn, under a trace of its own."""
+        """One turn, under a trace of its own; the message enters as tokens."""
+        query = admit_if_on(query).text
         with turn_trace(
             self._exporter,
             agent=get_settings().agent.id,

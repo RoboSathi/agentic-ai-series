@@ -14,6 +14,7 @@ from typing import Any
 from agent_platform.config import get_settings
 from agent_platform.core.persistence import SqliteConnectionPool
 from agent_platform.deterministic_checks import (
+    AdmittedChecker,
     DeterministicChecker,
     DeterministicCheckRequest,
     DeterministicCheckResult,
@@ -58,7 +59,9 @@ class TestThePlatformOwnsOnlyTheContract:
             deterministic_checks=_AnotherAgentsRules(),
             features=get_settings().features.with_override("deterministic_checks", True),
         )
-        assert isinstance(agent._deterministic_checks, _AnotherAgentsRules)
+        # Wrapped so its facts enter as tokens (ADR P-40); the rules are still the agent's own.
+        assert isinstance(agent._deterministic_checks, AdmittedChecker)
+        assert isinstance(agent._deterministic_checks.inner, _AnotherAgentsRules)
 
 
 class TestCustomerSupportRules:

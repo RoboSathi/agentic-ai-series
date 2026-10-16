@@ -165,6 +165,14 @@ security:
   pii:
     # The tool-call fields this agent's tools actually take.
     tool_call_allowed_fields: [order_id, user_id, amount, reason, status]
+    # A customer row's personal columns (ADR P-40): registered as known values the moment a
+    # query reads them, so each is found by exact match everywhere after — however unusual a
+    # name the NER model would miss.
+    known_columns:
+      users:
+        name: PERSON
+        email: EMAIL_ADDRESS
+        phone: PHONE_NUMBER
     # The business's own support address, not a customer's, so it is never redacted.
     allow_list:
       - &support_contact contact@robosathi.com

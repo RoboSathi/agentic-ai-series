@@ -107,8 +107,11 @@ class TestTheTurnSummaryHoldsWhatWorkingMemoryHolds:
         return agent
 
     def test_the_facts_and_how_many_turns_it_carries(self) -> None:
-        assert self._agent()._held("s") == {
-            "verified_customer": "Linus Hoare (account #89)",
+        held = self._agent()._held("s")
+        # The name is a token, never the value (ADR P-40): the leak this test now guards.
+        assert "Linus Hoare" not in held["verified_customer"]
+        assert held["verified_customer"].endswith("(account #89)")
+        assert {k: v for k, v in held.items() if k != "verified_customer"} == {
             "order_under_discussion": "order 10975",
             "history": "2 turns",
         }

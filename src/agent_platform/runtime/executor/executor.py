@@ -27,6 +27,11 @@ from agent_platform.runtime.executor.types import (
     ExecutionAuditEvent,
     ExecutionOutcome,
 )
+from agent_platform.security.pii.active import (
+    restore_tree_if_on,
+    tokenise_if_on,
+    tokenise_tree_if_on,
+)
 from agent_platform.tools.types import ToolCall, ToolResult
 
 # The idempotency key of the call being executed right now ("" for a read,
@@ -147,10 +152,14 @@ class ToolExecutorImpl:
                 self._emit_outcome(outcome, approved)
                 return outcome
 
+        # The one place a tool is handed real values: what the model wrote holds tokens, and
+        # a lookup by email needs the email (`security.pii.source`).
+        handed = call.model_copy(update={"params": restore_tree_if_on(call.params)})
+
         async def run_handler() -> Any:
             token = _EXECUTION_KEY.set(key)
             try:
-                return await tool_run(call.action, self._handler.execute)(call)
+                return await tool_run(call.action, self._handler.execute)(handed)
             finally:
                 _EXECUTION_KEY.reset(token)
 
@@ -175,6 +184,9 @@ class ToolExecutorImpl:
             self._logger.exception("Approved tool handler raised", action=call.action)
             normalized = ToolResult(success=False, error=f"Tool '{call.action}' failed: {exc}")
             timed_out = False
+        # What the tool returned enters the harness here, so it enters as tokens: remembered,
+        # audited, shown and sent to the model without a value in it.
+        normalized = _admitted(normalized)
 
         if call.side_effecting and self._idempotency is not None and normalized.success:
             # Remember only successful outcomes. A transient failure or timeout
@@ -283,6 +295,17 @@ class ToolExecutorImpl:
                     "error": outcome.result.error or "",
                 },
             )
+
+
+def _admitted(result: ToolResult) -> ToolResult:
+    """A tool's result with its personal data tokenised, when the posture declares `pii`."""
+    return result.model_copy(
+        update={
+            "output": tokenise_if_on(result.output),
+            "data": tokenise_tree_if_on(result.data),
+            "error": tokenise_if_on(result.error) if result.error else result.error,
+        }
+    )
 
 
 def _normalize_result(value: Any) -> ToolResult:

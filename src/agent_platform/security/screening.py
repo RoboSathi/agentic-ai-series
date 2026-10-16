@@ -26,7 +26,9 @@ from agent_platform.observability.status_feed import StageReporter
 from agent_platform.observability.types import EventKind
 from agent_platform.resilience.dead_letter_queue.queue import DeadLetterQueue, DeadLetterReason
 from agent_platform.security.content_moderation.types import ModerationVerdict
-from agent_platform.security.pii.types import PIISpan
+from agent_platform.security.pii.active import admit_if_on
+from agent_platform.security.pii.detector import RedactedSpan
+from agent_platform.security.pii.source import Admitted
 from agent_platform.security.prompt_injection.types import InjectionAssessment
 from agent_platform.security.suite import SecuritySuite, check_names
 from agent_platform.tools.types import ToolDefinition
@@ -112,21 +114,28 @@ class MessageScreener:
         return self._suite
 
     def redact(self, text: str, reporter: StageReporter | None) -> PiiOutcome:
-        """Personal data out of the message. Never blocks: a phone number is not an attack."""
+        """Personal data out of the message, as it enters, with its card. Never blocks.
+
+        For a caller that screens the person's own words here. One that admitted them earlier
+        (before its graph, so not even a checkpoint holds a value) calls `report` instead.
+        """
         if self._suite.pii is None:
             return PiiOutcome(text=text)
+        _started(reporter, PII_STAGE, _messages().pii_started)
+        return self.report(admit_if_on(text), reporter)
+
+    def report(self, admitted: Admitted, reporter: StageReporter | None) -> PiiOutcome:
+        """The PII card for a message already admitted: what was tokenised — never a value."""
+        if self._suite.pii is None:
+            return PiiOutcome(text=admitted.text)
         words = _messages()
-        _started(reporter, PII_STAGE, words.pii_started)
-        started = time.perf_counter()
-        spans = self._suite.detect_pii(text)
-        latency_ms = round((time.perf_counter() - started) * 1000, 2)
-        categories = sorted({span.category for span in spans})
+        spans = admitted.spans
+        categories = admitted.categories
         summary = (
             words.pii_redacted.format(categories=", ".join(categories), count=len(spans))
             if spans
             else words.pii_clear
         )
-        # Each redaction as it may be shown: category, recognizer, score, token — never a value.
         entities = [
             words.pii_entity.format(
                 category=span.category,
@@ -134,28 +143,22 @@ class MessageScreener:
                 score=f"{span.score:.2f}",
                 token=span.token,
             )
-            for span in self._suite.pii_tokens(text)
-        ] or [
-            words.pii_entity_masked.format(
-                category=span.category, detector=span.detector, score=f"{span.score:.2f}"
-            )
             for span in spans
         ]
         model, unavailable = self._suite.pii_model()
-        checks.record_pii(model, unavailable, len(spans), latency_ms)
+        checks.record_pii(model, unavailable, len(spans), admitted.latency_ms)
         fields = {
-            **self._pii_checks(spans, latency_ms, words),
+            **self._pii_checks(spans, admitted.latency_ms, words),
             "matches": len(spans),
             "categories": categories,
             "entities": entities,
         }
         self._logger.info("PII screen", **fields)
         _emit(reporter, PII_STAGE, "completed", summary, fields)
-        redacted = self._suite.redact(text) if spans else text
-        return PiiOutcome(text=redacted, categories=categories, matches=len(spans))
+        return PiiOutcome(text=admitted.text, categories=categories, matches=len(spans))
 
     def _pii_checks(
-        self, spans: list[PIISpan], latency_ms: float, words: ScreeningMessages
+        self, spans: Sequence[RedactedSpan], latency_ms: float, words: ScreeningMessages
     ) -> dict[str, Any]:
         """The same shape as the other screens: the rule-based recognizers, the model, the why.
 
