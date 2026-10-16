@@ -2023,7 +2023,6 @@ security:
     pii_started: Removing personal data before the model call
     pii_redacted: "REDACTED · {categories} · {count} match(es)"
     pii_entity: "{category} · {detector} · {score} · [{category}:{token}]"
-    pii_entity_masked: "{category} · {detector} · {score} · masked"
     pii_clear: PASS · no PII detected
     pii_reason_found: "{rule} by deterministic rules, {model} by the NER model: {categories}"
     pii_reason_clear: "no personal data found by the deterministic rules or the NER model"

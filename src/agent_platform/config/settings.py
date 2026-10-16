@@ -2452,7 +2452,6 @@ class ScreeningMessages(BaseModel):
     # One redaction on the card and in the log: `{category}`, `{detector}`, `{score}`, `{token}`
     # (the masked form has no token).
     pii_entity: str
-    pii_entity_masked: str
     pii_clear: str
     # The card's `reason`, as the other screens give one: what was found and by what (`{rule}`
     # rule-based, `{model}` model spans, `{categories}`), nothing found, or the model unavailable.

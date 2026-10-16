@@ -938,6 +938,25 @@ seen before. Every agent's turn makes one hosted guard round trip instead of two
   resilience pattern CLAUDE.md requires a real implementation of). No production subscriber
   exists yet; the first one decides whether publishing must fan out concurrently (P-45).
 
+### P-47 — Every settings field has a reader, enforced
+
+**Context.** The schema has about 2,100 fields. The review asked for fewer. A scan found
+that almost all are read: the count is the price of the rule that no value is hard-coded. A
+literal moved out of code becomes a field.
+
+**Decision.** (2026-10-16.)
+- **Removed:** the fields nothing read. `ScreeningMessages.pii_entity_masked`, plus the three
+  only `versions.py` read (P-46).
+- **Guarded:** `tests/agent_platform/test_settings_fields_are_read.py` fails on any field that
+  no code outside its settings module names, and that no used helper of its own module reads.
+  It collects every name read in one pass and runs in about a second.
+- **Not done:** the schema is not split (2026-10-13). A field with no reader cannot land, and
+  the rest stay as the configuration they are.
+
+**Consequences.** The count still rises when a literal becomes configuration (the card
+summaries' wording, P-45), and falls only when code stops reading a field. Neither can happen
+silently.
+
 ---
 
 ## 9. Research agent
