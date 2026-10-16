@@ -70,6 +70,7 @@ class AbortCommand:
     usage = "/abort [thread-prefix]"
 
     def __init__(self, agent: Callable[[], Any]) -> None:
+        self._app_config = get_settings()
         self._agent = agent
         self._scope: ConsoleScope | None = None
 
@@ -78,7 +79,7 @@ class AbortCommand:
         self._scope = scope
 
     async def run(self, args: list[str]) -> CommandResult:
-        words = get_settings().durability.stop_report
+        words = self._app_config.durability.stop_report
         agent = self._agent()
         if not isinstance(agent, DurableAgent):
             return CommandResult(ok=False).line(words.nothing_to_abort)

@@ -33,6 +33,7 @@ class StageReporterModelObserver:
     """Draws a model chain's backup events on whichever feed is current."""
 
     def __init__(self, reporter: ReporterSource, aggregate: Iterable[str] = ()) -> None:
+        self._app_config = get_settings()
         self._reporter = reporter
         self._aggregate = frozenset(aggregate)
         # Per aggregated label, each request's (tokens, model) since the last flush.
@@ -71,7 +72,7 @@ class StageReporterModelObserver:
             )
 
     def backup_started(self, label: str, primary: str, backup: str, reason: str) -> None:
-        words = get_settings().observability.model_events
+        words = self._app_config.observability.model_events
         summary = words.backup_started.format(
             label=label.upper(),
             primary=primary,
@@ -84,7 +85,7 @@ class StageReporterModelObserver:
         reporter = self._reporter()
         if reporter is None:
             return
-        words = get_settings().observability.model_events
+        words = self._app_config.observability.model_events
         reporter.warning(
             MODEL_STAGE,
             event_kind="model",

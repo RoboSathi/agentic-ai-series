@@ -61,6 +61,7 @@ class NodeSupport:
     """
 
     def __init__(self, kit: NodeKit) -> None:
+        self._agent_config = get_agent_settings()
         self._registry: NamespacedToolRegistry = kit.registry
         self._working_memory: WorkingMemoryStore | None = kit.working_memory
         # The profile, plus the skills a turn's signals select (ADR 0010).
@@ -386,7 +387,7 @@ class NodeSupport:
             },
             next_step=next_step,
             because=because,
-            because_words=get_agent_settings().loop_control_status.because,
+            because_words=self._agent_config.loop_control_status.because,
         )
         self._logger.info("Loop control status", **fields)
 

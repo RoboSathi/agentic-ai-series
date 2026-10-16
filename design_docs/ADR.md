@@ -957,6 +957,40 @@ literal moved out of code becomes a field.
 summaries' wording, P-45), and falls only when code stops reading a field. Neither can happen
 silently.
 
+### P-48 — Configuration is taken at construction, not looked up mid-call
+
+**Context.** There are about 630 direct settings reads. 212 of them were inside methods, so
+a component decided from process-global configuration on every call. That undercuts
+dependency injection and the "two postures in one process" claim. Making every section a
+required constructor argument would mean thousands of edits across src and tests, for code
+that already builds its components in one composition root per agent.
+
+**Decision.** (2026-10-16; chosen over full required-argument injection.)
+- **Taken in the constructor.** Each component class takes the live configuration once,
+  in its constructor (`self._app_config = get_settings()`, `self._agent_config =
+  get_agent_settings()`). Its methods read that reference: 74 classes, plus the context
+  strategies through their base class. It is the live object, never a copy, so `/harness`
+  and in-place toggles are still seen. `reload_settings()` runs only at process start (the
+  CLIs, the intent bake-off).
+- **Instance methods.** Static helpers that read configuration mid-turn became instance
+  methods: four in the CSA node groups, `StepEvents._words`,
+  `ParquetRefresher.interval_seconds`.
+- **Exempt, by name:**
+  - configuration itself;
+  - values that have no constructor to inject through (`Money`, `PromptManifest`,
+    `DummyProfile`, `MemoryProfile`);
+  - the logging bootstrap;
+  - the three hosts, which are composition roots.
+- **Guarded.** `tests/agent_platform/test_settings_reads.py` fails on a configuration read
+  inside any other instance method, and on any file whose direct reads exceed the baseline
+  (`tests/agent_platform/data/settings_reads_baseline.json`: 633 reads in 256 files). The
+  baseline only moves down.
+
+**Consequences.** No component consults global configuration mid-call. A composition root
+that wants another posture builds its components after setting it. Passing a different
+config object per agent is the next step, and the guard keeps new code from adding reads
+in the meantime.
+
 ---
 
 ## 9. Research agent

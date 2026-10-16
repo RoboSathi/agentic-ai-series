@@ -47,6 +47,7 @@ class MemoryCommand(PoolBackedCommand):
         working_memory: "WorkingMemoryStore | None" = None,
         session_id: str = "",
     ) -> None:
+        self._app_config = get_settings()
         super().__init__(pool)
         self._working_memory = working_memory
         self._session_id = session_id
@@ -58,7 +59,7 @@ class MemoryCommand(PoolBackedCommand):
 
     async def run(self, args: list[str]) -> CommandResult:
         """Scoped to a verified subject: working + their episodic. Unscoped: every store."""
-        settings = get_settings()
+        settings = self._app_config
         if args and args[0].casefold() == self._WORKING:
             return self._working_window(settings.commands.value_preview_chars)
         if args and args[0].casefold() == self._DREAM:
@@ -77,7 +78,7 @@ class MemoryCommand(PoolBackedCommand):
         from agent_platform.memory.inspect import episodic_tables, take_snapshot
 
         assert self._scope is not None
-        commands = get_settings().commands
+        commands = self._app_config.commands
         verified = self._scope.subject()
         if verified is None:
             return CommandResult(title="Memory", ok=False).line(commands.verify_first)
@@ -95,7 +96,7 @@ class MemoryCommand(PoolBackedCommand):
         """Every store, as `make show-memory` prints it, plus this conversation's window."""
         from agent_platform.memory.inspect import snapshot_tables, take_snapshot
 
-        commands = get_settings().commands
+        commands = self._app_config.commands
         result = self._titled()
         self._add_working(result)
         snapshot = take_snapshot(subject, term)
@@ -107,7 +108,7 @@ class MemoryCommand(PoolBackedCommand):
         """The dream events alone; a verified console sees only its own subject's."""
         from agent_platform.memory.inspect import inbox_table, take_snapshot
 
-        commands = get_settings().commands
+        commands = self._app_config.commands
         subject: str | None = None
         if self._scope is not None and self._scope.scoped:
             subject = self._scope.subject()
@@ -117,8 +118,8 @@ class MemoryCommand(PoolBackedCommand):
         return self._titled().table(table).line(commands.memory_tables.dream_note)
 
     def _titled(self) -> CommandResult:
-        words = get_settings().commands.memory_tables
-        return CommandResult(title=words.title.format(agent=get_settings().agent.id))
+        words = self._app_config.commands.memory_tables
+        return CommandResult(title=words.title.format(agent=self._app_config.agent.id))
 
     def _add_working(self, result: CommandResult) -> None:
         """This conversation's working memory, when a live agent is attached."""

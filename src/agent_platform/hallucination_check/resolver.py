@@ -121,6 +121,7 @@ class GroundingResolver:
         classifier: ClaimClassifier | None = None,
         confirmer: ClaimConfirmer | None = None,
     ) -> None:
+        self._app_config = get_settings()
         settings = get_settings().hallucination_check
         self._confirmer = confirmer
         self._confirm_settings = settings.confirmer
@@ -612,7 +613,7 @@ class GroundingResolver:
         refutation = result.label == "contradiction" and not tier.may_refute
         if refutation:
             return f"contradiction ignored, this tier cannot refute ({result.score:.2f})"
-        names = get_settings().hallucination_check.card.label_names
+        names = self._app_config.hallucination_check.card.label_names
         label = names.get(result.label, result.label)
         decisive = result.label in _DECIDING_LABELS
         gloss = "" if decisive else " (it neither states nor contradicts this)"
@@ -787,7 +788,7 @@ class GroundingResolver:
         """Why a retrieved item got no NLI call: unrelated, or the claim was already decided."""
         if chunk.score < self._floor:
             return f"not checked (below {self._floor})"
-        return f"not checked ({get_settings().hallucination_check.methods.restated})"
+        return f"not checked ({self._app_config.hallucination_check.methods.restated})"
 
     @staticmethod
     def _ranked(checks: list[EvidenceCheck]) -> list[EvidenceCheck]:
@@ -834,7 +835,7 @@ class GroundingResolver:
     def _retrieval_method(self) -> str:
         """Report the actual retrieval path used by the injected ranker."""
         cascade = getattr(self._retriever, "_ranker", None)
-        enabled = get_settings().hallucination_check.scoring.tiers.embedding_similarity
+        enabled = self._app_config.hallucination_check.scoring.tiers.embedding_similarity
         return "embedding" if enabled and cascade is not None else "lexical_fallback"
 
     @property

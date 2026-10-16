@@ -11,7 +11,6 @@ import re
 from typing import Any, get_args
 
 from agent_platform.observability.units import current_task_kind, open_task
-from customer_support_agent.config.settings import get_agent_settings
 from customer_support_agent.domain.models import Order, OrderStatus
 from customer_support_agent.graph.kit import NodeKit
 from customer_support_agent.graph.nodes._support import (
@@ -157,8 +156,7 @@ class IntentNodes(NodeSupport):
             },
         }
 
-    @staticmethod
-    def _suggested_intent(intent: Intent) -> str | None:
+    def _suggested_intent(self, intent: Intent) -> str | None:
         """The read intent an unplaced turn nearly reached, as a hint for skill selection.
 
         Never a write intent, and never when two intents are close: a refund or a cancellation
@@ -166,7 +164,7 @@ class IntentNodes(NodeSupport):
         """
         if intent.name != "UNKNOWN":
             return None
-        settings = get_agent_settings()
+        settings = self._agent_config
         modes = {item.name: item.mode for item in settings.intents}
         ranked = sorted(
             (c for c in intent.candidates if c.intent != "UNKNOWN"),
@@ -182,10 +180,9 @@ class IntentNodes(NodeSupport):
             return None
         return top.intent
 
-    @staticmethod
-    def _open_task_for(intent: str) -> None:
+    def _open_task_for(self, intent: str) -> None:
         """A refund or cancellation request opens its task; one already open carries on."""
-        for kind, spec in get_agent_settings().tasks.kinds.items():
+        for kind, spec in self._agent_config.tasks.kinds.items():
             if spec.intent == intent and current_task_kind() != kind:
                 open_task(kind)
 

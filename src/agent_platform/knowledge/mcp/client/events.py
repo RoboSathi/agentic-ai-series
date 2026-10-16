@@ -70,6 +70,7 @@ class LoggedMcpEvents:
     """Every event to `mcp.log`, in full — the record whether or not anyone is watching."""
 
     def __init__(self) -> None:
+        self._app_config = get_settings()
         self._logger = get_logger("mcp")
 
     def opening(self, server: str, target: str) -> None:
@@ -94,7 +95,7 @@ class LoggedMcpEvents:
         """The session's protocol profile, once: protocolVersion, serverInfo / clientInfo, both
         sides' capabilities, every tool's schemas, annotations and envelope, and how calls run
         and fail. Each later call logs only its own arguments and result."""
-        settings = get_settings().mcp
+        settings = self._app_config.mcp
         self._logger.info(
             "MCP session profile",
             server=description.server.name,
@@ -157,6 +158,7 @@ class McpEvents(LoggedMcpEvents):
     """The log, plus a card for each event an operator acts on (`mcp.card`)."""
 
     def __init__(self, reporter: StageReporter | None) -> None:
+        self._app_config = get_settings()
         super().__init__()
         self._reporter = reporter
 
@@ -188,7 +190,7 @@ class McpEvents(LoggedMcpEvents):
 
     def server_log(self, server: str, level: str, logger: str, data: Any) -> None:
         super().server_log(server, level, logger, data)
-        settings = get_settings().mcp.client
+        settings = self._app_config.mcp.client
         if level not in settings.card_log_levels:
             return
         lines = (data if isinstance(data, str) else str(data)).splitlines() or [""]

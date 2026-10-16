@@ -162,6 +162,7 @@ class RunNodes:
     """Nodes of one agent's run graph; per-run state lives in `RunResources`."""
 
     def __init__(self, parts: RunParts) -> None:
+        self._agent_config = get_agent_settings()
         self._p = parts
         self._r: RunResources | None = None
         self._scheduler: AsyncDagScheduler | None = None
@@ -1069,7 +1070,7 @@ class RunNodes:
         """LOOP CONTROL: the round, every budget meter, the step the run takes next, and the
         counter (or the governor's verdict) that forced it when one did."""
         r = self.resources
-        RunLoopReport(r.telemetry.reporter, get_agent_settings().run_loop).report(
+        RunLoopReport(r.telemetry.reporter, self._agent_config.run_loop).report(
             r.budget,
             round_number=state["round"],
             next_step=next_step,

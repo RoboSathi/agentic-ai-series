@@ -51,6 +51,7 @@ class ContextFailureDetector:
         similarity: TextSimilarity | None = None,
         rot: RotMonitor | None = None,
     ) -> None:
+        self._app_config = get_settings()
         similarity = similarity or shared_similarity()
         self._poisoning = PoisoningCheck(screen, nli, similarity)
         self._clash = ClashCheck(nli, similarity)
@@ -81,7 +82,7 @@ class ContextFailureDetector:
         self, context: AssembledContext, findings: list[ContextFinding]
     ) -> tuple[AssembledContext, list[ContextFinding]]:
         """Drop, cut or reduce what should not reach the model; say what was done."""
-        dropped_word = get_settings().context.window.dropped_action
+        dropped_word = self._app_config.context.window.dropped_action
         removed = {
             f.index for f in findings if f.action.startswith(dropped_word) and f.index is not None
         }

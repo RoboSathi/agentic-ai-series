@@ -85,6 +85,7 @@ class MessageScreener:
     """PII, injection and moderation over one message, each reported as its own card."""
 
     def __init__(self, suite: SecuritySuite, quarantine: DeadLetterQueue | None = None) -> None:
+        self._app_config = get_settings()
         self._suite = suite
         self._quarantine = quarantine
         self._logger = get_logger("security")
@@ -94,7 +95,7 @@ class MessageScreener:
 
         A composition root declares these for its agent (`units.declare_screens`).
         """
-        guards = get_settings().security.guards
+        guards = self._app_config.security.guards
         hosted = guards.enabled
         declared = {
             checks.PII: self._suite.pii is not None,
@@ -167,7 +168,7 @@ class MessageScreener:
         A span from a recognizer named in `security.pii.model_recognizers` (spaCy NER) is the
         model's; every other recognizer is a deterministic rule (patterns, checksums).
         """
-        model_names = set(get_settings().security.pii.model_recognizers)
+        model_names = set(self._app_config.security.pii.model_recognizers)
         by_model = [span for span in spans if span.detector in model_names]
         by_rule = [span for span in spans if span.detector not in model_names]
         model, unavailable = self._suite.pii_model()
@@ -260,7 +261,7 @@ class MessageScreener:
     ) -> "_Assessed":
         started = time.perf_counter()
         assessment = await self._suite.prepare_untrusted_async(instructions, text, list(tools))
-        rule = get_settings().security.guards.rule_checks.injection
+        rule = self._app_config.security.guards.rule_checks.injection
         return _Assessed(
             stage=INJECTION_STAGE,
             card=_injection_card(assessment, _messages()),

@@ -97,6 +97,7 @@ class CitationGuard:
         confirmer: ClaimConfirmer | None = None,
         rewrite_role: str = "",
     ) -> None:
+        self._app_config = get_settings()
         self._entailment = entailment
         self._confirmer = confirmer
         self._rewrite_role = rewrite_role
@@ -206,7 +207,7 @@ class CitationGuard:
 
     @property
     def _words(self) -> Any:
-        return get_settings().hallucination_check.readings
+        return self._app_config.hallucination_check.readings
 
     def _rewrite_reading(self, check: SentenceCheck, new: str) -> Reading:
         """The rewrite step: what the sentence became, or that no faithful rewrite existed."""

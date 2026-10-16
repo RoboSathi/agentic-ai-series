@@ -68,6 +68,7 @@ class OpsAgent:
         window: ContextWindow | None = None,
         working_memory: WorkingMemoryStore | None = None,
     ) -> None:
+        self._app_config = get_settings()
         self._graph = graph
         self._nodes = nodes
         self._registry = registry
@@ -98,7 +99,7 @@ class OpsAgent:
         query = admit_if_on(query).text
         with turn_trace(
             self._exporter,
-            agent=get_settings().agent.id,
+            agent=self._app_config.agent.id,
             session=session_id,
             inputs={"query": query},
         ) as trace:

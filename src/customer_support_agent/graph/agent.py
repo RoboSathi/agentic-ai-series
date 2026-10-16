@@ -101,6 +101,8 @@ class CustomerSupportAgent:
     """
 
     def __init__(self, parts: CsaParts) -> None:
+        self._app_config = get_settings()
+        self._agent_config = get_agent_settings()
         kit = NodeKit(parts)
         self._kit = kit
         self._nodes = CsaNodes.from_kit(kit)
@@ -311,7 +313,7 @@ class CustomerSupportAgent:
     def describe_progress(self, values: dict[str, Any]) -> dict[str, Any]:
         """How far a turn got: what was asked, who is verified, what was decided, which tools ran."""
         state = AgentState.model_validate(values)
-        words = get_agent_settings().messages.cancelled
+        words = self._agent_config.messages.cancelled
         labels = words.labels
         tools = [
             f"{item.get('name')} → {item.get('outcome', '')}"
@@ -335,7 +337,7 @@ class CustomerSupportAgent:
             thread_id=thread_id,
             session_id=session,
             status=outcome.status,
-            response=get_settings().durability.stop_report.aborted,
+            response=self._app_config.durability.stop_report.aborted,
         )
 
     def _begin_turn(self, thread_id: str, session_id: str) -> None:
@@ -379,7 +381,7 @@ class CustomerSupportAgent:
         """One thread's checkpoints, newest first."""
         if self._runner is None:
             return []
-        return await self._runner.history(thread_id, get_settings().commands.default_limit)
+        return await self._runner.history(thread_id, self._app_config.commands.default_limit)
 
     async def resume(self, thread_id: str, decision: Any | None = None) -> ResumeResult:
         """Continue a failed or waiting run from its last checkpoint.
@@ -412,7 +414,7 @@ class CustomerSupportAgent:
         """A fresh trace for one turn (a resume is a turn of its own, with no message in it)."""
         return turn_trace(
             self._trace_exporter,
-            agent=get_settings().agent.id,
+            agent=self._app_config.agent.id,
             session=session_id,
             inputs=inputs,
             message=message,

@@ -72,6 +72,7 @@ class DetectionLadder:
         entailment: EntailmentModel | None = None,
         confirmer: ClaimConfirmer | None = None,
     ) -> None:
+        self._app_config = get_settings()
         self._resolver = GroundingResolver(cascade, entailment, confirmer=confirmer)
         self._decomposer = decomposer or ClaimDecomposer()
         self._logger = get_logger("hallucination_check")
@@ -146,7 +147,7 @@ class DetectionLadder:
         claims, and reporting the second for the first is how a detector
         comes to look like it is working.
         """
-        settings = get_settings().hallucination_check
+        settings = self._app_config.hallucination_check
         if resample is None or not settings.consistency_enabled:
             return None
         if not any(not verdict.supported and not verdict.reason_code for verdict in verdicts):

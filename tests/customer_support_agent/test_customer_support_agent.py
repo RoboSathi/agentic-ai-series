@@ -494,11 +494,13 @@ class TestAnUnplacedTurnIsNeverOfferedAWrite:
 class TestAnUnplacedTurnMayBeHintedAReadSkill:
     @staticmethod
     def _intent(*scores: tuple[str, float]) -> Any:
+        from customer_support_agent.config import get_agent_settings
         from customer_support_agent.graph.nodes.intent import IntentNodes
 
         candidates = [SimpleNamespace(intent=name, score=score) for name, score in scores]
         intent = SimpleNamespace(name="UNKNOWN", candidates=candidates)
-        return IntentNodes._suggested_intent(intent)
+        nodes: Any = SimpleNamespace(_agent_config=get_agent_settings())
+        return IntentNodes._suggested_intent(nodes, intent)
 
     def test_a_clear_read_candidate_below_the_threshold_is_the_hint(self) -> None:
         assert self._intent(("UNKNOWN", 0.4), ("ORDER_STATUS", 0.5), ("LIST_ORDERS", 0.1)) == (

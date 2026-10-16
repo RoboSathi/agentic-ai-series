@@ -44,6 +44,7 @@ class TurnTally:
     """Counts one turn's events; renders them as a readable summary."""
 
     def __init__(self) -> None:
+        self._app_config = get_settings()
         self._statuses: Counter[str] = Counter()
         self._memory: Counter[str] = Counter()
         self._recall: Counter[str] = Counter()
@@ -118,7 +119,7 @@ class TurnTally:
         """How much of the turn's input the providers served from their prefix caches."""
         if not self._llm_calls:
             return ""
-        return get_settings().observability.prompt_cache_line.format(
+        return self._app_config.observability.prompt_cache_line.format(
             hits=self._cache_hits,
             calls=self._llm_calls,
             cached=self._cached_tokens,
@@ -170,7 +171,7 @@ class TurnTally:
         `1 turn queued · 2 actions, 3 observations · 7 waiting for the next dream`."""
         if not self._inbox:
             return ""
-        words = get_settings().observability.dream_inbox
+        words = self._app_config.observability.dream_inbox
         line = words.queued.format(
             turns=self._inbox, actions=self._inbox_actions, observations=self._inbox_observations
         )

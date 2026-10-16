@@ -41,6 +41,8 @@ from customer_support_agent.prompts.system_prompt import (
 
 class ProposalNodes(NodeSupport):
     def __init__(self, kit: NodeKit) -> None:
+        self._app_config = get_settings()
+        self._agent_config = get_agent_settings()
         super().__init__(kit)
         self._llm = kit.llm
         self._selector = kit.selector
@@ -70,7 +72,7 @@ class ProposalNodes(NodeSupport):
             state, self._registry.to_openai_tools([tool.qualified_name for tool in tools])
         )
         # The model may ask for a tool or answer; the response card names which it did.
-        purpose = get_settings().observability.llm_purposes.next_action
+        purpose = self._app_config.observability.llm_purposes.next_action
         self._report_llm_request(request, purpose=purpose)
         try:
             async with self._governor.deadline():
@@ -228,7 +230,7 @@ class ProposalNodes(NodeSupport):
             # An unplaced turn is offered reads at most. With no skill active the skill set is
             # empty, which means "no narrowing", and that must not become "every tool".
             reads = (
-                set(get_agent_settings().intent_router.unknown_tools)
+                set(self._agent_config.intent_router.unknown_tools)
                 if state.metadata.get("intent_execution_route") == "llm_fallback"
                 else None
             )
@@ -318,12 +320,12 @@ class ProposalNodes(NodeSupport):
         if context is not None and context.text:
             window = context.window
             builder.window(
-                get_settings().context.prompt.window_heading,
+                self._app_config.context.prompt.window_heading,
                 context.text,
                 window.chunks if window is not None else (),
             ).notes(window.applied_strategies if window is not None else [])
         if state.metadata.get("intent_execution_route") == "llm_fallback":
-            fallback = get_agent_settings().intent_fallback_instruction
+            fallback = self._agent_config.intent_fallback_instruction
             builder.system(INTENT_FALLBACK, fallback, volatility=Volatility.TURN)
         built = (
             builder.message(USER_QUERY, "user", state.model_query or state.query)

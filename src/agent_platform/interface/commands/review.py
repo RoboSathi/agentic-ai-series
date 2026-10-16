@@ -55,6 +55,7 @@ class QueueCommand(PoolBackedCommand):
         handlers: HandlerFactory | None = None,
         surface: Surface = CONSOLE,
     ) -> None:
+        self._app_config = get_settings()
         super().__init__(pool)
         self._handlers = handlers
         # Where the list is read: the hint under it says how to decide *there*. A terminal's
@@ -85,7 +86,7 @@ class QueueCommand(PoolBackedCommand):
         handlers: list[ReviewHandler] = [QuarantineHandler(), MemoryReviewHandler(pipeline), *own]
         # The agent's own ledger: written from a console or a terminal alike without
         # contending for the shared one, and read back by `/audit` and `make audit`.
-        ledger = SqliteAuditLedger(self.pool, agent_id=get_settings().agent.id)
+        ledger = SqliteAuditLedger(self.pool, agent_id=self._app_config.agent.id)
         return ReviewService(
             ReviewQueue(self.pool, redact=redact_if_on), handlers, ledger, redact=redact_if_on
         )
@@ -97,7 +98,7 @@ class QueueCommand(PoolBackedCommand):
         if action == _SHOW:
             return self._show(args[1:])
         if args and len(args) <= 2 and all(_number(arg) for arg in args):
-            default = get_settings().observability.review_queue.minutes_per_review
+            default = self._app_config.observability.review_queue.minutes_per_review
             return _staffing(float(args[0]), float(args[1]) if len(args) > 1 else default)
         return self._list(args[0] if args else None)
 
@@ -127,7 +128,7 @@ class QueueCommand(PoolBackedCommand):
 
     def hint(self) -> str:
         """How to decide, said for where the list is being read."""
-        agent = self.make_agent or get_settings().agent.id
+        agent = self.make_agent or self._app_config.agent.id
         return self._words.hints[self.surface].format(agent=agent)
 
     def _show(self, args: list[str]) -> CommandResult:
@@ -149,7 +150,7 @@ class QueueCommand(PoolBackedCommand):
 
     async def _decide(self, decision: str, args: list[str]) -> CommandResult:
         item_id = self._id(decision, args)
-        reviewer = get_settings().review.console_reviewer
+        reviewer = self._app_config.review.console_reviewer
         try:
             outcome = await self.service().decide(
                 item_id,

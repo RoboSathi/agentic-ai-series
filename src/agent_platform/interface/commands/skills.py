@@ -41,6 +41,7 @@ class SkillsCommand:
         catalog: Callable[[], SkillCatalog | None],
         curator: Callable[[], CuratorPipeline | None],
     ) -> None:
+        self._app_config = get_settings()
         self._catalog = catalog
         self._curator = curator
         self._words = get_settings().commands.skills
@@ -96,7 +97,7 @@ class SkillsCommand:
         skill = catalog.show(name)
         if skill is None:
             raise CommandError(self._words.unknown.format(name=name, usage=self.usage))
-        result = CommandResult(title=skill.ref(get_settings().skills.render.ref))
+        result = CommandResult(title=skill.ref(self._app_config.skills.render.ref))
         result.lines = [skill.document.description, *skill.document.body.splitlines()]
         return result
 

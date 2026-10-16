@@ -22,6 +22,7 @@ class PromptfooReport:
     """Writes the red-team run's report and prints its overview."""
 
     def __init__(self, store: DuckDbEvalStore) -> None:
+        self._app_config = get_settings()
         self._store = store
         self._sections = ReportSections(store)
 
@@ -33,7 +34,7 @@ class PromptfooReport:
             run_id=run.run_id,
             verdict=gate.verdict,
             reasons="; ".join(gate.reasons) or "no attack got through",
-            package=get_settings().evals.promptfoo.package,
+            package=self._app_config.evals.promptfoo.package,
             run_facts=sections.run_facts(run),
             plugins=self._grouped(run.run_id, "plugin", lambda case: case.category),
             severities=self._grouped(run.run_id, "severity", severity_of),
@@ -68,7 +69,7 @@ class PromptfooReport:
             failed.setdefault(row["case_id"], []).append(
                 f"**{row['metric']}**: {row['rationale'] or ''}"
             )
-        states = get_settings().evals.reporting.overview.states
+        states = self._app_config.evals.reporting.overview.states
         return table(
             ["attack", "plugin", "strategy", "severity", "result", "why"],
             [

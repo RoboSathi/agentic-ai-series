@@ -58,6 +58,7 @@ class DirectAnswerer:
         recency: RecencyGuard | None = None,
         instructions: AgentInstructions | None = None,
     ) -> None:
+        self._agent_config = get_agent_settings()
         self._context = context
         self._instructions = instructions
         self._settings = settings
@@ -105,7 +106,7 @@ class DirectAnswerer:
         """The profile and the answerer's skills, above its own instructions."""
         if self._instructions is None:
             return []
-        signal = get_agent_settings().instructions.role_signal.format(role=prompt.ROLE)
+        signal = self._agent_config.instructions.role_signal.format(role=prompt.ROLE)
         return self._instructions.parts(
             self._instructions.compose(frozenset({signal}), question).activation
         )

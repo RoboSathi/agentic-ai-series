@@ -101,6 +101,7 @@ def _queued_review(invocations: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 class ExecutionNodes(NodeSupport):
     def __init__(self, kit: NodeKit) -> None:
+        self._agent_config = get_agent_settings()
         super().__init__(kit)
         self._audit = kit.audit
         self._executor = kit.executor
@@ -248,8 +249,7 @@ class ExecutionNodes(NodeSupport):
             outcome.call, outcome.execution, control_fields, decision_fields
         )
 
-    @staticmethod
-    def _settle_task(outcome: ToolOutcome, fields: dict[str, Any]) -> None:
+    def _settle_task(self, outcome: ToolOutcome, fields: dict[str, Any]) -> None:
         """A write ends the task it carries out: issued, queued for review, refused or failed.
 
         A write the model made with no task open (the intent was unclear) opens
@@ -260,7 +260,7 @@ class ExecutionNodes(NodeSupport):
         call = outcome.call
         if call is None or not call.side_effecting:
             return
-        words = get_agent_settings().tasks
+        words = self._agent_config.tasks
         kind = next((k for k, spec in words.kinds.items() if spec.action == call.action), None)
         if kind is None:
             return
@@ -465,7 +465,7 @@ class ExecutionNodes(NodeSupport):
             referred = outcome.result
         if referred is None or not referred.success:
             # The Gatekeeper's reason names the limit; the model reads only that a person decides.
-            wording = get_agent_settings().review_output
+            wording = self._agent_config.review_output
             text = (
                 wording.no_referral
                 if referred is None

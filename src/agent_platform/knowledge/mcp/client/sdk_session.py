@@ -57,6 +57,7 @@ class SdkMcpSession:
         server: str = "",
         events: McpEventSink | None = None,
     ) -> None:
+        self._app_config = get_settings()
         self._target = target
         self._timeout = timeout_seconds
         self._server = server
@@ -164,7 +165,7 @@ class SdkMcpSession:
 
     def _client(self) -> Client:
         """The SDK client, with every server-to-client channel reported."""
-        settings = get_settings().mcp.client
+        settings = self._app_config.mcp.client
         return Client(
             self._target,
             read_timeout_seconds=self._timeout,

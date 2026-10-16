@@ -149,6 +149,7 @@ class StatusLineWidget(Static):
     running: reactive[bool] = reactive(False)
 
     def __init__(self) -> None:
+        self._app_config = get_settings()
         super().__init__(id="status-line")
         settings = get_settings().tui
         self._frames = settings.spinner_frames
@@ -259,7 +260,7 @@ class StatusLineWidget(Static):
 
     def _with_toggle(self, headline: Text) -> Text:
         """The headline, led by the open/closed marker when there is more to show."""
-        settings = get_settings().tui
+        settings = self._app_config.tui
         if not self._detail_lines:
             return headline
         marker = (
@@ -275,7 +276,7 @@ class StatusLineWidget(Static):
         if not self.stage_label:
             return Text("")
 
-        styles = get_settings().tui.status_styles
+        styles = self._app_config.tui.status_styles
         if self.running:
             symbol = self._frames[self.frame % len(self._frames)] if self._frames else "●"
             style = styles["running"]
@@ -296,7 +297,7 @@ class StatusLineWidget(Static):
             line.append("  · HISTORY", style=palette("history"))
             if self._history_pending:
                 line.append(f" · +{self._history_pending} new", style=palette("history"))
-            line.append(f" · {get_settings().tui.status_history_hint}", style=palette("history"))
+            line.append(f" · {self._app_config.tui.status_history_hint}", style=palette("history"))
 
         return line
 
@@ -309,6 +310,7 @@ class StageEventWidget(Collapsible):
         event: StatusEvent,
         labels: StageLabelRegistry,
     ) -> None:
+        self._app_config = get_settings()
         self.event = event
         self._labels = labels
         self._status = event.status
@@ -338,7 +340,7 @@ class StageEventWidget(Collapsible):
         clicked card went white. A styled label is set without the reactive's comparison (it
         compares by text, so the same words would be dropped) and then pushed to the screen.
         """
-        colour = get_settings().tui.outcome_colors.get(self._status, "")
+        colour = self._app_config.tui.outcome_colors.get(self._status, "")
         title = self.query_one(CollapsibleTitle)
         title.set_reactive(CollapsibleTitle.label, Content.styled(self._build_title(), colour))
         title.mutate_reactive(CollapsibleTitle.label)
@@ -367,7 +369,7 @@ class StageEventWidget(Collapsible):
             self._append_summary(body)
         self._append_tokens(body, rendered)
         if not body:
-            body.append(get_settings().tui.card_body.empty, style=palette("muted"))
+            body.append(self._app_config.tui.card_body.empty, style=palette("muted"))
         return body
 
     def _append_fields(self, body: Text) -> bool:
@@ -391,7 +393,7 @@ class StageEventWidget(Collapsible):
         if self.event.summary:
             body.append(self.event.summary, style=palette("emphasis"))
         elif self.event.detail:
-            body.append(get_settings().tui.card_body.detail_prefix)
+            body.append(self._app_config.tui.card_body.detail_prefix)
             body.append(_humanize(self.event.detail))
 
     def _append_tokens(self, body: Text, rendered: bool) -> None:
@@ -400,7 +402,7 @@ class StageEventWidget(Collapsible):
         if rendered or self.event.summary or self.event.detail:
             body.append("\n")
         body.append("  ")
-        label = get_settings().tui.card_body.tokens_label
+        label = self._app_config.tui.card_body.tokens_label
         _append_pair(body, label, " = ", f"+{self.event.tokens_delta}")
 
     def _append_block(self, body: Text, name: str, value: Any) -> None:
@@ -410,7 +412,7 @@ class StageEventWidget(Collapsible):
         read the thing, and a prompt cut at eighty characters is a prompt
         you still have to go to the log files for.
         """
-        styles = get_settings().tui.body_styles
+        styles = self._app_config.tui.body_styles
         body.append(f"  {_label(name)}:", style=styles["key"])
         for line in _block_lines(value):
             body.append("\n    ")
@@ -421,7 +423,7 @@ class StageEventWidget(Collapsible):
 
     def _append_checks(self, body: Text, checks: list[Any]) -> None:
         """Render structured checks as an operator-readable decision tree."""
-        settings = get_settings().tui
+        settings = self._app_config.tui
         styles = settings.body_styles
         body.append("  checks", style=settings.section_title_style)
         for check in checks:
@@ -979,6 +981,7 @@ class ChoiceMenu(OptionList):
     """A fixed menu of answers beside the free-text input; hidden unless a question offers one."""
 
     def __init__(self) -> None:
+        self._app_config = get_settings()
         super().__init__(id="choices")
         self._values: list[str] = []
         self.display = False
@@ -995,7 +998,7 @@ class ChoiceMenu(OptionList):
         self.clear_options()
         self._values = [str(_choice_part(choice, "value")) for choice in choices]
         self.add_options([Option(shown(str(_choice_part(choice, "label")))) for choice in choices])
-        self.border_title = get_settings().tui.choice_menu_hint
+        self.border_title = self._app_config.tui.choice_menu_hint
         self.display = bool(self._values)
         if self._values:
             self.highlighted = 0
@@ -1133,6 +1136,7 @@ class LiveStatusPanel(VerticalScroll):
         self,
         labels: StageLabelRegistry | None = None,
     ) -> None:
+        self._app_config = get_settings()
         super().__init__(id="feed")
         self._labels = labels or StageLabelRegistry()
         self._max_entries = get_settings().tui.max_feed_lines
@@ -1149,7 +1153,7 @@ class LiveStatusPanel(VerticalScroll):
         timeline never shows ``→ X`` followed by ``✓ X`` as two unrelated records.
         """
         if event.status == "started":
-            if event.event_kind in get_settings().tui.pending_card_kinds:
+            if event.event_kind in self._app_config.tui.pending_card_kinds:
                 self._show_pending(event)
             return
         pending = self._pending.pop((event.run_id, event.stage), None)
@@ -1204,7 +1208,7 @@ class LiveStatusPanel(VerticalScroll):
 
     def response(self, text: str) -> None:
         """The assistant's answer, with its headings, bullets and citations coloured."""
-        note = ResponseNote(text, get_settings().tui.response_styles)
+        note = ResponseNote(text, self._app_config.tui.response_styles)
         self._entries.append(note)
         self._trim_if_needed()
         self.mount(note)

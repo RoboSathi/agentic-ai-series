@@ -38,6 +38,7 @@ _VERIFIED = "verified_system_of_record"
 
 class ContextNodes(NodeSupport):
     def __init__(self, kit: NodeKit) -> None:
+        self._app_config = get_settings()
         super().__init__(kit)
         self._context = kit.context
         self._strategies = kit.strategies
@@ -67,7 +68,7 @@ class ContextNodes(NodeSupport):
             # not one that reasons without its own policy.
             self._done(
                 CONTEXT_STAGE,
-                summary=get_settings().context.window.withheld,
+                summary=self._app_config.context.window.withheld,
                 event_kind="context",
                 fields={"source": "none"},
                 quiet=True,

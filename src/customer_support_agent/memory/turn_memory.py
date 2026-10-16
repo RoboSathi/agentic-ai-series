@@ -63,6 +63,7 @@ class TurnMemory:
         redact: Callable[[str], str],
         reporter: StageReporter | None = None,
     ) -> None:
+        self._agent_config = get_agent_settings()
         self._working = working
         self._long_term = long_term
         self._recorder = recorder
@@ -110,7 +111,7 @@ class TurnMemory:
         claim = None if skip else self._claim(turn.spoken, str(turn.customer_id), turn.session_id)
         if not (turn.quarantined or (claim is not None and claim.route == _REFUSED)):
             return turn.spoken
-        settings = get_agent_settings()
+        settings = self._agent_config
         reason = claim.reason if claim is not None else settings.memory_quarantined
         return settings.memory_withheld.format(reason=reason)
 

@@ -39,6 +39,10 @@ class ContextStrategy(ABC):
     # Runs on every window (True), or only while it is over budget (False).
     always: bool = False
 
+    def __init__(self) -> None:
+        # The live sections, taken once: a strategy reads them on every window it fits.
+        self._app_config = get_settings()
+
     @abstractmethod
     async def apply(self, context: AssembledContext, task: Task) -> AssembledContext:
         """Return a new context with this strategy applied."""
@@ -47,7 +51,7 @@ class ContextStrategy(ABC):
         self, context: AssembledContext, chunks: list[Chunk], **note: object
     ) -> AssembledContext:
         """Rebuild a context around new chunks, saying what this strategy did."""
-        template = get_settings().context.strategy_notes[self.name]
+        template = self._app_config.context.strategy_notes[self.name]
         return context.model_copy(
             update={
                 "chunks": chunks,
@@ -69,6 +73,7 @@ class ConsolidateStrategy(ContextStrategy):
     always = True
 
     def __init__(self, similarity: TextSimilarity | None = None) -> None:
+        super().__init__()
         self._similarity = similarity or shared_similarity()
 
     async def apply(self, context: AssembledContext, task: Task) -> AssembledContext:
@@ -83,7 +88,7 @@ class ConsolidateStrategy(ContextStrategy):
         return self._record(context, kept, count=len(dropped))
 
     def _duplicates(self, chunks: list[Chunk], similar: list[list[float]]) -> set[int]:
-        settings = get_settings().context.consolidation
+        settings = self._app_config.context.consolidation
         order = sorted(range(len(chunks)), key=lambda i: _keep_first(chunks[i]))
         kept: list[int] = []
         dropped: set[int] = set()
@@ -110,8 +115,9 @@ class IsolateStrategy(ContextStrategy):
     always = True
 
     def __init__(self, keep_kinds: dict[str, list[str]] | None = None) -> None:
+        super().__init__()
         self._keep_kinds = (
-            keep_kinds if keep_kinds is not None else get_settings().context.isolation
+            keep_kinds if keep_kinds is not None else self._app_config.context.isolation
         )
 
     async def apply(self, context: AssembledContext, task: Task) -> AssembledContext:
@@ -175,7 +181,8 @@ class RetrieveStrategy(ContextStrategy):
     name = "retrieve"
 
     def __init__(self, top_k: int | None = None) -> None:
-        self._top_k = top_k or get_settings().context.top_k
+        super().__init__()
+        self._top_k = top_k or self._app_config.context.top_k
 
     async def apply(self, context: AssembledContext, task: Task) -> AssembledContext:
         pinned = [chunk for chunk in context.chunks if chunk.pinned]
@@ -199,7 +206,8 @@ class OffloadStrategy(ContextStrategy):
     name = "offload"
 
     def __init__(self, store: OffloadStore | None = None, min_tokens: int | None = None) -> None:
-        settings = get_settings().context
+        super().__init__()
+        settings = self._app_config.context
         self._store = store
         self._min_tokens = min_tokens or int(
             settings.token_budget * settings.offload.min_tokens_fraction
@@ -232,7 +240,7 @@ class ReduceStrategy(ContextStrategy):
     name = "reduce"
 
     async def apply(self, context: AssembledContext, task: Task) -> AssembledContext:
-        settings = get_settings().context.reduce
+        settings = self._app_config.context.reduce
         reduced: list[Chunk] = []
         changed = 0
         for chunk in context.chunks:

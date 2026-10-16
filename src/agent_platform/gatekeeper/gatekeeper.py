@@ -89,6 +89,7 @@ class GatekeeperImpl:
         hierarchy: AuthorityHierarchyResolver | None = None,
         advisor: Tier2Advisor | None = None,
     ) -> None:
+        self._app_config = get_settings()
         self._authorizer = authorizer
         # Tier 2: a note on a decision, never its reason (`tier2.py`). None: no note at all.
         self._advisor = advisor
@@ -327,7 +328,7 @@ class GatekeeperImpl:
         target key, so the platform needs no opinion about what a target
         is called.
         """
-        key = get_settings().gatekeeper.mandate.target_param
+        key = self._app_config.gatekeeper.mandate.target_param
         value = call.params.get(key)
         return f"{key.removesuffix('_id')}:{value}" if value is not None else ""
 
@@ -494,7 +495,7 @@ class GatekeeperImpl:
     def _record(
         self, call: ToolCall, context: AuthorityContext, decision: AuthorityDecision
     ) -> None:
-        llm_settings = get_settings().llm
+        llm_settings = self._app_config.llm
         model = llm_settings.providers[llm_settings.provider].model
         self._audit.record(
             AuditEntry(

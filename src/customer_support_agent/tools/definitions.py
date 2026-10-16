@@ -127,6 +127,7 @@ class SupportTools:
         cancellation: CancellationSaga | None = None,
         list_limit: int | None = None,
     ) -> None:
+        self._agent_config = get_agent_settings()
         self._orders = orders
         self._refund_policy = refund_policy or RefundPolicy(orders)
         self._cancellation_policy = CancellationPolicy(orders)
@@ -322,7 +323,7 @@ class SupportTools:
             )
         refund = validation.amount
         assert refund is not None
-        settlement = get_agent_settings().settlement
+        settlement = self._agent_config.settlement
         settles = settlement.lines[_SETTLES].format(
             amount=refund,
             order_id=order_id,
@@ -385,7 +386,7 @@ class SupportTools:
                 user_id=validation.order.user_id,
                 requested_amount=requested,
                 action=action,
-                reason=get_agent_settings().review_reasons.for_action(action),
+                reason=self._agent_config.review_reasons.for_action(action),
             )
         )
         self._orders.set_refund_status(order_id, _PENDING_REVIEW)

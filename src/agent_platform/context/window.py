@@ -59,13 +59,14 @@ class ContextWindow:
         strategies: StrategySelector | None = None,
         health: ContextFailureDetector | None = None,
     ) -> None:
+        self._app_config = get_settings()
         self._pipeline = pipeline
         self._strategies = strategies
         self._health = health
         self._logger = get_logger("context")
 
     async def build(self, task: Task, reporter: StageReporter | None = None) -> WindowResult:
-        words = get_settings().context.window
+        words = self._app_config.context.window
         if reporter is not None:
             reporter.started(CONTEXT_STAGE, event_kind=CONTEXT_KIND, summary=words.started)
         fitted = await self._pipeline.assemble(task, strategies=self._strategies)
@@ -96,7 +97,7 @@ class ContextWindow:
         self, fitted: AssembledContext, finding: ContextFinding, task: Task
     ) -> ContextFinding:
         """The finding, its cut lines struck from their source too when its mode says so."""
-        modes = get_settings().context.failure_detection.retract_modes
+        modes = self._app_config.context.failure_detection.retract_modes
         if finding.mode not in modes or not finding.excise or finding.index is None:
             return finding
         struck = self._pipeline.retract(task, fitted.chunks[finding.index], finding.excise)
@@ -110,7 +111,7 @@ class ContextWindow:
         """A warning card when the window needed attention; a quiet record otherwise."""
         if reporter is None:
             return
-        words = get_settings().context.window
+        words = self._app_config.context.window
         window = result.window
         cost: dict[str, Any] = {
             "chunks": len(window.chunks),

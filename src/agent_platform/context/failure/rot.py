@@ -26,6 +26,7 @@ class RotMonitor:
     """Per-session (window size, answer quality) observations, and the verdict they support."""
 
     def __init__(self) -> None:
+        self._app_config = get_settings()
         self._observed: dict[str, deque[tuple[int, float]]] = {}
         self._last_tokens: dict[str, int] = {}
 
@@ -35,13 +36,13 @@ class RotMonitor:
 
     def record(self, session_id: str, score: float) -> None:
         """One answer's quality in [0, 1], against the last window's size."""
-        limit = get_settings().context.failure_detection.max_observations
+        limit = self._app_config.context.failure_detection.max_observations
         series = self._observed.setdefault(session_id, deque(maxlen=limit))
         series.append((self._last_tokens.get(session_id, 0), score))
 
     def health(self, session_id: str, used_tokens: int, budget: int) -> ContextHealth | None:
         """The session's health at the highest checkpoint this window has crossed."""
-        settings = get_settings().context.failure_detection
+        settings = self._app_config.context.failure_detection
         crossed = [
             int(f * budget) for f in settings.checkpoint_fractions if used_tokens >= f * budget
         ]

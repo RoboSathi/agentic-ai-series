@@ -56,6 +56,8 @@ class NodeKit:
     """The agent's collaborators, supplied and derived, built once per agent."""
 
     def __init__(self, parts: CsaParts) -> None:
+        self._app_config = get_settings()
+        self._agent_config = get_agent_settings()
         self._supplied(parts)
         self._derive_tooling(parts)
         self._derive_turn(parts)
@@ -68,7 +70,7 @@ class NodeKit:
         # Which stages this agent has. Read once, here, because the graph is compiled from it —
         # a feature flipped afterwards reaches a running agent only by rebuilding one.
         self.features: FeatureSet = (
-            parts.features if parts.features is not None else get_settings().features
+            parts.features if parts.features is not None else self._app_config.features
         )
         self.llm: LLMClient = model.llm
         self.selector: ToolRetrievalSelector | None = model.selector
@@ -117,10 +119,10 @@ class NodeKit:
         self.tool_path = ToolPath(self.registry, self.executor, self.audit, self.gatekeeper)
         # One screener for the agent's life; the screens it runs are declared for analytics.
         self.message_screener = MessageScreener(self.security, self.dead_letter_queue)
-        declare_screens(get_settings().agent.id, self.message_screener.declared_checks())
+        declare_screens(self._app_config.agent.id, self.message_screener.declared_checks())
         # The profile always; skills only when the composition root built procedural memory.
         self.instructions: AgentInstructions = parts.model.instructions or (
-            build_agent_instructions(get_settings().skills, store=None, audit=None, reporter=None)
+            build_agent_instructions(self._app_config.skills, store=None, audit=None, reporter=None)
         )
         # What a finished turn leaves in memory: the transcript, the dream inbox, a claim.
         self.turn_memory = TurnMemory(
@@ -133,7 +135,7 @@ class NodeKit:
 
     def _derive_turn(self, parts: CsaParts) -> None:
         """What reads a turn: its order, its evidence, its loop, its reply checks."""
-        settings = get_agent_settings()
+        settings = self._agent_config
         self.deliberation_markers = [m.casefold() for m in settings.deliberation_markers]
         self.max_rounds = settings.max_tool_iterations
         self.actor = self.agent_policy.agent_id

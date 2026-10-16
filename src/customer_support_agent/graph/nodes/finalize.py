@@ -47,6 +47,7 @@ _PRE_CHECK = "pre_check"
 
 class FinalizeNodes(NodeSupport):
     def __init__(self, kit: NodeKit, proposal: ProposalNodes) -> None:
+        self._app_config = get_settings()
         super().__init__(kit)
         self._proposal = proposal
         self._llm = kit.llm
@@ -166,7 +167,7 @@ class FinalizeNodes(NodeSupport):
         # The draft check already logged what it found; saying it twice
         # here would double every rejection in the trace.
         request = self._reply_request(state)
-        purposes = get_settings().observability.llm_purposes
+        purposes = self._app_config.observability.llm_purposes
         self._report_llm_request(request, purpose=purposes.reply_revision)
         try:
             result = await self._proposal.call_model(request, state)

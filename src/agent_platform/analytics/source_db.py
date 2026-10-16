@@ -100,6 +100,7 @@ class SourceDatabase:
     """The sealed, in-memory source a model queries (Facade over DuckDB + guard)."""
 
     def __init__(self, parquet_dir: Path | None = None, catalog: Catalog | None = None) -> None:
+        self._app_config = get_settings()
         self._parquet_dir = parquet_dir or get_settings().analytics.resolved_parquet_dir
         self._catalog = catalog or load_catalog()
         self._lock = threading.Lock()
@@ -128,7 +129,7 @@ class SourceDatabase:
                 row[0]: row[1] for row in connection.execute(f"DESCRIBE {view.name}").fetchall()
             }
             sample = connection.execute(
-                f"SELECT * FROM {view.name} LIMIT {get_settings().analytics.query.sample_rows}"
+                f"SELECT * FROM {view.name} LIMIT {self._app_config.analytics.query.sample_rows}"
             )
             return ViewDescription(
                 name=view.name,
@@ -142,7 +143,7 @@ class SourceDatabase:
 
     def agents(self) -> list[str]:
         """Every agent id the source holds data for, across the views that carry one."""
-        column = get_settings().analytics.query.agent_column
+        column = self._app_config.analytics.query.agent_column
         with self._lock:
             connection = self._fresh()
             views = [
@@ -160,7 +161,7 @@ class SourceDatabase:
 
     def metrics(self) -> list[MetricSummary]:
         """The metric catalogue, with each metric's SLO target."""
-        targets = get_settings().observability.slo_targets
+        targets = self._app_config.observability.slo_targets
         return [
             MetricSummary(
                 **metric.model_dump(
@@ -191,7 +192,7 @@ class SourceDatabase:
             sql = period_sql(
                 metric,
                 lambda view: view,
-                get_settings().evals.channel,
+                self._app_config.evals.channel,
                 days,
                 by,
                 one_agent=agent_id is not None,
@@ -209,14 +210,14 @@ class SourceDatabase:
             return
         known = self.agents()
         if known and agent_id not in known:
-            words = get_settings().analytics.query.rejections
+            words = self._app_config.analytics.query.rejections
             self._logger.warning("Analytics metric refused", agent_id=agent_id, agents=known)
             raise QueryRejectedError(
                 words.unknown_agent.format(agent=agent_id, agents=", ".join(known))
             )
 
     def _metric(self, name: str, by: str | None) -> MetricDefinition:
-        words = get_settings().analytics.query.rejections
+        words = self._app_config.analytics.query.rejections
         metric = self._catalog.metric(name)
         if metric is None:
             raise QueryRejectedError(words.unknown_metric.format(name=name))
@@ -252,7 +253,7 @@ class SourceDatabase:
 
     def _guidance(self, error: str, views: list[str]) -> str:
         """DuckDB's error, each view's real columns, and the closest to any name it quoted."""
-        words = get_settings().analytics.query.rejections
+        words = self._app_config.analytics.query.rejections
         columns = {
             view: list(found.columns) for view in views if (found := self._catalog.get(view))
         }
@@ -270,7 +271,7 @@ class SourceDatabase:
     def _run(
         self, connection: duckdb.DuckDBPyConnection, sql: str, params: list[Any] | None = None
     ) -> list[Any]:
-        settings = get_settings().analytics.query
+        settings = self._app_config.analytics.query
         timer = threading.Timer(settings.timeout_seconds, connection.interrupt)
         timer.start()
         try:
@@ -285,7 +286,7 @@ class SourceDatabase:
             timer.cancel()
 
     def _bounded(self, sql: str, result: list[Any]) -> QueryResult:
-        settings = get_settings().analytics.query
+        settings = self._app_config.analytics.query
         columns, rows = result
         truncated = len(rows) > settings.max_rows
         rows = [list(row) for row in rows[: settings.max_rows]]
@@ -309,7 +310,7 @@ class SourceDatabase:
         view = self._catalog.get(name)
         if view is None or name not in self._loaded:
             raise QueryRejectedError(
-                get_settings().analytics.query.rejections.unknown_view.format(name=name)
+                self._app_config.analytics.query.rejections.unknown_view.format(name=name)
             )
         return view
 
@@ -336,7 +337,7 @@ class SourceDatabase:
                     f"CREATE TABLE {view.name} AS SELECT * FROM read_parquet({literal})"
                 )
                 loaded.add(view.name)
-        timezone = get_settings().analytics.query.timezone.replace("'", "''")
+        timezone = self._app_config.analytics.query.timezone.replace("'", "''")
         connection.execute(f"SET TimeZone = '{timezone}'")
         for statement in _SEAL:
             connection.execute(statement)

@@ -262,6 +262,7 @@ class NollmScoringCascadeImpl:
         judge: CalibratedJudge | None = None,
         rules: DeterministicRuleScorer | None = None,
     ) -> None:
+        self._app_config = get_settings()
         toggles = get_settings().hallucination_check.scoring.tiers
         self.rules = rules or DeterministicRuleScorer()
         self._similarity = EmbeddingSimilarityScorer(embeddings)
@@ -294,7 +295,7 @@ class NollmScoringCascadeImpl:
         `resolve()` for a number it deliberately refuses to produce in the
         ambiguous middle.
         """
-        if get_settings().hallucination_check.scoring.tiers.embedding_similarity:
+        if self._app_config.hallucination_check.scoring.tiers.embedding_similarity:
             return await self._similarity.similarities(text, candidates)
         return [lexical_overlap(text, candidate) for candidate in candidates]
 

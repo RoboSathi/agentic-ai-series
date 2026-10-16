@@ -38,6 +38,7 @@ from customer_support_agent.tools.definitions import SNAPSHOT_READS
 
 class PrefetchNodes(NodeSupport):
     def __init__(self, kit: NodeKit, proposal: ProposalNodes, execution: ExecutionNodes) -> None:
+        self._agent_config = get_agent_settings()
         super().__init__(kit)
         self._proposal = proposal
         self._execution = execution
@@ -86,7 +87,7 @@ class PrefetchNodes(NodeSupport):
             return list(offered)
         answered = {tool.qualified_name for _, tool, _ in reads}
         needless = (
-            set(get_agent_settings().prefetch.needless_when_order_known)
+            set(self._agent_config.prefetch.needless_when_order_known)
             if state.metadata.get(ORDER_UNDER_DISCUSSION) is not None
             else set()
         )
@@ -117,7 +118,7 @@ class PrefetchNodes(NodeSupport):
     async def _read(self, state: AgentState, skill: str, tool: Any, params: dict[str, Any]) -> bool:
         """One read, as a tool call the model will see; False when it was refused."""
         call = ModelToolCall(
-            id=get_agent_settings().prefetch.call_id.format(tool=tool.model_name),
+            id=self._agent_config.prefetch.call_id.format(tool=tool.model_name),
             name=tool.model_name,
             arguments=json.dumps(params),
         )
@@ -128,7 +129,7 @@ class PrefetchNodes(NodeSupport):
                 call.arguments,
                 served.output,
                 skill=skill,
-                source=get_agent_settings().prefetch.served_from,
+                source=self._agent_config.prefetch.served_from,
                 redact=self._security.redact,
             )
             self._hand_to_model(
@@ -167,10 +168,9 @@ class PrefetchNodes(NodeSupport):
         allowed = state.metadata.get("intent_tools")
         return not allowed or tool in allowed
 
-    @staticmethod
-    def _prefetch_params(tool: Any, state: AgentState) -> dict[str, Any] | None:
+    def _prefetch_params(self, tool: Any, state: AgentState) -> dict[str, Any] | None:
         """Each argument from the turn state the config names; None if a required one is unknown."""
-        sources = get_agent_settings().prefetch.arguments
+        sources = self._agent_config.prefetch.arguments
         fields = tool.args_schema.model_fields
         params = {
             arg: state.metadata[key]

@@ -38,6 +38,7 @@ _Stated = list[tuple[str, tuple[int, Chunk]]]
 
 class ClashCheck:
     def __init__(self, nli: ContradictionModel | None, similarity: TextSimilarity) -> None:
+        self._app_config = get_settings()
         self._nli = nli
         self._similarity = similarity
 
@@ -62,7 +63,7 @@ class ClashCheck:
         return found
 
     async def _prose(self, context: AssembledContext) -> list[ContextFinding]:
-        settings = get_settings().context.failure_detection
+        settings = self._app_config.context.failure_detection
         if self._nli is None or not settings.nli:
             return []
         stated = list(islice(_statements(context), settings.max_sentences))
@@ -80,7 +81,7 @@ class ClashCheck:
     ) -> list[tuple[tuple[Chunk, int, str], tuple[Chunk, int, str]]]:
         """Sentence pairs from chunks of different trust that name the same record, the most
         similar first, at most `max_pairs` of them."""
-        settings = get_settings().context.failure_detection
+        settings = self._app_config.context.failure_detection
         texts = [text for _, _, text in stated]
         similar = await self._similarity.matrix(texts, texts)
         ranked = sorted(

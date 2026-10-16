@@ -252,6 +252,7 @@ class AgenticTuiApp(App[None]):
         commands: Sequence[Command] | None = None,
         host: AgentHost | None = None,
     ) -> None:
+        self._app_config = get_settings()
         super().__init__()
         self._host = host
         # An explicit factory still wins — that is how a test substitutes
@@ -350,7 +351,7 @@ class AgenticTuiApp(App[None]):
     def on_mount(self) -> None:
         self._feed.subscribe(self._on_status)
         self.set_interval(
-            get_settings().tui.refresh_interval_ms / 1000,
+            self._app_config.tui.refresh_interval_ms / 1000,
             self._status.tick,
         )
         self.query_one("#query", ChatPrompt).focus()
@@ -363,7 +364,7 @@ class AgenticTuiApp(App[None]):
         if greeting:
             self._panel.note(greeting, style=palette("notice"))
         if self._status_host is not None or self._action_host is not None:
-            self.set_interval(get_settings().tui.status_refresh_ms / 1000, self._refresh_status)
+            self.set_interval(self._app_config.tui.status_refresh_ms / 1000, self._refresh_status)
         if isinstance(self._host, HousekeepingHost):
             self.set_interval(self._host.housekeeping_interval(), self._housekeep)
         if self._parquet.interval_seconds() > 0:
@@ -371,7 +372,7 @@ class AgenticTuiApp(App[None]):
 
     def on_unmount(self) -> None:
         """The console is closing: this session ends, and an open task in it is abandoned."""
-        end_session(get_settings().agent.id, self._session_id)
+        end_session(self._app_config.agent.id, self._session_id)
 
     def _refresh_parquet(self) -> None:
         """Re-export the analytics source from this process, which holds the database lock."""
@@ -496,7 +497,7 @@ class AgenticTuiApp(App[None]):
         self.query_one("#query", ChatPrompt).disabled = True
         self.run_worker(
             self._turn_of(
-                get_settings().tui.resume_banner, lambda: self._live_agent().resume(thread_id)
+                self._app_config.tui.resume_banner, lambda: self._live_agent().resume(thread_id)
             ),
             exclusive=True,
             name="agent-turn",
@@ -512,7 +513,7 @@ class AgenticTuiApp(App[None]):
         try:
             await self._dispatch_command(line)
         except Exception as exc:  # noqa: BLE001 - the console outlives any one command
-            self._report_failure(get_settings().tui.command_failed, exc)
+            self._report_failure(self._app_config.tui.command_failed, exc)
 
     def _handle_exception(self, error: Exception) -> None:
         """Whatever still escapes a handler ends the console: log it first, so it is on record.
@@ -551,7 +552,7 @@ class AgenticTuiApp(App[None]):
         self._status.clear_turn()
         if not forwarded:
             self._panel.note(line, style=palette("command"))
-        with bound_channel(get_settings().tui.channel):
+        with bound_channel(self._app_config.tui.channel):
             result = await self._commands.dispatch(line)
         self._apply(result.effect)
 
@@ -584,7 +585,7 @@ class AgenticTuiApp(App[None]):
             self._rebuild_agent()
         if effect.session_id and effect.session_id != self._session_id:
             # The session being left is over: a task still open in it is abandoned.
-            end_session(get_settings().agent.id, self._session_id)
+            end_session(self._app_config.agent.id, self._session_id)
             self._session_id = effect.session_id
             self._panel.note(f"Session switched to {effect.session_id}", style=palette("info"))
         if effect.agent_turn:
@@ -614,7 +615,7 @@ class AgenticTuiApp(App[None]):
             if previous is not None and callable(adopt):
                 adopt(previous)
         except Exception as exc:  # noqa: BLE001 - the agent on screen keeps running
-            self._report_failure(get_settings().tui.rebuild_failed, exc)
+            self._report_failure(self._app_config.tui.rebuild_failed, exc)
             return
         self._agent = rebuilt
         self._bind_live_commands()
@@ -666,7 +667,7 @@ class AgenticTuiApp(App[None]):
         try:
             # Every model call the turn makes is counted where it is made (the LLM
             # adapter); the turn only says where the count goes.
-            with bound_channel(get_settings().tui.channel), metered(self._tokens.add):
+            with bound_channel(self._app_config.tui.channel), metered(self._tokens.add):
                 state = await call()
 
             self._panel.note(
@@ -758,7 +759,7 @@ class AgenticTuiApp(App[None]):
             return False
         if self._copier.copy_text(text):
             self.notify(
-                f"Copied {len(text)} characters", timeout=get_settings().tui.copy_toast_seconds
+                f"Copied {len(text)} characters", timeout=self._app_config.tui.copy_toast_seconds
             )
         else:
             self.notify("Copy failed — no clipboard command found", severity="warning")
