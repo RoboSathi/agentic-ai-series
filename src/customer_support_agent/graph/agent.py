@@ -24,14 +24,14 @@ already.
 This module holds only what belongs to the agent as a whole — its
 dependencies, one turn's lifecycle, and the conversation it is carrying.
 Each node group lives in `nodes/`, and the wiring in `edges.py`, because
-one class with sixty methods is not a design, it is a file. The groups are
-mixins over this one object rather than separate collaborators: they share
-a single injected set of dependencies, and `nodes/_support.py` declares
-that set once so `mypy --strict` holds every group to it.
+one class with sixty methods is not a design, it is a file. Each group is
+its own object, built from one `NodeKit` (`kit.py`) and binding only what
+its nodes read; a group that needs another's work is handed that group.
 
-The dependencies arrive through `build_agent(...)`. Nothing is constructed
-inline, so a test can substitute a scripted LLM and an in-memory database
-without patching a single import.
+The dependencies arrive through `build_agent(...)` as one `CsaParts`
+(`parts.py`), grouped by concern. Nothing is constructed inline, so a test
+can substitute a scripted LLM and an in-memory database without patching a
+single import.
 """
 
 import uuid
@@ -39,102 +39,46 @@ from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from typing import Any
 
-from agent_platform.audit import AuditLedger, NullAuditLedger
-from agent_platform.config import FeatureSet, get_settings
-from agent_platform.context import (
-    ContextFailureDetector,
-    FiveStagePipeline,
-    StrategySelector,
-)
-from agent_platform.deterministic_checks import DeterministicChecker
+from agent_platform.config import get_settings
 from agent_platform.durability import (
     CheckpointInfo,
     DurableGraphRunner,
     ResumeResult,
     RunOutcome,
     RunRegistry,
-    SqliteCheckpointer,
 )
 from agent_platform.durability.stop_report import stop_report
-from agent_platform.gatekeeper import Gatekeeper
-from agent_platform.gatekeeper.mandate import MandateIssuer
-from agent_platform.guardrails import ResponseGuardrail
-from agent_platform.hallucination_check import DetectionLadder, GroundingReasoningDiagnoser
-from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import Message, TokenUsage
-from agent_platform.logging import get_logger
-from agent_platform.loop_control import LoopBudget, LoopGovernor, build_loop_governor
 from agent_platform.memory import (
-    MemoryFacade,
-    TurnRecorder,
     WorkingMemory,
     WorkingMemoryStore,
 )
 from agent_platform.memory.procedural.skills import (
-    AgentInstructions,
     SkillCatalog,
-    build_agent_instructions,
 )
 from agent_platform.memory.write_pipeline import MemoryWritePipelineImpl
-from agent_platform.observability import (
-    SLORegistry,
-    StageReporter,
-    Tracer,
-)
 from agent_platform.observability.langsmith import (
-    NullTraceExporter,
-    TraceExporter,
     TurnTrace,
     turn_trace,
 )
-from agent_platform.observability.step_events import StepEvents
-from agent_platform.observability.units import declare_screens, mark_cancelled
-from agent_platform.resilience import (
-    DeadLetterQueue,
-)
-from agent_platform.runtime.executor import ToolExecutor
-from agent_platform.runtime.verification import EffectVerifier
-from agent_platform.scoring import NollmScoringCascadeImpl
-from agent_platform.security import MessageScreener, SecuritySuite
-from agent_platform.security.auth.policy import AgentPolicy
+from agent_platform.observability.units import mark_cancelled
 from agent_platform.security.pii.active import admit_if_on, tokenise_if_on
 from agent_platform.security.pii.source import ADMITTED_KEY, Admitted
-from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
-from agent_platform.tools.path import ToolPath
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.identity import (
     Customer,
     bound_customer,
     current_customer,
 )
-from customer_support_agent.domain.order_reference import OrderReferenceResolver
-from customer_support_agent.graph.edges import GraphWiring
-from customer_support_agent.graph.nodes._support import NodeSupport
-from customer_support_agent.graph.nodes.authenticate import JUST_VERIFIED, AuthenticationNodes
-from customer_support_agent.graph.nodes.context import ContextNodes
-from customer_support_agent.graph.nodes.execute import ExecutionNodes
-from customer_support_agent.graph.nodes.finalize import FinalizeNodes
-from customer_support_agent.graph.nodes.intent import IntentNodes
-from customer_support_agent.graph.nodes.prefetch import PrefetchNodes
-from customer_support_agent.graph.nodes.propose import ProposalNodes
-from customer_support_agent.graph.nodes.review_wait import ReviewWaitNodes
-from customer_support_agent.graph.nodes.screening import ScreeningNodes
+from customer_support_agent.graph.edges import CsaNodes, GraphWiring
+from customer_support_agent.graph.kit import NodeKit
+from customer_support_agent.graph.nodes.authenticate import JUST_VERIFIED
+from customer_support_agent.graph.parts import CsaParts
 from customer_support_agent.graph.state import AgentState
-from customer_support_agent.grounding.evidence import GroundingEvidence
-from customer_support_agent.intent.phrases import PhraseReader
-from customer_support_agent.intent.router import CustomerSupportIntentRouter, Intent
-from customer_support_agent.loop_control import IndependentScorer, OutputQualityGate
 from customer_support_agent.memory.signals import turn_signals
-from customer_support_agent.memory.turn_memory import FinishedTurn, TurnMemory
-from customer_support_agent.observability.accounting import TurnAccountant, TurnOutcome
-from customer_support_agent.persistence.repositories import OrdersRepository, order_turn_scope
-from customer_support_agent.presentation.orders import (
-    OrderMenu,
-)
-from customer_support_agent.review.referral import ReplyReferral, ReviewReferral
-from customer_support_agent.security.authentication import CustomerAuthenticator
-from customer_support_agent.security.limit_disclosure import LimitDisclosureCheck
-from customer_support_agent.tools.definitions import SupportTools
+from customer_support_agent.memory.turn_memory import FinishedTurn
+from customer_support_agent.observability.accounting import TurnOutcome
+from customer_support_agent.persistence.repositories import order_turn_scope
 
 # Set by screening when a message is quarantined as hostile.
 _QUARANTINED = "security_quarantine"
@@ -148,193 +92,42 @@ _REVIEWED_OUTCOME = "review decision delivered"
 _CANCELLED_OUTCOME = "cancelled — resumable"
 
 
-class CustomerSupportAgent(
-    AuthenticationNodes,
-    ScreeningNodes,
-    IntentNodes,
-    ContextNodes,
-    PrefetchNodes,
-    ProposalNodes,
-    ExecutionNodes,
-    FinalizeNodes,
-    ReviewWaitNodes,
-    GraphWiring,
-    NodeSupport,
-):
-    """The refund agent: a graph plus the subsystems its nodes call."""
+class CustomerSupportAgent:
+    """The refund agent: one turn's lifecycle over a graph of node groups.
 
-    def __init__(
-        self,
-        llm: LLMClient,
-        gatekeeper: Gatekeeper | None,
-        registry: NamespacedToolRegistry,
-        tools: SupportTools,
-        executor: ToolExecutor,
-        security: SecuritySuite,
-        working_memory: WorkingMemoryStore | None = None,
-        dream_recorder: TurnRecorder | None = None,
-        context: FiveStagePipeline | None = None,
-        selector: ToolRetrievalSelector | None = None,
-        cascade: NollmScoringCascadeImpl | None = None,
-        reporter: StageReporter | None = None,
-        dead_letter_queue: DeadLetterQueue | None = None,
-        tracer: Tracer | None = None,
-        slos: SLORegistry | None = None,
-        deliberation: OutputQualityGate | None = None,
-        grounding: DetectionLadder | None = None,
-        authenticator: CustomerAuthenticator | None = None,
-        orders: OrdersRepository | None = None,
-        deterministic_checks: DeterministicChecker | None = None,
-        agent_policy: AgentPolicy | None = None,
-        intent_router: CustomerSupportIntentRouter | None = None,
-        features: FeatureSet | None = None,
-        audit: AuditLedger | None = None,
-        verifier: EffectVerifier | None = None,
-        mandate_issuer: MandateIssuer | None = None,
-        referral: ReviewReferral | None = None,
-        reply_referral: ReplyReferral | None = None,
-        checkpointer: SqliteCheckpointer | None = None,
-        runs: RunRegistry | None = None,
-        long_term_memory: MemoryFacade | None = None,
-        context_health: ContextFailureDetector | None = None,
-        context_strategies: StrategySelector | None = None,
-        governor: LoopGovernor | None = None,
-        trace_exporter: TraceExporter | None = None,
-        instructions: AgentInstructions | None = None,
-    ) -> None:
-        settings = get_agent_settings()
-        # Which stages this agent has. Read once, here, because the graph
-        # is compiled from it — a feature flipped afterwards reaches a
-        # running agent only by rebuilding one.
-        self._features = features if features is not None else get_settings().features
-        self._llm = llm
-        self._gatekeeper = gatekeeper
-        # Which refund-limit sentence the prompt carries (`refund_limit_notice`).
-        self._governed = gatekeeper is not None
-        # Written by the Gatekeeper when there is one, and by the agent
-        # itself when there is not — an ungoverned execution is exactly
-        # the one the trail must not be missing.
-        self._audit = audit or NullAuditLedger()
-        self._registry = registry
-        self._tools = tools
-        self._executor = executor
-        # Every model-proposed call takes this one path (ADR 0009 D9): it also
-        # writes the UNGOVERNED audit entry when the Gatekeeper is withheld.
-        self._tool_path = ToolPath(registry, executor, self._audit, gatekeeper)
-        self._security = security
-        # One screener for the agent's life; the screens it runs are declared for analytics.
-        self._message_screener = MessageScreener(security, dead_letter_queue)
-        declare_screens(get_settings().agent.id, self._message_screener.declared_checks())
-        self._working_memory = working_memory
-        self._dream_recorder = dream_recorder
-        self._long_term = long_term_memory
-        # The profile always; skills only when the composition root
-        # built procedural memory. A hand-built agent gets the profile.
-        self._instructions = instructions or build_agent_instructions(
-            get_settings().skills, store=None, audit=None, reporter=None
-        )
-        self._context = context
-        self._selector = selector
-        self._cascade = cascade
-        self._reporter = reporter
-        # What a finished turn leaves in memory: the transcript, the dream inbox, a claim.
-        self._turn_memory = TurnMemory(
-            working_memory, long_term_memory, dream_recorder, security.redact, reporter
-        )
-        # Where each turn's trace is exported (LangSmith), if anywhere.
-        self._trace_exporter = trace_exporter or NullTraceExporter()
-        # The model is a remote dependency like any other: bounded by a
-        # timeout, retried under an idempotency key, and behind a breaker
-        # so a provider outage fails fast instead of queueing.
-        self._dead_letter_queue = dead_letter_queue
-        self._tracer = tracer
-        self._grounding = grounding
-        # Reads an effect back after execution. A result it cannot
-        # verify never becomes authoritative, so no customer-facing
-        # claim can rest on an action that did not actually land.
-        self._verifier = verifier
-        # Says what this turn's request authorizes. Without one the
-        # Gatekeeper reports that the question was never asked,
-        # rather than quietly treating silence as consent.
-        self._mandate_issuer = mandate_issuer
-        # Turns a Gatekeeper escalation into a queued review. Present only
-        # with the Gatekeeper: without one nothing escalates.
-        self._referral = referral
-        # Queues a reply the hallucination check cut, for a person to judge.
-        # Present only with the check: without one nothing is cut.
-        self._reply_referral = reply_referral
-        if agent_policy is None:
-            raise ValueError("CustomerSupportAgent requires an AgentPolicy loaded from persistence")
-        self._agent_policy = agent_policy
-        self._deliberation_markers = [m.casefold() for m in settings.deliberation_markers]
-        self._max_rounds = settings.max_tool_iterations
-        self._actor = self._agent_policy.agent_id
-        self._strategies = context_strategies
-        # The window the model is handed is measured, not assumed: five
-        # failure modes, checked on what was actually assembled.
-        self._context_health = context_health
-        self._diagnoser = GroundingReasoningDiagnoser()
-        # Token confidence (step 1) draws its card on this agent's feed.
-        self._response_guardrail = ResponseGuardrail(self._grounding)
-        self._limit_disclosure = LimitDisclosureCheck(self._refund_limit())
-        if intent_router is None:
-            raise ValueError(
-                "CustomerSupportAgent requires an intent_router from the composition root"
-            )
-        self._intents = intent_router
-        self._authenticator = authenticator
-        self._orders = orders
-        # Which order the customer is talking about, resolved once a turn
-        # from what they said and what the record holds. One resolver, so
-        # the path that answers and the path that acts cannot drift.
-        rules = get_agent_settings().order_reference
-        negated_at = PhraseReader().negated_at
-        self._order_reference = (
-            OrderReferenceResolver.from_orders(rules, orders, negated_at)
-            if orders is not None
-            else OrderReferenceResolver(rules, negated_at=negated_at)
-        )
-        # What a reply is grounded on: the order record, tools, rules, facts — one assembler.
-        self._evidence = GroundingEvidence(
-            self._registry,
-            self._agent_policy,
-            orders,
-            self._order_reference,
-            governed=self._governed,
-        )
-        self._deterministic_checks = deterministic_checks
-        # Who each session has proved itself to be. Authentication is per
-        # conversation: a customer verifies once and stays verified for
-        # that session, rather than retyping a code every turn.
-        self._sessions: dict[str, Customer] = {}
-        # The order list each session was last shown, so a bare "2"
-        # resolves back to an order.
-        self._menus: dict[str, OrderMenu] = {}
-        self._last_supported_intent: dict[str, Intent] = {}
-        # The one authority over the tool loop: step cap, deadline, budgets, repeats (exact,
-        # canonical, semantic), cycles and convergence. Its state rides in the graph state.
-        self._governor = governor or build_loop_governor(LoopBudget(max_steps=self._max_rounds))
-        # Plan, reflect, evaluate. Injected as one composition so a
-        # deployment can swap any of the three; deterministic by default,
-        # so deliberating about a reply costs no completions.
-        self._deliberation = deliberation or OutputQualityGate(
-            evaluator=IndependentScorer(cascade) if cascade is not None else None
-        )
-        # Eight SLOs are configured; this is what actually observes them,
-        # once per turn.
-        self._accountant = TurnAccountant(slos=slos)
-        self._logger = get_logger("customer_support_agent")
+    The node groups (`nodes/`) are separate objects built from one `NodeKit`; the wiring
+    (`edges.py`) compiles them into the graph. This shell holds only what belongs to the
+    agent as a whole: the turn lifecycle, durable runs, and the conversation it carries.
+    """
+
+    def __init__(self, parts: CsaParts) -> None:
+        kit = NodeKit(parts)
+        self._kit = kit
+        self._nodes = CsaNodes.from_kit(kit)
+        self._conversation = kit.conversation
+        self._sessions = kit.conversation.sessions
+        self._security = kit.security
+        self._working_memory = kit.working_memory
+        self._long_term = kit.long_term
+        self._instructions = kit.instructions
+        self._authenticator = kit.authenticator
+        self._reporter = kit.reporter
+        self._turn_memory = kit.turn_memory
+        self._trace_exporter = kit.trace_exporter
+        self._accountant = kit.accountant
+        self._actor = kit.actor
+        self._governor = kit.governor
+        self._steps = kit.steps
+        self._logger = kit.logger
         # Durable execution. The graph is compiled against the checkpointer,
         # so the runner and the graph must share it.
-        self._checkpointer = checkpointer
-        self._runs = runs
-        self._steps = StepEvents(reporter, max_steps=self._max_rounds, model=llm.model)
+        self._runs = kit.runs
         # The durable thread running now, so the console can cancel it.
         self._active_thread: str | None = None
-        self._graph = self._build()
+        self._graph = GraphWiring(kit, self._nodes).build()
         self._runner = (
-            DurableGraphRunner(self._graph, checkpointer, runs)
-            if checkpointer is not None and runs is not None
+            DurableGraphRunner(self._graph, kit.checkpointer, kit.runs)
+            if kit.checkpointer is not None and kit.runs is not None
             else None
         )
 
@@ -353,10 +146,8 @@ class CustomerSupportAgent(
         question again; an agent that dropped the session would demand
         the customer code back before the comparison could be made.
         """
-        self._sessions.update(previous._sessions)
-        self._menus.update(previous._menus)
+        self._conversation.adopt(previous._conversation)
         self._adopt_working_memory(previous._working_memory)
-        self._last_supported_intent.update(previous._last_supported_intent)
 
     def _adopt_working_memory(self, previous: WorkingMemoryStore | None) -> None:
         """Copy the previous build's sessions into this build's own store.

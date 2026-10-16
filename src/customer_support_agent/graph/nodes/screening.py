@@ -13,7 +13,9 @@ from agent_platform.security import MessageScreener, ScreenOutcome, ScreenSubjec
 from agent_platform.security.pii.source import ADMITTED_KEY, Admitted
 from customer_support_agent.deterministic_checks import checked_order, owned_order_id
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
+from customer_support_agent.graph.kit import NodeKit
 from customer_support_agent.graph.nodes._support import ORDER_SNAPSHOT, NodeSupport
+from customer_support_agent.graph.nodes.propose import ProposalNodes
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.reporting import (
     deterministic_check_fields,
@@ -36,6 +38,14 @@ def _outbound(state: AgentState) -> str:
 
 
 class ScreeningNodes(NodeSupport):
+    def __init__(self, kit: NodeKit, proposal: ProposalNodes) -> None:
+        super().__init__(kit)
+        self._proposal = proposal
+        self._message_screener = kit.message_screener
+        self._deterministic_checks = kit.deterministic_checks
+        self._actor = kit.actor
+        self._features = kit.features
+
     async def pii_filtering(self, state: AgentState) -> dict[str, Any]:
         """Take personal data out of the message before the model sees it.
 
@@ -204,7 +214,7 @@ class ScreeningNodes(NodeSupport):
             pair = await self._screener().screen_both(
                 _outbound(state),
                 self._reporter,
-                instructions=self._system_prompt(),
+                instructions=self._proposal.system_prompt(),
                 tools=self._registry.all_tools(),
                 subject=self._subject(state),
             )
@@ -213,7 +223,7 @@ class ScreeningNodes(NodeSupport):
             outcome = await self._screener().injection(
                 _outbound(state),
                 self._reporter,
-                instructions=self._system_prompt(),
+                instructions=self._proposal.system_prompt(),
                 tools=self._registry.all_tools(),
                 subject=self._subject(state),
             )

@@ -1337,6 +1337,39 @@ root must follow `/harness` hot. That is correct while a host runs one agent. Tw
 different `pii` postures in one process would need the host to own a posture per agent and hand
 it to those surfaces.
 
+### C-09 — The node groups are objects, built from one kit
+
+**Context.** `CustomerSupportAgent` inherited eleven node mixins and took 36 constructor
+parameters. Every group could reach every collaborator through one shared `self`, and
+`NodeSupport` declared each cross-group call as a stub. C-08 left that structure for later.
+The research and ops agents already build their graphs from separate node objects.
+
+**Decision.** (2026-10-16; supersedes C-08's "the mixin structure … is unchanged".)
+- **`parts.py`.** `build_agent` hands the agent one `CsaParts`, made of records grouped by
+  concern: model, tools, guards, memory and run.
+- **`kit.py`.** `NodeKit` derives, once, what used to be built in the constructor: the tool
+  path, the screener, the order-reference resolver, the grounding assembler, the governor and
+  the step narrator.
+- **Separate node objects.** Each group in `nodes/` is its own object. `NodeSupport` binds what
+  its shared helpers read, and each group's constructor binds what its own nodes read.
+- **Cross-group calls are constructor arguments.** Screening, Prefetch and Finalize are handed
+  the Proposal group; Intent and Prefetch the Execution group. The calls are public methods:
+  `invoke`, `system_prompt`, `offered_tools`, `call_model`, `prompt_request`.
+- **`conversation.py`.** `ConversationState` owns the per-session maps (verified customer,
+  order menu, last intent). Each is bounded by `memory.working.max_sessions`, and a rebuilt
+  agent adopts it.
+- **`edges.py`.** `GraphWiring(kit, CsaNodes)` compiles the graph from the node objects. A
+  withheld feature is still a node never added.
+- **The agent is a shell:** the turn lifecycle, durable runs, the conversation.
+- **Dead attributes removed:** `_tools` and `_diagnoser` were set and never read.
+
+**Consequences.**
+- A group's dependencies are written in its own constructor.
+- The card stream of a scripted status turn and of a governed and an ungoverned refund turn
+  was compared event by event against the mixin version: identical.
+- Tests that reached into the agent now name the owner (`agent._kit.audit`,
+  `agent._nodes.proposal.offered_tools(...)`).
+
 ## 11. Ops agent
 
 ### O-01 — The ops agent's only tools are the analytics MCP server's

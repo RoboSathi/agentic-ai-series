@@ -172,12 +172,12 @@ class TestVerificationSuppliesTheMenu:
     async def test_verifying_builds_the_menu(self, agent) -> None:  # type: ignore[no-untyped-def]
         built, _ = agent
         await built.handle(CUSTOMER_CODE, session_id="m")
-        assert built._menus["m"].size == 2
+        assert built._conversation.menus["m"].size == 2
 
     async def test_a_failed_attempt_builds_no_menu(self, agent) -> None:  # type: ignore[no-untyped-def]
         built, _ = agent
         await built.handle("ZZZ9ZZZ", session_id="m")
-        assert "m" not in built._menus
+        assert "m" not in built._conversation.menus
 
     def test_the_menu_matches_what_was_shown(self, seeded_pool: SqliteConnectionPool) -> None:
         orders = customer_orders(OrdersRepository(seeded_pool), 1)

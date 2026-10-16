@@ -13,10 +13,12 @@ from typing import Any, get_args
 from agent_platform.observability.units import current_task_kind, open_task
 from customer_support_agent.config.settings import get_agent_settings
 from customer_support_agent.domain.models import Order, OrderStatus
+from customer_support_agent.graph.kit import NodeKit
 from customer_support_agent.graph.nodes._support import (
     ORDER_SNAPSHOT,
     NodeSupport,
 )
+from customer_support_agent.graph.nodes.execute import ExecutionNodes
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.grounding.evidence import TOOL_BLOCKED, TOOL_COMPLETED
 from customer_support_agent.intent.router import Intent
@@ -27,6 +29,14 @@ _ORDER_STATUS = "order_status"
 
 
 class IntentNodes(NodeSupport):
+    def __init__(self, kit: NodeKit, execution: ExecutionNodes) -> None:
+        super().__init__(kit)
+        self._execution = execution
+        self._intents = kit.intents
+        self._orders = kit.orders
+        self._last_supported_intent = kit.conversation.last_supported_intent
+        self._deliberation = kit.deliberation
+
     async def classify_intent(self, state: AgentState) -> dict[str, Any]:
         """Decide what the customer is asking for, and what that permits.
 
@@ -298,7 +308,7 @@ class IntentNodes(NodeSupport):
         self, state: AgentState, tool: Any, params: dict[str, Any], subject: str
     ) -> dict[str, Any]:
         """Invoke one read tool through the governed path and end the turn on its answer."""
-        text, decision, _stage, invocation = await self._invoke(
+        text, decision, _stage, invocation = await self._execution.invoke(
             tool.qualified_name,
             json.dumps(params),
             state,

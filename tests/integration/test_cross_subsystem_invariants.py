@@ -7,6 +7,7 @@ break silently during a refactor.
 """
 
 import inspect
+from typing import Any
 
 from agent_platform.core.persistence import SqliteConnectionPool
 from agent_platform.core.primitives.money import Money
@@ -72,13 +73,33 @@ class TestEveryRetryIsIdempotent:
 class TestEpisodesComposeRatherThanDuplicate:
     def test_the_agent_constructs_no_llm_client_of_its_own(self) -> None:
         """The duplication regression that was found and fixed once already."""
-        source = inspect.getsource(CustomerSupportAgent)
-        assert "AsyncOpenAI" not in source
-        assert "create_llm_client" not in source
+        source = _agent_source()
+        # Calls, not mentions: a docstring may say whose client protects the model.
+        assert "AsyncOpenAI(" not in source
+        assert "create_llm_client(" not in source
 
     def test_the_agent_uses_the_platform_logger_not_print(self) -> None:
-        source = inspect.getsource(CustomerSupportAgent)
-        assert "print(" not in source
+        assert "print(" not in _agent_source()
+
+
+def _agent_source() -> str:
+    """The agent shell, its kit, and every node group: the code a turn runs through."""
+    import customer_support_agent.graph.edges as edges
+    import customer_support_agent.graph.kit as kit
+    import customer_support_agent.graph.nodes as nodes
+
+    modules = [kit, edges, *(module for module in _node_modules(nodes))]
+    return "\n".join([inspect.getsource(CustomerSupportAgent), *map(inspect.getsource, modules)])
+
+
+def _node_modules(package: Any) -> list[Any]:
+    import importlib
+    import pkgutil
+
+    return [
+        importlib.import_module(f"{package.__name__}.{info.name}")
+        for info in pkgutil.iter_modules(package.__path__)
+    ]
 
 
 def _raw_call(name: str, arguments: str):  # type: ignore[no-untyped-def]

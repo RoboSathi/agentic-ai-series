@@ -102,6 +102,14 @@ from customer_support_agent.gatekeeper.business_rules import (
 )
 from customer_support_agent.gatekeeper.mandates import EstablishedOrderScope
 from customer_support_agent.graph.agent import CustomerSupportAgent
+from customer_support_agent.graph.parts import (
+    CsaParts,
+    GuardParts,
+    MemoryParts,
+    ModelParts,
+    RunParts,
+    ToolParts,
+)
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.intent.router import CustomerSupportIntentRouter
 from customer_support_agent.persistence.repositories import (
@@ -469,54 +477,13 @@ def build_agent(
         else None
     )
 
-    return CustomerSupportAgent(
+    model = ModelParts(
         # Every provider call tokenises personal data out and restores it in the answer.
         llm=bounded(
             llm or create_llm_client(observer=StageReporterModelObserver(lambda: reporter)),
             features,
             redactor,
         ),
-        gatekeeper=governed,
-        # Only a Gatekeeper escalates, so only a governed agent refers.
-        referral=ReviewReferral() if governed is not None else None,
-        # Only the hallucination check cuts a reply, so only a checked agent refers one.
-        reply_referral=ReplyReferral(hitl) if features.is_on("hallucination_guard") else None,
-        audit=ledger,
-        features=features,
-        # Exported traces are always PII-redacted, whatever the `pii` feature says.
-        trace_exporter=build_trace_exporter(agent_id, lambda: PIIFilterImpl().redact),
-        registry=registry,
-        tools=tools,
-        executor=ToolExecutorImpl(
-            handler=tool_handler,
-            idempotency=idempotency,
-            reporter=reporter,
-        ),
-        dead_letter_queue=dead_letter_queue,
-        # Each screening detector is wired only if this agent declared
-        # it. Absent means the stage does not run and has nothing to
-        # narrate — not a detector that runs and reports finding nothing.
-        security=SecuritySuite(
-            authorizer=authorizer,
-            pii=redactor,
-            injection=PromptInjectionGuard() if features.is_on("prompt_injection") else None,
-            moderator=(TermContentModerator() if features.is_on("content_moderation") else None),
-        ),
-        working_memory=live_working_memory,
-        dream_recorder=dream_recorder,
-        long_term_memory=long_term,
-        # Measured on what was actually assembled, and mitigated before the
-        # model sees it. Poisoning uses the security layer's own phrase
-        # list, so the two can never disagree about what an injection is.
-        context_health=management.health,
-        context_strategies=management.strategies,
-        # The loop's caps are this agent's own; the baseline is its own turn history.
-        governor=build_loop_governor(
-            LoopBudget(max_steps=agent_settings.max_tool_iterations),
-            facts=observability_store if observing else None,
-            agent_id=agent_id,
-        ),
-        context=context,
         instructions=build_agent_instructions(
             settings.skills, store=procedural, audit=ledger, reporter=reporter, tools=registry
         ),
@@ -525,8 +492,6 @@ def build_agent(
         # intent allows, which is the unscoped behaviour retrieval
         # selection exists to improve on.
         selector=ToolRetrievalSelector(registry, scoring) if settings.tools.enabled else None,
-        cascade=scoring,
-        reporter=reporter,
         # Observability is on by default: a production agent that has to
         # be reconfigured before it can be diagnosed is diagnosed late.
         # The redactor is not optional. A span carries the query, the
@@ -542,13 +507,23 @@ def build_agent(
             if observing
             else None
         ),
-        slos=SLORegistry() if observing else None,
-        # Grounding answers "is this reply supported by what the tools
-        # returned?", which is a hallucination-protection question and
-        # not an observability one. Gating it on `observe` meant an agent
-        # configured to be quiet was also an agent that stopped checking
-        # its own answers.
-        grounding=DetectionLadder(scoring) if features.is_on("hallucination_guard") else None,
+        # The loop's caps are this agent's own; the baseline is its own turn history.
+        governor=build_loop_governor(
+            LoopBudget(max_steps=agent_settings.max_tool_iterations),
+            facts=observability_store if observing else None,
+            agent_id=agent_id,
+        ),
+        cascade=scoring,
+    )
+    tool_parts = ToolParts(
+        registry=registry,
+        executor=ToolExecutorImpl(
+            handler=tool_handler,
+            idempotency=idempotency,
+            reporter=reporter,
+        ),
+        gatekeeper=governed,
+        audit=ledger,
         # Every side effect is read back before anything is claimed about
         # it. Not a feature toggle: an agent that cannot tell whether its
         # own refund landed is not a narrower agent, it is an unreliable
@@ -558,16 +533,60 @@ def build_agent(
         # Only built when the Gatekeeper is: a scope with nothing to
         # check it is a record nobody reads.
         mandate_issuer=EstablishedOrderScope(orders) if governed is not None else None,
+        # Only a Gatekeeper escalates, so only a governed agent refers.
+        referral=ReviewReferral() if governed is not None else None,
+        # Only the hallucination check cuts a reply, so only a checked agent refers one.
+        reply_referral=ReplyReferral(hitl) if features.is_on("hallucination_guard") else None,
+    )
+    guards = GuardParts(
+        # Each screening detector is wired only if this agent declared
+        # it. Absent means the stage does not run and has nothing to
+        # narrate — not a detector that runs and reports finding nothing.
+        security=SecuritySuite(
+            authorizer=authorizer,
+            pii=redactor,
+            injection=PromptInjectionGuard() if features.is_on("prompt_injection") else None,
+            moderator=(TermContentModerator() if features.is_on("content_moderation") else None),
+        ),
+        agent_policy=agent_policy,
+        intent_router=resolved_intent_router,
         authenticator=CustomerAuthenticator(UsersRepository(connection)),
         orders=orders,
         deterministic_checks=deterministic_checker,
-        agent_policy=agent_policy,
-        intent_router=resolved_intent_router,
+        # Grounding answers "is this reply supported by what the tools
+        # returned?", which is a hallucination-protection question and
+        # not an observability one. Gating it on `observe` meant an agent
+        # configured to be quiet was also an agent that stopped checking
+        # its own answers.
+        grounding=DetectionLadder(scoring) if features.is_on("hallucination_guard") else None,
+        dead_letter_queue=dead_letter_queue,
+    )
+    memory = MemoryParts(
+        working_memory=live_working_memory,
+        long_term_memory=long_term,
+        dream_recorder=dream_recorder,
+        context=context,
+        # Measured on what was actually assembled, and mitigated before the
+        # model sees it. Poisoning uses the security layer's own phrase
+        # list, so the two can never disagree about what an injection is.
+        context_health=management.health,
+        context_strategies=management.strategies,
+    )
+    run = RunParts(
         # Durable execution is not a feature: without it a crash loses the
         # turn and a refund waiting on a person loses the conversation that
         # asked for it. That is a broken program, not a narrower agent.
         checkpointer=checkpointer or create_checkpointer(state_types=model_types(AgentState)),
         runs=RunRegistry(platform_store),
+        reporter=reporter,
+        slos=SLORegistry() if observing else None,
+        # Exported traces are always PII-redacted, whatever the `pii` feature says.
+        trace_exporter=build_trace_exporter(agent_id, lambda: PIIFilterImpl().redact),
+    )
+    return CustomerSupportAgent(
+        CsaParts(
+            model=model, tools=tool_parts, guards=guards, memory=memory, run=run, features=features
+        )
     )
 
 

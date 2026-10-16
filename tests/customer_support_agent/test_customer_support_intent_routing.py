@@ -55,7 +55,7 @@ async def test_refund_status_beats_generic_refund_marker() -> None:
 
 
 def test_intent_operator_fields_are_concise_and_distinguish_source() -> None:
-    from customer_support_agent.graph.agent import CustomerSupportAgent
+    from customer_support_agent.graph.nodes.intent import IntentNodes
 
     class DeterministicIntent:
         name = "ORDER_STATUS"
@@ -68,7 +68,7 @@ def test_intent_operator_fields_are_concise_and_distinguish_source() -> None:
         clarification = ""
         candidates = []
 
-    deterministic_fields = CustomerSupportAgent._intent_status_fields(DeterministicIntent())
+    deterministic_fields = IntentNodes._intent_status_fields(DeterministicIntent())
     assert deterministic_fields == {
         "intent": "ORDER_STATUS",
         "classification": "deterministic",
@@ -86,7 +86,7 @@ def test_intent_operator_fields_are_concise_and_distinguish_source() -> None:
         clarification = ""
         candidates = []
 
-    bert_fields = CustomerSupportAgent._intent_status_fields(BertIntent())
+    bert_fields = IntentNodes._intent_status_fields(BertIntent())
     assert bert_fields == {
         "intent": "ORDER_STATUS",
         "classification": "model",

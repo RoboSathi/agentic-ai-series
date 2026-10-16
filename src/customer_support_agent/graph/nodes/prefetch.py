@@ -22,18 +22,27 @@ from agent_platform.tools import ToolResult
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.models import Order
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
+from customer_support_agent.graph.kit import NodeKit
 from customer_support_agent.graph.nodes._support import (
     ORDER_SNAPSHOT,
     PREFETCHED,
     TURN_OFFERED_TOOLS,
     NodeSupport,
 )
+from customer_support_agent.graph.nodes.execute import ExecutionNodes
+from customer_support_agent.graph.nodes.propose import ProposalNodes
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.grounding.evidence import TOOL_BLOCKED, TOOL_COMPLETED
 from customer_support_agent.tools.definitions import SNAPSHOT_READS
 
 
 class PrefetchNodes(NodeSupport):
+    def __init__(self, kit: NodeKit, proposal: ProposalNodes, execution: ExecutionNodes) -> None:
+        super().__init__(kit)
+        self._proposal = proposal
+        self._execution = execution
+        self._security = kit.security
+
     async def prefetch(self, state: AgentState) -> dict[str, Any]:
         """Say which skills this turn runs and what they read first; then read.
 
@@ -42,7 +51,7 @@ class PrefetchNodes(NodeSupport):
         """
         activation = self._activation(state)
         reads = self._runnable_reads(activation, state)
-        offered = self._still_needed(state, await self._offered_tools(state), reads)
+        offered = self._still_needed(state, await self._proposal.offered_tools(state), reads)
         self._instructions.announce(
             activation,
             prefetched=[tool.model_name for _, tool, _ in reads],
@@ -132,7 +141,7 @@ class PrefetchNodes(NodeSupport):
         self._steps.tool_request(
             call.name, call.arguments, redact=self._security.redact, prefetched_for=skill
         )
-        text, _decision, _stage, invocation = await self._invoke(
+        text, _decision, _stage, invocation = await self._execution.invoke(
             tool.qualified_name, call.arguments, state, {tool.qualified_name}
         )
         self._hand_to_model(state, call, text, invocation)

@@ -307,8 +307,8 @@ class TestTheBuilderHonoursConfiguration:
         stopped checking its own answers.
         """
         agent = self._off("observability", seeded_pool)
-        assert agent._tracer is None
-        assert agent._grounding is not None
+        assert agent._kit.tracer is None
+        assert agent._kit.grounding is not None
 
 
 class TestAWithheldFeatureLeavesNoStage:
@@ -453,7 +453,7 @@ class TestHarnessOffLeavesTheModelFree:
         self, seeded_pool: SqliteConnectionPool, restore_settings: None
     ) -> None:
         agent = self._agent(False, seeded_pool)
-        offered = await agent._offered_tools(_turn_state({}))
+        offered = await agent._nodes.proposal.offered_tools(_turn_state({}))
         assert offered, "an absent classifier narrowed nothing, so nothing is excluded"
 
     async def test_a_classifier_that_permits_nothing_still_offers_nothing(
@@ -461,7 +461,9 @@ class TestHarnessOffLeavesTheModelFree:
     ) -> None:
         """The distinction the fix turns on, asserted from the other side."""
         agent = self._agent(True, seeded_pool)
-        offered = await agent._offered_tools(_turn_state({"intent": "UNKNOWN", "intent_tools": []}))
+        offered = await agent._nodes.proposal.offered_tools(
+            _turn_state({"intent": "UNKNOWN", "intent_tools": []})
+        )
         assert offered == []
 
     async def test_the_security_narrowing_still_applies_without_a_classifier(
@@ -469,7 +471,7 @@ class TestHarnessOffLeavesTheModelFree:
     ) -> None:
         """Losing intent routing must not lose the injection guard's scoping."""
         agent = self._agent(False, seeded_pool)
-        offered = await agent._offered_tools(
+        offered = await agent._nodes.proposal.offered_tools(
             _turn_state({"allowed_actions": ["support.get_order_status"]})
         )
         assert [tool.qualified_name for tool in offered] == ["support.get_order_status"]
@@ -485,7 +487,7 @@ class TestAnUnplacedTurnIsNeverOfferedAWrite:
         state = _turn_state(
             {"intent": "UNKNOWN", "intent_tools": [], "intent_execution_route": "llm_fallback"}
         )
-        names = {tool.name for tool in await agent._offered_tools(state)}
+        names = {tool.name for tool in await agent._nodes.proposal.offered_tools(state)}
         assert names == {"get_order_status", "get_refund_status", "list_orders"}
 
 

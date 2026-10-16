@@ -60,8 +60,8 @@ class TestThePlatformOwnsOnlyTheContract:
             features=get_settings().features.with_override("deterministic_checks", True),
         )
         # Wrapped so its facts enter as tokens (ADR P-40); the rules are still the agent's own.
-        assert isinstance(agent._deterministic_checks, AdmittedChecker)
-        assert isinstance(agent._deterministic_checks.inner, _AnotherAgentsRules)
+        assert isinstance(agent._kit.deterministic_checks, AdmittedChecker)
+        assert isinstance(agent._kit.deterministic_checks.inner, _AnotherAgentsRules)
 
 
 class TestCustomerSupportRules:
@@ -108,14 +108,14 @@ class TestTheFeature:
         self, seeded_pool: SqliteConnectionPool, restore_settings: None
     ) -> None:
         agent = self._agent(True, seeded_pool)
-        assert agent._deterministic_checks is not None
+        assert agent._kit.deterministic_checks is not None
         assert "deterministic_checks" in agent._graph.get_graph().nodes
 
     def test_the_stage_is_absent_when_withheld(
         self, seeded_pool: SqliteConnectionPool, restore_settings: None
     ) -> None:
         agent = self._agent(False, seeded_pool)
-        assert agent._deterministic_checks is None
+        assert agent._kit.deterministic_checks is None
         assert "deterministic_checks" not in agent._graph.get_graph().nodes
 
     async def test_the_turn_still_completes_without_it(
