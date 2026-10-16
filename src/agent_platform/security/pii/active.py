@@ -58,10 +58,6 @@ def scrub_if_on(text: str) -> str:
     return _source().scrub(text) if pii_on() else text
 
 
-def scrub_tree_if_on(value: Any) -> Any:
-    return _source().scrub_tree(value) if pii_on() else value
-
-
 def redact_if_on(text: str) -> str:
     """`text` with its personal data tokenised, when the posture declares `pii`."""
     return tokenise_if_on(text)
@@ -130,7 +126,6 @@ __all__ = [
     "restore_if_on",
     "restore_tree_if_on",
     "scrub_if_on",
-    "scrub_tree_if_on",
     "tokenise_if_on",
     "tokenise_tree_if_on",
 ]

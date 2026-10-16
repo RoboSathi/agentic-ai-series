@@ -67,14 +67,21 @@ class PiiSource:
     token.
     """
 
-    def __init__(self, pii: PIIFilterImpl, rules: PIIFilterImpl | None = None) -> None:
+    def __init__(
+        self,
+        pii: PIIFilterImpl,
+        rules: PIIFilterImpl | None = None,
+        *,
+        max_tokens: int | None = None,
+        cache_entries: int | None = None,
+    ) -> None:
         settings = get_settings().security.pii.source
         self._pii = pii
         self._rules = rules or PIIFilterImpl(detectors=rule_detectors())
         self._values: OrderedDict[str, str] = OrderedDict()
         self._cache: OrderedDict[tuple[int, str], tuple[str, dict[str, str]]] = OrderedDict()
-        self._max_tokens = settings.max_tokens
-        self._cache_entries = settings.cache_entries
+        self._max_tokens = max_tokens or settings.max_tokens
+        self._cache_entries = cache_entries or settings.cache_entries
         self._lock = threading.Lock()
 
     def admit(self, text: str) -> Admitted:
@@ -98,9 +105,6 @@ class PiiSource:
     def scrub(self, text: str) -> str:
         """`text` with every known value and pattern match tokenised — no model, so cheap."""
         return self._through(self._rules, text)
-
-    def scrub_tree(self, value: Any) -> Any:
-        return map_strings(value, self.scrub)
 
     def restore(self, text: str) -> str:
         """`text` with each token this process made put back; any other token stays as it is."""

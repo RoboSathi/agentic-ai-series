@@ -116,6 +116,7 @@ def harness(ra_config: None, tmp_path: Path) -> BuildHarness:
     def build(
         scripts: Mapping[str, Sequence[Any]] | None = None,
         features: dict[str, bool] | None = None,
+        reported: bool = True,
     ) -> Harness:
         posture: FeatureSet = get_settings().features
         for path, value in {**OFFLINE_POSTURE, **(features or {})}.items():
@@ -125,7 +126,7 @@ def harness(ra_config: None, tmp_path: Path) -> BuildHarness:
         feed = InMemoryLiveStatusFeed(max_events=0)
         roles = ScriptedRoles(scripts or {})
         agent = build_agent(
-            reporter=StageReporter(feed, "test"),
+            reporter=StageReporter(feed, "test") if reported else None,
             features=posture,
             clients=roles,
             gateway=lambda: WebGateway("replay", fixtures=FixtureStore(tmp_path / "web", "none")),
