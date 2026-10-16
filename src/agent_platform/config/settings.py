@@ -3099,6 +3099,67 @@ class GroundingCardSettings(BaseModel):
     confidence_bands: dict[str, float]
 
 
+class CardSummaryWords(BaseModel):
+    """The one-line summary a card's title carries, per stage (`interface/tui/card_summaries.py`)."""
+
+    separator: str
+    failed: str
+    warning: str
+    waiting: str
+    blocked: str
+    in_scope: str
+    out_of_scope: str
+    identity_verified: str
+    verification_required: str
+    valid_request: str
+    invalid_request: str
+    injection_blocked: str
+    injection_passed: str
+    pii_redacted: str
+    pii_category: str
+    pii_match: str
+    pii_matches: str
+    pii_passed: str
+    moderation_passed: str
+    intent_classified: str
+    intent_score: str
+    memory_operation: str
+    memory_recalled: str
+    memory_read: str
+    history_turn: str
+    history_turns: str
+    state_item: str
+    state_items: str
+    state_preview: str
+    context_sources: str
+    tool_requested: str
+    tool: str
+    prompt_sent: str
+    tools_offered: str
+    response_generated: str
+    authorization_evaluated: str
+    attempt: str
+    attempts: str
+    recovered: str
+    recovery_event: str
+    claims_supported: str
+    repaired: str
+    response_ready: str
+    response_not_ready: str
+    # How many of a context card's working-memory state items its summary previews.
+    state_preview_items: int = Field(ge=0)
+    # Tool results that say only that the call ran: left off a tool card's summary.
+    plain_results: list[str] = Field(default_factory=list)
+
+
+class CardBodyWords(BaseModel):
+    """The few words an expanded card's body adds around its fields."""
+
+    detail_prefix: str
+    tokens_label: str
+    empty: str
+
+
 class TuiSettings(YamlBackedSettings):
     """Live status feed (LLD §20)."""
 
@@ -3110,6 +3171,8 @@ class TuiSettings(YamlBackedSettings):
     refresh_interval_ms: int
     # A stage's one-line summary for an agent's own reason code (DeterministicCheck's, say).
     reason_summaries: dict[str, str] = Field(default_factory=dict)
+    card_summaries: CardSummaryWords
+    card_body: CardBodyWords
     show_token_count: bool
     copy_method: Literal["osc52", "file"]
     # Commands that put text on the system clipboard, tried in order; the

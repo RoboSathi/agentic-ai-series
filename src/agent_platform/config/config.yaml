@@ -2745,6 +2745,64 @@ presentation:
 tui:
   # Every turn and command from this console is logged with `channel: tui`.
   channel: tui
+  # The one-line summary in a card's title, per stage (`interface/tui/card_summaries.py`).
+  card_summaries:
+    # Between the parts of one summary line.
+    separator: " · "
+    failed: "failed"
+    warning: "attention required"
+    waiting: "waiting"
+    # A blocked stage that named neither its decision nor its action.
+    blocked: "blocked"
+    in_scope: "in scope"
+    out_of_scope: "out of scope"
+    identity_verified: "PASS · Identity Verified"
+    verification_required: "Verification Required"
+    valid_request: "PASS · Valid Request"
+    invalid_request: "Invalid Request"
+    injection_blocked: "Prompt injection blocked"
+    injection_passed: "PASS · No prompt injection attempt"
+    pii_redacted: "REDACTED"
+    # When the detector named no category.
+    pii_category: "PII"
+    pii_match: "{count} match"
+    pii_matches: "{count} matches"
+    pii_passed: "PASS · No PII detected"
+    moderation_passed: "PASS · No harmful content detected"
+    intent_classified: "classified"
+    intent_score: "model score {score:.0%}"
+    # A memory write that named no operation.
+    memory_operation: "set"
+    memory_recalled: "Recalled {count} items"
+    memory_read: "memory read"
+    history_turn: "{count} history turn"
+    history_turns: "{count} history turns"
+    state_item: "{count} state item"
+    state_items: "{count} state items"
+    state_preview: "state: {items}"
+    context_sources: "{chunks} sources · {tokens} tokens"
+    tool_requested: "Tool Requested"
+    # A tool call that named no tool.
+    tool: "tool"
+    prompt_sent: "Prompt Sent"
+    tools_offered: "{count} Tools Offered"
+    response_generated: "Response Generated"
+    authorization_evaluated: "authorization evaluated"
+    attempt: "{count} attempt"
+    attempts: "{count} attempts"
+    recovered: "recovered"
+    recovery_event: "recovery event"
+    claims_supported: "{supported}/{claims} claims supported"
+    repaired: "repaired"
+    response_ready: "Response Ready"
+    response_not_ready: "Response Not Ready"
+    state_preview_items: 3
+    plain_results: [success, ok, completed]
+  # Around an expanded card's fields: a lone detail, the tokens it cost, or nothing to show.
+  card_body:
+    detail_prefix: "detail = "
+    tokens_label: tokens
+    empty: "No additional semantic detail."
   refresh_interval_ms: 100
   show_token_count: true
   copy_method: osc52
