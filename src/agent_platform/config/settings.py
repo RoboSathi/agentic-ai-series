@@ -162,6 +162,13 @@ class EmbeddingInputTypes(BaseModel):
     passage: str
 
 
+class EmbeddingCacheSettings(BaseModel):
+    """Vectors already computed, kept per (purpose, text) for the process (`embedding_cache`)."""
+
+    enabled: bool
+    max_entries: int = Field(ge=1)
+
+
 class EmbeddingSettings(BaseModel):
     """Embedding backend used by the NOLLM cascade, RAG and memory scoring."""
 
@@ -173,6 +180,7 @@ class EmbeddingSettings(BaseModel):
     local_dimensions: int
     input_types: EmbeddingInputTypes
     truncate: str
+    cache: EmbeddingCacheSettings
 
 
 class EncoderSettings(BaseModel):
@@ -625,10 +633,6 @@ class AuditSettings(YamlBackedSettings):
     data_version: str
     prompt_version: str
     tool_schema_version: str
-    # Where the versioned prompt and policy live, as `/versions` reports them.
-    # The agent names its own; the platform default names none.
-    prompt_source: str
-    policy_source: str
     view: AuditViewSettings
 
     model_config = SettingsConfigDict(env_prefix="AUDIT__")
@@ -1693,11 +1697,18 @@ class MemoryDecaySettings(BaseModel):
     confirmed_kinds: list[str]
 
 
+class WorkingMemorySettings(BaseModel):
+    """The live sessions working memory holds at once (`memory/working/memory.py`)."""
+
+    max_sessions: int = Field(ge=1)
+
+
 class MemorySettings(YamlBackedSettings):
     """All four CoALA stores plus the write pipeline (LLD §8)."""
 
     _yaml_section = "memory"
     schema_version: str
+    working: WorkingMemorySettings
     files: MemoryFilesSettings
     semantic: SemanticMemorySettings
     write_pipeline: MemoryWritePipelineSettings
@@ -1810,6 +1821,10 @@ class GroundingTierSettings(BaseModel):
     kinds: list[str]
     claims: list[str]
     may_refute: bool
+    # Whether the tier reads passages (premises wider than one sentence, marked `PASSAGE`):
+    # with its sentences (`include`), never (`exclude`), or only them (`only`). A tier of only
+    # passages has its own top-k, so a passage never takes a sentence's retrieval slot.
+    passages: Literal["include", "exclude", "only"]
 
 
 class RefutingPremiseSettings(BaseModel):
@@ -2083,8 +2098,12 @@ class HallucinationCheckSettings(YamlBackedSettings):
     repair_direct_refutations: bool
     # Words after a figure that make it a size, not an exact amount ("$1.2 M", "4 lakh").
     money_scales: list[str]
+    # A range of small figures, read as its two ends (two groups).
+    range_pattern: str
     # Connectives that split one sentence into separately checked claims.
     claim_conjunctions: list[str]
+    # Words that open a condition clause, inside which no conjunction splits a claim.
+    condition_openers: list[str]
     claim_min_content_tokens: int = Field(ge=1)
     # Grounding-specific NLI threshold. Keep the generic confidence threshold
     # for compatibility with the rest of the evaluation configuration.
@@ -2441,7 +2460,6 @@ class ScreeningMessages(BaseModel):
     # One redaction on the card and in the log: `{category}`, `{detector}`, `{score}`, `{token}`
     # (the masked form has no token).
     pii_entity: str
-    pii_entity_masked: str
     pii_clear: str
     # The card's `reason`, as the other screens give one: what was found and by what (`{rule}`
     # rule-based, `{model}` model spans, `{categories}`), nothing found, or the model unavailable.
@@ -2495,6 +2513,8 @@ class RetrySettings(BaseModel):
     max_attempts: int
     base_delay_seconds: float
     max_delay_seconds: float
+    # Exception class names (anywhere in an error's MRO) that are bugs, not outages.
+    non_retryable_errors: list[str] = Field(default_factory=list)
 
 
 class TimeoutSettings(BaseModel):
@@ -2738,8 +2758,6 @@ class EvalsSettings(YamlBackedSettings):
     enabled: bool
     # The channel eval traffic is stamped with, so runtime metrics can exclude it.
     channel: str
-    # The evaluator's version, recorded with every audit entry.
-    version: str
     # `module.path:attribute` of the running agent's EvalPlugin. Empty
     # here: the platform names no agent.
     plugin: str
@@ -3088,6 +3106,67 @@ class GroundingCardSettings(BaseModel):
     confidence_bands: dict[str, float]
 
 
+class CardSummaryWords(BaseModel):
+    """The one-line summary a card's title carries, per stage (`interface/tui/card_summaries.py`)."""
+
+    separator: str
+    failed: str
+    warning: str
+    waiting: str
+    blocked: str
+    in_scope: str
+    out_of_scope: str
+    identity_verified: str
+    verification_required: str
+    valid_request: str
+    invalid_request: str
+    injection_blocked: str
+    injection_passed: str
+    pii_redacted: str
+    pii_category: str
+    pii_match: str
+    pii_matches: str
+    pii_passed: str
+    moderation_passed: str
+    intent_classified: str
+    intent_score: str
+    memory_operation: str
+    memory_recalled: str
+    memory_read: str
+    history_turn: str
+    history_turns: str
+    state_item: str
+    state_items: str
+    state_preview: str
+    context_sources: str
+    tool_requested: str
+    tool: str
+    prompt_sent: str
+    tools_offered: str
+    response_generated: str
+    authorization_evaluated: str
+    attempt: str
+    attempts: str
+    recovered: str
+    recovery_event: str
+    claims_supported: str
+    repaired: str
+    response_ready: str
+    response_not_ready: str
+    # How many of a context card's working-memory state items its summary previews.
+    state_preview_items: int = Field(ge=0)
+    # Tool results that say only that the call ran: left off a tool card's summary.
+    plain_results: list[str] = Field(default_factory=list)
+
+
+class CardBodyWords(BaseModel):
+    """The few words an expanded card's body adds around its fields."""
+
+    detail_prefix: str
+    tokens_label: str
+    empty: str
+
+
 class TuiSettings(YamlBackedSettings):
     """Live status feed (LLD §20)."""
 
@@ -3099,6 +3178,8 @@ class TuiSettings(YamlBackedSettings):
     refresh_interval_ms: int
     # A stage's one-line summary for an agent's own reason code (DeterministicCheck's, say).
     reason_summaries: dict[str, str] = Field(default_factory=dict)
+    card_summaries: CardSummaryWords
+    card_body: CardBodyWords
     show_token_count: bool
     copy_method: Literal["osc52", "file"]
     # Commands that put text on the system clipboard, tried in order; the

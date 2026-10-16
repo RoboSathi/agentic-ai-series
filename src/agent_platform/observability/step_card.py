@@ -91,6 +91,7 @@ class StepCard:
     """Builds a step card's sections, in the configured order (Builder)."""
 
     def __init__(self) -> None:
+        self._app_config = get_settings()
         self._sections: dict[str, list[Line]] = {}
 
     def asked(self, *lines: Line) -> Self:
@@ -104,7 +105,7 @@ class StepCard:
         """
         if call is None:
             return self
-        words = get_settings().observability.step_card
+        words = self._app_config.observability.step_card
         line = words.model_line.format(
             role=call.role.replace("_", " ").upper(),
             model=call.model,
@@ -130,7 +131,7 @@ class StepCard:
 
     def decided_in_code(self, by: str, *reasoning: Line) -> Self:
         """No model was asked: say what decided instead, and on what grounds."""
-        line = get_settings().observability.step_card.no_model_line.format(by=by)
+        line = self._app_config.observability.step_card.no_model_line.format(by=by)
         self._add(MODEL, (line,))
         return self._add(REASONING, reasoning)
 
@@ -142,7 +143,7 @@ class StepCard:
 
     def fields(self) -> dict[str, list[Line]]:
         """The card's sections under their configured titles, in order, empty ones left out."""
-        titles = get_settings().observability.step_card.sections
+        titles = self._app_config.observability.step_card.sections
         return {
             title: self._sections[key] for key, title in titles.items() if self._sections.get(key)
         }

@@ -35,6 +35,9 @@ from customer_support_agent.persistence.repositories import HitlQueueRepository
 from customer_support_agent.persistence.schema import ensure_schema
 from customer_support_agent.review.queue import ReviewOutcome
 
+# The configured window, as the composition root passes it.
+_WINDOW = get_agent_settings().knowledge_passage_window
+
 
 class TestANameIsNotADate:
     @pytest.mark.parametrize("word", ["Margaret", "Marcus", "Augustine", "Decker", "Junior"])
@@ -62,7 +65,9 @@ class _Support(NodeSupport):
     def __init__(self) -> None:
         self._agent_policy: Any = SimpleNamespace(per_action_limit=lambda _action: None)
         self._registry: Any = SimpleNamespace(get=lambda _name: None)
-        self._evidence = GroundingEvidence(self._registry, self._agent_policy, governed=True)
+        self._evidence = GroundingEvidence(
+            self._registry, self._agent_policy, governed=True, knowledge_window=_WINDOW
+        )
 
 
 def _state() -> AgentState:

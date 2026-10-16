@@ -96,19 +96,19 @@ class TestWithholdingTheGatekeeper:
     def test_it_is_wired_when_the_feature_is_declared(
         self, seeded_pool: SqliteConnectionPool, restore_settings: None
     ) -> None:
-        assert self._agent(True, seeded_pool)._gatekeeper is not None
+        assert self._agent(True, seeded_pool)._kit.gatekeeper is not None
 
     def test_it_is_absent_when_the_feature_is_withheld(
         self, seeded_pool: SqliteConnectionPool, restore_settings: None
     ) -> None:
-        assert self._agent(False, seeded_pool)._gatekeeper is None
+        assert self._agent(False, seeded_pool)._kit.gatekeeper is None
 
     def test_the_audit_ledger_survives_the_bypass(
         self, seeded_pool: SqliteConnectionPool, restore_settings: None
     ) -> None:
         """The trail is what still distinguishes it from nothing happening."""
         agent = self._agent(False, seeded_pool)
-        assert not isinstance(agent._audit, NullAuditLedger)
+        assert not isinstance(agent._kit.audit, NullAuditLedger)
 
     def test_an_ungoverned_approval_says_so_rather_than_mimicking_one(self) -> None:
         """Whatever reads this later must be able to tell the two apart."""

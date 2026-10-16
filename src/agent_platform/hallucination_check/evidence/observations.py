@@ -60,7 +60,7 @@ def tool_evidence(observations: Sequence[Observation], window: int | None = None
         if size > 1 and not observation.changed:
             chunks.extend(
                 _chunk(passage, observation, {**metadata, PASSAGE: True})
-                for passage in _passages(facts, size)
+                for passage in passages(facts, size)
             )
     return chunks
 
@@ -97,8 +97,10 @@ def _chunk(content: str, observation: Observation, metadata: dict[str, object]) 
     )
 
 
-def _passages(facts: list[str], size: int) -> list[str]:
+def passages(facts: list[str], size: int) -> list[str]:
     """Every run of `size` consecutive facts, one string each; none when there are too few.
+
+    A result's facts here; an agent's policy article's sentences, section by section, too.
 
     A refused call's marker line stays alone: what was refused is not joined to what was read.
     """
@@ -113,4 +115,4 @@ def observation_facts(line: str) -> list[str]:
     return [sentence for sentence in split_sentences(line) if sentence.strip()]
 
 
-__all__ = ["TOOL_RESULT_KIND", "Observation", "observation_facts", "tool_evidence"]
+__all__ = ["TOOL_RESULT_KIND", "Observation", "observation_facts", "passages", "tool_evidence"]

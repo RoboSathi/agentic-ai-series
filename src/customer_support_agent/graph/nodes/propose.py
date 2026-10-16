@@ -23,6 +23,7 @@ from agent_platform.resilience import (
     external_api_error_fields,
 )
 from customer_support_agent.config import get_agent_settings
+from customer_support_agent.graph.kit import NodeKit
 from customer_support_agent.graph.loop_decision import after_propose_step
 from customer_support_agent.graph.nodes._support import (
     PREFETCHED,
@@ -39,6 +40,15 @@ from customer_support_agent.prompts.system_prompt import (
 
 
 class ProposalNodes(NodeSupport):
+    def __init__(self, kit: NodeKit) -> None:
+        self._app_config = get_settings()
+        self._agent_config = get_agent_settings()
+        super().__init__(kit)
+        self._llm = kit.llm
+        self._selector = kit.selector
+        self._tracer = kit.tracer
+        self._governed = kit.governed
+
     async def propose(self, state: AgentState) -> dict[str, Any]:
         """One model turn, with the tools this turn is allowed to use — if the governor allows it."""
         self._steps.begin(state.tool_rounds + 1)
@@ -58,15 +68,15 @@ class ProposalNodes(NodeSupport):
             prefetched=list(state.metadata.get(PREFETCHED, [])),
             offered=[tool.model_name for tool in tools],
         )
-        request = self._prompt_request(
+        request = self.prompt_request(
             state, self._registry.to_openai_tools([tool.qualified_name for tool in tools])
         )
         # The model may ask for a tool or answer; the response card names which it did.
-        purpose = get_settings().observability.llm_purposes.next_action
+        purpose = self._app_config.observability.llm_purposes.next_action
         self._report_llm_request(request, purpose=purpose)
         try:
             async with self._governor.deadline():
-                result = await self._call_model(request, state)
+                result = await self.call_model(request, state)
         except Exception as exc:
             error_fields = external_api_error_fields(exc)
             self._done_failed(
@@ -110,7 +120,7 @@ class ProposalNodes(NodeSupport):
             },
         }
 
-    async def _call_model(self, request: CompletionRequest, state: AgentState) -> CompletionResult:
+    async def call_model(self, request: CompletionRequest, state: AgentState) -> CompletionResult:
         """One model call, traced.
 
         Its protection — retry with backoff, circuit breaker, per-attempt timeout and a backup
@@ -193,7 +203,7 @@ class ProposalNodes(NodeSupport):
             span.attributes.update(result.usage.model_dump())
         self._tracer.end_span(span, result=outcome)
 
-    async def _offered_tools(self, state: AgentState) -> list[Any]:
+    async def offered_tools(self, state: AgentState) -> list[Any]:
         """Which tools this turn may use.
 
         Two independent narrowings, and both matter: the injection guard
@@ -220,7 +230,7 @@ class ProposalNodes(NodeSupport):
             # An unplaced turn is offered reads at most. With no skill active the skill set is
             # empty, which means "no narrowing", and that must not become "every tool".
             reads = (
-                set(get_agent_settings().intent_router.unknown_tools)
+                set(self._agent_config.intent_router.unknown_tools)
                 if state.metadata.get("intent_execution_route") == "llm_fallback"
                 else None
             )
@@ -273,7 +283,7 @@ class ProposalNodes(NodeSupport):
         """The tools settled for this turn before its first read — the ones its card names."""
         settled = state.metadata.get(TURN_OFFERED_TOOLS)
         tools = (
-            await self._offered_tools(state)
+            await self.offered_tools(state)
             if settled is None
             else [tool for name in settled if (tool := self._registry.get(name)) is not None]
         )
@@ -287,7 +297,7 @@ class ProposalNodes(NodeSupport):
         tool = self._registry.get(offload_tool_name())
         return [tool] if tool is not None and tool not in offered else []
 
-    def _system_prompt(self) -> str:
+    def system_prompt(self) -> str:
         """The profile and policy, without per-turn skills — what a screen sees."""
         return build_system_prompt(
             self._instructions.profile_section(),
@@ -295,7 +305,7 @@ class ProposalNodes(NodeSupport):
             governed=self._governed,
         )
 
-    def _prompt_request(
+    def prompt_request(
         self, state: AgentState, tools: list[dict[str, Any]] | None = None
     ) -> CompletionRequest:
         """The working request, built from named sections: instructions, policy, limit, the
@@ -310,12 +320,12 @@ class ProposalNodes(NodeSupport):
         if context is not None and context.text:
             window = context.window
             builder.window(
-                get_settings().context.prompt.window_heading,
+                self._app_config.context.prompt.window_heading,
                 context.text,
                 window.chunks if window is not None else (),
             ).notes(window.applied_strategies if window is not None else [])
         if state.metadata.get("intent_execution_route") == "llm_fallback":
-            fallback = get_agent_settings().intent_fallback_instruction
+            fallback = self._agent_config.intent_fallback_instruction
             builder.system(INTENT_FALLBACK, fallback, volatility=Volatility.TURN)
         built = (
             builder.message(USER_QUERY, "user", state.model_query or state.query)

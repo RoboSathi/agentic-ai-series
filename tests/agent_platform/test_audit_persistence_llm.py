@@ -10,8 +10,10 @@ from agent_platform.config import get_settings
 from agent_platform.core.persistence import IN_MEMORY, ExecutionResult, SqliteConnectionPool
 from agent_platform.llm.cascade import CascadingLLMClient, ConfiguredEscalationPolicy
 from agent_platform.llm.client import HostedClient, create_llm_client, create_pinned_llm_client
+from agent_platform.llm.embedding_cache import CachingEmbeddingClient
 from agent_platform.llm.embeddings import (
     HashingEmbeddingClient,
+    HostedEmbeddingClient,
     cosine_similarity,
     create_embedding_client,
     tokenize,
@@ -132,6 +134,26 @@ class TestEmbeddings:
 
     def test_a_client_is_always_available(self) -> None:
         assert create_embedding_client() is not None
+
+    def test_a_hosted_provider_without_its_key_is_never_asked(self) -> None:
+        """A request it would refuse still spends a rate-limit slot: go local from the start."""
+        llm = get_settings().llm
+        hosted = llm.model_copy(
+            update={"embedding": llm.embedding.model_copy(update={"backend": "hosted"})}
+        )
+        assert llm.provider_settings(hosted.embedding.provider).key_env_vars
+        assert isinstance(create_embedding_client(hosted), HashingEmbeddingClient)
+
+    def test_a_hosted_provider_with_its_key_is_used(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        llm = get_settings().llm
+        hosted = llm.model_copy(
+            update={"embedding": llm.embedding.model_copy(update={"backend": "hosted"})}
+        )
+        key_env = llm.provider_settings(hosted.embedding.provider).key_env_vars[0]
+        monkeypatch.setenv(key_env, "test-key")
+        client = create_embedding_client(hosted)
+        assert isinstance(client, CachingEmbeddingClient)
+        assert isinstance(client.inner, HostedEmbeddingClient)
 
 
 class TestLLMClient:

@@ -33,6 +33,7 @@ class ReviewScreen(Screen[None]):
     BINDINGS = [Binding("escape", "app.pop_screen", "Back")]
 
     def __init__(self, command: QueueCommand, note: Callable[[str], None]) -> None:
+        self._app_config = get_settings()
         super().__init__()
         self._command = command
         self._note = note
@@ -95,7 +96,7 @@ class ReviewScreen(Screen[None]):
         """Apply a decision to the selected item, then show what it did and re-read the queue."""
         if self._selected is None or self._service is None:
             return
-        reviewer = get_settings().review.console_reviewer
+        reviewer = self._app_config.review.console_reviewer
         try:
             outcome = await self._service.decide(
                 int(self._selected.id or 0),
@@ -135,7 +136,7 @@ class ReviewScreen(Screen[None]):
         """Approve and Deny only with an item selected and a comment long enough to be one."""
         comment = self.query_one(f"#{COMMENT_ID}", Input).value.strip()
         ready = (
-            self._selected is not None and len(comment) >= get_settings().review.min_comment_chars
+            self._selected is not None and len(comment) >= self._app_config.review.min_comment_chars
         )
         for button in (APPROVE_ID, DENY_ID):
             self.query_one(f"#{button}", Button).disabled = not ready

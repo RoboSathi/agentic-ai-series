@@ -54,6 +54,7 @@ class CustomerSupportIntentRouter:
     """One unified Customer Support intent + capability router."""
 
     def __init__(self, backend: IntentClassifierInterface | None = None) -> None:
+        self._app_config = get_settings()
         settings = get_agent_settings()
         self._settings = settings
         self._intents = {item.name: item for item in settings.intents}
@@ -387,7 +388,7 @@ class CustomerSupportIntentRouter:
         return (
             self._backend.model_name
             if self._backend is not None
-            else get_settings().llm.intent_classifier.model
+            else self._app_config.llm.intent_classifier.model
         )
 
     def _backend_score_type(self) -> str:

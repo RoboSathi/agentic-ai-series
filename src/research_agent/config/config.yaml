@@ -87,8 +87,6 @@ audit:
   data_version: live-web-v1
   prompt_version: research-prompts-v2
   tool_schema_version: research-tools-v1
-  prompt_source: research_agent/prompts
-  policy_source: research contract (audit)
 
 # The research roles' default model and its protection: super-120b, thinking off (with it on
 # it narrates its reasoning into the answer), backed up by lightning (NVIDIA models only,
@@ -215,7 +213,7 @@ hallucination_check:
   # A claim the sources neither confirm nor contradict stays, marked for the reader.
   undetermined_marker: " (unverified)"
   tiers:
-    - {name: tool_result, kinds: [tool_result], claims: [record, rule], may_refute: true}
+    - {name: tool_result, kinds: [tool_result], claims: [record, rule], may_refute: true, passages: include}
 
 web:
   mode: live

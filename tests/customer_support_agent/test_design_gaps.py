@@ -40,7 +40,7 @@ class TestTracesAreRedacted:
         from customer_support_agent.graph.builder import build_agent
 
         agent = build_agent(llm=ScriptedLLM(), pool=seeded_pool, with_memory=False)
-        assert isinstance(agent._tracer._redactor, PIIFilterImpl)  # type: ignore[union-attr]
+        assert isinstance(agent._kit.tracer._redactor, PIIFilterImpl)  # type: ignore[union-attr]
 
 
 class TestTheCascadeHasAJudge:
@@ -56,7 +56,7 @@ class TestTheCascadeHasAJudge:
         tiers = get_settings().hallucination_check.scoring.tiers
         monkeypatch.setattr(tiers, "calibrated_llm_judge", True)
         agent = build_agent(llm=ScriptedLLM(), pool=seeded_pool, with_memory=False)
-        [tier5] = [t for t in agent._cascade._tiers if isinstance(t, CalibratedJudgeScorer)]  # type: ignore[union-attr]
+        [tier5] = [t for t in agent._kit.cascade._tiers if isinstance(t, CalibratedJudgeScorer)]  # type: ignore[union-attr]
         assert isinstance(tier5._judge, ClaimJudge)
 
 

@@ -1,12 +1,12 @@
 """The async DAG scheduler: batches, bounded concurrency, failure isolation."""
 
 import asyncio
+import sys
 
 import pytest
 
 from agent_platform.runtime.scheduling import (
     AsyncDagScheduler,
-    BatchSummary,
     InvalidTaskGraphError,
     TaskGraph,
     TaskNode,
@@ -46,67 +46,50 @@ class TestTaskGraph:
 
 
 class TestAsyncDagScheduler:
-    async def test_every_node_runs_after_its_parents(self) -> None:
-        order: list[str] = []
-
-        async def worker(node_id: str) -> str:
-            order.append(node_id)
-            return node_id.upper()
-
-        outcomes = await AsyncDagScheduler(2).run(_graph(("a", ()), ("b", ("a",))), worker)
-        assert order == ["a", "b"]
-        assert outcomes["b"].value == "B" and outcomes["b"].batch == 2
-
     async def test_concurrency_is_bounded(self) -> None:
+        scheduler = AsyncDagScheduler(2)
         in_flight = 0
         peak = 0
 
-        async def worker(node_id: str) -> None:
+        async def node() -> None:
             nonlocal in_flight, peak
-            in_flight += 1
-            peak = max(peak, in_flight)
-            await asyncio.sleep(0.01)
-            in_flight -= 1
+            async with scheduler.slot():
+                in_flight += 1
+                peak = max(peak, in_flight)
+                await asyncio.sleep(0.01)
+                in_flight -= 1
 
-        graph = TaskGraph([TaskNode(node_id=str(index)) for index in range(6)])
-        await AsyncDagScheduler(2).run(graph, worker)
+        await asyncio.gather(*(node() for _ in range(6)))
         assert peak == 2
-
-    async def test_concurrency_one_is_sequential_with_the_same_outcomes(self) -> None:
-        async def worker(node_id: str) -> str:
-            return node_id
-
-        graph = _graph(("a", ()), ("b", ()), ("c", ("a",)))
-        parallel = await AsyncDagScheduler(3).run(graph, worker)
-        sequential = await AsyncDagScheduler(1).run(graph, worker)
-        assert {k: v.status for k, v in parallel.items()} == {
-            k: v.status for k, v in sequential.items()
-        }
-
-    async def test_a_failure_blocks_dependents_and_nothing_else(self) -> None:
-        async def worker(node_id: str) -> None:
-            if node_id == "a":
-                raise RuntimeError("boom")
-
-        graph = _graph(("a", ()), ("b", ("a",)), ("c", ("b",)), ("d", ()))
-        outcomes = await AsyncDagScheduler(2).run(graph, worker)
-        assert outcomes["a"].status == "failed" and "boom" in outcomes["a"].error
-        assert outcomes["b"].status == "blocked"
-        assert outcomes["c"].status == "blocked"
-        assert outcomes["d"].status == "done"
-
-    async def test_the_caller_can_stop_between_batches(self) -> None:
-        async def worker(node_id: str) -> None:
-            return None
-
-        batches: list[BatchSummary] = []
-        graph = _graph(("a", ()), ("b", ("a",)))
-        outcomes = await AsyncDagScheduler(1, observer=batches.append).run(
-            graph, worker, should_continue=lambda: not batches
-        )
-        assert outcomes["a"].status == "done"
-        assert outcomes["b"].status == "skipped"
 
     def test_concurrency_must_be_positive(self) -> None:
         with pytest.raises(ValueError):
             AsyncDagScheduler(0)
+
+
+class TestFindCycle:
+    def test_a_self_loop_is_a_cycle(self) -> None:
+        assert find_cycle([TaskNode(node_id="a", depends_on=("a",))]) == ["a", "a"]
+
+    def test_the_cycle_is_the_closed_path(self) -> None:
+        nodes = [
+            TaskNode(node_id="root", depends_on=("a",)),
+            TaskNode(node_id="a", depends_on=("b",)),
+            TaskNode(node_id="b", depends_on=("c",)),
+            TaskNode(node_id="c", depends_on=("a",)),
+        ]
+        assert find_cycle(nodes) == ["a", "b", "c", "a"]
+
+    def test_a_shared_dependency_is_not_a_cycle(self) -> None:
+        nodes = [
+            TaskNode(node_id="a"),
+            TaskNode(node_id="b", depends_on=("a",)),
+            TaskNode(node_id="c", depends_on=("a", "b")),
+        ]
+        assert find_cycle(nodes) is None
+
+    def test_a_long_chain_does_not_reach_the_recursion_limit(self) -> None:
+        length = sys.getrecursionlimit() * 2
+        nodes = [TaskNode(node_id=f"n{i}", depends_on=(f"n{i + 1}",)) for i in range(length)]
+        nodes.append(TaskNode(node_id=f"n{length}"))
+        assert find_cycle(nodes) is None

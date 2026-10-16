@@ -1,65 +1,34 @@
 """What every node group needs: state notes, halts, and the status feed.
 
-The attribute declarations below are the interesting part. Each node
-group is a mixin over the one agent, so without them there is nothing
-saying which collaborators a group actually uses — and a type checker
-could not tell you either. Declared here once, they are a readable
-inventory of what the graph is composed of, and `mypy --strict` holds
-every node group to it.
+Each node group is its own object, built from the agent's `NodeKit`. `NodeSupport` binds
+the collaborators its shared helpers read; each group's constructor binds the rest of what
+its own nodes read, so a group's dependencies are written where the group is.
 """
 
 from typing import Any
 
-from agent_platform.audit import AuditLedger
-from agent_platform.config import FeatureSet
-from agent_platform.context import (
-    ContextFailureDetector,
-    FiveStagePipeline,
-    StrategySelector,
-)
 from agent_platform.context.types import Chunk
 from agent_platform.core.primitives.money import Money
-from agent_platform.deterministic_checks import DeterministicChecker
-from agent_platform.durability import DurableGraphRunner, RunRegistry, SqliteCheckpointer
-from agent_platform.gatekeeper import Gatekeeper
-from agent_platform.gatekeeper.mandate import MandateIssuer
-from agent_platform.guardrails import ResponseGuardrail
-from agent_platform.hallucination_check import (
-    DetectionLadder,
-    GroundingReasoningDiagnoser,
-)
-from agent_platform.llm.client import LLMClient
 from agent_platform.llm.types import CompletionRequest, CompletionResult, Message
 from agent_platform.loop_control import LoopGovernor, LoopState, LoopVerdict
-from agent_platform.memory import MemoryFacade, WorkingMemoryStore
+from agent_platform.memory import WorkingMemoryStore
 from agent_platform.memory.procedural.skills import Activation, AgentInstructions
 from agent_platform.observability import (
     StageReporter,
-    Tracer,
 )
 from agent_platform.observability.loop_reporter import mark_step
 from agent_platform.observability.step_events import LOOP_STAGES, StepEvents
 from agent_platform.observability.types import EventKind
-from agent_platform.resilience import (
-    DeadLetterQueue,
-)
-from agent_platform.runtime.executor import ToolExecutor
-from agent_platform.runtime.verification import EffectVerifier
-from agent_platform.scoring import NollmScoringCascadeImpl
-from agent_platform.security import MessageScreener, SecuritySuite
 from agent_platform.security.auth.policy import AgentPolicy
 from agent_platform.security.pii.active import tokenise_if_on
-from agent_platform.tools import NamespacedToolRegistry, ToolRetrievalSelector
-from agent_platform.tools.path import ToolPath
+from agent_platform.tools import NamespacedToolRegistry
 from customer_support_agent.config.settings import get_agent_settings
-from customer_support_agent.domain.identity import (
-    Customer,
-)
 from customer_support_agent.domain.order_reference import (
     ORDER_UNDER_DISCUSSION,
     OrderReferenceResolver,
 )
 from customer_support_agent.gatekeeper.business_rules import REFUND_ACTION_CLASS
+from customer_support_agent.graph.kit import NodeKit
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.grounding.evidence import (
     GroundingEvidence,
@@ -67,18 +36,7 @@ from customer_support_agent.grounding.evidence import (
     order_under_discussion,
     turn_actions,
 )
-from customer_support_agent.intent.router import CustomerSupportIntentRouter, Intent
-from customer_support_agent.loop_control import OutputQualityGate
 from customer_support_agent.memory.signals import turn_signals
-from customer_support_agent.observability.accounting import TurnAccountant
-from customer_support_agent.persistence.repositories import OrdersRepository
-from customer_support_agent.presentation.orders import (
-    OrderMenu,
-)
-from customer_support_agent.review.referral import ReplyReferral, ReviewReferral
-from customer_support_agent.security.authentication import CustomerAuthenticator
-from customer_support_agent.security.limit_disclosure import LimitDisclosureCheck
-from customer_support_agent.tools.definitions import SupportTools
 
 # The reads a skill ran before the first model call (model names), for its card.
 PREFETCHED = "prefetched"
@@ -94,163 +52,34 @@ _UNPLACED_ROUTE = "llm_fallback"
 
 
 class NodeSupport:
-    """Collaborators and small helpers shared by every node group."""
+    """The helpers every node group shares, and the collaborators those helpers read.
 
-    # Injected by `CustomerSupportAgent.__init__`; declared here so each
-    # mixin type-checks against the agent it is mixed into.
-    _llm: LLMClient
-    _gatekeeper: Gatekeeper | None
-    _audit: AuditLedger
-    _registry: NamespacedToolRegistry
-    _tools: SupportTools
-    _executor: ToolExecutor
-    _tool_path: ToolPath
-    _security: SecuritySuite
-    _message_screener: MessageScreener
-    _working_memory: WorkingMemoryStore | None
-    _long_term: MemoryFacade | None
-    _context: FiveStagePipeline | None
-    # The profile, plus the skills a turn's signals select (ADR 0010).
-    _instructions: AgentInstructions
-    _selector: ToolRetrievalSelector | None
-    _cascade: NollmScoringCascadeImpl | None
-    _reporter: StageReporter | None
-    _dead_letter_queue: DeadLetterQueue | None
-    _tracer: Tracer | None
-    _grounding: DetectionLadder | None
-    _verifier: EffectVerifier | None
-    _mandate_issuer: MandateIssuer | None
-    _referral: ReviewReferral | None
-    _reply_referral: ReplyReferral | None
-    _agent_policy: AgentPolicy
-    # Whether the Gatekeeper was built: it picks the prompt's refund-limit sentence.
-    _governed: bool
-    _features: FeatureSet
-    _intents: CustomerSupportIntentRouter
-    _authenticator: CustomerAuthenticator | None
-    # Every tier a reply is grounded on, assembled per turn (`grounding/evidence.py`).
-    _evidence: GroundingEvidence
-    # Absent for an agent built without a database; a node group tests it before reading.
-    _orders: OrdersRepository | None = None
-    _order_reference: OrderReferenceResolver
-    _deterministic_checks: DeterministicChecker | None
-    _deliberation_markers: list[str]
-    _max_rounds: int
-    _actor: str
-    _strategies: StrategySelector | None
-    # Absent when `context.failure_detection` is withheld.
-    _context_health: ContextFailureDetector | None
-    # Which tool-use loop iteration is running (None outside the loop).
-    _steps: StepEvents
-    _diagnoser: GroundingReasoningDiagnoser
-    _response_guardrail: ResponseGuardrail
-    _limit_disclosure: LimitDisclosureCheck
-    _sessions: dict[str, Customer]
-    _menus: dict[str, OrderMenu]
-    _last_supported_intent: dict[str, Intent]
-    _governor: LoopGovernor
-    _deliberation: OutputQualityGate
-    _accountant: TurnAccountant
-    # Durable execution. Absent only for an agent constructed by hand
-    # without one — then the graph has no checkpoints and no approval wait.
-    _checkpointer: SqliteCheckpointer | None
-    _runs: RunRegistry | None
-    _runner: DurableGraphRunner | None
-    _logger: Any
+    Each group is its own object, built from the agent's `NodeKit`; it binds what its own
+    nodes read on top of these. A group that needs another group's work (Execution's
+    `invoke`, Proposal's prompt) is handed that group, so the coupling is a constructor
+    argument rather than a method found on a shared object.
+    """
 
-    # The nodes a graph is wired from. Declared here rather than left
-    # implicit because `edges.py` registers them by name and would
-    # otherwise be the only place that knows the set exists — and a node
-    # renamed in its own module would fail at graph-compile time rather
-    # than at type-check time. Each is implemented by exactly one group.
-
-    async def authenticate(self, state: AgentState) -> dict[str, Any]:
-        """Establish who is asking, deterministically."""
-        raise NotImplementedError
-
-    async def await_approval(self, state: AgentState) -> dict[str, Any]:
-        """Pause the run until a human decides a queued refund."""
-        raise NotImplementedError
-
-    async def choose_order(self, state: AgentState) -> dict[str, Any]:
-        """Resolve which order the customer means."""
-        raise NotImplementedError
-
-    async def deterministic_checks(self, state: AgentState) -> dict[str, Any]:
-        """Run this agent's own pre-flight checks."""
-        raise NotImplementedError
-
-    async def prompt_injection(self, state: AgentState) -> dict[str, Any]:
-        """Screen the request for an injection attempt."""
-        raise NotImplementedError
-
-    async def content_moderation(self, state: AgentState) -> dict[str, Any]:
-        """Screen the request against the content policy."""
-        raise NotImplementedError
-
-    async def pii_filtering(self, state: AgentState) -> dict[str, Any]:
-        """Take personal data out of what the model will be sent."""
-        raise NotImplementedError
-
-    async def classify_intent(self, state: AgentState) -> dict[str, Any]:
-        """Decide what is being asked, and what that permits."""
-        raise NotImplementedError
-
-    async def read_intent(self, state: AgentState) -> dict[str, Any]:
-        """Answer a read-shaped intent without calling a model."""
-        raise NotImplementedError
-
-    async def assemble_context(self, state: AgentState) -> dict[str, Any]:
-        """Build the window the model is handed."""
-        raise NotImplementedError
-
-    async def prefetch(self, state: AgentState) -> dict[str, Any]:
-        """Run the reads this turn's skills declare come first."""
-        raise NotImplementedError
-
-    async def propose(self, state: AgentState) -> dict[str, Any]:
-        """Ask the model what to do next."""
-        raise NotImplementedError
-
-    async def execute(self, state: AgentState) -> dict[str, Any]:
-        """Execute what the model proposed, under governance."""
-        raise NotImplementedError
-
-    async def finalize(self, state: AgentState) -> dict[str, Any]:
-        """Turn what happened into a reply a customer can read."""
-        raise NotImplementedError
-
-    # Helpers one group needs from another. Declaring them keeps the
-    # coupling between groups visible and checked: a group that grows a
-    # dependency on a sibling has to say so here.
-
-    def _system_prompt(self) -> str:
-        """The system prompt this turn is run under."""
-        raise NotImplementedError
+    def __init__(self, kit: NodeKit) -> None:
+        self._agent_config = get_agent_settings()
+        self._registry: NamespacedToolRegistry = kit.registry
+        self._working_memory: WorkingMemoryStore | None = kit.working_memory
+        # The profile, plus the skills a turn's signals select (ADR 0010).
+        self._instructions: AgentInstructions = kit.instructions
+        self._reporter: StageReporter | None = kit.reporter
+        self._agent_policy: AgentPolicy = kit.agent_policy
+        # Every tier a reply is grounded on, assembled per turn (`grounding/evidence.py`).
+        self._evidence: GroundingEvidence = kit.evidence
+        self._order_reference: OrderReferenceResolver = kit.order_reference
+        self._max_rounds: int = kit.max_rounds
+        # Which tool-use loop iteration is running (None outside the loop).
+        self._steps: StepEvents = kit.steps
+        self._governor: LoopGovernor = kit.governor
+        self._logger: Any = kit.logger
 
     def _refund_limit(self) -> Money | None:
         """The per-refund limit the prompt states: the DB row, read when the agent was built."""
         return self._agent_policy.per_action_limit(REFUND_ACTION_CLASS)
-
-    def _prompt_request(
-        self, state: AgentState, tools: list[dict[str, Any]] | None = None
-    ) -> CompletionRequest:
-        """The working request handed to the model this turn, with its manifest."""
-        raise NotImplementedError
-
-    async def _offered_tools(self, state: AgentState) -> list[Any]:
-        """The tools this turn may offer the model (settled once, by the prefetch stage)."""
-        raise NotImplementedError
-
-    async def _call_model(self, request: CompletionRequest, state: AgentState) -> CompletionResult:
-        """One model call, traced; its protection is the client's own (`create_llm_client`)."""
-        raise NotImplementedError
-
-    async def _invoke(
-        self, name: str, arguments: str, state: AgentState, offered: set[str]
-    ) -> tuple[str, str, str, dict[str, Any]]:
-        """Run one proposed tool call through governance and execution."""
-        raise NotImplementedError
 
     def _resolve_read_order_id(self, state: AgentState) -> int | None:
         """Which order this request is about, if any.
@@ -558,7 +387,7 @@ class NodeSupport:
             },
             next_step=next_step,
             because=because,
-            because_words=get_agent_settings().loop_control_status.because,
+            because_words=self._agent_config.loop_control_status.because,
         )
         self._logger.info("Loop control status", **fields)
 

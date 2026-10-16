@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_platform.config import reload_settings, yaml_config
 from agent_platform.config.yaml_config import _read_yaml
 from agent_platform.context.excerpt import relevant_excerpt
 from agent_platform.interface.presentation.text_tree import value_lines
@@ -50,3 +51,17 @@ class TestYamlMerge:
         path.write_text("x: 1\nx: 2\n")
         with pytest.raises(ValueError, match="Duplicate"):
             _read_yaml(path)
+
+
+class TestTheLocalExample:
+    """`local.yaml.example`, copied to `local.yaml` as its comment says, must load."""
+
+    def test_copied_as_local_yaml_it_validates_and_takes_effect(
+        self, monkeypatch: pytest.MonkeyPatch, restore_settings: None
+    ) -> None:
+        example = yaml_config._CONFIG_DIR / "local.yaml.example"
+        monkeypatch.setattr(yaml_config, "_LOCAL_FILE", example)
+        llm = reload_settings().llm
+        declared = _read_yaml(example)["llm"]
+        assert llm.provider == declared["provider"]
+        assert llm.provider_settings().model == declared["providers"]["local"]["model"]

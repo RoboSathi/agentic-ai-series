@@ -79,8 +79,6 @@ audit:
   data_version: dummy-data-v1
   prompt_version: support-prompt-v2
   tool_schema_version: support-tools-v1
-  prompt_source: customer_support_agent/prompts (AGENT.md + skills/)
-  policy_source: gatekeeper + customer_policy.md
 
 llm:
   intent_classifier:
@@ -220,6 +218,15 @@ hallucination_check:
   card:
     tier_names:
       history: customer message
+  # The platform's tiers, plus runs of neighbouring policy-article sentences (ADR C-11) as their
+  # own tier after the policy: they may support a rule, never refute one, and have their own
+  # top-k, so they never crowd a sentence or a rule out of the policy tier's.
+  tiers:
+    - {name: tool_result, kinds: [tool_result], claims: [record], may_refute: true, passages: include}
+    - {name: policy, kinds: [policy, retrieved], claims: [rule], may_refute: true, passages: exclude}
+    - {name: policy_passage, kinds: [policy], claims: [rule], may_refute: false, passages: only}
+    - {name: system, kinds: [system], claims: [rule], may_refute: false, passages: include}
+    - {name: memory, kinds: [memory], claims: [rule], may_refute: false, passages: include}
   # A claim nothing grounds was made up: cut, and queued for a person like a wrong one.
   unsupported_is_hallucination: true
   # What the customer reads when nothing of a reply survived, by why. Every cut reply is
@@ -407,6 +414,11 @@ customer_support_agent:
       customer_name: "The customer is {value}."
       customer_id: "The customer's account number is {value}."
       verified: "The customer's identity is verified."
+  # The policy articles are grounded one sentence at a time, and also by every run of this many
+  # neighbouring sentences of one section, which may support a claim but never refute it: "Once
+  # a refund has settled, it goes back… Card refunds usually show within 5 to 10 business days"
+  # entails a reply neither sentence entails alone (ADR C-11).
+  knowledge_passage_window: 2
   max_tool_iterations: 5
   # The LOOP CONTROL card is the platform's (`observability.step_events.loop_control`);
   # these are the reasons only this agent's loop has for stopping.
@@ -475,9 +487,12 @@ customer_support_agent:
     - give a refund
     - refund this order
     - refund for order
-    - refund
-    - money back
-    - reimburse
+    - refund order
+    - refund my order
+    - refund me
+    - get a refund
+    - want my money back
+    - get my money back
     - chargeback
     tools:
     - list_orders
@@ -485,13 +500,19 @@ customer_support_agent:
     - get_refund_status
     - process_refund
     description: asking to receive a refund for an order
-  # Where a refund stands — a read, answered from the record with no model
-  # call. Its phrases are multi-word so they outrank REQUEST_REFUND's bare
-  # "refund": "when will I get my refund" asks about one, not for one.
+  # Where a refund stands, and how refunds work — a read, answered from the record and the
+  # refund policy. REQUEST_REFUND has no bare "refund" phrase: a message that only mentions
+  # one ("how long will the refund take to show on my card?") is the classifier's to place.
   - name: REFUND_STATUS
     mode: read
     phrases:
     - refund status
+    - refund policy
+    - how long will the refund
+    - how long will my refund
+    - how long does a refund take
+    - how long do refunds take
+    - refund take to show
     - status of my refund
     - status of the refund
     - where is my refund
@@ -499,6 +520,7 @@ customer_support_agent:
     - track refund
     - when will i get my refund
     - when will i get the refund
+    - when will i get a refund
     - when do i get my refund
     - what about refund
     - what about my refund

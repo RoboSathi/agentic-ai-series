@@ -73,11 +73,26 @@ SPECS = [
 ]
 
 
+# DeepEval is the optional `evals` extra: where it is not installed, its tests are skipped.
+def _deepeval_installed() -> bool:
+    try:
+        import deepeval  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+needs_deepeval = pytest.mark.skipif(
+    not _deepeval_installed(), reason="deepeval not installed (pip install .[evals])"
+)
+
+
 class _Reason(BaseModel):
     reason: str
 
 
 class TestTestCase:
+    @needs_deepeval
     def test_each_reply_carries_its_own_tools_and_the_last_one_the_evidence(self) -> None:
         test_case = conversation(import_deepeval(), CASE, TRANSCRIPT, FRAME, evidence_cap=0)
         assert [turn.role for turn in test_case.turns] == ["user", "assistant"] * 2
@@ -94,6 +109,7 @@ class TestTestCase:
         assert capped(["aaaa"], 0) == ["aaaa"]
 
 
+@needs_deepeval
 class TestMetrics:
     def test_one_metric_per_spec_with_the_anchored_rubric(self) -> None:
         deepeval = import_deepeval()
@@ -123,6 +139,7 @@ class TestMetrics:
         assert len(build_metrics(deepeval, specs, model)) == len(specs)
 
 
+@needs_deepeval
 class TestJudgeModel:
     async def test_a_schema_answer_is_validated_and_counted(self) -> None:
         model = judge_model(import_deepeval(), ScriptedLLM([{"content": ANSWER}]))
@@ -134,6 +151,7 @@ class TestJudgeModel:
         assert model.generate("hello") == "plain"
 
 
+@needs_deepeval
 class TestGrader:
     async def test_every_metric_scores_through_evaluate(self) -> None:
         llm = ScriptedLLM([{"content": ANSWER}])

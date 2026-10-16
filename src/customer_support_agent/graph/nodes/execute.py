@@ -30,6 +30,7 @@ from agent_platform.tools.names import display_tool_name
 from agent_platform.tools.path import DUPLICATE, NOT_OFFERED, ToolOutcome, ToolTurn
 from agent_platform.tools.types import ToolCall, ToolResult
 from customer_support_agent.config.settings import get_agent_settings
+from customer_support_agent.graph.kit import NodeKit
 from customer_support_agent.graph.loop_decision import after_execute_step
 from customer_support_agent.graph.nodes._support import (
     NodeSupport,
@@ -99,6 +100,18 @@ def _queued_review(invocations: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 class ExecutionNodes(NodeSupport):
+    def __init__(self, kit: NodeKit) -> None:
+        self._agent_config = get_agent_settings()
+        super().__init__(kit)
+        self._audit = kit.audit
+        self._executor = kit.executor
+        self._tool_path = kit.tool_path
+        self._security = kit.security
+        self._verifier = kit.verifier
+        self._mandate_issuer = kit.mandate_issuer
+        self._referral = kit.referral
+        self._actor = kit.actor
+
     async def execute(self, state: AgentState) -> dict[str, Any]:
         """Execute the requested tool calls, each through the Gatekeeper."""
         # The same iteration `propose` opened (it has already counted it).
@@ -114,7 +127,7 @@ class ExecutionNodes(NodeSupport):
             self._steps.tool_request(
                 requested.name, requested.arguments, redact=self._security.redact
             )
-            text, decision, stage, invocation_fields = await self._invoke(
+            text, decision, stage, invocation_fields = await self.invoke(
                 requested.name, requested.arguments, state, offered
             )
             invocation_fields_history.append(invocation_fields)
@@ -193,7 +206,7 @@ class ExecutionNodes(NodeSupport):
             refusal_final=refusal_final,
         )
 
-    async def _invoke(
+    async def invoke(
         self, name: str, arguments: str, state: AgentState, offered: set[str]
     ) -> tuple[str, str, str, dict[str, Any]]:
         """One tool call through the platform's single tool path, drawn as this agent draws it.
@@ -236,8 +249,7 @@ class ExecutionNodes(NodeSupport):
             outcome.call, outcome.execution, control_fields, decision_fields
         )
 
-    @staticmethod
-    def _settle_task(outcome: ToolOutcome, fields: dict[str, Any]) -> None:
+    def _settle_task(self, outcome: ToolOutcome, fields: dict[str, Any]) -> None:
         """A write ends the task it carries out: issued, queued for review, refused or failed.
 
         A write the model made with no task open (the intent was unclear) opens
@@ -248,7 +260,7 @@ class ExecutionNodes(NodeSupport):
         call = outcome.call
         if call is None or not call.side_effecting:
             return
-        words = get_agent_settings().tasks
+        words = self._agent_config.tasks
         kind = next((k for k, spec in words.kinds.items() if spec.action == call.action), None)
         if kind is None:
             return
@@ -453,7 +465,7 @@ class ExecutionNodes(NodeSupport):
             referred = outcome.result
         if referred is None or not referred.success:
             # The Gatekeeper's reason names the limit; the model reads only that a person decides.
-            wording = get_agent_settings().review_output
+            wording = self._agent_config.review_output
             text = (
                 wording.no_referral
                 if referred is None

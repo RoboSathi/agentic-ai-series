@@ -121,6 +121,7 @@ class GroundingResolver:
         classifier: ClaimClassifier | None = None,
         confirmer: ClaimConfirmer | None = None,
     ) -> None:
+        self._app_config = get_settings()
         settings = get_settings().hallucination_check
         self._confirmer = confirmer
         self._confirm_settings = settings.confirmer
@@ -200,7 +201,7 @@ class GroundingResolver:
             return self._read(claim, kind, settled[1], supported=True, rationale=settled[0],
                               also=also)  # fmt: skip
         outcomes = [
-            await self._judge(claim, tier, [c for c in evidence if c.kind in tier.kinds])
+            await self._judge(claim, tier, _tier_evidence(tier, evidence))
             for tier in self._tiers
             if kind in tier.claims
         ]
@@ -612,7 +613,7 @@ class GroundingResolver:
         refutation = result.label == "contradiction" and not tier.may_refute
         if refutation:
             return f"contradiction ignored, this tier cannot refute ({result.score:.2f})"
-        names = get_settings().hallucination_check.card.label_names
+        names = self._app_config.hallucination_check.card.label_names
         label = names.get(result.label, result.label)
         decisive = result.label in _DECIDING_LABELS
         gloss = "" if decisive else " (it neither states nor contradicts this)"
@@ -787,7 +788,7 @@ class GroundingResolver:
         """Why a retrieved item got no NLI call: unrelated, or the claim was already decided."""
         if chunk.score < self._floor:
             return f"not checked (below {self._floor})"
-        return f"not checked ({get_settings().hallucination_check.methods.restated})"
+        return f"not checked ({self._app_config.hallucination_check.methods.restated})"
 
     @staticmethod
     def _ranked(checks: list[EvidenceCheck]) -> list[EvidenceCheck]:
@@ -834,10 +835,22 @@ class GroundingResolver:
     def _retrieval_method(self) -> str:
         """Report the actual retrieval path used by the injected ranker."""
         cascade = getattr(self._retriever, "_ranker", None)
-        enabled = get_settings().hallucination_check.scoring.tiers.embedding_similarity
+        enabled = self._app_config.hallucination_check.scoring.tiers.embedding_similarity
         return "embedding" if enabled and cascade is not None else "lexical_fallback"
 
     @property
     def _detector_model(self) -> str:
         """Expose the concrete NLI model, including its deterministic fallback."""
         return str(getattr(self._entailment, "model_name", "")) or "lexical-entailment-fallback"
+
+
+def _tier_evidence(tier: GroundingTierSettings, evidence: list[Chunk]) -> list[Chunk]:
+    """The evidence a tier reads: its kinds, with its passages, without them, or only them."""
+    if tier.passages == "include":
+        return [chunk for chunk in evidence if chunk.kind in tier.kinds]
+    wanted = tier.passages == "only"
+    return [
+        chunk
+        for chunk in evidence
+        if chunk.kind in tier.kinds and bool(chunk.metadata.get(PASSAGE)) == wanted
+    ]

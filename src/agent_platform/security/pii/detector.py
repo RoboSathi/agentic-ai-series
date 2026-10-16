@@ -112,6 +112,7 @@ class PIIFilterImpl:
         detectors: list[PIIDetector] | None = None,
         vault: PIIVault | None | _Default = _DEFAULT,
     ) -> None:
+        self._app_config = get_settings()
         settings = get_settings().security.pii
         self._detectors: list[PIIDetector] = detectors or _default_detectors()
         self._vault = create_pii_vault() if isinstance(vault, _Default) else vault
@@ -248,7 +249,7 @@ class PIIFilterImpl:
             self._vault.keep(span.category, token, span.text)
             return token
         digest = hmac.new(_process_key(), f"{span.category}|{span.text}".encode(), hashlib.sha256)
-        return digest.hexdigest()[: get_settings().security.pii.token_chars]
+        return digest.hexdigest()[: self._app_config.security.pii.token_chars]
 
     def _replacement(self, span: PIISpan, mode: RedactionMode) -> str:
         """The text that stands in for one redacted span."""

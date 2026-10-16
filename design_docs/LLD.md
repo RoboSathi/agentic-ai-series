@@ -47,8 +47,8 @@ and owns the feature tree that decides which harness controls an agent is given.
   `YamlBackedSettings`; `use_overlay` / `clear_overlays` / `config_sources`; `FeatureSet`,
   `active_features`, `set_active_features` (`features.py`); `resolve_path` / `REPO_ROOT`
   (`paths.py` — paths resolve against the repo, never the CWD); `load_environment`
-  (`environment.py` — `.env` fills the process environment once; an exported variable wins);
-  `VersionManifest` (`versions.py` — independently versioned components).
+  (`environment.py` — `.env` fills the process environment once; an exported variable wins).
+  Versioned components are stamped on audit entries from `audit.*_version` (FR-48).
 - **Feature tree.** The nine platform features (ADR P-07); an agent may declare its own
   (the research agent's `rubric`, `reflection`, `independent_audit`, …). Read once in the
   composition root. `/harness` moves the live `FeatureSet`; `/config` is read-only.
@@ -201,8 +201,9 @@ should have changed through an agent's `EffectSource` and compares it with the
 judge), used by the research audit.
 
 **`runtime/scheduling`** — dependency-aware concurrent scheduling. `TaskGraph` (validation,
-cycle finding, waves) and `AsyncDagScheduler` (bounded concurrency; a node's failure blocks its
-dependents and nothing else).
+cycle finding, waves, `ready`; `blocked`: a node's failure blocks its dependents and nothing
+else) and `AsyncDagScheduler.slot()`, the shared bound on how many nodes run at once. The
+fan-out itself is LangGraph's `Send` (ADR P-45).
 
 ## A10. gatekeeper
 

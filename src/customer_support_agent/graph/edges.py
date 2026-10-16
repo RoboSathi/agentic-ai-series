@@ -6,13 +6,23 @@ has no step to narrate, while a merely disabled one still runs, still
 traces, and still tells you it found nothing.
 """
 
+from dataclasses import dataclass
 from typing import Any
 
 from langgraph.graph import END, StateGraph
 
+from customer_support_agent.graph.kit import NodeKit
 from customer_support_agent.graph.loop_decision import after_execute_step, after_propose_step
 from customer_support_agent.graph.nodes._support import NodeSupport
-from customer_support_agent.graph.nodes.review_wait import AWAITING_REVIEW
+from customer_support_agent.graph.nodes.authenticate import AuthenticationNodes
+from customer_support_agent.graph.nodes.context import ContextNodes
+from customer_support_agent.graph.nodes.execute import ExecutionNodes
+from customer_support_agent.graph.nodes.finalize import FinalizeNodes
+from customer_support_agent.graph.nodes.intent import IntentNodes
+from customer_support_agent.graph.nodes.prefetch import PrefetchNodes
+from customer_support_agent.graph.nodes.propose import ProposalNodes
+from customer_support_agent.graph.nodes.review_wait import AWAITING_REVIEW, ReviewWaitNodes
+from customer_support_agent.graph.nodes.screening import ScreeningNodes
 from customer_support_agent.graph.state import AgentState
 
 # Each optional stage and the feature that decides whether it is built.
@@ -26,8 +36,50 @@ _STAGE_FEATURES = {
 }
 
 
+@dataclass(frozen=True)
+class CsaNodes:
+    """The agent's node groups, each its own object (`nodes/`)."""
+
+    authentication: AuthenticationNodes
+    screening: ScreeningNodes
+    intent: IntentNodes
+    context: ContextNodes
+    prefetch: PrefetchNodes
+    proposal: ProposalNodes
+    execution: ExecutionNodes
+    finalize: FinalizeNodes
+    review_wait: ReviewWaitNodes
+
+    @classmethod
+    def from_kit(cls, kit: NodeKit) -> "CsaNodes":
+        """Every group, built once; Proposal and Execution first, for the groups that use them."""
+        proposal, execution = ProposalNodes(kit), ExecutionNodes(kit)
+        return cls(
+            authentication=AuthenticationNodes(kit),
+            screening=ScreeningNodes(kit, proposal),
+            intent=IntentNodes(kit, execution),
+            context=ContextNodes(kit),
+            prefetch=PrefetchNodes(kit, proposal, execution),
+            proposal=proposal,
+            execution=execution,
+            finalize=FinalizeNodes(kit, proposal),
+            review_wait=ReviewWaitNodes(kit),
+        )
+
+
 class GraphWiring(NodeSupport):
-    def _build(self) -> Any:
+    """Which stages exist, and how a turn moves between them."""
+
+    def __init__(self, kit: NodeKit, nodes: CsaNodes) -> None:
+        super().__init__(kit)
+        self._nodes = nodes
+        self._security = kit.security
+        self._context = kit.context
+        self._features = kit.features
+        self._deterministic_checks = kit.deterministic_checks
+        self._checkpointer = kit.checkpointer
+
+    def build(self) -> Any:
         """Assemble the state graph from the stages this agent was given.
 
         Only enabled stages become nodes, and the edges are wired to the
@@ -38,14 +90,14 @@ class GraphWiring(NodeSupport):
         nothing.
         """
         graph: StateGraph[AgentState, None, AgentState, AgentState] = StateGraph(AgentState)
-        graph.add_node("authenticate", self.authenticate)
-        graph.add_node("choose_order", self.choose_order)
-        graph.add_node("read_intent", self.read_intent)
+        graph.add_node("authenticate", self._nodes.authentication.authenticate)
+        graph.add_node("choose_order", self._nodes.authentication.choose_order)
+        graph.add_node("read_intent", self._nodes.intent.read_intent)
         # Between the front door and the first model call: a skill's known first reads.
-        graph.add_node("prefetch", self.prefetch)
-        graph.add_node("propose", self.propose)
-        graph.add_node("execute", self.execute)
-        graph.add_node("finalize", self.finalize)
+        graph.add_node("prefetch", self._nodes.prefetch.prefetch)
+        graph.add_node("propose", self._nodes.proposal.propose)
+        graph.add_node("execute", self._nodes.execution.execute)
+        graph.add_node("finalize", self._nodes.finalize.finalize)
 
         # The screening-and-routing run, in order, each present only if
         # this deployment declared it.
@@ -57,16 +109,16 @@ class GraphWiring(NodeSupport):
                 # their own, so redacting after they ran would mean the
                 # customer's email had already left the building twice
                 # before the "redact before the LLM call" step reached it.
-                ("pii_filtering", self.pii_filtering),
-                ("prompt_injection", self.prompt_injection),
-                ("content_moderation", self.content_moderation),
+                ("pii_filtering", self._nodes.screening.pii_filtering),
+                ("prompt_injection", self._nodes.screening.prompt_injection),
+                ("content_moderation", self._nodes.screening.content_moderation),
                 # After the security screens, so untrusted text is vetted before
                 # anything reads the database on its behalf; before intent, so a
                 # turn's domain contradictions are settled without a model call
                 # and the order it resolves can place an unclassified turn.
-                ("deterministic_checks", self.deterministic_checks),
-                ("classify_intent", self.classify_intent),
-                ("assemble_context", self.assemble_context),
+                ("deterministic_checks", self._nodes.screening.deterministic_checks),
+                ("classify_intent", self._nodes.intent.classify_intent),
+                ("assemble_context", self._nodes.context.assemble_context),
             )
             if self._features.is_on(_STAGE_FEATURES[stage[0]]) and self._has_collaborator(stage[0])
         ]
@@ -118,7 +170,7 @@ class GraphWiring(NodeSupport):
         # has the node: an interrupt with nowhere to persist the pause
         # would lose the run it was meant to keep.
         if self._checkpointer is not None:
-            graph.add_node("await_approval", self.await_approval)
+            graph.add_node("await_approval", self._nodes.review_wait.await_approval)
             graph.add_conditional_edges(
                 "finalize", self._after_finalize, {"await": "await_approval", "done": END}
             )

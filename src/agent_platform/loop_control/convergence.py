@@ -10,6 +10,7 @@ An agent's own notion of "done" (every question answered, nothing new found) is 
 `ConvergenceSignal` it consults beside this; the governor decides.
 """
 
+from collections.abc import Iterator
 from typing import Protocol, runtime_checkable
 
 from agent_platform.config.settings import ConvergenceSettings
@@ -33,13 +34,27 @@ class ConvergenceMonitor:
 
     async def gain(self, result: str, evidence: list[str]) -> float:
         """How much new evidence `result` adds to `evidence` (1.0: entirely new)."""
+        return (await self.gains([result], evidence))[0]
+
+    async def gains(self, results: list[str], evidence: list[str]) -> list[float]:
+        """Each result's gain against the same evidence, in one similarity call.
+
+        One call for the lot: asked a result at a time, the evidence window was embedded
+        again for every result.
+        """
+        seen = evidence[-self._history :]
+        texts = [result for result in results if result.strip()]
+        rows = iter(await self._similarity.matrix(texts, seen) if seen and texts else [])
+        return [self._gain_of(result, seen, rows) for result in results]
+
+    @staticmethod
+    def _gain_of(result: str, seen: list[str], rows: Iterator[list[float]]) -> float:
+        """No result is no gain; anything is all gain against no evidence."""
         if not result.strip():
             return 0.0
-        seen = evidence[-self._history :]
         if not seen:
             return 1.0
-        row = (await self._similarity.matrix([result], seen))[0]
-        return max(0.0, 1.0 - max(row))
+        return max(0.0, 1.0 - max(next(rows)))
 
     def plateaued(self, gains: list[float]) -> bool:
         """The last `window` steps all added less than `min_gain`."""

@@ -10,7 +10,6 @@ small collapsible card:
 The logger remains responsible for implementation-level debugging.
 """
 
-import json
 import re
 import textwrap
 import time
@@ -30,12 +29,15 @@ from textual.widgets.button import ButtonVariant
 from textual.widgets.option_list import Option
 
 from agent_platform.config import get_settings
-from agent_platform.core.primitives.money import money_or_none
 from agent_platform.hallucination_check.levels import CONFIDENCE_LEVEL as _FIRST_LEVEL
 from agent_platform.interface.presentation.text_tree import as_structure, message_lines, value_lines
+from agent_platform.interface.tui.card_format import field_priority as _field_priority
+from agent_platform.interface.tui.card_format import format_value as _format_value
+from agent_platform.interface.tui.card_format import humanize as _humanize
+from agent_platform.interface.tui.card_format import label as _label
+from agent_platform.interface.tui.card_summaries import summarise
 from agent_platform.interface.tui.labels import StageLabelRegistry
 from agent_platform.llm.types import TokenUsage
-from agent_platform.observability.step_events import subject_part
 from agent_platform.observability.types import StatusEvent
 
 # State is the visual language: a card's title, marks and state words take the colour of
@@ -49,160 +51,6 @@ STATUS_MARKS = {
     "blocked": "✗",
 }
 
-# Where an agent's own subject fields sit in the card order.
-_SUBJECT_SLOT = "__subject_fields__"
-
-# Common field ordering for expanded cards.  Any other safe semantic fields
-# follow alphabetically.
-FIELD_PRIORITY = (
-    # A model card reads in the order the exchange happened: what the
-    # customer asked, what we sent, what came back. A reasoning loop's card
-    # leads with what the model thought, then what it decided.
-    "loop_step",
-    "model",
-    "reasoning",
-    "tool_calls",
-    "observation",
-    "output",
-    "user_query",
-    "system_prompt",
-    "messages",
-    "response",
-    "decision",
-    "standing",
-    "action",
-    "effect",
-    "qualified_action",
-    "reason_code",
-    "question",
-    "intent",
-    "topic",
-    # An agent's subject fields (`agent.subject_fields`) are ranked here.
-    _SUBJECT_SLOT,
-    "amount",
-    "requested_amount",
-    "allowed_amount",
-    "autonomous_limit",
-    "remaining_before",
-    "remaining_after",
-    "policy_version",
-    "error_code",
-    "http_status",
-    "reason",
-    "actor",
-    "roles",
-    "permission",
-    "said",
-    "for",
-    "by",
-    "review",
-    "read_by",
-    "granted_by",
-    "checks",
-    "reason",
-    "confidence",
-    "model_score",
-    "score_type",
-    "source",
-    "candidates",
-    "raw_model_labels",
-    "matched_phrase",
-    "match_method",
-    "tool",
-    "qualified_tool",
-    "result",
-    "status",
-    "verified",
-    "method",
-    "count",
-    "facts_held",
-    "operation",
-    "scope",
-    "written",
-    "route",
-    "chunks",
-    "selected",
-    "dropped",
-    "budget_tokens",
-    "used_tokens",
-    "utilization",
-    "health",
-    "model",
-    "finish_reason",
-    "tool_calls",
-    "requested_tools",
-    "requested_tool_calls",
-    "tools_available",
-    "tools_offered",
-    # The skill card: what was chosen and why, then what the harness read, then what
-    # the model may call.
-    "skills",
-    "harness_reads_first",
-    "model_may_call",
-    "input_tokens",
-    "output_tokens",
-    "total_tokens",
-    "round",
-    "max_rounds",
-    "previous_result",
-    "fingerprint",
-    "next_stage",
-    "claims",
-    "supported",
-    "unsupported",
-    "evidence_searched",
-    "provenance_checks",
-    "claim_checks",
-    "unsupported_claims",
-    "unsupported_diagnostics",
-    "detector_model",
-    "retrieval_method",
-    "retrieval_top_k",
-    "best_evidence_overlap",
-    "hallucination_rate",
-    "response_ready",
-    "revised",
-    "comment",
-    "grounding_issues",
-    "fallback",
-    "schema_valid",
-    "validation_mode",
-    "validation_attempts",
-    "repair_attempts",
-    "enforcement",
-    "grounded",
-    "escalated",
-    "failure_kinds",
-    "nollm_resolved_ratio",
-    "tier_counts",
-    "reason_code",
-    "hallucination_scope",
-    "advisory_flagged",
-    "advisory_reason",
-)
-
-FIELD_LABELS = {
-    # A tool result's `result` says the call ran, not what it answered.
-    "result": "call",
-    "policy_version": "policy",
-    "requested_amount": "requested",
-    "allowed_amount": "allowed",
-    "autonomous_limit": "autonomous_limit",
-    "budget_tokens": "budget_tokens",
-    "used_tokens": "used_tokens",
-    "input_tokens": "input_tokens",
-    "output_tokens": "output_tokens",
-    "total_tokens": "total_tokens",
-    "comment": "comment",
-    "schema_valid": "reply_matches_json_schema",
-}
-
-AMOUNT_FIELDS = {
-    "amount",
-    "requested_amount",
-    "allowed_amount",
-    "autonomous_limit",
-}
 
 # How a claim's verdict is marked on a card; the tally wording comes with
 # the guardrail result, so title, log and card agree.
@@ -301,6 +149,7 @@ class StatusLineWidget(Static):
     running: reactive[bool] = reactive(False)
 
     def __init__(self) -> None:
+        self._app_config = get_settings()
         super().__init__(id="status-line")
         settings = get_settings().tui
         self._frames = settings.spinner_frames
@@ -411,7 +260,7 @@ class StatusLineWidget(Static):
 
     def _with_toggle(self, headline: Text) -> Text:
         """The headline, led by the open/closed marker when there is more to show."""
-        settings = get_settings().tui
+        settings = self._app_config.tui
         if not self._detail_lines:
             return headline
         marker = (
@@ -427,7 +276,7 @@ class StatusLineWidget(Static):
         if not self.stage_label:
             return Text("")
 
-        styles = get_settings().tui.status_styles
+        styles = self._app_config.tui.status_styles
         if self.running:
             symbol = self._frames[self.frame % len(self._frames)] if self._frames else "●"
             style = styles["running"]
@@ -448,7 +297,7 @@ class StatusLineWidget(Static):
             line.append("  · HISTORY", style=palette("history"))
             if self._history_pending:
                 line.append(f" · +{self._history_pending} new", style=palette("history"))
-            line.append(f" · {get_settings().tui.status_history_hint}", style=palette("history"))
+            line.append(f" · {self._app_config.tui.status_history_hint}", style=palette("history"))
 
         return line
 
@@ -461,6 +310,7 @@ class StageEventWidget(Collapsible):
         event: StatusEvent,
         labels: StageLabelRegistry,
     ) -> None:
+        self._app_config = get_settings()
         self.event = event
         self._labels = labels
         self._status = event.status
@@ -490,7 +340,7 @@ class StageEventWidget(Collapsible):
         clicked card went white. A styled label is set without the reactive's comparison (it
         compares by text, so the same words would be dropped) and then pushed to the screen.
         """
-        colour = get_settings().tui.outcome_colors.get(self._status, "")
+        colour = self._app_config.tui.outcome_colors.get(self._status, "")
         title = self.query_one(CollapsibleTitle)
         title.set_reactive(CollapsibleTitle.label, Content.styled(self._build_title(), colour))
         title.mutate_reactive(CollapsibleTitle.label)
@@ -508,67 +358,52 @@ class StageEventWidget(Collapsible):
 
     def _build_body(self) -> Text:
         body = Text()
-
         if self.event.event_kind == "narrative":
             _append_narrative(body, self.event)
             return body
-
         if self.event.stage == "hallucination_check":
             _append_grounding(body, self.event.fields)
             return body
-
-        fields = self._ordered_fields(self.event.fields)
-
-        rendered_fields = False
-        for name, value in fields:
-            if name == "checks" and isinstance(value, list):
-                if rendered_fields:
-                    body.append("\n")
-                self._append_checks(body, value)
-                rendered_fields = True
-                continue
-            if value and (name in BLOCK_FIELDS or _is_structured(value)):
-                if rendered_fields:
-                    body.append("\n")
-                self._append_block(body, name, value)
-                rendered_fields = True
-                continue
-
-            if rendered_fields:
-                body.append("\n")
-            body.append("  ")
-            _append_pair(body, _label(name), " = ", _format_value(name, value))
-            rendered_fields = True
-
-        # The summary is already shown in the collapsed title.
-        # Only show it in the expanded body when there are no structured
-        # semantic fields available.
-        if not rendered_fields:
-            if self.event.summary:
-                body.append(
-                    self.event.summary,
-                    style=palette("emphasis"),
-                )
-            elif self.event.detail:
-                body.append("detail = ")
-                body.append(
-                    _humanize(self.event.detail),
-                )
-
-        if self.event.tokens_delta:
-            if rendered_fields or self.event.summary or self.event.detail:
-                body.append("\n")
-
-            body.append("  ")
-            _append_pair(body, "tokens", " = ", f"+{self.event.tokens_delta}")
-
+        rendered = self._append_fields(body)
+        if not rendered:
+            self._append_summary(body)
+        self._append_tokens(body, rendered)
         if not body:
-            body.append(
-                "No additional semantic detail.",
-                style=palette("muted"),
-            )
-
+            body.append(self._app_config.tui.card_body.empty, style=palette("muted"))
         return body
+
+    def _append_fields(self, body: Text) -> bool:
+        """Every visible field, in card order; whether there was any."""
+        rendered = False
+        for name, value in self._ordered_fields(self.event.fields):
+            if rendered:
+                body.append("\n")
+            if name == "checks" and isinstance(value, list):
+                self._append_checks(body, value)
+            elif value and (name in BLOCK_FIELDS or _is_structured(value)):
+                self._append_block(body, name, value)
+            else:
+                body.append("  ")
+                _append_pair(body, _label(name), " = ", _format_value(name, value))
+            rendered = True
+        return rendered
+
+    def _append_summary(self, body: Text) -> None:
+        """With no fields to show, the summary or detail (the title has the summary too)."""
+        if self.event.summary:
+            body.append(self.event.summary, style=palette("emphasis"))
+        elif self.event.detail:
+            body.append(self._app_config.tui.card_body.detail_prefix)
+            body.append(_humanize(self.event.detail))
+
+    def _append_tokens(self, body: Text, rendered: bool) -> None:
+        if not self.event.tokens_delta:
+            return
+        if rendered or self.event.summary or self.event.detail:
+            body.append("\n")
+        body.append("  ")
+        label = self._app_config.tui.card_body.tokens_label
+        _append_pair(body, label, " = ", f"+{self.event.tokens_delta}")
 
     def _append_block(self, body: Text, name: str, value: Any) -> None:
         """A document-shaped field, as a labelled and indented block.
@@ -577,227 +412,18 @@ class StageEventWidget(Collapsible):
         read the thing, and a prompt cut at eighty characters is a prompt
         you still have to go to the log files for.
         """
-        styles = get_settings().tui.body_styles
+        styles = self._app_config.tui.body_styles
         body.append(f"  {_label(name)}:", style=styles["key"])
         for line in _block_lines(value):
             body.append("\n    ")
             _append_line(body, line, "")
 
     def _summary(self) -> str:
-        stage = self.event.stage
-        fields = self.event.fields
-        status = self.event.status
-
-        if self.event.event_kind == "narrative":
-            return self.event.summary or ""
-        if status == "failed":
-            return self.event.summary or "failed"
-        if status == "blocked":
-            return self.event.summary or _decision_summary(fields, self._labels)
-        if status == "warning":
-            return self.event.summary or "attention required"
-        if status == "waiting":
-            return self.event.summary or "waiting"
-
-        if stage == "scope_check":
-            if fields.get("in_scope") is True:
-                return str(fields.get("topic") or "in scope")
-            if fields.get("topic"):
-                return f"out of scope · {fields['topic']}"
-
-        if stage == "authentication":
-            return "PASS · Identity Verified" if fields.get("verified") else "Verification Required"
-
-        if stage == "deterministic_checks":
-            summary = get_settings().tui.reason_summaries.get(str(fields.get("reason_code")))
-            if summary:
-                return summary
-            return "PASS · Valid Request" if fields.get("passed") else "Invalid Request"
-
-        if stage == "prompt_injection_check":
-            return (
-                "Prompt injection blocked"
-                if fields.get("detected")
-                else "PASS · No prompt injection attempt"
-            )
-
-        if stage == "pii_filtering":
-            if fields.get("detected"):
-                categories = fields.get("categories") or []
-                matches = fields.get("matches")
-                category_text = ", ".join(str(item) for item in categories) or "PII"
-                suffix = (
-                    f" · {matches} match{'es' if matches != 1 else ''}"
-                    if matches is not None
-                    else ""
-                )
-                return f"REDACTED · {category_text}{suffix}"
-            return "PASS · No PII detected"
-
-        if stage == "content_moderation":
-            # A blocked screen returned above, with its decision summary.
-            return "PASS · No harmful content detected"
-
-        if stage == "intent_classification":
-            intent = fields.get("intent") or self.event.detail or "classified"
-            score = fields.get("model_score")
-            disposition = fields.get("disposition")
-            if score is not None:
-                route = f" · {disposition}" if disposition else ""
-                return f"{intent} · model score {float(score):.0%}{route}"
-            return str(intent)
-
-        if stage == "working_memory_write":
-            operation = str(fields.get("operation") or "set").upper()
-            key = fields.get("key")
-            value = fields.get("memory_value")
-            if key and value is not None:
-                return f"{operation} · {key}={_format_value(str(key), value)}"
-            return f"{operation} · {key}" if key else operation
-
-        if stage == "memory_recall":
-            count = fields.get("selected", fields.get("count"))
-            return f"Recalled {count} items" if count is not None else "memory read"
-
-        if stage == "context_assembly":
-            chunks = fields.get("chunks")
-            used = fields.get("used_tokens")
-            turns = fields.get("working_memory_history_turns")
-            state = fields.get("working_memory_state")
-            parts = []
-            if turns is not None:
-                parts.append(f"{turns} history turn{'s' if turns != 1 else ''}")
-            state_items = fields.get("working_memory_state_items")
-            if isinstance(state_items, int):
-                parts.append(f"{state_items} state item{'s' if state_items != 1 else ''}")
-            if isinstance(state, Mapping) and state:
-                preview = []
-                for key, value in list(state.items())[:3]:
-                    preview.append(f"{key}={_format_value(str(key), value)}")
-                parts.append("state: " + ", ".join(preview))
-            if chunks is not None and used is not None:
-                parts.append(f"{chunks} sources · {used} tokens")
-            return " · ".join(parts) or self._compact_from_fields(
-                fields, ("selected", "used_tokens")
-            )
-
-        if stage in {"llm_request", "llm_call", "llm_response_received"}:
-            calls = fields.get("tool_calls")
-            if isinstance(calls, list) and calls:
-                first = calls[0]
-                if isinstance(first, Mapping):
-                    tool = first.get("tool") or first.get("name")
-                    arguments = first.get("arguments")
-                    parsed: Any = arguments
-                    if isinstance(arguments, str):
-                        try:
-                            parsed = json.loads(arguments)
-                        except (TypeError, ValueError, json.JSONDecodeError):
-                            parsed = {}
-                    given = parsed if isinstance(parsed, Mapping) else {}
-                    subject = subject_part(given)
-                    amount = given.get("amount")
-                    parts = [
-                        "Tool Requested",
-                        self._labels.tool_label(str(tool)) if tool else "tool",
-                    ]
-                    if subject:
-                        parts.append(subject)
-                    if amount is not None:
-                        parts.append(_format_value("amount", amount))
-                    return " · ".join(parts)
-            if stage == "llm_request":
-                # A request is a prompt sent, with or without tools; it never "generated" anything.
-                requested = fields.get("tools_offered")
-                count = len(requested) if isinstance(requested, list) else 0
-                purpose = fields.get("purpose")
-                parts = [
-                    "Prompt Sent",
-                    f"{count} Tools Offered" if count else "",
-                    str(purpose or ""),
-                ]
-                return " · ".join(part for part in parts if part)
-            if fields.get("finish_reason") == "tool_calls":
-                return "Tool Requested"
-            return "Response Generated"
-
-        if stage == "loop_control":
-            # The verdict names its own decision and mechanism (`loop_heading`).
-            if self.event.summary:
-                return self.event.summary
-            decision = str(fields.get("decision") or "").upper()
-            reason_code = str(fields.get("reason_code") or "")
-            return " · ".join(part for part in (decision, reason_code) if part)
-
-        if stage == "tool_request":
-            return self._tool_summary(fields)
-
-        if stage == "gatekeeper_evaluation":
-            verdict = fields.get("decision") or fields.get("verdict")
-            standing = fields.get("standing")
-            action = fields.get("action")
-            subject = subject_part(fields)
-            amount = _first_present(fields, AMOUNT_FIELDS)
-            parts = []
-            if verdict:
-                parts.append(str(verdict).upper())
-            # What the principal may do about it: VOID, RATIFIABLE, VOIDABLE…
-            if standing:
-                parts.append(str(standing))
-            if action:
-                parts.append(self._labels.tool_label(str(action)))
-            if subject:
-                parts.append(subject)
-            if amount is not None:
-                parts.append(_format_value("amount", amount))
-            checks = fields.get("checks")
-            if isinstance(checks, list):
-                failed = next(
-                    (
-                        item
-                        for item in checks
-                        if isinstance(item, Mapping) and item.get("status") in {"FAIL", "ESCALATE"}
-                    ),
-                    None,
-                )
-                if isinstance(failed, Mapping):
-                    parts.append(
-                        str(failed.get("reason_code") or failed.get("check_id") or "blocked")
-                    )
-            return " · ".join(parts) or "authorization evaluated"
-
-        if stage in {"tool_execution", "tool_result"}:
-            return self._tool_summary(fields)
-
-        if stage == "resilience":
-            attempts = fields.get("attempts")
-            recovered = fields.get("recovered")
-            if attempts is not None:
-                return f"{attempts} attempt{'s' if attempts != 1 else ''}" + (
-                    " · recovered" if recovered is True else ""
-                )
-            return self.event.summary or "recovery event"
-
-        if stage in {"hallucination_check", "hallucination_repair"}:
-            # A blocked check has already returned its outcome as the summary.
-            tally = fields.get("tally")
-            if not tally and fields.get("claims") is not None:
-                tally = f"{fields.get('supported')}/{fields['claims']} claims supported"
-            if tally:
-                return f"{tally}{' · repaired' if fields.get('repaired') else ''}"
-
-        if stage == "finalize":
-            return "Response Ready" if fields.get("response_ready", True) else "Response Not Ready"
-
-        if self.event.summary:
-            return self.event.summary
-        if self.event.detail:
-            return _humanize(self.event.detail)
-        return ""
+        return summarise(self.event, self._labels)
 
     def _append_checks(self, body: Text, checks: list[Any]) -> None:
         """Render structured checks as an operator-readable decision tree."""
-        settings = get_settings().tui
+        settings = self._app_config.tui
         styles = settings.body_styles
         body.append("  checks", style=settings.section_title_style)
         for check in checks:
@@ -825,33 +451,6 @@ class StageEventWidget(Collapsible):
                     for line in value_lines(dict(detail)):
                         body.append("\n        ")
                         _append_line(body, line, "")
-
-    def _compact_from_fields(
-        self,
-        fields: Mapping[str, Any],
-        names: tuple[str, ...],
-    ) -> str:
-        parts = []
-        for name in names:
-            value = fields.get(name)
-            if value is not None:
-                parts.append(f"{_label(name)}={_format_value(name, value)}")
-        return " · ".join(parts)
-
-    def _tool_summary(self, fields: Mapping[str, Any]) -> str:
-        tool = fields.get("tool") or fields.get("action")
-        tool_name = self._labels.tool_label(str(tool)) if tool else "tool"
-        result = fields.get("result")
-        subject = subject_part(fields)
-        amount = _first_present(fields, AMOUNT_FIELDS)
-        parts = [tool_name]
-        if subject:
-            parts.append(subject)
-        if amount is not None:
-            parts.append(_format_value("amount", amount))
-        if result and str(result) not in {"success", "ok", "completed"}:
-            parts.append(str(result))
-        return " · ".join(parts)
 
     @staticmethod
     def _ordered_fields(
@@ -1382,6 +981,7 @@ class ChoiceMenu(OptionList):
     """A fixed menu of answers beside the free-text input; hidden unless a question offers one."""
 
     def __init__(self) -> None:
+        self._app_config = get_settings()
         super().__init__(id="choices")
         self._values: list[str] = []
         self.display = False
@@ -1398,7 +998,7 @@ class ChoiceMenu(OptionList):
         self.clear_options()
         self._values = [str(_choice_part(choice, "value")) for choice in choices]
         self.add_options([Option(shown(str(_choice_part(choice, "label")))) for choice in choices])
-        self.border_title = get_settings().tui.choice_menu_hint
+        self.border_title = self._app_config.tui.choice_menu_hint
         self.display = bool(self._values)
         if self._values:
             self.highlighted = 0
@@ -1536,6 +1136,7 @@ class LiveStatusPanel(VerticalScroll):
         self,
         labels: StageLabelRegistry | None = None,
     ) -> None:
+        self._app_config = get_settings()
         super().__init__(id="feed")
         self._labels = labels or StageLabelRegistry()
         self._max_entries = get_settings().tui.max_feed_lines
@@ -1552,7 +1153,7 @@ class LiveStatusPanel(VerticalScroll):
         timeline never shows ``→ X`` followed by ``✓ X`` as two unrelated records.
         """
         if event.status == "started":
-            if event.event_kind in get_settings().tui.pending_card_kinds:
+            if event.event_kind in self._app_config.tui.pending_card_kinds:
                 self._show_pending(event)
             return
         pending = self._pending.pop((event.run_id, event.stage), None)
@@ -1607,7 +1208,7 @@ class LiveStatusPanel(VerticalScroll):
 
     def response(self, text: str) -> None:
         """The assistant's answer, with its headings, bullets and citations coloured."""
-        note = ResponseNote(text, get_settings().tui.response_styles)
+        note = ResponseNote(text, self._app_config.tui.response_styles)
         self._entries.append(note)
         self._trim_if_needed()
         self.mount(note)
@@ -1640,22 +1241,6 @@ class LiveStatusPanel(VerticalScroll):
                 pass
 
 
-def _decision_summary(
-    fields: Mapping[str, Any],
-    labels: StageLabelRegistry,
-) -> str:
-    decision = fields.get("decision") or fields.get("verdict")
-    action = fields.get("action")
-    if not decision and not action:
-        return "blocked"
-    parts = []
-    if decision:
-        parts.append(str(decision).upper())
-    if action:
-        parts.append(labels.tool_label(str(action)))
-    return " · ".join(parts)
-
-
 def palette(role: str) -> str:
     """The configured style for one console role (`tui.palette`): banner, metrics, muted, ..."""
     return get_settings().tui.palette[role]
@@ -1664,60 +1249,6 @@ def palette(role: str) -> str:
 def _tone(name: str) -> str:
     """A state's style (`tui.tone_styles`): pass, fail, warn, dim."""
     return get_settings().tui.tone_styles[name]
-
-
-def _field_priority() -> tuple[str, ...]:
-    """The card field order, with this agent's subject fields in their slot."""
-    subjects = tuple(subject.field for subject in get_settings().agent.subject_fields)
-    index = FIELD_PRIORITY.index(_SUBJECT_SLOT)
-    return FIELD_PRIORITY[:index] + subjects + FIELD_PRIORITY[index + 1 :]
-
-
-def _label(name: str) -> str:
-    """A field's name as a card shows it: an agent's subject label, else the platform's."""
-    for subject in get_settings().agent.subject_fields:
-        if subject.field == name:
-            return subject.label
-    return FIELD_LABELS.get(name, name)
-
-
-def _first_present(
-    fields: Mapping[str, Any],
-    names: set[str],
-) -> Any | None:
-    for name in _field_priority():
-        if name in names and name in fields:
-            return fields[name]
-    return None
-
-
-def _format_value(
-    name: str,
-    value: Any,
-) -> str:
-    if value is None:
-        return "None"
-
-    if name in AMOUNT_FIELDS:
-        amount = money_or_none(value)
-        if amount is not None:
-            return str(amount)
-
-    if isinstance(value, bool):
-        return "true" if value else "false"
-
-    if isinstance(value, (list, tuple, set)):
-        return "[" + ", ".join(str(item) for item in value) + "]"
-
-    if isinstance(value, dict):
-        items = ", ".join(f"{key}={_format_value(str(key), item)}" for key, item in value.items())
-        return "{" + items + "}"
-
-    return " ".join(str(value).split())
-
-
-def _humanize(value: str) -> str:
-    return " ".join(value.replace("_", " ").split())
 
 
 def _compact(tokens: int) -> str:

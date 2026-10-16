@@ -25,6 +25,7 @@ from agent_platform.hallucination_check import (
     Observation,
     tool_evidence,
 )
+from agent_platform.hallucination_check.resolver import _tier_evidence
 from agent_platform.scoring import create_scoring_cascade
 from agent_platform.scoring.entailment import EntailmentResult
 
@@ -55,7 +56,11 @@ def web_tiers(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """One tool-result tier that grounds every claim class, as the research agent declares."""
     settings = get_settings().hallucination_check
     tier = GroundingTierSettings(
-        name="tool_result", kinds=["tool_result"], claims=["record", "rule"], may_refute=True
+        name="tool_result",
+        kinds=["tool_result"],
+        claims=["record", "rule"],
+        may_refute=True,
+        passages="include",
     )
     monkeypatch.setattr(settings, "tiers", [tier])
     monkeypatch.setattr(settings, "refute_identifier_pattern", None)
@@ -276,3 +281,32 @@ class TestAQuestionAScopeAndAnOfferToLookAreConversation:
     def test_a_clause_cut_from_a_question_is_still_asked(self) -> None:
         claims = ClaimDecomposer().decompose("Shall I look at order 10633, so I can check it?")
         assert {claim.claim_class for claim in claims} == {"conversational"}
+
+
+class TestATierChoosesWhetherItReadsPassages:
+    """ADR C-11: passages in a tier of their own never take a sentence's retrieval slot."""
+
+    _SENTENCE = Chunk(
+        content="Card refunds show within 5 to 10 days.", kind="policy", source="kb#6.1"
+    )
+    _PASSAGE = Chunk(
+        content="Once settled it goes back. Card refunds show within 5 to 10 days.",
+        kind="policy",
+        source="kb#6",
+        metadata={PASSAGE: True},
+    )
+
+    def _read(self, passages: str) -> list[str]:
+        tier = GroundingTierSettings(
+            name="policy", kinds=["policy"], claims=["rule"], may_refute=False, passages=passages
+        )
+        return [c.source for c in _tier_evidence(tier, [self._SENTENCE, self._PASSAGE])]
+
+    def test_include_reads_both(self) -> None:
+        assert self._read("include") == ["kb#6.1", "kb#6"]
+
+    def test_exclude_reads_sentences_only(self) -> None:
+        assert self._read("exclude") == ["kb#6.1"]
+
+    def test_only_reads_passages_only(self) -> None:
+        assert self._read("only") == ["kb#6"]

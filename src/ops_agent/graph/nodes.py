@@ -79,6 +79,7 @@ class OpsNodes:
         reviewer: SqlReviewer | None = None,
         separator: InstructionDataSeparator | None = None,
     ) -> None:
+        self._app_config = get_settings()
         self._llm = llm
         self._registry = registry
         self._calls = calls
@@ -126,7 +127,7 @@ class OpsNodes:
         tools = [] if spent else self._registry.to_openai_tools()
         messages = [*state["messages"], *self._budget_note(spent)]
         built = state.get("layout", TurnLayout()).build(messages, tools)
-        purpose = get_settings().observability.llm_purposes.next_action
+        purpose = self._app_config.observability.llm_purposes.next_action
         result = await self._complete(built, tools, governor, self._settings.max_tokens, purpose)
         if _cut_off(result, self._settings.cut_off_finish):
             # The model's reasoning used the whole cap before the answer was written: once more,

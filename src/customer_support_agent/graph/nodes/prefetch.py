@@ -22,18 +22,28 @@ from agent_platform.tools import ToolResult
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.models import Order
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
+from customer_support_agent.graph.kit import NodeKit
 from customer_support_agent.graph.nodes._support import (
     ORDER_SNAPSHOT,
     PREFETCHED,
     TURN_OFFERED_TOOLS,
     NodeSupport,
 )
+from customer_support_agent.graph.nodes.execute import ExecutionNodes
+from customer_support_agent.graph.nodes.propose import ProposalNodes
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.grounding.evidence import TOOL_BLOCKED, TOOL_COMPLETED
 from customer_support_agent.tools.definitions import SNAPSHOT_READS
 
 
 class PrefetchNodes(NodeSupport):
+    def __init__(self, kit: NodeKit, proposal: ProposalNodes, execution: ExecutionNodes) -> None:
+        self._agent_config = get_agent_settings()
+        super().__init__(kit)
+        self._proposal = proposal
+        self._execution = execution
+        self._security = kit.security
+
     async def prefetch(self, state: AgentState) -> dict[str, Any]:
         """Say which skills this turn runs and what they read first; then read.
 
@@ -42,7 +52,7 @@ class PrefetchNodes(NodeSupport):
         """
         activation = self._activation(state)
         reads = self._runnable_reads(activation, state)
-        offered = self._still_needed(state, await self._offered_tools(state), reads)
+        offered = self._still_needed(state, await self._proposal.offered_tools(state), reads)
         self._instructions.announce(
             activation,
             prefetched=[tool.model_name for _, tool, _ in reads],
@@ -77,7 +87,7 @@ class PrefetchNodes(NodeSupport):
             return list(offered)
         answered = {tool.qualified_name for _, tool, _ in reads}
         needless = (
-            set(get_agent_settings().prefetch.needless_when_order_known)
+            set(self._agent_config.prefetch.needless_when_order_known)
             if state.metadata.get(ORDER_UNDER_DISCUSSION) is not None
             else set()
         )
@@ -108,7 +118,7 @@ class PrefetchNodes(NodeSupport):
     async def _read(self, state: AgentState, skill: str, tool: Any, params: dict[str, Any]) -> bool:
         """One read, as a tool call the model will see; False when it was refused."""
         call = ModelToolCall(
-            id=get_agent_settings().prefetch.call_id.format(tool=tool.model_name),
+            id=self._agent_config.prefetch.call_id.format(tool=tool.model_name),
             name=tool.model_name,
             arguments=json.dumps(params),
         )
@@ -119,7 +129,7 @@ class PrefetchNodes(NodeSupport):
                 call.arguments,
                 served.output,
                 skill=skill,
-                source=get_agent_settings().prefetch.served_from,
+                source=self._agent_config.prefetch.served_from,
                 redact=self._security.redact,
             )
             self._hand_to_model(
@@ -132,7 +142,7 @@ class PrefetchNodes(NodeSupport):
         self._steps.tool_request(
             call.name, call.arguments, redact=self._security.redact, prefetched_for=skill
         )
-        text, _decision, _stage, invocation = await self._invoke(
+        text, _decision, _stage, invocation = await self._execution.invoke(
             tool.qualified_name, call.arguments, state, {tool.qualified_name}
         )
         self._hand_to_model(state, call, text, invocation)
@@ -158,10 +168,9 @@ class PrefetchNodes(NodeSupport):
         allowed = state.metadata.get("intent_tools")
         return not allowed or tool in allowed
 
-    @staticmethod
-    def _prefetch_params(tool: Any, state: AgentState) -> dict[str, Any] | None:
+    def _prefetch_params(self, tool: Any, state: AgentState) -> dict[str, Any] | None:
         """Each argument from the turn state the config names; None if a required one is unknown."""
-        sources = get_agent_settings().prefetch.arguments
+        sources = self._agent_config.prefetch.arguments
         fields = tool.args_schema.model_fields
         params = {
             arg: state.metadata[key]

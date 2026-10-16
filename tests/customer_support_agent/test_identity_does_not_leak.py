@@ -90,7 +90,7 @@ class TestShowOrdersIsAlwaysTheTable:
         state = await agent.handle("show orders", session_id="up", customer=_ADA)
         assert "10001" in state.response and "10002" in state.response
         assert llm.requests == []
-        assert agent._menus["up"].size == 2
+        assert agent._conversation.menus["up"].size == 2
 
     async def test_after_verifying_show_orders_is_the_same_table(
         self, seeded_pool: SqliteConnectionPool

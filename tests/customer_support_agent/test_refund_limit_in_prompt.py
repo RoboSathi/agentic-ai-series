@@ -66,7 +66,7 @@ def test_the_ungoverned_notice_forbids_the_call_and_names_the_contact() -> None:
 
 
 async def test_an_escalation_with_no_queue_tells_the_model_no_limit() -> None:
-    nodes: Any = SimpleNamespace(_referral=None)
+    nodes: Any = SimpleNamespace(_referral=None, _agent_config=get_agent_settings())
     decision: Any = SimpleNamespace(reason=_REASON)
     call: Any = SimpleNamespace(action="support.process_refund")
     text, fields, _ = await ExecutionNodes._refer_for_review(nodes, call, decision, None)  # type: ignore[arg-type]

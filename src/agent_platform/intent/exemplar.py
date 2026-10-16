@@ -70,5 +70,7 @@ class ExemplarIntentClassifier:
         """The examples' vectors, computed once, however many messages ask at the same time."""
         async with self._indexing:
             if self._vectors is None:
+                # Queries, like the message they are compared with: an example is a message
+                # someone sent, not a passage to retrieve, so the comparison is symmetric.
                 self._vectors = await self._embedder.embed([text for _, text in self._pairs])
             return self._vectors

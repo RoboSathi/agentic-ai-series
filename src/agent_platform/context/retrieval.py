@@ -11,9 +11,10 @@ Hybrid exists because real queries are mixtures, and picking one mode
 globally means being wrong for whichever half of the traffic doesn't fit.
 """
 
+import heapq
 import math
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import Protocol, runtime_checkable
 
 from agent_platform.config import get_settings
@@ -34,11 +35,17 @@ class Retriever(Protocol):
 
 
 class LexicalRetriever:
-    """BM25 over an in-memory corpus.
+    """BM25 over an in-memory corpus, scored through an inverted index.
 
     BM25 rather than raw TF-IDF because the two parameters matter: `k1`
     caps how much repeating a term can help, and `b` controls how much a
     long document is penalized for its length. Both are in config.
+
+    `index()` is one pass: postings (term → document → frequency) and each
+    document's length norm. A query then touches only the documents that
+    share one of its terms, its IDFs are computed for its own terms alone,
+    and only the k winners are copied. Several callers index per claim, so
+    the build has to stay as cheap as the search.
     """
 
     def __init__(self, corpus: list[Chunk] | None = None) -> None:
@@ -46,48 +53,60 @@ class LexicalRetriever:
         self._k1 = settings.bm25_k1
         self._b = settings.bm25_b
         self._corpus: list[Chunk] = []
-        self._tokens: list[list[str]] = []
-        self._doc_freq: Counter[str] = Counter()
-        self._avg_len = 0.0
+        self._postings: dict[str, dict[int, int]] = {}
+        self._norms: list[float] = []
         if corpus:
             self.index(corpus)
 
     def index(self, chunks: list[Chunk]) -> None:
-        """Build the term statistics BM25 needs."""
+        """Build the postings and length norms BM25 needs."""
         self._corpus = list(chunks)
-        self._tokens = [tokenize(chunk.content) for chunk in self._corpus]
-        self._doc_freq = Counter(term for tokens in self._tokens for term in set(tokens))
-        lengths = [len(tokens) for tokens in self._tokens]
-        self._avg_len = sum(lengths) / len(lengths) if lengths else 0.0
+        self._postings = {}
+        lengths: list[int] = []
+        for doc_index, chunk in enumerate(self._corpus):
+            tokens = tokenize(chunk.content)
+            lengths.append(len(tokens))
+            for term, freq in Counter(tokens).items():
+                self._postings.setdefault(term, {})[doc_index] = freq
+        average = sum(lengths) / len(lengths) if lengths else 0.0
+        self._norms = [
+            1 - self._b + self._b * (length / average if average else 1.0) for length in lengths
+        ]
 
     async def retrieve(self, query: str, k: int) -> list[Chunk]:
-        """Top-k by BM25 score."""
-        scored = [
-            chunk.model_copy(update={"score": self.score(query, index)})
-            for index, chunk in enumerate(self._corpus)
+        """Top-k by BM25 score; a document sharing no query term is never scored."""
+        scores = self._scores(query)
+        best = heapq.nlargest(k, scores.items(), key=lambda item: (item[1], -item[0]))
+        return [
+            self._corpus[doc_index].model_copy(update={"score": score})
+            for doc_index, score in best
+            if score > 0
         ]
-        ranked = sorted(scored, key=lambda chunk: chunk.score, reverse=True)
-        return [chunk for chunk in ranked if chunk.score > 0][:k]
 
     def score(self, query: str, doc_index: int) -> float:
         """BM25 score of one document against the query."""
-        if not self._corpus:
-            return 0.0
-        tokens = self._tokens[doc_index]
-        length = len(tokens)
-        counts = Counter(tokens)
-        total_docs = len(self._corpus)
-        score = 0.0
+        return self._scores(query, only=doc_index).get(doc_index, 0.0)
+
+    def _scores(self, query: str, only: int | None = None) -> dict[int, float]:
+        """Every matching document's score, summed term by term over the postings."""
+        scores: dict[int, float] = defaultdict(float)
         for term in tokenize(query):
-            if term not in counts:
+            postings = self._postings.get(term)
+            if not postings:
                 continue
-            idf = math.log(
-                1 + (total_docs - self._doc_freq[term] + 0.5) / (self._doc_freq[term] + 0.5)
-            )
-            freq = counts[term]
-            norm = 1 - self._b + self._b * (length / self._avg_len if self._avg_len else 1.0)
-            score += idf * (freq * (self._k1 + 1)) / (freq + self._k1 * norm)
-        return score
+            idf = self._idf(len(postings))
+            matched = postings.items() if only is None else ((only, postings.get(only, 0)),)
+            for doc_index, freq in matched:
+                if freq:
+                    scores[doc_index] += self._term_score(idf, freq, self._norms[doc_index])
+        return scores
+
+    def _idf(self, doc_freq: int) -> float:
+        total = len(self._corpus)
+        return math.log(1 + (total - doc_freq + 0.5) / (doc_freq + 0.5))
+
+    def _term_score(self, idf: float, freq: int, norm: float) -> float:
+        return idf * (freq * (self._k1 + 1)) / (freq + self._k1 * norm)
 
 
 class DenseRetriever:

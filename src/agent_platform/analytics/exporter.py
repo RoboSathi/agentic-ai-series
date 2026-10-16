@@ -68,6 +68,7 @@ class ParquetExporter:
         parquet_dir: Path | None = None,
         evals_db: Path | None = None,
     ) -> None:
+        self._app_config = get_settings()
         settings = get_settings()
         self._store = store
         self._catalog = catalog or load_catalog()
@@ -80,10 +81,10 @@ class ParquetExporter:
         self._parquet_dir.mkdir(parents=True, exist_ok=True)
         # Days and windows are UTC calendar days (as the semantic layer documents them),
         # whatever zone the exporting machine is in.
-        timezone = get_settings().analytics.query.timezone.replace("'", "''")
+        timezone = self._app_config.analytics.query.timezone.replace("'", "''")
         self._store.execute_script(f"SET TimeZone = '{timezone}'")
         self._ensure_sources()
-        manifest = SourceManifest(schema_version=get_settings().analytics.schema_version)
+        manifest = SourceManifest(schema_version=self._app_config.analytics.schema_version)
         evals_reason = self._attach_evals()
         skipped: set[str] = set()
         try:
@@ -157,7 +158,7 @@ class ParquetExporter:
 
     def _attach_evals(self) -> str:
         """Attach the eval store read-only; the reason it could not be, or ""."""
-        alias = get_settings().analytics.evals_alias
+        alias = self._app_config.analytics.evals_alias
         if not self._evals_db.exists():
             return f"no eval store at {self._evals_db}"
         try:
@@ -168,11 +169,11 @@ class ParquetExporter:
         return ""
 
     def _detach_evals(self) -> None:
-        alias = get_settings().analytics.evals_alias
+        alias = self._app_config.analytics.evals_alias
         self._store.execute_script(f"DETACH DATABASE IF EXISTS {alias}")
 
     def _write_manifest(self, manifest: SourceManifest) -> None:
-        target = self._parquet_dir / get_settings().analytics.manifest_file
+        target = self._parquet_dir / self._app_config.analytics.manifest_file
         partial = target.with_name(target.name + _PARTIAL)
         partial.write_text(json.dumps(manifest.model_dump(mode="json"), indent=2), encoding="utf-8")
         os.replace(partial, target)

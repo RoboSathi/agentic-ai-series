@@ -80,3 +80,16 @@ async def test_a_roles_request_fields_ride_on_every_request() -> None:
     # One adapter for the model; only the interviewer's requests carry its fields.
     assert llm.requests[0].extra_body == extra and llm.requests[1].extra_body == {}
     assert router.model_key("interviewer") == router.model_key("answerer")
+
+
+class TestARangeIsItsTwoEnds:
+    """ADR P-50: "5-10 business days" is sourced by "5 to 10 business days"."""
+
+    def test_a_range_is_sourced_by_its_ends_written_out(self) -> None:
+        assert specifics("5-10 business days") <= specifics("within 5 to 10 business days")
+
+    def test_a_different_range_is_still_unsourced(self) -> None:
+        assert not specifics("2-3 business days") <= specifics("within 5 to 10 business days")
+
+    def test_an_iso_date_is_still_a_date(self) -> None:
+        assert "2 oct" in specifics("2026-10-02")

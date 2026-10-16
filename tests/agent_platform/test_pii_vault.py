@@ -13,6 +13,7 @@ from agent_platform.config import get_settings
 from agent_platform.core.persistence import SqliteConnectionPool
 from agent_platform.security.pii import PatternPIIDetector, PIIFilterImpl, SqlitePIIVault
 from agent_platform.security.pii.vault import VaultKeyError, vault_key
+from tests.hermetic import needs_model
 
 KEY = b"0123456789abcdef0123456789abcdef"
 OTHER_KEY = b"fedcba9876543210fedcba9876543210"
@@ -90,9 +91,7 @@ def test_a_key_of_the_wrong_length_is_refused() -> None:
 # -- Presidio, on the real local pipeline ----------------------------------------------------
 
 _PIPELINE = get_settings().security.pii.presidio.resolved_local_model_dir
-needs_pipeline = pytest.mark.skipif(
-    not (_PIPELINE / "config.cfg").exists(), reason="spaCy pipeline not downloaded (make models)"
-)
+needs_pipeline = needs_model(_PIPELINE / "config.cfg", "spaCy pipeline not downloaded")
 
 
 @needs_pipeline

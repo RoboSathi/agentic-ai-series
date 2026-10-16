@@ -10,6 +10,7 @@ import asyncio
 
 import pytest
 
+from agent_platform.config import get_settings
 from agent_platform.context.similarity import LexicalSimilarity
 from agent_platform.loop_control import (
     BudgetGuard,
@@ -22,6 +23,7 @@ from agent_platform.loop_control import (
     canonical_fingerprint,
     route_on_verdict,
 )
+from agent_platform.loop_control.convergence import ConvergenceMonitor
 from agent_platform.loop_control.stagnation import CycleDetector, HistoricalBaseline
 from agent_platform.tools.types import ToolCall
 
@@ -277,3 +279,35 @@ class TestRouting:
         routes = {"finalize": "answer"}
         assert route_on_verdict(stopped, routes, "next") == "answer"
         assert route_on_verdict(None, routes, "next") == "next"
+
+
+class TestConvergenceGains:
+    """Several results in one step are measured in one similarity call, not one each."""
+
+    class _Counting(LexicalSimilarity):
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls: list[tuple[int, int]] = []
+
+        async def matrix(self, left: list[str], right: list[str]) -> list[list[float]]:
+            self.calls.append((len(left), len(right)))
+            return await super().matrix(left, right)
+
+    def _monitor(self, similarity: LexicalSimilarity) -> ConvergenceMonitor:
+        settings = get_settings().loop_control
+        return ConvergenceMonitor(
+            similarity, settings.convergence, settings.stagnation.history_window
+        )
+
+    async def test_one_call_for_every_result(self) -> None:
+        similarity = self._Counting()
+        gains = await self._monitor(similarity).gains(
+            ["refund issued", "", "weather in Pune"], ["refund issued for order 7"]
+        )
+        assert similarity.calls == [(2, 1)]
+        assert gains[1] == 0.0 and gains[0] < gains[2]
+
+    async def test_against_no_evidence_everything_is_new(self) -> None:
+        similarity = self._Counting()
+        assert await self._monitor(similarity).gains(["a", " "], []) == [1.0, 0.0]
+        assert similarity.calls == []

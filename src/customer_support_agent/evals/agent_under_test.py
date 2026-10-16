@@ -74,6 +74,7 @@ class CsaAgentUnderTest:
         classifier: Any = None,
         settings: CsaEvalSettings | None = None,
     ) -> None:
+        self._app_config = get_settings()
         self._fixture = fixture
         self._facts: FixtureFacts = fixture.facts()
         self._run_key = run_key
@@ -113,7 +114,7 @@ class CsaAgentUnderTest:
             for turn in case.turns:
                 turn_starts.append(len(feed.events))
                 # Eval traffic is told apart by its channel (ADR 0009 D5).
-                with bound_channel(get_settings().evals.channel):
+                with bound_channel(self._app_config.evals.channel):
                     state = await agent.handle(
                         turn, session_id=self._session(case), customer=customer
                     )

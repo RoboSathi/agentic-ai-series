@@ -34,6 +34,7 @@ class CompensatingSaga:
     """Forward execution with reverse compensation on failure."""
 
     def __init__(self) -> None:
+        self._app_config = get_settings()
         self._enabled = get_settings().resilience.saga.enabled
         self._logger = get_logger("resilience")
 
@@ -63,7 +64,7 @@ class CompensatingSaga:
 
     async def _stopped(self, completed: list[SagaStep], step: str) -> None:
         """A Stop mid-saga: undo what committed, shielded from the Stop that caused it."""
-        reason = get_settings().resilience.saga.stopped_reason
+        reason = self._app_config.resilience.saga.stopped_reason
         if not self._enabled:
             self._uncompensated(completed, step, reason)
             return

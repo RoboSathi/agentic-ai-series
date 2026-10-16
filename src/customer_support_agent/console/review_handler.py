@@ -47,6 +47,8 @@ class SupportReviewHandler:
         service: Callable[[SqliteConnectionPool], ReviewQueueService],
         agent: Callable[[], Any] | None = None,
     ) -> None:
+        self._app_config = get_settings()
+        self._agent_config = get_agent_settings()
         self._pool = pool
         self._service = service
         self._agent = agent
@@ -64,7 +66,7 @@ class SupportReviewHandler:
         return [request_line(request), request.reason, *([sent] if sent else [])]
 
     def columns(self, kind: str) -> list[str]:
-        return list(get_settings().review.words.columns[kind])
+        return list(self._app_config.review.words.columns[kind])
 
     def cells(self, item: ReviewItem) -> list[str]:
         """A refund as its order, amount and customer; a cut reply as what was removed."""
@@ -89,7 +91,7 @@ class SupportReviewHandler:
     def _customer(self, user_id: int) -> str:
         """`Name (#id)` when the customer is on record; the id alone otherwise."""
         user = UsersRepository(self._pool).get(user_id)
-        words = get_agent_settings().review_output
+        words = self._agent_config.review_output
         return words.customer_cell.format(name=user.name, id=user_id) if user else str(user_id)
 
     async def approve(self, item: ReviewItem, reviewer: str, comment: str) -> ReviewOutcome:
@@ -105,7 +107,7 @@ class SupportReviewHandler:
     ) -> ReviewOutcome:
         if outcome.decision not in _STATUS:
             # Decided nothing (no longer pending): nobody is told, and the reviewer is told why.
-            not_pending = get_agent_settings().review_output.not_pending.format(id=item.id)
+            not_pending = self._agent_config.review_output.not_pending.format(id=item.id)
             return ReviewOutcome.model_validate(
                 {"item_id": item.id, "kind": item.kind, "status": "failed", "lines": [not_pending]}
             )

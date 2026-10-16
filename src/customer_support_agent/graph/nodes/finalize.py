@@ -19,7 +19,9 @@ from agent_platform.resilience import (
     external_api_error_fields,
 )
 from customer_support_agent.config import get_agent_settings
+from customer_support_agent.graph.kit import NodeKit
 from customer_support_agent.graph.nodes._support import NodeSupport
+from customer_support_agent.graph.nodes.propose import ProposalNodes
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.loop_control.quality_gate import Critique
 from customer_support_agent.presentation.reporting import (
@@ -44,6 +46,19 @@ _PRE_CHECK = "pre_check"
 
 
 class FinalizeNodes(NodeSupport):
+    def __init__(self, kit: NodeKit, proposal: ProposalNodes) -> None:
+        self._app_config = get_settings()
+        super().__init__(kit)
+        self._proposal = proposal
+        self._llm = kit.llm
+        self._grounding = kit.grounding
+        self._reply_referral = kit.reply_referral
+        self._deliberation_markers = kit.deliberation_markers
+        self._context_health = kit.context_health
+        self._response_guardrail = kit.response_guardrail
+        self._limit_disclosure = kit.limit_disclosure
+        self._deliberation = kit.deliberation
+
     async def finalize(self, state: AgentState) -> dict[str, Any]:
         """One tool-free call so the customer always gets an answer.
 
@@ -152,10 +167,10 @@ class FinalizeNodes(NodeSupport):
         # The draft check already logged what it found; saying it twice
         # here would double every rejection in the trace.
         request = self._reply_request(state)
-        purposes = get_settings().observability.llm_purposes
+        purposes = self._app_config.observability.llm_purposes
         self._report_llm_request(request, purpose=purposes.reply_revision)
         try:
-            result = await self._call_model(request, state)
+            result = await self._proposal.call_model(request, state)
         except Exception as exc:
             error_fields = external_api_error_fields(exc)
             self._done_failed(
@@ -204,7 +219,7 @@ class FinalizeNodes(NodeSupport):
                 json_schema=CustomerResponse.model_json_schema(),
             )
             self._report_llm_request(request, purpose=purposes.hallucination_repair)
-            repaired_result = await self._call_model(request, state)
+            repaired_result = await self._proposal.call_model(request, state)
             self._report_llm_response(repaired_result, purpose=purposes.hallucination_repair)
             repaired, _ = self._response_guardrail.validate_schema(repaired_result.content)
             return repaired or FALLBACK_REPLY
@@ -345,9 +360,9 @@ class FinalizeNodes(NodeSupport):
             results = []
             for index in range(max(0, count)):
                 purpose = f"response_resample_{index + 1}"
-                request = self._prompt_request(state)
+                request = self._proposal.prompt_request(state)
                 self._report_llm_request(request, purpose=purpose)
-                result = await self._call_model(request, state)
+                result = await self._proposal.call_model(request, state)
                 self._report_llm_response(result, purpose=purpose)
                 results.append(result)
             return [result.content for result in results if result.content]

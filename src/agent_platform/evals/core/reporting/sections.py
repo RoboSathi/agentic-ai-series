@@ -21,6 +21,7 @@ class ReportSections:
     """The Markdown pieces: run facts, metrics, failures, transcripts, cost."""
 
     def __init__(self, store: DuckDbEvalStore) -> None:
+        self._app_config = get_settings()
         self._store = store
         settings = get_settings().evals.reporting
         self._z = settings.confidence_z
@@ -185,7 +186,7 @@ class ReportSections:
 
     def trials(self, run_id: str, stage: str) -> str:
         """pass@k and pass^k per base case, when cases ran more than once."""
-        trials = get_settings().evals.trials
+        trials = self._app_config.evals.trials
         if trials <= 1:
             return f"_Each case ran once (`evals.trials: {trials}`); pass@k and pass^k need k > 1._"
         rows = self._store.query(

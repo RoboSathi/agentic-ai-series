@@ -26,6 +26,7 @@ from agent_platform.memory.context_source import SOURCE_PREFIX as MEMORY_SOURCE_
 from agent_platform.memory.context_source import SUBJECT_ID
 from customer_support_agent.config import get_agent_settings
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION, WRITE_INTENT
+from customer_support_agent.graph.kit import NodeKit
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.grounding.evidence import GROUNDING_EVIDENCE
@@ -36,6 +37,13 @@ _VERIFIED = "verified_system_of_record"
 
 
 class ContextNodes(NodeSupport):
+    def __init__(self, kit: NodeKit) -> None:
+        self._app_config = get_settings()
+        super().__init__(kit)
+        self._context = kit.context
+        self._strategies = kit.strategies
+        self._context_health = kit.context_health
+
     def _task_metadata(self, state: AgentState) -> dict[str, Any]:
         """What this turn has settled that assembly should know about."""
         metadata: dict[str, Any] = {}
@@ -60,7 +68,7 @@ class ContextNodes(NodeSupport):
             # not one that reasons without its own policy.
             self._done(
                 CONTEXT_STAGE,
-                summary=get_settings().context.window.withheld,
+                summary=self._app_config.context.window.withheld,
                 event_kind="context",
                 fields={"source": "none"},
                 quiet=True,

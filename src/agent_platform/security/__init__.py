@@ -17,6 +17,7 @@ from agent_platform.security.guard_types import GuardVerdict
 from agent_platform.security.pii.detector import PIIFilterImpl
 from agent_platform.security.prompt_injection import (
     HostedJailbreakGuard,
+    InjectionGuard,
     JailbreakGuard,
     PromptInjectionGuard,
 )
@@ -24,6 +25,7 @@ from agent_platform.security.screening import (
     MessageScreener,
     PiiOutcome,
     ScreenOutcome,
+    ScreenPair,
     ScreenSubject,
 )
 from agent_platform.security.suite import SecuritySuite
@@ -42,9 +44,11 @@ __all__ = [
     "MessageScreener",
     "PiiOutcome",
     "ScreenOutcome",
+    "ScreenPair",
     "ScreenSubject",
     "HostedContentSafetyGuard",
     "HostedJailbreakGuard",
+    "InjectionGuard",
     "PromptInjectionGuard",
     "SecuritySuite",
     "TermContentModerator",

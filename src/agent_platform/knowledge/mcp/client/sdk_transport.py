@@ -41,6 +41,7 @@ class SdkMcpTransport:
     """An `McpTransport` over the MCP SDK."""
 
     def __init__(self, resolve: TargetResolver | None = None) -> None:
+        self._app_config = get_settings()
         self._resolve = resolve or _target
 
     async def connect(
@@ -48,7 +49,7 @@ class SdkMcpTransport:
     ) -> SdkMcpSession:
         session = SdkMcpSession(
             self._resolve(server),
-            get_settings().mcp.call_timeout_seconds,
+            self._app_config.mcp.call_timeout_seconds,
             server=server.name,
             events=events,
         )

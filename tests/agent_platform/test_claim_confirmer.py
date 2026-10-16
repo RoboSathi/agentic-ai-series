@@ -132,7 +132,11 @@ class _Nli:
 def web_tiers(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     settings = get_settings().hallucination_check
     tier = GroundingTierSettings(
-        name="tool_result", kinds=["tool_result"], claims=["record", "rule"], may_refute=True
+        name="tool_result",
+        kinds=["tool_result"],
+        claims=["record", "rule"],
+        may_refute=True,
+        passages="include",
     )
     monkeypatch.setattr(settings, "tiers", [tier])
     monkeypatch.setattr(settings, "refute_identifier_pattern", None)

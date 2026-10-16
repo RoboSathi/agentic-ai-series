@@ -31,10 +31,11 @@ class WorkingMemoryOffloadStore:
     """Offloaded passages kept in the session's working memory (and so its checkpoints)."""
 
     def __init__(self, working_memory: WorkingMemoryStore) -> None:
+        self._app_config = get_settings()
         self._working_memory = working_memory
 
     def put(self, session_id: str, text: str) -> str:
-        settings = get_settings().context.offload
+        settings = self._app_config.context.offload
         handle = hashlib.sha256(text.encode("utf-8")).hexdigest()[: settings.handle_chars]
         self._working_memory.get(session_id).offload(handle, text, settings.max_entries)
         return handle

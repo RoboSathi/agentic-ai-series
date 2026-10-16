@@ -44,6 +44,7 @@ from customer_support_agent.config.settings import reload_agent_settings
 from customer_support_agent.domain.identity import Customer, set_current_customer
 from customer_support_agent.domain.models import Order, User
 from customer_support_agent.persistence.schema import ensure_schema
+from tests.hermetic import hermetic
 
 _ANALYTICS_PATH_VAR = "ANALYTICS__SOURCES__LIVE__DB_PATH"
 _CHECKPOINTS_PATH_VAR = "DURABILITY__DB_PATH"
@@ -52,7 +53,9 @@ _MEMORY_ROOT_VAR = "MEMORY__FILES__ROOT"
 # Settings fields naming a credential's environment variables, and the two provider
 # key read by bare name (`web_search` Tavily).
 _KEY_ENV_VARS = "key_env_vars"
-_BARE_PROVIDER_KEYS = ("tavily_api_key",)
+_BARE_PROVIDER_KEYS = ("tavily_api_key", "hf_api_key")
+# The Hub client never downloads in a test: a `models` test uses what `make models` fetched.
+_HUB_OFFLINE_VARS = ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
 _HOSTED_GUARDS_VAR = "SECURITY__GUARDS__ENABLED"
 # Request sizes are counted by characters in tests: the model-family tokenizer is a
 # download, and a count that depends on whether it is on disk is not a fixed expectation.
@@ -294,10 +297,15 @@ def no_provider_calls() -> Iterator[None]:
     production and would block every scripted turn here. The deterministic
     phrase screens still run; a test of a hosted guard injects its own client.
     """
-    names = _key_env_vars(get_settings().model_dump()) | set(_BARE_PROVIDER_KEYS)
+    settings = get_settings()
+    names = _key_env_vars(settings.model_dump()) | set(_BARE_PROVIDER_KEYS)
+    # The PII vault key too: whether a vault exists must not depend on the developer's shell.
+    names.add(settings.security.pii.vault.key_env)
     with pytest.MonkeyPatch.context() as patch:
         for name in names:
             patch.delenv(name, raising=False)
+        for name in _HUB_OFFLINE_VARS:
+            patch.setenv(name, "1")
         patch.setenv(_HOSTED_GUARDS_VAR, "false")
         patch.setenv(_TOKENIZER_VAR, "false")
         patch.setenv(_JUDGE_TIER_VAR, "false")
@@ -347,6 +355,13 @@ def _eval_paths(root: Any) -> dict[str, Any]:
         "CUSTOMER_SUPPORT_AGENT__EVALS__FIXTURE_DB_PATH": root / "fixture.db",
         "CUSTOMER_SUPPORT_AGENT__EVALS__WORKSPACE_DIR": root / "workspace",
     }
+
+
+@pytest.fixture(autouse=True)
+def hermetic_test(request: pytest.FixtureRequest) -> Iterator[None]:
+    """No remote socket and no local model unless the test is marked for it (`tests/hermetic.py`)."""
+    with hermetic(request.node):
+        yield
 
 
 @pytest.fixture(autouse=True)

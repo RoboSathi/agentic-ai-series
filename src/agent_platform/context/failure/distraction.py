@@ -15,6 +15,7 @@ from agent_platform.context.types import AssembledContext, ContextFinding
 
 class DistractionCheck:
     def __init__(self, similarity: TextSimilarity) -> None:
+        self._app_config = get_settings()
         self._similarity = similarity
 
     async def relevance(self, context: AssembledContext, query: str) -> list[float]:
@@ -26,13 +27,13 @@ class DistractionCheck:
 
     async def ratio(self, context: AssembledContext, query: str) -> float:
         """Share of unpinned chunks below the relevance floor."""
-        floor = get_settings().context.failure_detection.min_relevance
+        floor = self._app_config.context.failure_detection.min_relevance
         scores = await self.relevance(context, query)
         competing = [s for c, s in zip(context.chunks, scores) if not c.pinned]
         return sum(s < floor for s in competing) / len(competing) if competing else 0.0
 
     async def findings(self, context: AssembledContext, query: str) -> list[ContextFinding]:
-        settings = get_settings().context.failure_detection
+        settings = self._app_config.context.failure_detection
         scores = await self.relevance(context, query)
         competing = [s for c, s in zip(context.chunks, scores) if not c.pinned]
         ratio = (

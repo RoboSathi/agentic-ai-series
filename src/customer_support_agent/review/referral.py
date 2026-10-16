@@ -77,6 +77,8 @@ class ReplyReferral:
     """
 
     def __init__(self, queue: HitlQueueRepository) -> None:
+        self._app_config = get_settings()
+        self._agent_config = get_agent_settings()
         self._queue = queue
 
     def refer(
@@ -85,7 +87,7 @@ class ReplyReferral:
         """Queue the cut reply; None when nothing was cut or no customer is known."""
         if not result.escalated or customer_id is None:
             return None
-        reasons = get_settings().guardrails.block_reasons
+        reasons = self._app_config.guardrails.block_reasons
         self._queue.save(
             HitlRequest(
                 user_id=customer_id,
@@ -98,7 +100,7 @@ class ReplyReferral:
                     reason=reasons.get(result.reason_code, result.reason_code),
                     withheld=result.withheld,
                 ),
-                reason=get_agent_settings().review_reasons.for_finding(result.reason_code),
+                reason=self._agent_config.review_reasons.for_finding(result.reason_code),
             )
         )
         return self._queue.last_id()

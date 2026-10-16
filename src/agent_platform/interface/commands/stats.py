@@ -28,6 +28,7 @@ class StatsCommand:
     name = "stats"
 
     def __init__(self, store: DuckDbObservabilityStore | None = None) -> None:
+        self._app_config = get_settings()
         self._store = store
         self._tables_ready = False
         self._scope: ConsoleScope | None = None
@@ -40,7 +41,7 @@ class StatsCommand:
 
     async def run(self, args: list[str]) -> CommandResult:
         session = self._scope.session_id if self._scope is not None else ""
-        agent = get_settings().agent.id
+        agent = self._app_config.agent.id
         root = TreeNode(self._words.title.format(session=session or self._words.none, agent=agent))
         turns = self._one(_TURNS, agent, session)
         if not turns or not turns["turns"]:
@@ -71,7 +72,7 @@ class StatsCommand:
 
     def _slos(self, node: TreeNode, agent: str, session: str) -> None:
         """Each catalogue metric with an SLO target, by its own formula, over this session."""
-        targets = get_settings().observability.slo_targets
+        targets = self._app_config.observability.slo_targets
         catalog = load_catalog()
         for metric in catalog.metrics:
             target = targets.get(metric.name)

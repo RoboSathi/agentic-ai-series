@@ -64,8 +64,6 @@ audit:
   data_version: analytics-source-v3
   prompt_version: ops-prompts-v3
   tool_schema_version: analytics-mcp-v2
-  prompt_source: ops_agent/prompts (AGENT.md + skills/)
-  policy_source: ops_agent.policy
 
 persistence:
   db_path: db/ops_agent/agent.db

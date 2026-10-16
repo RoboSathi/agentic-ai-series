@@ -48,6 +48,7 @@ class PoisoningCheck:
         nli: ContradictionModel | None,
         similarity: TextSimilarity,
     ) -> None:
+        self._app_config = get_settings()
         self._screen = screen
         self._nli = nli
         self._similarity = similarity
@@ -80,7 +81,7 @@ class PoisoningCheck:
 
     async def _unverified(self, context: AssembledContext) -> list[ContextFinding]:
         """The model's own earlier claims that a verified chunk contradicts."""
-        if self._nli is None or not get_settings().context.failure_detection.nli:
+        if self._nli is None or not self._app_config.context.failure_detection.nli:
             return []
         facts = [
             (c, s)
@@ -100,7 +101,7 @@ class PoisoningCheck:
     async def _against(
         self, index: int, chunk: Chunk, claims: list[str], facts: list[tuple[Chunk, str]]
     ) -> list[ContextFinding]:
-        limit = get_settings().context.failure_detection.max_pairs
+        limit = self._app_config.context.failure_detection.max_pairs
         texts = [fact for _, fact in facts]
         similar = await self._similarity.matrix(claims, texts)
         found: list[ContextFinding] = []

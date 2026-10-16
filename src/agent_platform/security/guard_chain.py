@@ -30,6 +30,7 @@ class GuardChain:
     """The primary guard, then each fallback, until one answers."""
 
     def __init__(self, guards: Sequence[TextGuard]) -> None:
+        self._app_config = get_settings()
         if not guards:
             raise ValueError("a guard chain needs at least one guard")
         self._guards = list(guards)
@@ -62,6 +63,6 @@ class GuardChain:
     def _answered_by_fallback(self, verdict: GuardVerdict) -> GuardVerdict:
         if verdict.decision == _UNAVAILABLE:
             return verdict
-        wording = get_settings().security.guards.fallback_reason
+        wording = self._app_config.security.guards.fallback_reason
         reason = wording.format(reason=verdict.reason, model=verdict.model, primary=self.model)
         return verdict.model_copy(update={"reason": reason})

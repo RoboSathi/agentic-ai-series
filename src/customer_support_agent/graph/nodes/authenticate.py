@@ -13,6 +13,7 @@ from customer_support_agent.domain.identity import (
     set_current_customer,
 )
 from customer_support_agent.domain.order_reference import ORDER_UNDER_DISCUSSION
+from customer_support_agent.graph.kit import NodeKit
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
 from customer_support_agent.presentation.auth import ask_for_code, unknown_code
@@ -34,6 +35,13 @@ JUST_VERIFIED = "just_verified"
 
 
 class AuthenticationNodes(NodeSupport):
+    def __init__(self, kit: NodeKit) -> None:
+        super().__init__(kit)
+        self._authenticator = kit.authenticator
+        self._orders = kit.orders
+        self._sessions = kit.conversation.sessions
+        self._menus = kit.conversation.menus
+
     async def authenticate(self, state: AgentState) -> dict[str, Any]:
         """Establish who is speaking before looking anything up.
 

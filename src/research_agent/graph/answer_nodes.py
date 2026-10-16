@@ -97,6 +97,7 @@ class AnswerNodes:
         grounding: AnswerGrounding | None = None,
         recency: RecencyGuard | None = None,
     ) -> None:
+        self._agent_config = get_agent_settings()
         self._tools = tools
         self._grounding = grounding
         self._recency = recency
@@ -453,7 +454,7 @@ class AnswerNodes:
         )
 
     def _observe(self, turn: Turn, tool: str, text: str, result: ToolResult) -> None:
-        limit = get_agent_settings().tui.clip_chars
+        limit = self._agent_config.tui.clip_chars
         # A tool's JSON answer reads as a tree, never as JSON.
         lines = [clip(line, limit) for line in readable_lines(text) if line.strip()]
         provider = str(result.data.get(PROVIDER_KEY) or "")

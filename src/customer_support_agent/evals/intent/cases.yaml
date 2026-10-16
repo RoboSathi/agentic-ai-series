@@ -1,4 +1,4 @@
-# Intent bake-off: 50 customer messages, each labelled with the one intent a
+# Intent bake-off: 54 customer messages, each labelled with the one intent a
 # person would route it to (`intents[]` in config.yaml). Drafted 2026-10-10 for
 # review — a label here is a claim about the right answer, so check it first.
 #
@@ -39,6 +39,7 @@ cases:
   - {text: "I was overcharged on 10840, return the amount", intent: REQUEST_REFUND}   # model
   - {text: "order 10907 is useless, credit me", intent: REQUEST_REFUND}            # model
   - {text: "I'd like to return 10229 for a full repayment", intent: REQUEST_REFUND}   # model
+  - {text: "can i get a refund on 10846?", intent: REQUEST_REFUND}                 # model
   # REFUND_STATUS — where a refund stands or when it will arrive
   - {text: "when will i get refund for order 10842", intent: REFUND_STATUS}
   - {text: "money for order 10509 - when will i get it ?", intent: REFUND_STATUS}  # model
@@ -47,6 +48,10 @@ cases:
   - {text: "still waiting on the credit for 10372", intent: REFUND_STATUS}         # model
   - {text: "did you send back the money for 10555 yet", intent: REFUND_STATUS}     # model
   - {text: "how long until 10840's reimbursement lands", intent: REFUND_STATUS}    # model
+  # ... or how refunds work: answered from the refund policy (ADR C-10)
+  - {text: "how long will the refund take to show on my card?", intent: REFUND_STATUS}
+  - {text: "do you do partial refunds?", intent: REFUND_STATUS}                    # model
+  - {text: "where does the refund money go, my card?", intent: REFUND_STATUS}      # model
   # CANCEL_ORDER — cancel an order that has not shipped
   - {text: "cancel order 10622", intent: CANCEL_ORDER}
   - {text: "I no longer want order 10240", intent: CANCEL_ORDER}

@@ -19,8 +19,8 @@ from agent_platform.security.pii.types import RedactionMode
 from agent_platform.security.prompt_injection import (
     ChatJailbreakGuard,
     HostedJailbreakGuard,
+    InjectionGuard,
     JailbreakGuard,
-    PromptInjectionGuard,
 )
 from agent_platform.security.prompt_injection.types import InjectionAssessment
 from agent_platform.tools.types import ToolDefinition
@@ -59,13 +59,14 @@ class SecuritySuite:
         self,
         authorizer: Authorizer | None = None,
         pii: PIIFilterImpl | None = None,
-        injection: PromptInjectionGuard | None = None,
+        injection: InjectionGuard | None = None,
         moderator: ContentModerator | None = None,
         jailbreak_guard: JailbreakGuard | None = None,
         content_safety_guard: ContentSafetyGuard | None = None,
         jailbreak_resilient: ResilientCaller | None = None,
         content_safety_resilient: ResilientCaller | None = None,
     ) -> None:
+        self._app_config = get_settings()
         self.authorizer = authorizer or Authorizer()
         # Each detector is absent when this deployment was not given it.
         # The hosted guards are paired with their deterministic partner:
@@ -127,7 +128,7 @@ class SecuritySuite:
         verdict = self.moderator.moderate(text)
         verdict.checks.append(
             {
-                "name": get_settings().security.guards.rule_checks.moderation,
+                "name": self._app_config.security.guards.rule_checks.moderation,
                 "status": "FAIL" if verdict.flagged else "PASS",
                 "reason_code": "BLOCKED_TERM_FOUND" if verdict.flagged else "NO_BLOCKED_TERMS",
                 "matched_terms": list(verdict.matched_terms),
@@ -141,7 +142,7 @@ class SecuritySuite:
     ) -> InjectionAssessment:
         """Run deterministic injection checks, then the hosted guard when needed."""
         assessment = self.prepare_untrusted(instructions, data, tools)
-        settings = get_settings().security.guards
+        settings = self._app_config.security.guards
         if assessment.suspicious:
             assessment.checks.append(
                 {
@@ -212,7 +213,7 @@ class SecuritySuite:
     async def moderate_async(self, text: str) -> ModerationVerdict:
         """Run deterministic moderation, then hosted safety when needed."""
         verdict = self.moderate(text)
-        settings = get_settings().security.guards
+        settings = self._app_config.security.guards
         if verdict.matched_terms:
             return verdict
 

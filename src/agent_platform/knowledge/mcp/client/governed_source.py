@@ -60,6 +60,7 @@ class GovernedMcpToolSource:
         policy: ToolGovernancePolicy,
         events: McpEventSink | None = None,
     ) -> None:
+        self._app_config = get_settings()
         self._server = server
         self._transport = transport
         self._policy = policy
@@ -139,7 +140,7 @@ class GovernedMcpToolSource:
             session = await self._open()
             given = {key: value for key, value in arguments.items() if value is not None}
             result = await session.call_tool(name, given)
-            limit = get_settings().mcp.result_text_limit
+            limit = self._app_config.mcp.result_text_limit
             text = result.text[:limit] if limit else result.text
             exchange = call_exchange(self._server.name, name, given, result)
             if result.is_error:

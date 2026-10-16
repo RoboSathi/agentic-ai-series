@@ -18,14 +18,14 @@ class ParquetRefresher:
     """Exports the source on demand, one export at a time, never raising."""
 
     def __init__(self, exporter: ParquetExporter | None = None) -> None:
+        self._app_config = get_settings()
         self._exporter = exporter
         self._lock = asyncio.Lock()
         self._logger = get_logger("analytics")
 
-    @staticmethod
-    def interval_seconds() -> float:
+    def interval_seconds(self) -> float:
         """How often to refresh; 0 when observability or the periodic export is off."""
-        settings = get_settings()
+        settings = self._app_config
         if not settings.observability.enabled:
             return 0.0
         return settings.analytics.export_interval_seconds
@@ -42,7 +42,7 @@ class ParquetRefresher:
     def _export(self) -> SourceManifest:
         if self._exporter is None:
             # What this console records is what it exports, whatever `SOURCE` readers use.
-            recording = get_settings().analytics.recording
+            recording = self._app_config.analytics.recording
             self._exporter = ParquetExporter(
                 DuckDbObservabilityStore(), parquet_dir=recording.resolved_parquet_dir
             )

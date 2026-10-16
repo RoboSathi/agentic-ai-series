@@ -35,6 +35,25 @@ class TestClaimDecomposition:
         claims = ClaimDecomposer().decompose("The order shipped and the refund was issued")
         assert len(claims) == 2
 
+    def test_a_conjunction_inside_a_condition_does_not_split(self) -> None:
+        """A condition ("once approved and issued, …") is one promise, not an outcome."""
+        claims = ClaimDecomposer().decompose(
+            "Once approved and issued, it typically takes 5-10 business days to show on your card."
+        )
+        assert [claim.text for claim in claims] == [
+            "Once approved and issued, it typically takes 5-10 business days to show on your card"
+        ]
+
+    def test_a_conjunction_after_the_conditions_comma_still_splits(self) -> None:
+        claims = ClaimDecomposer().decompose(
+            "When it settles, the refund is final and the customer gets a confirmation"
+        )
+        assert len(claims) == 2
+
+    def test_a_clause_with_no_condition_still_splits_at_and(self) -> None:
+        claims = ClaimDecomposer().decompose("Order 10988 has been cancelled and refunded in full")
+        assert len(claims) == 2
+
     def test_marks_contentless_claims_unverifiable(self) -> None:
         claims = ClaimDecomposer().decompose("Sure!")
         assert claims[0].is_verifiable is False

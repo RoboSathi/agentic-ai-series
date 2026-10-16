@@ -29,6 +29,7 @@ class CommandRegistry:
     """Every console command, and the dispatch for one typed line."""
 
     def __init__(self, commands: list[Command] | None = None) -> None:
+        self._app_config = get_settings()
         self._commands: dict[str, Command] = {}
         for command in commands or _default_commands():
             self.register(command)
@@ -40,7 +41,7 @@ class CommandRegistry:
 
     def register(self, command: Command) -> None:
         """Add a command under its name — unless this agent hides it (`commands.hidden`)."""
-        if command.name in get_settings().commands.hidden:
+        if command.name in self._app_config.commands.hidden:
             return
         self._commands[command.name] = command
 

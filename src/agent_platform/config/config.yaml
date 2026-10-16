@@ -238,6 +238,12 @@ llm:
       query: query
       passage: passage
     truncate: END
+    # Every vector computed is kept, per (purpose, text), for the life of the process: the
+    # tool descriptions, passages and evidence ranked each turn are embedded once, not per
+    # turn. One model's vectors at a time; least recently used go first past the bound.
+    cache:
+      enabled: true
+      max_entries: 20000
   # BERT-family cross-encoders, run in-process. These answer questions a
   # generative model answers worse and dearer: does this evidence *entail*
   # this claim, and which of these ten passages actually answers the query.
@@ -527,8 +533,6 @@ audit:
   data_version: unversioned
   prompt_version: unversioned
   tool_schema_version: unversioned
-  prompt_source: unnamed
-  policy_source: unnamed
   # How the trail reads (`audit/view.py`): one renderer for `make audit <agent>`, `/audit`
   # and the console. It holds tokens only — never a revealed value (`make pii-reveal`).
   view:
@@ -1271,6 +1275,11 @@ skills:
 
 memory:
   schema_version: memory-schema-v1
+  # Working memory keeps one object per session; past this many, the least recently used
+  # session is dropped (and restored from its checkpoint if it comes back). A turn touches
+  # its session first, so a live conversation is never the one dropped.
+  working:
+    max_sessions: 10000
   # Long-term memory is files, one directory per agent (ADR 0012). The records under each
   # store's history directory are the truth; the readable files beside them (one per fact,
   # one SKILL.md per skill, a MEMORY.md index per store) are regenerated views, and the
@@ -1769,8 +1778,15 @@ hallucination_check:
   # Connectives that split a sentence into claims checked separately, and the fewest content
   # words a claim needs to be checked at all.
   claim_conjunctions: [and, but, however, although, while, because, since, so]
+  # A clause that opens on one of these is a condition, and runs to its comma: in
+  # "once approved and issued, it takes 5-10 days" the `and` joins two halves of one event
+  # inside the condition, so the sentence is not split there and keeps its promise.
+  condition_openers: [once, when, if, after, until, unless, as soon as]
   claim_min_content_tokens: 3
   money_scales: [k, m, mn, mm, b, bn, t, tn, thousand, million, billion, trillion, lakh, lac, crore, cr]
+  # A range of small figures ("5-10 business days") names its two ends, so evidence that
+  # writes "5 to 10" sources it. Two groups: the low end and the high end.
+  range_pattern: '(\d{1,3})\s*[-–]\s*(\d{1,3})'
   # Minimum NLI probability required to accept an entailment as grounded.
   # This is separate from the generic cascade confidence threshold so the
   # hallucination guard can be calibrated independently. 0.60 is the initial
@@ -1858,10 +1874,10 @@ hallucination_check:
   # facts a correct reply can contradict. The customer's own words are in
   # no tier: what a customer asserts proves nothing.
   tiers:
-    - {name: tool_result, kinds: [tool_result], claims: [record], may_refute: true}
-    - {name: policy, kinds: [policy, retrieved], claims: [rule], may_refute: true}
-    - {name: system, kinds: [system], claims: [rule], may_refute: false}
-    - {name: memory, kinds: [memory], claims: [rule], may_refute: false}
+    - {name: tool_result, kinds: [tool_result], claims: [record], may_refute: true, passages: include}
+    - {name: policy, kinds: [policy, retrieved], claims: [rule], may_refute: true, passages: include}
+    - {name: system, kinds: [system], claims: [rule], may_refute: false, passages: include}
+    - {name: memory, kinds: [memory], claims: [rule], may_refute: false, passages: include}
   # An offer of help asserts nothing, so it is conversation even when it names an outcome word
   # ("If you'd like a refund for this delivered order, I can assist you with that"). Only a
   # bare offer to help, assist, or check or look into something: "I can process it" commits to an
@@ -2014,7 +2030,6 @@ security:
     pii_started: Removing personal data before the model call
     pii_redacted: "REDACTED · {categories} · {count} match(es)"
     pii_entity: "{category} · {detector} · {score} · [{category}:{token}]"
-    pii_entity_masked: "{category} · {detector} · {score} · masked"
     pii_clear: PASS · no PII detected
     pii_reason_found: "{rule} by deterministic rules, {model} by the NER model: {categories}"
     pii_reason_clear: "no personal data found by the deterministic rules or the NER model"
@@ -2249,6 +2264,19 @@ resilience:
     max_attempts: 3
     base_delay_seconds: 0.2
     max_delay_seconds: 2.0
+    # Programming errors: the same call fails the same way every time, so a retry only
+    # delays the traceback. ValueError is not here on purpose — malformed model JSON
+    # (JSONDecodeError, pydantic ValidationError) subclasses it and does recover.
+    non_retryable_errors:
+      - TypeError
+      - AttributeError
+      - NameError
+      - KeyError
+      - IndexError
+      - AssertionError
+      - NotImplementedError
+      - ImportError
+      - NonIdempotentRetryError
   timeout:
     enabled: true
     default_seconds: 30
@@ -2333,8 +2361,6 @@ evals:
   enabled: true
   # Eval traffic's channel on every fact (ADR 0009 D5); runtime metrics exclude it.
   channel: eval
-  # The evaluator's version on every audit entry (`config.versions`): bump it when the graders change.
-  version: evals-v2
   # The running agent's EvalPlugin (`module.path:attribute`). The platform
   # names no agent; the agent's config names its own plugin.
   plugin: ""
@@ -2725,6 +2751,64 @@ presentation:
 tui:
   # Every turn and command from this console is logged with `channel: tui`.
   channel: tui
+  # The one-line summary in a card's title, per stage (`interface/tui/card_summaries.py`).
+  card_summaries:
+    # Between the parts of one summary line.
+    separator: " · "
+    failed: "failed"
+    warning: "attention required"
+    waiting: "waiting"
+    # A blocked stage that named neither its decision nor its action.
+    blocked: "blocked"
+    in_scope: "in scope"
+    out_of_scope: "out of scope"
+    identity_verified: "PASS · Identity Verified"
+    verification_required: "Verification Required"
+    valid_request: "PASS · Valid Request"
+    invalid_request: "Invalid Request"
+    injection_blocked: "Prompt injection blocked"
+    injection_passed: "PASS · No prompt injection attempt"
+    pii_redacted: "REDACTED"
+    # When the detector named no category.
+    pii_category: "PII"
+    pii_match: "{count} match"
+    pii_matches: "{count} matches"
+    pii_passed: "PASS · No PII detected"
+    moderation_passed: "PASS · No harmful content detected"
+    intent_classified: "classified"
+    intent_score: "model score {score:.0%}"
+    # A memory write that named no operation.
+    memory_operation: "set"
+    memory_recalled: "Recalled {count} items"
+    memory_read: "memory read"
+    history_turn: "{count} history turn"
+    history_turns: "{count} history turns"
+    state_item: "{count} state item"
+    state_items: "{count} state items"
+    state_preview: "state: {items}"
+    context_sources: "{chunks} sources · {tokens} tokens"
+    tool_requested: "Tool Requested"
+    # A tool call that named no tool.
+    tool: "tool"
+    prompt_sent: "Prompt Sent"
+    tools_offered: "{count} Tools Offered"
+    response_generated: "Response Generated"
+    authorization_evaluated: "authorization evaluated"
+    attempt: "{count} attempt"
+    attempts: "{count} attempts"
+    recovered: "recovered"
+    recovery_event: "recovery event"
+    claims_supported: "{supported}/{claims} claims supported"
+    repaired: "repaired"
+    response_ready: "Response Ready"
+    response_not_ready: "Response Not Ready"
+    state_preview_items: 3
+    plain_results: [success, ok, completed]
+  # Around an expanded card's fields: a lone detail, the tokens it cost, or nothing to show.
+  card_body:
+    detail_prefix: "detail = "
+    tokens_label: tokens
+    empty: "No additional semantic detail."
   refresh_interval_ms: 100
   show_token_count: true
   copy_method: osc52

@@ -60,8 +60,8 @@ class TestThePlatformOwnsOnlyTheContract:
             features=get_settings().features.with_override("deterministic_checks", True),
         )
         # Wrapped so its facts enter as tokens (ADR P-40); the rules are still the agent's own.
-        assert isinstance(agent._deterministic_checks, AdmittedChecker)
-        assert isinstance(agent._deterministic_checks.inner, _AnotherAgentsRules)
+        assert isinstance(agent._kit.deterministic_checks, AdmittedChecker)
+        assert isinstance(agent._kit.deterministic_checks.inner, _AnotherAgentsRules)
 
 
 class TestCustomerSupportRules:
@@ -108,14 +108,14 @@ class TestTheFeature:
         self, seeded_pool: SqliteConnectionPool, restore_settings: None
     ) -> None:
         agent = self._agent(True, seeded_pool)
-        assert agent._deterministic_checks is not None
+        assert agent._kit.deterministic_checks is not None
         assert "deterministic_checks" in agent._graph.get_graph().nodes
 
     def test_the_stage_is_absent_when_withheld(
         self, seeded_pool: SqliteConnectionPool, restore_settings: None
     ) -> None:
         agent = self._agent(False, seeded_pool)
-        assert agent._deterministic_checks is None
+        assert agent._kit.deterministic_checks is None
         assert "deterministic_checks" not in agent._graph.get_graph().nodes
 
     async def test_the_turn_still_completes_without_it(
@@ -123,3 +123,19 @@ class TestTheFeature:
     ) -> None:
         state = await self._agent(False, seeded_pool).handle("what is order 10001?")
         assert state.response
+
+
+class TestTheOperationIsReadFromAssertedPhrases:
+    """ADR C-10: a bare mention of a refund is not a refund request."""
+
+    def _operation(self, query: str) -> str:
+        return OrderChecks(orders=None)._operation(query)  # type: ignore[arg-type]
+
+    def test_asking_for_a_refund_is_a_request(self) -> None:
+        assert self._operation("please refund my order 10846") == "REQUEST_REFUND"
+
+    def test_asking_how_long_a_refund_takes_is_a_status_read(self) -> None:
+        assert self._operation("how long will the refund take for 10846") == "REFUND_STATUS"
+
+    def test_a_bare_mention_is_left_unplaced(self) -> None:
+        assert self._operation("will the refund for 10846 appear on my card") == "unknown"

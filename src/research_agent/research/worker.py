@@ -63,6 +63,7 @@ class ResearcherWorker:
     """Researches one sub-question with the run's shared resources."""
 
     def __init__(self, resources: RunResources) -> None:
+        self._agent_config = get_agent_settings()
         self._r = resources
 
     async def run(self, node: SubQuestion, extra_queries: tuple[str, ...] = ()) -> NodeResult:
@@ -462,7 +463,7 @@ class ResearcherWorker:
         refused: list[dict[str, str]],
     ) -> None:
         """One card per page: what was asked of it, the model's reading, what was kept and why."""
-        tui = get_agent_settings().tui
+        tui = self._agent_config.tui
         heading, sections = cards.page_card(
             cards.PageStep(
                 node=node,

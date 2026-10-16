@@ -15,6 +15,7 @@ from functools import cache
 from typing import Protocol, runtime_checkable
 
 from agent_platform.config import get_settings
+from agent_platform.llm.embedding_cache import cached
 from agent_platform.llm.embeddings import (
     EmbeddingClient,
     HashingEmbeddingClient,
@@ -96,7 +97,10 @@ def shared_similarity() -> TextSimilarity:
     if backend == "local_embedder" and get_settings().llm.local_embedder.enabled:
         from agent_platform.llm.local_embeddings import LocalSentenceEmbedder
 
-        return EmbeddingSimilarity(LocalSentenceEmbedder())
+        # Cached: a loop measures each step against the same evidence window, step after step.
+        return EmbeddingSimilarity(
+            cached(LocalSentenceEmbedder(), get_settings().llm.embedding.cache)
+        )
     if backend == "lexical":
         return LexicalSimilarity()
     return EmbeddingSimilarity(HashingEmbeddingClient())

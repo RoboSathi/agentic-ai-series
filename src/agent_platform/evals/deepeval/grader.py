@@ -64,6 +64,7 @@ class DeepEvalGrader:
         client: LLMClient | None = None,
     ) -> None:
         """`frame(case)` gives the role, scenario and expected outcome a case is judged against."""
+        self._app_config = get_settings()
         self._deepeval = import_deepeval()
         self._specs = specs
         self._frame = frame
@@ -89,12 +90,12 @@ class DeepEvalGrader:
         deepeval = self._deepeval
         model = judge_model(deepeval, self._client)
         metrics = build_metrics(deepeval, self._specs, model)
-        cap = get_settings().judge.max_evidence_chars
+        cap = self._app_config.judge.max_evidence_chars
         test_cases = [
             conversation(deepeval, case, transcript, frame, cap)
             for (case, transcript), frame in zip(items, frames, strict=True)
         ]
-        settings = get_settings().evals.deepeval
+        settings = self._app_config.evals.deepeval
         from deepeval.evaluate.configs import AsyncConfig, CacheConfig, DisplayConfig, ErrorConfig
 
         with _EVALUATE_LOCK:

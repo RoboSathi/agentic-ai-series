@@ -109,6 +109,7 @@ class ResearchAgent:
         trace_exporter: TraceExporter | None = None,
         dream_recorder: TurnRecorder | None = None,
     ) -> None:
+        self._app_config = get_settings()
         self._scoping = scoping
         # The person's own message, screened before any layer reads it (None: no screen declared).
         self._screen = screen
@@ -141,7 +142,7 @@ class ResearchAgent:
 
     async def checkpoint_history(self, thread_id: str) -> list[CheckpointInfo]:
         """One run thread's checkpoints, newest first (the `DurableAgent` contract)."""
-        return await self._runs.history(thread_id, get_settings().commands.default_limit)
+        return await self._runs.history(thread_id, self._app_config.commands.default_limit)
 
     def session(self, session_id: str) -> SessionRecord:
         return self._sessions.setdefault(session_id, SessionRecord())
@@ -155,7 +156,7 @@ class ResearchAgent:
         query = admitted.text
         with turn_trace(
             self._trace_exporter,
-            agent=get_settings().agent.id,
+            agent=self._app_config.agent.id,
             session=session_id,
             inputs={"query": query},
         ) as trace:
@@ -406,7 +407,7 @@ class ResearchAgent:
         session_id, record = self._owner(thread_id)
         with turn_trace(
             self._trace_exporter,
-            agent=get_settings().agent.id,
+            agent=self._app_config.agent.id,
             session=session_id,
             inputs={"resume": thread_id},
             message=False,
@@ -448,7 +449,7 @@ class ResearchAgent:
         session_id, record = self._owner(thread_id)
         with turn_trace(
             self._trace_exporter,
-            agent=get_settings().agent.id,
+            agent=self._app_config.agent.id,
             session=session_id,
             inputs={"abort": thread_id},
             message=False,
@@ -461,7 +462,7 @@ class ResearchAgent:
             thread_id=thread_id,
             session_id=session_id,
             status=outcome.status,
-            response=get_settings().durability.stop_report.aborted,
+            response=self._app_config.durability.stop_report.aborted,
         )
 
     def describe_progress(self, values: dict[str, Any]) -> dict[str, Any]:

@@ -12,8 +12,10 @@ None) is never run and draws no card: the trace shows the gap instead of a check
 without looking at anything.
 """
 
+import asyncio
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -83,6 +85,7 @@ class MessageScreener:
     """PII, injection and moderation over one message, each reported as its own card."""
 
     def __init__(self, suite: SecuritySuite, quarantine: DeadLetterQueue | None = None) -> None:
+        self._app_config = get_settings()
         self._suite = suite
         self._quarantine = quarantine
         self._logger = get_logger("security")
@@ -92,7 +95,7 @@ class MessageScreener:
 
         A composition root declares these for its agent (`units.declare_screens`).
         """
-        guards = get_settings().security.guards
+        guards = self._app_config.security.guards
         hosted = guards.enabled
         declared = {
             checks.PII: self._suite.pii is not None,
@@ -165,7 +168,7 @@ class MessageScreener:
         A span from a recognizer named in `security.pii.model_recognizers` (spaCy NER) is the
         model's; every other recognizer is a deterministic rule (patterns, checksums).
         """
-        model_names = set(get_settings().security.pii.model_recognizers)
+        model_names = set(self._app_config.security.pii.model_recognizers)
         by_model = [span for span in spans if span.detector in model_names]
         by_rule = [span for span in spans if span.detector not in model_names]
         model, unavailable = self._suite.pii_model()
@@ -199,29 +202,9 @@ class MessageScreener:
         """The phrase scan, then the hosted jailbreak model; a hit blocks and is quarantined."""
         if self._suite.injection is None:
             return ScreenOutcome(allowed_actions=[tool.name for tool in tools])
-        words = _messages()
-        _started(reporter, INJECTION_STAGE, words.injection_started)
-        started = time.perf_counter()
-        assessment = await self._suite.prepare_untrusted_async(instructions, text, list(tools))
-        rule = get_settings().security.guards.rule_checks.injection
-        checks.record_screen(
-            assessment.checks,
-            rule=checks.INJECTION,
-            rule_hit=any(
-                entry.get("name") == rule and entry.get("status") == FAIL
-                for entry in assessment.checks
-            ),
-            elapsed_ms=(time.perf_counter() - started) * 1000,
-        )
-        status, summary, fields = _injection_card(assessment, words)
-        _emit(reporter, INJECTION_STAGE, status, summary, fields)
-        outcome = ScreenOutcome(
-            blocked=assessment.suspicious,
-            reason=assessment.reason,
-            allowed_actions=list(assessment.allowed_actions),
-            checks=list(assessment.checks),
-        )
-        return self._settled("prompt_injection", text, outcome, reporter, subject)
+        _started(reporter, INJECTION_STAGE, _messages().injection_started)
+        assessed = await self._assess_injection(text, instructions, tools)
+        return self._settled("prompt_injection", text, assessed.report(reporter), reporter, subject)
 
     async def moderation(
         self, text: str, reporter: StageReporter | None, subject: ScreenSubject | None = None
@@ -229,25 +212,89 @@ class MessageScreener:
         """The term scan, then the hosted safety model; a flag blocks and is quarantined."""
         if self._suite.moderator is None:
             return ScreenOutcome()
+        _started(reporter, MODERATION_STAGE, _messages().moderation_started)
+        assessed = await self._assess_moderation(text)
+        return self._settled(
+            "content_moderation", text, assessed.report(reporter), reporter, subject
+        )
+
+    async def screen_both(
+        self,
+        text: str,
+        reporter: StageReporter | None,
+        instructions: str = "",
+        tools: Sequence[ToolDefinition] = (),
+        subject: ScreenSubject | None = None,
+    ) -> "ScreenPair":
+        """Injection and moderation at once: one hosted round trip a message, not two.
+
+        Both models are asked together; their verdicts are then taken in the order the two
+        separate screens would have taken them. Injection decides first: when it blocks,
+        moderation's verdict cannot change the outcome, so it is neither shown nor
+        quarantined, and the cards read exactly as two screens in sequence would.
+        """
+        if self._suite.injection is None or self._suite.moderator is None:
+            first = await self.injection(text, reporter, instructions, tools, subject)
+            if first.blocked:
+                return ScreenPair(injection=first)
+            return ScreenPair(
+                injection=first, moderation=await self.moderation(text, reporter, subject)
+            )
         words = _messages()
+        _started(reporter, INJECTION_STAGE, words.injection_started)
+        injected, moderated = await asyncio.gather(
+            self._assess_injection(text, instructions, tools), self._assess_moderation(text)
+        )
+        first = self._settled(
+            "prompt_injection", text, injected.report(reporter), reporter, subject
+        )
+        if first.blocked:
+            return ScreenPair(injection=first)
         _started(reporter, MODERATION_STAGE, words.moderation_started)
+        second = self._settled(
+            "content_moderation", text, moderated.report(reporter), reporter, subject
+        )
+        return ScreenPair(injection=first, moderation=second)
+
+    async def _assess_injection(
+        self, text: str, instructions: str, tools: Sequence[ToolDefinition]
+    ) -> "_Assessed":
+        started = time.perf_counter()
+        assessment = await self._suite.prepare_untrusted_async(instructions, text, list(tools))
+        rule = self._app_config.security.guards.rule_checks.injection
+        return _Assessed(
+            stage=INJECTION_STAGE,
+            card=_injection_card(assessment, _messages()),
+            outcome=ScreenOutcome(
+                blocked=assessment.suspicious,
+                reason=assessment.reason,
+                allowed_actions=list(assessment.allowed_actions),
+                checks=list(assessment.checks),
+            ),
+            record_rule=checks.INJECTION,
+            rule_hit=any(
+                entry.get("name") == rule and entry.get("status") == FAIL
+                for entry in assessment.checks
+            ),
+            elapsed_ms=(time.perf_counter() - started) * 1000,
+        )
+
+    async def _assess_moderation(self, text: str) -> "_Assessed":
         started = time.perf_counter()
         verdict = await self._suite.moderate_async(text)
-        checks.record_screen(
-            verdict.checks,
-            rule=checks.MODERATION,
+        return _Assessed(
+            stage=MODERATION_STAGE,
+            card=_moderation_card(verdict, _messages()),
+            outcome=ScreenOutcome(
+                blocked=verdict.flagged,
+                reason=verdict.reason,
+                categories=list(verdict.categories),
+                checks=list(verdict.checks),
+            ),
+            record_rule=checks.MODERATION,
             rule_hit=bool(verdict.matched_terms),
             elapsed_ms=(time.perf_counter() - started) * 1000,
         )
-        status, summary, fields = _moderation_card(verdict, words)
-        _emit(reporter, MODERATION_STAGE, status, summary, fields)
-        outcome = ScreenOutcome(
-            blocked=verdict.flagged,
-            reason=verdict.reason,
-            categories=list(verdict.categories),
-            checks=list(verdict.checks),
-        )
-        return self._settled("content_moderation", text, outcome, reporter, subject)
 
     def _settled(
         self,
@@ -324,6 +371,45 @@ class MessageScreener:
 # -- the cards ------------------------------------------------------------------------------
 
 Card = tuple[str, str, dict[str, Any]]
+
+
+class ScreenPair(BaseModel):
+    """Both hosted screens' outcomes; `moderation` is None when injection already stopped it."""
+
+    injection: ScreenOutcome
+    moderation: ScreenOutcome | None = None
+
+    @property
+    def stopping(self) -> ScreenOutcome | None:
+        """The screen that blocked the message, if one did."""
+        for outcome in (self.injection, self.moderation):
+            if outcome is not None and outcome.blocked:
+                return outcome
+        return None
+
+
+@dataclass(frozen=True)
+class _Assessed:
+    """One screen's verdict, not yet reported: what it found, and the card that says so."""
+
+    stage: str
+    card: Card
+    outcome: ScreenOutcome
+    record_rule: str
+    rule_hit: bool
+    elapsed_ms: float
+
+    def report(self, reporter: StageReporter | None) -> ScreenOutcome:
+        """Counted for analytics and carded, then handed on to be settled."""
+        checks.record_screen(
+            self.outcome.checks,
+            rule=self.record_rule,
+            rule_hit=self.rule_hit,
+            elapsed_ms=self.elapsed_ms,
+        )
+        status, summary, fields = self.card
+        _emit(reporter, self.stage, status, summary, fields)
+        return self.outcome
 
 
 def _injection_card(assessment: InjectionAssessment, words: ScreeningMessages) -> Card:
@@ -425,6 +511,7 @@ __all__ = [
     "MODERATION_STAGE",
     "PII_STAGE",
     "QUARANTINE_STAGE",
+    "ScreenPair",
     "ScreenSubject",
     "MessageScreener",
     "PiiOutcome",

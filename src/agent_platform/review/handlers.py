@@ -28,6 +28,7 @@ class MemoryReviewHandler:
     """A fact or a skill memory would not take on its own word: a curator decides."""
 
     def __init__(self, pipeline: CuratorPipeline) -> None:
+        self._app_config = get_settings()
         self._pipeline = pipeline
         kinds = get_settings().review.kinds
         self._kinds = frozenset({kinds.memory_fact, kinds.skill})
@@ -41,11 +42,11 @@ class MemoryReviewHandler:
         return [f"{fact.get('key', '')} = {fact.get('value', '')}", reason]
 
     def columns(self, kind: str) -> list[str]:
-        return list(get_settings().review.words.columns[kind])
+        return list(self._app_config.review.words.columns[kind])
 
     def cells(self, item: ReviewItem) -> list[str]:
         fact, reason = _write(item)
-        if item.kind == get_settings().review.kinds.skill:
+        if item.kind == self._app_config.review.kinds.skill:
             what = _frontmatter_value(str(fact.get("value", "")), _DESCRIPTION)
             return [str(item.id), str(fact.get("key", "")), what, reason, raised(item)]
         source = dict(fact.get("provenance") or {}).get("source", "")
@@ -76,6 +77,7 @@ class QuarantineHandler:
     """
 
     def __init__(self) -> None:
+        self._app_config = get_settings()
         self._kind = get_settings().review.kinds.quarantine
 
     @property
@@ -87,7 +89,7 @@ class QuarantineHandler:
         return [str(detail.get("reason", "")), str(detail.get("payload", ""))]
 
     def columns(self, kind: str) -> list[str]:
-        return list(get_settings().review.words.columns[kind])
+        return list(self._app_config.review.words.columns[kind])
 
     def cells(self, item: ReviewItem) -> list[str]:
         detail = item.detail
@@ -101,10 +103,10 @@ class QuarantineHandler:
         ]
 
     async def approve(self, item: ReviewItem, reviewer: str, comment: str) -> ReviewOutcome:
-        return _outcome(item, "approved", get_settings().review.words.quarantine_released)
+        return _outcome(item, "approved", self._app_config.review.words.quarantine_released)
 
     async def deny(self, item: ReviewItem, reviewer: str, comment: str) -> ReviewOutcome:
-        return _outcome(item, "denied", get_settings().review.words.quarantine_upheld)
+        return _outcome(item, "denied", self._app_config.review.words.quarantine_upheld)
 
 
 def raised(item: ReviewItem) -> str:

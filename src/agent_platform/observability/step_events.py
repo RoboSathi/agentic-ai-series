@@ -85,6 +85,7 @@ class StepEvents:
     """Emits a tool-use loop's cards, each numbered by the step it belongs to."""
 
     def __init__(self, reporter: StageReporter | None, *, max_steps: int, model: str = "") -> None:
+        self._app_config = get_settings()
         self._loop = LoopReporter(reporter, max_steps=max_steps, stages=LOOP_STAGES)
         self._model = model
         self._max_steps = max_steps
@@ -102,7 +103,7 @@ class StepEvents:
     def llm_request(self, request: Any, *, purpose: str) -> None:
         """CONTEXT, then LLM REQUEST: what the model is handed this step, section by section."""
         self.context(request, purpose=purpose)
-        heading = get_settings().observability.llm_request_heading.format(purpose=purpose)
+        heading = self._app_config.observability.llm_request_heading.format(purpose=purpose)
         fields = {**llm_request_fields(request, model=self._model), "purpose": purpose}
         self._loop.emit(LLM_REQUEST, summary=heading, fields=fields, event_kind="model")
 
@@ -126,7 +127,7 @@ class StepEvents:
         A loop step's call is made to choose the next action, so its response is named by what
         it chose: a tool, or the reply. The request could not know which.
         """
-        words = get_settings().observability
+        words = self._app_config.observability
         purpose = _produced(purpose, bool(result.tool_calls))
         heading = (
             words.llm_tool_requested_heading.format(
@@ -275,7 +276,7 @@ class StepEvents:
 
     def mcp_call(self, exchange: Mapping[str, Any]) -> None:
         """MCP CALL: the protocol's side of one call — server, method, how long, whether it failed."""
-        words = get_settings().mcp.card
+        words = self._app_config.mcp.card
         failed = bool(exchange.get("is_error"))
         heading = (words.call_failed_heading if failed else words.call_heading).format(**exchange)
         fields = {key: value for key, value in exchange.items() if key != EXCHANGE_PROTOCOL}
@@ -309,7 +310,7 @@ class StepEvents:
             "because": reasons.get(because, because),
         }
         if verdict.intervened:
-            words = get_settings().loop_control.card
+            words = self._app_config.loop_control.card
             fields["intervened"] = words.intervention.format(
                 layer=verdict.layer or verdict.reason_code, reason=_spent_reason(verdict, names)
             )
@@ -320,7 +321,7 @@ class StepEvents:
         fields["budgets"] = budget_lines(verdict, names)
         # Other failing checks only (a flag the verdict did not act on, such as the historical
         # baseline): the deciding one is already the `intervened` line.
-        line = get_settings().loop_control.card.check_line
+        line = self._app_config.loop_control.card.check_line
         flags = [
             line.format(mark=_FAIL_MARK, name=check.name, reason=check.reason)
             for check in verdict.checks
@@ -351,9 +352,8 @@ class StepEvents:
             HALLUCINATION_CHECK, status, summary=summary, fields=shown, event_kind="grounding"
         )
 
-    @staticmethod
-    def _words() -> Any:
-        return get_settings().observability.step_events
+    def _words(self) -> Any:
+        return self._app_config.observability.step_events
 
 
 def _stopped_by(path: "ToolOutcome | None") -> str:

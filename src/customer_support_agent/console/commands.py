@@ -36,6 +36,8 @@ class _SettlementCommand(PoolBackedCommand):
     usage: str
 
     def __init__(self, pool: SqliteConnectionPool | None = None) -> None:
+        self._app_config = get_settings()
+        self._agent_config = get_agent_settings()
         super().__init__(pool)
         self._scope: ConsoleScope | None = None
 
@@ -50,7 +52,7 @@ class _SettlementCommand(PoolBackedCommand):
     def _unverified(self) -> CommandResult | None:
         if self._scope is not None and self._scope.scoped and self._scope.subject() is None:
             return CommandResult(title=self.summary, ok=False).line(
-                get_settings().commands.verify_first
+                self._app_config.commands.verify_first
             )
         return None
 
@@ -71,7 +73,7 @@ class _SettlementCommand(PoolBackedCommand):
         return customer is None or any(order.order_id == order_id for order in self._issued())
 
     def _listing(self) -> CommandResult:
-        words = get_agent_settings().settlement
+        words = self._agent_config.settlement
         issued = self._issued()
         result = CommandResult(title=words.titles["issued"].format(count=len(issued)))
         if not issued:
@@ -98,12 +100,12 @@ class VoidCommand(_SettlementCommand):
         if not args[0].isdigit():
             raise CommandError(f"Usage: {self.usage}")
         order_id = int(args[0])
-        words = get_agent_settings().settlement
+        words = self._agent_config.settlement
         if not self._is_theirs(order_id):
             return CommandResult(
                 title=words.titles["refused"].format(order_id=order_id), ok=False
             ).line(words.lines["not_issued"].format(order_id=order_id))
-        outcome = self._service().void(order_id, get_agent_settings().console_reviewer)
+        outcome = self._service().void(order_id, self._agent_config.console_reviewer)
         if outcome.state == "voided":
             return CommandResult(title=words.titles["voided"].format(order_id=order_id)).line(
                 words.lines["voided"].format(order_id=order_id, amount=outcome.amount)

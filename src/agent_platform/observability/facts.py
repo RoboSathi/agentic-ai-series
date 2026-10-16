@@ -178,6 +178,7 @@ class DuckDbFactStore:
     """Facts in the shared observability database, one table per fact type."""
 
     def __init__(self, store: DuckDbObservabilityStore, agent_id: str | None = None) -> None:
+        self._app_config = get_settings()
         self._store = store
         self._agent_id = agent_id or get_settings().agent.id
         self._tables: set[str] = set()
@@ -234,7 +235,7 @@ class DuckDbFactStore:
         if not (update.get("agent_id") or fact.agent_id):
             update["agent_id"] = self._agent_id
         if not (update.get("channel") or fact.channel):
-            update["channel"] = get_settings().analytics.default_channel
+            update["channel"] = self._app_config.analytics.default_channel
         return fact.model_copy(update=update)
 
     def _ensure_table(self, model: type[Fact]) -> None:

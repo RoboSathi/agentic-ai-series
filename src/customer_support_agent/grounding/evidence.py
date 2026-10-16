@@ -21,7 +21,7 @@ from agent_platform.config import get_settings
 from agent_platform.context.types import Chunk
 from agent_platform.core.primitives.money import Money, money_or_none
 from agent_platform.guardrails.response import NOT_EXECUTED_MARKER
-from agent_platform.hallucination_check import Observation, tool_evidence
+from agent_platform.hallucination_check import PASSAGE, Observation, passages, tool_evidence
 from agent_platform.memory.semantic.rag import KNOWLEDGE_SOURCE_PREFIX, section_sentences
 from agent_platform.security.auth.policy import AgentPolicy
 from agent_platform.tools import NamespacedToolRegistry
@@ -83,8 +83,11 @@ class GroundingEvidence:
         order_reference: OrderReferenceResolver | None = None,
         *,
         governed: bool,
+        knowledge_window: int,
     ) -> None:
         self._registry = registry
+        # How many neighbouring policy sentences also read as one support-only premise.
+        self._knowledge_window = knowledge_window
         self._policy = agent_policy
         # Whether the Gatekeeper was built: which limit sentence the model was given.
         self._governed = governed
@@ -108,7 +111,7 @@ class GroundingEvidence:
         return [
             *self.records(turn),
             *self.rules(),
-            *knowledge_evidence(),
+            *knowledge_evidence(self._knowledge_window),
             *self._typed_facts(turn),
             *asked,
             *seen,
@@ -278,24 +281,36 @@ def prompt_rules(markdown: str) -> list[str]:
 
 
 @cache
-def knowledge_evidence() -> tuple[Chunk, ...]:
-    """The agent's policy articles, one chunk per sentence, read once.
+def knowledge_evidence(window: int) -> tuple[Chunk, ...]:
+    """The agent's policy articles, one chunk per sentence and per run of sentences, read once.
 
     The articles are the business's own statement of its policy, so they ground what a reply
     says about how refunds work, whether or not retrieval put that section in the window.
-    One sentence per chunk: NLI weighs a paragraph, not the rule it is about.
+    One sentence per chunk: NLI weighs a paragraph, not the rule it is about. A rule stated
+    across two sentences ("Once a refund has settled, it goes back… Card refunds usually show
+    within 5 to 10 business days") is entailed by neither alone, so each run of neighbouring
+    sentences of a section is a premise too — one that may support, never refute (ADR C-11).
     """
     rag = get_settings().memory.semantic.rag
     return tuple(
-        Chunk(
-            content=sentence,
-            kind="policy",
-            source=f"{KNOWLEDGE_SOURCE_PREFIX}{path.name}#{index}.{number}",
-        )
+        chunk
         for path in sorted(rag.resolved_corpus_dir.glob(rag.corpus_glob))
         for index, sentences in enumerate(section_sentences(path.read_text(encoding="utf-8")))
-        for number, sentence in enumerate(sentences)
+        for chunk in _section_evidence(
+            f"{KNOWLEDGE_SOURCE_PREFIX}{path.name}#{index}", sentences, window
+        )
     )
+
+
+def _section_evidence(source: str, sentences: list[str], window: int) -> list[Chunk]:
+    """One section's sentences, then its support-only passages when the window joins any."""
+    joined = passages(sentences, window) if window > 1 else []
+    return [
+        *(Chunk(content=sentence, kind="policy", source=f"{source}.{number}")
+          for number, sentence in enumerate(sentences)),
+        *(Chunk(content=passage, kind="policy", source=source, metadata={PASSAGE: True})
+          for passage in joined),
+    ]  # fmt: skip
 
 
 def _read_order_ids(turn: TurnRecord) -> set[int]:

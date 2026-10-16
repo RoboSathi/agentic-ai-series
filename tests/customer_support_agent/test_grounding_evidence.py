@@ -13,17 +13,21 @@ import pytest
 
 from agent_platform.config import get_settings
 from agent_platform.guardrails.response import ResponseGuardrail
-from agent_platform.hallucination_check import NOT_EXECUTED_MARKER, DetectionLadder
+from agent_platform.hallucination_check import NOT_EXECUTED_MARKER, PASSAGE, DetectionLadder
 from agent_platform.hallucination_check.claim_view import claim_check
 from agent_platform.hallucination_check.resolver import DIRECT_TIER, NO_TIER
 from agent_platform.hallucination_check.types import DetectionVerdict, EvidenceCheck
 from agent_platform.scoring import create_scoring_cascade
 from agent_platform.scoring.entailment import EntailmentResult
+from customer_support_agent.config import get_agent_settings
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
-from customer_support_agent.grounding.evidence import GroundingEvidence
+from customer_support_agent.grounding.evidence import GroundingEvidence, knowledge_evidence
 
 _ORDER = 10864
+
+# The configured window, as the composition root passes it.
+_WINDOW = get_agent_settings().knowledge_passage_window
 
 
 class _Support(NodeSupport):
@@ -32,7 +36,9 @@ class _Support(NodeSupport):
         self._registry: Any = SimpleNamespace(
             get=lambda name: SimpleNamespace(side_effecting=name.endswith("process_refund"))
         )
-        self._evidence = GroundingEvidence(self._registry, self._agent_policy, governed=True)
+        self._evidence = GroundingEvidence(
+            self._registry, self._agent_policy, governed=True, knowledge_window=_WINDOW
+        )
 
 
 def _state(*actions: tuple[str, ...], **metadata: Any) -> AgentState:
@@ -520,7 +526,9 @@ class _LimitedSupport(_Support):
         from agent_platform.core.primitives.money import Money
 
         self._agent_policy = SimpleNamespace(per_action_limit=lambda _action: Money.parse("50.00"))
-        self._evidence = GroundingEvidence(self._registry, self._agent_policy, governed=True)
+        self._evidence = GroundingEvidence(
+            self._registry, self._agent_policy, governed=True, knowledge_window=_WINDOW
+        )
 
 
 @pytest.mark.usefixtures("abstaining_guard")
@@ -618,7 +626,7 @@ class TestTheKnowledgeArticlesAreOneSentencePerPremise:
             knowledge_evidence as _knowledge_evidence,
         )
 
-        chunks = _knowledge_evidence()
+        chunks = _knowledge_evidence(_WINDOW)
         assert chunks and all("\n" not in chunk.content for chunk in chunks)
 
     def test_what_may_be_refunded_and_what_may_not_are_separate_premises(self) -> None:
@@ -626,6 +634,30 @@ class TestTheKnowledgeArticlesAreOneSentencePerPremise:
             knowledge_evidence as _knowledge_evidence,
         )
 
-        contents = [chunk.content for chunk in _knowledge_evidence()]
+        contents = [chunk.content for chunk in _knowledge_evidence(_WINDOW)]
         delivered = next(c for c in contents if "delivered order can be refunded" in c)
         assert "nothing to refund" not in delivered
+
+
+class TestAPolicyRuleAcrossSentencesIsOnePremise:
+    """ADR C-11: neighbouring sentences of one section are also a support-only premise."""
+
+    def test_each_passage_joins_neighbours_of_one_section_and_only_supports(self) -> None:
+        chunks = knowledge_evidence(_WINDOW)
+        sentences = {c.source: c.content for c in chunks if not c.metadata.get(PASSAGE)}
+        joined = [c for c in chunks if c.metadata.get(PASSAGE)]
+        assert joined
+        for passage in joined:
+            parts = [s for src, s in sentences.items() if src.rsplit(".", 1)[0] == passage.source]
+            assert passage.kind == "policy"
+            assert any(
+                f"{a} {b}" == passage.content for a, b in zip(parts, parts[1:], strict=False)
+            )
+
+    def test_the_card_refund_timing_rule_reads_with_its_condition(self) -> None:
+        assert any(
+            c.metadata.get(PASSAGE)
+            and c.content.startswith("Once a refund has settled")
+            and "5 to 10 business days" in c.content
+            for c in knowledge_evidence(_WINDOW)
+        )

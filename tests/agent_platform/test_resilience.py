@@ -1,6 +1,7 @@
 """The seven Nygard patterns (LLD §13)."""
 
 import asyncio
+import json
 
 import pytest
 
@@ -74,6 +75,39 @@ class TestCircuitBreaker:
             await breaker.call(_boom)
         assert breaker.state == "open"
 
+    async def test_half_open_lets_exactly_one_trial_through(self) -> None:
+        breaker = CircuitBreakerImpl(failure_threshold=1, half_open_after_seconds=0.01)
+        with pytest.raises(RuntimeError):
+            await breaker.call(_boom)
+        await asyncio.sleep(0.02)
+        release, started = asyncio.Event(), []
+
+        async def trial() -> str:
+            started.append(1)
+            await release.wait()
+            return "ok"
+
+        calls = [asyncio.create_task(breaker.call(trial)) for _ in range(5)]
+        await asyncio.sleep(0)
+        release.set()
+        results = await asyncio.gather(*calls, return_exceptions=True)
+        assert len(started) == 1
+        assert sum(isinstance(r, CircuitBreakerOpenError) for r in results) == 4
+        assert breaker.state == "closed"
+
+    async def test_a_cancelled_trial_frees_the_slot(self) -> None:
+        breaker = CircuitBreakerImpl(failure_threshold=1, half_open_after_seconds=0.01)
+        with pytest.raises(RuntimeError):
+            await breaker.call(_boom)
+        await asyncio.sleep(0.02)
+        hung = asyncio.create_task(breaker.call(asyncio.Event().wait))
+        await asyncio.sleep(0)
+        hung.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await hung
+        assert breaker.state == "half_open"
+        assert await breaker.call(_ok) == "ok"
+
     async def test_success_clears_the_failure_count(self) -> None:
         breaker = CircuitBreakerImpl(failure_threshold=3)
         with pytest.raises(RuntimeError):
@@ -138,6 +172,43 @@ class TestRetry:
         with pytest.raises(CircuitBreakerOpenError):
             await ExponentialBackoffRetry(max_attempts=5).execute(refused, "key")
         assert attempts["n"] == 1
+
+    async def test_a_programming_error_is_not_retried(self) -> None:
+        """A TypeError fails the same way every time; retrying only delays the traceback."""
+        attempts = {"n": 0}
+
+        async def buggy() -> str:
+            attempts["n"] += 1
+            raise TypeError("bad argument")
+
+        with pytest.raises(TypeError):
+            await ExponentialBackoffRetry(max_attempts=5).execute(buggy, "key")
+        assert attempts["n"] == 1
+
+    async def test_a_timeout_is_retried_to_the_cap(self) -> None:
+        attempts = {"n": 0}
+
+        async def slow() -> str:
+            attempts["n"] += 1
+            raise TimeoutError
+
+        retry = ExponentialBackoffRetry(max_attempts=3, base_delay_seconds=0.001)
+        with pytest.raises(TimeoutError):
+            await retry.execute(slow, "key")
+        assert attempts["n"] == 3
+
+    async def test_malformed_model_output_is_still_retried(self) -> None:
+        """ValueError stays retryable: a model's bad JSON on one attempt is fine on the next."""
+        attempts = {"n": 0}
+
+        async def garbled() -> str:
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise json.JSONDecodeError("bad", "{", 0)
+            return "ok"
+
+        retry = ExponentialBackoffRetry(max_attempts=3, base_delay_seconds=0.001)
+        assert await retry.execute(garbled, "key") == "ok"
 
     def test_backoff_is_bounded_by_the_max_delay(self) -> None:
         retry = ExponentialBackoffRetry(base_delay_seconds=1.0, max_delay_seconds=2.0)

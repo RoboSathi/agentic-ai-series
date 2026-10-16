@@ -43,6 +43,7 @@ class CsaEvalPlugin:
     """The Customer Support agent's evals."""
 
     def __init__(self, settings: CsaEvalSettings | None = None) -> None:
+        self._app_config = get_settings()
         self._settings = settings or get_agent_settings().evals
         self._fixture = EvalFixture(self._settings)
         self._classifier: object | None = None
@@ -50,10 +51,10 @@ class CsaEvalPlugin:
 
     @property
     def agent_id(self) -> str:
-        return get_settings().agent.id
+        return self._app_config.agent.id
 
     def load_cases(self, suite: str) -> list[GoldenCase]:
-        if suite != get_settings().evals.suites.golden:
+        if suite != self._app_config.evals.suites.golden:
             raise UnknownSuiteError(
                 f"'{suite}' has no golden cases here; the red-team attacks live in "
                 f"{self._settings.security_config_path}"
@@ -95,7 +96,7 @@ class CsaEvalPlugin:
 
     def fingerprint_inputs(self) -> dict[str, str]:
         """The agent's model, and the fixture world every case runs in."""
-        llm = get_settings().llm
+        llm = self._app_config.llm
         seed = self._settings.resolved_fixture_seed_path.read_text(encoding="utf-8")
         return {"model": llm.provider_settings().model, "fixture": canonical_hash(seed)}
 

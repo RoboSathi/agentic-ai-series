@@ -131,6 +131,7 @@ class MemoryWritePipelineImpl:
         reporter: MemoryReporter | None = None,
         claims: DeterministicClaims | None = None,
     ) -> None:
+        self._app_config = get_settings()
         settings = get_settings().memory
         # Absent, not defaulted: which CoALA classes exist is the
         # composition root's decision, and rebuilding a store that was
@@ -240,7 +241,7 @@ class MemoryWritePipelineImpl:
                 WriteResult(
                     route="refused",
                     written=False,
-                    reason=get_settings().memory.card.screen_reason.format(pattern=rejected),
+                    reason=self._app_config.memory.card.screen_reason.format(pattern=rejected),
                     stage="screen",
                     tier_path=["D1:screen"],
                 )
@@ -449,7 +450,7 @@ class MemoryWritePipelineImpl:
 
     def score_confidence(self, provenance: Provenance, category: str) -> float:
         """How much this claim is believed — from provenance, never from tone."""
-        base = get_settings().memory.provenance_weights.get(provenance.kind, 0.0)
+        base = self._app_config.memory.provenance_weights.get(provenance.kind, 0.0)
         if category in self._authority_categories:
             # An authority claim is the one place extra caution is free.
             return base * 0.5
@@ -673,7 +674,7 @@ class MemoryWritePipelineImpl:
 
     def _queue(self, result: WriteResult) -> WriteResult:
         """Hold a write for a human, and keep the record either way."""
-        kinds = get_settings().review.kinds
+        kinds = self._app_config.review.kinds
         procedural = result.fact is not None and store_type(result.fact.category) == "procedural"
         kind = kinds.skill if procedural else kinds.memory_fact
         return result.model_copy(update={"curator_id": self._curator.put(result, kind)})

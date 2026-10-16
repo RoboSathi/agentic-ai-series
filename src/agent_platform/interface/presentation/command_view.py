@@ -23,6 +23,7 @@ class CommandView:
     """Turns one command result into styled feed lines."""
 
     def __init__(self) -> None:
+        self._app_config = get_settings()
         self._style = get_settings().tui.command_output
 
     def render(self, result: CommandResult) -> list[Text]:
@@ -47,7 +48,7 @@ class CommandView:
         rows = [[self._fit(cell) for cell in row] for row in table.rows]
         headers = [self._fit(cell) for cell in table.headers]
         widths = column_widths(headers, rows)
-        glyphs = get_settings().presentation.box
+        glyphs = self._app_config.presentation.box
         lines.append(Text.styled(rule(widths, glyphs.top), style.grid_style))
         lines.append(self._box_row(headers, widths, lambda _i, _c: style.table_header_style))
         lines.append(Text.styled(rule(widths, glyphs.middle), style.grid_style))
@@ -58,7 +59,7 @@ class CommandView:
     def _box_row(
         self, cells: list[str], widths: list[int], style_of: Callable[[int, str], str]
     ) -> Text:
-        presentation = get_settings().presentation
+        presentation = self._app_config.presentation
         vertical, pad = presentation.box.vertical, " " * presentation.cell_padding
         text = Text(vertical, style=self._style.grid_style)
         for index, (cell, width) in enumerate(zip(cells, widths, strict=True)):

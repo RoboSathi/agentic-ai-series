@@ -1,4 +1,4 @@
-.PHONY: gen-key help install clean lint type-check format test verify agent llm-check model-check models data refund-limit \
+.PHONY: gen-key help install clean lint type-check format test test-models test-network test-all verify agent llm-check model-check models data refund-limit \
 	clean-memory show-memory dream memory-reindex review queue audit dummy-data analytics-export analytics-drop-legacy dashboard dashboard-install dashboard-refresh \
 	eval intent-eval _agent matrix \
 	_clean_check _clean_venv _clean_pycache _clean_cache _clean_logs _clean_memory \
@@ -159,7 +159,10 @@ help:
 	@echo "  make lint                 ruff check"
 	@echo "  make type-check           mypy --strict"
 	@echo "  make format               ruff format + autofix"
-	@echo "  make test                 pytest with coverage"
+	@echo "  make test                 pytest with coverage: the fast, offline tier, in parallel"
+	@echo "  make test-models          Tests that load a local model (make models first)"
+	@echo "  make test-network         Tests that reach a remote host"
+	@echo "  make test-all             Every tier, one after another"
 	@echo "  make verify               All gates: lint, format, types, tests (80% coverage), both composition roots"
 	@echo ""
 	@echo "$(GREEN)Run$(NC) (agent name required):"
@@ -313,8 +316,22 @@ format:
 	./venv/bin/ruff format src/ tests/
 	./venv/bin/ruff check src/ tests/ --fix
 
+# The default tier deselects `models` and `network` (pyproject.toml); a test that strays
+# into either fails at once (tests/hermetic.py). Each tier runs in its own process, so a
+# model a later tier loads is never one an earlier tier refused.
+TEST_WORKERS ?= auto
+MODEL_TEST_TIMEOUT ?= 600
+
 test:
-	./venv/bin/pytest tests/ --cov=src --cov-report=term-missing -q
+	./venv/bin/pytest tests/ -n $(TEST_WORKERS) --cov=src --cov-report=term-missing -q
+
+test-models:
+	./venv/bin/pytest tests/ -m models --timeout=$(MODEL_TEST_TIMEOUT) -q
+
+test-network:
+	./venv/bin/pytest tests/ -m network -q
+
+test-all: test test-models test-network
 
 agent: _agent
 	$(PYTHON) -m agent_platform.interface.tui
@@ -477,7 +494,7 @@ verify:
 	@echo "$(BLUE)2/4 mypy --strict...$(NC)"
 	./venv/bin/mypy --strict src/ > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
 	@echo "$(BLUE)3/4 Pytest with coverage gate (80%)...$(NC)"
-	./venv/bin/pytest tests/ --cov=src -q > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
+	./venv/bin/pytest tests/ -n $(TEST_WORKERS) --cov=src -q > /dev/null && echo "$(GREEN)✓$(NC)" || exit 1
 	@echo "$(BLUE)4/4 Composition root imports (one process per agent)...$(NC)"
 	$(foreach a,$(AGENTS),AGENTIC_OVERLAYS=$($(a)_OVERLAY) $(PYTHON) -c "from $($(a)_PKG).graph import build_agent; build_agent" || exit 1;) \
 	echo "$(GREEN)✓$(NC)"

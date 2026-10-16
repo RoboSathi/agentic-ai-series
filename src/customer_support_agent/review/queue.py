@@ -59,6 +59,7 @@ class ReviewQueueService:
         trust: TrustCalibrationTracker | None = None,
         cancellation: CancellationSaga | None = None,
     ) -> None:
+        self._agent_config = get_agent_settings()
         self._queue = queue
         self._orders = orders
         # Whether reviewers trust the agent about as much as they should.
@@ -196,7 +197,7 @@ class ReviewQueueService:
         rationale = reason or f"reply review {decision} by reviewer"
         self._record(request, reviewer, "allow" if approved else "deny", rationale)
         removed = request.detail.removed if request.detail is not None else []
-        template = get_agent_settings().review_output.reply_follow_up
+        template = self._agent_config.review_output.reply_follow_up
         return ReviewOutcome(
             request_id=int(request.id or 0),
             decision=decision,

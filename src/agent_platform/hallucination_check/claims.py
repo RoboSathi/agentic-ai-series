@@ -14,6 +14,7 @@ from decimal import Decimal
 from functools import cache
 
 from agent_platform.config import get_settings
+from agent_platform.config.settings import HallucinationCheckSettings
 from agent_platform.core.primitives.pii_tokens import bare_token, framed_token
 from agent_platform.hallucination_check.types import AtomicClaim, ClaimClass
 from agent_platform.llm.embeddings import tokenize
@@ -58,6 +59,16 @@ def conjunction_pattern(words: tuple[str, ...]) -> re.Pattern[str]:
 def _conjunction(words: tuple[str, ...]) -> re.Pattern[str]:
     alternatives = "|".join(re.escape(word) for word in words) or "(?!)"
     return re.compile(rf",?\s+\b(?:{alternatives})\b\s+")
+
+
+# A condition ("once approved and issued, …") runs from its opener to its comma, and a
+# conjunction inside it joins halves of one event. Split there, "once approved" was too short
+# to check, and "issued, it takes 5-10 days" lost its "once": read as an outcome, it was
+# checked against the tool results alone and cut, though the policy said exactly that.
+@cache
+def _condition(words: tuple[str, ...]) -> re.Pattern[str]:
+    alternatives = "|".join(re.escape(word) for word in words) or "(?!)"
+    return re.compile(rf"\s*(?:{alternatives})\b[^,]*$", re.IGNORECASE)
 
 
 # A clause that opens on one of these has lost its subject to the split:
@@ -151,7 +162,7 @@ _SPECIFIC = re.compile(
 # configuration (`hallucination_check.money_scales`).
 def money_pattern() -> re.Pattern[str]:
     """Exact amounts in prose, as this deployment's scale words leave them."""
-    return _money(tuple(get_settings().hallucination_check.money_scales))
+    return _money(tuple(_figures().money_scales))
 
 
 @cache
@@ -161,6 +172,21 @@ def _money(scales: tuple[str, ...]) -> re.Pattern[str]:
     return re.compile(
         r"(?<!\w)(?:\$\d+(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:,\d{3})*\.\d{2})(?!\.?\w)" + unscaled
     )
+
+
+def range_pattern() -> re.Pattern[str]:
+    """A range of small figures, as this deployment writes one (`hallucination_check.range_pattern`)."""
+    return _range(_figures().range_pattern)
+
+
+def _figures() -> HallucinationCheckSettings:
+    """The section that says how this deployment writes amounts and ranges."""
+    return get_settings().hallucination_check
+
+
+@cache
+def _range(pattern: str) -> re.Pattern[str]:
+    return re.compile(pattern)
 
 
 _PLAIN_NUMBER = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
@@ -217,11 +243,13 @@ def _forms(value: str) -> set[str]:
 
     An ISO date ("2026-10-02", as an API or a page's metadata writes it) is also the day a
     sentence names ("2 October") and its year ("2026"): evidence that says 2026-10-02 sources a
-    claim about "2 October 2026".
+    claim about "2 October 2026". A range ("5-10") is its two ends: evidence that says "5 to 10"
+    sources a claim about "5-10 business days".
     """
     iso = _ISO_DATE.match(value)
     if iso is None or not 1 <= int(iso.group("month")) <= len(_MONTH_KEYS):
-        return {_normalised(value)}
+        ends = range_pattern().fullmatch(value)
+        return {_normalised(end) for end in ends.groups()} if ends else {_normalised(value)}
     day, month = int(iso.group("day")), _MONTH_KEYS[int(iso.group("month")) - 1]
     return {_normalised(value), f"{day} {month}", iso.group("year")}
 
@@ -291,6 +319,7 @@ class ClaimDecomposer:
             (re.compile(phrase.pattern, re.IGNORECASE), phrase) for phrase in settings.rule_phrases
         ]
         self._conjunction = conjunction_pattern(tuple(settings.claim_conjunctions))
+        self._condition = _condition(tuple(settings.condition_openers))
         # Fewer content words than this and a fragment is not a checkable claim.
         self._min_tokens = settings.claim_min_content_tokens
 
@@ -300,7 +329,7 @@ class ClaimDecomposer:
             (index, text, forced, plain.endswith(_QUESTION))
             for index, sentence in enumerate(split_sentences(generation))
             for plain in [plain_text(sentence)]
-            for part in _with_subjects(_clauses(plain, self._conjunction))
+            for part in _with_subjects(_clauses(plain, self._conjunction, self._condition))
             for text, forced in self._carve(part.strip().rstrip(".;"))
             if text and not _is_lead_in(text)
         ]
@@ -365,19 +394,23 @@ def plain_text(sentence: str) -> str:
     return _MARKDOWN_MARKS.sub("", _MARKDOWN_LEAD.sub("", sentence)).strip()
 
 
-def _clauses(sentence: str, conjunction: re.Pattern[str]) -> list[str]:
+def _clauses(sentence: str, conjunction: re.Pattern[str], condition: re.Pattern[str]) -> list[str]:
     """Split one sentence at the conjunctions that join clauses, and only those.
 
     "and" also joins the items of a list. Split there and "orders 10876
     and 10854" becomes two fragments, each checked on its own — the first
     was refuted by the record for the second, and the fragment that
     survived was all the customer saw. So a conjunction inside brackets,
-    or between two bare specifics, joins items, not claims.
+    or between two bare specifics, joins items, not claims. Nor does one
+    inside a condition that has not reached its comma ("once approved and
+    issued, …"): the condition and what it promises are one claim.
     """
     parts: list[str] = []
     start = 0
     for match in conjunction.finditer(sentence):
         if _joins_items(sentence, match.start(), match.end()):
+            continue
+        if condition.match(sentence, start, match.start()):
             continue
         parts.append(sentence[start : match.start()])
         start = match.end()

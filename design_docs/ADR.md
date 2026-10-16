@@ -836,7 +836,199 @@ rather than one saying it is off. Both Gatekeeper-holding agents (support, ops) 
 **Consequences.** Off by default, as configured: no change until a deployment turns it on, and
 then one model call per allowed or escalated action.
 
+### P-44 — The default test run is offline and in-process, and enforces it
+
+**Context.** One full run took 15 min 46 s on 2 cores, and a serial run stalled for more than
+10 minutes on a test waiting on the network. Stripping provider keys (`no_provider_calls`) was
+not enough:
+- **Doomed embedding requests.** The hosted embedder still sent `/v1/embeddings` with a
+  placeholder key. Each refused request spent a slot of the shared 35-per-minute NVIDIA bucket,
+  so a 20-turn test waited about 60 s on the rate limiter.
+- **Real models loaded.** The intent classifier loaded the real Laya checkpoint, and Presidio
+  loaded spaCy.
+- **Environment-dependent results.** Ten DeepEval tests failed wherever the optional `evals`
+  extra was not installed. One PII test passed only when `PII_VAULT_KEY` was set.
+
+**Decision.** (2026-10-16.)
+- **Two markers.** `models` (loads a local model) and `network` (reaches a remote host). The
+  default run deselects both (`pyproject.toml`). `make test-models` and `make test-network`
+  run them, each in its own process.
+- **An unmarked test that strays fails at once** (`tests/hermetic.py`). A remote
+  `socket.connect` raises `UnmarkedNetworkAccessError`. The model seams raise
+  `UnmarkedModelLoadError`: `LocalSequenceClassifier._load_or_download`, Laya's `load`, the
+  tokenizer, and Presidio's analyzer and pipeline. Loopback and Unix sockets are allowed.
+- **Every test is bounded.** `pytest-timeout`, at 60 s per test.
+- **Hub and keys.** The Hub is offline in tests. `hf_api_key` and the vault key are stripped
+  with the provider keys.
+- **Product change.** `create_embedding_client` uses the local embedder from the start when
+  the hosted provider needs a key and has none. Production stops sending requests that can
+  only be refused.
+- **DeepEval** tests are skipped when the package is absent.
+
+**Consequences.**
+- The default run: 2,421 tests, about 53 s on 8 workers (was 2 min 52 s), 91 s with
+  coverage. Coverage is 88.5%. The slowest test is 4.7 s (was 64 s).
+- A test needing a real model or host says so with a marker, and gets `needs_model(path)` to
+  skip where the artifact was never downloaded.
+- Models stay off the default path. A test that reached one by accident is given a fake or a
+  known value instead, as in `test_memory_cards`.
+
+### P-45 — Retrieval and screening: index once, embed once, ask both guards together
+
+**Context.** An external review found three retrieval costs (BM25, re-embedding, embedding
+purpose) and nine further data-structure and algorithm (DSA) suggestions. Each was checked
+against the code before it was acted on.
+
+**Decision.** (2026-10-16.)
+
+*Changed:*
+- **BM25** (`context/retrieval.py`). The index is an inverted index (term → document →
+  frequency) plus per-document length norms, built in one pass. A query scores only documents
+  that share one of its terms, computes IDF for its own terms only, and copies only its
+  k winners (`heapq.nlargest`). Results are identical, ties included. On 5,000 documents a
+  query fell from 29.9 ms to 0.12 ms.
+- **Embedding cache** (`llm/embedding_cache.py`). `CachingEmbeddingClient` is a bounded LRU
+  keyed by purpose and text digest (`llm.embedding.cache`). It holds one model's vectors at
+  a time: a change of model empties it, and a batch is never answered from two spaces. It
+  wraps the hosted client in `create_embedding_client` and the local encoder behind
+  `shared_similarity()`.
+- **Embedding purpose.** `EmbeddingSimilarityScorer.similarities` embeds the text as a
+  `query` and the candidates as `passage`s. The exemplar classifier stays symmetric: its
+  examples are messages, not passages.
+- **Both hosted guards at once.** `MessageScreener.screen_both` asks the injection and
+  moderation models concurrently, then takes the verdicts in the old order: injection decides
+  first. When injection blocks, moderation's verdict cannot change the outcome, so it is not
+  carded or quarantined. Ops and RA call it inline. In CSA the injection stage calls it when
+  the moderation stage is built, and that stage then passes the message on. Cost: a message
+  injection blocks still spends one moderation call.
+- **Smaller changes:**
+  - The RAG dense leg starts first, so its embedding call is in flight while BM25 runs.
+  - Convergence gains for one step are a single similarity call (`ConvergenceMonitor.gains`),
+    not one call per result, each re-embedding the evidence window.
+  - The cycle finder is iterative over one shared path.
+  - `WorkingMemoryStore` keeps at most `memory.working.max_sessions` sessions, least
+    recently used first.
+
+*Not changed, and why:*
+- **Incremental BM25:** `refresh()` runs only on a knowledge-base sync.
+- **A Kahn's-algorithm scheduler:** RA fans out with LangGraph `Send`, so the batch barrier is
+  LangGraph's superstep. The scheduler's own `run` has no production caller.
+- **Dictionaries for the governor's repeat checks:** a turn is capped at about 10 steps.
+- **Concurrent pub-sub fan-out:** there is no production subscriber.
+- **A cached skill index:** a handful of skills, and a candidate set that changes per turn.
+- **Retrying a failed local similarity encoder:** a local failure is a missing artifact, and
+  the permanent fallback is deliberate.
+
+**Consequences.** Ranking a turn's tools, passages and evidence embeds only text it has not
+seen before. Every agent's turn makes one hosted guard round trip instead of two.
+
+### P-46 — Unused code: deleted, typed to, or kept on purpose
+
+**Decision.** (2026-10-16.)
+- **`config/versions.py` (`VersionManifest`) is deleted.** Nothing imported it, and there is
+  no `/versions` command. Three fields existed only for it, and are removed from the schema
+  and every YAML layer: `audit.prompt_source`, `audit.policy_source` and `evals.version`.
+  Components stay versioned through `audit.*_version` on every audit entry (FR-48).
+- **The scheduler is its semaphore** (`AsyncDagScheduler.slot()`). Its `run` / `run_batch`
+  path, `TaskOutcome` and `BatchSummary` had no production caller, because the research run
+  fans out with LangGraph `Send` (P-45). `TaskGraph` keeps `ready`, `blocked` and `batches`.
+- **`InjectionGuard` declares `assess`**, the one method `SecuritySuite` calls, and the suite
+  is typed to the protocol rather than to `PromptInjectionGuard`.
+- **`InMemoryPubSub` is kept, unused.** It is the platform's tested pub-sub primitive (a
+  resilience pattern CLAUDE.md requires a real implementation of). No production subscriber
+  exists yet; the first one decides whether publishing must fan out concurrently (P-45).
+
+### P-47 — Every settings field has a reader, enforced
+
+**Context.** The schema has about 2,100 fields. The review asked for fewer. A scan found
+that almost all are read: the count is the price of the rule that no value is hard-coded. A
+literal moved out of code becomes a field.
+
+**Decision.** (2026-10-16.)
+- **Removed:** the fields nothing read. `ScreeningMessages.pii_entity_masked`, plus the three
+  only `versions.py` read (P-46).
+- **Guarded:** `tests/agent_platform/test_settings_fields_are_read.py` fails on any field that
+  no code outside its settings module names, and that no used helper of its own module reads.
+  It collects every name read in one pass and runs in about a second.
+- **Not done:** the schema is not split (2026-10-13). A field with no reader cannot land, and
+  the rest stay as the configuration they are.
+
+**Consequences.** The count still rises when a literal becomes configuration (the card
+summaries' wording, P-45), and falls only when code stops reading a field. Neither can happen
+silently.
+
+### P-48 — Configuration is taken at construction, not looked up mid-call
+
+**Context.** There are about 630 direct settings reads. 212 of them were inside methods, so
+a component decided from process-global configuration on every call. That undercuts
+dependency injection and the "two postures in one process" claim. Making every section a
+required constructor argument would mean thousands of edits across src and tests, for code
+that already builds its components in one composition root per agent.
+
+**Decision.** (2026-10-16; chosen over full required-argument injection.)
+- **Taken in the constructor.** Each component class takes the live configuration once,
+  in its constructor (`self._app_config = get_settings()`, `self._agent_config =
+  get_agent_settings()`). Its methods read that reference: 74 classes, plus the context
+  strategies through their base class. It is the live object, never a copy, so `/harness`
+  and in-place toggles are still seen. `reload_settings()` runs only at process start (the
+  CLIs, the intent bake-off).
+- **Instance methods.** Static helpers that read configuration mid-turn became instance
+  methods: four in the CSA node groups, `StepEvents._words`,
+  `ParquetRefresher.interval_seconds`.
+- **Exempt, by name:**
+  - configuration itself;
+  - values that have no constructor to inject through (`Money`, `PromptManifest`,
+    `DummyProfile`, `MemoryProfile`);
+  - the logging bootstrap;
+  - the three hosts, which are composition roots.
+- **Guarded.** `tests/agent_platform/test_settings_reads.py` fails on a configuration read
+  inside any other instance method, and on any file whose direct reads exceed the baseline
+  (`tests/agent_platform/data/settings_reads_baseline.json`: 633 reads in 256 files). The
+  baseline only moves down.
+
+**Consequences.** No component consults global configuration mid-call. A composition root
+that wants another posture builds its components after setting it. Passing a different
+config object per agent is the next step, and the guard keeps new code from adding reads
+in the meantime.
+
 ---
+
+### P-49 — A condition clause is one claim
+
+**Context.** A CSA reply said "once approved and issued, it typically takes 5-10 business days
+to appear on your card statement". The claim splitter cut it at `and`. "once approved" was too
+short to check. "issued, it typically takes…" had lost its "once", so it read as an outcome:
+it was classed a record claim, checked against the tool results only, and cut. The refund
+article states exactly that rule, but the policy tier grounds only rule claims.
+
+**Decision.** (2026-10-16.) A clause that opens on a condition word
+(`hallucination_check.condition_openers`) runs to its comma, and a conjunction inside it does
+not split. The sentence stays one claim, keeps its promise and is classed a rule.
+
+**Consequences.**
+- "Order 10988 has been cancelled and refunded in full" still splits: it has no condition.
+- A condition in mid-clause ("it takes 5-10 days once approved and issued") still splits.
+
+### P-50 — A range is its two ends; a tier chooses whether it reads passages
+
+**Context.** "5-10 business days" was refuted by the figure check, because the policy writes
+"5 to 10": `specifics()` read "5-10" as one token. Separately, an agent whose evidence also
+holds passages (several sentences as one support-only premise) could only mix them into a
+tier's retrieval. Each passage repeats its sentences, so with `embedding_top_k: 3` the passages
+crowded a sentence or a rule out of the tier's top three, and a claim that used to be supported
+lost its premise.
+
+**Decision.** (2026-10-16.)
+- **Ranges.** A range of small figures (`hallucination_check.range_pattern`) is its two ends,
+  so "5 to 10" sources "5-10". "2-3" against "5 to 10" is still unsourced. An ISO date is read
+  first and stays a date.
+- **Tiers and passages.** Every tier names `passages: include | exclude | only`. `include` is
+  what every tier did before; the platform and RA keep it. A tier of `only` passages runs its
+  own top-k after the sentences' tier, so it can add support and can never take a slot.
+- `observations.passages()` is public, so one windowing serves tool results and articles.
+
+**Consequences.**
+- No behaviour change for the platform defaults or RA: all of their tiers are `include`.
 
 ## 9. Research agent
 
@@ -1234,6 +1426,100 @@ posture (`active_features()`) on every call, because review surfaces built outsi
 root must follow `/harness` hot. That is correct while a host runs one agent. Two agents with
 different `pii` postures in one process would need the host to own a posture per agent and hand
 it to those surfaces.
+
+### C-09 — The node groups are objects, built from one kit
+
+**Context.** `CustomerSupportAgent` inherited eleven node mixins and took 36 constructor
+parameters. Every group could reach every collaborator through one shared `self`, and
+`NodeSupport` declared each cross-group call as a stub. C-08 left that structure for later.
+The research and ops agents already build their graphs from separate node objects.
+
+**Decision.** (2026-10-16; supersedes C-08's "the mixin structure … is unchanged".)
+- **`parts.py`.** `build_agent` hands the agent one `CsaParts`, made of records grouped by
+  concern: model, tools, guards, memory and run.
+- **`kit.py`.** `NodeKit` derives, once, what used to be built in the constructor: the tool
+  path, the screener, the order-reference resolver, the grounding assembler, the governor and
+  the step narrator.
+- **Separate node objects.** Each group in `nodes/` is its own object. `NodeSupport` binds what
+  its shared helpers read, and each group's constructor binds what its own nodes read.
+- **Cross-group calls are constructor arguments.** Screening, Prefetch and Finalize are handed
+  the Proposal group; Intent and Prefetch the Execution group. The calls are public methods:
+  `invoke`, `system_prompt`, `offered_tools`, `call_model`, `prompt_request`.
+- **`conversation.py`.** `ConversationState` owns the per-session maps (verified customer,
+  order menu, last intent). Each is bounded by `memory.working.max_sessions`, and a rebuilt
+  agent adopts it.
+- **`edges.py`.** `GraphWiring(kit, CsaNodes)` compiles the graph from the node objects. A
+  withheld feature is still a node never added.
+- **The agent is a shell:** the turn lifecycle, durable runs, the conversation.
+- **Dead attributes removed:** `_tools` and `_diagnoser` were set and never read.
+
+**Consequences.**
+- A group's dependencies are written in its own constructor.
+- The card stream of a scripted status turn and of a governed and an ungoverned refund turn
+  was compared event by event against the mixin version: identical.
+- Tests that reached into the agent now name the owner (`agent._kit.audit`,
+  `agent._nodes.proposal.offered_tools(...)`).
+
+### C-10 — "Refund" alone is not a refund request
+
+**Context.** REQUEST_REFUND carried the bare phrases `refund`, `money back` and `reimburse`.
+Phrase rules run before the classifier, so any message mentioning a refund became a request,
+and Laya never placed one as REFUND_STATUS. "how long will the refund take to show on my
+card?" went to the refund workflow, whose skill said "any request mentioning a refund is a
+refund request".
+
+**Decision.** (2026-10-16.)
+- **Phrases.** REQUEST_REFUND keeps only phrases that ask for one ("refund order", "refund
+  me", "get a refund", "want my money back"); the `refund 10846` order reference is unchanged.
+- **Classifier.** A message that only mentions a refund goes to the classifier.
+- **REFUND_STATUS covers policy questions.** It answers how refunds work (timing, full amount,
+  where the money goes) as well as where one stands, with no new intent. Its phrases and skill
+  say so, and the answer comes from the refund article.
+- **Its description stays as it was** ("asking where a refund stands or when it will arrive").
+  Widened to name policy questions, it cost Laya 3 of the original 50 bake-off cases (refund
+  status questions such as "still waiting on the credit for 10372" went to ORDER_STATUS) and
+  the router 2.
+  - Restored: no regression on the original 50 (Laya 36/50, router 28/50, as on 2026-10-12).
+  - Still missed: of the 4 new cases, Laya misses "do you do partial refunds?" and "where does
+    the refund money go?". Through the router these become UNKNOWN, which gets read-only tools.
+
+**Consequences.**
+- `OrderValidator._operation` reads the same phrases. A bare mention is now `unknown` before
+  intent, not `REQUEST_REFUND`. `process_refund` still checks the record and the Gatekeeper
+  still decides authority, so no write loses a check.
+
+### C-11 — Refund-policy rules read across neighbouring sentences; no Laya for CSA
+
+**Context.** After C-10 and P-49, "once approved and issued, it typically takes 5-10 business
+days to appear on your card statement" was still cut. Beyond the range (P-50), NLI scored it
+neutral (0.93) against "Card refunds usually show… 5 to 10 business days…", because the
+condition is in the sentence before. The two sentences of "When the money arrives" together
+scored entailment 0.99.
+
+Laya, the second opinion RA uses, was measured again for CSA (offline, 10 policy claims, its
+three options supported / contradicted / not stated):
+- Its scores are compressed to 0.41–0.84.
+- At RA's 0.45 bar there was no margin: a false claim scored 0.445.
+- At 0.7 it confirmed 2 of 5 true claims and none of the false ones.
+- It costs ~200–375 ms per call on CPU.
+
+**Decision.** (2026-10-16.)
+- **Passages.** `knowledge_evidence(window)` adds every run of
+  `customer_support_agent.knowledge_passage_window: 2` neighbouring sentences of a section as a
+  passage (`PASSAGE`, the section as its source). The window is passed in by the composition
+  root (`NodeKit`).
+- **Tiers.** CSA's tiers put those passages in a tier of their own (`policy_passage`,
+  `passages: only`, may not refute) after `policy` (`passages: exclude`).
+- **Window size.** A window of 3 was tried and failed: "When the money arrives" has two
+  sentences, so no 3-sentence passage exists.
+- **Laya stays off for CSA.** A model trained for grounding checks, or a labelled measurement
+  of the logged unverified claims, comes first.
+
+**Consequences.**
+- Offline, against the real articles with local NLI: 5 of 5 true policy claims supported,
+  and 0 of 6 false ones. Those six are a wrong range, a wrong destination, "within 24 hours",
+  a partial refund, "48 hours", and voiding after settlement.
+- A passage can only support, so a sentence that contradicts a claim still refutes it.
 
 ## 11. Ops agent
 
