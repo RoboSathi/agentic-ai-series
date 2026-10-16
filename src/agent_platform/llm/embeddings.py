@@ -180,6 +180,23 @@ def _embedding_backend(client: object) -> str:
 def create_embedding_client(settings: LLMSettings | None = None) -> EmbeddingClient:
     """Build the configured embedding client (Factory)."""
     resolved = settings or get_settings().llm
-    if resolved.embedding.backend == HOSTED:
+    if resolved.embedding.backend == HOSTED and _has_credentials(resolved):
         return HostedEmbeddingClient(resolved)
     return HashingEmbeddingClient(resolved.embedding.local_dimensions)
+
+
+def _has_credentials(settings: LLMSettings) -> bool:
+    """Whether the hosted provider can be asked at all.
+
+    A provider that needs a key and has none would refuse every request, and each refusal
+    would still spend a slot of the shared rate limit: the client falls back from the start.
+    """
+    provider = settings.embedding.provider
+    if not settings.provider_settings(provider).key_env_vars:
+        return True
+    if settings.api_key_for(provider):
+        return True
+    get_logger("llm").warning(
+        "Hosted embeddings have no key; using the local embedder", provider=provider
+    )
+    return False

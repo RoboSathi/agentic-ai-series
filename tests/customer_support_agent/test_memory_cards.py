@@ -15,6 +15,7 @@ from agent_platform.memory.facade import _event_fields, _recall_fields
 from agent_platform.memory.types import MemoryFact, Provenance, RecallReport, ScoredFact
 from agent_platform.memory.working import WorkingMemoryStore
 from agent_platform.observability import InMemoryLiveStatusFeed, StageReporter
+from agent_platform.security.pii.known_values import register_known
 from customer_support_agent.graph.agent import CustomerSupportAgent
 from customer_support_agent.graph.nodes._support import NodeSupport
 from customer_support_agent.graph.state import AgentState
@@ -99,6 +100,8 @@ class TestTheTurnSummaryHoldsWhatWorkingMemoryHolds:
         agent = object.__new__(CustomerSupportAgent)
         store = WorkingMemoryStore()
         memory = store.get("s")
+        # Registered as a database read of the customer's row registers it (`known_columns`).
+        register_known("PERSON", "Linus Hoare")
         memory.set("verified_customer", "Linus Hoare (account #89)")
         memory.set("order_under_discussion", "order 10975")
         memory.add_history("show orders", "Listed the orders.")

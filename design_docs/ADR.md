@@ -836,6 +836,43 @@ rather than one saying it is off. Both Gatekeeper-holding agents (support, ops) 
 **Consequences.** Off by default, as configured: no change until a deployment turns it on, and
 then one model call per allowed or escalated action.
 
+### P-44 — The default test run is offline and in-process, and enforces it
+
+**Context.** One full run took 15 min 46 s on 2 cores, and a serial run stalled for more than
+10 minutes on a test waiting on the network. Stripping provider keys (`no_provider_calls`) was
+not enough:
+- **Doomed embedding requests.** The hosted embedder still sent `/v1/embeddings` with a
+  placeholder key. Each refused request spent a slot of the shared 35-per-minute NVIDIA bucket,
+  so a 20-turn test waited about 60 s on the rate limiter.
+- **Real models loaded.** The intent classifier loaded the real Laya checkpoint, and Presidio
+  loaded spaCy.
+- **Environment-dependent results.** Ten DeepEval tests failed wherever the optional `evals`
+  extra was not installed. One PII test passed only when `PII_VAULT_KEY` was set.
+
+**Decision.** (2026-10-16.)
+- **Two markers.** `models` (loads a local model) and `network` (reaches a remote host). The
+  default run deselects both (`pyproject.toml`). `make test-models` and `make test-network`
+  run them, each in its own process.
+- **An unmarked test that strays fails at once** (`tests/hermetic.py`). A remote
+  `socket.connect` raises `UnmarkedNetworkAccessError`. The model seams raise
+  `UnmarkedModelLoadError`: `LocalSequenceClassifier._load_or_download`, Laya's `load`, the
+  tokenizer, and Presidio's analyzer and pipeline. Loopback and Unix sockets are allowed.
+- **Every test is bounded.** `pytest-timeout`, at 60 s per test.
+- **Hub and keys.** The Hub is offline in tests. `hf_api_key` and the vault key are stripped
+  with the provider keys.
+- **Product change.** `create_embedding_client` uses the local embedder from the start when
+  the hosted provider needs a key and has none. Production stops sending requests that can
+  only be refused.
+- **DeepEval** tests are skipped when the package is absent.
+
+**Consequences.**
+- The default run: 2,421 tests, about 53 s on 8 workers (was 2 min 52 s), 91 s with
+  coverage. Coverage is 88.5%. The slowest test is 4.7 s (was 64 s).
+- A test needing a real model or host says so with a marker, and gets `needs_model(path)` to
+  skip where the artifact was never downloaded.
+- Models stay off the default path. A test that reached one by accident is given a fake or a
+  known value instead, as in `test_memory_cards`.
+
 ---
 
 ## 9. Research agent

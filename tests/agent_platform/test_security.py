@@ -2,8 +2,10 @@
 
 from pathlib import Path
 
+import pytest
 from pydantic import BaseModel
 
+from agent_platform.config import get_settings
 from agent_platform.memory import EpisodicStore, MemoryFacade
 from agent_platform.memory.types import MemoryQuery
 from agent_platform.security import (
@@ -13,6 +15,9 @@ from agent_platform.security import (
     TermContentModerator,
 )
 from agent_platform.tools import ToolDefinition
+
+# A 32-byte AES key, raw.
+VAULT_KEY = "0123456789abcdef0123456789abcdef"
 
 
 class _Args(BaseModel):
@@ -41,7 +46,11 @@ class TestPII:
         found = PIIFilterImpl().detect("card 4111 1111 1111 1111")
         assert [span.category for span in found] == ["CREDIT_CARD"]
 
-    def test_masking_removes_the_value(self, security_on: None) -> None:
+    def test_masking_removes_the_value(
+        self, security_on: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The test's own key: a vault exists here whatever the developer's shell exports.
+        monkeypatch.setenv(get_settings().security.pii.vault.key_env, VAULT_KEY)
         redacted = PIIFilterImpl().redact("mail ada@example.com")
         # A vault token, not a blank: the value stays recoverable by an audited reveal.
         assert "ada@example.com" not in redacted and "[EMAIL_ADDRESS:" in redacted
