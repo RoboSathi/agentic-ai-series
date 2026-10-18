@@ -14,7 +14,3 @@ No. Refunds are always for the full order total; partial refunds are not support
 
 ## I asked for a refund twice. Will I be charged back twice?
 No. A repeated request for the same refund returns the first result and never pays out a second time.
-
-## How long does a refund take to reach my account?
-Usually 5 to 10 business days after the refund settles, which is a few minutes after it is issued, depending on your bank.
-

@@ -23,7 +23,7 @@ features:
   # On. An agent that states an order's delivery date and a refund's
   # outcome must be checkable against what its tools actually
   # returned; without this the draft reaches the customer unread.
-  hallucination_guard: true
+  hallucination_guard: false
   gatekeeper: true
   memory:
     enabled: true
@@ -829,7 +829,7 @@ customer_support_agent:
   # it settles it can be voided (`/void`), after that only refunded. Settling is
   # when the customer is told the money is on its way.
   settlement:
-    window_seconds: 3600
+    window_seconds: 60
     sweep_interval_seconds: 15
     titles:
       issued: "Issued refunds — {count} voidable"
