@@ -906,7 +906,7 @@ research_agent:
     clip_chars: 110
     actions:
       SCOPING:
-        - {label: "✓ Done Interviewing", command: done, variant: primary}
+        - {label: "✓ Done Interviewing", command: done, variant: success}
       RUBRIC_REVIEW:
         - {label: "▶ Approve & Run", command: approve, variant: success}
       # RUNNING / STOPPED: the platform's run buttons (`tui.run_controls`), the same as every agent.

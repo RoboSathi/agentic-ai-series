@@ -2488,10 +2488,10 @@ evals:
       reason_chars: 90
       # The run's sections, as the timing table at the end names them.
       sections:
-        agent: "golden set · agent runs (transcripts)"
-        oracle: "golden set · oracle (DB invariants)"
-        deepeval: "golden set · DeepEval (judged quality)"
-        promptfoo: "red team · Promptfoo (attacks)"
+        agent: "golden set · Agent runs (Transcripts)"
+        oracle: "golden set · Oracle (DB invariants)"
+        deepeval: "golden set · DeepEval (Judged quality)"
+        promptfoo: "red team · Promptfoo (Attacks)"
         intent: "intent bake-off"
         total: total
       # What Ctrl+C prints before the time taken so far (`{section}` that was running,
@@ -2850,7 +2850,7 @@ tui:
   # The run buttons, the same for every agent.
   run_controls:
     stop: {label: "■ Stop Agent", variant: error}
-    resume: {label: "↻ Resume Agent from {node}", variant: primary}
+    resume: {label: "↻ Resume Agent from {node}", variant: success}
     abort: {label: "✕ Abort", variant: warning}
   status_history_hint: "scroll down to follow"
   choice_menu_hint: "↑/↓ then Enter to pick · or type your own answer"
