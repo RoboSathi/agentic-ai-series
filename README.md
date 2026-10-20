@@ -2,7 +2,7 @@
 
 **A production-grade platform for governed AI agents, and three agents built on it.**
 
-`agentic-harness-core` is the codebase behind *The Agentic AI Systems Masterclass*. It shows,
+`agentic-harness-core` is the codebase behind *The Agentic AI Systems Series*. It shows,
 in running and tested code, what turns a model into an agent you can deploy:
 
 - deterministic authority over every action;
@@ -15,9 +15,9 @@ in running and tested code, what turns a model into an agent you can deploy:
 
 | Agent | What it shows |
 |---|---|
-| **Customer Support** (`csa`) | A money-moving tool-use agent. It answers order and refund questions, issues refunds within its authority, escalates larger ones to a person, and refuses what policy forbids. |
-| **Research** (`ra`) | Two paths. A plain question gets a grounded direct answer. `/research` runs a scoped, contract-bound, independently audited research run that ends COMPLETE or PARTIAL. |
-| **Ops Analyst** (`ops`) | An agent whose only tools arrive over MCP. It answers questions about how the other agents are running, and shows the SQL and rows behind every number. |
+| **Customer Support** (`CSA`) | A money-moving tool-use agent. It answers order and refund questions, issues refunds within its authority, escalates larger ones to a person, and refuses what policy forbids. |
+| **Research** (`RA`) | Two paths. A plain question gets a grounded direct answer. `/research` runs a scoped, contract-bound, independently audited research run that ends COMPLETE or PARTIAL. |
+| **Ops Analyst** (`OPS`) | An agent whose only tools arrive over MCP. It answers questions about how the other agents are running, and shows the SQL and rows behind every number. |
 
 All three compose one shared library, `agent_platform`, and the platform never names an
 agent. Each harness control can be withheld live with `/harness`, so its effect can be
@@ -108,8 +108,8 @@ cp .env.example .env          # then set nvidia_api_key (and optionally tavily_a
 make gen-key >> .env          # fresh keys for checkpoint encryption and the PII vault
 ```
 
-Provider keys are plain lowercase variables (`nvidia_api_key`); every other setting can be
-overridden as `SECTION__FIELD` (see [Configuration](#7-configuration)).
+Provider keys are plain lowercase variables (`nvidia_api_key`, `langchain_api_key`, `tavily_api_key`).
+Export each of them to your environment variable, e.g., export nvidia_api_key=XXXXXX.
 
 ### First run
 
@@ -130,9 +130,21 @@ make agent ops SOURCE=dummy   # ask the Ops Analyst, e.g. "p95 model latency by 
 
 ---
 
-## 2. Using it: every make command
+## 2. Using it: important make command
 
-Run `make help` for the same list in the terminal. Agent-scoped targets take the agent as their
+### Run an agent
+
+| Command | What it does |
+|---|---|
+| `make agent <agent>` | Opens the operator console on that agent. `PROFILE=<name>` adds `src/<pkg>/config/profiles/<name>.yaml`, e.g. `make agent csa PROFILE=bert_intent`. |
+| `make agent ops` | The Ops Analyst. `SOURCE=dummy` reads the generated demo world; its own turns are always recorded to the live source. |
+| `make model-check` | Probes every model the system uses (hosted chat, judge, embeddings, guards, and each local model) and says what each is used for. `BENCH=1` also times each chat model (p50/p95 and throughput). Alias: `make llm-check`. |
+
+<!-- SCREENSHOT: `make model-check` — the tree of every model, its role and its probe result. -->
+![make model-check](design_docs/images/make-model-check.png)
+
+
+Run `make` for the same list in the terminal. Agent-scoped targets take the agent as their
 second word: `csa`, `ra` or `ops`. A missing, unknown or doubled agent name prints usage and
 exits.
 
@@ -147,68 +159,6 @@ exits.
 | `make models [agent]` | Downloads any missing local models, then loads and runs each agent's models once (all agents, or one) |
 | `make gen-key` | Prints fresh `LANGGRAPH_AES_KEY` (checkpoint encryption) and `PII_VAULT_KEY` lines; append them to `.env` |
 | `make matrix` | Matrix-style digital rain in the terminal. Ctrl+C spells `AGENT` in digits; any key (or Ctrl+C again) exits and clears the screen. |
-
-### Clean
-
-`make clean` on its own removes nothing: name one kind of file, and for agent kinds the agent (or
-`all`). Each command lists what it removed.
-
-| Command | What it removes |
-|---|---|
-| `make clean venv` | `venv/`; `make install` recreates it |
-| `make clean pycache` | Every `__pycache__` in the repo (not the venv, git or `local_models/`) |
-| `make clean cache` | pytest, mypy and ruff caches, `.coverage`, root `dist/`, `build/` and `*.egg-info` |
-| `make clean logs <agent>\|all` | `logs/<package>/`, every subsystem log and its rotations |
-| `make clean memory <agent>\|all` | Long-term memory files, through the platform's own reset. Checkpoints, business records, reviews and audit are kept. Same as `make clean-memory <agent>`. |
-| `make clean checkpoints <agent>\|all` | Conversation checkpoints and durable-run state (`db/<package>/checkpoints.db`); a paused run cannot resume afterwards |
-| `make clean db <agent>\|all` | The agent's business database and knowledge index. A seeded agent is rebuilt by `make dummy-data <agent>`. |
-| `make clean evals <agent>\|all` | Eval reports, raw framework output, workspaces and the fixture DB. `all` also clears the shared transcript store. |
-| `make clean analytics live\|dummy\|all` | The shared analytics source (facts, audit decisions) and its Parquet export |
-
-### Run an agent
-
-| Command | What it does |
-|---|---|
-| `make agent <agent>` | Opens the operator console on that agent. `PROFILE=<name>` adds `src/<pkg>/config/profiles/<name>.yaml`, e.g. `make agent csa PROFILE=bert_intent`. |
-| `make agent ops [SOURCE=dummy]` | The Ops Analyst. `SOURCE=dummy` reads the generated demo world; its own turns are always recorded to the live source. |
-| `make model-check` | Probes every model the system uses (hosted chat, judge, embeddings, guards, and each local model) and says what each is used for. `BENCH=1` also times each chat model (p50/p95 and throughput). Alias: `make llm-check`. |
-
-<!-- SCREENSHOT: `make model-check` — the tree of every model, its role and its probe result. -->
-![make model-check](design_docs/images/make-model-check.png)
-
-### Review, audit and PII
-
-| Command | What it does |
-|---|---|
-| `make review <agent>` | The human-review queue as a table: escalated refunds, cut replies, quarantined messages, facts and skills waiting for a curator. Filters: `KIND=<kind>`, `ID=<id>`. Decide an item with `ACTION=approve\|deny ID=<id> COMMENT="<why>"` (a comment is required and audited). Alias: `make queue`. |
-| `make audit <agent>` | The audit trail, coloured by standing then decision. Filters: `DECISION=allow\|deny\|escalate`, `STANDING=…`, `KIND=…`, `SINCE=24h`, `N=50`. `TRACE=<id>` shows one turn as a tree. |
-| `make pii-reveal <agent> T=<token> WHY="<reason>"` | Shows what a PII token stood for. The reveal is written to the audit trail first, and needs `PII_VAULT_KEY`. |
-
-<!-- SCREENSHOT: `make review csa` with one escalated refund and one cut reply. -->
-![make review](design_docs/images/make-review.png)
-
-<!-- SCREENSHOT: `make audit csa TRACE=<id>` — one refund turn as a tree. -->
-![make audit](design_docs/images/make-audit.png)
-
-### Memory
-
-| Command | What it does |
-|---|---|
-| `make show-memory <agent>` | What dreams consolidated, as tables: episodic, semantic and procedural. `SUBJECT=<id>` shows one customer; `EVENTS=<n>` sets how many events are listed. |
-| `make show-memory dream <agent>` | The dream events alone, pending and consolidated. Same as `/memory dream` in the console. |
-| `make dream <agent>` | Consolidates pending dream events into session summaries, facts and learned-skill proposals. `SHOW=1` also prints the memory tables. |
-| `make clean-memory <agent>` | Empties long-term memory. Checkpoints, business records and the audit trail are kept. |
-| `make memory-reindex <agent>` | Rebuilds the derived search index from the memory files |
-
-<!-- SCREENSHOT: `make dream csa` — the change tree after a dream. -->
-![make dream](design_docs/images/make-dream.png)
-
-### Customer Support admin
-
-| Command | What it does |
-|---|---|
-| `make dummy-data csa` | Rebuilds the agent database from its seed: users, orders, the agent policy, and the eval fixture. `KEEP_MEMORY=1` keeps long-term memory. `make data csa` is an alias. |
-| `make refund-limit <amount>` | Sets the per-refund limit the Gatekeeper enforces. It is stored as a database row, never in config or the prompt. |
 
 ### Evals
 
@@ -243,16 +193,6 @@ Only `csa` has a suite today; the research agent's was removed with its syntheti
 
 <!-- SCREENSHOT: Rill — the Agent Platform dashboard over SOURCE=dummy (Outcomes and Hallucination sections). -->
 ![Agent Platform dashboard in Rill](design_docs/images/rill-agent-platform.png)
-
-### Quality
-
-| Command | What it does |
-|---|---|
-| `make lint` | `ruff check` |
-| `make format` | `ruff format` and autofix |
-| `make type-check` | `mypy --strict src/` |
-| `make test` | `pytest` with coverage. Fully offline: models are scripted and provider keys are removed. |
-| `make verify` | Every gate: lint, format, `mypy --strict`, tests with the 80% coverage gate, and each agent's composition root imported in its own process |
 
 ---
 
